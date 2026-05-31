@@ -127,14 +127,20 @@ final class WorkIntentClassifier
      */
     private function action(string $text, ?string $system, array &$signals): string
     {
+        if (in_array($system, ['water_supply', 'sewerage'], true) && $this->containsAny($text, ['арматур', 'сантехническ', 'канализац'])) {
+            $signals[] = 'action_pipe_layout';
+
+            return 'pipe_layout';
+        }
+
         foreach ([
             'insulation' => ['утепл', 'теплоизоляц'],
             'plastering' => ['штукатур'],
             'cable_installation' => ['кабел'],
             'pipe_layout' => ['разводк труб', 'прокладк труб', 'труб отоплен'],
-            'masonry' => ['кладк', 'кирпич', 'блок'],
             'heating_equipment' => ['завес', 'радиатор', 'котел', 'конвектор', 'теплогенератор'],
             'window_installation' => ['установк окон', 'монтаж окон', 'окн', 'двер', 'ворот'],
+            'masonry' => ['кладк', 'кирпич', 'блок'],
             'ventilation_installation' => ['монтаж вентиляц', 'вентиляц', 'воздуховод'],
             'socket_installation' => ['розет', 'выключател'],
             'fence_installation' => ['огражден', 'забор'],

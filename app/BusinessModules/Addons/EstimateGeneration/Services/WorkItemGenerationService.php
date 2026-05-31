@@ -380,7 +380,7 @@ class WorkItemGenerationService
             'external_networks' => [
                 $this->template('Наружные сети водоснабжения и канализации', 'plumbing', 'Подключение наружных инженерных сетей', 'networks.external', 280000, ['material' => 0.62, 'labor' => 0.2, 'machinery' => 0.18], 0.52),
                 $this->template('Наружное электроснабжение', 'electrical', 'Кабельный ввод и подключение объекта', 'networks.external', 220000, ['material' => 0.64, 'labor' => 0.18, 'machinery' => 0.18], 0.52),
-                $this->template('Ливневая канализация площадки', 'sewerage', 'Водоотвод кровли и твердых покрытий', 'warehouse.roads', 1350, ['material' => 0.56, 'labor' => 0.24, 'machinery' => 0.2], 0.52),
+                $this->template('Ливневая канализация площадки', 'sewerage', 'Водоотвод кровли и твердых покрытий', 'sewerage.pipe', 1350, ['material' => 0.56, 'labor' => 0.24, 'machinery' => 0.2], 0.52),
                 $this->template('Подключение наружных сетей к зданию', 'plumbing', 'Вводы сетей, футляры и узлы подключения', 'networks.external', 125000, ['material' => 0.55, 'labor' => 0.28, 'machinery' => 0.17], 0.5),
             ],
             'siteworks' => [

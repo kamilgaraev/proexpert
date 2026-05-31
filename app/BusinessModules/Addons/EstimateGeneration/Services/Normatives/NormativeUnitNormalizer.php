@@ -95,6 +95,8 @@ final class NormativeUnitNormalizer
             str_starts_with($unit, 'маш/ч'),
             str_starts_with($unit, 'машч') => ['machine_time', 'маш-ч', 1.0],
             str_starts_with($unit, 'компл') => ['set', 'компл', 1.0],
+            in_array($unit, ['точка', 'точки', 'точек', 'точ'], true),
+            str_starts_with($unit, 'точк') => ['piece', 'шт', 1.0],
             $unit === 'шт',
             str_starts_with($unit, 'штук') => ['piece', 'шт', 1.0],
             $unit === 'ед',
@@ -113,8 +115,8 @@ final class NormativeUnitNormalizer
         $unit = str_replace(["\u{00A0}", '³', '²', '^3', '^2'], [' ', '3', '2', '3', '2'], $unit);
 
         return str_replace(
-            ['куб. м', 'куб.м', 'куб м', 'кв. м', 'кв.м', 'кв м'],
-            ['м3', 'м3', 'м3', 'м2', 'м2', 'м2'],
+            ['куб. м', 'куб.м', 'куб м', 'кв. м', 'кв.м', 'кв м', 'пог. м', 'пог.м'],
+            ['м3', 'м3', 'м3', 'м2', 'м2', 'м2', 'м', 'м'],
             $unit
         );
     }

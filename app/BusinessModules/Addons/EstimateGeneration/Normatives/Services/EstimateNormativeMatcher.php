@@ -14,9 +14,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\NormativeRerankResultData;
+use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\NormativeSearchProfileData;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\WorkIntentData;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningEvidenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSearchService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeSearchProfileCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\NormativeCandidateRerankerInterface;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
@@ -33,17 +35,20 @@ class EstimateNormativeMatcher
     private readonly EstimateGenerationLearningEvidenceService $learningEvidenceService;
     private readonly NormativeCandidateRerankerInterface $reranker;
     private readonly WorkIntentClassifier $workIntentClassifier;
+    private readonly NormativeSearchProfileCatalog $searchProfileCatalog;
 
     public function __construct(
         ?NormativeCandidateSearchService $candidateSearchService = null,
         ?EstimateGenerationLearningEvidenceService $learningEvidenceService = null,
         ?NormativeCandidateRerankerInterface $reranker = null,
         ?WorkIntentClassifier $workIntentClassifier = null,
+        ?NormativeSearchProfileCatalog $searchProfileCatalog = null,
     ) {
         $this->candidateSearchService = $candidateSearchService ?? app(NormativeCandidateSearchService::class);
         $this->learningEvidenceService = $learningEvidenceService ?? app(EstimateGenerationLearningEvidenceService::class);
         $this->reranker = $reranker ?? app(NormativeCandidateRerankerInterface::class);
         $this->workIntentClassifier = $workIntentClassifier ?? app(WorkIntentClassifier::class);
+        $this->searchProfileCatalog = $searchProfileCatalog ?? app(NormativeSearchProfileCatalog::class);
     }
 
     /**
@@ -59,6 +64,7 @@ class EstimateNormativeMatcher
         }
 
         $intent = $this->workIntentClassifier->classify($workItem, $context);
+        $profile = $this->searchProfileCatalog->forIntentData($intent);
         $workItem = [
             ...$workItem,
             'work_intent' => $this->intentPayload($intent),
@@ -79,7 +85,8 @@ class EstimateNormativeMatcher
                 $tokens,
                 $priceVersions,
                 $learningEvidence[(int) $norm->id] ?? $this->emptyLearningEvidence(),
-                $intent
+                $intent,
+                $profile
             ))
             ->filter(static fn (array $candidate): bool => (float) $candidate['score'] > 0)
             ->sortByDesc('score')
@@ -138,6 +145,7 @@ class EstimateNormativeMatcher
         }
 
         $intent = $this->workIntentClassifier->classify($workItem, $context);
+        $profile = $this->searchProfileCatalog->forIntentData($intent);
         $workItem = [
             ...$workItem,
             'work_intent' => $this->intentPayload($intent),
@@ -151,7 +159,8 @@ class EstimateNormativeMatcher
             $tokens,
             $priceVersions,
             $learningEvidence[(int) $norm->id] ?? $this->emptyLearningEvidence(),
-            $intent
+            $intent,
+            $profile
         );
 
         return [
@@ -306,14 +315,24 @@ class EstimateNormativeMatcher
         array $tokens,
         Collection $priceVersions,
         array $learningEvidence,
-        WorkIntentData $intent
+        WorkIntentData $intent,
+        NormativeSearchProfileData $profile
     ): array
     {
         $name = mb_strtolower($norm->name);
+        $workName = mb_strtolower(trim((string) ($workItem['normative_search_text'] ?? $workItem['name'] ?? '')));
         $section = mb_strtolower((string) ($norm->section_name ?? ''));
         $composition = mb_strtolower(implode(' ', $norm->work_composition ?? []));
         $score = 0.0;
         $reasons = [];
+
+        if ($workName !== '' && $workName === $name) {
+            $score += 32;
+            $reasons[] = 'exact_name';
+        } elseif ($workName !== '' && (str_contains($name, $workName) || str_contains($workName, $name))) {
+            $score += 14;
+            $reasons[] = 'name_phrase';
+        }
 
         foreach ($tokens as $token) {
             if ($token === mb_strtolower($norm->code)) {
@@ -356,6 +375,15 @@ class EstimateNormativeMatcher
         if ($scopeMismatch) {
             $score -= 120;
             $reasons[] = 'scope_mismatch';
+        } elseif ($this->sectionStartsWithAny((string) ($norm->section_code ?? $norm->section?->code ?? ''), $profile->allowedSectionPrefixes)) {
+            $score += 20;
+            $reasons[] = 'search_profile_section';
+        }
+
+        $profileTermScore = $this->profileTermScore($name . ' ' . $section . ' ' . $composition, $profile);
+        if ($profileTermScore > 0) {
+            $score += $profileTermScore;
+            $reasons[] = 'search_profile_terms';
         }
 
         $learningScore = (float) ($learningEvidence['learning_score'] ?? 0);
@@ -425,6 +453,25 @@ class EstimateNormativeMatcher
             'learning_score' => round($learningScore, 2),
             'learning_sources' => array_values($learningEvidence['learning_sources'] ?? []),
         ];
+    }
+
+    private function profileTermScore(string $text, NormativeSearchProfileData $profile): float
+    {
+        $score = 0.0;
+
+        foreach ($profile->requiredTerms as $term) {
+            if ($term !== '' && str_contains($text, $term)) {
+                $score += 8.0;
+            }
+        }
+
+        foreach ($profile->synonymTerms as $term) {
+            if ($term !== '' && str_contains($text, $term)) {
+                $score += 3.0;
+            }
+        }
+
+        return min($score, 36.0);
     }
 
     /**

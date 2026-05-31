@@ -27,7 +27,7 @@ class NormativeMatchDecisionServiceTest extends TestCase
         $this->assertContains('low_confidence', $decision->warnings);
     }
 
-    public function test_middle_confidence_safe_candidate_requires_manual_review_without_pricing(): void
+    public function test_middle_confidence_safe_candidate_is_priced_for_manual_review(): void
     {
         $decision = app(NormativeMatchDecisionService::class)->decide([
             'confidence' => 0.61,
@@ -40,10 +40,11 @@ class NormativeMatchDecisionServiceTest extends TestCase
             ],
         ], ['unit' => 'м2']);
 
-        $this->assertSame('candidate', $decision->status);
-        $this->assertFalse($decision->canUseForPricing);
+        $this->assertSame('review_priced', $decision->status);
+        $this->assertTrue($decision->canUseForPricing);
         $this->assertContains('low_confidence', $decision->warnings);
         $this->assertContains('requires_normative_review', $decision->warnings);
+        $this->assertContains('safe_normative_analog', $decision->warnings);
     }
 
     public function test_middle_confidence_candidate_with_wrong_domain_is_not_review_priced(): void

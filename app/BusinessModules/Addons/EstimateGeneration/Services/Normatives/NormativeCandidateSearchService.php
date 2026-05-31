@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Normatives;
 
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\WorkIntentData;
+use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\NormativeSearchProfileData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateDatasetVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm;
 use Illuminate\Database\Eloquent\Builder;
@@ -16,6 +17,7 @@ final class NormativeCandidateSearchService
 
     public function __construct(
         private readonly WorkIntentClassifier $workIntentClassifier,
+        private readonly NormativeSearchProfileCatalog $searchProfileCatalog,
     ) {}
 
     /**
@@ -32,10 +34,11 @@ final class NormativeCandidateSearchService
         int $limit
     ): Collection {
         $intent = $this->workIntentClassifier->classify($workItem, $context);
-        $pool = $this->queryPool($version, $workItem, $tokens, $intent, max($limit * 6, self::MIN_POOL_SIZE));
+        $profile = $this->searchProfileCatalog->forIntentData($intent);
+        $pool = $this->queryPool($version, $workItem, $tokens, $intent, $profile, max($limit * 6, self::MIN_POOL_SIZE));
 
         $ranked = $pool
-            ->sortByDesc(fn (EstimateNorm $norm): float => $this->scorePoolCandidate($norm, $workItem, $tokens, $intent))
+            ->sortByDesc(fn (EstimateNorm $norm): float => $this->scorePoolCandidate($norm, $workItem, $tokens, $intent, $profile))
             ->values();
 
         $compatible = $this->compatibleCandidates($ranked, (string) ($workItem['unit'] ?? ''));
@@ -51,9 +54,16 @@ final class NormativeCandidateSearchService
      * @param array<int, string> $tokens
      * @return Collection<int, EstimateNorm>
      */
-    private function queryPool(EstimateDatasetVersion $version, array $workItem, array $tokens, WorkIntentData $intent, int $poolLimit): Collection
+    private function queryPool(
+        EstimateDatasetVersion $version,
+        array $workItem,
+        array $tokens,
+        WorkIntentData $intent,
+        NormativeSearchProfileData $profile,
+        int $poolLimit
+    ): Collection
     {
-        $tokens = $this->expandedTokens($tokens, $intent);
+        $tokens = $this->expandedTokens($tokens, $intent, $profile);
         $query = EstimateNorm::query()
             ->with(['collection', 'section'])
             ->whereHas('collection', static function (Builder $query) use ($version): void {
@@ -71,7 +81,17 @@ final class NormativeCandidateSearchService
             });
         }
 
-        foreach ($intent->forbiddenSectionPrefixes as $prefix) {
+        if ($profile->allowedSectionPrefixes !== []) {
+            $query->where(function (Builder $query) use ($profile): void {
+                $query->whereNull('section_code');
+
+                foreach ($profile->allowedSectionPrefixes as $prefix) {
+                    $query->orWhere('section_code', 'like', $prefix . '%');
+                }
+            });
+        }
+
+        foreach (array_values(array_unique([...$intent->forbiddenSectionPrefixes, ...$profile->forbiddenSectionPrefixes])) as $prefix) {
             $query->where(function (Builder $query) use ($prefix): void {
                 $query->whereNull('section_code')
                     ->orWhere('section_code', 'not like', $prefix . '%');
@@ -147,9 +167,13 @@ final class NormativeCandidateSearchService
      * @param array<int, string> $tokens
      * @return array<int, string>
      */
-    private function expandedTokens(array $tokens, WorkIntentData $intent): array
+    private function expandedTokens(array $tokens, WorkIntentData $intent, NormativeSearchProfileData $profile): array
     {
-        $expanded = $tokens;
+        $expanded = [
+            ...$tokens,
+            ...$profile->requiredTerms,
+            ...$profile->synonymTerms,
+        ];
 
         foreach ($tokens as $token) {
             foreach ([
@@ -195,15 +219,29 @@ final class NormativeCandidateSearchService
      * @param array<string, mixed> $workItem
      * @param array<int, string> $tokens
      */
-    private function scorePoolCandidate(EstimateNorm $norm, array $workItem, array $tokens, WorkIntentData $intent): float
+    private function scorePoolCandidate(
+        EstimateNorm $norm,
+        array $workItem,
+        array $tokens,
+        WorkIntentData $intent,
+        NormativeSearchProfileData $profile
+    ): float
     {
         $score = 0.0;
+        $workName = mb_strtolower(trim((string) ($workItem['normative_search_text'] ?? $workItem['name'] ?? '')));
         $haystack = mb_strtolower(implode(' ', [
             $norm->code,
             $norm->name,
             $norm->section_name,
             implode(' ', $norm->work_composition ?? []),
         ]));
+        $normName = mb_strtolower((string) ($norm->name ?? ''));
+
+        if ($workName !== '' && $workName === $normName) {
+            $score += 60.0;
+        } elseif ($workName !== '' && (str_contains($normName, $workName) || str_contains($workName, $normName))) {
+            $score += 24.0;
+        }
 
         foreach ($tokens as $token) {
             if ($token !== '' && str_contains($haystack, mb_strtolower($token))) {
@@ -226,9 +264,28 @@ final class NormativeCandidateSearchService
             }
         }
 
-        foreach ($intent->forbiddenSectionPrefixes as $prefix) {
+        foreach ($profile->allowedSectionPrefixes as $prefix) {
+            if ($sectionCode !== '' && str_starts_with($sectionCode, $prefix)) {
+                $score += 30.0;
+                break;
+            }
+        }
+
+        foreach (array_values(array_unique([...$intent->forbiddenSectionPrefixes, ...$profile->forbiddenSectionPrefixes])) as $prefix) {
             if ($sectionCode !== '' && str_starts_with($sectionCode, $prefix)) {
                 $score -= 100.0;
+            }
+        }
+
+        foreach ($profile->requiredTerms as $term) {
+            if ($term !== '' && str_contains($haystack, $term)) {
+                $score += 12.0;
+            }
+        }
+
+        foreach ($profile->synonymTerms as $term) {
+            if ($term !== '' && str_contains($haystack, $term)) {
+                $score += 5.0;
             }
         }
 

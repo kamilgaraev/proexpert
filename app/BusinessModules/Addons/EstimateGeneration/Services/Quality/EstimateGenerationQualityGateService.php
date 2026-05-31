@@ -29,6 +29,18 @@ class EstimateGenerationQualityGateService
         $area = (float) ($profile['area'] ?? 0);
         $totalCost = (float) ($totals['total_cost'] ?? $totals['base_total_cost'] ?? 0);
         $itemsCount = (int) ($totals['work_items_count'] ?? $this->countItems($draft));
+        $pricedWorkItemsRaw = data_get($draft, 'quality_summary.priced_work_items');
+        $notCalculatedWorkItemsRaw = data_get($draft, 'quality_summary.not_calculated_work_items');
+        $safeNormRequiredWorkItemsRaw = data_get($draft, 'quality_summary.safe_norm_required_work_items');
+        $hasPricingCoverageSummary = $pricedWorkItemsRaw !== null
+            || $notCalculatedWorkItemsRaw !== null
+            || $safeNormRequiredWorkItemsRaw !== null;
+        $pricedWorkItems = (int) ($pricedWorkItemsRaw ?? 0);
+        $notCalculatedWorkItems = (int) ($notCalculatedWorkItemsRaw ?? 0);
+        $safeNormRequiredWorkItems = (int) ($safeNormRequiredWorkItemsRaw ?? 0);
+        $pricingCoverageIncomplete = $hasPricingCoverageSummary
+            && $itemsCount > 0
+            && ($pricedWorkItems < $itemsCount || $notCalculatedWorkItems > 0 || $safeNormRequiredWorkItems > 0);
         $lineAnomalies = $this->lineAnomalies($draft, $totalCost, $area);
         $criticalFlags = [];
         $warningFlags = [];
@@ -38,7 +50,7 @@ class EstimateGenerationQualityGateService
             $criticalFlags[] = 'insufficient_detail';
         }
 
-        if ($area > 0 && $totalCost > 0) {
+        if ($area > 0 && $totalCost > 0 && !$pricingCoverageIncomplete) {
             $totalPerSquareMeter = $totalCost / $area;
             [$min, $max] = $this->isWarehouse($objectType)
                 ? [self::WAREHOUSE_TOTAL_PER_M2_MIN, self::WAREHOUSE_TOTAL_PER_M2_MAX]
@@ -49,23 +61,35 @@ class EstimateGenerationQualityGateService
             }
         }
 
-        if ($totalCost > 0 && $this->hasAnomalousSectionShare($draft, $totalCost)) {
+        if ($totalCost > 0 && !$pricingCoverageIncomplete && $this->hasAnomalousSectionShare($draft, $totalCost)) {
             $criticalFlags[] = 'section_total_anomaly';
         }
 
-        if ($lineAnomalies !== []) {
+        if (!$pricingCoverageIncomplete && $lineAnomalies !== []) {
             $criticalFlags[] = 'line_total_anomaly';
         }
 
-        if (($totals['zero_price_work_items'] ?? 0) > 0) {
+        if (($totals['zero_price_work_items'] ?? 0) > 0 && !$pricingCoverageIncomplete) {
             $criticalFlags[] = 'missing_prices';
         }
 
         $existingFlags = $this->collectExistingFlags($draft);
-        foreach (['missing_price', 'missing_resources', 'regional_context_missing'] as $flag) {
+        foreach (['missing_price', 'missing_resources'] as $flag) {
             if (in_array($flag, $existingFlags, true)) {
-                $criticalFlags[] = $flag;
+                if ($pricingCoverageIncomplete) {
+                    $warningFlags[] = $flag;
+                } else {
+                    $criticalFlags[] = $flag;
+                }
             }
+        }
+
+        if (in_array('regional_context_missing', $existingFlags, true)) {
+            $criticalFlags[] = 'regional_context_missing';
+        }
+
+        if ($pricingCoverageIncomplete) {
+            $warningFlags[] = 'pricing_coverage_incomplete';
         }
 
         foreach (['low_confidence', 'normative_match_low_confidence', 'market_price_used'] as $flag) {
@@ -99,6 +123,7 @@ class EstimateGenerationQualityGateService
                 'max_line_total' => $lineAnomalies !== [] ? max(array_column($lineAnomalies, 'total_cost')) : 0,
                 'max_line_share' => $lineAnomalies !== [] ? max(array_column($lineAnomalies, 'share')) : 0,
                 'anomalous_line_keys' => array_values(array_column($lineAnomalies, 'key')),
+                'pricing_coverage' => $itemsCount > 0 ? round($pricedWorkItems / $itemsCount, 4) : 0.0,
             ],
         );
     }

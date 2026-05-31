@@ -184,7 +184,10 @@ class ResourceAssemblyService
         $workItem = $this->applyNormativeResources($workItem, $match, false, $decisionPayload);
         $flags = $this->acceptedFlags($workItem['validation_flags'] ?? []);
 
-        if ($decision->status !== 'accepted') {
+        if ($decision->status === 'review_priced') {
+            $flags[] = 'requires_normative_review';
+            $flags[] = 'safe_normative_analog';
+        } elseif ($decision->status !== 'accepted') {
             $flags[] = 'normative_candidate_only';
             $flags[] = 'requires_normative_review';
         }
@@ -455,6 +458,7 @@ class ResourceAssemblyService
             'normative_not_found',
             'normative_match_low_confidence',
             'requires_normative_review',
+            'safe_normative_analog',
             'missing_price',
             'missing_resources',
             'safe_norm_required',

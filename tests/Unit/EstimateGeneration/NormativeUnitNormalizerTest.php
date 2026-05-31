@@ -17,6 +17,7 @@ class NormativeUnitNormalizerTest extends TestCase
         $this->assertSame(['volume', 'м3', 1000.0], $this->unitTuple('1000 м3'));
         $this->assertSame(['mass', 'кг', 1000.0], $this->unitTuple('т'));
         $this->assertSame(['piece', 'шт', 1.0], $this->unitTuple('шт'));
+        $this->assertSame(['piece', 'шт', 1.0], $this->unitTuple('точка'));
         $this->assertSame(['set', 'компл', 1.0], $this->unitTuple('компл'));
     }
 
@@ -38,7 +39,13 @@ class NormativeUnitNormalizerTest extends TestCase
     public function test_scaled_units_are_compatible_and_return_quantity_factor(): void
     {
         $this->assertTrue(NormativeUnitNormalizer::compatible('1000 м³', 'м3'));
+        $this->assertTrue(NormativeUnitNormalizer::compatible('100 м²', 'м2'));
+        $this->assertTrue(NormativeUnitNormalizer::compatible('100 м³', 'м3'));
+        $this->assertTrue(NormativeUnitNormalizer::compatible('100 пог. м', 'м'));
         $this->assertSame(0.001, NormativeUnitNormalizer::quantityFactor('м3', '1000 м³'));
+        $this->assertSame(0.01, NormativeUnitNormalizer::quantityFactor('м2', '100 м²'));
+        $this->assertSame(0.01, NormativeUnitNormalizer::quantityFactor('м3', '100 м³'));
+        $this->assertSame(0.01, NormativeUnitNormalizer::quantityFactor('м', '100 пог. м'));
         $this->assertSame(1000.0, NormativeUnitNormalizer::quantityFactor('тыс. шт', 'шт'));
         $this->assertSame(0.1, NormativeUnitNormalizer::quantityFactor('0,1 т', 'т'));
     }

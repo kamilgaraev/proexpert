@@ -117,6 +117,7 @@ final class NormativeScopeRuleCatalog
     {
         return match ($action) {
             'masonry' => $this->rule(['gesn_building'], ['gesn_earthwork'], ['08'], ['01', '03', '05', '09', '27', '28']),
+            'plastering' => $this->rule(['gesn_building', 'gesnr_finishing'], ['gesn_earthwork'], ['15'], ['01', '03', '05', '09', '16', '18', '20', '27', '28']),
             default => $this->rule([], [], [], []),
         };
     }

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationAuditEvent;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationAuditService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
@@ -117,5 +119,73 @@ final class EstimateGenerationAuditTest extends TestCase
             ->expectsOutputToContain('Learning examples')
             ->expectsOutputToContain('estimate_generation_learning')
             ->assertExitCode(0);
+    }
+
+    public function test_production_check_strict_mode_fails_when_pricing_coverage_is_incomplete(): void
+    {
+        $organization = Organization::factory()->create();
+        $user = User::factory()->create([
+            'current_organization_id' => $organization->id,
+        ]);
+        $project = Project::factory()->create([
+            'organization_id' => $organization->id,
+        ]);
+        $session = EstimateGenerationSession::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => $user->id,
+            'status' => 'review_required',
+            'processing_stage' => 'validation_and_normalization',
+            'processing_progress' => 100,
+            'input_payload' => [],
+            'analysis_payload' => [],
+            'draft_payload' => [],
+            'problem_flags' => [],
+        ]);
+        $package = EstimateGenerationPackage::query()->create([
+            'session_id' => $session->id,
+            'key' => 'foundation',
+            'title' => 'Foundation',
+            'scope_type' => 'foundation',
+            'status' => 'ready',
+            'target_items_min' => 1,
+            'target_items_max' => 1,
+            'actual_items_count' => 1,
+            'totals' => ['items_count' => 1, 'priced_items_count' => 0],
+            'quality_summary' => [],
+            'assumptions' => [],
+            'source_refs' => [],
+            'metadata' => [],
+            'sort_order' => 100,
+        ]);
+        EstimateGenerationPackageItem::query()->create([
+            'package_id' => $package->id,
+            'key' => 'foundation-work-1',
+            'level' => 0,
+            'item_type' => 'priced_work',
+            'name' => 'Foundation work',
+            'unit' => 'm3',
+            'quantity' => 1,
+            'quantity_basis' => [],
+            'price_source' => null,
+            'normative_status' => 'not_found',
+            'unit_price' => 0,
+            'direct_cost' => 0,
+            'overhead_cost' => 0,
+            'profit_cost' => 0,
+            'total_cost' => 0,
+            'resources' => [],
+            'flags' => ['safe_norm_required', 'pricing_not_calculated'],
+            'metadata' => ['pricing_status' => 'not_calculated'],
+            'sort_order' => 100,
+        ]);
+
+        $this->artisan('estimate-generation:production-check', [
+            '--session_id' => $session->id,
+            '--require-full-pricing' => true,
+        ])
+            ->expectsOutputToContain('Покрытие расчетом')
+            ->expectsOutputToContain('Есть позиции без полного нормативного расчета.')
+            ->assertExitCode(1);
     }
 }

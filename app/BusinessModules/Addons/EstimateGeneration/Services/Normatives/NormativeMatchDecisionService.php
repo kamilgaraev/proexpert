@@ -89,8 +89,10 @@ class NormativeMatchDecisionService
 
         if ($confidence >= self::REVIEW_CONFIDENCE_THRESHOLD) {
             $warnings[] = 'requires_normative_review';
+            $warnings[] = 'safe_normative_analog';
+            $reasons[] = 'safe_analog_pricing_allowed';
 
-            return new NormativeMatchDecisionData('candidate', false, $confidence, $reasons, array_values(array_unique($warnings)), $candidate);
+            return new NormativeMatchDecisionData('review_priced', true, $confidence, $reasons, array_values(array_unique($warnings)), $candidate);
         }
 
         $status = $confidence >= self::CANDIDATE_CONFIDENCE_THRESHOLD ? 'candidate' : 'rejected';

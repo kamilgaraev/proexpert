@@ -23,6 +23,7 @@ final class InspectEstimateGenerationProductionCommand extends Command
         {--organization_id= : Ограничить отчет организацией}
         {--project_id= : Ограничить отчет проектом}
         {--top=20 : Количество строк в списках риска}
+        {--require-full-pricing : Завершить проверку с ошибкой, если есть позиции без нормативного расчета}
         {--json : Вывести отчет в JSON}';
 
     protected $description = 'Read-only диагностика AI-генерации смет, learning examples и RAG-индекса.';
@@ -34,6 +35,7 @@ final class InspectEstimateGenerationProductionCommand extends Command
             'normative_decisions' => $this->normativeDecisionSummary(),
             'priced_risk_lines' => $this->pricedRiskLines(),
             'review_priced_lines' => $this->reviewPricedLines(),
+            'full_pricing' => $this->fullPricingSummary(),
             'learning_examples' => $this->learningExamplesSummary(),
             'rag_learning_source' => $this->ragLearningSourceSummary(),
             'dataset_status' => $this->datasetStatus(),
@@ -42,7 +44,7 @@ final class InspectEstimateGenerationProductionCommand extends Command
         if ((bool) $this->option('json')) {
             $this->line(json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
-            return self::SUCCESS;
+            return $this->fullPricingExitCode($report['full_pricing']);
         }
 
         $this->info('Фильтры');
@@ -71,6 +73,13 @@ final class InspectEstimateGenerationProductionCommand extends Command
             $report['review_priced_lines']
         );
 
+        $this->info('Покрытие расчетом');
+        $this->table(['Метрика', 'Значение'], array_map(
+            static fn (string $key, mixed $value): array => [$key, $value],
+            array_keys($report['full_pricing']),
+            $report['full_pricing']
+        ));
+
         $this->info('Learning examples');
         $this->table(['Метрика', 'Значение'], array_map(
             static fn (string $key, mixed $value): array => [$key, is_array($value) ? json_encode($value, JSON_UNESCAPED_UNICODE) : $value],
@@ -85,7 +94,7 @@ final class InspectEstimateGenerationProductionCommand extends Command
             $report['rag_learning_source']
         ));
 
-        return self::SUCCESS;
+        return $this->fullPricingExitCode($report['full_pricing']);
     }
 
     /**
@@ -171,6 +180,56 @@ final class InspectEstimateGenerationProductionCommand extends Command
             ->map(fn (EstimateGenerationPackageItem $item): array => $this->linePayload($item, $this->lineFlags($item)))
             ->values()
             ->all();
+    }
+
+    /**
+     * @return array<string, int|float>
+     */
+    private function fullPricingSummary(): array
+    {
+        $summary = [
+            'priced_work_items' => 0,
+            'calculated_work_items' => 0,
+            'not_calculated_work_items' => 0,
+            'market_estimate_work_items' => 0,
+            'safe_norm_required_work_items' => 0,
+            'pricing_coverage' => 0.0,
+        ];
+
+        $this->packageItemQuery()
+            ->where('item_type', 'priced_work')
+            ->lazyById(500)
+            ->each(function (EstimateGenerationPackageItem $item) use (&$summary): void {
+                $summary['priced_work_items']++;
+
+                $flags = $this->lineFlags($item);
+                $metadata = is_array($item->metadata) ? $item->metadata : [];
+                $pricingStatus = (string) ($metadata['pricing_status'] ?? '');
+                $isNotCalculated = (float) $item->total_cost <= 0
+                    || $pricingStatus === 'not_calculated'
+                    || in_array('pricing_not_calculated', $flags, true)
+                    || in_array('safe_norm_required', $flags, true);
+
+                if ($isNotCalculated) {
+                    $summary['not_calculated_work_items']++;
+                } else {
+                    $summary['calculated_work_items']++;
+                }
+
+                if ($item->price_source === 'market_estimate' || in_array('market_price_used', $flags, true)) {
+                    $summary['market_estimate_work_items']++;
+                }
+
+                if (in_array('safe_norm_required', $flags, true)) {
+                    $summary['safe_norm_required_work_items']++;
+                }
+            });
+
+        $summary['pricing_coverage'] = $summary['priced_work_items'] > 0
+            ? round($summary['calculated_work_items'] / $summary['priced_work_items'], 4)
+            : 0.0;
+
+        return $summary;
     }
 
     /**
@@ -400,6 +459,29 @@ final class InspectEstimateGenerationProductionCommand extends Command
 
         return ($decision['status'] ?? null) === 'review_priced'
             || in_array('requires_normative_review', $flags, true);
+    }
+
+    /**
+     * @param array<string, int|float> $fullPricing
+     */
+    private function fullPricingExitCode(array $fullPricing): int
+    {
+        if (!(bool) $this->option('require-full-pricing')) {
+            return self::SUCCESS;
+        }
+
+        if (
+            (int) ($fullPricing['not_calculated_work_items'] ?? 0) > 0
+            || (int) ($fullPricing['safe_norm_required_work_items'] ?? 0) > 0
+            || (int) ($fullPricing['market_estimate_work_items'] ?? 0) > 0
+            || (float) ($fullPricing['pricing_coverage'] ?? 0.0) < 1.0
+        ) {
+            $this->error('Есть позиции без полного нормативного расчета.');
+
+            return self::FAILURE;
+        }
+
+        return self::SUCCESS;
     }
 
     private function nullableIntOption(string $key): ?int

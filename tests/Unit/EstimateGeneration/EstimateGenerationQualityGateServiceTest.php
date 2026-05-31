@@ -108,4 +108,37 @@ class EstimateGenerationQualityGateServiceTest extends TestCase
         $this->assertSame('blocked', $report->level);
         $this->assertContains('line_total_anomaly', $report->criticalFlags);
     }
+
+    public function test_incomplete_normative_pricing_requires_review_without_blocking_generation(): void
+    {
+        $report = app(EstimateGenerationQualityGateService::class)->evaluate([
+            'object_profile' => [
+                'object_type' => 'house',
+                'area' => 150,
+            ],
+            'quality_summary' => [
+                'total_work_items' => 63,
+                'priced_work_items' => 4,
+                'not_calculated_work_items' => 59,
+                'safe_norm_required_work_items' => 59,
+            ],
+            'totals' => [
+                'total_cost' => 120000,
+                'work_items_count' => 63,
+                'zero_price_work_items' => 59,
+            ],
+            'local_estimates' => [
+                [
+                    'scope_type' => 'roof',
+                    'totals' => ['items_count' => 20, 'total_cost' => 120000],
+                    'validation_flags' => ['missing_price', 'missing_resources', 'safe_norm_required'],
+                ],
+            ],
+        ]);
+
+        $this->assertSame('review_required', $report->level);
+        $this->assertContains('pricing_coverage_incomplete', $report->warningFlags);
+        $this->assertNotContains('total_out_of_range', $report->criticalFlags);
+        $this->assertNotContains('section_total_anomaly', $report->criticalFlags);
+    }
 }
