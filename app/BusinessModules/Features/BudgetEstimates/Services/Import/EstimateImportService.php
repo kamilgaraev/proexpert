@@ -296,10 +296,11 @@ class EstimateImportService
         return [
             'status' => $this->mapSessionStatusToOldStatus($session->status),
             'progress' => (int) $progress,
-            'message' => $session->stats['message'] ?? null,
-            'error' => $session->error_message,
+            'message' => $this->translateStoredMessage($session->stats['message'] ?? null),
+            'error' => $this->translateStoredMessage($session->error_message),
             'result' => $session->stats['result'] ?? null,
             'estimate_id' => $session->stats['estimate_id'] ?? null,
+            'validation' => $session->stats['validation'] ?? ($session->options['validation'] ?? null),
         ];
     }
 
@@ -358,5 +359,24 @@ class EstimateImportService
             'failed' => 'failed',
             default => 'queued',
         };
+    }
+
+    private function translateStoredMessage(mixed $message): ?string
+    {
+        if (!is_string($message)) {
+            return null;
+        }
+
+        $message = trim($message);
+        if ($message === '') {
+            return null;
+        }
+
+        return $this->looksLikeTranslationKey($message) ? trans_message($message) : $message;
+    }
+
+    private function looksLikeTranslationKey(string $message): bool
+    {
+        return preg_match('/^[a-z0-9_]+\.[a-z0-9_.-]+$/i', $message) === 1;
     }
 }

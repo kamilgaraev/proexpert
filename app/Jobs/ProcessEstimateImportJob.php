@@ -10,6 +10,9 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
+use Throwable;
+
+use function trans_message;
 
 class ProcessEstimateImportJob implements ShouldQueue
 {
@@ -41,16 +44,32 @@ class ProcessEstimateImportJob implements ShouldQueue
         
         try {
             $pipeline->run($session);
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             Log::error("[ProcessEstimateImportJob] Pipeline failed: " . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
+            $userMessage = $this->userFacingErrorMessage($e);
             
             $session->update([
                 'status' => 'failed',
-                'error_message' => $e->getMessage(),
-                'stats' => array_merge($session->stats ?? [], ['error_trace' => $e->getTraceAsString()])
+                'error_message' => $userMessage,
+                'stats' => array_merge($session->stats ?? [], [
+                    'message' => $userMessage,
+                    'technical_error_message' => $e->getMessage(),
+                    'error_trace' => $e->getTraceAsString(),
+                ])
             ]);
             
             $this->fail($e);
         }
+    }
+
+    private function userFacingErrorMessage(Throwable $e): string
+    {
+        $message = trim($e->getMessage());
+
+        if ($message === '') {
+            return trans_message('estimate.import_failed');
+        }
+
+        return str_starts_with($message, 'estimate.') ? trans_message($message) : $message;
     }
 }

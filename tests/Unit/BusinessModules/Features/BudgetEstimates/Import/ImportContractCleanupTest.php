@@ -101,6 +101,41 @@ class ImportContractCleanupTest extends TestCase
         self::assertSame(200.0, $rows[0]->currentTotalAmount);
     }
 
+    public function test_pdf_table_normalizer_extracts_wrapped_rows_from_estimate_print_forms(): void
+    {
+        $text = implode("\n", [
+            'Цена Попра- Стои- ПунктКоэффи- Стои-',
+            '№ Шифр ЕдиницаКол-во за ед.',
+            '1 2 3 4 5 6 7 8 9 10 11',
+            'Локальная смета',
+            '1 ФЕР01-01-001-01 Разработка грунта вручную',
+            'м3 2,5 1000,00 - 2500,00 1 5,0 12500,00',
+        ]);
+
+        $rows = (new PdfEstimateTableNormalizer())->normalize($text);
+
+        self::assertCount(1, $rows);
+        self::assertSame('1', $rows[0]->sectionNumber);
+        self::assertSame('ФЕР01-01-001-01', $rows[0]->code);
+        self::assertSame('Разработка грунта вручную', $rows[0]->itemName);
+        self::assertSame('м3', $rows[0]->unit);
+        self::assertSame(2.5, $rows[0]->quantity);
+        self::assertSame(1000.0, $rows[0]->unitPrice);
+        self::assertSame(12500.0, $rows[0]->currentTotalAmount);
+    }
+
+    public function test_estimate_import_translation_keys_exist_in_primary_language_file(): void
+    {
+        self::assertSame(
+            'В смете найдены ошибки, исправьте их перед импортом',
+            trans_message('estimate.import_validation_failed')
+        );
+        self::assertSame(
+            'В PDF не найдены строки сметы для импорта',
+            trans_message('estimate.import_pdf_no_rows')
+        );
+    }
+
     public function test_pdf_handler_uses_ocr_when_text_layer_is_unusable(): void
     {
         config(['estimate-generation.ocr.enabled' => true]);

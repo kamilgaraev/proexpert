@@ -21,6 +21,7 @@ return [
     'import_recalculating_totals' => 'Пересчитываем итоги сметы',
     'import_validated' => 'Смета проверена и готова к импорту',
     'import_validation_failed' => 'В смете найдены ошибки, исправьте их перед импортом',
+    'import_validation_failed_with_reason' => 'Импорт остановлен: :reason',
     'import_format_not_detected' => 'Не удалось определить формат сметы',
     'import_unsupported_format' => 'Формат файла не поддерживается',
     'import_failed' => 'Импорт сметы завершился с ошибкой',

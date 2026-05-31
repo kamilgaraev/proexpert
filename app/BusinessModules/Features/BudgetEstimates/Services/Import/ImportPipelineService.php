@@ -9,6 +9,7 @@ use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportFormatRegistry;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportStructureResult;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportValidationResult;
 use App\Models\Estimate;
 use App\Models\EstimateSection;
 use App\Models\EstimateItem;
@@ -132,7 +133,14 @@ class ImportPipelineService
         }
 
         if (!$validation->isValid()) {
-            throw new \RuntimeException(trans_message('estimate.import_validation_failed'));
+            $message = $this->validationFailureMessage($validation);
+            $session->update([
+                'stats' => array_merge($session->fresh()->stats ?? [], [
+                    'message' => $message,
+                ]),
+            ]);
+
+            throw new \RuntimeException($message);
         }
 
         $stream = $handler->streamRows($session, $filePath, $structureResult);
@@ -266,6 +274,35 @@ class ImportPipelineService
             metadata: $structure['metadata'] ?? [],
             aiMappingApplied: (bool) ($structure['ai_mapping_applied'] ?? false),
         );
+    }
+
+    private function validationFailureMessage(ImportValidationResult $validation): string
+    {
+        $reason = $this->validationMessage($validation->errors[0] ?? null);
+
+        if ($reason === '') {
+            return trans_message('estimate.import_validation_failed');
+        }
+
+        return trans_message('estimate.import_validation_failed_with_reason', ['reason' => $reason]);
+    }
+
+    private function validationMessage(mixed $message): string
+    {
+        if (is_array($message)) {
+            $message = $message['message'] ?? $message['key'] ?? reset($message);
+        }
+
+        if (!is_string($message)) {
+            return '';
+        }
+
+        $message = trim($message);
+        if ($message === '') {
+            return '';
+        }
+
+        return str_starts_with($message, 'estimate.') ? trans_message($message) : $message;
     }
 
     private function resolveEstimate(ImportSession $session): Estimate
