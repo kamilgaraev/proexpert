@@ -2,24 +2,27 @@
 
 namespace App\Services\Contract;
 
+use App\DTOs\Contract\ContractPerformanceActDTO;
+use App\Models\Contract;
+use App\Models\ContractPerformanceAct;
+use App\Models\File;
 use App\Repositories\Interfaces\ContractPerformanceActRepositoryInterface;
 use App\Repositories\Interfaces\ContractRepositoryInterface;
-use App\DTOs\Contract\ContractPerformanceActDTO;
-use App\Models\ContractPerformanceAct;
-use App\Models\Contract;
-use App\Models\File;
 use App\Services\Logging\LoggingService;
 use App\Services\Storage\FileService;
+use Exception;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use Exception;
 
 class ContractPerformanceActService
 {
     protected ContractPerformanceActRepositoryInterface $actRepository;
+
     protected ContractRepositoryInterface $contractRepository;
+
     protected LoggingService $logging;
+
     protected FileService $fileService;
 
     public function __construct(
@@ -37,7 +40,7 @@ class ContractPerformanceActService
     protected function getContractOrFail(int $contractId, int $organizationId, ?int $projectId = null): Contract
     {
         $contract = $this->contractRepository->findAccessible($contractId, $organizationId);
-        if (!$contract) {
+        if (! $contract) {
             throw new Exception('Contract not found or does not belong to the organization.');
         }
 
@@ -48,7 +51,7 @@ class ContractPerformanceActService
                 // Используем exists() для оптимизации запроса
                 $isLinked = $contract->projects()->where('projects.id', $projectId)->exists();
 
-                if (!$isLinked) {
+                if (! $isLinked) {
                     throw new Exception('Multi-project contract is not linked to the specified project.');
                 }
             } elseif ($contract->project_id !== $projectId) {
@@ -79,7 +82,7 @@ class ContractPerformanceActService
     public function createActForContract(int $contractId, int $organizationId, ContractPerformanceActDTO $actDTO, ?int $projectId = null): ContractPerformanceAct
     {
         // Проверка наличия organizationId
-        if (!$organizationId) {
+        if (! $organizationId) {
             $this->logging->technical('performance_act.creation.failed.missing_organization', [
                 'contract_id' => $contractId,
                 'project_id' => $projectId,
@@ -93,8 +96,8 @@ class ContractPerformanceActService
             'contract_id' => $contractId,
             'organization_id' => $organizationId,
             'act_document_number' => $actDTO->act_document_number,
-            'has_completed_works' => !empty($actDTO->completed_works),
-            'completed_works_count' => count($actDTO->completed_works ?? [])
+            'has_completed_works' => ! empty($actDTO->completed_works),
+            'completed_works_count' => count($actDTO->completed_works ?? []),
         ]);
 
         $contract = $this->getContractOrFail($contractId, $organizationId, $projectId);
@@ -106,12 +109,12 @@ class ContractPerformanceActService
             $actData['contract_id'] = $contract->id;
 
             // Если project_id не был передан в DTO, но передан в метод - используем его
-            if (!isset($actData['project_id']) || $actData['project_id'] === null) {
+            if (! isset($actData['project_id']) || $actData['project_id'] === null) {
                 $actData['project_id'] = $projectId;
             }
 
             // Если всё ещё нет project_id - используем из контракта (для обычных контрактов)
-            if (!isset($actData['project_id']) || $actData['project_id'] === null) {
+            if (! isset($actData['project_id']) || $actData['project_id'] === null) {
                 $actData['project_id'] = $contract->project_id;
             }
 
@@ -127,7 +130,7 @@ class ContractPerformanceActService
             $act = $this->actRepository->create($actData);
 
             // Синхронизируем выполненные работы (если есть)
-            if (!empty($actDTO->completed_works)) {
+            if (! empty($actDTO->completed_works)) {
                 $this->syncCompletedWorks($act, $actDTO->getCompletedWorksForSync());
                 // Пересчитываем сумму акта на основе включенных работ
                 $act->recalculateAmount();
@@ -145,7 +148,7 @@ class ContractPerformanceActService
                 \Illuminate\Support\Facades\Log::error('[ContractPerformanceActService] Failed to upload PDF after act creation', [
                     'act_id' => $act->id,
                     'organization_id' => $organizationId,
-                    'error' => $e->getMessage()
+                    'error' => $e->getMessage(),
                 ]);
             }
         }
@@ -161,7 +164,7 @@ class ContractPerformanceActService
             'act_document_number' => $act->act_document_number,
             'final_amount' => $act->amount,
             'included_works_count' => $act->completedWorks()->count(),
-            'has_pdf_file' => $actDTO->pdf_file !== null
+            'has_pdf_file' => $actDTO->pdf_file !== null,
         ]);
 
         // AUDIT: Критичное финансовое событие - создание акта
@@ -174,7 +177,7 @@ class ContractPerformanceActService
             'act_date' => $act->act_date,
             'is_approved' => $act->is_approved,
             'has_pdf_file' => $actDTO->pdf_file !== null,
-            'performed_by' => request()->user()?->id
+            'performed_by' => request()->user()?->id,
         ]);
 
         return $act;
@@ -194,8 +197,10 @@ class ContractPerformanceActService
 
             // Загружаем связи для возврата полных данных
             $act->load(['completedWorks.workType', 'completedWorks.user', 'files.user']);
+
             return $act;
         }
+
         return null;
     }
 
@@ -206,13 +211,13 @@ class ContractPerformanceActService
             'act_id' => $actId,
             'contract_id' => $contractId,
             'organization_id' => $organizationId,
-            'new_document_number' => $actDTO->act_document_number
+            'new_document_number' => $actDTO->act_document_number,
         ]);
 
         $this->getContractOrFail($contractId, $organizationId, $projectId);
         $act = $this->actRepository->find($actId);
 
-        if (!$act || $act->contract_id !== $contractId || ($projectId !== null && $act->project_id !== $projectId)) {
+        if (! $act || $act->contract_id !== $contractId || ($projectId !== null && $act->project_id !== $projectId)) {
             // TECHNICAL: Попытка обновить несуществующий или чужой акт
             $this->logging->technical('performance_act.update.failed.not_found', [
                 'act_id' => $actId,
@@ -221,7 +226,7 @@ class ContractPerformanceActService
                 'organization_id' => $organizationId,
                 'act_exists' => $act !== null,
                 'contract_matches' => $act ? ($act->contract_id === $contractId) : false,
-                'project_matches' => $act && $projectId ? ($act->project_id === $projectId) : true
+                'project_matches' => $act && $projectId ? ($act->project_id === $projectId) : true,
             ], 'warning');
 
             throw new Exception('Performance act not found or does not belong to the specified contract or project.');
@@ -230,18 +235,18 @@ class ContractPerformanceActService
         $oldData = [
             'amount' => $act->amount,
             'document_number' => $act->act_document_number,
-            'is_approved' => $act->is_approved
+            'is_approved' => $act->is_approved,
         ];
 
         $updateData = $actDTO->toArray();
         $updated = $this->actRepository->update($actId, $updateData);
 
-        if (!$updated) {
+        if (! $updated) {
             // TECHNICAL: Ошибка при обновлении в БД
             $this->logging->technical('performance_act.update.failed.database', [
                 'act_id' => $actId,
                 'contract_id' => $contractId,
-                'organization_id' => $organizationId
+                'organization_id' => $organizationId,
             ], 'error');
 
             throw new Exception('Failed to update performance act.');
@@ -250,7 +255,7 @@ class ContractPerformanceActService
         $act = $this->actRepository->find($actId);
 
         // Синхронизируем выполненные работы если они переданы
-        if (isset($actDTO->completed_works) && !empty($actDTO->completed_works)) {
+        if (isset($actDTO->completed_works) && ! empty($actDTO->completed_works)) {
             $this->syncCompletedWorks($act, $actDTO->getCompletedWorksForSync());
             // Пересчитываем сумму только если были переданы работы
             $act->recalculateAmount();
@@ -271,7 +276,7 @@ class ContractPerformanceActService
             'old_amount' => $oldData['amount'],
             'new_amount' => $act->amount,
             'amount_changed' => $oldData['amount'] != $act->amount,
-            'included_works_count' => $act->completedWorks()->count()
+            'included_works_count' => $act->completedWorks()->count(),
         ]);
 
         // AUDIT: Критичное изменение финансового документа
@@ -282,9 +287,9 @@ class ContractPerformanceActService
             'changes' => [
                 'amount' => ['from' => $oldData['amount'], 'to' => $act->amount],
                 'document_number' => ['from' => $oldData['document_number'], 'to' => $act->act_document_number],
-                'is_approved' => ['from' => $oldData['is_approved'], 'to' => $act->is_approved]
+                'is_approved' => ['from' => $oldData['is_approved'], 'to' => $act->is_approved],
             ],
-            'performed_by' => request()->user()?->id
+            'performed_by' => request()->user()?->id,
         ]);
 
         return $act;
@@ -300,7 +305,7 @@ class ContractPerformanceActService
             'act_id' => $act->id,
             'contract_id' => $act->contract_id,
             'requested_works_count' => count($completedWorksData),
-            'work_ids' => array_keys($completedWorksData)
+            'work_ids' => array_keys($completedWorksData),
         ]);
 
         // Проверяем что все работы принадлежат тому же контракту
@@ -313,14 +318,14 @@ class ContractPerformanceActService
 
         $invalidWorks = array_diff($workIds, $validWorks);
 
-        if (!empty($invalidWorks)) {
+        if (! empty($invalidWorks)) {
             // TECHNICAL: Обнаружены невалидные работы
             $this->logging->technical('performance_act.works.sync.invalid_works', [
                 'act_id' => $act->id,
                 'contract_id' => $act->contract_id,
                 'invalid_work_ids' => $invalidWorks,
                 'invalid_count' => count($invalidWorks),
-                'valid_count' => count($validWorks)
+                'valid_count' => count($validWorks),
             ], 'warning');
         }
 
@@ -345,19 +350,19 @@ class ContractPerformanceActService
             'added_works' => $addedWorks,
             'removed_works' => $removedWorks,
             'added_count' => count($addedWorks),
-            'removed_count' => count($removedWorks)
+            'removed_count' => count($removedWorks),
         ]);
 
         // AUDIT: Если были изменения в составе работ - логируем для compliance
-        if (!empty($addedWorks) || !empty($removedWorks)) {
+        if (! empty($addedWorks) || ! empty($removedWorks)) {
             $this->logging->audit('performance_act.works.modified', [
                 'act_id' => $act->id,
                 'contract_id' => $act->contract_id,
                 'works_changes' => [
                     'added' => $addedWorks,
-                    'removed' => $removedWorks
+                    'removed' => $removedWorks,
                 ],
-                'performed_by' => request()->user()?->id
+                'performed_by' => request()->user()?->id,
             ]);
 
             // Инвалидируем кэш EVM метрик при изменении состава работ в акте
@@ -397,7 +402,7 @@ class ContractPerformanceActService
      */
     protected function isWorkIncludedInApprovedAct(int $workId): bool
     {
-        return \App\Models\PerformanceActCompletedWork::whereHas('performanceAct', function($query) {
+        return \App\Models\PerformanceActCompletedWork::whereHas('performanceAct', function ($query) {
             $query->where('is_approved', true);
         })->where('completed_work_id', $workId)->exists();
     }
@@ -407,7 +412,7 @@ class ContractPerformanceActService
         $this->getContractOrFail($contractId, $organizationId, $projectId);
         $act = $this->actRepository->find($actId);
 
-        if (!$act || $act->contract_id !== $contractId || ($projectId !== null && $act->project_id !== $projectId)) {
+        if (! $act || $act->contract_id !== $contractId || ($projectId !== null && $act->project_id !== $projectId)) {
             // SECURITY: Попытка удалить чужой акт - подозрительная активность
             $this->logging->security('performance_act.deletion.unauthorized', [
                 'act_id' => $actId,
@@ -418,7 +423,7 @@ class ContractPerformanceActService
                 'contract_matches' => $act ? ($act->contract_id === $contractId) : false,
                 'project_matches' => $act && $projectId ? ($act->project_id === $projectId) : true,
                 'user_id' => request()->user()?->id,
-                'attempted_by_ip' => request()->ip()
+                'attempted_by_ip' => request()->ip(),
             ], 'warning');
 
             throw new Exception('Performance act not found or does not belong to the specified contract or project.');
@@ -431,7 +436,7 @@ class ContractPerformanceActService
             'amount' => $act->amount,
             'act_date' => $act->act_date,
             'is_approved' => $act->is_approved,
-            'included_works_count' => $act->completedWorks()->count()
+            'included_works_count' => $act->completedWorks()->count(),
         ];
 
         // SECURITY: Попытка удаления акта - критичное действие
@@ -441,7 +446,7 @@ class ContractPerformanceActService
             'organization_id' => $organizationId,
             'act_amount' => $actData['amount'],
             'is_approved' => $actData['is_approved'],
-            'user_id' => request()->user()?->id
+            'user_id' => request()->user()?->id,
         ], 'warning');
 
         $result = $this->actRepository->delete($actId);
@@ -453,7 +458,7 @@ class ContractPerformanceActService
                 'contract_id' => $contractId,
                 'organization_id' => $organizationId,
                 'deleted_amount' => $actData['amount'],
-                'was_approved' => $actData['is_approved']
+                'was_approved' => $actData['is_approved'],
             ]);
 
             // AUDIT: Критичное финансовое событие - удаление акта
@@ -462,14 +467,14 @@ class ContractPerformanceActService
                 'contract_id' => $contractId,
                 'organization_id' => $organizationId,
                 'deleted_act_data' => $actData,
-                'performed_by' => request()->user()?->id
+                'performed_by' => request()->user()?->id,
             ]);
         } else {
             // TECHNICAL: Ошибка при удалении
             $this->logging->technical('performance_act.deletion.failed', [
                 'act_id' => $actId,
                 'contract_id' => $contractId,
-                'organization_id' => $organizationId
+                'organization_id' => $organizationId,
             ], 'error');
         }
 
@@ -479,6 +484,7 @@ class ContractPerformanceActService
     public function getTotalPerformedAmountForContract(int $contractId, int $organizationId, ?int $projectId = null): float
     {
         $this->getContractOrFail($contractId, $organizationId, $projectId);
+
         return $this->actRepository->getTotalAmountForContract($contractId);
     }
 
@@ -491,16 +497,17 @@ class ContractPerformanceActService
             // Загружаем файл в S3
             $organization = \App\Models\Organization::find($organizationId);
 
-            if (!$organization) {
+            if (! $organization) {
                 $this->logging->technical('performance_act.pdf_upload.failed', [
                     'act_id' => $act->id,
                     'organization_id' => $organizationId,
-                    'reason' => 'Organization not found'
+                    'reason' => 'Organization not found',
                 ], 'error');
                 \Illuminate\Support\Facades\Log::error('[ContractPerformanceActService] Organization not found', [
                     'organization_id' => $organizationId,
-                    'act_id' => $act->id
+                    'act_id' => $act->id,
                 ]);
+
                 return null;
             }
 
@@ -516,14 +523,15 @@ class ContractPerformanceActService
                     'organization_id' => $organizationId,
                     'reason' => "File size too large: {$fileSizeMb}MB (max: {$maxFileSizeMb}MB)",
                     'file_size_mb' => $fileSizeMb,
-                    'max_size_mb' => $maxFileSizeMb
+                    'max_size_mb' => $maxFileSizeMb,
                 ], 'error');
                 \Illuminate\Support\Facades\Log::error('[ContractPerformanceActService] File size too large', [
                     'act_id' => $act->id,
                     'file_size_mb' => $fileSizeMb,
                     'max_size_mb' => $maxFileSizeMb,
-                    'config_key' => 'file-uploads.max_sizes.pdf_documents'
+                    'config_key' => 'file-uploads.max_sizes.pdf_documents',
                 ]);
+
                 return null;
             }
 
@@ -532,19 +540,19 @@ class ContractPerformanceActService
                 'organization_id' => $organizationId,
                 'directory' => $directory,
                 'file_size_mb' => $fileSizeMb,
-                'original_name' => $pdfFile->getClientOriginalName()
+                'original_name' => $pdfFile->getClientOriginalName(),
             ]);
 
             $path = $this->fileService->upload($pdfFile, $directory, null, 'private', $organization);
 
-            if (!$path) {
+            if (! $path) {
                 $this->logging->technical('performance_act.pdf_upload.failed', [
                     'act_id' => $act->id,
                     'organization_id' => $organizationId,
                     'reason' => 'FileService returned false',
                     'file_size_mb' => $fileSizeMb,
                     'directory' => $directory,
-                    'original_filename' => $pdfFile->getClientOriginalName()
+                    'original_filename' => $pdfFile->getClientOriginalName(),
                 ], 'error');
 
                 \Illuminate\Support\Facades\Log::error('[ContractPerformanceActService] FileService upload returned false', [
@@ -552,7 +560,7 @@ class ContractPerformanceActService
                     'organization_id' => $organizationId,
                     'directory' => $directory,
                     'file_size_mb' => $fileSizeMb,
-                    'original_filename' => $pdfFile->getClientOriginalName()
+                    'original_filename' => $pdfFile->getClientOriginalName(),
                 ]);
 
                 // Не блокируем создание акта - файл можно загрузить позже
@@ -574,8 +582,8 @@ class ContractPerformanceActService
                 'type' => 'document',
                 'category' => 'act_scan',
                 'additional_info' => [
-                    'description' => 'Скан акта выполненных работ'
-                ]
+                    'description' => 'Скан акта выполненных работ',
+                ],
             ]);
 
             // TECHNICAL: PDF файл успешно сохранен
@@ -583,13 +591,13 @@ class ContractPerformanceActService
                 'act_id' => $act->id,
                 'file_id' => $file->id,
                 'file_size_mb' => round($file->size / 1024 / 1024, 2),
-                's3_path' => $path
+                's3_path' => $path,
             ]);
 
             \Illuminate\Support\Facades\Log::info('[ContractPerformanceActService] PDF uploaded successfully', [
                 'act_id' => $act->id,
                 'file_id' => $file->id,
-                's3_path' => $path
+                's3_path' => $path,
             ]);
 
             return $file;
@@ -601,7 +609,7 @@ class ContractPerformanceActService
                 'organization_id' => $organizationId,
                 'error' => $e->getMessage(),
                 'exception_class' => get_class($e),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ], 'error');
 
             \Illuminate\Support\Facades\Log::error('[ContractPerformanceActService] Exception during PDF upload', [
@@ -609,7 +617,7 @@ class ContractPerformanceActService
                 'organization_id' => $organizationId,
                 'error' => $e->getMessage(),
                 'exception_class' => get_class($e),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
 
             // Не блокируем создание акта - файл можно загрузить позже
@@ -623,26 +631,19 @@ class ContractPerformanceActService
     protected function invalidateEVMCache(ContractPerformanceAct $act): void
     {
         try {
-            $contract = $act->contract;
-
-            if (!$contract || !$contract->project_id) {
-                return;
-            }
-
             $evmService = app(\App\Services\Analytics\EVMService::class);
-            $evmService->invalidateCache($contract->project_id);
+            $evmService->invalidateCacheForPerformanceAct($act);
 
             $this->logging->technical('evm.cache.invalidated', [
-                'project_id' => $contract->project_id,
-                'contract_id' => $contract->id,
+                'contract_id' => $act->contract_id,
                 'act_id' => $act->id,
-                'reason' => 'performance_act_works_modified'
+                'reason' => 'performance_act_works_modified',
             ]);
         } catch (\Exception $e) {
             // Не критично - логируем и продолжаем
             $this->logging->technical('evm.cache.invalidation_failed', [
                 'act_id' => $act->id,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 'warning');
         }
     }
