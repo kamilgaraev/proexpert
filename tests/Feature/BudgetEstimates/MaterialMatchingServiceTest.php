@@ -37,4 +37,29 @@ class MaterialMatchingServiceTest extends TestCase
         $this->assertSame($unit->id, $material->measurement_unit_id);
         $this->assertSame($unitsCount, MeasurementUnit::query()->where('organization_id', $organization->id)->count());
     }
+
+    public function test_reuses_existing_measurement_unit_when_truncated_short_name_conflicts(): void
+    {
+        $organization = Organization::factory()->create();
+        $unit = MeasurementUnit::query()->create([
+            'organization_id' => $organization->id,
+            'name' => 'Existing long unit',
+            'short_name' => 'abcdefghij',
+            'type' => 'material',
+        ]);
+        $unitsCount = MeasurementUnit::query()->where('organization_id', $organization->id)->count();
+
+        $service = new MaterialMatchingService(new NormativeCodeService());
+
+        $material = $service->findOrCreate(
+            'FSBC-20.2.07.04-0002',
+            'Cable tray',
+            'abcdefghij extra',
+            100.0,
+            $organization->id
+        );
+
+        $this->assertSame($unit->id, $material->measurement_unit_id);
+        $this->assertSame($unitsCount, MeasurementUnit::query()->where('organization_id', $organization->id)->count());
+    }
 }

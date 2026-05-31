@@ -114,19 +114,18 @@ class MaterialMatchingService
         int $organizationId,
         string $itemType
     ): Material {
+        $measurementUnitId = null;
+        if ($unit) {
+            $measurementUnit = $this->findOrCreateUnit($unit, $organizationId);
+            $measurementUnitId = $measurementUnit->id;
+        }
+
         DB::beginTransaction();
         
         try {
             // Определяем категорию по коду
             $category = $this->detectCategory($code);
             
-            // Находим или создаем единицу измерения
-            $measurementUnitId = null;
-            if ($unit) {
-                $measurementUnit = $this->findOrCreateUnit($unit, $organizationId);
-                $measurementUnitId = $measurementUnit->id;
-            }
-
             // Создаем материал
             $material = Material::create([
                 'organization_id' => $organizationId,
@@ -217,9 +216,11 @@ class MaterialMatchingService
         $unit = $this->findUnitByNameOrShortName($normalized, $organizationId);
 
         if ($unit === null) {
-            $shortName = mb_strlen($unitName) > 10
-                ? mb_substr($unitName, 0, 10)
-                : $unitName;
+            $shortName = trim(
+                mb_strlen($unitName) > 10
+                    ? mb_substr($unitName, 0, 10)
+                    : $unitName
+            );
 
             try {
                 $unit = MeasurementUnit::create([
