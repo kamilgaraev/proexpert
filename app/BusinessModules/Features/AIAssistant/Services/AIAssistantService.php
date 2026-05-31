@@ -34,6 +34,8 @@ class AIAssistantService
 
     private const STRUCTURED_CONTEXT_CHARS = 2500;
 
+    private const FOLLOW_UP_QUERY_CHAR_LIMIT = 1200;
+
     private const MESSAGE_CHAR_BUDGET = 18000;
 
     private const STRICT_MESSAGE_CHAR_BUDGET = 12000;
@@ -316,6 +318,8 @@ class AIAssistantService
                 'executed_action' => $executedAction,
                 'rag_context' => $ragMetadata,
             ]);
+
+            $this->rememberRagContext($conversation, $ragMetadata);
 
             $assistantMessage = $this->conversationManager->addMessage(
                 $conversation,
@@ -824,6 +828,7 @@ class AIAssistantService
         }
 
         $payload = $requestPayload;
+        $isDetailContinuation = $this->isDetailContinuation($query);
         $currentContext = is_array($payload['context'] ?? null) ? $payload['context'] : [];
         $previousContext = is_array($previousRequest['context'] ?? null) ? $previousRequest['context'] : [];
 
@@ -837,7 +842,11 @@ class AIAssistantService
             }
         }
 
-        if (($currentContext['period'] ?? null) === null && $this->expectsPeriodContinuation($previousContext, $query)) {
+        if (
+            ($currentContext['period'] ?? null) === null
+            && ! $isDetailContinuation
+            && $this->expectsPeriodContinuation($previousContext, $query)
+        ) {
             $currentContext['period'] = trim($query);
         }
 
@@ -859,6 +868,14 @@ class AIAssistantService
         $reportFocus = (string) ($conversationContext['last_report_focus'] ?? '');
         if ($reportFocus !== '') {
             $currentContext['ui_state']['assistant_report_focus'] = $reportFocus;
+        }
+
+        if ($isDetailContinuation) {
+            $currentContext['ui_state']['assistant_follow_up_query'] = $this->buildContinuationSearchQuery(
+                $query,
+                $previousRequest,
+                $conversationContext
+            );
         }
 
         $payload['context'] = $currentContext;
@@ -894,12 +911,20 @@ class AIAssistantService
         string $previousCapability,
         array $previousRequest
     ): bool {
-        if (! in_array($previousCapability, ['reports', 'schedules'], true) || $previousRequest === []) {
+        if ($previousRequest === []) {
             return false;
         }
 
         $normalizedQuery = mb_strtolower(trim($query));
         if ($this->looksLikeStandaloneRequest($normalizedQuery)) {
+            return false;
+        }
+
+        if ($this->isDetailContinuation($query)) {
+            return true;
+        }
+
+        if (! in_array($previousCapability, ['reports', 'schedules'], true)) {
             return false;
         }
 
@@ -920,6 +945,90 @@ class AIAssistantService
         $previousContext = is_array($previousRequest['context'] ?? null) ? $previousRequest['context'] : [];
 
         return $this->expectsPeriodContinuation($previousContext, $query);
+    }
+
+    private function isDetailContinuation(string $query): bool
+    {
+        $normalized = $this->normalizeText(mb_strtolower($query));
+        if ($normalized === '' || mb_strlen($normalized) > 160) {
+            return false;
+        }
+
+        $normalized = preg_replace('/[^\p{L}\p{N}\s]+/u', ' ', $normalized) ?? $normalized;
+        $normalized = $this->normalizeText($normalized);
+
+        if ($normalized === '') {
+            return false;
+        }
+
+        $exactPhrases = [
+            'а подробнее',
+            'давай детальнее',
+            'давай подробнее',
+            'детальнее',
+            'можно детальнее',
+            'можно подробнее',
+            'покажи детали',
+            'подробнее',
+            'подробней',
+            'поясни',
+            'распиши',
+            'расскажи детальнее',
+            'расскажи подробнее',
+            'расшифруй',
+            'разверни',
+            'что именно',
+            'еще подробнее',
+            'ещё подробнее',
+        ];
+
+        if (in_array($normalized, $exactPhrases, true)) {
+            return true;
+        }
+
+        return preg_match(
+            '/^(?:а\s+)?(?:(?:давай|можно|расскажи|покажи)\s+)?(?:(?:еще|ещё|чуть|более)\s+)?(?:подробнее|подробней|детальнее|поясни|распиши|расшифруй|разверни|детали)(?:\s+(?:это|его|её|ее|их|тут|там|здесь|об\s+этом|в\s+этом|на\s+этом|по\s+(?:этому|нему|ней|ним|этому\s+вопросу|этим\s+данным|этой\s+части|этому\s+пункту)))?$/u',
+            $normalized
+        ) === 1;
+    }
+
+    private function buildContinuationSearchQuery(string $query, array $previousRequest, array $conversationContext): string
+    {
+        $parts = [$this->normalizeText($query)];
+        $previousMessage = $this->normalizeText((string) ($previousRequest['message'] ?? ''));
+        if ($previousMessage !== '') {
+            $parts[] = 'Предыдущий запрос: '.$previousMessage;
+        }
+
+        $lastRagContext = is_array($conversationContext['last_rag_context'] ?? null)
+            ? $conversationContext['last_rag_context']
+            : [];
+
+        $lastRagQuery = $this->normalizeText((string) ($lastRagContext['query'] ?? ''));
+        if ($lastRagQuery !== '' && $lastRagQuery !== $previousMessage) {
+            $parts[] = 'Предыдущий поиск: '.$lastRagQuery;
+        }
+
+        $sources = is_array($lastRagContext['sources'] ?? null) ? array_slice($lastRagContext['sources'], 0, 4) : [];
+        foreach ($sources as $source) {
+            if (! is_array($source)) {
+                continue;
+            }
+
+            $sourceLine = $this->normalizeText(trim(implode(' ', array_filter([
+                (string) ($source['title'] ?? ''),
+                (string) ($source['excerpt'] ?? ''),
+            ]))));
+
+            if ($sourceLine !== '') {
+                $parts[] = 'Источник: '.$sourceLine;
+            }
+        }
+
+        return $this->truncateText(
+            implode("\n", array_values(array_filter($parts, static fn (string $part): bool => trim($part) !== ''))),
+            self::FOLLOW_UP_QUERY_CHAR_LIMIT
+        );
     }
 
     private function expectsPeriodContinuation(array $previousContext, string $query): bool
@@ -1184,16 +1293,22 @@ class AIAssistantService
         array $requestPayload
     ): array {
         try {
+            $ragSearchQuery = $this->resolveRagSearchQuery($query, $requestPayload);
             $results = $this->ragRetriever instanceof RagRetriever
                 ? $this->ragRetriever->search(
-                    $query,
+                    $ragSearchQuery,
                     $organizationId,
                     $user,
                     $this->buildRagRequestContext($taskPlan, $requestPayload)
                 )
                 : [];
 
-            return $this->ragPromptContextBuilder->build($query, $results);
+            $context = $this->ragPromptContextBuilder->build($query, $results);
+            if ($ragSearchQuery !== $query && is_array($context['metadata'] ?? null)) {
+                $context['metadata']['search_query'] = $ragSearchQuery;
+            }
+
+            return $context;
         } catch (Throwable $exception) {
             $this->logging->technical('ai.rag.context_failed', [
                 'organization_id' => $organizationId,
@@ -1203,6 +1318,66 @@ class AIAssistantService
 
             return $this->ragPromptContextBuilder->build($query, []);
         }
+    }
+
+    protected function resolveRagSearchQuery(string $query, array $requestPayload): string
+    {
+        $context = is_array($requestPayload['context'] ?? null) ? $requestPayload['context'] : [];
+        $uiState = is_array($context['ui_state'] ?? null) ? $context['ui_state'] : [];
+        $followUpQuery = isset($uiState['assistant_follow_up_query'])
+            ? $this->normalizeText((string) $uiState['assistant_follow_up_query'])
+            : '';
+
+        return $followUpQuery !== ''
+            ? $this->truncateText($followUpQuery, self::FOLLOW_UP_QUERY_CHAR_LIMIT)
+            : $query;
+    }
+
+    private function rememberRagContext(Conversation $conversation, array $ragMetadata): void
+    {
+        $context = is_array($conversation->context ?? null) ? $conversation->context : [];
+        $compact = $this->compactRagContextForContinuation($ragMetadata);
+
+        if ($compact === null) {
+            unset($context['last_rag_context']);
+        } else {
+            $context['last_rag_context'] = $compact;
+        }
+
+        $conversation->context = $context;
+        $conversation->save();
+    }
+
+    protected function compactRagContextForContinuation(array $ragMetadata): ?array
+    {
+        if (($ragMetadata['used'] ?? false) !== true || ! is_array($ragMetadata['sources'] ?? null)) {
+            return null;
+        }
+
+        $sources = [];
+        foreach (array_slice($ragMetadata['sources'], 0, 6) as $source) {
+            if (! is_array($source)) {
+                continue;
+            }
+
+            $sources[] = [
+                'source_type' => (string) ($source['source_type'] ?? ''),
+                'entity_type' => (string) ($source['entity_type'] ?? ''),
+                'entity_id' => $source['entity_id'] ?? null,
+                'project_id' => $source['project_id'] ?? null,
+                'title' => $this->truncateText($this->normalizeText((string) ($source['title'] ?? '')), 180),
+                'excerpt' => $this->truncateText($this->normalizeText((string) ($source['excerpt'] ?? '')), 260),
+            ];
+        }
+
+        $query = $this->normalizeText((string) ($ragMetadata['search_query'] ?? $ragMetadata['query'] ?? ''));
+
+        return $sources === []
+            ? null
+            : [
+                'query' => $this->truncateText($query, 300),
+                'sources' => $sources,
+            ];
     }
 
     private function buildRagRequestContext(array $taskPlan, array $requestPayload): array
@@ -1315,6 +1490,7 @@ class AIAssistantService
                 'entity_refs' => array_slice($taskPlan['request']['context']['entity_refs'] ?? [], 0, 3),
                 'period' => $taskPlan['request']['context']['period'] ?? null,
                 'report_focus' => $taskPlan['request']['context']['ui_state']['assistant_report_focus'] ?? null,
+                'follow_up_query' => $taskPlan['request']['context']['ui_state']['assistant_follow_up_query'] ?? null,
                 'filters_count' => is_array($taskPlan['request']['context']['filters'] ?? null)
                     ? count($taskPlan['request']['context']['filters'])
                     : 0,
@@ -1339,7 +1515,8 @@ class AIAssistantService
             ."1. Опирайся только на подтвержденные данные и доступный контекст.\n"
             ."2. Если данных или прав не хватает, прямо скажи об ограничении.\n"
             ."3. Не придумывай технические причины отказа и обходные пути.\n"
-            ."4. Отвечай коротко и по делу, затем предлагай конкретный следующий шаг.\n";
+            ."4. Отвечай коротко и по делу, затем предлагай конкретный следующий шаг.\n"
+            ."5. Если последняя реплика короткая и просит подробнее, продолжай предыдущий вопрос без повторного уточнения темы.\n";
 
         return $this->truncateText(
             "=== STRUCTURED WORKSPACE CONTEXT ===\n"

@@ -284,6 +284,102 @@ class AIAssistantServiceBudgetTest extends TestCase
         $this->assertSame('за ноябрь', $payload['context']['period']);
     }
 
+    public function test_detail_follow_up_keeps_previous_rag_topic_and_project_context(): void
+    {
+        $service = $this->makeService(new AIToolRegistry);
+
+        $payload = $service->exposeMergeContinuationRequestPayload(
+            'Давай подробнее',
+            [
+                'context' => [
+                    'source_module' => 'ai-assistant',
+                ],
+            ],
+            [
+                'last_task_type' => 'summary',
+                'last_capability' => null,
+                'last_request' => [
+                    'message' => 'Что есть по бетонированию в смете?',
+                    'context' => [
+                        'source_module' => 'projects',
+                        'source_route' => '/projects/56',
+                        'entity_refs' => [
+                            [
+                                'type' => 'project',
+                                'id' => 56,
+                                'label' => 'Строительство склада Литер А',
+                            ],
+                        ],
+                        'period' => null,
+                        'filters' => [],
+                        'ui_state' => [],
+                    ],
+                ],
+                'last_rag_context' => [
+                    'query' => 'Что есть по бетонированию в смете?',
+                    'sources' => [
+                        [
+                            'title' => 'Раздел сметы: Фундамент',
+                            'excerpt' => 'Бетонирование 115 кубических метров на сумму 115 000 рублей.',
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $this->assertSame('projects', $payload['context']['source_module']);
+        $this->assertSame('/projects/56', $payload['context']['source_route']);
+        $this->assertSame(56, $payload['context']['entity_refs'][0]['id']);
+        $this->assertSame('summary', $payload['desired_mode']);
+        $this->assertNull($payload['context']['period'] ?? null);
+        $this->assertStringContainsString('Что есть по бетонированию', $payload['context']['ui_state']['assistant_follow_up_query']);
+        $this->assertStringContainsString('Бетонирование 115 кубических метров', $payload['context']['ui_state']['assistant_follow_up_query']);
+    }
+
+    public function test_rag_search_query_uses_detail_follow_up_context(): void
+    {
+        $service = $this->makeService(new AIToolRegistry);
+
+        $query = $service->exposeResolveRagSearchQuery('Давай подробнее', [
+            'context' => [
+                'ui_state' => [
+                    'assistant_follow_up_query' => "Давай подробнее\nПредыдущий запрос: Что есть по бетонированию?",
+                ],
+            ],
+        ]);
+
+        $this->assertSame('Давай подробнее Предыдущий запрос: Что есть по бетонированию?', $query);
+    }
+
+    public function test_compact_rag_context_keeps_expanded_follow_up_search_query(): void
+    {
+        $service = $this->makeService(new AIToolRegistry);
+
+        $context = $service->exposeCompactRagContextForContinuation([
+            'used' => true,
+            'query' => 'Давай подробнее',
+            'search_query' => 'Давай подробнее Предыдущий запрос: Что есть по бетонированию?',
+            'sources' => [
+                [
+                    'source_type' => 'estimate',
+                    'entity_type' => 'estimate_section',
+                    'entity_id' => 11,
+                    'project_id' => 56,
+                    'title' => 'Раздел сметы: Фундамент',
+                    'excerpt' => 'Бетонирование 115 кубических метров на сумму 115 000 рублей.',
+                ],
+            ],
+        ]);
+
+        $this->assertNotNull($context);
+        $this->assertSame(
+            'Давай подробнее Предыдущий запрос: Что есть по бетонированию?',
+            $context['query']
+        );
+        $this->assertSame('estimate_section', $context['sources'][0]['entity_type']);
+        $this->assertSame(56, $context['sources'][0]['project_id']);
+    }
+
     public function test_prepare_messages_for_provider_preserves_latest_user_message_and_reduces_budget(): void
     {
         $service = $this->makeService(new AIToolRegistry);
@@ -557,6 +653,16 @@ class TestableAIAssistantService extends AIAssistantService
         array $conversationContext
     ): array {
         return $this->mergeContinuationRequestPayload($query, $requestPayload, $conversationContext);
+    }
+
+    public function exposeResolveRagSearchQuery(string $query, array $requestPayload): string
+    {
+        return $this->resolveRagSearchQuery($query, $requestPayload);
+    }
+
+    public function exposeCompactRagContextForContinuation(array $ragMetadata): ?array
+    {
+        return $this->compactRagContextForContinuation($ragMetadata);
     }
 
     public function exposeStripUntrustedMarkdownLinks(string $content, array $trustedUrls = []): string
