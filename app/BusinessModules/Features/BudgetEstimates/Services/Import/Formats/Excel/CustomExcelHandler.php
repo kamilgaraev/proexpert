@@ -158,7 +158,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
 
             $name = $this->value($row, $mapping['name'] ?? null);
             $code = $this->value($row, $mapping['code'] ?? null);
-            $positionNumber = $this->value($row, $mapping['position_number'] ?? null);
+            $positionNumber = $this->value($row, $mapping['position_number'] ?? ($mapping['section_number'] ?? null));
 
             if ($name === '' && $code === '') {
                 continue;
@@ -171,7 +171,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
             $isSection = $this->isSectionRow($row, $name, $positionNumber, $mapping);
             $quantity = $this->number($this->value($row, $mapping['quantity'] ?? null));
             $unitPrice = $this->number($this->value($row, $mapping['unit_price'] ?? null));
-            $total = $this->number($this->value($row, $mapping['total_price'] ?? null));
+            $total = $this->number($this->value($row, $mapping['total_price'] ?? ($mapping['current_total_amount'] ?? null)));
 
             if (!$isSection && $name !== '' && $quantity === null && $unitPrice === null && $total === null && $code === '') {
                 continue;
@@ -220,8 +220,10 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
             'quantity' => 20,
             'unit_price' => 20,
             'total_price' => 20,
+            'current_total_amount' => 20,
             'unit' => 10,
             'position_number' => 8,
+            'section_number' => 8,
             'code' => 5,
         ];
 
@@ -237,7 +239,12 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
     protected function mappingHasRequiredColumns(array $mapping): bool
     {
         return isset($mapping['name'])
-            && (isset($mapping['quantity']) || isset($mapping['unit_price']) || isset($mapping['total_price']));
+            && (
+                isset($mapping['quantity'])
+                || isset($mapping['unit_price'])
+                || isset($mapping['total_price'])
+                || isset($mapping['current_total_amount'])
+            );
     }
 
     /**
@@ -250,7 +257,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
         }
 
         $required = 0;
-        foreach (['quantity', 'unit_price', 'total_price'] as $field) {
+        foreach (['quantity', 'unit_price', 'total_price', 'current_total_amount'] as $field) {
             if (isset($mapping[$field])) {
                 $required++;
             }
@@ -295,6 +302,11 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
             $detection = $this->headerDetector->detect($rows);
         }
 
+        $aiStructure = $this->aiColumnMapper->detectStructure($rows, $detection);
+        if (($aiStructure['applied'] ?? false) === true && is_array($aiStructure['detection'] ?? null)) {
+            $detection = $aiStructure['detection'];
+        }
+
         $headerRow = $detection['header_row'] !== null ? (int) $detection['header_row'] : null;
         $sampleRows = $this->sampleRows($rows, $headerRow);
         $aiMapping = $this->aiColumnMapper->improve(
@@ -320,12 +332,15 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
             headerCandidates: $detection['header_candidates'] ?? [],
             warnings: $headerRow === null ? [trans_message('estimate.import_header_not_found')] : [],
             metadata: [
-                'column_mapping_source' => ($aiMapping['applied'] ?? false) === true ? 'ai' : 'rules',
+                'column_mapping_source' => ($aiMapping['applied'] ?? false) === true || ($aiStructure['applied'] ?? false) === true ? 'ai' : 'rules',
+                'ai_structure_reason' => $aiStructure['reason'] ?? null,
+                'ai_structure_confidence' => $aiStructure['confidence'] ?? null,
+                'ai_structure_model' => $aiStructure['model'] ?? null,
                 'ai_mapping_reason' => $aiMapping['reason'] ?? null,
                 'ai_mapping_confidence' => $aiMapping['confidence'] ?? null,
                 'ai_mapping_model' => $aiMapping['model'] ?? null,
             ],
-            aiMappingApplied: ($aiMapping['applied'] ?? false) === true,
+            aiMappingApplied: ($aiMapping['applied'] ?? false) === true || ($aiStructure['applied'] ?? false) === true,
         );
     }
 
@@ -360,7 +375,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
 
         $quantity = $this->value($row, $mapping['quantity'] ?? null);
         $unitPrice = $this->value($row, $mapping['unit_price'] ?? null);
-        $total = $this->value($row, $mapping['total_price'] ?? null);
+        $total = $this->value($row, $mapping['total_price'] ?? ($mapping['current_total_amount'] ?? null));
 
         return $positionNumber === '' && $name !== '' && $quantity === '' && $unitPrice === '' && $total === '';
     }

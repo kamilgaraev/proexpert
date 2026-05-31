@@ -20,6 +20,10 @@ class EstimateImportPreviewResource extends ModelJsonResource
             'items' => array_map(function($item) {
                 // Поддержка как объектов DTO, так и массивов
                 if (is_array($item)) {
+                    $total = $item['current_total_amount']
+                        ?? $item['total_amount']
+                        ?? (($item['quantity'] ?? 0) * ($item['unit_price'] ?? 0));
+
                     return [
                         'row_number' => $item['row_number'],
                         'section_path' => $item['section_path'] ?? null,
@@ -27,7 +31,7 @@ class EstimateImportPreviewResource extends ModelJsonResource
                         'unit' => $item['unit'],
                         'quantity' => $item['quantity'],
                         'unit_price' => $item['unit_price'],
-                        'total' => ($item['quantity'] ?? 0) * ($item['unit_price'] ?? 0),
+                        'total' => $total,
                         'code' => $item['code'] ?? null,
                         'sub_items' => $item['sub_items'] ?? [],
                         'is_sub_item' => $item['is_sub_item'] ?? false,
@@ -41,6 +45,8 @@ class EstimateImportPreviewResource extends ModelJsonResource
                 }
                 
                 // Объект EstimateImportRowDTO
+                $total = $item->currentTotalAmount ?? (($item->quantity ?? 0) * ($item->unitPrice ?? 0));
+
                 return [
                     'row_number' => $item->rowNumber,
                     'section_path' => $item->sectionPath ?? null,
@@ -48,7 +54,7 @@ class EstimateImportPreviewResource extends ModelJsonResource
                     'unit' => $item->unit,
                     'quantity' => $item->quantity,
                     'unit_price' => $item->unitPrice,
-                    'total' => ($item->quantity ?? 0) * ($item->unitPrice ?? 0),
+                    'total' => $total,
                     'code' => $item->code ?? null,
                     'sub_items' => $item->subItems ?? [],
                     'is_sub_item' => $item->isSubItem ?? false,

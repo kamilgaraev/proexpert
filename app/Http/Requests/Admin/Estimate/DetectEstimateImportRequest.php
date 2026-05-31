@@ -4,6 +4,8 @@ namespace App\Http\Requests\Admin\Estimate;
 
 use Illuminate\Foundation\Http\FormRequest;
 
+use function trans_message;
+
 class DetectEstimateImportRequest extends FormRequest
 {
     public function authorize(): bool
@@ -32,9 +34,9 @@ class DetectEstimateImportRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'file_id.required' => 'File ID is required',
-            'suggested_header_row.integer' => 'Suggested header row must be an integer',
-            'suggested_header_row.min' => 'Suggested header row must be at least 1',
+            'file_id.required' => trans_message('estimate.import_file_id_required'),
+            'suggested_header_row.integer' => trans_message('estimate.import_header_row_integer'),
+            'suggested_header_row.min' => trans_message('estimate.import_header_row_min'),
         ];
     }
 }

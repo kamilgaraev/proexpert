@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\EstimateExportService;
+use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportDTO;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateImportService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\StagingAreaService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\VoiceCommandService;
@@ -68,6 +69,55 @@ class EstimateImportExportControllerWorkflowTest extends TestCase
         $response->assertOk()
             ->assertJsonPath('success', true)
             ->assertJsonPath('data', []);
+    }
+
+    public function test_import_map_returns_preview_validation_and_file_totals(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+
+        $this->mock(EstimateImportService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('preview')
+                ->once()
+                ->with('session-1', [])
+                ->andReturn(new EstimateImportDTO(
+                    fileName: 'estimate.xlsx',
+                    fileSize: 1024,
+                    fileFormat: 'xlsx',
+                    sections: [],
+                    items: [[
+                        'row_number' => 2,
+                        'item_name' => 'Монтаж стоек каркаса',
+                        'unit' => 'м3',
+                        'quantity' => 0.464,
+                        'unit_price' => 4500,
+                        'current_total_amount' => 2088,
+                        'code' => null,
+                    ]],
+                    totals: [
+                        'total_amount' => 2088,
+                        'items_count' => 1,
+                    ],
+                    metadata: [],
+                    validationSummary: [
+                        'errors' => ['Проверьте строку 2.'],
+                        'warnings' => ['Разделы не найдены.'],
+                    ],
+                ));
+        });
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/estimates/import/map", [
+                'file_id' => 'session-1',
+                'column_mapping' => [],
+            ]);
+
+        $response->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.preview.items.0.total', 2088)
+            ->assertJsonPath('data.validation.errors.0', 'Проверьте строку 2.')
+            ->assertJsonPath('data.validation.warnings.0', 'Разделы не найдены.');
     }
 
     public function test_staging_and_voice_command_errors_are_localized_without_broken_text(): void

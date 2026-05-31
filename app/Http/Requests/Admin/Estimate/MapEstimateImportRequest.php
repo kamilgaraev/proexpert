@@ -4,6 +4,8 @@ namespace App\Http\Requests\Admin\Estimate;
 
 use Illuminate\Foundation\Http\FormRequest;
 
+use function trans_message;
+
 class MapEstimateImportRequest extends FormRequest
 {
     public function authorize(): bool
@@ -39,9 +41,9 @@ class MapEstimateImportRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'file_id.required' => 'Не указан идентификатор файла',
-            'column_mapping.present' => 'Необходимо указать маппинг колонок',
-            'column_mapping.array' => 'Маппинг колонок должен быть массивом',
+            'file_id.required' => trans_message('estimate.import_file_id_required'),
+            'column_mapping.present' => trans_message('estimate.import_column_mapping_required'),
+            'column_mapping.array' => trans_message('estimate.import_column_mapping_invalid'),
         ];
     }
 }

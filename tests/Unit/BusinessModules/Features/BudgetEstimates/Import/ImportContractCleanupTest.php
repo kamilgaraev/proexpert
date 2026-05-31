@@ -112,7 +112,7 @@ class ImportContractCleanupTest extends TestCase
                     'content' => json_encode([
                         'mapping' => [
                             'position_number' => 'B',
-                            'code' => null,
+                            'code' => 'F',
                             'name' => 'C',
                             'unit' => 'D',
                             'quantity' => 'E',
@@ -152,6 +152,124 @@ class ImportContractCleanupTest extends TestCase
         self::assertSame('G', $result['mapping']['total_price'] ?? null);
         self::assertArrayNotHasKey('code', $result['mapping']);
         self::assertSame('test-model', $result['model'] ?? null);
+    }
+
+    public function test_custom_excel_handler_uses_ai_to_find_header_row_in_arbitrary_table(): void
+    {
+        $provider = new class implements LLMProviderInterface {
+            public int $calls = 0;
+
+            public function chat(array $messages, array $options = []): array
+            {
+                $this->calls++;
+
+                if ($this->calls === 1) {
+                    return [
+                        'content' => json_encode([
+                            'header_row' => 3,
+                            'mapping' => [
+                                'position_number' => 'A',
+                                'description' => 'B',
+                                'measure' => 'C',
+                                'volume' => 'D',
+                                'amount' => 5,
+                            ],
+                            'confidence' => 0.94,
+                        ], JSON_UNESCAPED_UNICODE),
+                    ];
+                }
+
+                return [
+                    'content' => json_encode([
+                        'mapping' => [
+                            'position_number' => 'A',
+                            'name' => 'B',
+                            'unit' => 'C',
+                            'quantity' => 'D',
+                            'total_price' => 'E',
+                        ],
+                        'confidence' => 0.96,
+                    ], JSON_UNESCAPED_UNICODE),
+                ];
+            }
+
+            public function countTokens(string $text): int
+            {
+                return strlen($text);
+            }
+
+            public function isAvailable(): bool
+            {
+                return true;
+            }
+
+            public function getModel(): string
+            {
+                return 'test-model';
+            }
+        };
+        $filePath = $this->createTemporarySpreadsheet([
+            ['Project custom estimate'],
+            ['Generated from contractor table'],
+            ['Pos', 'Task title', 'Measure', 'Vol', 'Line amount'],
+            ['1', 'Install steel frame posts', 'm3', 0.464, 2088],
+        ]);
+
+        try {
+            $handler = new CustomExcelHandler(
+                new SpreadsheetTableReader(),
+                new SpreadsheetHeaderDetector(),
+                new SpreadsheetAiColumnMapper($provider),
+            );
+            $structure = $handler->detectStructure(new ImportSession(), $filePath);
+            $preview = $handler->preview(new ImportSession(), $filePath, $structure);
+
+            self::assertTrue($structure->aiMappingApplied);
+            self::assertSame('ai', $structure->metadata['column_mapping_source'] ?? null);
+            self::assertSame(3, $structure->headerRow);
+            self::assertSame('B', $structure->columnMapping['name'] ?? null);
+            self::assertSame('E', $structure->columnMapping['total_price'] ?? null);
+            self::assertCount(1, $preview->items);
+            self::assertSame('Install steel frame posts', $preview->items[0]['item_name'] ?? null);
+            self::assertSame(2088.0, $preview->totals['total_amount'] ?? null);
+            self::assertGreaterThanOrEqual(1, $provider->calls);
+        } finally {
+            @unlink($filePath);
+        }
+    }
+
+    public function test_custom_excel_handler_accepts_frontend_total_and_section_mapping_aliases(): void
+    {
+        $filePath = $this->createTemporarySpreadsheet([
+            ['№', 'Работа', 'Ед.', 'Кол-во', 'Цена', 'Сумма'],
+            [1, 'Монтаж стоек каркаса', 'м3', 0.464, 4500, 2088],
+        ]);
+
+        try {
+            $handler = new CustomExcelHandler(new SpreadsheetTableReader(), new SpreadsheetHeaderDetector());
+            $session = new ImportSession();
+            $structure = new \App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportStructureResult(
+                formatSlug: 'custom_excel',
+                headerRow: 1,
+                columnMapping: [
+                    'section_number' => 'A',
+                    'name' => 'B',
+                    'unit' => 'C',
+                    'quantity' => 'D',
+                    'unit_price' => 'E',
+                    'current_total_amount' => 'F',
+                ],
+                rawHeaders: ['№', 'Работа', 'Ед.', 'Кол-во', 'Цена', 'Сумма'],
+            );
+            $preview = $handler->preview($session, $filePath, $structure);
+
+            self::assertCount(1, $preview->items);
+            self::assertSame('1', $preview->items[0]['section_number'] ?? null);
+            self::assertSame(2088.0, $preview->items[0]['current_total_amount'] ?? null);
+            self::assertSame(2088.0, $preview->totals['total_amount'] ?? null);
+        } finally {
+            @unlink($filePath);
+        }
     }
 
     public function test_universal_xml_parser_stream_returns_rows(): void

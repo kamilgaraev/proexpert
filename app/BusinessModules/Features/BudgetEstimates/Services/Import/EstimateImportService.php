@@ -382,6 +382,14 @@ class EstimateImportService
             $normalized[$field] = $column;
         }
 
+        if (isset($normalized['current_total_amount']) && !isset($normalized['total_price'])) {
+            $normalized['total_price'] = $normalized['current_total_amount'];
+        }
+
+        if (isset($normalized['section_number']) && !isset($normalized['position_number'])) {
+            $normalized['position_number'] = $normalized['section_number'];
+        }
+
         return $normalized;
     }
 

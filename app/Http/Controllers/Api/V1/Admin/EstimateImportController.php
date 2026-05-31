@@ -204,7 +204,7 @@ class EstimateImportController extends Controller
             
             return AdminResponse::success([
                 'preview' => new EstimateImportPreviewResource($preview),
-                'validation' => [
+                'validation' => $preview->validationSummary ?: [
                     'errors' => [],
                     'warnings' => [],
                 ],
