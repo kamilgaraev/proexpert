@@ -11,6 +11,8 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceiptLine;
+use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
+use App\BusinessModules\Features\Procurement\Services\PurchaseOrderPaymentGateService;
 use App\Domain\Authorization\Services\AuthorizationService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -22,6 +24,8 @@ final class MobilePurchaseOrderResource extends JsonResource
     {
         /** @var PurchaseOrder $order */
         $order = $this->resource;
+        $workflowSummary = app(ProcurementLifecycleService::class)->forPurchaseOrder($order);
+        $paymentSummary = app(PurchaseOrderPaymentGateService::class)->summary($order);
 
         return [
             'id' => $order->id,
@@ -30,7 +34,7 @@ final class MobilePurchaseOrderResource extends JsonResource
             'order_number' => $order->order_number,
             'order_date' => $order->order_date?->toDateString(),
             'status' => $this->statusValue($order),
-            'status_label' => trans_message('procurement.mobile.purchase_order_statuses.' . $this->statusValue($order)),
+            'status_label' => trans_message('procurement.mobile.purchase_order_statuses.'.$this->statusValue($order)),
             'total_amount' => (float) $order->total_amount,
             'currency' => $order->currency,
             'delivery_date' => $order->delivery_date?->toDateString(),
@@ -48,7 +52,9 @@ final class MobilePurchaseOrderResource extends JsonResource
                 'receipts_count' => (int) ($order->receipts_count ?? $order->receipts->count()),
                 'received_items_count' => $this->receivedItemsCount($order),
             ],
-            'available_actions' => $this->availableActions($request, $order),
+            'workflow_summary' => $workflowSummary->toArray(),
+            'payment_summary' => $paymentSummary,
+            'available_actions' => $this->availableActions($request, $order, $workflowSummary->canReceiveMaterials),
             'items' => $this->items($order),
             'receipts' => $this->receipts($order),
             'comments' => $this->comments($order),
@@ -64,10 +70,10 @@ final class MobilePurchaseOrderResource extends JsonResource
         return $status instanceof PurchaseOrderStatusEnum ? $status->value : (string) $status;
     }
 
-    private function availableActions(Request $request, PurchaseOrder $order): array
+    private function availableActions(Request $request, PurchaseOrder $order, bool $canReceiveMaterials): array
     {
         $user = $request->user();
-        if (!$user) {
+        if (! $user) {
             return [];
         }
 
@@ -76,8 +82,7 @@ final class MobilePurchaseOrderResource extends JsonResource
         $actions = [];
 
         if (
-            $order->status instanceof PurchaseOrderStatusEnum
-            && $order->status->canReceiveMaterials()
+            $canReceiveMaterials
             && $authorization->can($user, 'procurement.purchase_orders.receive', ['organization_id' => $organizationId])
         ) {
             $actions[] = 'receive_materials';
@@ -115,7 +120,7 @@ final class MobilePurchaseOrderResource extends JsonResource
     {
         $purchaseRequest = $order->purchaseRequest;
 
-        if (!$purchaseRequest) {
+        if (! $purchaseRequest) {
             return null;
         }
 
@@ -134,7 +139,7 @@ final class MobilePurchaseOrderResource extends JsonResource
 
     private function items(PurchaseOrder $order): array
     {
-        if (!$order->relationLoaded('items')) {
+        if (! $order->relationLoaded('items')) {
             return [];
         }
 
@@ -164,7 +169,7 @@ final class MobilePurchaseOrderResource extends JsonResource
 
     private function receipts(PurchaseOrder $order): array
     {
-        if (!$order->relationLoaded('receipts')) {
+        if (! $order->relationLoaded('receipts')) {
             return [];
         }
 
@@ -196,7 +201,7 @@ final class MobilePurchaseOrderResource extends JsonResource
 
     private function comments(PurchaseOrder $order): array
     {
-        if (!$order->relationLoaded('auditEvents')) {
+        if (! $order->relationLoaded('auditEvents')) {
             return [];
         }
 
@@ -226,7 +231,7 @@ final class MobilePurchaseOrderResource extends JsonResource
 
     private function receivedByItem(PurchaseOrder $order): array
     {
-        if (!$order->relationLoaded('receipts')) {
+        if (! $order->relationLoaded('receipts')) {
             return [];
         }
 

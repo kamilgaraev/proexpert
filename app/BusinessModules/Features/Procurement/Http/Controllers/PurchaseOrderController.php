@@ -11,6 +11,7 @@ use App\BusinessModules\Features\Procurement\Http\Resources\PurchaseOrderItemRes
 use App\BusinessModules\Features\Procurement\Http\Resources\PurchaseOrderResource;
 use App\BusinessModules\Features\Procurement\Models\ProcurementAuditLog;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
+use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Services\PurchaseOrderService;
@@ -48,6 +49,8 @@ class PurchaseOrderController extends Controller
                     'contract',
                     'acceptedSupplierProposalVersion',
                     'items',
+                    'receipts.warehouse',
+                    'receipts.receivedByUser',
                     'receipts.lines',
                     'organization',
                 ]);
@@ -105,6 +108,8 @@ class PurchaseOrderController extends Controller
                     'proposals.supplierParty',
                     'proposals.currentVersion',
                     'items.receiptLines',
+                    'receipts.warehouse',
+                    'receipts.receivedByUser',
                     'receipts.lines',
                     'organization',
                 ])
@@ -300,6 +305,8 @@ class PurchaseOrderController extends Controller
                     'externalSupplierContact',
                     'supplierParty',
                     'purchaseRequest',
+                    'receipts.warehouse',
+                    'receipts.receivedByUser',
                     'receipts.lines',
                 ])
                 ->find($id);
@@ -377,6 +384,52 @@ class PurchaseOrderController extends Controller
         } catch (\Exception $e) {
             Log::error('procurement.purchase_orders.receipt_document_pdf.error', [
                 'id' => $id,
+                'user_id' => auth()->id(),
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('procurement.purchase_orders.receipt_document_pdf_error'), 500);
+        }
+    }
+
+    public function receiptDocumentPdfFromReceipt(Request $request, int $id, int $receipt): JsonResponse|Response
+    {
+        try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $order = PurchaseOrder::forOrganization($organizationId)
+                ->with([
+                    'supplier',
+                    'externalSupplierContact',
+                    'supplierParty',
+                    'purchaseRequest',
+                    'organization',
+                ])
+                ->find($id);
+
+            if (! $order) {
+                return AdminResponse::error(trans_message('procurement.purchase_orders.not_found'), 404);
+            }
+
+            $purchaseReceipt = PurchaseReceipt::query()
+                ->where('organization_id', $organizationId)
+                ->where('purchase_order_id', $order->id)
+                ->where('id', $receipt)
+                ->first();
+
+            if (! $purchaseReceipt) {
+                return AdminResponse::error(trans_message('procurement.purchase_orders.receipt_not_found'), 404);
+            }
+
+            $document = data_get($purchaseReceipt->metadata, 'receipt_document');
+            if (! is_array($document)) {
+                return AdminResponse::error(trans_message('procurement.purchase_orders.receipt_document_missing'), 422);
+            }
+
+            return $this->receiptDocumentPdfService->download($order, $document);
+        } catch (\Exception $e) {
+            Log::error('procurement.purchase_orders.receipt_document_pdf_from_receipt.error', [
+                'id' => $id,
+                'receipt_id' => $receipt,
                 'user_id' => auth()->id(),
                 'error' => $e->getMessage(),
             ]);

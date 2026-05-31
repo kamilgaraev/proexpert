@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Procurement\Services;
 
 use App\BusinessModules\Features\Procurement\DTOs\ProcurementLifecycleSummary;
-use App\BusinessModules\Features\Procurement\Enums\ProcurementApprovalStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalDecisionEnum;
@@ -25,6 +24,10 @@ use function trans_message;
 
 class ProcurementLifecycleService
 {
+    public function __construct(
+        private readonly PurchaseOrderPaymentGateService $paymentGateService
+    ) {}
+
     public function forPurchaseRequest(PurchaseRequest $purchaseRequest): ProcurementLifecycleSummary
     {
         $purchaseRequest->loadMissing([
@@ -58,7 +61,7 @@ class ProcurementLifecycleService
         }
 
         $supplierRequests = $purchaseRequest->supplierRequests
-            ->filter(static fn (SupplierRequest $request): bool => !in_array($request->status, [
+            ->filter(static fn (SupplierRequest $request): bool => ! in_array($request->status, [
                 SupplierRequestStatusEnum::CANCELLED,
                 SupplierRequestStatusEnum::EXPIRED,
             ], true))
@@ -170,15 +173,9 @@ class ProcurementLifecycleService
         return match ($order->status) {
             PurchaseOrderStatusEnum::DRAFT => $this->summary('order_draft', 'send_order'),
             PurchaseOrderStatusEnum::SENT => $this->summary('order_sent', 'confirm_order'),
-            PurchaseOrderStatusEnum::CONFIRMED => $this->summary('order_confirmed', 'receive_materials', [
-                'canReceiveMaterials' => true,
-            ]),
-            PurchaseOrderStatusEnum::IN_DELIVERY => $this->summary('order_in_delivery', 'receive_materials', [
-                'canReceiveMaterials' => true,
-            ]),
-            PurchaseOrderStatusEnum::PARTIALLY_DELIVERED => $this->summary('order_partially_delivered', 'receive_materials', [
-                'canReceiveMaterials' => true,
-            ]),
+            PurchaseOrderStatusEnum::CONFIRMED => $this->receiptSummary($order, 'order_confirmed'),
+            PurchaseOrderStatusEnum::IN_DELIVERY => $this->receiptSummary($order, 'order_in_delivery'),
+            PurchaseOrderStatusEnum::PARTIALLY_DELIVERED => $this->receiptSummary($order, 'order_partially_delivered'),
             PurchaseOrderStatusEnum::DELIVERED => $this->summary('completed', null),
             PurchaseOrderStatusEnum::CANCELLED => $this->summary('order_cancelled', null),
         };
@@ -203,7 +200,7 @@ class ProcurementLifecycleService
 
     public function assertCanAcceptProposal(SupplierProposal $proposal): void
     {
-        if (!$this->canAcceptProposal($proposal)) {
+        if (! $this->canAcceptProposal($proposal)) {
             throw new \DomainException(trans_message('procurement.proposal_decisions.accepted_decision_required'));
         }
     }
@@ -223,7 +220,7 @@ class ProcurementLifecycleService
 
     public function assertCanReceiveMaterials(PurchaseOrder $order, array $items): void
     {
-        if (!$order->status->canReceiveMaterials()) {
+        if (! $order->status->canReceiveMaterials()) {
             throw new \DomainException(trans_message('procurement.purchase_orders.invalid_status_for_receive'));
         }
 
@@ -336,7 +333,7 @@ class ProcurementLifecycleService
 
         $hasActiveSubmittedProposal = $proposals->contains(
             static fn (SupplierProposal $proposal): bool => $proposal->status === SupplierProposalStatusEnum::SUBMITTED
-                && !$proposal->isExpired()
+                && ! $proposal->isExpired()
         );
 
         if ($hasActiveSubmittedProposal) {
@@ -348,7 +345,7 @@ class ProcurementLifecycleService
                 && $proposal->isExpired()
         );
 
-        if (!$hasExpiredSubmittedProposal) {
+        if (! $hasExpiredSubmittedProposal) {
             return null;
         }
 
@@ -377,13 +374,13 @@ class ProcurementLifecycleService
         }
 
         $supplierRequest = $proposal->supplierRequest;
-        if (!$supplierRequest instanceof SupplierRequest || $supplierRequest->status !== SupplierRequestStatusEnum::RESPONDED) {
+        if (! $supplierRequest instanceof SupplierRequest || $supplierRequest->status !== SupplierRequestStatusEnum::RESPONDED) {
             return false;
         }
 
         $decision = $supplierRequest->proposalDecision;
 
-        if (!$this->decisionAllowsAcceptance($decision)) {
+        if (! $this->decisionAllowsAcceptance($decision)) {
             return false;
         }
 
@@ -391,7 +388,7 @@ class ProcurementLifecycleService
             return false;
         }
 
-        return !DB::table('purchase_orders')
+        return ! DB::table('purchase_orders')
             ->where('organization_id', $proposal->organization_id)
             ->whereNull('deleted_at')
             ->where(function ($query) use ($proposal): void {
@@ -421,6 +418,17 @@ class ProcurementLifecycleService
         return $purchaseRequest->purchaseOrders
             ->sortByDesc('id')
             ->first();
+    }
+
+    private function receiptSummary(PurchaseOrder $order, string $stage): ProcurementLifecycleSummary
+    {
+        $paymentSummary = $this->paymentGateService->summary($order);
+        $canReceiveMaterials = (bool) $paymentSummary['can_receive_materials'];
+
+        return $this->summary($stage, $canReceiveMaterials ? 'receive_materials' : null, [
+            'canReceiveMaterials' => $canReceiveMaterials,
+            'blockers' => $paymentSummary['blocker'] ? [$paymentSummary['blocker']] : [],
+        ]);
     }
 
     private function syncLoadedSupplierRequests(PurchaseRequest $purchaseRequest): void

@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
+use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
+use App\BusinessModules\Core\Payments\Enums\InvoiceType;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
@@ -127,6 +131,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         $this->assertSame($purchaseRequest->id, $purchaseOrder->purchase_request_id);
         $this->assertSame($secondSupplier->id, $purchaseOrder->supplier_id);
         $this->assertSame(1, $purchaseOrder->items()->count());
+        $this->createPaidProcurementPaymentDocument($context, $purchaseOrder, 950);
 
         $orderIndexResponse = $this->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/procurement/purchase-orders?per_page=20&status=confirmed');
@@ -188,6 +193,27 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
             ->firstOrFail();
         $this->assertSame('5.000', (string) $balance->available_quantity);
 
+        $receipt = PurchaseReceipt::query()
+            ->where('purchase_order_id', $purchaseOrder->id)
+            ->firstOrFail();
+
+        $postedPdfResponse = $this->withHeaders($context->authHeaders())
+            ->get("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receipts/{$receipt->id}/document/pdf");
+
+        $postedPdfResponse->assertOk();
+        $this->assertStringContainsString('application/pdf', (string) $postedPdfResponse->headers->get('content-type'));
+        $this->assertStringContainsString('torg12-', (string) $postedPdfResponse->headers->get('content-disposition'));
+        $this->assertStringStartsWith('%PDF', (string) $postedPdfResponse->getContent());
+
+        $stockResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/warehouses/{$warehouse->id}/balances");
+
+        $stockResponse->assertOk();
+        $stockResponse->assertJsonPath('data.0.receipt_documents.0.receipt_id', $receipt->id);
+        $stockResponse->assertJsonPath('data.0.receipt_documents.0.purchase_order_id', $purchaseOrder->id);
+        $stockResponse->assertJsonPath('data.0.receipt_documents.0.receipt_number', $receipt->receipt_number);
+        $stockResponse->assertJsonPath('data.0.receipt_documents.0.order_number', $purchaseOrder->order_number);
+
         $duplicateAcceptResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/procurement/proposals/{$secondProposal->id}/accept");
 
@@ -240,6 +266,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
             'unit_price' => 100,
             'total_price' => 500,
         ]);
+        $this->createPaidProcurementPaymentDocument($context, $purchaseOrder, 500);
 
         $receiveResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receive-materials", [
@@ -261,7 +288,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         ]);
     }
 
-    public function test_purchase_order_receipt_document_pdf_can_be_downloaded_before_posting(): void
+    public function test_purchase_order_receipt_document_pdf_can_be_downloaded_after_payment_before_posting(): void
     {
         $context = AdminApiTestContext::create();
         $unit = $this->createUnit($context->organization->id);
@@ -292,6 +319,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
             'unit_price' => 100,
             'total_price' => 500,
         ]);
+        $this->createPaidProcurementPaymentDocument($context, $purchaseOrder, 500);
 
         $response = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receipt-document/pdf", [
@@ -313,6 +341,85 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         $this->assertSame(0, PurchaseReceipt::query()
             ->where('purchase_order_id', $purchaseOrder->id)
             ->count());
+    }
+
+    public function test_purchase_order_receipt_requires_paid_payment_document(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id);
+        $purchaseRequest = $this->createPurchaseRequest($context->organization->id, $material->id);
+        $supplier = $this->createSupplier($context->organization->id, 'Unpaid Supplier', 'unpaid@example.test');
+        $warehouse = $this->createWarehouse($context->organization->id);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $purchaseOrder = PurchaseOrder::query()->create([
+            'organization_id' => $context->organization->id,
+            'purchase_request_id' => $purchaseRequest->id,
+            'supplier_id' => $supplier->id,
+            'order_number' => 'PO-UNPAID-'.uniqid(),
+            'order_date' => now()->toDateString(),
+            'status' => PurchaseOrderStatusEnum::CONFIRMED,
+            'total_amount' => 500,
+            'currency' => 'RUB',
+        ]);
+
+        $item = PurchaseOrderItem::query()->create([
+            'purchase_order_id' => $purchaseOrder->id,
+            'material_id' => $material->id,
+            'material_name' => $material->name,
+            'quantity' => 5,
+            'unit' => 'pcs',
+            'unit_price' => 100,
+            'total_price' => 500,
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receive-materials", [
+                'warehouse_id' => $warehouse->id,
+                'receipt_date' => now()->toDateString(),
+                'items' => [
+                    [
+                        'item_id' => $item->id,
+                        'quantity_received' => 5,
+                        'price' => 100,
+                    ],
+                ],
+            ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('success', false);
+        $response->assertJsonFragment([
+            'message' => trans_message('procurement.purchase_orders.payment_required_before_receipt'),
+        ]);
+        $this->assertDatabaseMissing('purchase_receipts', [
+            'organization_id' => $context->organization->id,
+            'purchase_order_id' => $purchaseOrder->id,
+        ]);
+        $this->assertDatabaseMissing('warehouse_balances', [
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+        ]);
+
+        $pdfResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receipt-document/pdf", [
+                'warehouse_id' => $warehouse->id,
+                'receipt_date' => now()->toDateString(),
+                'items' => [
+                    [
+                        'item_id' => $item->id,
+                        'quantity_received' => 5,
+                        'price' => 100,
+                    ],
+                ],
+            ]);
+
+        $pdfResponse->assertStatus(422);
+        $pdfResponse->assertJsonFragment([
+            'message' => trans_message('procurement.purchase_orders.payment_required_before_receipt'),
+        ]);
     }
 
     public function test_supplier_flow_rejects_foreign_purchase_request_supplier_and_proposal_links_without_mutation(): void
@@ -464,6 +571,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
             ->firstOrFail();
         $item = $purchaseOrder->items()->firstOrFail();
         $this->assertNull($item->material_id);
+        $this->createPaidProcurementPaymentDocument($context, $purchaseOrder, 700);
 
         $receiveResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receive-materials", [
@@ -577,6 +685,7 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
             ->firstOrFail();
         $warehouse = $this->createWarehouse($context->organization->id);
         $item = $purchaseOrder->items()->firstOrFail();
+        $this->createPaidProcurementPaymentDocument($context, $purchaseOrder, 900);
 
         $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/mark-in-delivery")
@@ -799,6 +908,32 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
             'warehouse_type' => OrganizationWarehouse::TYPE_CENTRAL,
             'is_main' => true,
             'is_active' => true,
+        ]);
+    }
+
+    private function createPaidProcurementPaymentDocument(
+        AdminApiTestContext $context,
+        PurchaseOrder $purchaseOrder,
+        float $amount
+    ): PaymentDocument {
+        return PaymentDocument::query()->create([
+            'organization_id' => $context->organization->id,
+            'document_type' => PaymentDocumentType::PAYMENT_ORDER,
+            'document_number' => 'PAY-PO-'.$purchaseOrder->id.'-'.uniqid(),
+            'document_date' => now()->toDateString(),
+            'direction' => InvoiceDirection::OUTGOING,
+            'invoice_type' => InvoiceType::MATERIAL_PURCHASE,
+            'payer_organization_id' => $context->organization->id,
+            'amount' => $amount,
+            'currency' => 'RUB',
+            'paid_amount' => $amount,
+            'remaining_amount' => 0,
+            'status' => PaymentDocumentStatus::PAID,
+            'paid_at' => now(),
+            'metadata' => [
+                'purchase_order_id' => $purchaseOrder->id,
+                'purchase_order_number' => $purchaseOrder->order_number,
+            ],
         ]);
     }
 

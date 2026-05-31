@@ -11,6 +11,9 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseIdentifier;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseItemGallery;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
+use App\BusinessModules\Features\Procurement\Enums\PurchaseReceiptStatusEnum;
+use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
+use App\BusinessModules\Features\Procurement\Models\PurchaseReceiptLine;
 use App\Models\Organization;
 use App\Services\Logging\LoggingService;
 use Carbon\Carbon;
@@ -19,6 +22,7 @@ use chillerlan\QRCode\QROptions;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+
 use function trans_message;
 
 /**
@@ -615,6 +619,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 ->values()
                 ->all())
             ->all();
+        $receiptDocumentMap = $this->purchaseReceiptDocumentMap($organizationId, $allBatches);
 
         $identifierMap = WarehouseIdentifier::query()
             ->where('organization_id', $organizationId)
@@ -667,6 +672,7 @@ class WarehouseService implements WarehouseReportDataProvider
                 'last_movement_at' => $batches->max('last_movement_at')?->toDateTimeString(),
                 'photo_gallery' => $balancePhotos !== [] ? $balancePhotos : $receiptPhotos,
                 'receipt_photo_gallery' => $receiptPhotos,
+                'receipt_documents' => $receiptDocumentMap[$galleryKey] ?? [],
                 'asset_photo_gallery' => $first->material->photo_gallery,
                 'qr_code' => $qrCode,
                 'qr_code_image_url' => $this->makeQrDataUri($qrCode),
@@ -699,6 +705,89 @@ class WarehouseService implements WarehouseReportDataProvider
         }
 
         return $resultData;
+    }
+
+    private function purchaseReceiptDocumentMap(int $organizationId, Collection $batches): array
+    {
+        $warehouseIds = $batches->pluck('warehouse_id')->filter()->unique()->values();
+        $materialIds = $batches->pluck('material_id')->filter()->unique()->values();
+
+        if ($warehouseIds->isEmpty() || $materialIds->isEmpty()) {
+            return [];
+        }
+
+        $receiptLines = PurchaseReceiptLine::query()
+            ->with([
+                'purchaseReceipt.purchaseOrder.supplier',
+                'purchaseReceipt.purchaseOrder.externalSupplierContact',
+                'purchaseReceipt.purchaseOrder.supplierParty',
+                'purchaseOrderItem',
+            ])
+            ->whereHas('purchaseReceipt', static function ($query) use ($organizationId, $warehouseIds): void {
+                $query->where('organization_id', $organizationId)
+                    ->where('status', PurchaseReceiptStatusEnum::POSTED->value)
+                    ->whereIn('warehouse_id', $warehouseIds);
+            })
+            ->whereHas('purchaseOrderItem', static function ($query) use ($materialIds): void {
+                $query->whereIn('material_id', $materialIds);
+            })
+            ->get()
+            ->filter(static function (PurchaseReceiptLine $line): bool {
+                $receipt = $line->purchaseReceipt;
+                $item = $line->purchaseOrderItem;
+
+                return $receipt !== null
+                    && $item !== null
+                    && $item->material_id !== null
+                    && is_array(data_get($receipt->metadata, 'receipt_document'));
+            });
+
+        return $receiptLines
+            ->groupBy(static function (PurchaseReceiptLine $line): string {
+                return $line->purchaseReceipt->warehouse_id.':'.$line->purchaseOrderItem->material_id;
+            })
+            ->map(fn (Collection $lines): array => $lines
+                ->groupBy('purchase_receipt_id')
+                ->map(function (Collection $receiptLines): array {
+                    /** @var PurchaseReceiptLine $firstLine */
+                    $firstLine = $receiptLines->first();
+                    $receipt = $firstLine->purchaseReceipt;
+                    $order = $receipt?->purchaseOrder;
+
+                    return [
+                        'receipt_id' => (int) $receipt->id,
+                        'purchase_order_id' => (int) $receipt->purchase_order_id,
+                        'warehouse_id' => (int) $receipt->warehouse_id,
+                        'receipt_number' => (string) $receipt->receipt_number,
+                        'receipt_date' => $receipt->receipt_date?->format('Y-m-d'),
+                        'order_number' => $order?->order_number,
+                        'supplier_name' => $this->purchaseReceiptSupplierName($order),
+                        'quantity' => round((float) $receiptLines->sum('quantity_received'), 3),
+                        'total_amount' => round((float) $receiptLines->sum('total_amount'), 2),
+                        'has_pdf' => true,
+                    ];
+                })
+                ->sortByDesc(static fn (array $document): string => (string) ($document['receipt_date'] ?? ''))
+                ->take(5)
+                ->values()
+                ->all())
+            ->all();
+    }
+
+    private function purchaseReceiptSupplierName(?PurchaseOrder $order): ?string
+    {
+        if (! $order) {
+            return null;
+        }
+
+        $snapshot = is_array($order->supplier_snapshot) ? $order->supplier_snapshot : [];
+
+        return $order->supplier?->name
+            ?? $order->externalSupplierContact?->name
+            ?? $order->supplierParty?->display_name
+            ?? $snapshot['display_name']
+            ?? $snapshot['name']
+            ?? null;
     }
 
     /**

@@ -29,6 +29,7 @@ class PurchaseOrderService
         private readonly SupplierPartyService $supplierPartyService,
         private readonly ProcurementAuditService $auditService,
         private readonly ProcurementLifecycleService $lifecycleService,
+        private readonly PurchaseOrderPaymentGateService $paymentGateService,
         private readonly ProjectMaterialDeliveryService $deliveryService
     ) {}
 
@@ -202,6 +203,7 @@ class PurchaseOrderService
         array $receiptData = []
     ): PurchaseOrder {
         $this->lifecycleService->assertCanReceiveMaterials($order, $items);
+        $this->paymentGateService->assertCanReceive($order, $items);
 
         $warehouse = $this->resolveReceiptWarehouse($order, $warehouseId);
         $orderItems = $this->resolveOrderItems($order, $items);
@@ -296,6 +298,8 @@ class PurchaseOrderService
                 'externalSupplierContact',
                 'supplierParty',
                 'purchaseRequest',
+                'receipts.warehouse',
+                'receipts.receivedByUser',
                 'receipts.lines',
             ]);
         } catch (\Exception $e) {
@@ -357,6 +361,7 @@ class PurchaseOrderService
         ?string $receiptDate = null
     ): array {
         $this->lifecycleService->assertCanReceiveMaterials($order, $items);
+        $this->paymentGateService->assertCanReceive($order, $items);
 
         $warehouse = $this->resolveReceiptWarehouse($order, $warehouseId);
         $orderItems = $this->resolveOrderItems($order, $items);
