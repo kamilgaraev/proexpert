@@ -203,7 +203,7 @@ class ContractResource extends JsonResource
             'is_advance_fully_paid' => $this->is_advance_fully_paid ?? false,
             'advance_payment_percentage' => (float) ($this->advance_payment_percentage ?? 0),
             'status' => $this->status->value,
-            'status_label' => $this->status->name,
+            'status_label' => $this->status->label(),
             'start_date' => $this->start_date,
             'end_date' => $this->end_date,
             'notes' => $this->notes,

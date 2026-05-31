@@ -42,6 +42,13 @@ return [
     'project_estimates_loaded' => 'Сметы проекта загружены.',
     'project_estimates_load_error' => 'Не удалось загрузить сметы проекта.',
     'state_date_required' => 'Укажите дату состояния договора.',
+    'statuses' => [
+        'draft' => 'Черновик',
+        'active' => 'Активен',
+        'completed' => 'Завершен',
+        'on_hold' => 'Приостановлен',
+        'terminated' => 'Расторгнут',
+    ],
     'work_type_category' => [
         'smr' => 'СМР',
         'general_construction' => 'Общестроительные работы',

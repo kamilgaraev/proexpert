@@ -1108,7 +1108,7 @@ class CustomerPortalService
             'number' => $contract->number,
             'subject' => $contract->subject,
             'status' => $contract->status?->value ?? (string) $contract->status,
-            'status_label' => $contract->status?->name ?? (string) $contract->status,
+            'status_label' => $contract->status?->label() ?? (string) $contract->status,
             'project' => $project ? [
                 'id' => $project->id,
                 'name' => $project->name,
