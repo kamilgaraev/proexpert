@@ -6,12 +6,14 @@ namespace App\BusinessModules\Features\Procurement\Services;
 
 use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
+use App\BusinessModules\Features\Procurement\Mail\SupplierRequestLinkMail;
 use App\BusinessModules\Features\Procurement\Models\ExternalSupplierContact;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierParty;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -169,6 +171,7 @@ class SupplierRequestService
             $supplierRequest->loadMissing('purchaseRequest');
             $version = $this->versionService->createSentVersion($supplierRequest->refresh(), $actorId);
             $snapshot = is_array($supplierRequest->supplier_snapshot) ? $supplierRequest->supplier_snapshot : [];
+            $emailQueuedTo = $this->queuePublicLinkEmail($supplierRequest);
 
             $this->auditService->record(
                 ProcurementAuditEventTypeEnum::SUPPLIER_REQUEST_SENT->value,
@@ -183,6 +186,7 @@ class SupplierRequestService
                     'sent_at' => $supplierRequest->sent_at?->toIso8601String(),
                     'public_url' => $supplierRequest->publicUrl(),
                     'public_token_expires_at' => $supplierRequest->public_token_expires_at?->toIso8601String(),
+                    'public_link_email_queued_to' => $emailQueuedTo,
                     'supplier_request_version_id' => $version->id,
                     'version_number' => $version->version_number,
                     'purchase_request_number' => $supplierRequest->purchaseRequest?->request_number,
@@ -263,6 +267,48 @@ class SupplierRequestService
         ]);
 
         return $contact;
+    }
+
+    private function queuePublicLinkEmail(SupplierRequest $supplierRequest): ?string
+    {
+        $publicUrl = $supplierRequest->publicUrl();
+
+        if ($publicUrl === null) {
+            return null;
+        }
+
+        $recipientEmail = $this->resolveRecipientEmail($supplierRequest);
+
+        if ($recipientEmail === null) {
+            return null;
+        }
+
+        Mail::to($recipientEmail)->queue(
+            (new SupplierRequestLinkMail($supplierRequest, $publicUrl))->afterCommit()
+        );
+
+        return $recipientEmail;
+    }
+
+    private function resolveRecipientEmail(SupplierRequest $supplierRequest): ?string
+    {
+        $supplierRequest->loadMissing(['supplierParty', 'externalSupplierContact', 'supplier']);
+        $snapshot = is_array($supplierRequest->supplier_snapshot) ? $supplierRequest->supplier_snapshot : [];
+
+        foreach ([
+            $supplierRequest->externalSupplierContact?->email,
+            $supplierRequest->supplier?->email,
+            $supplierRequest->supplierParty?->email,
+            $snapshot['email'] ?? null,
+        ] as $email) {
+            $email = trim((string) $email);
+
+            if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL) !== false) {
+                return $email;
+            }
+        }
+
+        return null;
     }
 
     private function generateRequestNumber(): string
