@@ -2,10 +2,12 @@
 
 namespace App\Observers;
 
-use App\Models\ScheduleTask;
 use App\Exceptions\Schedule\ScheduleValidationException;
-use Illuminate\Support\Facades\Log;
+use App\Models\ProjectSchedule;
+use App\Models\ScheduleTask;
+use App\Services\Analytics\EVMService;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Log;
 
 class ScheduleTaskObserver
 {
@@ -20,7 +22,7 @@ class ScheduleTaskObserver
             'planned_end_date' => $task->attributes['planned_end_date'] ?? null,
             'attributes' => $task->attributes,
         ]);
-        
+
         try {
             $this->validateDates($task);
             Log::info('[ScheduleTaskObserver] Валидация прошла успешно');
@@ -31,7 +33,7 @@ class ScheduleTaskObserver
             ]);
             throw $e;
         }
-        
+
         // Вычисляем длительность ПЕРЕД сохранением
         $this->calculateDuration($task);
 
@@ -53,11 +55,11 @@ class ScheduleTaskObserver
             ->max('sort_order');
 
         $task->sort_order = ($maxSortOrder ?? 0) + 1;
-        
+
         Log::info('[ScheduleTaskObserver] sort_order set', [
             'task_id' => $task->id,
             'sort_order' => $task->sort_order,
-            'parent_task_id' => $task->parent_task_id
+            'parent_task_id' => $task->parent_task_id,
         ]);
     }
 
@@ -76,14 +78,14 @@ class ScheduleTaskObserver
         // Проверка, что задача не завершается раньше начала
         if ($task->isDirty('actual_end_date') && $task->actual_end_date && $task->actual_start_date) {
             try {
-                $actualEndDate = $task->actual_end_date instanceof Carbon 
-                    ? $task->actual_end_date 
+                $actualEndDate = $task->actual_end_date instanceof Carbon
+                    ? $task->actual_end_date
                     : Carbon::parse($task->actual_end_date);
-                    
-                $actualStartDate = $task->actual_start_date instanceof Carbon 
-                    ? $task->actual_start_date 
+
+                $actualStartDate = $task->actual_start_date instanceof Carbon
+                    ? $task->actual_start_date
                     : Carbon::parse($task->actual_start_date);
-                    
+
                 if ($actualEndDate < $actualStartDate) {
                     throw new ScheduleValidationException(
                         'Фактическая дата окончания не может быть раньше даты начала',
@@ -105,10 +107,10 @@ class ScheduleTaskObserver
     {
         if ($task->wasChanged(['planned_start_date', 'planned_end_date'])) {
             $service = app(\App\Services\Schedule\AutoSchedulingService::class);
-            
+
             // 1. Обновляем родителей (вверх)
             $service->syncParentDates($task);
-            
+
             // 2. Обновляем последователей (вниз)
             $service->applyCascadeUpdates($task);
         }
@@ -121,8 +123,8 @@ class ScheduleTaskObserver
             } catch (\Exception $e) {
                 Log::error('[ScheduleTaskObserver] Ошибка синхронизации выполненных работ', [
                     'task_id' => $task->id,
-                    'status'  => $task->status,
-                    'error'   => $e->getMessage(),
+                    'status' => $task->status,
+                    'error' => $e->getMessage(),
                 ]);
             }
         }
@@ -134,9 +136,22 @@ class ScheduleTaskObserver
             } catch (\Exception $e) {
                 Log::error('[ScheduleTaskObserver] Ошибка синхронизации активной выполненной работы', [
                     'task_id' => $task->id,
-                    'error'   => $e->getMessage(),
+                    'error' => $e->getMessage(),
                 ]);
             }
+        }
+
+        if ($task->wasChanged([
+            'schedule_id',
+            'task_type',
+            'status',
+            'planned_start_date',
+            'planned_end_date',
+            'baseline_start_date',
+            'baseline_end_date',
+            'estimated_cost',
+        ])) {
+            $this->invalidateEVMCache($task, true);
         }
     }
 
@@ -147,6 +162,12 @@ class ScheduleTaskObserver
     {
         $service = app(\App\Services\Schedule\AutoSchedulingService::class);
         $service->syncParentDates($task);
+        $this->invalidateEVMCache($task);
+    }
+
+    public function deleting(ScheduleTask $task): void
+    {
+        $this->invalidateEVMCache($task, true);
     }
 
     /**
@@ -164,42 +185,90 @@ class ScheduleTaskObserver
         }
     }
 
+    public function restored(ScheduleTask $task): void
+    {
+        $this->invalidateEVMCache($task);
+    }
+
+    public function forceDeleted(ScheduleTask $task): void
+    {
+        $this->invalidateEVMCache($task, true);
+    }
+
+    private function invalidateEVMCache(ScheduleTask $task, bool $includeOriginal = false): void
+    {
+        try {
+            $projectIds = collect();
+            $schedule = $task->relationLoaded('schedule')
+                ? $task->schedule
+                : $task->schedule()->first();
+
+            if ($schedule?->project_id) {
+                $projectIds->push($schedule->project_id);
+            }
+
+            if ($includeOriginal) {
+                $originalScheduleId = $task->getOriginal('schedule_id');
+
+                if ($originalScheduleId && (int) $originalScheduleId !== (int) $task->schedule_id) {
+                    $projectIds->push(
+                        ProjectSchedule::query()
+                            ->whereKey((int) $originalScheduleId)
+                            ->value('project_id')
+                    );
+                }
+            }
+
+            $projectIds
+                ->filter(fn (mixed $projectId): bool => $projectId !== null && (int) $projectId > 0)
+                ->map(fn (mixed $projectId): int => (int) $projectId)
+                ->unique()
+                ->each(fn (int $projectId): mixed => app(EVMService::class)->invalidateCache($projectId));
+        } catch (\Exception $e) {
+            Log::warning('Failed to invalidate EVM cache for schedule task', [
+                'task_id' => $task->id,
+                'schedule_id' => $task->schedule_id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
     /**
      * Валидация дат задачи
      */
     protected function validateDates(ScheduleTask $task): void
     {
         Log::info('[ScheduleTaskObserver] validateDates started');
-        
+
         $errors = [];
 
         // Получаем даты из атрибутов напрямую
         $startDateValue = $task->attributes['planned_start_date'] ?? $task->planned_start_date;
         $endDateValue = $task->attributes['planned_end_date'] ?? $task->planned_end_date;
-        
+
         Log::info('[ScheduleTaskObserver] Плановые даты', [
             'start' => $startDateValue,
             'end' => $endDateValue,
         ]);
-        
+
         // Плановые даты
         if ($startDateValue && $endDateValue) {
             try {
                 Log::info('[ScheduleTaskObserver] Парсинг плановых дат');
-                
-                $startDate = $startDateValue instanceof Carbon 
-                    ? $startDateValue 
+
+                $startDate = $startDateValue instanceof Carbon
+                    ? $startDateValue
                     : Carbon::parse($startDateValue);
-                    
-                $endDate = $endDateValue instanceof Carbon 
-                    ? $endDateValue 
+
+                $endDate = $endDateValue instanceof Carbon
+                    ? $endDateValue
                     : Carbon::parse($endDateValue);
-                
+
                 Log::info('[ScheduleTaskObserver] Даты распарсены', [
                     'start' => $startDate->format('Y-m-d'),
                     'end' => $endDate->format('Y-m-d'),
                 ]);
-                
+
                 if ($endDate < $startDate) {
                     $errors['planned_end_date'] = ['Дата окончания должна быть позже или равна дате начала'];
                     Log::warning('[ScheduleTaskObserver] Дата окончания раньше даты начала');
@@ -210,27 +279,27 @@ class ScheduleTaskObserver
                     'start' => $startDateValue,
                     'end' => $endDateValue,
                 ]);
-                $errors['planned_dates'] = ['Неверный формат даты: ' . $e->getMessage()];
+                $errors['planned_dates'] = ['Неверный формат даты: '.$e->getMessage()];
             }
         }
 
         // Получаем фактические даты из атрибутов напрямую
         $actualStartValue = $task->attributes['actual_start_date'] ?? $task->actual_start_date;
         $actualEndValue = $task->attributes['actual_end_date'] ?? $task->actual_end_date;
-        
+
         // Фактические даты
         if ($actualStartValue && $actualEndValue) {
             try {
                 Log::info('[ScheduleTaskObserver] Парсинг фактических дат');
-                
-                $actualStartDate = $actualStartValue instanceof Carbon 
-                    ? $actualStartValue 
+
+                $actualStartDate = $actualStartValue instanceof Carbon
+                    ? $actualStartValue
                     : Carbon::parse($actualStartValue);
-                    
-                $actualEndDate = $actualEndValue instanceof Carbon 
-                    ? $actualEndValue 
+
+                $actualEndDate = $actualEndValue instanceof Carbon
+                    ? $actualEndValue
                     : Carbon::parse($actualEndValue);
-                
+
                 if ($actualEndDate < $actualStartDate) {
                     $errors['actual_end_date'] = ['Фактическая дата окончания должна быть позже или равна дате начала'];
                     Log::warning('[ScheduleTaskObserver] Фактическая дата окончания раньше даты начала');
@@ -239,17 +308,17 @@ class ScheduleTaskObserver
                 Log::error('[ScheduleTaskObserver] Ошибка парсинга фактических дат', [
                     'error' => $e->getMessage(),
                 ]);
-                $errors['actual_dates'] = ['Неверный формат даты: ' . $e->getMessage()];
+                $errors['actual_dates'] = ['Неверный формат даты: '.$e->getMessage()];
             }
         }
 
-        if (!empty($errors)) {
+        if (! empty($errors)) {
             Log::error('[ScheduleTaskObserver] Ошибки валидации', [
                 'errors' => $errors,
             ]);
             throw new ScheduleValidationException('Ошибка валидации дат задачи', $errors);
         }
-        
+
         Log::info('[ScheduleTaskObserver] validateDates completed successfully');
     }
 
@@ -261,20 +330,20 @@ class ScheduleTaskObserver
         // Плановая длительность
         $startDateValue = $task->attributes['planned_start_date'] ?? $task->planned_start_date;
         $endDateValue = $task->attributes['planned_end_date'] ?? $task->planned_end_date;
-        
+
         if ($startDateValue && $endDateValue) {
             try {
-                $startDate = $startDateValue instanceof Carbon 
-                    ? $startDateValue 
+                $startDate = $startDateValue instanceof Carbon
+                    ? $startDateValue
                     : Carbon::parse($startDateValue);
-                    
-                $endDate = $endDateValue instanceof Carbon 
-                    ? $endDateValue 
+
+                $endDate = $endDateValue instanceof Carbon
+                    ? $endDateValue
                     : Carbon::parse($endDateValue);
-                
+
                 $duration = $startDate->diffInDays($endDate) + 1;
                 $task->setAttribute('planned_duration_days', $duration);
-                
+
                 Log::info('[ScheduleTaskObserver] Плановая длительность вычислена', [
                     'planned_duration_days' => $duration,
                     'start' => $startDate->format('Y-m-d'),
@@ -291,24 +360,24 @@ class ScheduleTaskObserver
             // Если даты не указаны, устанавливаем 1 день по умолчанию
             $task->setAttribute('planned_duration_days', 1);
         }
-        
+
         // Фактическая длительность
         $actualStartValue = $task->attributes['actual_start_date'] ?? $task->actual_start_date;
         $actualEndValue = $task->attributes['actual_end_date'] ?? $task->actual_end_date;
-        
+
         if ($actualStartValue && $actualEndValue) {
             try {
-                $actualStartDate = $actualStartValue instanceof Carbon 
-                    ? $actualStartValue 
+                $actualStartDate = $actualStartValue instanceof Carbon
+                    ? $actualStartValue
                     : Carbon::parse($actualStartValue);
-                    
-                $actualEndDate = $actualEndValue instanceof Carbon 
-                    ? $actualEndValue 
+
+                $actualEndDate = $actualEndValue instanceof Carbon
+                    ? $actualEndValue
                     : Carbon::parse($actualEndValue);
-                
+
                 $actualDuration = $actualStartDate->diffInDays($actualEndDate) + 1;
                 $task->setAttribute('actual_duration_days', $actualDuration);
-                
+
                 Log::info('[ScheduleTaskObserver] Фактическая длительность вычислена', [
                     'actual_duration_days' => $actualDuration,
                 ]);
@@ -319,6 +388,4 @@ class ScheduleTaskObserver
             }
         }
     }
-
 }
-

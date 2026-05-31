@@ -2,53 +2,54 @@
 
 namespace App\Providers;
 
-use Illuminate\Support\ServiceProvider;
-use Illuminate\Support\Facades\App;
-use Illuminate\Support\Facades\Gate;
-use App\Services\Organization\OrganizationContext;
-use App\Services\FileService;
-use App\Services\Export\ExcelExporterService;
-use App\Services\Report\MaterialReportService;
-use App\Services\Landing\ChildOrganizationUserService;
-use App\Services\RateCoefficient\RateCoefficientService;
-use App\Models\Models\Log\MaterialUsageLog;
+use App\Events\OrganizationOnboardingCompleted;
+use App\Events\OrganizationProfileUpdated;
+use App\Events\ProjectOrganizationAdded;
+use App\Events\ProjectOrganizationRemoved;
+use App\Events\ProjectOrganizationRoleChanged;
+use App\Listeners\InvalidateProjectContextCache;
+use App\Listeners\LogProjectOrganizationActivity;
+use App\Listeners\SendTrialExpiredNotification;
+use App\Listeners\SuggestModulesBasedOnCapabilities;
 use App\Models\CompletedWork;
 use App\Models\MaterialReceipt;
-use App\Models\Project;
+use App\Models\Models\Log\MaterialUsageLog;
 use App\Models\Organization;
+use App\Models\Project;
 use App\Models\ProjectOrganization;
+use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
-use App\Models\TaskDependency;
-use App\Models\TaskResource;
+use App\Models\SystemAdmin;
 // ОТКЛЮЧЕНЫ: переключились на warehouse_balances
 // use App\Observers\MaterialUsageLogObserver;
-use App\Observers\CompletedWorkObserver;
+use App\Models\TaskDependency;
 // use App\Observers\MaterialReceiptObserver;
-use App\Observers\ProjectObserver;
+use App\Models\TaskResource;
+use App\Modules\Core\AccessController;
+use App\Modules\Core\BillingEngine;
+use App\Modules\Core\ModuleRegistry;
+use App\Modules\Core\ModuleScanner;
+use App\Modules\Events\TrialExpired;
+use App\Observers\CompletedWorkObserver;
 use App\Observers\OrganizationObserver;
+use App\Observers\ProjectObserver;
 use App\Observers\ProjectOrganizationObserver;
+use App\Observers\ProjectScheduleObserver;
+use App\Observers\ScheduleTaskIntervalObserver;
 use App\Observers\ScheduleTaskObserver;
 use App\Observers\TaskDependencyObserver;
 use App\Observers\TaskResourceObserver;
-use App\Observers\ScheduleTaskIntervalObserver;
+use App\Services\Export\ExcelExporterService;
+use App\Services\FileService;
+use App\Services\Landing\ChildOrganizationUserService;
+use App\Services\RateCoefficient\RateCoefficientService;
+use App\Services\Report\MaterialReportService;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Event;
-use Illuminate\Support\Facades\Auth;
-use App\Events\ProjectOrganizationAdded;
-use App\Events\ProjectOrganizationRoleChanged;
-use App\Events\ProjectOrganizationRemoved;
-use App\Events\OrganizationProfileUpdated;
-use App\Events\OrganizationOnboardingCompleted;
-use App\Listeners\LogProjectOrganizationActivity;
-use App\Listeners\InvalidateProjectContextCache;
-use App\Listeners\SuggestModulesBasedOnCapabilities;
-use App\Listeners\SendTrialExpiredNotification;
-use App\Modules\Events\TrialExpired;
-use App\Modules\Core\ModuleScanner;
-use App\Modules\Core\ModuleRegistry;
-use App\Modules\Core\BillingEngine;
-use App\Modules\Core\AccessController;
-use App\Models\SystemAdmin;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\ServiceProvider;
+
 class AppServiceProvider extends ServiceProvider
 {
     /**
@@ -64,7 +65,7 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(ExcelExporterService::class, function ($app) {
             return new ExcelExporterService($app->make(\App\Services\Logging\LoggingService::class));
         });
-        
+
         // Регистрируем MaterialReportService как singleton
         $this->app->singleton(MaterialReportService::class, function ($app) {
             return new MaterialReportService($app->make(RateCoefficientService::class));
@@ -78,7 +79,7 @@ class AppServiceProvider extends ServiceProvider
                 $app->make(\App\Services\UserInvitationService::class)
             );
         });
-        
+
         // Регистрируем UserService с AuthorizationService
         $this->app->singleton(\App\Services\User\UserService::class, function ($app) {
             return new \App\Services\User\UserService(
@@ -107,7 +108,7 @@ class AppServiceProvider extends ServiceProvider
         });
 
         $this->app->scoped(\App\Services\Schedule\AutoSchedulingService::class);
-        
+
         // Репозиторий дашборда ЛК
         $this->app->bind(\App\Repositories\Landing\OrganizationDashboardRepositoryInterface::class, \App\Repositories\Landing\EloquentOrganizationDashboardRepository::class);
 
@@ -116,13 +117,13 @@ class AppServiceProvider extends ServiceProvider
         // Доп соглашения и спецификации
         $this->app->bind(\App\Repositories\Interfaces\SupplementaryAgreementRepositoryInterface::class, \App\Repositories\SupplementaryAgreementRepository::class);
         $this->app->bind(\App\Repositories\Interfaces\SpecificationRepositoryInterface::class, \App\Repositories\SpecificationRepository::class);
-        
+
         // Регистрируем модульную систему
         $this->app->singleton(ModuleRegistry::class);
         $this->app->singleton(ModuleScanner::class);
         $this->app->singleton(BillingEngine::class);
         $this->app->singleton(AccessController::class);
-        
+
         // Регистрируем модули
         $this->app->register(\App\BusinessModules\Core\Organizations\OrganizationsServiceProvider::class);
         $this->app->register(\App\BusinessModules\Core\Users\UsersServiceProvider::class);
@@ -132,10 +133,10 @@ class AppServiceProvider extends ServiceProvider
         $this->app->register(\App\BusinessModules\Enterprise\MultiOrganization\Core\MultiOrganizationEventServiceProvider::class);
         $this->app->register(\App\BusinessModules\Addons\MaterialAnalytics\MaterialAnalyticsServiceProvider::class);
         $this->app->register(\App\BusinessModules\ContractorMarketplace\ContractorMarketplaceServiceProvider::class);
-        
+
         // Регистрируем складские модули
         $this->app->register(\App\BusinessModules\Features\BasicWarehouse\BasicWarehouseServiceProvider::class);
-        
+
         // Error Tracking Services
         $this->app->singleton(\App\Services\ErrorTracking\ErrorTrackingService::class);
         $this->app->singleton(\App\Services\ErrorTracking\ErrorTrackingServiceAsync::class);
@@ -158,7 +159,6 @@ class AppServiceProvider extends ServiceProvider
                 && $user->hasSystemPermission('system_admin.api_docs.view');
         });
 
-        
         // ОТКЛЮЧЕНЫ: переключились на warehouse_balances вместо material_balances
         // MaterialUsageLog::observe(MaterialUsageLogObserver::class);
         CompletedWork::observe(CompletedWorkObserver::class);
@@ -168,33 +168,34 @@ class AppServiceProvider extends ServiceProvider
         ProjectOrganization::observe(ProjectOrganizationObserver::class);
         \App\Models\OrganizationModuleActivation::observe(\App\Observers\OrganizationModuleActivationObserver::class);
         \App\Models\Contract::observe(\App\Observers\ContractObserver::class);
-        
+
         // Contract-related observers for non-fixed amount contracts
         \App\Models\ContractPerformanceAct::observe(\App\Observers\ContractPerformanceActObserver::class);
         \App\Models\SupplementaryAgreement::observe(\App\Observers\SupplementaryAgreementObserver::class);
-        
+
         // Schedule observers
+        ProjectSchedule::observe(ProjectScheduleObserver::class);
         ScheduleTask::observe(ScheduleTaskObserver::class);
         \App\Models\ScheduleTaskInterval::observe(ScheduleTaskIntervalObserver::class);
         TaskDependency::observe(TaskDependencyObserver::class);
         TaskResource::observe(TaskResourceObserver::class);
-        
+
         // Estimate Position Catalog Observer
         \App\Models\EstimatePositionCatalog::observe(\App\Observers\EstimatePositionCatalogObserver::class);
-        
+
         // Project-Based RBAC Events
         Event::listen(ProjectOrganizationAdded::class, [LogProjectOrganizationActivity::class, 'handleAdded']);
         Event::listen(ProjectOrganizationAdded::class, [InvalidateProjectContextCache::class, 'handleAdded']);
-        
+
         Event::listen(ProjectOrganizationRoleChanged::class, [LogProjectOrganizationActivity::class, 'handleRoleChanged']);
         Event::listen(ProjectOrganizationRoleChanged::class, [InvalidateProjectContextCache::class, 'handleRoleChanged']);
-        
+
         Event::listen(ProjectOrganizationRemoved::class, [LogProjectOrganizationActivity::class, 'handleRemoved']);
         Event::listen(ProjectOrganizationRemoved::class, [InvalidateProjectContextCache::class, 'handleRemoved']);
-        
+
         // Organization Profile Events
         Event::listen(OrganizationProfileUpdated::class, [SuggestModulesBasedOnCapabilities::class, 'handleProfileUpdated']);
-        
+
         Event::listen(OrganizationOnboardingCompleted::class, [SuggestModulesBasedOnCapabilities::class, 'handleOnboardingCompleted']);
 
         Event::listen(TrialExpired::class, SendTrialExpiredNotification::class);
@@ -219,7 +220,7 @@ class AppServiceProvider extends ServiceProvider
                 ->exists();
 
             // Если системных шаблонов нет - синхронизируем автоматически при первом веб-запросе
-            if (!$hasSystemTemplates) {
+            if (! $hasSystemTemplates) {
                 $this->syncReportTemplatesFromJson();
             }
 
@@ -227,7 +228,7 @@ class AppServiceProvider extends ServiceProvider
             // Если таблицы еще нет (миграции не запущены) - просто пропускаем
             // Log::debug('Skip report templates sync: ' . $e->getMessage());
         } catch (\Exception $e) {
-            Log::warning('Failed to sync report templates: ' . $e->getMessage());
+            Log::warning('Failed to sync report templates: '.$e->getMessage());
         }
     }
 
@@ -237,17 +238,17 @@ class AppServiceProvider extends ServiceProvider
     protected function syncReportTemplatesFromJson(): void
     {
         $templatesPath = config_path('report-templates');
-        
-        if (!is_dir($templatesPath)) {
+
+        if (! is_dir($templatesPath)) {
             return;
         }
 
-        $jsonFiles = glob($templatesPath . '/*.json');
+        $jsonFiles = glob($templatesPath.'/*.json');
 
         foreach ($jsonFiles as $jsonFile) {
             try {
                 $templates = json_decode(file_get_contents($jsonFile), true);
-                
+
                 if (json_last_error() !== JSON_ERROR_NONE) {
                     continue;
                 }
@@ -270,11 +271,11 @@ class AppServiceProvider extends ServiceProvider
             } catch (\Exception $e) {
                 Log::warning('Failed to sync report template from JSON', [
                     'file' => basename($jsonFile),
-                    'error' => $e->getMessage()
+                    'error' => $e->getMessage(),
                 ]);
             }
         }
-        
+
         Log::info('Report templates synced from JSON files');
     }
-} 
+}

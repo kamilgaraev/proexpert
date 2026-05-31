@@ -11,6 +11,8 @@ use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\ProjectSchedule;
+use App\Models\ScheduleTask;
 use App\Models\User;
 use App\Services\Analytics\EVMService;
 use Carbon\Carbon;
@@ -92,7 +94,7 @@ class DashboardEVMServiceTest extends TestCase
 
         [$organization, $user] = $this->createOrganizationAndUser();
         $project = $this->createProject($organization, [
-            'budget_amount' => 2000,
+            'budget_amount' => 3000,
             'start_date' => '2026-01-01',
             'end_date' => '2026-01-30',
         ]);
@@ -135,6 +137,80 @@ class DashboardEVMServiceTest extends TestCase
 
         $this->assertSame(2000.0, $metrics['bac']);
         $this->assertSame(1000.0, $metrics['pv']);
+    }
+
+    public function test_project_schedule_changes_invalidate_evm_cache_for_project(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-01-15 12:00:00'));
+
+        [$organization, $user] = $this->createOrganizationAndUser();
+        $project = $this->createProject($organization, [
+            'budget_amount' => 1000,
+            'start_date' => '2026-01-01',
+            'end_date' => '2026-01-10',
+        ]);
+
+        Cache::put($this->evmCacheKey($project), ['stale' => true], 600);
+
+        ProjectSchedule::query()->create([
+            'project_id' => $project->id,
+            'organization_id' => $organization->id,
+            'created_by_user_id' => $user->id,
+            'name' => 'Schedule cache test',
+            'planned_start_date' => '2026-01-01',
+            'planned_end_date' => '2026-01-10',
+            'status' => 'active',
+            'total_estimated_cost' => 1000,
+            'overall_progress_percent' => 0,
+        ]);
+
+        $this->assertFalse(Cache::has($this->evmCacheKey($project)));
+    }
+
+    public function test_schedule_task_plan_changes_invalidate_evm_cache_for_project(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-01-15 12:00:00'));
+
+        [$organization, $user] = $this->createOrganizationAndUser();
+        $project = $this->createProject($organization, [
+            'budget_amount' => 1000,
+            'start_date' => '2026-01-01',
+            'end_date' => '2026-01-10',
+        ]);
+        $scheduleId = DB::table('project_schedules')->insertGetId([
+            'project_id' => $project->id,
+            'organization_id' => $organization->id,
+            'created_by_user_id' => $user->id,
+            'name' => 'Task cache test',
+            'planned_start_date' => '2026-01-01',
+            'planned_end_date' => '2026-01-10',
+            'status' => 'active',
+            'total_estimated_cost' => 1000,
+            'overall_progress_percent' => 0,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        Cache::put($this->evmCacheKey($project), ['stale' => true], 600);
+
+        ScheduleTask::query()->create([
+            'schedule_id' => $scheduleId,
+            'organization_id' => $organization->id,
+            'created_by_user_id' => $user->id,
+            'name' => 'Task cache invalidation',
+            'task_type' => 'task',
+            'planned_start_date' => '2026-01-01',
+            'planned_end_date' => '2026-01-10',
+            'planned_duration_days' => 10,
+            'planned_work_hours' => 0,
+            'actual_work_hours' => 0,
+            'progress_percent' => 0,
+            'status' => 'not_started',
+            'priority' => 'normal',
+            'estimated_cost' => 1000,
+        ]);
+
+        $this->assertFalse(Cache::has($this->evmCacheKey($project)));
     }
 
     public function test_earned_value_uses_performance_act_lines_when_they_exist(): void
