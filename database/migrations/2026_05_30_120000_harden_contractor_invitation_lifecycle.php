@@ -82,10 +82,11 @@ return new class extends Migration
         $driver = DB::getDriverName();
 
         if ($driver === 'pgsql') {
+            DB::statement('ALTER TABLE contractor_invitations DROP CONSTRAINT IF EXISTS unique_active_invitation');
             DB::statement('DROP INDEX IF EXISTS unique_active_invitation');
             DB::statement('DROP INDEX IF EXISTS contractor_invitations_pending_pair_unique');
             DB::statement(
-                "CREATE UNIQUE INDEX contractor_invitations_pending_pair_unique ON contractor_invitations (organization_id, invited_organization_id) WHERE status = 'pending'"
+                "CREATE UNIQUE INDEX IF NOT EXISTS contractor_invitations_pending_pair_unique ON contractor_invitations (organization_id, invited_organization_id) WHERE status = 'pending'"
             );
         }
 
