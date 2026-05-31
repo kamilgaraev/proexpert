@@ -125,6 +125,9 @@ return [
     'import_pdf_ocr_disabled' => 'Распознавание текста PDF временно отключено.',
     'import_pdf_ocr_failed' => 'Не удалось распознать текст PDF.',
     'import_pdf_ocr_empty' => 'После распознавания в PDF не найден текст сметы.',
+    'import_math_zero_total_mismatch' => 'Проверьте сумму строки: при количестве :quantity и цене :unit_price итог не может быть :total.',
+    'import_math_total_mismatch' => 'Проверьте расчет строки: :quantity × :unit_price = :calculated, а в файле указано :total. Расхождение: :diff.',
+    'import_math_coefficient_mismatch' => 'Проверьте индекс пересчета: база :base × индекс :coefficient = :calculated, а указано :current.',
 
     'export_error' => 'Не удалось экспортировать смету.',
     'export_ks2_act_required' => 'Для экспорта КС-2 нужен хотя бы один акт по контракту.',
