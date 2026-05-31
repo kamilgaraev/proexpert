@@ -28,7 +28,7 @@ class PurchaseContractController extends Controller
 
             $query = Contract::forOrganization($organizationId)
                 ->procurementContracts()
-                ->with(['supplier', 'project', 'organization']);
+                ->with(['supplier', 'contractor', 'project', 'organization']);
 
             if ($request->has('supplier_id')) {
                 $supplierId = $request->input('supplier_id');
@@ -91,7 +91,7 @@ class PurchaseContractController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             $contract = Contract::forOrganization($organizationId)
                 ->procurementContracts()
-                ->with(['supplier', 'project', 'organization'])
+                ->with(['supplier', 'contractor', 'project', 'organization'])
                 ->find($id);
 
             if (!$contract) {
