@@ -105,6 +105,10 @@ final class PdfEstimateTableNormalizer
             return null;
         }
 
+        if ($this->startsWithScaleUnitNoise($sectionNumber, $tokens)) {
+            return null;
+        }
+
         $tailCells = [];
         $cursor = count($tokens) - 1;
         while ($cursor >= 0 && $this->isTailCell($tokens[$cursor])) {
@@ -140,6 +144,11 @@ final class PdfEstimateTableNormalizer
             return null;
         }
 
+        $unit = implode(' ', $unitTokens);
+        if ($this->isSummaryOrResourceRow($itemName) || $this->isSummaryOrResourceRow($unit)) {
+            return null;
+        }
+
         $quantity = $this->number($numericTail[0]);
         $total = $this->number($numericTail[count($numericTail) - 1]);
         $unitPrice = count($numericTail) >= 3
@@ -150,7 +159,7 @@ final class PdfEstimateTableNormalizer
             rowNumber: $rowNumber,
             sectionNumber: $sectionNumber,
             itemName: $itemName,
-            unit: implode(' ', $unitTokens),
+            unit: $unit,
             quantity: $quantity,
             unitPrice: $unitPrice,
             code: $code,
@@ -173,6 +182,25 @@ final class PdfEstimateTableNormalizer
     private function isUnitScaleToken(string $token): bool
     {
         return in_array($token, ['10', '100', '1000'], true);
+    }
+
+    private function startsWithScaleUnitNoise(string $sectionNumber, array $tokens): bool
+    {
+        if (!in_array($sectionNumber, ['10', '100', '1000'], true)) {
+            return false;
+        }
+
+        $nextToken = mb_strtolower((string) ($tokens[0] ?? ''));
+
+        return preg_match('/^(?:м|м2|м²|м3|м³|кг|т|шт|чел|маш|руб|%)/u', $nextToken) === 1;
+    }
+
+    private function isSummaryOrResourceRow(string $itemName): bool
+    {
+        return preg_match(
+            '/\b(итого|всего|сметная прибыль|накладные расходы|зарплата|эксплуатация машин|материальные|материальные ресурсы|оборудование|ресурсы)\b/ui',
+            $itemName
+        ) === 1;
     }
 
     private function looksLikeRateCode(string $token): bool

@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportDTO;
+use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\Csv\LocalCsvHandler;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\Excel\CustomExcelHandler;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\Pdf\PdfEstimateHandler;
@@ -362,14 +363,17 @@ class ImportContractCleanupTest extends TestCase
 
     public function test_pdf_handler_blocks_low_quality_rows_from_scrambled_text_layer(): void
     {
-        $rows = (new PdfEstimateTableNormalizer())->normalize(implode("\n", [
-            '1000 м34,9875 6 406,61 01-01- 014-5 Зарплата 244,30 1 218,45 19,69 23 991,21',
-            '1 2 3 4 5 6 7 8 9 10 11 Материальные ресурсы 170,77 170,77 8,4 1 434,47',
-            '1000 м3 0,09 465,88 01-01- 033-1 Эксплуатация машин 465,88 41,93 9,24 387,43',
-            '100 м трубопр овода 4,57 293,70',
-            '1 2 3 4 5 6 7 8 9 10 11 Сметная прибыль % 65,00 196,81((*0.8)) 52,00 3 100,23',
-            '7 455 315,732 390 861,40 Дом №2 Итого 7 455 315,73',
-        ]));
+        $rows = [
+            new EstimateImportRowDTO(
+                rowNumber: 1,
+                sectionNumber: '1',
+                itemName: '2 3 4 5 6 7 8 9 10 11 Материальные ресурсы',
+                unit: 'ресурсы',
+                quantity: 170.77,
+                unitPrice: 170.77,
+                currentTotalAmount: 434.47,
+            ),
+        ];
         $preview = new ImportPreviewResult(
             formatSlug: 'pdf_estimate',
             items: array_map(static fn ($row): array => $row->toArray(), $rows),
@@ -395,6 +399,25 @@ class ImportContractCleanupTest extends TestCase
         self::assertNotEmpty($rows);
         self::assertFalse($validation->isValid());
         self::assertContains(trans_message('estimate.import_pdf_table_quality_failed'), $validation->errors);
+    }
+
+    public function test_pdf_table_normalizer_ignores_resource_and_total_noise_from_text_layer(): void
+    {
+        $rows = (new PdfEstimateTableNormalizer())->normalize(implode("\n", [
+            '"СОГЛАСОВАНО"',
+            'Цена Попра- Стои- ПунктКоэффи- Стои-',
+            '№ Шифр ЕдиницаКол-во за ед. вочные мость коэфф.циенты мость в',
+            'п/прасценкиНаименование работ и затрат изме-единиц изм. коэффи- в ценах пере- пере- текущих',
+            '1 2 3 4 5 6 7 8 9 10 11',
+            '1000 м34,9875 6 406,61 01-01- 014-5 Зарплата 244,30 1 218,45 19,69 23 991,21',
+            '1 2 3 4 5 6 7 8 9 10 11 Материальные ресурсы 170,77 170,77 8,4 1 434,47',
+            '1000 м3 0,09 465,88 01-01- 033-1 Эксплуатация машин 465,88 41,93 9,24 387,43',
+            '100 м трубопр овода 4,57 293,70',
+            '1 2 3 4 5 6 7 8 9 10 11 Сметная прибыль % 65,00 196,81((*0.8)) 52,00 3 100,23',
+            '7 455 315,732 390 861,40 Дом №2 Итого 7 455 315,73',
+        ]));
+
+        self::assertSame([], array_map(static fn ($row): array => $row->toArray(), $rows));
     }
 
     public function test_pdf_handler_uses_ocr_when_text_layer_is_unusable(): void

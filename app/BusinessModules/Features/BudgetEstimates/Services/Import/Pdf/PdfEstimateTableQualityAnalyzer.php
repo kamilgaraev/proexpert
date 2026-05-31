@@ -75,6 +75,7 @@ final readonly class PdfEstimateTableQualityAnalyzer
         $quantity = (float) ($item['quantity'] ?? 0);
         $total = (float) (($item['current_total_amount'] ?? null) ?? ($item['total_amount'] ?? 0));
         $hasCode = trim((string) ($item['code'] ?? '')) !== '';
+        $sectionNumber = trim((string) ($item['section_number'] ?? ''));
         $score = 0.0;
 
         if ($name !== '' && preg_match('/\p{L}/u', $name) === 1 && mb_strlen($name) >= 4) {
@@ -85,8 +86,10 @@ final readonly class PdfEstimateTableQualityAnalyzer
             $score += 0.2;
         }
 
-        if ($unit !== '' && !$this->isSuspiciousPdfUnit($unit)) {
-            $score += 0.2;
+        if ($this->isKnownEstimateUnit($unit)) {
+            $score += 0.22;
+        } elseif ($unit !== '' && !$this->isSuspiciousPdfUnit($unit)) {
+            $score += 0.1;
         }
 
         if ($quantity > 0.0 && $total > 0.0) {
@@ -107,7 +110,15 @@ final readonly class PdfEstimateTableQualityAnalyzer
             $score -= 0.2;
         }
 
-        if (preg_match('/\b(итого|сметная прибыль|накладные расходы|зарплата|эксплуатация машин)\b/ui', $name) === 1) {
+        if ($this->containsSummaryOrResourceTerms($name)) {
+            $score -= 0.45;
+        }
+
+        if (in_array($sectionNumber, ['10', '100', '1000'], true) && !$hasCode) {
+            $score -= 0.25;
+        }
+
+        if ($this->hasHighNumericDensity($name)) {
             $score -= 0.25;
         }
 
@@ -139,5 +150,32 @@ final readonly class PdfEstimateTableQualityAnalyzer
     {
         return in_array($unit, ['зарплата', 'машин', 'ресурсы', 'итого', 'машинистов'], true)
             || preg_match('/\d|\(|\)/u', $unit) === 1;
+    }
+
+    private function isKnownEstimateUnit(string $unit): bool
+    {
+        return preg_match(
+            '/^(?:м|м2|м²|м3|м³|кг|т|шт|компл|пог\.?\s?м|чел-ч|маш-ч|смета|раз|sht|pcs|m2|m3|kg)$/u',
+            $unit
+        ) === 1;
+    }
+
+    private function containsSummaryOrResourceTerms(string $name): bool
+    {
+        return preg_match(
+            '/\b(итого|всего|сметная прибыль|накладные расходы|зарплата|эксплуатация машин|материальные|материальные ресурсы|оборудование|ресурсы)\b/ui',
+            $name
+        ) === 1;
+    }
+
+    private function hasHighNumericDensity(string $name): bool
+    {
+        $numericTokens = preg_match_all('/\d+(?:[,.]\d+)?/u', $name);
+        $wordTokens = preg_match_all('/\p{L}{2,}/u', $name);
+
+        return is_int($numericTokens)
+            && is_int($wordTokens)
+            && $numericTokens >= 4
+            && $numericTokens >= ($wordTokens * 2);
     }
 }

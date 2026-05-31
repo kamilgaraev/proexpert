@@ -19,7 +19,7 @@ use Illuminate\Support\Facades\Cache;
 
 final readonly class PdfEstimateHandler implements RuntimeImportFormatHandlerInterface
 {
-    private const MIN_TABLE_QUALITY_SCORE = 0.6;
+    private const MIN_TABLE_QUALITY_SCORE = 0.75;
 
     public function __construct(
         private PdfEstimateTextExtractor $extractor,
