@@ -261,11 +261,17 @@ class ImportPipelineService
             return null;
         }
 
+        $columnMapping = ImportStructureResult::columnMappingFromArray($structure);
+        $detectedColumns = $structure['detected_columns'] ?? [];
+        if ((!is_array($detectedColumns) || $detectedColumns === []) && $columnMapping !== []) {
+            $detectedColumns = ImportStructureResult::detectedColumnsFromMapping($columnMapping);
+        }
+
         return new ImportStructureResult(
             formatSlug: $formatSlug,
             headerRow: isset($structure['header_row']) ? (int) $structure['header_row'] : null,
-            columnMapping: $structure['column_mapping'] ?? [],
-            detectedColumns: $structure['detected_columns'] ?? [],
+            columnMapping: $columnMapping,
+            detectedColumns: is_array($detectedColumns) ? $detectedColumns : [],
             rawHeaders: $structure['raw_headers'] ?? [],
             sampleRows: $structure['sample_rows'] ?? [],
             headerCandidates: $structure['header_candidates'] ?? [],

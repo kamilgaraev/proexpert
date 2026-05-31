@@ -141,6 +141,13 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
         $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeCodeService::class);
         $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeMatchingService::class);
         $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\ResourceMatchingService::class);
+        $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetAiColumnMapper::class, function ($app) {
+            $providerClass = \App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface::class;
+
+            return new \App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetAiColumnMapper(
+                $app->bound($providerClass) ? $app->make($providerClass) : null,
+            );
+        });
         
         $this->app->singleton(GrandSmetaHandler::class);
         $this->app->singleton(GrandSmetaRuntimeBridge::class);

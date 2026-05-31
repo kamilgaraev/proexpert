@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
+use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportDTO;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\Csv\LocalCsvHandler;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\Excel\CustomExcelHandler;
@@ -20,6 +21,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\Pdf\PdfEstimate
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Pdf\PdfEstimateTextExtractor;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportPreviewResult;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\RuntimeImportFormatHandlerInterface;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetAiColumnMapper;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetHeaderDetector;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetTableReader;
 use App\Models\ImportSession;
@@ -52,6 +54,104 @@ class ImportContractCleanupTest extends TestCase
         } finally {
             @unlink($filePath);
         }
+    }
+
+    public function test_custom_excel_handler_maps_commercial_estimate_columns(): void
+    {
+        $filePath = $this->createTemporarySpreadsheet([
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [null, '№', 'Наименование работ', 'ед.изм.', 'кол-во', 'Расценка, ед., руб.', 'ВСЕГО, руб.', 'Примечания'],
+            [null, 'Работы', null, null, null, null, null, null],
+            [null, 'Раздел №1. Земляные работы.', null, null, null, null, null, null],
+            [null, 1, 'Геодезические работы по привязке и разбивке осей дома', 'м2', 40, 180, 7200, null],
+            [null, 2, 'Планировка площадей бульдозером', 'м2', 40, 250, 10000, null],
+            [null, 'Итого по разделу 1:', null, null, null, null, 17200, null],
+            [null, 'Раздел №3. Монтаж каркаса.', null, null, null, null, null, null],
+            [null, 5, 'Монтаж стоек каркаса', 'м3', 0.464, 4500, 2088, null],
+            [null, 7, 'Устройство обвязки из брусьев', 'м3', 2.154, 4500, 9693, null],
+        ]);
+
+        try {
+            $handler = new CustomExcelHandler(new SpreadsheetTableReader(), new SpreadsheetHeaderDetector());
+            $session = new ImportSession();
+            $structure = $handler->detectStructure($session, $filePath);
+            $preview = $handler->preview($session, $filePath, $structure);
+
+            self::assertSame(9, $structure->headerRow);
+            self::assertSame('B', $structure->columnMapping['position_number'] ?? null);
+            self::assertSame('C', $structure->columnMapping['name'] ?? null);
+            self::assertSame('D', $structure->columnMapping['unit'] ?? null);
+            self::assertSame('E', $structure->columnMapping['quantity'] ?? null);
+            self::assertSame('F', $structure->columnMapping['unit_price'] ?? null);
+            self::assertSame('G', $structure->columnMapping['total_price'] ?? null);
+            self::assertArrayNotHasKey('code', $structure->columnMapping);
+            self::assertCount(4, $preview->items);
+            self::assertSame('Геодезические работы по привязке и разбивке осей дома', $preview->items[0]['item_name'] ?? null);
+            self::assertSame(40.0, $preview->items[0]['quantity'] ?? null);
+            self::assertSame(180.0, $preview->items[0]['unit_price'] ?? null);
+            self::assertSame(7200.0, $preview->items[0]['current_total_amount'] ?? null);
+            self::assertSame(28981.0, $preview->totals['total_amount'] ?? null);
+        } finally {
+            @unlink($filePath);
+        }
+    }
+
+    public function test_spreadsheet_ai_column_mapper_overrides_price_column_misclassified_as_code(): void
+    {
+        $provider = new class implements LLMProviderInterface {
+            public function chat(array $messages, array $options = []): array
+            {
+                return [
+                    'content' => json_encode([
+                        'mapping' => [
+                            'position_number' => 'B',
+                            'code' => null,
+                            'name' => 'C',
+                            'unit' => 'D',
+                            'quantity' => 'E',
+                            'unit_price' => 'F',
+                            'total_price' => 'G',
+                        ],
+                        'confidence' => 0.96,
+                    ], JSON_UNESCAPED_UNICODE),
+                ];
+            }
+
+            public function countTokens(string $text): int
+            {
+                return strlen($text);
+            }
+
+            public function isAvailable(): bool
+            {
+                return true;
+            }
+
+            public function getModel(): string
+            {
+                return 'test-model';
+            }
+        };
+
+        $mapper = new SpreadsheetAiColumnMapper($provider);
+        $result = $mapper->improve(
+            [null, '№', 'Наименование работ', 'ед.изм.', 'кол-во', 'Расценка, ед., руб.', 'ВСЕГО, руб.'],
+            [[null, 1, 'Монтаж стоек каркаса', 'м3', 0.464, 4500, 2088]],
+            ['code' => 'F', 'name' => 'C', 'unit' => 'D', 'quantity' => 'E'],
+        );
+
+        self::assertTrue($result['applied'] ?? false);
+        self::assertSame('F', $result['mapping']['unit_price'] ?? null);
+        self::assertSame('G', $result['mapping']['total_price'] ?? null);
+        self::assertArrayNotHasKey('code', $result['mapping']);
+        self::assertSame('test-model', $result['model'] ?? null);
     }
 
     public function test_universal_xml_parser_stream_returns_rows(): void

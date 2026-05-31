@@ -7,19 +7,88 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadshe
 final class SpreadsheetHeaderDetector
 {
     private const FIELDS = [
-        'position_number' => ['n пп', '№ пп', 'номер', 'позиция', 'п/п', 'no'],
-        'code' => ['шифр', 'код', 'обоснование', 'норматив', 'расценка', 'code'],
-        'name' => ['наименование', 'работ', 'затрат', 'описание', 'name', 'description'],
-        'unit' => ['единица', 'ед.', 'ед изм', 'изм', 'unit'],
-        'quantity' => ['количество', 'кол-во', 'объем', 'объём', 'qty', 'quantity'],
-        'unit_price' => ['цена', 'стоимость единицы', 'единицы', 'price'],
-        'total_price' => ['сумма', 'общая стоимость', 'итого', 'total', 'amount'],
+        'position_number' => [
+            '№ пп' => 34,
+            '№ п/п' => 34,
+            'n пп' => 28,
+            'п/п' => 26,
+            'номер' => 24,
+            'позиция' => 22,
+            '№' => 20,
+            'no' => 16,
+            'number' => 16,
+        ],
+        'name' => [
+            'наименование работ' => 36,
+            'наименование затрат' => 34,
+            'наименование' => 32,
+            'описание' => 28,
+            'работ' => 24,
+            'затрат' => 22,
+            'name' => 20,
+            'description' => 20,
+        ],
+        'unit' => [
+            'ед.изм' => 34,
+            'ед изм' => 32,
+            'единица измерения' => 32,
+            'единица' => 28,
+            'ед.' => 24,
+            'изм' => 18,
+            'unit' => 18,
+        ],
+        'quantity' => [
+            'кол-во' => 34,
+            'к-во' => 32,
+            'количество' => 30,
+            'объем' => 28,
+            'объём' => 28,
+            'qty' => 20,
+            'quantity' => 20,
+        ],
+        'unit_price' => [
+            'расценка' => 40,
+            'цена за ед' => 36,
+            'цена ед' => 34,
+            'стоимость единицы' => 34,
+            'стоимость за ед' => 34,
+            'ед. руб' => 28,
+            'руб за ед' => 28,
+            'цена' => 26,
+            'price' => 20,
+        ],
+        'total_price' => [
+            'всего' => 40,
+            'всего руб' => 38,
+            'общая стоимость' => 34,
+            'стоимость всего' => 34,
+            'итого' => 28,
+            'сумма' => 26,
+            'total' => 20,
+            'amount' => 20,
+        ],
+        'code' => [
+            'обоснование' => 34,
+            'шифр' => 32,
+            'код' => 30,
+            'норматив' => 28,
+            'фер' => 18,
+            'тер' => 18,
+            'гэсн' => 18,
+            'code' => 18,
+        ],
     ];
 
-    /**
-     * @param array<int, array<int, mixed>> $rows
-     * @return array<string, mixed>
-     */
+    private const FIELD_PRIORITY = [
+        'position_number' => 70,
+        'name' => 65,
+        'unit' => 60,
+        'quantity' => 58,
+        'unit_price' => 56,
+        'total_price' => 54,
+        'code' => 40,
+    ];
+
     public function detect(array $rows): array
     {
         $best = [
@@ -61,12 +130,9 @@ final class SpreadsheetHeaderDetector
         return $best;
     }
 
-    /**
-     * @param array<int, mixed> $headers
-     * @return array<string, string>
-     */
     public function mapHeaders(array $headers): array
     {
+        $candidates = [];
         $mapping = [];
 
         foreach ($headers as $index => $header) {
@@ -75,27 +141,50 @@ final class SpreadsheetHeaderDetector
                 continue;
             }
 
-            foreach (self::FIELDS as $field => $keywords) {
-                if (isset($mapping[$field])) {
-                    continue;
-                }
-
-                foreach ($keywords as $keyword) {
-                    if (str_contains($normalized, $this->normalize($keyword))) {
-                        $mapping[$field] = $this->columnName($index);
-                        break;
-                    }
-                }
+            $best = $this->bestFieldForHeader($normalized);
+            if ($best === null) {
+                continue;
             }
+
+            $candidates[] = [
+                'field' => $best['field'],
+                'column' => $this->columnName($index),
+                'score' => $best['score'],
+                'index' => $index,
+            ];
+        }
+
+        usort($candidates, static function (array $left, array $right): int {
+            $scoreComparison = $right['score'] <=> $left['score'];
+            if ($scoreComparison !== 0) {
+                return $scoreComparison;
+            }
+
+            $priorityComparison = (self::FIELD_PRIORITY[$right['field']] ?? 0)
+                <=> (self::FIELD_PRIORITY[$left['field']] ?? 0);
+            if ($priorityComparison !== 0) {
+                return $priorityComparison;
+            }
+
+            return $left['index'] <=> $right['index'];
+        });
+
+        $usedColumns = [];
+        foreach ($candidates as $candidate) {
+            $field = (string) $candidate['field'];
+            $column = (string) $candidate['column'];
+
+            if (isset($mapping[$field]) || isset($usedColumns[$column])) {
+                continue;
+            }
+
+            $mapping[$field] = $column;
+            $usedColumns[$column] = true;
         }
 
         return $mapping;
     }
 
-    /**
-     * @param array<string, string> $mapping
-     * @param array<int, mixed> $row
-     */
     private function scoreMapping(array $mapping, array $row): int
     {
         $score = count($mapping) * 10;
@@ -111,6 +200,46 @@ final class SpreadsheetHeaderDetector
         }
 
         return max(0, $score);
+    }
+
+    private function bestFieldForHeader(string $normalized): ?array
+    {
+        $bestField = null;
+        $bestScore = 0;
+
+        foreach (self::FIELDS as $field => $keywords) {
+            foreach ($keywords as $keyword => $score) {
+                $keyword = $this->normalize((string) $keyword);
+                if ($keyword === '' || !str_contains($normalized, $keyword)) {
+                    continue;
+                }
+
+                $candidateScore = (int) $score;
+                if ($normalized === $keyword) {
+                    $candidateScore += 8;
+                }
+
+                if (
+                    $candidateScore > $bestScore
+                    || (
+                        $candidateScore === $bestScore
+                        && (self::FIELD_PRIORITY[$field] ?? 0) > (self::FIELD_PRIORITY[$bestField] ?? 0)
+                    )
+                ) {
+                    $bestField = (string) $field;
+                    $bestScore = $candidateScore;
+                }
+            }
+        }
+
+        if ($bestField === null) {
+            return null;
+        }
+
+        return [
+            'field' => $bestField,
+            'score' => $bestScore,
+        ];
     }
 
     private function normalize(string $value): string

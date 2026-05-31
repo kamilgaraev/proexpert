@@ -50,4 +50,65 @@ final readonly class ImportStructureResult
             'ai_mapping_applied' => $this->aiMappingApplied,
         ];
     }
+
+    public static function columnMappingFromArray(array $structure): array
+    {
+        $mapping = $structure['column_mapping'] ?? [];
+        if (is_array($mapping) && $mapping !== []) {
+            return self::stringMap($mapping);
+        }
+
+        $detectedColumns = $structure['detected_columns'] ?? [];
+        if (is_array($detectedColumns) && $detectedColumns !== []) {
+            $flipped = [];
+            foreach ($detectedColumns as $column => $field) {
+                if (!is_string($column) || !is_string($field) || $column === '' || $field === '') {
+                    continue;
+                }
+
+                $flipped[$field] = $column;
+            }
+
+            if ($flipped !== []) {
+                return $flipped;
+            }
+        }
+
+        $candidateMapping = $structure['header_candidates'][0]['mapping'] ?? [];
+
+        return is_array($candidateMapping) ? self::stringMap($candidateMapping) : [];
+    }
+
+    public static function detectedColumnsFromMapping(array $mapping): array
+    {
+        $detected = [];
+        foreach ($mapping as $field => $column) {
+            if (!is_string($field) || !is_string($column) || $field === '' || $column === '') {
+                continue;
+            }
+
+            $detected[$column] = $field;
+        }
+
+        return $detected;
+    }
+
+    private static function stringMap(array $mapping): array
+    {
+        $normalized = [];
+        foreach ($mapping as $field => $column) {
+            if (!is_string($field) || (!is_string($column) && !is_int($column))) {
+                continue;
+            }
+
+            $column = trim((string) $column);
+            if ($field === '' || $column === '') {
+                continue;
+            }
+
+            $normalized[$field] = $column;
+        }
+
+        return $normalized;
+    }
 }

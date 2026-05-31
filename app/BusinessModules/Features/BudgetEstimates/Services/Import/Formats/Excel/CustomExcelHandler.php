@@ -10,6 +10,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportP
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportStructureResult;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportValidationResult;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\RuntimeImportFormatHandlerInterface;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetAiColumnMapper;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetHeaderDetector;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetTableReader;
 use App\Models\ImportSession;
@@ -18,10 +19,15 @@ use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 
 class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
 {
+    protected SpreadsheetAiColumnMapper $aiColumnMapper;
+
     public function __construct(
         protected SpreadsheetTableReader $reader,
         protected SpreadsheetHeaderDetector $headerDetector,
-    ) {}
+        ?SpreadsheetAiColumnMapper $aiColumnMapper = null,
+    ) {
+        $this->aiColumnMapper = $aiColumnMapper ?? new SpreadsheetAiColumnMapper();
+    }
 
     public function slug(): string
     {
@@ -143,7 +149,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
     protected function rowsToDtos(array $rows, ImportStructureResult $structure): Generator
     {
         $headerRow = $structure->headerRow ?? 0;
-        $mapping = $structure->columnMapping;
+        $mapping = $this->mappingForStructure($structure);
 
         foreach ($rows as $rowNumber => $row) {
             if ($rowNumber <= $headerRow || $this->isEmptyRow($row) || $this->isRepeatedHeader($row, $mapping)) {
@@ -185,6 +191,53 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
                 currentTotalAmount: $total,
             );
         }
+    }
+
+    protected function mappingForStructure(ImportStructureResult $structure): array
+    {
+        $mapping = $structure->columnMapping;
+        if ($structure->rawHeaders === []) {
+            return $mapping;
+        }
+
+        $detected = $this->headerDetector->mapHeaders($structure->rawHeaders);
+        if ($this->mappingCoverageScore($detected) >= $this->mappingCoverageScore($mapping) + 20) {
+            return $detected;
+        }
+
+        if (!$this->mappingHasRequiredColumns($mapping) && $this->mappingHasRequiredColumns($detected)) {
+            return $detected;
+        }
+
+        return $mapping;
+    }
+
+    protected function mappingCoverageScore(array $mapping): int
+    {
+        $score = 0;
+        $weights = [
+            'name' => 30,
+            'quantity' => 20,
+            'unit_price' => 20,
+            'total_price' => 20,
+            'unit' => 10,
+            'position_number' => 8,
+            'code' => 5,
+        ];
+
+        foreach ($weights as $field => $weight) {
+            if (isset($mapping[$field])) {
+                $score += $weight;
+            }
+        }
+
+        return $score;
+    }
+
+    protected function mappingHasRequiredColumns(array $mapping): bool
+    {
+        return isset($mapping['name'])
+            && (isset($mapping['quantity']) || isset($mapping['unit_price']) || isset($mapping['total_price']));
     }
 
     /**
@@ -243,6 +296,19 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
         }
 
         $headerRow = $detection['header_row'] !== null ? (int) $detection['header_row'] : null;
+        $sampleRows = $this->sampleRows($rows, $headerRow);
+        $aiMapping = $this->aiColumnMapper->improve(
+            $detection['raw_headers'] ?? [],
+            $sampleRows,
+            $detection['column_mapping'] ?? [],
+        );
+        $resolvedMapping = is_array($aiMapping['mapping'] ?? null)
+            ? $aiMapping['mapping']
+            : ($detection['column_mapping'] ?? []);
+        if (($aiMapping['applied'] ?? false) === true) {
+            $detection['column_mapping'] = $resolvedMapping;
+            $detection['detected_columns'] = array_flip($resolvedMapping);
+        }
 
         return new ImportStructureResult(
             formatSlug: $this->slug(),
@@ -250,9 +316,16 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
             columnMapping: $detection['column_mapping'] ?? [],
             detectedColumns: $detection['detected_columns'] ?? [],
             rawHeaders: $detection['raw_headers'] ?? [],
-            sampleRows: $this->sampleRows($rows, $headerRow),
+            sampleRows: $sampleRows,
             headerCandidates: $detection['header_candidates'] ?? [],
             warnings: $headerRow === null ? [trans_message('estimate.import_header_not_found')] : [],
+            metadata: [
+                'column_mapping_source' => ($aiMapping['applied'] ?? false) === true ? 'ai' : 'rules',
+                'ai_mapping_reason' => $aiMapping['reason'] ?? null,
+                'ai_mapping_confidence' => $aiMapping['confidence'] ?? null,
+                'ai_mapping_model' => $aiMapping['model'] ?? null,
+            ],
+            aiMappingApplied: ($aiMapping['applied'] ?? false) === true,
         );
     }
 

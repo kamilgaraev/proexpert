@@ -132,8 +132,13 @@ class EstimateImportService
         $options = $session->options ?? [];
 
         if ($columnMapping !== null) {
+            $columnMapping = $this->normalizeColumnMappingInput($columnMapping);
+        }
+
+        if ($columnMapping !== null && $columnMapping !== []) {
             $structure = $options['structure'] ?? [];
             $structure['column_mapping'] = $columnMapping;
+            $structure['detected_columns'] = ImportStructureResult::detectedColumnsFromMapping($columnMapping);
             $options['structure'] = $structure;
             $session->update(['options' => $options]);
             $session = $session->fresh();
@@ -199,7 +204,11 @@ class EstimateImportService
             $spreadsheet->disconnectWorksheets();
 
             $signature = $this->signatureGenerator->generate($firstRow);
-            $mapping = $session->options['column_mapping'] ?? ($session->options['structure']['column_mapping'] ?? []);
+            $mapping = $session->options['column_mapping'] ?? [];
+            if ($mapping === []) {
+                $structure = $session->options['structure'] ?? [];
+                $mapping = is_array($structure) ? ImportStructureResult::columnMappingFromArray($structure) : [];
+            }
 
             if ($mapping === []) {
                 return;
@@ -336,11 +345,17 @@ class EstimateImportService
             return null;
         }
 
+        $columnMapping = ImportStructureResult::columnMappingFromArray($structure);
+        $detectedColumns = $structure['detected_columns'] ?? [];
+        if ((!is_array($detectedColumns) || $detectedColumns === []) && $columnMapping !== []) {
+            $detectedColumns = ImportStructureResult::detectedColumnsFromMapping($columnMapping);
+        }
+
         return new ImportStructureResult(
             formatSlug: $formatSlug,
             headerRow: isset($structure['header_row']) ? (int) $structure['header_row'] : null,
-            columnMapping: $structure['column_mapping'] ?? [],
-            detectedColumns: $structure['detected_columns'] ?? [],
+            columnMapping: $columnMapping,
+            detectedColumns: is_array($detectedColumns) ? $detectedColumns : [],
             rawHeaders: $structure['raw_headers'] ?? [],
             sampleRows: $structure['sample_rows'] ?? [],
             headerCandidates: $structure['header_candidates'] ?? [],
@@ -349,6 +364,25 @@ class EstimateImportService
             metadata: $structure['metadata'] ?? [],
             aiMappingApplied: (bool) ($structure['ai_mapping_applied'] ?? false),
         );
+    }
+
+    private function normalizeColumnMappingInput(array $mapping): array
+    {
+        $normalized = [];
+        foreach ($mapping as $field => $column) {
+            if (!is_string($field) || (!is_string($column) && !is_int($column))) {
+                continue;
+            }
+
+            $column = strtoupper(trim((string) $column));
+            if ($field === '' || $column === '') {
+                continue;
+            }
+
+            $normalized[$field] = $column;
+        }
+
+        return $normalized;
     }
 
     private function mapSessionStatusToOldStatus(string $status): string
