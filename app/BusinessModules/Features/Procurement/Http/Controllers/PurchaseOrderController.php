@@ -11,25 +11,27 @@ use App\BusinessModules\Features\Procurement\Http\Resources\PurchaseOrderItemRes
 use App\BusinessModules\Features\Procurement\Http\Resources\PurchaseOrderResource;
 use App\BusinessModules\Features\Procurement\Models\ProcurementAuditLog;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
-use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Services\PurchaseOrderService;
+use App\BusinessModules\Features\Procurement\Services\PurchaseReceiptDocumentPdfService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+
 use function trans_message;
 
 class PurchaseOrderController extends Controller
 {
     public function __construct(
-        private readonly PurchaseOrderService $service
-    ) {
-    }
+        private readonly PurchaseOrderService $service,
+        private readonly PurchaseReceiptDocumentPdfService $receiptDocumentPdfService
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -108,7 +110,7 @@ class PurchaseOrderController extends Controller
                 ])
                 ->find($id);
 
-            if (!$order) {
+            if (! $order) {
                 return AdminResponse::error(trans_message('procurement.purchase_orders.not_found'), 404);
             }
 
@@ -132,7 +134,7 @@ class PurchaseOrderController extends Controller
                 ->with(['items.material'])
                 ->find($id);
 
-            if (!$order) {
+            if (! $order) {
                 return AdminResponse::error(trans_message('procurement.purchase_orders.not_found'), 404);
             }
 
@@ -193,7 +195,7 @@ class PurchaseOrderController extends Controller
                 ->with(['items', 'supplier', 'externalSupplierContact', 'supplierParty', 'purchaseRequest', 'organization'])
                 ->find($id);
 
-            if (!$order) {
+            if (! $order) {
                 return AdminResponse::error(trans_message('procurement.purchase_orders.not_found'), 404);
             }
 
@@ -224,7 +226,7 @@ class PurchaseOrderController extends Controller
                 ->with(['items', 'supplier', 'supplierParty', 'organization'])
                 ->find($id);
 
-            if (!$order) {
+            if (! $order) {
                 return AdminResponse::error(trans_message('procurement.purchase_orders.not_found'), 404);
             }
 
@@ -260,7 +262,7 @@ class PurchaseOrderController extends Controller
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $order = PurchaseOrder::forOrganization($organizationId)->find($id);
 
-            if (!$order) {
+            if (! $order) {
                 return AdminResponse::error(trans_message('procurement.purchase_orders.not_found'), 404);
             }
 
@@ -302,35 +304,11 @@ class PurchaseOrderController extends Controller
                 ])
                 ->find($id);
 
-            if (!$order) {
+            if (! $order) {
                 return AdminResponse::error(trans_message('procurement.purchase_orders.not_found'), 404);
             }
 
-            $validated = $request->validate([
-                'warehouse_id' => [
-                    'required',
-                    'integer',
-                    Rule::exists('organization_warehouses', 'id')->where(static function ($query) use ($organizationId) {
-                        $query->where('organization_id', $organizationId)
-                            ->where('is_active', true)
-                            ->whereNull('deleted_at');
-                    }),
-                ],
-                'items' => ['required', 'array', 'min:1'],
-                'items.*.item_id' => [
-                    'required',
-                    'integer',
-                    Rule::exists('purchase_order_items', 'id')->where(static function ($query) use ($order) {
-                        $query->where('purchase_order_id', $order->id);
-                    }),
-                ],
-                'items.*.quantity_received' => ['required', 'numeric', 'min:0.001'],
-                'items.*.price' => ['required', 'numeric', 'min:0'],
-                'items.*.metadata' => ['sometimes', 'array'],
-                'receipt_date' => ['sometimes', 'date'],
-                'notes' => ['sometimes', 'nullable', 'string', 'max:2000'],
-                'metadata' => ['sometimes', 'array'],
-            ]);
+            $validated = $this->validateReceiptPayload($request, $order, $organizationId);
 
             $received = $this->service->receiveMaterials(
                 $order,
@@ -363,6 +341,50 @@ class PurchaseOrderController extends Controller
         }
     }
 
+    public function receiptDocumentPdf(Request $request, int $id): JsonResponse|Response
+    {
+        try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $order = PurchaseOrder::forOrganization($organizationId)
+                ->with([
+                    'items.receiptLines',
+                    'items.material',
+                    'supplier',
+                    'externalSupplierContact',
+                    'supplierParty',
+                    'purchaseRequest',
+                    'organization',
+                ])
+                ->find($id);
+
+            if (! $order) {
+                return AdminResponse::error(trans_message('procurement.purchase_orders.not_found'), 404);
+            }
+
+            $validated = $this->validateReceiptPayload($request, $order, $organizationId);
+            $document = $this->service->buildReceiptDocumentPreview(
+                $order,
+                (int) $validated['warehouse_id'],
+                $validated['items'],
+                $validated['receipt_date'] ?? null
+            );
+
+            return $this->receiptDocumentPdfService->download($order, $document);
+        } catch (ValidationException $e) {
+            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (\DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\Exception $e) {
+            Log::error('procurement.purchase_orders.receipt_document_pdf.error', [
+                'id' => $id,
+                'user_id' => auth()->id(),
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('procurement.purchase_orders.receipt_document_pdf_error'), 500);
+        }
+    }
+
     public function markInDelivery(Request $request, int $id): JsonResponse
     {
         try {
@@ -371,7 +393,7 @@ class PurchaseOrderController extends Controller
                 ->with(['items', 'supplier', 'supplierParty', 'organization'])
                 ->find($id);
 
-            if (!$order) {
+            if (! $order) {
                 return AdminResponse::error(trans_message('procurement.purchase_orders.not_found'), 404);
             }
 
@@ -406,7 +428,7 @@ class PurchaseOrderController extends Controller
             ]);
 
             $auditableType = $this->resolveAuditableType($validated['auditable_type']);
-            if (!$auditableType) {
+            if (! $auditableType) {
                 return AdminResponse::error(trans_message('procurement.audit_logs.unsupported_type'), 422);
             }
 
@@ -446,5 +468,34 @@ class PurchaseOrderController extends Controller
             'SupplierProposal', SupplierProposal::class => SupplierProposal::class,
             default => null,
         };
+    }
+
+    private function validateReceiptPayload(Request $request, PurchaseOrder $order, int $organizationId): array
+    {
+        return $request->validate([
+            'warehouse_id' => [
+                'required',
+                'integer',
+                Rule::exists('organization_warehouses', 'id')->where(static function ($query) use ($organizationId) {
+                    $query->where('organization_id', $organizationId)
+                        ->where('is_active', true)
+                        ->whereNull('deleted_at');
+                }),
+            ],
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.item_id' => [
+                'required',
+                'integer',
+                Rule::exists('purchase_order_items', 'id')->where(static function ($query) use ($order) {
+                    $query->where('purchase_order_id', $order->id);
+                }),
+            ],
+            'items.*.quantity_received' => ['required', 'numeric', 'min:0.001'],
+            'items.*.price' => ['required', 'numeric', 'min:0'],
+            'items.*.metadata' => ['sometimes', 'array'],
+            'receipt_date' => ['sometimes', 'date'],
+            'notes' => ['sometimes', 'nullable', 'string', 'max:2000'],
+            'metadata' => ['sometimes', 'array'],
+        ]);
     }
 }

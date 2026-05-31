@@ -261,6 +261,60 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         ]);
     }
 
+    public function test_purchase_order_receipt_document_pdf_can_be_downloaded_before_posting(): void
+    {
+        $context = AdminApiTestContext::create();
+        $unit = $this->createUnit($context->organization->id);
+        $material = $this->createMaterial($context->organization->id, $unit->id);
+        $purchaseRequest = $this->createPurchaseRequest($context->organization->id, $material->id);
+        $supplier = $this->createSupplier($context->organization->id, 'PDF Supplier', 'pdf@example.test');
+        $warehouse = $this->createWarehouse($context->organization->id);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $purchaseOrder = PurchaseOrder::query()->create([
+            'organization_id' => $context->organization->id,
+            'purchase_request_id' => $purchaseRequest->id,
+            'supplier_id' => $supplier->id,
+            'order_number' => 'PO-PDF-'.uniqid(),
+            'order_date' => now()->toDateString(),
+            'status' => PurchaseOrderStatusEnum::CONFIRMED,
+            'total_amount' => 500,
+            'currency' => 'RUB',
+        ]);
+
+        $item = PurchaseOrderItem::query()->create([
+            'purchase_order_id' => $purchaseOrder->id,
+            'material_id' => $material->id,
+            'material_name' => $material->name,
+            'quantity' => 5,
+            'unit' => 'pcs',
+            'unit_price' => 100,
+            'total_price' => 500,
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/receipt-document/pdf", [
+                'warehouse_id' => $warehouse->id,
+                'receipt_date' => now()->toDateString(),
+                'items' => [
+                    [
+                        'item_id' => $item->id,
+                        'quantity_received' => 5,
+                        'price' => 100,
+                    ],
+                ],
+            ]);
+
+        $response->assertOk();
+        $this->assertStringContainsString('application/pdf', (string) $response->headers->get('content-type'));
+        $this->assertStringContainsString('torg12-', (string) $response->headers->get('content-disposition'));
+        $this->assertStringStartsWith('%PDF', (string) $response->getContent());
+        $this->assertSame(0, PurchaseReceipt::query()
+            ->where('purchase_order_id', $purchaseOrder->id)
+            ->count());
+    }
+
     public function test_supplier_flow_rejects_foreign_purchase_request_supplier_and_proposal_links_without_mutation(): void
     {
         $context = AdminApiTestContext::create();

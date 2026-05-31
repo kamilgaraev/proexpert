@@ -203,16 +203,7 @@ class PurchaseOrderService
     ): PurchaseOrder {
         $this->lifecycleService->assertCanReceiveMaterials($order, $items);
 
-        $warehouse = OrganizationWarehouse::query()
-            ->where('organization_id', $order->organization_id)
-            ->where('id', $warehouseId)
-            ->where('is_active', true)
-            ->first();
-
-        if (! $warehouse) {
-            throw new \DomainException(trans_message('procurement.purchase_orders.warehouse_not_found'));
-        }
-
+        $warehouse = $this->resolveReceiptWarehouse($order, $warehouseId);
         $orderItems = $this->resolveOrderItems($order, $items);
 
         DB::beginTransaction();
@@ -357,6 +348,42 @@ class PurchaseOrderService
         }
 
         return app(PurchaseContractService::class)->createFromOrder($order);
+    }
+
+    public function buildReceiptDocumentPreview(
+        PurchaseOrder $order,
+        int $warehouseId,
+        array $items,
+        ?string $receiptDate = null
+    ): array {
+        $this->lifecycleService->assertCanReceiveMaterials($order, $items);
+
+        $warehouse = $this->resolveReceiptWarehouse($order, $warehouseId);
+        $orderItems = $this->resolveOrderItems($order, $items);
+
+        return $this->buildReceiptDocument(
+            $order,
+            $warehouse,
+            $orderItems,
+            $items,
+            trans_message('procurement.receipt_document.pending_number'),
+            $receiptDate ?: now()->toDateString()
+        );
+    }
+
+    private function resolveReceiptWarehouse(PurchaseOrder $order, int $warehouseId): OrganizationWarehouse
+    {
+        $warehouse = OrganizationWarehouse::query()
+            ->where('organization_id', $order->organization_id)
+            ->where('id', $warehouseId)
+            ->where('is_active', true)
+            ->first();
+
+        if (! $warehouse) {
+            throw new \DomainException(trans_message('procurement.purchase_orders.warehouse_not_found'));
+        }
+
+        return $warehouse;
     }
 
     private function resolveOrderItems(PurchaseOrder $order, array $items): Collection

@@ -1,16 +1,16 @@
 <?php
 
-use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementDashboardController;
-use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementAuditEventController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementApprovalController;
+use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementAuditEventController;
+use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementDashboardController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementIssueController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementSettingsController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\PublicSupplierRequestController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseContractController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseOrderController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\PurchaseRequestController;
-use App\BusinessModules\Features\Procurement\Http\Controllers\SupplierProposalDecisionController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\SupplierProposalController;
+use App\BusinessModules\Features\Procurement\Http\Controllers\SupplierProposalDecisionController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\SupplierRequestController;
 use App\Http\Responses\AdminResponse;
 use App\Support\Routing\AdminRouteStack;
@@ -104,6 +104,9 @@ Route::prefix('api/v1/admin/procurement')
             Route::post('/{id}/mark-in-delivery', [PurchaseOrderController::class, 'markInDelivery'])
                 ->middleware('authorize:procurement.purchase_orders.mark_delivery')
                 ->name('mark_in_delivery');
+            Route::post('/{id}/receipt-document/pdf', [PurchaseOrderController::class, 'receiptDocumentPdf'])
+                ->middleware('authorize:procurement.purchase_orders.receive')
+                ->name('receipt_document_pdf');
             Route::post('/{id}/receive-materials', [PurchaseOrderController::class, 'receiveMaterials'])
                 ->middleware('authorize:procurement.purchase_orders.receive')
                 ->name('receive_materials');
