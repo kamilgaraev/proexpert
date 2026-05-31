@@ -697,7 +697,6 @@ class ReportService
                 'acts.status',
                 'acts.is_approved',
                 'contracts.number as contract_number',
-                'contracts.contract_number as legacy_contract_number',
                 'contracts.subject as contract_subject',
                 'contractors.id as contractor_id',
                 'contractors.name as contractor_name',
@@ -871,7 +870,6 @@ class ReportService
                     ->where('acts.act_document_number', 'like', "%{$search}%")
                     ->orWhere('acts.description', 'like', "%{$search}%")
                     ->orWhere('contracts.number', 'like', "%{$search}%")
-                    ->orWhere('contracts.contract_number', 'like', "%{$search}%")
                     ->orWhere('contracts.subject', 'like', "%{$search}%")
                     ->orWhere('act_projects.name', 'like', "%{$search}%")
                     ->orWhere('contract_projects.name', 'like', "%{$search}%")
@@ -883,7 +881,6 @@ class ReportService
     private function mapActReportRow(object $row): array
     {
         $status = $row->status ?: ((bool) $row->is_approved ? ContractPerformanceAct::STATUS_APPROVED : ContractPerformanceAct::STATUS_DRAFT);
-        $contractNumber = $row->contract_number ?: $row->legacy_contract_number;
         $linesCount = (int) ($row->lines_count ?? 0);
         $completedWorksCount = (int) ($row->completed_works_count ?? 0);
 
@@ -894,7 +891,7 @@ class ReportService
             'period_start' => $row->period_start ? Carbon::parse($row->period_start)->toDateString() : null,
             'period_end' => $row->period_end ? Carbon::parse($row->period_end)->toDateString() : null,
             'contract_id' => (int) $row->contract_id,
-            'contract_number' => $contractNumber ?: 'Договор ' . $row->contract_id,
+            'contract_number' => $row->contract_number ?: 'Договор ' . $row->contract_id,
             'contract_subject' => $row->contract_subject,
             'project_id' => $row->resolved_project_id ? (int) $row->resolved_project_id : null,
             'project' => $row->project_name ?: 'Без объекта',
