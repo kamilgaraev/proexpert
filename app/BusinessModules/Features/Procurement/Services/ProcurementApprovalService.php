@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Services;
 
-use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\ProcurementApprovalStatusEnum;
+use App\BusinessModules\Features\Procurement\Enums\ProcurementAuditEventTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierPartyTypeEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalDecisionEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
@@ -23,15 +23,19 @@ use function trans_message;
 class ProcurementApprovalService
 {
     public const REASON_BUDGET_EXCEEDED = 'budget_exceeded';
+
     public const REASON_NON_LOWEST_PRICE = 'non_lowest_price';
+
     public const REASON_EXTERNAL_SUPPLIER_MISSING_IDENTITY = 'external_supplier_missing_identity';
+
     public const REASON_ORDER_CHANGED_AFTER_ACCEPTANCE = 'order_changed_after_acceptance';
 
     public function __construct(
         private readonly ProcurementAuditService $auditService,
         private readonly ProcurementApprovalPolicyService $policyService,
         private readonly ProcurementDutySeparationService $dutySeparationService,
-        private readonly AuthorizationService $authorizationService
+        private readonly AuthorizationService $authorizationService,
+        private readonly SupplierProposalService $proposalService
     ) {}
 
     public function evaluateForDecision(
@@ -73,7 +77,7 @@ class ProcurementApprovalService
 
         if (
             $policy->is_active
-            && !$decision->is_lowest_price_selected
+            && ! $decision->is_lowest_price_selected
             && $this->nonLowestThresholdExceeded($policy, $deltaAmount, $deltaPercent)
         ) {
             $risks[] = [
@@ -244,10 +248,12 @@ class ProcurementApprovalService
                 ])
                 ->exists();
 
-            if (!$blockingApprovalsExist) {
+            if (! $blockingApprovalsExist) {
                 $decision->update([
                     'status' => SupplierProposalDecisionEnum::APPROVED,
                 ]);
+
+                $this->acceptApprovedWinningProposal($decision, $actorId);
             }
 
             $decision->loadMissing('winningProposal');
@@ -375,7 +381,7 @@ class ProcurementApprovalService
 
     private function lockDecisionForApproval(ProcurementApproval $approval): SupplierProposalDecision
     {
-        if ($approval->approvable_type !== (new SupplierProposalDecision())->getMorphClass()) {
+        if ($approval->approvable_type !== (new SupplierProposalDecision)->getMorphClass()) {
             throw new \DomainException(trans_message('procurement.approvals.decision_not_found'));
         }
 
@@ -406,16 +412,32 @@ class ProcurementApprovalService
         }
     }
 
+    private function acceptApprovedWinningProposal(SupplierProposalDecision $decision, int $actorId): void
+    {
+        $decision->loadMissing('winningProposal');
+        $proposal = $decision->winningProposal;
+
+        if (! $proposal instanceof SupplierProposal) {
+            return;
+        }
+
+        if ($proposal->status !== SupplierProposalStatusEnum::SUBMITTED) {
+            return;
+        }
+
+        $this->proposalService->accept($proposal, $actorId);
+    }
+
     private function expiredWinningProposalBlocker(SupplierProposalDecision $decision): ?array
     {
         $decision->loadMissing('winningProposal');
         $proposal = $decision->winningProposal;
 
-        if (!$proposal instanceof SupplierProposal) {
+        if (! $proposal instanceof SupplierProposal) {
             return null;
         }
 
-        if ($proposal->status !== SupplierProposalStatusEnum::EXPIRED && !$proposal->isExpired()) {
+        if ($proposal->status !== SupplierProposalStatusEnum::EXPIRED && ! $proposal->isExpired()) {
             return null;
         }
 
@@ -456,7 +478,7 @@ class ProcurementApprovalService
         $cheapestRow = collect($comparison['rows'] ?? [])
             ->firstWhere('id', $cheapestProposalId);
 
-        if (!is_array($cheapestRow) || !array_key_exists('comparison_total', $cheapestRow)) {
+        if (! is_array($cheapestRow) || ! array_key_exists('comparison_total', $cheapestRow)) {
             return null;
         }
 
@@ -499,7 +521,7 @@ class ProcurementApprovalService
 
         $user = User::query()->find($actorId);
 
-        if (!$user instanceof User) {
+        if (! $user instanceof User) {
             return false;
         }
 

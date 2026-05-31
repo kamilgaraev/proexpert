@@ -21,7 +21,8 @@ class SupplierProposalComparisonService
 {
     public function __construct(
         private readonly ProcurementApprovalService $approvalService,
-        private readonly ProcurementAuditService $auditService
+        private readonly ProcurementAuditService $auditService,
+        private readonly SupplierProposalService $proposalService
     ) {}
 
     public function comparisonForRequest(SupplierRequest $supplierRequest, bool $includeDecision = true): array
@@ -78,8 +79,7 @@ class SupplierProposalComparisonService
         array $scope,
         bool $requireSameSupplierRequestVersion,
         ?SupplierProposalDecision $decision
-    ): array
-    {
+    ): array {
         $rows = $proposals
             ->map(fn (SupplierProposal $proposal): array => $this->proposalComparisonRow($proposal))
             ->values()
@@ -93,7 +93,7 @@ class SupplierProposalComparisonService
                 $row['is_directly_comparable'] = $baseCurrency === null || $row['currency'] === $baseCurrency;
                 $row['comparison_warnings'] = [];
 
-                if (!$row['is_directly_comparable']) {
+                if (! $row['is_directly_comparable']) {
                     $row['comparison_warnings'][] = trans_message('procurement_enterprise.proposal_decisions.currency_not_comparable');
                 }
 
@@ -220,7 +220,7 @@ class SupplierProposalComparisonService
                 ]);
             }
 
-            if (!is_array($selectedRow) || !($selectedRow['is_directly_comparable'] ?? true)) {
+            if (! is_array($selectedRow) || ! ($selectedRow['is_directly_comparable'] ?? true)) {
                 throw ValidationException::withMessages([
                     'proposal_id' => [trans_message('procurement.proposal_decisions.proposal_not_comparable')],
                 ]);
@@ -233,7 +233,7 @@ class SupplierProposalComparisonService
                 ? ($cheapestRow['current_version_id'] ?? null)
                 : null;
 
-            if (!$isLowestPriceSelected && $normalizedReason === null) {
+            if (! $isLowestPriceSelected && $normalizedReason === null) {
                 throw ValidationException::withMessages([
                     'decision_reason' => [trans_message('procurement.proposal_decisions.reason_required')],
                 ]);
@@ -289,6 +289,10 @@ class SupplierProposalComparisonService
 
             $this->approvalService->createPendingForDecision($decision, $risks, $actorId);
 
+            if ($risks === []) {
+                $this->proposalService->accept($proposal, $actorId);
+            }
+
             return $decision->fresh([
                 'winningProposal.currentVersion',
                 'cheapestProposal.currentVersion',
@@ -342,7 +346,7 @@ class SupplierProposalComparisonService
                 ]);
             }
 
-            if (!is_array($selectedRow) || !($selectedRow['is_directly_comparable'] ?? true)) {
+            if (! is_array($selectedRow) || ! ($selectedRow['is_directly_comparable'] ?? true)) {
                 throw ValidationException::withMessages([
                     'proposal_id' => [trans_message('procurement.proposal_decisions.proposal_not_comparable')],
                 ]);
@@ -355,7 +359,7 @@ class SupplierProposalComparisonService
                 ? ($cheapestRow['current_version_id'] ?? null)
                 : null;
 
-            if (!$isLowestPriceSelected && $normalizedReason === null) {
+            if (! $isLowestPriceSelected && $normalizedReason === null) {
                 throw ValidationException::withMessages([
                     'decision_reason' => [trans_message('procurement.proposal_decisions.reason_required')],
                 ]);
@@ -412,6 +416,10 @@ class SupplierProposalComparisonService
             );
 
             $this->approvalService->createPendingForDecision($decision, $risks, $actorId);
+
+            if ($risks === []) {
+                $this->proposalService->accept($proposal, $actorId);
+            }
 
             return $decision->fresh([
                 'winningProposal.currentVersion',

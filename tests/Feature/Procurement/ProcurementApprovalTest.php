@@ -137,7 +137,7 @@ class ProcurementApprovalTest extends TestCase
         ]);
     }
 
-    public function test_approved_decision_can_be_accepted(): void
+    public function test_approved_decision_automatically_creates_purchase_order(): void
     {
         $organization = Organization::factory()->create();
         $actor = User::factory()->create();
@@ -159,10 +159,8 @@ class ProcurementApprovalTest extends TestCase
 
         app(ProcurementApprovalService::class)->approve($approval, $approver->id, 'Budget exception approved.');
 
-        $accepted = app(SupplierProposalService::class)->accept($proposal);
-
         $this->assertSame('approved', $decision->refresh()->status->value);
-        $this->assertSame('accepted', $accepted->status->value);
+        $this->assertSame('accepted', $proposal->refresh()->status->value);
         $this->assertSame(1, PurchaseOrder::query()
             ->where('accepted_supplier_proposal_id', $proposal->id)
             ->count());

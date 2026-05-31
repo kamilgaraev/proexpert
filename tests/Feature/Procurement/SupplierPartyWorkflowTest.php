@@ -80,7 +80,7 @@ class SupplierPartyWorkflowTest extends TestCase
 
         app(SupplierProposalComparisonService::class)->selectWinner($supplierRequest, $proposal->id, null, null);
 
-        $acceptedProposal = app(SupplierProposalService::class)->accept($proposal);
+        $acceptedProposal = $proposal->refresh();
         $purchaseOrder = $acceptedProposal->purchaseOrder;
 
         $this->assertSame(SupplierPartyStatusEnum::SELECTED, SupplierParty::query()->findOrFail($supplierPartyId)->status);

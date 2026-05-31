@@ -81,7 +81,7 @@ class SupplierProposalDecisionTest extends TestCase
         $this->assertSame(90.0, $rows[$fallbackProposal->id]['comparison_total']);
     }
 
-    public function test_selecting_winner_persists_decision(): void
+    public function test_selecting_winner_automatically_creates_purchase_order_when_approval_is_not_required(): void
     {
         $organization = Organization::factory()->create();
         $supplierRequest = $this->createSupplierRequest($organization);
@@ -104,6 +104,11 @@ class SupplierProposalDecisionTest extends TestCase
             'winning_supplier_proposal_id' => $winner->id,
             'status' => 'selected',
         ]);
+        $this->assertSame('accepted', $winner->refresh()->status->value);
+        $this->assertSame(1, PurchaseOrder::query()
+            ->where('accepted_supplier_proposal_id', $winner->id)
+            ->where('purchase_request_id', $supplierRequest->purchase_request_id)
+            ->count());
     }
 
     public function test_comparison_payload_includes_saved_decision(): void
@@ -181,7 +186,7 @@ class SupplierProposalDecisionTest extends TestCase
             $this->assertTrue(true);
         }
 
-        $accepted = app(SupplierProposalService::class)->accept($winner);
+        $accepted = $winner->refresh();
 
         $this->assertSame('accepted', $accepted->status->value);
         $this->assertNotNull($accepted->purchase_order_id);
@@ -196,7 +201,8 @@ class SupplierProposalDecisionTest extends TestCase
         $otherProposal = $this->createProposal($organization, $supplierRequest, 'KP-DEC-012', 150);
 
         app(SupplierProposalComparisonService::class)->selectWinner($supplierRequest, $winner->id, null, null);
-        app(SupplierProposalService::class)->accept($winner);
+
+        $this->assertSame('accepted', $winner->refresh()->status->value);
 
         $this->expectException(ValidationException::class);
 
@@ -225,8 +231,6 @@ class SupplierProposalDecisionTest extends TestCase
             'attachment_snapshot' => [],
         ]);
 
-        app(SupplierProposalComparisonService::class)->selectWinner($supplierRequest, $winner->id, null, null);
-
         $versionQueries = [];
 
         DB::listen(static function ($query) use (&$versionQueries): void {
@@ -237,7 +241,8 @@ class SupplierProposalDecisionTest extends TestCase
             }
         });
 
-        $accepted = app(SupplierProposalService::class)->accept($winner);
+        app(SupplierProposalComparisonService::class)->selectWinner($supplierRequest, $winner->id, null, null);
+        $accepted = $winner->refresh();
 
         $this->assertSame(2, $accepted->purchaseOrder?->acceptedSupplierProposalVersion?->version_number);
         $this->assertTrue(collect($versionQueries)->contains(
@@ -254,7 +259,6 @@ class SupplierProposalDecisionTest extends TestCase
         $staleWinner = SupplierProposal::query()->findOrFail($winner->id);
 
         app(SupplierProposalComparisonService::class)->selectWinner($supplierRequest, $winner->id, null, null);
-        app(SupplierProposalService::class)->accept($winner);
 
         try {
             app(SupplierProposalService::class)->accept($staleWinner);

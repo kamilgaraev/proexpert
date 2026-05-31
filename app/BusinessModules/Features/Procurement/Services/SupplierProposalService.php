@@ -10,6 +10,7 @@ use App\BusinessModules\Features\Procurement\Enums\SupplierProposalDecisionEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalVatModeEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
+use App\BusinessModules\Features\Procurement\Events\PurchaseOrderCreated;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
@@ -351,6 +352,18 @@ class SupplierProposalService
 
             return $lockedProposal;
         });
+
+        if ($acceptedProposal->purchase_order_id !== null) {
+            $purchaseOrderId = (int) $acceptedProposal->purchase_order_id;
+
+            DB::afterCommit(static function () use ($purchaseOrderId): void {
+                $purchaseOrder = PurchaseOrder::query()->find($purchaseOrderId);
+
+                if ($purchaseOrder instanceof PurchaseOrder) {
+                    event(new PurchaseOrderCreated($purchaseOrder));
+                }
+            });
+        }
 
         return $acceptedProposal->fresh([
             'supplier',

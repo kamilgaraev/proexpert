@@ -13,12 +13,13 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
-use App\BusinessModules\Features\Procurement\Services\ProcurementAuditService;
 use App\BusinessModules\Features\Procurement\Services\ProcurementApprovalService;
+use App\BusinessModules\Features\Procurement\Services\ProcurementAuditService;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalComparisonService;
-use App\BusinessModules\Features\Procurement\Services\SupplierProposalService;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalVersionService;
 use App\Domain\Authorization\Http\Middleware\AuthorizeMiddleware;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Http\Middleware\JwtMiddleware;
 use App\Models\Organization;
 use App\Models\Supplier;
@@ -50,7 +51,6 @@ class ProcurementAuditTest extends TestCase
             ->firstOrFail();
 
         app(ProcurementApprovalService::class)->approve($approval, $approver->id, 'Approved for urgent delivery.');
-        app(SupplierProposalService::class)->accept($proposal, $actor->id);
 
         $eventTypes = ProcurementAuditEvent::query()
             ->where('organization_id', $organization->id)
@@ -138,6 +138,11 @@ class ProcurementAuditTest extends TestCase
         $otherOrganization = Organization::factory()->create();
         $user = User::factory()->create(['current_organization_id' => $organization->id]);
         $user->organizations()->attach($organization->id, ['is_owner' => true, 'is_active' => true]);
+        UserRoleAssignment::assignRole(
+            user: $user,
+            roleSlug: 'organization_owner',
+            context: AuthorizationContext::getOrganizationContext($organization->id)
+        );
 
         $supplierRequest = $this->createSupplierRequest($organization, '020');
         $proposal = $this->createProposal($organization, $supplierRequest, 'KP-AUD-020', 900);
@@ -312,5 +317,4 @@ class ProcurementAuditTest extends TestCase
             'payload' => ['event_type' => $eventType],
         ]);
     }
-
 }
