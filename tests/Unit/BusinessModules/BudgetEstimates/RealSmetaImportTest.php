@@ -72,7 +72,7 @@ class RealSmetaImportTest extends TestCase
 
         $this->assertEquals('queued', $result['status']);
 
-        (new ProcessEstimateImportJob($fileId, []))->handle(app(ImportPipelineService::class));
+        (new ProcessEstimateImportJob($fileId))->handle(app(ImportPipelineService::class));
 
         $session = \App\Models\ImportSession::query()->findOrFail($fileId);
         $this->assertEquals('completed', $session->status, $session->error_message ?? '');

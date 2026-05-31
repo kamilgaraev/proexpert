@@ -6,6 +6,7 @@ use App\Models\NormativeRate;
 use App\Models\NormativeCollection;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -113,6 +114,10 @@ class NormativeMatchingService
         $name = trim($name);
         
         if (empty($name)) {
+            return collect();
+        }
+
+        if (DB::connection()->getDriverName() === 'sqlite') {
             return collect();
         }
 

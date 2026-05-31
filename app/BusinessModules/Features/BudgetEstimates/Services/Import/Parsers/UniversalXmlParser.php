@@ -16,18 +16,6 @@ class UniversalXmlParser implements EstimateImportParserInterface, StreamParserI
 
     public function parse(string $filePath): EstimateImportDTO|Generator
     {
-        // Determine caller to decide between Stream (Generator) and Full (DTO) parsing
-        $backtrace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2);
-        $callerClass = $backtrace[1]['class'] ?? '';
-        $callerFunction = $backtrace[1]['function'] ?? '';
-        
-        // If called by ParserFactory or specifically for streaming execution
-        if (str_contains($callerClass, 'ParserFactory') || 
-           (str_contains($callerClass, 'EstimateImportService') && str_contains($callerFunction, 'createEstimateFromStream'))) {
-             return $this->getStream($filePath);
-        }
-        
-        // Default to full DTO (for preview and other usages)
         return $this->fullParse($filePath);
     }
 

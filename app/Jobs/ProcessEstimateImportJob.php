@@ -18,8 +18,7 @@ class ProcessEstimateImportJob implements ShouldQueue
     public int $timeout = 1200; // Increased timeout for parsing and enrichment
     public int $tries = 1; // Don't retry parsing automatically if it fails logic
     public function __construct(
-        public string $sessionId,
-        public array $config = []
+        public string $sessionId
     ) {
         $this->queue = 'imports';
     }
@@ -41,7 +40,7 @@ class ProcessEstimateImportJob implements ShouldQueue
         }
         
         try {
-            $pipeline->run($session, $this->config);
+            $pipeline->run($session);
         } catch (\Throwable $e) {
             Log::error("[ProcessEstimateImportJob] Pipeline failed: " . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
             

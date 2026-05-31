@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\BudgetEstimates\DTOs;
 
 /**
@@ -8,11 +10,11 @@ namespace App\BusinessModules\Features\BudgetEstimates\DTOs;
 class EstimateTypeDetectionDTO
 {
     public function __construct(
-        public string $detectedType = 'custom', // 'grandsmeta', 'rik', 'fer', 'smartsmeta', 'custom'
-        public float $confidence = 0.0,         // 0-100
-        public array $indicators = [],          // ['title_grandsmeta', 'columns_match', ...]
-        public array $candidates = [],          // Альтернативные типы с их confidence
-        public array $metadata = []             // Дополнительные метаданные
+        public string $detectedType = 'custom',
+        public float $confidence = 0.0,
+        public array $indicators = [],
+        public array $candidates = [],
+        public array $metadata = []
     ) {}
     
     /**
@@ -37,6 +39,7 @@ class EstimateTypeDetectionDTO
         return [
             'detected_type' => $this->detectedType,
             'confidence' => $this->confidence,
+            'is_high_confidence' => $this->isHighConfidence(0.9),
             'indicators' => $this->indicators,
             'candidates' => $this->candidates,
             'metadata' => $this->metadata,
@@ -48,7 +51,10 @@ class EstimateTypeDetectionDTO
      */
     public function isHighConfidence(float $threshold = 60.0): bool
     {
-        return $this->confidence >= $threshold;
+        $confidencePercent = $this->confidence <= 1.0 ? $this->confidence * 100 : $this->confidence;
+        $thresholdPercent = $threshold <= 1.0 ? $threshold * 100 : $threshold;
+
+        return $confidencePercent >= $thresholdPercent;
     }
     
     /**
@@ -62,7 +68,9 @@ class EstimateTypeDetectionDTO
             'fer' => 'ФЕР/ГЭСН (Федеральные/Государственные расценки)',
             'smartsmeta' => 'SmartSmeta / Smeta.ru',
             'prohelper' => 'Смета Prohelper (с полными метаданными для импорта)',
+            'prohelper_template' => 'Шаблон Prohelper',
             'xml_estimate' => 'XML Смета (ГрандСмета, GGE или совместимый формат)',
+            'pdf_estimate' => 'PDF смета',
             'custom' => 'Произвольная таблица (без официальных кодов)',
             default => 'Неизвестный тип',
         };

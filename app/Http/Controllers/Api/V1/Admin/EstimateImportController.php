@@ -128,15 +128,22 @@ class EstimateImportController extends Controller
             ]);
             
             $detectionDTO = $this->importService->detectEstimateType($fileId);
+            $metadata = $detectionDTO->metadata;
             
             return AdminResponse::success([
                 'detected_type' => $detectionDTO->detectedType,
                 'type_description' => $detectionDTO->getTypeDescription(),
                 'confidence' => $detectionDTO->confidence,
-                'is_high_confidence' => $detectionDTO->isHighConfidence(),
-                'is_template' => $detectionDTO->indicators['is_template'] ?? false,
+                'is_high_confidence' => $detectionDTO->isHighConfidence(0.9),
+                'is_template' => $detectionDTO->detectedType === 'prohelper_template'
+                    || (bool) ($metadata['is_template'] ?? false),
+                'format_slug' => $metadata['format_slug'] ?? null,
+                'label' => $metadata['label'] ?? null,
+                'requires_confirmation' => (bool) ($metadata['requires_confirmation'] ?? false),
+                'warnings' => $metadata['warnings'] ?? [],
                 'indicators' => $detectionDTO->indicators,
                 'candidates' => $detectionDTO->candidates,
+                'metadata' => $metadata,
             ]);
         } catch (\Throwable $e) {
             Log::error('[EstimateImport] detectType failed', [
@@ -170,14 +177,7 @@ class EstimateImportController extends Controller
                 'candidates_count' => count($detection['header_candidates'] ?? []),
             ]);
             
-            return AdminResponse::success([
-                'format' => $detection['format'],
-                'detected_columns' => $detection['detected_columns'],
-                'raw_headers' => $detection['raw_headers'],
-                'header_row' => $detection['header_row'],
-                'header_candidates' => $detection['header_candidates'],
-                'sample_rows' => $detection['sample_rows'],
-            ]);
+            return AdminResponse::success($detection);
             
         } catch (\Throwable $e) {
             Log::error('[EstimateImport] Detect failed', [
@@ -276,6 +276,7 @@ class EstimateImportController extends Controller
         $fileId = is_array($fileIdRaw) ? (string) ($fileIdRaw[0] ?? '') : (string) $fileIdRaw;
         $matchingConfig = $request->input('matching_config');
         $estimateSettings = $request->input('estimate_settings');
+        $validateOnly = $request->boolean('validate_only');
         
         $organization = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
         $estimateSettings['organization_id'] = $organization->id;
@@ -293,7 +294,7 @@ class EstimateImportController extends Controller
         }
         
         try {
-            $result = $this->importService->execute($fileId, $matchingConfig, $estimateSettings);
+            $result = $this->importService->execute($fileId, $matchingConfig, $estimateSettings, $validateOnly);
             
             return AdminResponse::success($result);
             

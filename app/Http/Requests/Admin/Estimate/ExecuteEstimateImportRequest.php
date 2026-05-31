@@ -1,8 +1,12 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Requests\Admin\Estimate;
 
 use Illuminate\Foundation\Http\FormRequest;
+
+use function trans_message;
 
 class ExecuteEstimateImportRequest extends FormRequest
 {
@@ -27,12 +31,12 @@ class ExecuteEstimateImportRequest extends FormRequest
             'estimate_settings.vat_rate' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
             'estimate_settings.overhead_rate' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
             'estimate_settings.profit_rate' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
+            'validate_only' => ['sometimes', 'boolean'],
         ];
     }
     
     protected function prepareForValidation(): void
     {
-        // Normalize file_id if it's an array
         $fileId = $this->input('file_id');
         if (is_array($fileId)) {
             $this->merge([
@@ -44,13 +48,13 @@ class ExecuteEstimateImportRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'file_id.required' => 'Не указан идентификатор файла',
-            'matching_config.required' => 'Необходимо указать конфигурацию сопоставления',
-            'matching_config.create_new_work_types.required' => 'Необходимо указать, создавать ли новые виды работ',
-            'estimate_settings.required' => 'Необходимо указать настройки сметы',
-            'estimate_settings.name.required' => 'Необходимо указать название сметы',
-            'estimate_settings.type.required' => 'Необходимо указать тип сметы',
-            'estimate_settings.type.in' => 'Недопустимый тип сметы',
+            'file_id.required' => trans_message('estimate.import_file_id_required'),
+            'matching_config.required' => trans_message('estimate.import_matching_config_required'),
+            'matching_config.create_new_work_types.required' => trans_message('estimate.import_create_work_types_required'),
+            'estimate_settings.required' => trans_message('estimate.import_estimate_settings_required'),
+            'estimate_settings.name.required' => trans_message('estimate.import_estimate_name_required'),
+            'estimate_settings.type.required' => trans_message('estimate.import_estimate_type_required'),
+            'estimate_settings.type.in' => trans_message('estimate.import_estimate_type_invalid'),
         ];
     }
 }

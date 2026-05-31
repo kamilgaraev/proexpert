@@ -2,6 +2,8 @@
 
 namespace App\BusinessModules\Features\BudgetEstimates;
 
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Clients\YandexCloudOcrClient;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Log;
@@ -28,11 +30,23 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\{
     NormativeCodeService,
     NormativeMatchingService,
     ResourceMatchingService,
-    ImportFormatOrchestrator,
 };
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\{
+    GrandSmetaRuntimeBridge,
+    ImportFormatDetector,
+    ImportFormatRegistry,
+};
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Pdf\PdfEstimateOcrExtractor;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\{
-    Generic\GenericFormatHandler,
+    Csv\LocalCsvHandler,
+    Excel\CustomExcelHandler,
+    Fer\FerHandler,
     GrandSmeta\GrandSmetaHandler,
+    Pdf\PdfEstimateHandler,
+    Prohelper\ProhelperTemplateHandler,
+    Rik\RikHandler,
+    SmartSmeta\SmartSmetaHandler,
+    Xml\UniversalXmlHandler,
 };
 use App\Repositories\{
     EstimateRepository,
@@ -128,35 +142,34 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
         $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeMatchingService::class);
         $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\ResourceMatchingService::class);
         
-        // 🤖 AI-powered Import Services
-        $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection\AISectionDetector::class);
-        $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\Mapping\AIColumnMapper::class);
-        $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\Calculation\AICalculationService::class);
-        
-        // Регистрируем парсер с AI (если доступен)
-        $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\ExcelSimpleTableParser::class, function ($app) {
-            try {
-                $aiSection = $app->make(\App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection\AISectionDetector::class);
-                $aiMapper = $app->make(\App\BusinessModules\Features\BudgetEstimates\Services\Import\Mapping\AIColumnMapper::class);
-                return new \App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\ExcelSimpleTableParser($aiSection, $aiMapper);
-            } catch (\Exception $e) {
-                // AI не доступен - возвращаем парсер без AI
-                Log::warning('[BudgetEstimates] AI services not available for parser', ['error' => $e->getMessage()]);
-                return new \App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\ExcelSimpleTableParser();
-            }
-        });
-
-        // 🏗️ Modular Import Orchestration
-        $this->app->singleton(ImportFormatOrchestrator::class, function ($app) {
-            $handlers = [
-                $app->make(GrandSmetaHandler::class),
-                $app->make(GenericFormatHandler::class),
-            ];
-            return new ImportFormatOrchestrator($handlers);
-        });
-
-        $this->app->singleton(GenericFormatHandler::class);
         $this->app->singleton(GrandSmetaHandler::class);
+        $this->app->singleton(GrandSmetaRuntimeBridge::class);
+        $this->app->singleton(ProhelperTemplateHandler::class);
+        $this->app->singleton(RikHandler::class);
+        $this->app->singleton(FerHandler::class);
+        $this->app->singleton(SmartSmetaHandler::class);
+        $this->app->singleton(CustomExcelHandler::class);
+        $this->app->singleton(LocalCsvHandler::class);
+        $this->app->singleton(UniversalXmlHandler::class);
+        if (! $this->app->bound(OcrClientInterface::class)) {
+            $this->app->singleton(OcrClientInterface::class, YandexCloudOcrClient::class);
+        }
+        $this->app->singleton(PdfEstimateOcrExtractor::class);
+        $this->app->singleton(PdfEstimateHandler::class);
+        $this->app->singleton(ImportFormatRegistry::class, function ($app) {
+            return new ImportFormatRegistry([
+                $app->make(GrandSmetaRuntimeBridge::class),
+                $app->make(ProhelperTemplateHandler::class),
+                $app->make(RikHandler::class),
+                $app->make(FerHandler::class),
+                $app->make(SmartSmetaHandler::class),
+                $app->make(CustomExcelHandler::class),
+                $app->make(LocalCsvHandler::class),
+                $app->make(UniversalXmlHandler::class),
+                $app->make(PdfEstimateHandler::class),
+            ]);
+        });
+        $this->app->singleton(ImportFormatDetector::class);
         $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\SignatureGenerator::class);
         $this->app->scoped(MobileBudgetEstimateService::class);
     }

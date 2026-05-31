@@ -1,16 +1,19 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Import;
 
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder;
+use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateService;
-use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\Factory\ParserFactory;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportFormatRegistry;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportStructureResult;
 use App\Models\Estimate;
 use App\Models\EstimateSection;
 use App\Models\EstimateItem;
 use App\Models\ImportSession;
 use App\Models\MeasurementUnit;
-use App\Models\NormativeRate;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
@@ -19,7 +22,6 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\Classification\
 class ImportPipelineService
 {
     private const BATCH_SIZE = 100;
-    private const DEFAULT_VAT_RATE = 20;
 
     private array $unitCache = [];
 
@@ -40,8 +42,8 @@ class ImportPipelineService
     ];
 
     public function __construct(
-        private ParserFactory $parserFactory,
         private FileStorageService $fileStorage,
+        private ImportFormatRegistry $runtimeRegistry,
         private ImportRowMapper $rowMapper,
         private EstimateService $estimateService,
         private ItemClassificationService $classifier,
@@ -70,68 +72,70 @@ class ImportPipelineService
         ]);
     }
 
-    public function run(ImportSession $session, array $config = []): void
+    public function run(ImportSession $session): void
     {
         Log::info("[ImportPipeline] Started for session {$session->id}");
         
         $session->update([
             'status' => 'parsing', 
-            'stats' => array_merge($session->fresh()->stats ?? [], ['progress' => 5, 'message' => 'Starting import pipeline...'])
+            'stats' => array_merge($session->fresh()->stats ?? [], ['progress' => 5, 'message' => trans_message('estimate.import_processing_started')])
         ]);
 
         $filePath = $this->fileStorage->getAbsolutePath($session);
-        
-        $formatHandler = $session->options['format_handler'] ?? null;
-        if ($formatHandler === 'grandsmeta') {
-            $parser = app(\App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\GrandSmeta\GrandSmetaParser::class);
-        } else {
-            $parser = $this->parserFactory->getParser($filePath);
-        }
-        
-        // Prepare Parser Options
-        $structure = $session->options['structure'] ?? [];
-        $options = [
-            'header_row' => $structure['header_row'] ?? null,
-            'column_mapping' => $structure['column_mapping'] ?? [],
-        ];
-
-        if (!empty($structure['ai_section_hints'])) {
-             $this->rowMapper->setSectionHints($structure['ai_section_hints']);
+        $handlerSlug = (string) ($session->options['format_handler'] ?? '');
+        if ($handlerSlug === '') {
+            throw new \RuntimeException(trans_message('estimate.import_format_not_detected'));
         }
 
-        if (!empty($structure['row_styles'])) {
-             $this->rowMapper->setRowStyles($structure['row_styles']);
-        }
+        $handler = $this->runtimeRegistry->bySlug($handlerSlug);
+        $structureResult = $this->structureFromSession($handler->slug(), $session)
+            ?? $handler->detectStructure($session, $filePath);
+
+        $sessionOptions = $session->options ?? [];
+        $sessionOptions['format_handler'] = $handler->slug();
+        $sessionOptions['structure'] = $structureResult->toArray();
+        $session->update(['options' => $sessionOptions]);
+        $session = $session->fresh();
+
+        $preview = $handler->preview($session, $filePath, $structureResult);
+        $validation = $handler->validate($session, $preview);
+        $totalRows = (int) ($preview->summary['rows_count'] ?? (count($preview->sections) + count($preview->items)));
 
         // 1. Оцениваем общее количество строк для прогресса
-        $totalRows = method_exists($parser, 'getTotalRows') ? $parser->getTotalRows($filePath, $options) : 0;
         
         $session->update([
             'stats' => array_merge($session->fresh()->stats ?? [], [
-                'progress'   => 10,
+                'progress' => 10,
                 'total_rows' => $totalRows,
-                'message'    => $totalRows > 0 ? "File has {$totalRows} rows. Starting processing..." : 'Parsing file...'
+                'validation' => $validation->toArray(),
+                'message' => trans_message('estimate.import_processing_file'),
             ])
         ]);
 
-        // 2. Create or Get Estimate
-        $estimate = $this->resolveEstimate($session);
-        
-        // 3. Stream & Process
-        $options['raw_progress_callback'] = function (int $progress, string $message) use ($session) {
-            $this->updateProgress($session, $progress, $message);
-        };
+        if (($session->options['validate_only'] ?? false) === true) {
+            $session->update([
+                'status' => 'validated',
+                'stats' => array_merge($session->fresh()->stats ?? [], [
+                    'progress' => 100,
+                    'result' => [
+                        'processed_rows' => $totalRows,
+                        'sections_created' => 0,
+                        'items_created' => 0,
+                        'total_rows' => $totalRows,
+                        'validation' => $validation->toArray(),
+                    ],
+                    'message' => trans_message('estimate.import_validated'),
+                ]),
+            ]);
 
-        if ($formatHandler === 'grandsmeta') {
-            $progressCallback = function (int $current, int $total) use ($session) {
-                // Grandsmeta takes stream callback mapped to 10-88%
-                $pct = (int) (10 + min(78, ($current / max(1, $total)) * 78));
-                $this->updateProgress($session, $pct, "Processed {$current}/{$total} rows...");
-            };
-            $stream = $parser->getStream($filePath, $options, $progressCallback);
-        } else {
-            $stream = $parser->getStream($filePath, $options);
+            return;
         }
+
+        if (!$validation->isValid()) {
+            throw new \RuntimeException(trans_message('estimate.import_validation_failed'));
+        }
+
+        $stream = $handler->streamRows($session, $filePath, $structureResult);
         
         $stats = [
             'processed_rows' => 0,
@@ -142,11 +146,11 @@ class ImportPipelineService
         
         DB::beginTransaction();
         try {
+            $estimate = $this->resolveEstimate($session);
             $this->processStream($stream, $estimate, $stats, $session);
             
-            // Extract and save footer data if the parser supports it
-            if (method_exists($parser, 'getFooterData')) {
-                $footerData = $parser->getFooterData();
+            if (method_exists($handler, 'getFooterData')) {
+                $footerData = $handler->getFooterData();
                 if (!empty($footerData)) {
                     Log::info("[ImportPipeline] Found footer data for session {$session->id}", $footerData);
                     
@@ -180,7 +184,7 @@ class ImportPipelineService
             }
 
             // Update Totals with proper markup distribution
-            $this->updateProgress($session, 90, 'Recalculating totals...');
+            $this->updateProgress($session, 90, trans_message('estimate.import_recalculating_totals'));
             $this->calculationService->recalculateAll($estimate);
 
             // ⭐ OVERRIDE ШАПКИ СМЕТЫ ТОЧНЫМИ ЗНАЧЕНИЯМИ ИЗ FOOTER
@@ -231,7 +235,7 @@ class ImportPipelineService
                     'progress'    => 100,
                     'result'      => $stats,
                     'estimate_id' => $estimate->id,
-                    'message'     => 'Import successfully completed.',
+                    'message'     => trans_message('estimate.import_completed'),
                 ])
             ]);
 
@@ -240,6 +244,28 @@ class ImportPipelineService
             Log::error("[ImportPipeline] Error: " . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
             throw $e;
         }
+    }
+
+    private function structureFromSession(string $formatSlug, ImportSession $session): ?ImportStructureResult
+    {
+        $structure = $session->options['structure'] ?? null;
+        if (!is_array($structure)) {
+            return null;
+        }
+
+        return new ImportStructureResult(
+            formatSlug: $formatSlug,
+            headerRow: isset($structure['header_row']) ? (int) $structure['header_row'] : null,
+            columnMapping: $structure['column_mapping'] ?? [],
+            detectedColumns: $structure['detected_columns'] ?? [],
+            rawHeaders: $structure['raw_headers'] ?? [],
+            sampleRows: $structure['sample_rows'] ?? [],
+            headerCandidates: $structure['header_candidates'] ?? [],
+            rowStyles: $structure['row_styles'] ?? [],
+            warnings: $structure['warnings'] ?? [],
+            metadata: $structure['metadata'] ?? [],
+            aiMappingApplied: (bool) ($structure['ai_mapping_applied'] ?? false),
+        );
     }
 
     private function resolveEstimate(ImportSession $session): Estimate
@@ -280,16 +306,12 @@ class ImportPipelineService
         $lastSectionId = null; // For items without explicit section path?
         
         foreach ($stream as $rowDTO) {
-            // Skip technical rows
-            if ($this->rowMapper->isTechnicalRow($rowDTO->rawData)) {
-                continue;
+            if (!$rowDTO instanceof EstimateImportRowDTO) {
+                $rowDTO = EstimateImportRowDTO::fromArray((array) $rowDTO);
             }
 
-            // Apply mapping ONLY if not using specialized handler like GrandSmeta
-            // Specialized handlers return already mapped DTOs.
-            $handler = $session->options['format_handler'] ?? 'generic';
-            if ($handler !== 'grandsmeta') {
-                $rowDTO = $this->rowMapper->map($rowDTO, $session->options['structure']['column_mapping'] ?? []);
+            if (is_array($rowDTO->rawData) && $this->rowMapper->isTechnicalRow($rowDTO->rawData)) {
+                continue;
             }
             
             // Skip rows that are identified as footers (totals, summaries, etc.)
@@ -349,7 +371,10 @@ class ImportPipelineService
                 $this->updateProgress(
                     $session,
                     $progress,
-                    "Processed {$stats['processed_rows']}" . ($totalRows > 0 ? "/{$totalRows}" : '') . ' rows...'
+                    trans_message('estimate.import_processed_rows', [
+                        'current' => $stats['processed_rows'],
+                        'total' => $totalRows,
+                    ])
                 );
                 $session->stats = array_merge($session->fresh()->stats ?? [], ['processed_rows' => $stats['processed_rows']]);
             }
@@ -363,7 +388,6 @@ class ImportPipelineService
 
     private function processAndInsertBatch(array $batch, Estimate $estimate, array &$stats, ImportSession $session): void
     {
-        $itemsToInsert = [];
         $aiBatch = [];
 
         // Step 1: Normative Matching

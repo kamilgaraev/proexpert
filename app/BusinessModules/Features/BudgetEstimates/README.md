@@ -258,16 +258,18 @@ app/BusinessModules/Features/BudgetEstimates/
 
 ### Добавление импорта
 
-Создайте парсер:
+Добавляйте новый формат через runtime handler:
 ```php
-class ExcelSimpleTableParser implements EstimateImportParserInterface
+final class VendorEstimateHandler implements RuntimeImportFormatHandlerInterface
 {
-    public function parse($file): array
+    public function slug(): string
     {
-        // Логика парсинга
+        return 'vendor_estimate';
     }
 }
 ```
+
+После добавления зарегистрируйте handler в `ImportFormatRegistry` и покройте его тестом на detect, structure, preview и streamRows.
 
 ### Добавление экспорта
 
@@ -312,4 +314,3 @@ public function exportToPDF(Estimate $estimate): string
 ## Лицензия
 
 Модуль является частью системы ProHelper.
-

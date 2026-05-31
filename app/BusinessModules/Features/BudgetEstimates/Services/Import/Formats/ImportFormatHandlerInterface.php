@@ -9,7 +9,7 @@ use App\Models\ImportSession;
 use Illuminate\Support\Collection;
 
 /**
- * Interface for format-specific import handlers (GrandSmeta, RIK, Generic, etc.)
+ * Interface for the existing GrandSmeta spreadsheet handler.
  */
 interface ImportFormatHandlerInterface
 {

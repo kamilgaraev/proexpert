@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Import;
 
-use App\Models\ImportSession;
 use Illuminate\Support\Facades\Log;
 
 class StagingAreaService
@@ -18,86 +17,62 @@ class StagingAreaService
 
     public function buildPreview(string $sessionId, int $organizationId): array
     {
-        $session = ImportSession::findOrFail($sessionId);
+        $preview = $this->importService->preview($sessionId);
+        $rows = array_merge($preview->sections, $preview->items);
 
-        $structure     = $session->options['structure'] ?? [];
-        $columnMapping = $structure['column_mapping'] ?? [];
-
-        if (empty($columnMapping)) {
-            return [
-                'rows'    => [],
-                'stats'   => ['total' => 0, 'sections' => 0, 'items' => 0, 'anomalies' => 0, 'mismatches' => 0],
-                'warning' => 'Маппинг колонок не задан. Выполните шаг detect сначала.',
-            ];
-        }
-
-        $fullPath = app(FileStorageService::class)->getAbsolutePath($session);
-
-        $extension = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
-        $orchestrator = app(ImportFormatOrchestrator::class);
-        $handler = $orchestrator->getHandler($session->options['format_handler'] ?? 'generic');
-
-        Log::info("[StagingArea] Using handler: {$handler->getSlug()}");
-
-        $content = ($extension === 'xml') ? file_get_contents($fullPath) : \PhpOffice\PhpSpreadsheet\IOFactory::load($fullPath);
-        $result = $handler->parse($session, $content);
-        
-        $rows = $result['items'] ?? [];
-        
-        // If handler already returned segments/sections, we might need to merge them 
-        // OR just rely on the fact that items might have 'is_section' flag
-        if (!empty($result['sections'])) {
-            $rows = array_merge($result['sections'], $rows);
-            // Sort by row_number if available
-            usort($rows, fn($a, $b) => ($a['row_number'] ?? 0) <=> ($b['row_number'] ?? 0));
-        }
-
-        $mapper = app(ImportRowMapper::class);
+        usort(
+            $rows,
+            static fn (array $left, array $right): int => ($left['row_number'] ?? 0) <=> ($right['row_number'] ?? 0)
+        );
 
         $grouped = $this->subItemGrouper->groupItems($rows);
 
         $this->formulaAwareness->annotate($grouped);
-
         $this->anomalyDetector->annotateFromImport($grouped, $organizationId);
 
         $stats = $this->buildStats($grouped);
         $treeRows = $this->buildFrontendTree($grouped);
 
-        Log::info("[StagingArea] Preview built for session {$sessionId}", $stats);
+        Log::info('[StagingArea] Preview built', [
+            'session_id' => $sessionId,
+            'stats' => $stats,
+        ]);
 
         return [
             'session_id' => $sessionId,
-            'rows'       => $treeRows,
-            'stats'      => $stats,
+            'rows' => $treeRows,
+            'stats' => $stats,
         ];
     }
 
     private function buildStats(array $rows): array
     {
-        $sections   = 0;
-        $items      = 0;
-        $anomalies  = 0;
+        $sections = 0;
+        $items = 0;
+        $anomalies = 0;
         $mismatches = 0;
 
         foreach ($rows as $row) {
             if ($row['is_section'] ?? false) {
                 $sections++;
-            } else {
-                $items++;
-                if (!empty($row['anomaly']['is_anomaly'])) {
-                    $anomalies++;
-                }
-                if (!empty($row['has_math_mismatch'])) {
-                    $mismatches++;
-                }
+                continue;
+            }
+
+            $items++;
+            if (!empty($row['anomaly']['is_anomaly'])) {
+                $anomalies++;
+            }
+
+            if (!empty($row['has_math_mismatch'])) {
+                $mismatches++;
             }
         }
 
         return [
-            'total'      => count($rows),
-            'sections'   => $sections,
-            'items'      => $items,
-            'anomalies'  => $anomalies,
+            'total' => count($rows),
+            'sections' => $sections,
+            'items' => $items,
+            'anomalies' => $anomalies,
             'mismatches' => $mismatches,
         ];
     }
@@ -105,7 +80,7 @@ class StagingAreaService
     private function buildFrontendTree(array $flatRows): array
     {
         $tree = [];
-        $insertedParents = []; // map of flat index -> reference to tree node
+        $insertedParents = [];
 
         foreach ($flatRows as $idx => $row) {
             if ($row['is_section'] ?? false) {
@@ -116,18 +91,17 @@ class StagingAreaService
             if (!empty($row['is_sub_item'])) {
                 $parentIdx = $row['_parent_index'] ?? null;
                 if ($parentIdx !== null && isset($insertedParents[$parentIdx])) {
-                    if (!isset($insertedParents[$parentIdx]['sub_items'])) {
-                        $insertedParents[$parentIdx]['sub_items'] = [];
-                    }
+                    $insertedParents[$parentIdx]['sub_items'] ??= [];
                     $insertedParents[$parentIdx]['sub_items'][] = $row;
-                } else {
-                    $tree[] = $row; // Fallback if parent missing
+                    continue;
                 }
-            } else {
-                // Add parent to tree and keep a reference
+
                 $tree[] = $row;
-                $insertedParents[$idx] = &$tree[count($tree) - 1]; // Store reference to last added element
+                continue;
             }
+
+            $tree[] = $row;
+            $insertedParents[$idx] = &$tree[count($tree) - 1];
         }
 
         return $tree;
