@@ -18,7 +18,7 @@ final readonly class PdfEstimateTextExtractor
     public function extract(string $filePath): array
     {
         if (!class_exists(\Smalot\PdfParser\Parser::class)) {
-            return $this->fallbackToOcr(
+            return $this->extractWithForcedOcr(
                 $filePath,
                 [trans_message('estimate.import_pdf_parser_unavailable')],
                 'parser_unavailable'
@@ -39,13 +39,13 @@ final readonly class PdfEstimateTextExtractor
                 ];
             }
 
-            return $this->fallbackToOcr(
+            return $this->extractWithForcedOcr(
                 $filePath,
                 [trans_message('estimate.import_pdf_text_layer_empty')],
                 'empty'
             );
         } catch (Throwable) {
-            return $this->fallbackToOcr(
+            return $this->extractWithForcedOcr(
                 $filePath,
                 [trans_message('estimate.import_pdf_text_extract_failed')],
                 'failed'
@@ -57,7 +57,7 @@ final readonly class PdfEstimateTextExtractor
      * @param array<int, string> $textLayerWarnings
      * @return array{text: string, method: string, warnings: array<int, string>, metadata: array<string, mixed>}
      */
-    private function fallbackToOcr(string $filePath, array $textLayerWarnings, string $textLayerStatus): array
+    public function extractWithForcedOcr(string $filePath, array $textLayerWarnings, string $textLayerStatus): array
     {
         $ocrExtraction = $this->ocrExtractor->extract($filePath);
         $ocrExtraction['metadata'] = array_merge(
