@@ -12,6 +12,8 @@ use App\Services\PerformanceMonitor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
+use function trans_message;
+
 class ProjectController extends Controller
 {
     /**
@@ -29,7 +31,7 @@ class ProjectController extends Controller
             $organizationId = $user->current_organization_id;
 
             if (!$organizationId) {
-                return MobileResponse::error('Не выбрана организация', 400);
+                return MobileResponse::error(trans_message('project.mobile_no_organization'), 400);
             }
 
             $query = Project::where('organization_id', $organizationId)

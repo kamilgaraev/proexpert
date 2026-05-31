@@ -278,7 +278,7 @@ class ContractStateEventController extends Controller
         }
 
         if (!$asOfDate) {
-            return AdminResponse::error('Параметр as_of_date обязателен', Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(trans_message('contract.state_date_required'), Response::HTTP_BAD_REQUEST);
         }
 
         try {
@@ -467,4 +467,3 @@ class ContractStateEventController extends Controller
         }
     }
 }
-

@@ -16,7 +16,7 @@ class ErrorTrackingController extends Controller
     ) {}
 
     /**
-     * РџРѕР»СѓС‡РёС‚СЊ СЃРїРёСЃРѕРє РїРѕСЃР»РµРґРЅРёС… РѕС€РёР±РѕРє
+     * Получить список последних ошибок
      * 
      * @group Error Tracking
      * @authenticated
@@ -31,7 +31,7 @@ class ErrorTrackingController extends Controller
                 'module' => $request->input('module'),
             ];
 
-            // РЈРґР°Р»РёС‚СЊ null Р·РЅР°С‡РµРЅРёСЏ
+            // Удалить null значения
             $filters = array_filter($filters, fn($value) => $value !== null);
 
             $limit = min($request->input('limit', 50), 100);
@@ -68,13 +68,13 @@ class ErrorTrackingController extends Controller
             
             return \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => false,
-                'error' => 'РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РѕС€РёР±РєРё',
+                'error' => 'Не удалось загрузить ошибки',
             ], 500);
         }
     }
 
     /**
-     * РџРѕР»СѓС‡РёС‚СЊ РґРµС‚Р°Р»Рё РєРѕРЅРєСЂРµС‚РЅРѕР№ РѕС€РёР±РєРё
+     * Получить детали конкретной ошибки
      * 
      * @group Error Tracking
      * @authenticated
@@ -116,7 +116,7 @@ class ErrorTrackingController extends Controller
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => false,
-                'error' => 'РћС€РёР±РєР° РЅРµ РЅР°Р№РґРµРЅР°',
+                'error' => 'Ошибка не найдена',
             ], 404);
         } catch (\Exception $e) {
             \Log::error('error_tracking.show.failed', [
@@ -126,13 +126,13 @@ class ErrorTrackingController extends Controller
             
             return \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => false,
-                'error' => 'РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РґРµС‚Р°Р»Рё РѕС€РёР±РєРё',
+                'error' => 'Не удалось загрузить детали ошибки',
             ], 500);
         }
     }
 
     /**
-     * РџРѕР»СѓС‡РёС‚СЊ СЃС‚Р°С‚РёСЃС‚РёРєСѓ РѕС€РёР±РѕРє
+     * Получить статистику ошибок
      * 
      * @group Error Tracking
      * @authenticated
@@ -148,7 +148,7 @@ class ErrorTrackingController extends Controller
                 'days' => $request->input('days', 7),
             ];
 
-            // РЈРґР°Р»РёС‚СЊ null Р·РЅР°С‡РµРЅРёСЏ
+            // Удалить null значения
             $filters = array_filter($filters, fn($value) => $value !== null);
 
             $statistics = $this->errorTrackingService->getStatistics($filters);
@@ -164,13 +164,13 @@ class ErrorTrackingController extends Controller
             
             return \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => false,
-                'error' => 'РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ СЃС‚Р°С‚РёСЃС‚РёРєСѓ',
+                'error' => 'Не удалось загрузить статистику',
             ], 500);
         }
     }
 
     /**
-     * РџРѕР»СѓС‡РёС‚СЊ С‚РѕРї РѕС€РёР±РѕРє
+     * Получить топ ошибок
      * 
      * @group Error Tracking
      * @authenticated
@@ -209,13 +209,13 @@ class ErrorTrackingController extends Controller
             
             return \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => false,
-                'error' => 'РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ С‚РѕРї РѕС€РёР±РѕРє',
+                'error' => 'Не удалось загрузить топ ошибок',
             ], 500);
         }
     }
 
     /**
-     * РР·РјРµРЅРёС‚СЊ СЃС‚Р°С‚СѓСЃ РѕС€РёР±РєРё
+     * Изменить статус ошибки
      * 
      * @group Error Tracking
      * @authenticated
@@ -232,7 +232,7 @@ class ErrorTrackingController extends Controller
             
             return \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => true,
-                'message' => 'РЎС‚Р°С‚СѓСЃ РѕС€РёР±РєРё РѕР±РЅРѕРІР»РµРЅ',
+                'message' => 'Статус ошибки обновлен',
                 'data' => [
                     'id' => $error->id,
                     'status' => $error->status,
@@ -241,12 +241,12 @@ class ErrorTrackingController extends Controller
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => false,
-                'error' => 'РћС€РёР±РєР° РЅРµ РЅР°Р№РґРµРЅР°',
+                'error' => 'Ошибка не найдена',
             ], 404);
         } catch (\Illuminate\Validation\ValidationException $e) {
             return \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => false,
-                'error' => 'РќРµРІРµСЂРЅС‹Рµ РґР°РЅРЅС‹Рµ',
+                'error' => 'Неверные данные',
                 'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
@@ -257,13 +257,13 @@ class ErrorTrackingController extends Controller
             
             return \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => false,
-                'error' => 'РќРµ СѓРґР°Р»РѕСЃСЊ РѕР±РЅРѕРІРёС‚СЊ СЃС‚Р°С‚СѓСЃ',
+                'error' => 'Не удалось обновить статус',
             ], 500);
         }
     }
 
     /**
-     * Р“СЂР°С„РёРє РѕС€РёР±РѕРє РІРѕ РІСЂРµРјРµРЅРё (РґР»СЏ Grafana)
+     * График ошибок во времени (для Grafana)
      * 
      * @group Error Tracking
      * @authenticated
@@ -307,7 +307,7 @@ class ErrorTrackingController extends Controller
             
             return \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => false,
-                'error' => 'РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РґР°РЅРЅС‹Рµ РіСЂР°С„РёРєР°',
+                'error' => 'Не удалось загрузить данные графика',
             ], 500);
         }
     }

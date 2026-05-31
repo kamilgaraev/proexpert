@@ -17,6 +17,8 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
+use function trans_message;
+
 class AssetController extends Controller
 {
     public function __construct(
@@ -50,7 +52,7 @@ class AssetController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error('Ошибка получения списка активов', 500);
+            return AdminResponse::error(trans_message('basic_warehouse.asset.list_error'), 500);
         }
     }
 
@@ -62,7 +64,7 @@ class AssetController extends Controller
 
             return AdminResponse::success(
                 $this->assetService->getAssetById($organizationId, $asset->id),
-                'Актив успешно создан',
+                trans_message('basic_warehouse.asset.created'),
                 201
             );
         } catch (\Exception $exception) {
@@ -73,7 +75,7 @@ class AssetController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error('Ошибка создания актива: ' . $exception->getMessage(), 500);
+            return AdminResponse::error(trans_message('basic_warehouse.asset.create_error') . ': ' . $exception->getMessage(), 500);
         }
     }
 
@@ -85,7 +87,7 @@ class AssetController extends Controller
 
             return AdminResponse::success($asset);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
-            return AdminResponse::error('Актив не найден', 404);
+            return AdminResponse::error(trans_message('basic_warehouse.asset.not_found'), 404);
         } catch (\Exception $exception) {
             Log::error('AssetController::show error', [
                 'user_id' => $request->user()->id ?? null,
@@ -93,7 +95,7 @@ class AssetController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error('Ошибка получения актива', 500);
+            return AdminResponse::error(trans_message('basic_warehouse.asset.show_error'), 500);
         }
     }
 
@@ -105,10 +107,10 @@ class AssetController extends Controller
 
             return AdminResponse::success(
                 $this->assetService->getAssetById($organizationId, $asset->id),
-                'Актив успешно обновлён'
+                trans_message('basic_warehouse.asset.updated')
             );
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
-            return AdminResponse::error('Актив не найден', 404);
+            return AdminResponse::error(trans_message('basic_warehouse.asset.not_found'), 404);
         } catch (\Exception $exception) {
             Log::error('AssetController::update error', [
                 'user_id' => $request->user()->id ?? null,
@@ -117,7 +119,7 @@ class AssetController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error('Ошибка обновления актива: ' . $exception->getMessage(), 500);
+            return AdminResponse::error(trans_message('basic_warehouse.asset.update_error') . ': ' . $exception->getMessage(), 500);
         }
     }
 
@@ -127,9 +129,9 @@ class AssetController extends Controller
             $organizationId = $request->user()->current_organization_id;
             $this->assetService->deactivateAsset($organizationId, $id);
 
-            return AdminResponse::success(null, 'Актив деактивирован');
+            return AdminResponse::success(null, trans_message('basic_warehouse.asset.deactivated'));
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
-            return AdminResponse::error('Актив не найден', 404);
+            return AdminResponse::error(trans_message('basic_warehouse.asset.not_found'), 404);
         } catch (\Exception $exception) {
             Log::error('AssetController::destroy error', [
                 'user_id' => $request->user()->id ?? null,
@@ -137,7 +139,7 @@ class AssetController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error('Ошибка деактивации актива', 500);
+            return AdminResponse::error(trans_message('basic_warehouse.asset.deactivate_error'), 500);
         }
     }
 
@@ -150,7 +152,7 @@ class AssetController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error('Ошибка получения типов активов', 500);
+            return AdminResponse::error(trans_message('basic_warehouse.asset.types_error'), 500);
         }
     }
 
@@ -169,7 +171,7 @@ class AssetController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error('Ошибка получения статистики', 500);
+            return AdminResponse::error(trans_message('basic_warehouse.asset.statistics_error'), 500);
         }
     }
 

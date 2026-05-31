@@ -17,6 +17,8 @@ use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Http\JsonResponse;
 
+use function trans_message;
+
 class AuthController extends Controller
 {
     protected JwtAuthService $authService;
@@ -45,7 +47,7 @@ class AuthController extends Controller
 
                 if (Gate::forUser($user)->denies('access-mobile-app', [$organizationId])) {
                     $this->authService->logout($this->guard, false);
-                    return MobileResponse::error('У вас нет доступа к мобильному приложению', 403);
+                    return MobileResponse::error(trans_message('auth.mobile_access_denied'), 403);
                 }
 
                 LogService::authLog('mobile_login_success', [
@@ -60,7 +62,7 @@ class AuthController extends Controller
                 return MobileResponse::success([
                     'token' => $result['token'],
                     'user' => new MobileUserResource($user)
-                ], 'Вход выполнен успешно');
+                ], trans_message('auth.login_success'));
             }
 
             LogService::authLog('mobile_login_failed', [
@@ -68,10 +70,10 @@ class AuthController extends Controller
                 'reason' => $result['message'] ?? 'auth_failed'
             ]);
 
-            return MobileResponse::error($result['message'] ?? 'Неверные данные для входа', 401);
+            return MobileResponse::error($result['message'] ?? trans_message('auth.login_failed'), 401);
         } catch (\Throwable $e) {
             Log::error('[MobileAuthController] Login error', ['exception' => $e->getMessage()]);
-            return MobileResponse::error('Внутренняя ошибка сервера', 500);
+            return MobileResponse::error(trans_message('auth.server_error'), 500);
         }
     }
 
@@ -107,7 +109,7 @@ class AuthController extends Controller
                 return MobileResponse::error($result['message'], $result['status_code'] ?? 401);
             }
 
-            return MobileResponse::success(['token' => $result['token']], 'Токен успешно обновлен');
+            return MobileResponse::success(['token' => $result['token']], trans_message('auth.token_refreshed'));
         });
     }
 
@@ -128,7 +130,7 @@ class AuthController extends Controller
                 'ip' => request()->ip()
             ]);
 
-            return MobileResponse::success(null, 'Выход выполнен успешно');
+            return MobileResponse::success(null, trans_message('auth.logout_success'));
         });
     }
 
@@ -144,7 +146,7 @@ class AuthController extends Controller
         $user = Auth($this->guard)->user();
 
         if (!$user->belongsToOrganization($organizationId)) {
-            return MobileResponse::error('Вы не состоите в данной организации или доступ заблокирован', 403);
+            return MobileResponse::error(trans_message('auth.mobile_organization_access_denied'), 403);
         }
 
         // Обновляем текущую организацию
@@ -163,6 +165,6 @@ class AuthController extends Controller
         return MobileResponse::success([
             'token' => $token,
             'user' => new MobileUserResource($user->load('organizations'))
-        ], 'Организация успешно переключена');
+        ], trans_message('auth.mobile_organization_switched'));
     }
 }

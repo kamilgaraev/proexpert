@@ -18,6 +18,8 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Log;
 
+use function trans_message;
+
 class ContractEstimateItemController extends Controller
 {
     public function __construct(
@@ -38,7 +40,7 @@ class ContractEstimateItemController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return AdminResponse::error('Ошибка при загрузке позиций сметы', 500);
+            return AdminResponse::error(trans_message('contract.estimate_items_load_error'), 500);
         }
     }
 
@@ -51,7 +53,7 @@ class ContractEstimateItemController extends Controller
                 $estimate->organization_id !== $contract->organization_id
                 || $estimate->project_id !== $contract->project_id
             ) {
-                return AdminResponse::error('Смета должна принадлежать той же организации и проекту', 422);
+                return AdminResponse::error(trans_message('contract.estimate_project_mismatch'), 422);
             }
 
             $attached = $this->service->attachItems(
@@ -63,7 +65,7 @@ class ContractEstimateItemController extends Controller
 
             return AdminResponse::success(
                 ContractEstimateItemResource::collection($attached),
-                'Позиции успешно привязаны к договору'
+                trans_message('contract.estimate_items_attached')
             );
         } catch (\Throwable $e) {
             Log::error('contract_estimate_items.attach_failed', [
@@ -72,7 +74,7 @@ class ContractEstimateItemController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return AdminResponse::error('Ошибка при привязке позиций', 500);
+            return AdminResponse::error(trans_message('contract.estimate_items_attach_error'), 500);
         }
     }
 
@@ -81,14 +83,14 @@ class ContractEstimateItemController extends Controller
         try {
             $this->service->detachItems($contract, $request->input('item_ids'));
 
-            return AdminResponse::success(null, 'Позиции успешно отвязаны от договора');
+            return AdminResponse::success(null, trans_message('contract.estimate_items_detached'));
         } catch (\Throwable $e) {
             Log::error('contract_estimate_items.detach_failed', [
                 'contract_id' => $contract->id,
                 'error' => $e->getMessage(),
             ]);
 
-            return AdminResponse::error('Ошибка при отвязке позиций', 500);
+            return AdminResponse::error(trans_message('contract.estimate_items_detach_error'), 500);
         }
     }
 
@@ -97,7 +99,7 @@ class ContractEstimateItemController extends Controller
         try {
             $estimateId = $request->query('estimate_id');
             if (!$estimateId) {
-                return AdminResponse::error('Укажите estimate_id', 422);
+                return AdminResponse::error(trans_message('contract.estimate_required'), 422);
             }
 
             $estimate = Estimate::query()->findOrFail((int) $estimateId);
@@ -105,7 +107,7 @@ class ContractEstimateItemController extends Controller
                 $estimate->organization_id !== $contract->organization_id
                 || $estimate->project_id !== $contract->project_id
             ) {
-                return AdminResponse::error('Смета должна принадлежать той же организации и проекту', 422);
+                return AdminResponse::error(trans_message('contract.estimate_project_mismatch'), 422);
             }
 
             $linkedItemIds = ContractEstimateItem::query()
@@ -144,7 +146,7 @@ class ContractEstimateItemController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return AdminResponse::error('Ошибка при загрузке доступных позиций', 500);
+            return AdminResponse::error(trans_message('contract.available_estimate_items_load_error'), 500);
         }
     }
 
@@ -158,7 +160,7 @@ class ContractEstimateItemController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return AdminResponse::error('Ошибка при загрузке сводки', 500);
+            return AdminResponse::error(trans_message('contract.estimate_items_summary_load_error'), 500);
         }
     }
 
@@ -185,14 +187,14 @@ class ContractEstimateItemController extends Controller
                     ];
                 });
 
-            return AdminResponse::success($estimates, 'Сметы проекта успешно загружены');
+            return AdminResponse::success($estimates, trans_message('contract.project_estimates_loaded'));
         } catch (\Throwable $e) {
             Log::error('contract_estimate_items.project_estimates_failed', [
                 'contract_id' => $contract->id,
                 'error' => $e->getMessage(),
             ]);
 
-            return AdminResponse::error('Ошибка при загрузке смет проекта', 500);
+            return AdminResponse::error(trans_message('contract.project_estimates_load_error'), 500);
         }
     }
 }

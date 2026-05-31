@@ -60,7 +60,7 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::post('/', [ContractController::class, 'store']);
         Route::get('/{contract}', [ContractController::class, 'show']);
         Route::put('/{contract}', [ContractController::class, 'update']);
-        Route::delete('/{contract}', [ContractController::class, 'destroy']);
+        Route::delete('/{contract}', [ContractController::class, 'destroyForProject']);
         
         // Contract Performance Acts
         Route::prefix('{contract}/performance-acts')->group(function () {

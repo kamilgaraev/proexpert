@@ -18,7 +18,7 @@ class CorsMiddleware
         $this->logging = $logging;
     }
     /**
-     * РћР±СЂР°Р±Р°С‚С‹РІР°РµС‚ РІС…РѕРґСЏС‰РёР№ Р·Р°РїСЂРѕСЃ.
+     * Обрабатывает входящий запрос.
      *
      * @param  \Illuminate\Http\Request  $request
      * @param  \Closure  $next
@@ -26,10 +26,10 @@ class CorsMiddleware
      */
     public function handle(Request $request, Closure $next)
     {
-        // РџРѕР»СѓС‡Р°РµРј Origin РёР· Р·Р°РіРѕР»РѕРІРєР° Р·Р°РїСЂРѕСЃР°
+        // Получаем Origin из заголовка запроса
         $origin = $request->header('Origin');
         
-        // Р›РѕРіРёСЂСѓРµРј С‚РѕР»СЊРєРѕ РїРѕРґРѕР·СЂРёС‚РµР»СЊРЅС‹Рµ РёР»Рё РІР°Р¶РЅС‹Рµ CORS Р·Р°РїСЂРѕСЃС‹ (РЅРµ /metrics РѕС‚ Prometheus)
+        // Логируем только подозрительные или важные CORS запросы (не /metrics от Prometheus)
         if (!$this->isRoutineRequest($request)) {
             $this->logging->access([
                 'event' => 'cors.request.processed',
@@ -41,7 +41,7 @@ class CorsMiddleware
             ]);
         }
         
-        // РџРѕР»СѓС‡Р°РµРј РєРѕРЅС„РёРіСѓСЂР°С†РёСЋ CORS
+        // Получаем конфигурацию CORS
         $allowedOrigins = Config::get('cors.allowed_origins', []);
         $allowedOriginsPatterns = Config::get('cors.allowed_origins_patterns', []);
         $allowedMethods = Config::get('cors.allowed_methods', ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
@@ -50,18 +50,18 @@ class CorsMiddleware
         $maxAge = Config::get('cors.max_age', 86400);
         $allowAnyOriginInDev = Config::get('cors.allow_any_origin_in_dev', false);
         
-        // РћРїСЂРµРґРµР»СЏРµРј, РґРѕСЃС‚СѓРїРµРЅ Р»Рё Р·Р°РїСЂРѕС€РµРЅРЅС‹Р№ origin
+        // Определяем, доступен ли запрошенный origin
         $allowedOrigin = null;
         $allowCredentials = 'false';
         $originMatched = false;
         
-        // Р•СЃР»Рё РјС‹ РІ СЂРµР¶РёРјРµ СЂР°Р·СЂР°Р±РѕС‚РєРё Рё РЅР°СЃС‚СЂРѕР№РєР° СЂР°Р·СЂРµС€Р°РµС‚ Р»СЋР±РѕР№ origin
+        // Если мы в режиме разработки и настройка разрешает любой origin
         if (app()->environment('local') && $allowAnyOriginInDev) {
             $allowedOrigin = $origin ?: '*';
             $allowCredentials = ($allowedOrigin === '*') ? 'false' : 'true';
             $originMatched = true;
         } 
-        // РРЅР°С‡Рµ РїСЂРѕРІРµСЂСЏРµРј РїРѕ СЃРїРёСЃРєСѓ СЂР°Р·СЂРµС€РµРЅРЅС‹С…
+        // Иначе проверяем по списку разрешенных
         else if ($origin) {
             if (in_array($origin, $allowedOrigins)) {
                 $allowedOrigin = $origin;
@@ -79,9 +79,9 @@ class CorsMiddleware
             }
             
             if (!$originMatched) {
-                // Р’ СЂРµР¶РёРјРµ СЂР°Р·СЂР°Р±РѕС‚РєРё РјРѕР¶РµРј Р±С‹С‚СЊ Р±РѕР»РµРµ СЃРЅРёСЃС…РѕРґРёС‚РµР»СЊРЅС‹РјРё
+                // В режиме разработки можем быть более снисходительными
                 if (app()->environment('local')) {
-                    // SECURITY: Р Р°Р·СЂРµС€РµРЅРёРµ РЅРµРёР·РІРµСЃС‚РЅРѕРіРѕ origin РІ dev СЃСЂРµРґРµ
+                    // SECURITY: Разрешение неизвестного origin в dev среде
                     $this->logging->security('cors.origin.allowed.dev', [
                         'origin' => $origin,
                         'environment' => 'local',
@@ -91,9 +91,9 @@ class CorsMiddleware
                     $allowCredentials = 'true';
                     $originMatched = true;
                 } else {
-                    // Р’ РїСЂРѕРґР°РєС€РµРЅРµ РґР»СЏ prohelper.pro РґРѕРјРµРЅРѕРІ СЂР°Р·СЂРµС€Р°РµРј
+                    // В продакшене для prohelper.pro доменов разрешаем
                     if ($origin && (strpos($origin, '.prohelper.pro') !== false || $origin === 'https://prohelper.pro')) {
-                        // SECURITY: Р Р°Р·СЂРµС€РµРЅРёРµ prohelper.pro РґРѕРјРµРЅР° РЅРµ РёР· СЃРїРёСЃРєР°
+                        // SECURITY: Разрешение prohelper.pro домена не из списка
                         $this->logging->security('cors.origin.allowed.prohelper', [
                             'origin' => $origin,
                             'uri' => $request->getRequestUri(),
@@ -103,7 +103,7 @@ class CorsMiddleware
                         $allowCredentials = 'true';
                         $originMatched = true;
                     } else {
-                        // SECURITY: РљР РРўРР§РќРћ - РћС‚РєР»РѕРЅРµРЅ Р·Р°РїСЂРѕСЃ СЃ РЅРµРґРѕРїСѓСЃС‚РёРјРѕРіРѕ origin
+                        // SECURITY: КРИТИЧНО - Отклонен запрос с недопустимого origin
                         $this->logging->security('cors.origin.rejected', [
                             'origin' => $origin,
                             'uri' => $request->getRequestUri(),
@@ -118,34 +118,34 @@ class CorsMiddleware
                 }
             }
         } else {
-            // Р•СЃР»Рё origin РЅРµ СѓРєР°Р·Р°РЅ, РёСЃРїРѕР»СЊР·СѓРµРј wildcard (С‚РѕР»СЊРєРѕ РґР»СЏ Р·Р°РїСЂРѕСЃРѕРІ Р±РµР· credentials)
+            // Если origin не указан, используем wildcard (только для запросов без credentials)
             $allowedOrigin = '*';
             $allowCredentials = 'false';
             $originMatched = true;
         }
         
-        // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј Р·Р°РіРѕР»РѕРІРєРё CORS РґР»СЏ РѕС‚РІРµС‚Р°
+        // Устанавливаем заголовки CORS для ответа
         $headers = [
-            // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј origin РёР· Р·Р°РїСЂРѕСЃР° РёР»Рё wildcard
+            // Устанавливаем origin из запроса или wildcard
             'Access-Control-Allow-Origin' => $allowedOrigin,
-            // Р Р°Р·СЂРµС€РёС‚СЊ РІРєР»СЋС‡Р°С‚СЊ СѓС‡РµС‚РЅС‹Рµ РґР°РЅРЅС‹Рµ (С‚РѕР»СЊРєРѕ РµСЃР»Рё РЅРµ wildcard)
+            // Разрешить включать учетные данные (только если не wildcard)
             'Access-Control-Allow-Credentials' => $allowCredentials,
-            // Р Р°Р·СЂРµС€РёС‚СЊ СѓРєР°Р·Р°РЅРЅС‹Рµ РјРµС‚РѕРґС‹
+            // Разрешить указанные методы
             'Access-Control-Allow-Methods' => implode(', ', $allowedMethods),
-            // Р Р°Р·СЂРµС€РёС‚СЊ СѓРєР°Р·Р°РЅРЅС‹Рµ Р·Р°РіРѕР»РѕРІРєРё
+            // Разрешить указанные заголовки
             'Access-Control-Allow-Headers' => implode(', ', $allowedHeaders),
-            // РЎСЂРѕРє РґРµР№СЃС‚РІРёСЏ preflight Р·Р°РїСЂРѕСЃР°
+            // Срок действия preflight запроса
             'Access-Control-Max-Age' => (string) $maxAge,
         ];
         
-        // Р”РѕР±Р°РІР»СЏРµРј exposed headers, РµСЃР»Рё РѕРЅРё РµСЃС‚СЊ
+        // Добавляем exposed headers, если они есть
         if (!empty($exposedHeaders)) {
             $headers['Access-Control-Expose-Headers'] = implode(', ', $exposedHeaders);
         }
         
-        // Р•СЃР»Рё СЌС‚Рѕ preflight OPTIONS-Р·Р°РїСЂРѕСЃ
+        // Если это preflight OPTIONS-запрос
         if ($request->isMethod('OPTIONS')) {
-            // TECHNICAL: РћР±СЂР°Р±РѕС‚РєР° preflight Р·Р°РїСЂРѕСЃР° - РІР°Р¶РЅРѕ РґР»СЏ API РёРЅС‚РµРіСЂР°С†РёР№
+            // TECHNICAL: Обработка preflight запроса - важно для API интеграций
             $this->logging->technical('cors.preflight.processed', [
                 'origin' => $origin,
                 'allowed_origin' => $allowedOrigin,
@@ -154,22 +154,22 @@ class CorsMiddleware
                 'requested_method' => $request->header('Access-Control-Request-Method'),
                 'requested_headers' => $request->header('Access-Control-Request-Headers')
             ]);
-            // Р’РѕР·РІСЂР°С‰Р°РµРј РїСѓСЃС‚РѕР№ РѕС‚РІРµС‚ 200 СЃ РЅСѓР¶РЅС‹РјРё CORS-Р·Р°РіРѕР»РѕРІРєР°РјРё
+            // Возвращаем пустой ответ 200 с нужными CORS-заголовками
             return response('', 200, $headers);
         }
         
         try {
-            // Р”Р»СЏ РґСЂСѓРіРёС… Р·Р°РїСЂРѕСЃРѕРІ РІС‹Р·С‹РІР°РµРј СЃР»РµРґСѓСЋС‰РёР№ middleware РІ С†РµРїРѕС‡РєРµ
+            // Для других запросов вызываем следующий middleware в цепочке
             $response = $next($request);
             
-            // Р”РѕР±Р°РІР»СЏРµРј Р·Р°РіРѕР»РѕРІРєРё CORS Рє РѕС‚РІРµС‚Сѓ
+            // Добавляем заголовки CORS к ответу
             foreach ($headers as $key => $value) {
                 $response->headers->set($key, $value);
             }
             
-            // Р›РѕРіРёСЂСѓРµРј С‚РѕР»СЊРєРѕ РїСЂРѕР±Р»РµРјРЅС‹Рµ РёР»Рё РІР°Р¶РЅС‹Рµ CORS РѕС‚РІРµС‚С‹ (РЅРµ РєР°Р¶РґС‹Р№ /metrics)
+            // Логируем только проблемные или важные CORS ответы (не каждый /metrics)
             if (!$this->isRoutineRequest($request) || $response->getStatusCode() >= 400) {
-                // ACCESS: РЈСЃРїРµС€РЅР°СЏ РѕР±СЂР°Р±РѕС‚РєР° CORS
+                // ACCESS: Успешная обработка CORS
                 $this->logging->access([
                     'event' => 'cors.response.success',
                     'uri' => $request->getRequestUri(),
@@ -182,7 +182,7 @@ class CorsMiddleware
             
             return $response;
         } catch (\Throwable $e) {
-            // TECHNICAL: РСЃРєР»СЋС‡РµРЅРёРµ РІ CORS middleware
+            // TECHNICAL: Исключение в CORS middleware
             $this->logging->technical('cors.exception.caught', [
                 'uri' => $request->getRequestUri(),
                 'method' => $request->method(),
@@ -193,21 +193,21 @@ class CorsMiddleware
                 'origin' => $origin
             ], 'error');
 
-            // РЎРїРµС†РёР°Р»СЊРЅР°СЏ РѕР±СЂР°Р±РѕС‚РєР° РґР»СЏ business logic РёСЃРєР»СЋС‡РµРЅРёР№ - РїСЂРѕР±СЂР°СЃС‹РІР°РµРј РґР°Р»СЊС€Рµ РІ Handler
+            // Специальная обработка для business logic исключений - пробрасываем дальше в Handler
             if ($e instanceof \App\Exceptions\Billing\InsufficientBalanceException ||
                 $e instanceof \App\Exceptions\BusinessLogicException ||
                 $e instanceof \Illuminate\Validation\ValidationException ||
                 $e instanceof \Illuminate\Auth\AuthenticationException ||
                 $e instanceof \Illuminate\Auth\Access\AuthorizationException ||
-                $e instanceof \InvalidArgumentException) { // Р”Р»СЏ РѕС€РёР±РѕРє РєРѕРЅС„РёРіСѓСЂР°С†РёРё (РЅР°РїСЂРёРјРµСЂ, guard РЅРµ РѕРїСЂРµРґРµР»С‘РЅ)
+                $e instanceof \InvalidArgumentException) { // Для ошибок конфигурации (например, guard не определён)
                 
-                // РЎРѕС…СЂР°РЅСЏРµРј CORS Р·Р°РіРѕР»РѕРІРєРё РІ Р·Р°РїСЂРѕСЃРµ РґР»СЏ Handler
+                // Сохраняем CORS заголовки в запросе для Handler
                 $request->attributes->set('cors_headers', $headers);
                 
-                throw $e; // РџСЂРѕР±СЂР°СЃС‹РІР°РµРј РІ Handler
+                throw $e; // Пробрасываем в Handler
             }
 
-            // TECHNICAL: РЎРёСЃС‚РµРјРЅР°СЏ РѕС€РёР±РєР° РІ CORS middleware
+            // TECHNICAL: Системная ошибка в CORS middleware
             $this->logging->technical('cors.system.error', [
                 'error_message' => $e->getMessage(),
                 'uri' => $request->getRequestUri(),
@@ -216,23 +216,23 @@ class CorsMiddleware
                 'stack_trace_hash' => md5($e->getTraceAsString())
             ], 'error');
             
-            // Р’РѕР·РІСЂР°С‰Р°РµРј РѕС‚РІРµС‚ РѕР± РѕС€РёР±РєРµ СЃ Р·Р°РіРѕР»РѕРІРєР°РјРё CORS С‚РѕР»СЊРєРѕ РґР»СЏ СЃРёСЃС‚РµРјРЅС‹С… РѕС€РёР±РѕРє
+            // Возвращаем ответ об ошибке с заголовками CORS только для системных ошибок
             return \App\Http\Responses\AdminResponse::fromPayload([
-                'error' => 'РћС€РёР±РєР° РЅР° СЃРµСЂРІРµСЂРµ',
-                'message' => 'РџСЂРё РѕР±СЂР°Р±РѕС‚РєРµ Р·Р°РїСЂРѕСЃР° РїСЂРѕРёР·РѕС€Р»Р° РѕС€РёР±РєР°. РђРґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ СѓРІРµРґРѕРјР»РµРЅ. [Diag: Catch Block Reached]'
+                'error' => trans_message('errors.server_error'),
+                'message' => trans_message('errors.internal_server_error')
             ], 500, $headers);
         }
     }
 
     /**
-     * РџСЂРѕРІРµСЂСЏРµС‚ СЏРІР»СЏРµС‚СЃСЏ Р»Рё Р·Р°РїСЂРѕСЃ СЂСѓС‚РёРЅРЅС‹Рј (РЅР°РїСЂРёРјРµСЂ, РјРѕРЅРёС‚РѕСЂРёРЅРі)
+     * Проверяет является ли запрос рутинным (например, мониторинг)
      */
     protected function isRoutineRequest(Request $request): bool
     {
         $uri = $request->getRequestUri();
         $userAgent = $request->header('User-Agent', '');
         
-        // Prometheus РјРѕРЅРёС‚РѕСЂРёРЅРі
+        // Prometheus мониторинг
         if (str_contains($uri, '/metrics') && str_contains($userAgent, 'Prometheus/')) {
             return true;
         }

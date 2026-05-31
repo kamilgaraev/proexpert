@@ -60,9 +60,9 @@ class ContractController extends Controller
                 : $this->exportService->exportKS6aToPdf($contract);
             $url = $this->exportService->getFileService()->temporaryUrl($path, 15);
             
-            return AdminResponse::success(['url' => $url], 'Файл успешно сгенерирован');
+            return AdminResponse::success(['url' => $url], trans_message('contract.file_generated'));
         } catch (\Exception $e) {
-            return AdminResponse::error('Ошибка экспорта: ' . $e->getMessage(), 500);
+            return AdminResponse::error(trans_message('contract.export_error') . ': ' . $e->getMessage(), 500);
         }
     }
 
@@ -203,7 +203,7 @@ class ContractController extends Controller
         $organizationId = $organization?->id ?? ($request->attributes->get('current_organization_id') ?? $user->current_organization_id);
         
         if (!$organizationId) {
-            return AdminResponse::error('Не определён контекст организации', 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
         
         Log::info('ContractController@show attempt', [
@@ -334,7 +334,7 @@ class ContractController extends Controller
                 }
                 
                 if (!$belongsToProject) {
-                    return AdminResponse::error('Контракт не найден', Response::HTTP_NOT_FOUND);
+                    return AdminResponse::error(trans_message('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
                 }
             }
 
@@ -413,7 +413,17 @@ class ContractController extends Controller
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(int $project, int $contract, Request $request)
+    public function destroy(int $contract, Request $request): JsonResponse
+    {
+        return $this->destroyContract($request, $contract, null);
+    }
+
+    public function destroyForProject(int $project, int $contract, Request $request): JsonResponse
+    {
+        return $this->destroyContract($request, $contract, $project);
+    }
+
+    private function destroyContract(Request $request, int $contract, ?int $projectId): JsonResponse
     {
         $user = $request->user();
         $organization = $request->attributes->get('current_organization');
@@ -421,9 +431,7 @@ class ContractController extends Controller
         if (!$organizationId) {
             return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
-        
-        $projectId = $project;
-        
+
         try {
             $existingContract = $this->contractService->getContractById($contract, $organizationId);
             if (!$existingContract) {
@@ -457,16 +465,16 @@ class ContractController extends Controller
     /**
      * Получить аналитику по контракту
      */
-    public function analytics(int $project, int $contract, Request $request): JsonResponse
+    public function analytics(int $contract, Request $request): JsonResponse
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId) {
-            return AdminResponse::error('Не определён контекст организации', 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
         
-        $projectId = $project;
+        $projectId = $request->route('project');
 
         $contract = $this->contractService->getContractById($contract, $organizationId);
         
@@ -507,16 +515,16 @@ class ContractController extends Controller
     /**
      * Получить выполненные работы по контракту
      */
-    public function completedWorks(int $project, int $contract, Request $request): JsonResponse
+    public function completedWorks(int $contract, Request $request): JsonResponse
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId) {
-            return AdminResponse::error('Не определён контекст организации', 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
         
-        $projectId = $project;
+        $projectId = $request->route('project');
 
         $contract = $this->contractService->getContractById($contract, $organizationId);
         
@@ -547,16 +555,16 @@ class ContractController extends Controller
     /**
      * Получить полную информацию по контракту (все данные в одном запросе)
      */
-    public function fullDetails(int $project, int $contract, Request $request): JsonResponse
+    public function fullDetails(int $contract, Request $request): JsonResponse
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId) {
-            return AdminResponse::error('Не определён контекст организации', 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
         
-        $projectId = $project;
+        $projectId = $request->route('project');
 
         try {
             $fullDetails = $this->contractService->getFullContractDetails($contract, $organizationId, $projectId);
@@ -600,7 +608,7 @@ class ContractController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId) {
-            return AdminResponse::error('Не определён контекст организации', 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
 
         try {
@@ -622,7 +630,7 @@ class ContractController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId) {
-            return AdminResponse::error('Не определён контекст организации', 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
 
         try {

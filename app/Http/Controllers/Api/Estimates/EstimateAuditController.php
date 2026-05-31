@@ -97,14 +97,14 @@ class EstimateAuditController extends Controller
         $snapshot = EstimateSnapshot::findOrFail($snapshotId);
 
         if ($snapshot->estimate_id !== $estimate->id) {
-            return \App\Http\Responses\AdminResponse::fromPayload(['error' => 'РЎРЅРёРјРѕРє РЅРµ РїСЂРёРЅР°РґР»РµР¶РёС‚ СЌС‚РѕР№ СЃРјРµС‚Рµ'], 400);
+            return \App\Http\Responses\AdminResponse::fromPayload(['error' => 'Снимок не принадлежит этой смете'], 400);
         }
 
         try {
             $estimate = $this->auditService->restoreFromSnapshot($estimate, $snapshot);
 
             return \App\Http\Responses\AdminResponse::fromPayload([
-                'message' => 'РЎРјРµС‚Р° РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅР° РёР· СЃРЅРёРјРєР°',
+                'message' => 'Смета восстановлена из снимка',
                 'estimate' => $estimate,
             ]);
         } catch (\RuntimeException $e) {

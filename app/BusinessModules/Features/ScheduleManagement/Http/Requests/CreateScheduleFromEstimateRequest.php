@@ -4,6 +4,8 @@ namespace App\BusinessModules\Features\ScheduleManagement\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 
+use function trans_message;
+
 class CreateScheduleFromEstimateRequest extends FormRequest
 {
     /**
@@ -43,13 +45,13 @@ class CreateScheduleFromEstimateRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'estimate_id.required' => 'ID сметы обязателен',
-            'estimate_id.exists' => 'Смета не найдена',
-            'start_date.after_or_equal' => 'Дата начала не может быть в прошлом',
-            'options.workers_count.min' => 'Количество работников должно быть не менее 1',
-            'options.workers_count.max' => 'Количество работников не должно превышать 100',
-            'options.hours_per_day.min' => 'Рабочих часов в день должно быть не менее 1',
-            'options.hours_per_day.max' => 'Рабочих часов в день не должно превышать 24',
+            'estimate_id.required' => trans_message('schedule_management.validation.estimate_required'),
+            'estimate_id.exists' => trans_message('schedule_management.validation.estimate_not_found'),
+            'start_date.after_or_equal' => trans_message('schedule_management.validation.start_date_past'),
+            'options.workers_count.min' => trans_message('schedule_management.validation.workers_count_min'),
+            'options.workers_count.max' => trans_message('schedule_management.validation.workers_count_max'),
+            'options.hours_per_day.min' => trans_message('schedule_management.validation.hours_per_day_min'),
+            'options.hours_per_day.max' => trans_message('schedule_management.validation.hours_per_day_max'),
         ];
     }
 }

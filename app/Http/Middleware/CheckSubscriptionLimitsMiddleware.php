@@ -24,7 +24,7 @@ class CheckSubscriptionLimitsMiddleware
         if (!$user) {
             return \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => false,
-                'message' => 'РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅРµ Р°РІС‚РѕСЂРёР·РѕРІР°РЅ'
+                'message' => trans_message('errors.unauthenticated')
             ], 401);
         }
 
@@ -56,10 +56,10 @@ class CheckSubscriptionLimitsMiddleware
     private function getLimitExceededMessage(string $limitType): string
     {
         return match ($limitType) {
-            'max_foremen' => 'Р”РѕСЃС‚РёРіРЅСѓС‚ Р»РёРјРёС‚ РєРѕР»РёС‡РµСЃС‚РІР° РїСЂРѕСЂР°Р±РѕРІ. РћР±РЅРѕРІРёС‚Рµ РїРѕРґРїРёСЃРєСѓ РґР»СЏ РґРѕР±Р°РІР»РµРЅРёСЏ РЅРѕРІС‹С… РїСЂРѕСЂР°Р±РѕРІ.',
-            'max_projects' => 'Р”РѕСЃС‚РёРіРЅСѓС‚ Р»РёРјРёС‚ РєРѕР»РёС‡РµСЃС‚РІР° РїСЂРѕРµРєС‚РѕРІ. РћР±РЅРѕРІРёС‚Рµ РїРѕРґРїРёСЃРєСѓ РґР»СЏ СЃРѕР·РґР°РЅРёСЏ РЅРѕРІС‹С… РїСЂРѕРµРєС‚РѕРІ.',
-            'max_storage_mb' => 'Р”РѕСЃС‚РёРіРЅСѓС‚ Р»РёРјРёС‚ РґРёСЃРєРѕРІРѕРіРѕ РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІР°. РћР±РЅРѕРІРёС‚Рµ РїРѕРґРїРёСЃРєСѓ РґР»СЏ Р·Р°РіСЂСѓР·РєРё С„Р°Р№Р»РѕРІ.',
-            default => 'Р”РѕСЃС‚РёРіРЅСѓС‚ Р»РёРјРёС‚ РїРѕРґРїРёСЃРєРё. РћР±РЅРѕРІРёС‚Рµ РїРѕРґРїРёСЃРєСѓ РґР»СЏ РїСЂРѕРґРѕР»Р¶РµРЅРёСЏ СЂР°Р±РѕС‚С‹.',
+            'max_foremen' => trans_message('billing.limits.max_foremen'),
+            'max_projects' => trans_message('billing.limits.max_projects'),
+            'max_storage_mb' => trans_message('billing.limits.max_storage_mb'),
+            default => trans_message('billing.limits.default'),
         };
     }
-} 
+}

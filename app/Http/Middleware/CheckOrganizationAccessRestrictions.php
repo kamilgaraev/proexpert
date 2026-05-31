@@ -57,7 +57,7 @@ class CheckOrganizationAccessRestrictions
 
             return \App\Http\Responses\AdminResponse::fromPayload([
                 'success' => false,
-                'message' => 'Р”РµР№СЃС‚РІРёРµ РѕРіСЂР°РЅРёС‡РµРЅРѕ',
+                'message' => trans_message('errors.access_restricted'),
                 'error' => 'access_restricted',
                 'details' => [
                     'reason' => $restriction->reason,

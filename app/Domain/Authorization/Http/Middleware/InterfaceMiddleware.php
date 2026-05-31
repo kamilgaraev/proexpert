@@ -9,9 +9,9 @@ use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response as ResponseAlias;
 
 /**
- * Middleware РґР»СЏ РїСЂРѕРІРµСЂРєРё РґРѕСЃС‚СѓРїР° Рє РёРЅС‚РµСЂС„РµР№СЃР°Рј
+ * Middleware для проверки доступа к интерфейсам
  * 
- * РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ:
+ * Использование:
  * Route::middleware('interface:lk')->group(function () { ... });
  * Route::middleware('interface:admin,organization')->get('/admin', ...);
  * Route::middleware('interface:mobile,project,project_id')->get('/mobile', ...);
@@ -30,14 +30,14 @@ class InterfaceMiddleware
      *
      * @param Request $request
      * @param Closure $next
-     * @param string $interface РРЅС‚РµСЂС„РµР№СЃ (lk, admin, mobile)
-     * @param string|null $contextType РўРёРї РєРѕРЅС‚РµРєСЃС‚Р°
-     * @param string|null $contextParam РџР°СЂР°РјРµС‚СЂ СЂРѕСѓС‚Р° РґР»СЏ РєРѕРЅС‚РµРєСЃС‚Р°
+     * @param string $interface Интерфейс (lk, admin, mobile)
+     * @param string|null $contextType Тип контекста
+     * @param string|null $contextParam Параметр роута для контекста
      * @return ResponseAlias
      */
     public function handle(Request $request, Closure $next, string $interface, ?string $contextType = null, ?string $contextParam = null): ResponseAlias
     {
-        // РџСЂРѕРїСѓСЃРєР°РµРј Prometheus РјРѕРЅРёС‚РѕСЂРёРЅРі Р±РµР· РїСЂРѕРІРµСЂРєРё РёРЅС‚РµСЂС„РµР№СЃР°
+        // Пропускаем Prometheus мониторинг без проверки интерфейса
         $userAgent = $request->userAgent() ?? '';
         if (str_contains($userAgent, 'Prometheus')) {
             return $next($request);
@@ -46,17 +46,17 @@ class InterfaceMiddleware
         $user = $request->user();
         
         if (!$user) {
-            return \App\Http\Responses\AdminResponse::fromPayload(['error' => 'Unauthorized'], 401);
+            return \App\Http\Responses\AdminResponse::fromPayload(['error' => trans_message('errors.unauthenticated')], 401);
         }
 
-        // РћРїСЂРµРґРµР»СЏРµРј РєРѕРЅС‚РµРєСЃС‚
+        // Определяем контекст
         $context = $this->resolveContext($request, $contextType, $contextParam);
         
-        // РџСЂРѕРІРµСЂСЏРµРј РґРѕСЃС‚СѓРї Рє РёРЅС‚РµСЂС„РµР№СЃСѓ
+        // Проверяем доступ к интерфейсу
         $hasAccess = $this->authService->canAccessInterface($user, $interface, $context);
         
         if (!$hasAccess) {
-            // Р”РёР°РіРЅРѕСЃС‚РёРєР° РґР»СЏ РѕС‚Р»Р°РґРєРё РїСЂРѕР±Р»РµРј СЃ РґРѕСЃС‚СѓРїРѕРј Рє РёРЅС‚РµСЂС„РµР№СЃР°Рј
+            // Диагностика для отладки проблем с доступом к интерфейсам
             \Log::warning('interface.access.denied', [
                 'user_id' => $user->id,
                 'user_email' => $user->email,
@@ -70,33 +70,33 @@ class InterfaceMiddleware
             ]);
             
             return \App\Http\Responses\AdminResponse::fromPayload([
-                'error' => 'Р”РѕСЃС‚СѓРї Рє РёРЅС‚РµСЂС„РµР№СЃСѓ Р·Р°РїСЂРµС‰РµРЅ',
+                'error' => trans_message('errors.interface_access.denied'),
                 'interface' => $interface,
                 'message' => $this->getInterfaceMessage($interface)
             ], 403);
         }
 
-        // Р”РѕР±Р°РІР»СЏРµРј РёРЅС„РѕСЂРјР°С†РёСЋ РѕР± РёРЅС‚РµСЂС„РµР№СЃРµ РІ Р·Р°РїСЂРѕСЃ РґР»СЏ РґР°Р»СЊРЅРµР№С€РµРіРѕ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёСЏ
+        // Добавляем информацию об интерфейсе в запрос для дальнейшего использования
         $request->merge(['current_interface' => $interface]);
 
         return $next($request);
     }
 
     /**
-     * РћРїСЂРµРґРµР»РёС‚СЊ РєРѕРЅС‚РµРєСЃС‚ Р°РІС‚РѕСЂРёР·Р°С†РёРё
+     * Определить контекст авторизации
      */
     protected function resolveContext(Request $request, ?string $contextType, ?string $contextParam): ?AuthorizationContext
     {
-        // Р•СЃР»Рё contextType РЅРµ СѓРєР°Р·Р°РЅ СЏРІРЅРѕ, РїСЂРѕР±СѓРµРј Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё РѕРїСЂРµРґРµР»РёС‚СЊ РєРѕРЅС‚РµРєСЃС‚
-        // РёР· СЂР°РЅРµРµ СѓСЃС‚Р°РЅРѕРІР»РµРЅРЅС‹С… Р°С‚СЂРёР±СѓС‚РѕРІ (middleware organization.context)
+        // Если contextType не указан явно, пробуем автоматически определить контекст
+        // из ранее установленных атрибутов (middleware organization.context)
         if (!$contextType) {
-            // РџСЂРѕР±СѓРµРј РїРѕР»СѓС‡РёС‚СЊ organization_id РёР· Р°С‚СЂРёР±СѓС‚РѕРІ Р·Р°РїСЂРѕСЃР°
+            // Пробуем получить organization_id из атрибутов запроса
             $organizationId = $request->attributes->get('current_organization_id');
             if ($organizationId) {
                 return AuthorizationContext::getOrganizationContext($organizationId);
             }
             
-            // Fallback РЅР° current_organization_id РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
+            // Fallback на current_organization_id пользователя
             $user = $request->user();
             if ($user && $user->current_organization_id) {
                 return AuthorizationContext::getOrganizationContext($user->current_organization_id);
@@ -112,7 +112,7 @@ class InterfaceMiddleware
             case 'organization':
                 $organizationId = $this->extractParam($request, $contextParam ?? 'organization_id');
                 if (!$organizationId) {
-                    // РџСЂРѕР±СѓРµРј РїРѕР»СѓС‡РёС‚СЊ РёР· Р°С‚СЂРёР±СѓС‚РѕРІ Р·Р°РїСЂРѕСЃР°
+                    // Пробуем получить из атрибутов запроса
                     $organizationId = $request->attributes->get('current_organization_id');
                 }
                 if (!$organizationId && $request->user()) {
@@ -138,7 +138,7 @@ class InterfaceMiddleware
     }
 
     /**
-     * РР·РІР»РµС‡СЊ РїР°СЂР°РјРµС‚СЂ РёР· Р·Р°РїСЂРѕСЃР°
+     * Извлечь параметр из запроса
      */
     protected function extractParam(Request $request, string $param): mixed
     {
@@ -148,16 +148,15 @@ class InterfaceMiddleware
     }
 
     /**
-     * РџРѕР»СѓС‡РёС‚СЊ СЃРѕРѕР±С‰РµРЅРёРµ РѕР± РѕРіСЂР°РЅРёС‡РµРЅРёРё РґРѕСЃС‚СѓРїР° Рє РёРЅС‚РµСЂС„РµР№СЃСѓ
+     * Получить сообщение об ограничении доступа к интерфейсу
      */
     protected function getInterfaceMessage(string $interface): string
     {
-        $messages = [
-            'lk' => 'Р”РѕСЃС‚СѓРї РІ Р»РёС‡РЅС‹Р№ РєР°Р±РёРЅРµС‚ СЂР°Р·СЂРµС€РµРЅ С‚РѕР»СЊРєРѕ РІР»Р°РґРµР»СЊС†Р°Рј Рё Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°Рј РѕСЂРіР°РЅРёР·Р°С†РёР№',
-            'admin' => 'Р”РѕСЃС‚СѓРї РІ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РёРІРЅСѓСЋ РїР°РЅРµР»СЊ СЂР°Р·СЂРµС€РµРЅ С‚РѕР»СЊРєРѕ СЃРёСЃС‚РµРјРЅС‹Рј Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°Рј Рё РјРѕРґРµСЂР°С‚РѕСЂР°Рј',
-            'mobile' => 'Р”РѕСЃС‚СѓРї Рє РјРѕР±РёР»СЊРЅРѕРјСѓ РїСЂРёР»РѕР¶РµРЅРёСЋ СЂР°Р·СЂРµС€РµРЅ С‚РѕР»СЊРєРѕ СЂР°Р±РѕС‚РЅРёРєР°Рј РЅР° РѕР±СЉРµРєС‚Р°С…',
-        ];
-
-        return $messages[$interface] ?? 'Р”РѕСЃС‚СѓРї Рє РґР°РЅРЅРѕРјСѓ РёРЅС‚РµСЂС„РµР№СЃСѓ РѕРіСЂР°РЅРёС‡РµРЅ';
+        return match ($interface) {
+            'lk' => trans_message('errors.interface_access.lk'),
+            'admin' => trans_message('errors.interface_access.admin'),
+            'mobile' => trans_message('errors.interface_access.mobile'),
+            default => trans_message('errors.interface_access.default'),
+        };
     }
 }

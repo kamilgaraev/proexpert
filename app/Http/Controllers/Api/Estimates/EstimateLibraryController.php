@@ -91,7 +91,7 @@ class EstimateLibraryController extends Controller
 
         $this->libraryService->deleteLibrary($library);
 
-        return \App\Http\Responses\AdminResponse::fromPayload(['message' => 'Р‘РёР±Р»РёРѕС‚РµРєР° СѓРґР°Р»РµРЅР°'], 200);
+        return \App\Http\Responses\AdminResponse::fromPayload(['message' => 'Библиотека удалена'], 200);
     }
 
     public function items(Request $request, int $libraryId): JsonResponse
@@ -163,7 +163,7 @@ class EstimateLibraryController extends Controller
             );
 
             return \App\Http\Responses\AdminResponse::fromPayload([
-                'message' => 'РўРёРїРѕРІРѕРµ СЂРµС€РµРЅРёРµ РїСЂРёРјРµРЅРµРЅРѕ СѓСЃРїРµС€РЅРѕ',
+                'message' => 'Типовое решение применено успешно',
                 'added_items_count' => count($addedItems),
                 'items' => $addedItems,
             ]);
@@ -195,7 +195,7 @@ class EstimateLibraryController extends Controller
             );
 
             return \App\Http\Responses\AdminResponse::fromPayload([
-                'message' => 'РЈСЂРѕРІРµРЅСЊ РґРѕСЃС‚СѓРїР° РёР·РјРµРЅРµРЅ',
+                'message' => 'Уровень доступа изменен',
                 'library' => $library,
             ]);
         } catch (\InvalidArgumentException $e) {

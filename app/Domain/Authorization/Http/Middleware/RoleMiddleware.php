@@ -9,9 +9,9 @@ use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response as ResponseAlias;
 
 /**
- * Middleware РґР»СЏ РїСЂРѕРІРµСЂРєРё СЂРѕР»РµР№ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
+ * Middleware для проверки ролей пользователя
  * 
- * РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ:
+ * Использование:
  * Route::middleware('role:organization_admin')->get('/admin', ...);
  * Route::middleware('role:project_manager,organization')->get('/projects', ...);
  * Route::middleware('role:foreman|worker,project,project_id')->get('/mobile', ...);
@@ -30,14 +30,14 @@ class RoleMiddleware
      *
      * @param Request $request
      * @param Closure $next
-     * @param string $roles Р РѕР»Рё (СЂР°Р·РґРµР»РµРЅРЅС‹Рµ | РґР»СЏ OR, , РґР»СЏ AND)
-     * @param string|null $contextType РўРёРї РєРѕРЅС‚РµРєСЃС‚Р°
-     * @param string|null $contextParam РџР°СЂР°РјРµС‚СЂ СЂРѕСѓС‚Р° РґР»СЏ РєРѕРЅС‚РµРєСЃС‚Р°
+     * @param string $roles Роли (разделенные | для OR, , для AND)
+     * @param string|null $contextType Тип контекста
+     * @param string|null $contextParam Параметр роута для контекста
      * @return ResponseAlias
      */
     public function handle(Request $request, Closure $next, string $roles, ?string $contextType = null, ?string $contextParam = null): ResponseAlias
     {
-        // РџСЂРѕРїСѓСЃРєР°РµРј Prometheus РјРѕРЅРёС‚РѕСЂРёРЅРі Р±РµР· РїСЂРѕРІРµСЂРєРё СЂРѕР»РµР№
+        // Пропускаем Prometheus мониторинг без проверки ролей
         $userAgent = $request->userAgent() ?? '';
         if (str_contains($userAgent, 'Prometheus')) {
             return $next($request);
@@ -46,16 +46,16 @@ class RoleMiddleware
         $user = $request->user();
         
         if (!$user) {
-            return \App\Http\Responses\AdminResponse::fromPayload(['error' => 'Unauthorized'], 401);
+            return \App\Http\Responses\AdminResponse::fromPayload(['error' => trans_message('errors.unauthenticated')], 401);
         }
 
-        // РћРїСЂРµРґРµР»СЏРµРј РєРѕРЅС‚РµРєСЃС‚
+        // Определяем контекст
         $contextId = $this->resolveContextId($request, $contextType, $contextParam);
         
-        // РџСЂРѕРІРµСЂСЏРµРј СЂРѕР»Рё
+        // Проверяем роли
         if (!$this->checkRoles($user, $roles, $contextId)) {
             return \App\Http\Responses\AdminResponse::fromPayload([
-                'error' => 'РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РїСЂР°РІ РґРѕСЃС‚СѓРїР°',
+                'error' => trans_message('errors.unauthorized'),
                 'required_roles' => $roles,
                 'context_type' => $contextType,
                 'context_id' => $contextId
@@ -66,19 +66,19 @@ class RoleMiddleware
     }
 
     /**
-     * РџСЂРѕРІРµСЂРёС‚СЊ СЂРѕР»Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
+     * Проверить роли пользователя
      */
     protected function checkRoles($user, string $roles, ?int $contextId): bool
     {
-        // Р Р°Р·Р±РёСЂР°РµРј СЂРѕР»Рё РїРѕ | (OR Р»РѕРіРёРєР°)
+        // Разбираем роли по | (OR логика)
         $roleGroups = explode('|', $roles);
         
         foreach ($roleGroups as $roleGroup) {
-            // Р Р°Р·Р±РёСЂР°РµРј СЂРѕР»Рё РїРѕ , (AND Р»РѕРіРёРєР°)
+            // Разбираем роли по , (AND логика)
             $requiredRoles = array_map('trim', explode(',', $roleGroup));
             
             if ($this->hasAllRoles($user, $requiredRoles, $contextId)) {
-                return true; // РћРґРЅР° РёР· РіСЂСѓРїРї СЂРѕР»РµР№ РїРѕРґРѕС€Р»Р°
+                return true; // Одна из групп ролей подошла
             }
         }
         
@@ -86,7 +86,7 @@ class RoleMiddleware
     }
 
     /**
-     * РџСЂРѕРІРµСЂРёС‚СЊ, РµСЃС‚СЊ Р»Рё Сѓ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ РІСЃРµ СЂРѕР»Рё РёР· СЃРїРёСЃРєР°
+     * Проверить, есть ли у пользователя все роли из списка
      */
     protected function hasAllRoles($user, array $roles, ?int $contextId): bool
     {
@@ -100,7 +100,7 @@ class RoleMiddleware
     }
 
     /**
-     * РћРїСЂРµРґРµР»РёС‚СЊ ID РєРѕРЅС‚РµРєСЃС‚Р° РёР· Р·Р°РїСЂРѕСЃР°
+     * Определить ID контекста из запроса
      */
     protected function resolveContextId(Request $request, ?string $contextType, ?string $contextParam): ?int
     {
@@ -122,7 +122,7 @@ class RoleMiddleware
             case 'project':
                 $projectId = $this->extractParam($request, $contextParam ?? 'project_id');
                 if ($projectId) {
-                    // РџРѕР»СѓС‡Р°РµРј organization_id РїСЂРѕРµРєС‚Р°
+                    // Получаем organization_id проекта
                     $project = \App\Models\Project::find($projectId);
                     $organizationId = $project ? $project->organization_id : null;
                     
@@ -138,7 +138,7 @@ class RoleMiddleware
     }
 
     /**
-     * РР·РІР»РµС‡СЊ РїР°СЂР°РјРµС‚СЂ РёР· Р·Р°РїСЂРѕСЃР°
+     * Извлечь параметр из запроса
      */
     protected function extractParam(Request $request, string $param): mixed
     {

@@ -15,6 +15,8 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use Throwable;
 
+use function trans_message;
+
 class CustomerAccessController extends Controller
 {
     public function __construct(
@@ -38,7 +40,7 @@ class CustomerAccessController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error('Не удалось загрузить customer-доступ пользователя.', 500);
+            return AdminResponse::error(trans_message('errors.customer_access.load_failed'), 500);
         }
     }
 
@@ -56,7 +58,7 @@ class CustomerAccessController extends Controller
                 $this->customerTeamAccessService->updateUserAccess($user, $request, $validated)
             );
         } catch (ValidationException $exception) {
-            return AdminResponse::error('Проверьте параметры customer-доступа.', 422, $exception->errors());
+            return AdminResponse::error(trans_message('errors.customer_access.invalid_params'), 422, $exception->errors());
         } catch (BusinessLogicException $exception) {
             return AdminResponse::error($exception->getMessage(), $exception->getCode() ?: 400);
         } catch (Throwable $exception) {
@@ -67,7 +69,7 @@ class CustomerAccessController extends Controller
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error('Не удалось обновить customer-доступ пользователя.', 500);
+            return AdminResponse::error(trans_message('errors.customer_access.update_failed'), 500);
         }
     }
 }
