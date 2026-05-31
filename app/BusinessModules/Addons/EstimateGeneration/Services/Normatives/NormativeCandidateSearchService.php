@@ -32,29 +32,7 @@ final class NormativeCandidateSearchService
         int $limit
     ): Collection {
         $intent = $this->workIntentClassifier->classify($workItem, $context);
-        $pool = $this->queryPool($version, $tokens, $intent, max($limit * 6, self::MIN_POOL_SIZE));
-
-        if ($pool->isEmpty() && $intent->forbiddenSectionPrefixes !== []) {
-            $pool = $this->queryPool(
-                $version,
-                $tokens,
-                new WorkIntentData(
-                    scope: $intent->scope,
-                    action: $intent->action,
-                    object: $intent->object,
-                    material: $intent->material,
-                    system: $intent->system,
-                    expectedDimensions: $intent->expectedDimensions,
-                    preferredNormTypes: $intent->preferredNormTypes,
-                    forbiddenNormTypes: [],
-                    preferredSectionPrefixes: $intent->preferredSectionPrefixes,
-                    forbiddenSectionPrefixes: [],
-                    confidence: $intent->confidence,
-                    signals: $intent->signals,
-                ),
-                max($limit * 6, self::MIN_POOL_SIZE)
-            );
-        }
+        $pool = $this->queryPool($version, $workItem, $tokens, $intent, max($limit * 6, self::MIN_POOL_SIZE));
 
         $ranked = $pool
             ->sortByDesc(fn (EstimateNorm $norm): float => $this->scorePoolCandidate($norm, $workItem, $tokens, $intent))
@@ -73,7 +51,7 @@ final class NormativeCandidateSearchService
      * @param array<int, string> $tokens
      * @return Collection<int, EstimateNorm>
      */
-    private function queryPool(EstimateDatasetVersion $version, array $tokens, WorkIntentData $intent, int $poolLimit): Collection
+    private function queryPool(EstimateDatasetVersion $version, array $workItem, array $tokens, WorkIntentData $intent, int $poolLimit): Collection
     {
         $tokens = $this->expandedTokens($tokens, $intent);
         $query = EstimateNorm::query()
@@ -103,7 +81,66 @@ final class NormativeCandidateSearchService
         return $query
             ->orderBy('code')
             ->limit($poolLimit)
-            ->get();
+            ->get()
+            ->reject(fn (EstimateNorm $norm): bool => $this->forbiddenDomainCandidate($norm, $workItem, $intent))
+            ->values();
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    private function forbiddenDomainCandidate(EstimateNorm $norm, array $workItem, WorkIntentData $intent): bool
+    {
+        $candidateText = mb_strtolower(trim(implode(' ', array_filter([
+            (string) ($norm->code ?? ''),
+            (string) ($norm->name ?? ''),
+            (string) ($norm->section_name ?? ''),
+            (string) ($norm->section?->name ?? ''),
+        ]))));
+        $workText = mb_strtolower(trim(implode(' ', array_filter([
+            (string) ($workItem['name'] ?? ''),
+            (string) ($workItem['description'] ?? ''),
+            (string) ($workItem['work_category'] ?? ''),
+            (string) ($workItem['normative_search_text'] ?? ''),
+        ]))));
+
+        if ($this->containsAny($candidateText, ['кран портальн', 'портальный кран', 'кран козлов']) && !$this->containsAny($workText, ['кран', 'подъемн'])) {
+            return true;
+        }
+
+        if ($this->containsAny($candidateText, ['железнодорож', 'земляное полотно']) && !$this->containsAny($workText, ['железнодорож', 'рельс', 'путь'])) {
+            return true;
+        }
+
+        if ($this->containsAny($candidateText, ['бурени', 'скважин']) && !$this->containsAny($workText, ['бурени', 'скважин'])) {
+            return true;
+        }
+
+        if ($this->containsAny($candidateText, ['взрыв', 'взрываем']) && !$this->containsAny($workText, ['взрыв', 'взрываем'])) {
+            return true;
+        }
+
+        if ($this->containsAny($candidateText, ['шпунт']) && !$this->containsAny($workText, ['шпунт'])) {
+            return true;
+        }
+
+        if (
+            $this->containsAny($candidateText, ['водопроводн арматур', 'арматур водопровод'])
+            && !in_array($intent->system, ['water_supply', 'sewerage'], true)
+            && $intent->action !== 'pipe_layout'
+        ) {
+            return true;
+        }
+
+        if (
+            $this->containsAny($candidateText, ['землян', 'разработк грунт', 'котлован', 'транше'])
+            && !in_array($intent->scope, ['foundation', 'site'], true)
+            && !in_array($intent->action, ['excavation', 'backfill'], true)
+        ) {
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -205,6 +242,20 @@ final class NormativeCandidateSearchService
         }
 
         return $score;
+    }
+
+    /**
+     * @param array<int, string> $needles
+     */
+    private function containsAny(string $text, array $needles): bool
+    {
+        foreach ($needles as $needle) {
+            if (str_contains($text, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

@@ -13,6 +13,9 @@ use App\Models\EstimateSection;
 use App\Models\MeasurementUnit;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+
+use function trans_message;
 
 class EstimateDraftPersistenceService
 {
@@ -24,9 +27,8 @@ class EstimateDraftPersistenceService
         if (($draft['local_estimates'] ?? []) === []) {
             throw new \RuntimeException('Draft is empty.');
         }
-        if (($draft['quality_summary']['status'] ?? null) === 'critical') {
-            throw new \RuntimeException('Draft requires review before applying.');
-        }
+
+        $this->assertDraftCanBeApplied($draft);
 
         return DB::transaction(function () use ($session, $payload, $draft): Estimate {
             $regionalContext = $draft['regional_context'] ?? $session->input_payload['regional_context'] ?? [];
@@ -201,6 +203,30 @@ class EstimateDraftPersistenceService
         }
 
         return mb_substr($this->buildGeneratedEstimateName($session), 0, self::ESTIMATE_NAME_MAX_LENGTH);
+    }
+
+    /**
+     * @param array<string, mixed> $draft
+     */
+    private function assertDraftCanBeApplied(array $draft): void
+    {
+        $qualityStatus = (string) ($draft['quality_summary']['status'] ?? '');
+        $qualityLevel = (string) ($draft['quality_summary']['level'] ?? '');
+        $unresolvedNormatives = (int) data_get($draft, 'quality_summary.normative_items.requires_review', 0);
+
+        if ($unresolvedNormatives > 0) {
+            throw ValidationException::withMessages([
+                'draft' => [trans_message('estimate_generation.unresolved_normatives', [
+                    'count' => $unresolvedNormatives,
+                ])],
+            ]);
+        }
+
+        if ($qualityStatus === 'critical' || $qualityLevel === 'blocked') {
+            throw ValidationException::withMessages([
+                'draft' => [trans_message('estimate_generation.apply_blocked')],
+            ]);
+        }
     }
 
     private function buildGeneratedEstimateName(EstimateGenerationSession $session): string

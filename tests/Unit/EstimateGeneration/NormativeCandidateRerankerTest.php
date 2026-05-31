@@ -42,6 +42,33 @@ final class NormativeCandidateRerankerTest extends TestCase
         $this->assertContains('all_candidates_hard_gated', $result->warnings);
     }
 
+    public function test_rule_based_reranker_rejects_wrong_domain_even_with_higher_score(): void
+    {
+        $result = app(RuleBasedNormativeCandidateReranker::class)->rerank(
+            ['name' => 'Воздушно-тепловые завесы ворот', 'unit' => 'шт'],
+            ['scope_type' => 'engineering', 'section_title' => 'Отопление'],
+            [
+                $this->candidate('candidate-crane', [
+                    'code' => '09-05-001-01',
+                    'name' => 'Кран портальный электрический',
+                    'unit' => 'шт',
+                    'score' => 140,
+                    'section' => ['code' => '09', 'name' => 'Металлические конструкции'],
+                ]),
+                $this->candidate('candidate-heating', [
+                    'code' => '18-03-001-01',
+                    'name' => 'Установка воздушно-тепловых завес',
+                    'unit' => 'шт',
+                    'score' => 40,
+                    'section' => ['code' => '18', 'name' => 'Отопление'],
+                ]),
+            ]
+        );
+
+        $this->assertSame('candidate-heating', $result->selectedCandidateKey);
+        $this->assertSame('rule_based', $result->provider);
+    }
+
     public function test_llm_reranker_cannot_introduce_candidate_not_in_list(): void
     {
         $reranker = new LLMNormativeCandidateReranker(

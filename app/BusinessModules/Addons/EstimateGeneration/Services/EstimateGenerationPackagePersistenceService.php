@@ -196,6 +196,9 @@ class EstimateGenerationPackagePersistenceService
             'metadata' => [
                 'normative_match' => $workItem['normative_match'] ?? null,
                 'normative_candidates' => $workItem['normative_candidates'] ?? [],
+                'pricing_status' => $workItem['pricing_status'] ?? null,
+                'pricing_blocker' => $workItem['pricing_blocker'] ?? null,
+                'pricing_blocker_message' => $workItem['pricing_blocker_message'] ?? null,
                 'source_refs' => $workItem['source_refs'] ?? [],
                 'confidence' => $workItem['confidence'] ?? null,
                 ...($workItem['metadata'] ?? []),

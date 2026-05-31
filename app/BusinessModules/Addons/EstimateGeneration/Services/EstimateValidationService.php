@@ -28,6 +28,8 @@ class EstimateValidationService
         $normativeUnitMismatchWorkItemsCount = 0;
         $normativeScopeMismatchWorkItemsCount = 0;
         $marketEstimateWorkItemsCount = 0;
+        $safeNormRequiredWorkItemsCount = 0;
+        $notCalculatedWorkItemsCount = 0;
 
         foreach ($draft['local_estimates'] as $localIndex => $localEstimate) {
             $localFlags = [];
@@ -79,6 +81,13 @@ class EstimateValidationService
                     $normativeDecision = is_array($normativeMatch['decision'] ?? null) ? $normativeMatch['decision'] : [];
                     $normativeDecisionStatus = (string) ($normativeDecision['status'] ?? '');
                     $normativeWarnings = $this->normativeWarnings($normativeMatch);
+                    $safeNormRequired = $this->safeNormRequired($normativeStatus, $normativeDecisionStatus, $normativeWarnings, $flags);
+
+                    if ($isPricedItem && $safeNormRequired) {
+                        $flags[] = 'safe_norm_required';
+                        $flags[] = 'pricing_not_calculated';
+                        $safeNormRequiredWorkItemsCount++;
+                    }
 
                     if (in_array('unit_mismatch', $normativeWarnings, true)) {
                         $normativeUnitMismatchWorkItemsCount++;
@@ -105,6 +114,10 @@ class EstimateValidationService
 
                     if ($isPricedItem && (in_array('market_price_used', $flags, true) || ($workItem['price_source'] ?? null) === 'market_estimate')) {
                         $marketEstimateWorkItemsCount++;
+                    }
+
+                    if ($isPricedItem && (string) ($workItem['pricing_status'] ?? '') === 'not_calculated') {
+                        $notCalculatedWorkItemsCount++;
                     }
 
                     $flags = array_values(array_unique($flags));
@@ -162,6 +175,8 @@ class EstimateValidationService
             $normativeUnitMismatchWorkItemsCount,
             $normativeScopeMismatchWorkItemsCount,
             $marketEstimateWorkItemsCount,
+            $safeNormRequiredWorkItemsCount,
+            $notCalculatedWorkItemsCount,
             $projectFlags
         );
 
@@ -202,6 +217,8 @@ class EstimateValidationService
         int $normativeUnitMismatchWorkItems,
         int $normativeScopeMismatchWorkItems,
         int $marketEstimateWorkItems,
+        int $safeNormRequiredWorkItems,
+        int $notCalculatedWorkItems,
         array $projectFlags
     ): array {
         $requiresNormativeReview = $normativeCandidateWorkItems + $normativeRejectedWorkItems + $normativeNotFoundWorkItems;
@@ -226,6 +243,8 @@ class EstimateValidationService
             'total_work_items' => $totalWorkItems,
             'priced_work_items' => $pricedWorkItems,
             'zero_price_work_items' => $zeroPriceWorkItems,
+            'not_calculated_work_items' => $notCalculatedWorkItems,
+            'safe_norm_required_work_items' => $safeNormRequiredWorkItems,
             'normative_matched_work_items' => $normativeMatchedWorkItems,
             'market_estimate_work_items' => $marketEstimateWorkItems,
             'normative_items' => [
@@ -237,6 +256,7 @@ class EstimateValidationService
                 'not_found' => $normativeNotFoundWorkItems,
                 'unit_mismatch' => $normativeUnitMismatchWorkItems,
                 'scope_mismatch' => $normativeScopeMismatchWorkItems,
+                'safe_norm_required' => $safeNormRequiredWorkItems,
                 'requires_review' => $requiresNormativeReview,
             ],
             'critical_flags' => $criticalFlags,
@@ -256,5 +276,32 @@ class EstimateValidationService
             ...array_map('strval', $normativeMatch['warnings'] ?? []),
             ...array_map('strval', $decision['warnings'] ?? []),
         ]));
+    }
+
+    /**
+     * @param array<int, string> $warnings
+     * @param array<int, string> $flags
+     */
+    private function safeNormRequired(mixed $normativeStatus, string $decisionStatus, array $warnings, array $flags): bool
+    {
+        if (in_array('safe_norm_required', $flags, true) || in_array('pricing_not_calculated', $flags, true)) {
+            return true;
+        }
+
+        if (in_array((string) $normativeStatus, ['candidate', 'rejected', 'not_found', 'unmatched', 'low_confidence'], true)) {
+            return true;
+        }
+
+        if ($decisionStatus !== '' && $decisionStatus !== 'accepted' && $decisionStatus !== 'review_priced') {
+            return true;
+        }
+
+        return array_intersect($warnings, [
+            'unit_mismatch',
+            'scope_mismatch',
+            'norm_without_resources',
+            'norm_without_prices',
+            'norm_without_resource_prices',
+        ]) !== [];
     }
 }

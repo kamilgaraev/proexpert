@@ -6,9 +6,14 @@ namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationLearningExample;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningBootstrapService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
+use App\Models\Estimate;
+use App\Models\EstimateItem;
+use App\Models\EstimateSection;
+use App\Models\MeasurementUnit;
 use App\Models\Organization;
 use App\Models\Project;
 use Illuminate\Support\Facades\DB;
@@ -106,6 +111,46 @@ class EstimateNormativeMatcherTest extends TestCase
         $this->assertGreaterThan(0, $match['selected']['learning_score']);
         $this->assertContains('learning_positive_evidence', $match['selected']['match_reasons']);
         $this->assertSame('user_selection', $match['selected']['learning_sources'][0]['source_type']);
+    }
+
+    public function test_matcher_uses_bootstrapped_imported_learning_example_in_candidate_scoring(): void
+    {
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $versionId = $this->createVersion('fsnb_2022', '2026-05-31');
+        $priceVersionId = $this->createVersion('fsbc', '2026-05-31');
+        $collectionId = $this->createCollection($versionId);
+        $sectionId = $this->createSection($collectionId, 'Фундаменты');
+        $normId = $this->createNorm($collectionId, $sectionId, '01-01-001-01', 'Бетонирование фундаментной ленты', 'м3');
+        $this->createNormResource($normId, '01.1.01.01-0001', 'Бетон тяжелый', 'м3', 1.02, 'material');
+        $this->createResourcePrice($priceVersionId, '01.1.01.01-0001', 'Бетон тяжелый', 'м3', 4200, 'material');
+        $this->createImportedEstimateItem($organization, $project, '01-01-001-01');
+
+        $bootstrap = app(EstimateGenerationLearningBootstrapService::class)->bootstrap([
+            'organization_id' => $organization->id,
+            'write' => true,
+        ]);
+
+        $this->assertSame(1, $bootstrap['created_examples']);
+
+        $match = app(EstimateNormativeMatcher::class)->matchWorkItem([
+            'name' => 'Бетонирование фундаментной ленты B22.5',
+            'unit' => 'м3',
+            'quantity' => 13.8,
+        ], [
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'scope_type' => 'foundation',
+            'section_title' => 'Фундамент',
+            'local_estimate_title' => 'Фундамент',
+        ]);
+
+        $this->assertNotNull($match);
+        $this->assertSame('01-01-001-01', $match['selected']['code']);
+        $this->assertSame(1, $match['selected']['learning_positive_count']);
+        $this->assertGreaterThan(0, $match['selected']['learning_score']);
+        $this->assertContains('learning_positive_evidence', $match['selected']['match_reasons']);
+        $this->assertSame('imported_estimate', $match['selected']['learning_sources'][0]['source_type']);
     }
 
     public function test_matcher_does_not_drop_roof_norm_after_code_ordered_earthwork_pool(): void
@@ -532,6 +577,45 @@ class EstimateNormativeMatcherTest extends TestCase
             'price_type' => $type,
             'created_at' => now(),
             'updated_at' => now(),
+        ]);
+    }
+
+    private function createImportedEstimateItem(Organization $organization, Project $project, string $normCode): EstimateItem
+    {
+        $estimate = Estimate::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'number' => 'BOOT-001',
+            'name' => 'Bootstrap estimate',
+            'type' => 'local',
+            'status' => 'draft',
+            'estimate_date' => now()->toDateString(),
+        ]);
+        $section = EstimateSection::query()->create([
+            'estimate_id' => $estimate->id,
+            'section_number' => '1',
+            'full_section_number' => '1',
+            'name' => 'Фундамент',
+            'sort_order' => 1,
+        ]);
+        $unit = MeasurementUnit::query()->create([
+            'organization_id' => $organization->id,
+            'name' => 'кубический метр',
+            'short_name' => 'м3',
+            'type' => 'work',
+        ]);
+
+        return EstimateItem::query()->create([
+            'estimate_id' => $estimate->id,
+            'estimate_section_id' => $section->id,
+            'position_number' => '1',
+            'name' => 'Бетонирование фундаментной ленты B22.5',
+            'measurement_unit_id' => $unit->id,
+            'quantity' => 13.8,
+            'unit_price' => 5000,
+            'total_amount' => 69000,
+            'normative_rate_code' => 'ФСНБ ' . $normCode,
+            'item_type' => 'work',
         ]);
     }
 }

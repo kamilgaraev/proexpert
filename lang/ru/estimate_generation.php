@@ -41,6 +41,7 @@ return [
     'normative_candidate_not_offered' => 'Эта норма не была предложена для выбранной позиции.',
     'normative_candidate_not_available' => 'Выбранная норма сейчас недоступна.',
     'normative_manual_selection_required' => 'Нужно подобрать норму вручную.',
+    'pricing_not_calculated_safe_norm' => 'Не рассчитано: нет безопасной нормы для этой позиции.',
     'work_item_not_found' => 'Позиция сметы не найдена.',
     'section_rebuilt' => 'Выбранный блок сметы пересобран.',
     'section_rebuild_error' => 'Не удалось пересобрать блок сметы.',

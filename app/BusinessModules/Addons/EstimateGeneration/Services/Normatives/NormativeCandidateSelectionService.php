@@ -64,7 +64,7 @@ class NormativeCandidateSelectionService
                         ]);
                     }
 
-                    $workItem = $this->resourceAssemblyService->applySelectedNormativeMatch($workItem, $match);
+                    $workItem = $this->resourceAssemblyService->applySelectedNormativeMatch($workItem, $match, $context);
                     $workItem = $this->pricingService->price([$workItem])[0];
                     $learningSelection = [$originalWorkItem, $workItem, $context];
                     $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex] = $workItem;

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\BootstrapEstimateGenerationLearningCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\InspectEstimateGenerationProductionCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ClassifyEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ImportEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\InspectEstimateNormativesCommand;
@@ -34,6 +36,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationExc
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningBootstrapService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningEvidenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSearchService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeScopeRuleCatalog;
@@ -88,6 +91,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(NormativeScopeRuleCatalog::class);
         $this->app->singleton(WorkIntentClassifier::class);
         $this->app->singleton(NormativeCandidateSearchService::class);
+        $this->app->singleton(EstimateGenerationLearningBootstrapService::class);
         $this->app->singleton(EstimateGenerationLearningEvidenceService::class);
         $this->app->singleton(RuleBasedNormativeCandidateReranker::class);
         $this->app->singleton(LLMNormativeCandidateReranker::class, fn ($app) => new LLMNormativeCandidateReranker(
@@ -133,6 +137,8 @@ class EstimateGenerationServiceProvider extends ServiceProvider
 
         if ($this->app->runningInConsole()) {
             $this->commands([
+                BootstrapEstimateGenerationLearningCommand::class,
+                InspectEstimateGenerationProductionCommand::class,
                 ClassifyEstimateNormativesCommand::class,
                 ImportEstimateNormativesCommand::class,
                 InspectEstimateNormativesCommand::class,

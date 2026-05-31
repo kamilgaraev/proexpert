@@ -106,6 +106,41 @@ final class EstimateGenerationLearningImportTest extends TestCase
         $this->assertContains('unit_compatible', $example->quality_flags);
     }
 
+    public function test_bootstrap_command_reports_candidates_without_writing_by_default(): void
+    {
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $this->seedNormative('01-01-006-01', 'Бетонирование фундаментной ленты B22.5', 'м3');
+        $this->createImportedEstimateItem($organization, $project);
+
+        $this->artisan('estimates:generation-learning:bootstrap', [
+            '--organization_id' => $organization->id,
+        ])->assertExitCode(0);
+
+        $this->assertSame(0, EstimateGenerationLearningExample::query()->count());
+    }
+
+    public function test_bootstrap_command_writes_only_quality_gated_learning_examples(): void
+    {
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $this->seedNormative('01-01-006-01', 'Бетонирование фундаментной ленты B22.5', 'м3');
+        $acceptedItem = $this->createImportedEstimateItem($organization, $project);
+        $this->createImportedEstimateItem($organization, $project, withUnit: false);
+
+        $this->artisan('estimates:generation-learning:bootstrap', [
+            '--organization_id' => $organization->id,
+            '--write' => true,
+        ])->assertExitCode(0);
+
+        $this->assertSame(1, EstimateGenerationLearningExample::query()->count());
+        $example = EstimateGenerationLearningExample::query()->firstOrFail();
+
+        $this->assertSame($acceptedItem->id, $example->estimate_item_id);
+        $this->assertSame($acceptedItem->id, $example->source_entity_id);
+        $this->assertContains('unit_compatible', $example->quality_flags);
+    }
+
     private function seedNormative(string $code, string $name, string $unit): int
     {
         $versionId = (int) DB::table('estimate_dataset_versions')->insertGetId([
@@ -151,6 +186,48 @@ final class EstimateGenerationLearningImportTest extends TestCase
             'section_name' => 'Строительные работы',
             'created_at' => now(),
             'updated_at' => now(),
+        ]);
+    }
+
+    private function createImportedEstimateItem(
+        Organization $organization,
+        Project $project,
+        bool $withUnit = true
+    ): EstimateItem {
+        $estimate = Estimate::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'number' => 'BOOT-' . Str::uuid(),
+            'name' => 'Bootstrap estimate',
+            'type' => 'local',
+            'status' => 'draft',
+            'estimate_date' => now()->toDateString(),
+        ]);
+        $section = EstimateSection::query()->create([
+            'estimate_id' => $estimate->id,
+            'section_number' => '1',
+            'full_section_number' => '1',
+            'name' => 'Bootstrap section',
+            'sort_order' => 1,
+        ]);
+        $unit = $withUnit ? MeasurementUnit::query()->create([
+            'organization_id' => $organization->id,
+            'name' => 'кубический метр',
+            'short_name' => 'м3',
+            'type' => 'work',
+        ]) : null;
+
+        return EstimateItem::query()->create([
+            'estimate_id' => $estimate->id,
+            'estimate_section_id' => $section->id,
+            'position_number' => '1',
+            'name' => 'Бетонирование фундаментной ленты B22.5',
+            'measurement_unit_id' => $unit?->id,
+            'quantity' => 13.8,
+            'unit_price' => 5000,
+            'total_amount' => 69000,
+            'normative_rate_code' => 'ФСНБ 01-01-006-01',
+            'item_type' => 'work',
         ]);
     }
 }

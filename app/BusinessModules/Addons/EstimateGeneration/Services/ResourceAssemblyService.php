@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNo
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeMatchDecisionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidatePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 
 use function trans_message;
 
@@ -20,6 +21,7 @@ class ResourceAssemblyService
         protected EstimateNormativeMatcher $normativeMatcher,
         protected NormativeMatchDecisionService $matchDecisionService,
         protected NormativeCandidatePresenter $candidatePresenter,
+        protected ?WorkIntentClassifier $workIntentClassifier = null,
     ) {}
 
     public function enrich(array $workItems, array $context = []): array
@@ -39,10 +41,12 @@ class ResourceAssemblyService
                 continue;
             }
 
+            $workItemForMatching = $this->withWorkIntent($this->workItemForMatching($workItem), $context);
+            $workItem['work_intent'] = $workItemForMatching['work_intent'];
             $cacheKey = $this->matchCacheKey($workItem, $context);
             $match = array_key_exists($cacheKey, $matchCache)
                 ? $matchCache[$cacheKey]
-                : $matchCache[$cacheKey] = $this->normativeMatcher->matchWorkItem($this->workItemForMatching($workItem), $context);
+                : $matchCache[$cacheKey] = $this->normativeMatcher->matchWorkItem($workItemForMatching, $context);
 
             if ($match === null) {
                 $workItem = $this->markUnmatched($workItem);
@@ -64,10 +68,13 @@ class ResourceAssemblyService
     /**
      * @param array<string, mixed> $workItem
      * @param array<string, mixed> $match
+     * @param array<string, mixed> $context
      * @return array<string, mixed>
      */
-    public function applySelectedNormativeMatch(array $workItem, array $match): array
+    public function applySelectedNormativeMatch(array $workItem, array $match, array $context = []): array
     {
+        $workItem = $this->withWorkIntent($workItem, $context);
+
         return $this->applyNormativeResources($workItem, $match, true);
     }
 
@@ -108,6 +115,39 @@ class ResourceAssemblyService
             ...$workItem,
             'name' => $workItem['normative_search_text'],
             'description' => $workItem['normative_search_text'],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @param array<string, mixed> $context
+     * @return array<string, mixed>
+     */
+    private function withWorkIntent(array $workItem, array $context): array
+    {
+        if (is_array($workItem['work_intent'] ?? null)) {
+            return $workItem;
+        }
+
+        $this->workIntentClassifier ??= app(WorkIntentClassifier::class);
+        $intent = $this->workIntentClassifier->classify($workItem, $context);
+
+        return [
+            ...$workItem,
+            'work_intent' => [
+                'scope' => $intent->scope,
+                'action' => $intent->action,
+                'object' => $intent->object,
+                'material' => $intent->material,
+                'system' => $intent->system,
+                'expected_dimensions' => $intent->expectedDimensions,
+                'preferred_norm_types' => $intent->preferredNormTypes,
+                'forbidden_norm_types' => $intent->forbiddenNormTypes,
+                'preferred_section_prefixes' => $intent->preferredSectionPrefixes,
+                'forbidden_section_prefixes' => $intent->forbiddenSectionPrefixes,
+                'confidence' => $intent->confidence,
+                'signals' => $intent->signals,
+            ],
         ];
     }
 
@@ -202,6 +242,12 @@ class ResourceAssemblyService
         $workItem['normative_rate_code'] = $selected['code'];
         $workItem['normative_dataset'] = $version;
         $workItem['price_dataset'] = $priceVersion;
+        $workItem['price_source'] = 'fsnb_normative';
+        $workItem['pricing_status'] = ($decision['status'] ?? null) === 'review_priced'
+            ? 'calculated_review_required'
+            : 'calculated';
+        $workItem['pricing_blocker'] = null;
+        $workItem['pricing_blocker_message'] = null;
         $warnings = $selectedByUser ? [] : array_values(array_unique([
             ...($selected['warnings'] ?? []),
             ...($decision['warnings'] ?? []),
@@ -253,11 +299,21 @@ class ResourceAssemblyService
         $flags = $workItem['validation_flags'] ?? [];
         $flags[] = 'normative_candidate_only';
         $flags[] = 'requires_normative_review';
+        $flags[] = 'safe_norm_required';
+        $flags[] = 'pricing_not_calculated';
         $workItem = $this->clearNonNormativeResources($workItem);
 
         if (in_array('low_confidence', $decision['warnings'] ?? [], true)) {
             $flags[] = 'normative_match_low_confidence';
         }
+
+        foreach ($this->hardWarningFlags($decision['warnings'] ?? []) as $flag) {
+            $flags[] = $flag;
+        }
+
+        $workItem['pricing_status'] = 'not_calculated';
+        $workItem['pricing_blocker'] = $this->pricingBlocker($decision['warnings'] ?? []);
+        $workItem['pricing_blocker_message'] = trans_message('estimate_generation.pricing_not_calculated_safe_norm');
 
         $workItem['normative_match'] = [
             'status' => $decision['status'],
@@ -342,7 +398,12 @@ class ResourceAssemblyService
         $flags = $workItem['validation_flags'] ?? [];
         $flags[] = 'normative_not_found';
         $flags[] = 'requires_normative_review';
+        $flags[] = 'safe_norm_required';
+        $flags[] = 'pricing_not_calculated';
         $workItem = $this->clearNonNormativeResources($workItem);
+        $workItem['pricing_status'] = 'not_calculated';
+        $workItem['pricing_blocker'] = 'normative_not_found';
+        $workItem['pricing_blocker_message'] = trans_message('estimate_generation.pricing_not_calculated_safe_norm');
         $workItem['normative_match'] = [
             'status' => 'not_found',
             'message' => trans_message('estimate_generation.normative_manual_selection_required'),
@@ -396,7 +457,46 @@ class ResourceAssemblyService
             'requires_normative_review',
             'missing_price',
             'missing_resources',
+            'safe_norm_required',
+            'pricing_not_calculated',
         ]));
+    }
+
+    /**
+     * @param array<int, string> $warnings
+     * @return array<int, string>
+     */
+    private function hardWarningFlags(array $warnings): array
+    {
+        return array_values(array_intersect(array_map('strval', $warnings), [
+            'unit_mismatch',
+            'scope_mismatch',
+            'norm_without_resources',
+            'norm_without_prices',
+            'norm_without_resource_prices',
+        ]));
+    }
+
+    /**
+     * @param array<int, string> $warnings
+     */
+    private function pricingBlocker(array $warnings): string
+    {
+        $warnings = array_map('strval', $warnings);
+
+        if (in_array('unit_mismatch', $warnings, true)) {
+            return 'unit_mismatch';
+        }
+
+        if (in_array('scope_mismatch', $warnings, true)) {
+            return 'scope_mismatch';
+        }
+
+        if (array_intersect($warnings, ['norm_without_resources', 'norm_without_prices', 'norm_without_resource_prices']) !== []) {
+            return 'normative_resources_or_prices_missing';
+        }
+
+        return 'safe_norm_required';
     }
 
     /**

@@ -27,7 +27,7 @@ class NormativeMatchDecisionServiceTest extends TestCase
         $this->assertContains('low_confidence', $decision->warnings);
     }
 
-    public function test_middle_confidence_safe_candidate_is_priced_with_review(): void
+    public function test_middle_confidence_safe_candidate_requires_manual_review_without_pricing(): void
     {
         $decision = app(NormativeMatchDecisionService::class)->decide([
             'confidence' => 0.61,
@@ -40,10 +40,40 @@ class NormativeMatchDecisionServiceTest extends TestCase
             ],
         ], ['unit' => 'м2']);
 
-        $this->assertSame('review_priced', $decision->status);
-        $this->assertTrue($decision->canUseForPricing);
+        $this->assertSame('candidate', $decision->status);
+        $this->assertFalse($decision->canUseForPricing);
         $this->assertContains('low_confidence', $decision->warnings);
         $this->assertContains('requires_normative_review', $decision->warnings);
+    }
+
+    public function test_middle_confidence_candidate_with_wrong_domain_is_not_review_priced(): void
+    {
+        $decision = app(NormativeMatchDecisionService::class)->decide([
+            'confidence' => 0.61,
+            'unit' => 'м2',
+            'code' => '16-07-001-01',
+            'name' => 'Установка водопроводной арматуры',
+            'collection' => ['norm_type' => 'gesnp_plumbing'],
+            'section' => ['code' => '16'],
+            'resources' => [
+                'materials' => [['price_source' => 'fsbc_base']],
+                'labor' => [],
+                'machinery' => [],
+                'other' => [],
+            ],
+        ], [
+            'name' => 'Утепление кровли 200 мм',
+            'unit' => 'м2',
+            'work_intent' => [
+                'scope' => 'roof',
+                'action' => 'insulation',
+                'material' => 'insulation',
+            ],
+        ]);
+
+        $this->assertSame('candidate', $decision->status);
+        $this->assertFalse($decision->canUseForPricing);
+        $this->assertContains('scope_mismatch', $decision->warnings);
     }
 
     public function test_unit_mismatch_candidate_cannot_be_used_for_pricing(): void
@@ -98,6 +128,33 @@ class NormativeMatchDecisionServiceTest extends TestCase
         ], [
             'unit' => 'м',
             'work_intent' => ['scope' => 'engineering', 'system' => 'heating'],
+        ]);
+
+        $this->assertSame('candidate', $decision->status);
+        $this->assertFalse($decision->canUseForPricing);
+        $this->assertContains('scope_mismatch', $decision->warnings);
+    }
+
+    public function test_strict_scope_prefix_mismatch_candidate_is_not_used_for_pricing(): void
+    {
+        $decision = app(NormativeMatchDecisionService::class)->decide([
+            'confidence' => 0.91,
+            'unit' => 'м3',
+            'section' => ['code' => '05-01-016'],
+            'resources' => [
+                'materials' => [['price_source' => 'fsbc_base']],
+                'labor' => [],
+                'machinery' => [],
+                'other' => [],
+            ],
+        ], [
+            'unit' => 'м3',
+            'work_intent' => [
+                'scope' => 'walls',
+                'action' => 'masonry',
+                'preferred_section_prefixes' => ['08'],
+                'forbidden_section_prefixes' => ['01'],
+            ],
         ]);
 
         $this->assertSame('candidate', $decision->status);

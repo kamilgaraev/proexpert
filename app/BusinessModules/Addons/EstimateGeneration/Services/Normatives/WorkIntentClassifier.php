@@ -72,11 +72,12 @@ final class WorkIntentClassifier
 
         foreach ([
             'roof' => ['кровл', 'стропил', 'мауэрлат'],
-            'engineering' => ['отоплен', 'водоснаб', 'канализац', 'вентиляц', 'электр', 'кабел', 'труб'],
+            'engineering' => ['отоплен', 'теплов', 'теплоснаб', 'завес', 'водоснаб', 'канализац', 'вентиляц', 'электр', 'кабел', 'труб', 'котел', 'радиатор'],
             'foundation' => ['фундамент', 'ростверк', 'свая', 'основани'],
             'walls' => ['стен', 'перегород', 'кладк'],
             'slabs' => ['перекрыт', 'плит'],
             'facade' => ['фасад'],
+            'openings' => ['окн', 'двер', 'ворот'],
             'finishing' => ['отделк', 'штукатур', 'окраск', 'шпатлев', 'плитк'],
             'temporary' => ['временн', 'стройплощад', 'огражден'],
             'site' => ['благоустрой', 'планировк', 'вывоз грунта'],
@@ -106,7 +107,7 @@ final class WorkIntentClassifier
     {
         foreach ([
             'electrical' => ['электр', 'кабел', 'освещ'],
-            'heating' => ['отоплен', 'радиатор', 'теплоснаб'],
+            'heating' => ['отоплен', 'радиатор', 'теплоснаб', 'теплов', 'завес', 'котел'],
             'water_supply' => ['водоснаб', 'хвс', 'гвс'],
             'sewerage' => ['канализац'],
             'ventilation' => ['вентиляц', 'воздуховод'],
@@ -128,8 +129,15 @@ final class WorkIntentClassifier
     {
         foreach ([
             'insulation' => ['утепл', 'теплоизоляц'],
+            'plastering' => ['штукатур'],
             'cable_installation' => ['кабел'],
             'pipe_layout' => ['разводк труб', 'прокладк труб', 'труб отоплен'],
+            'masonry' => ['кладк', 'кирпич', 'блок'],
+            'heating_equipment' => ['завес', 'радиатор', 'котел', 'конвектор', 'теплогенератор'],
+            'window_installation' => ['установк окон', 'монтаж окон', 'окн', 'двер', 'ворот'],
+            'ventilation_installation' => ['монтаж вентиляц', 'вентиляц', 'воздуховод'],
+            'socket_installation' => ['розет', 'выключател'],
+            'fence_installation' => ['огражден', 'забор'],
             'formwork' => ['опалуб'],
             'reinforcement' => ['армирован', 'арматур'],
             'concreting' => ['бетонир', 'бетон b', 'бетон в', 'b22', 'b25'],
@@ -149,6 +157,12 @@ final class WorkIntentClassifier
             $signals[] = 'action_cable_installation';
 
             return 'cable_installation';
+        }
+
+        if ($system === 'ventilation') {
+            $signals[] = 'action_ventilation_installation';
+
+            return 'ventilation_installation';
         }
 
         if ($system === 'heating' || $system === 'water_supply' || $system === 'sewerage') {
@@ -172,6 +186,14 @@ final class WorkIntentClassifier
             return 'roof';
         }
 
+        if ($this->containsAny($text, ['окн', 'двер', 'ворот'])) {
+            return 'opening';
+        }
+
+        if ($this->containsAny($text, ['завес', 'радиатор', 'котел'])) {
+            return 'heating_equipment';
+        }
+
         if ($this->containsAny($text, ['кабел'])) {
             return 'cable_line';
         }
@@ -187,6 +209,8 @@ final class WorkIntentClassifier
     {
         return match (true) {
             $this->containsAny($text, ['b22', 'b25', 'бетон', 'железобетон']) => 'concrete',
+            $this->containsAny($text, ['газобетон', 'газоблок']) => 'aerated_concrete',
+            $this->containsAny($text, ['кирпич']) => 'brick',
             $this->containsAny($text, ['арматур']) => 'reinforcement_steel',
             $this->containsAny($text, ['утепл', 'минват', 'пенополистир']) => 'insulation',
             default => null,
@@ -207,6 +231,10 @@ final class WorkIntentClassifier
         return match ($action) {
             'cable_installation', 'pipe_layout' => ['length'],
             'insulation', 'formwork', 'waterproofing' => ['area'],
+            'masonry' => ['volume'],
+            'plastering', 'ventilation_installation' => ['area'],
+            'window_installation', 'heating_equipment' => ['piece'],
+            'fence_installation' => ['length'],
             'concreting', 'excavation', 'backfill' => ['volume'],
             'reinforcement' => ['mass'],
             default => ['piece'],
@@ -238,8 +266,9 @@ final class WorkIntentClassifier
         $scope = mb_strtolower(trim($scope));
 
         return match ($scope) {
-            'foundation', 'roof', 'engineering', 'walls', 'slabs', 'facade', 'finishing', 'site', 'temporary' => $scope,
+            'foundation', 'roof', 'engineering', 'walls', 'slabs', 'facade', 'openings', 'finishing', 'site', 'temporary' => $scope,
             'electrical', 'plumbing', 'heating', 'ventilation' => 'engineering',
+            'rough_finishing', 'finish_finishing' => 'finishing',
             default => '',
         };
     }

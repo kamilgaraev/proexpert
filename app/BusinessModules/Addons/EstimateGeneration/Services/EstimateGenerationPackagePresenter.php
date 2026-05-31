@@ -95,6 +95,9 @@ class EstimateGenerationPackagePresenter
             'quantity' => $item->quantity,
             'quantity_basis' => $item->quantity_basis ?? [],
             'price_source' => $item->price_source,
+            'pricing_status' => $metadata['pricing_status'] ?? $this->pricingStatus($item),
+            'pricing_blocker' => $metadata['pricing_blocker'] ?? null,
+            'pricing_blocker_message' => $metadata['pricing_blocker_message'] ?? null,
             'normative_status' => $item->normative_status,
             'normative_confidence' => $item->normative_confidence,
             'unit_price' => $item->unit_price,
@@ -141,5 +144,14 @@ class EstimateGenerationPackagePresenter
     private function isPricedItem(EstimateGenerationPackageItem $item): bool
     {
         return !in_array($item->item_type, ['operation', 'resource_note', 'review_note'], true);
+    }
+
+    private function pricingStatus(EstimateGenerationPackageItem $item): string
+    {
+        if (!$this->isPricedItem($item)) {
+            return 'not_applicable';
+        }
+
+        return (float) $item->total_cost > 0 ? 'calculated' : 'not_calculated';
     }
 }

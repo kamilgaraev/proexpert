@@ -71,4 +71,51 @@ final class EstimateGenerationAuditTest extends TestCase
             json_encode($events->pluck('payload')->all(), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)
         );
     }
+
+    public function test_production_check_command_reports_normative_and_learning_sections(): void
+    {
+        $organization = Organization::factory()->create();
+        $user = User::factory()->create([
+            'current_organization_id' => $organization->id,
+        ]);
+        $project = Project::factory()->create([
+            'organization_id' => $organization->id,
+        ]);
+        $session = EstimateGenerationSession::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => $user->id,
+            'status' => 'review_required',
+            'processing_stage' => 'validation_and_normalization',
+            'processing_progress' => 100,
+            'input_payload' => [],
+            'analysis_payload' => [],
+            'draft_payload' => [],
+            'problem_flags' => [],
+        ]);
+
+        EstimateGenerationAuditEvent::query()->create([
+            'session_id' => $session->id,
+            'package_id' => null,
+            'user_id' => $user->id,
+            'event_type' => EstimateGenerationAuditService::EVENT_NORMATIVE_DECISION_SUMMARY,
+            'payload' => [
+                'accepted' => 1,
+                'review_priced' => 1,
+                'candidate_only' => 2,
+                'not_found' => 1,
+                'unit_mismatch' => 1,
+                'scope_mismatch' => 1,
+                'max_line_total' => 12345.67,
+            ],
+        ]);
+
+        $this->artisan('estimate-generation:production-check', [
+            '--session_id' => $session->id,
+        ])
+            ->expectsOutputToContain('Подбор норм')
+            ->expectsOutputToContain('Learning examples')
+            ->expectsOutputToContain('estimate_generation_learning')
+            ->assertExitCode(0);
+    }
 }

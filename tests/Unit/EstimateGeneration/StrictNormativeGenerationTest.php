@@ -13,6 +13,7 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 class StrictNormativeGenerationTest extends TestCase
@@ -114,7 +115,7 @@ class StrictNormativeGenerationTest extends TestCase
         self::assertSame(0, $session->draft_payload['quality_summary']['normative_items']['requires_review']);
     }
 
-    public function test_apply_keeps_review_required_normative_candidates_in_draft_metadata(): void
+    public function test_apply_blocks_review_required_normative_candidates(): void
     {
         $organization = Organization::factory()->create();
         $user = User::factory()->create(['current_organization_id' => $organization->id]);
@@ -132,13 +133,17 @@ class StrictNormativeGenerationTest extends TestCase
             'problem_flags' => [],
         ]);
 
-        $estimate = app(EstimateDraftPersistenceService::class)->apply($session, ['name' => 'Смета'], $user);
+        try {
+            app(EstimateDraftPersistenceService::class)->apply($session, ['name' => 'Смета'], $user);
+            self::fail('Expected unresolved normative validation error.');
+        } catch (ValidationException $exception) {
+            self::assertArrayHasKey('draft', $exception->errors());
+        }
+
         $session->refresh();
 
-        self::assertSame('applied', $session->status);
-        self::assertSame($estimate->id, $session->applied_estimate_id);
-        self::assertSame(1, $estimate->items()->where('item_type', 'work')->count());
-        self::assertSame(1, (int) data_get($estimate->metadata, 'quality_summary.normative_items.requires_review'));
+        self::assertSame('review_required', $session->status);
+        self::assertNull($session->applied_estimate_id);
     }
 
     private function seedNormativeWithPrice(): int

@@ -14,10 +14,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateRegionalPriceVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\NormativeRerankResultData;
+use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\WorkIntentData;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningEvidenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSearchService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\NormativeCandidateRerankerInterface;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
@@ -30,15 +32,18 @@ class EstimateNormativeMatcher
     private readonly NormativeCandidateSearchService $candidateSearchService;
     private readonly EstimateGenerationLearningEvidenceService $learningEvidenceService;
     private readonly NormativeCandidateRerankerInterface $reranker;
+    private readonly WorkIntentClassifier $workIntentClassifier;
 
     public function __construct(
         ?NormativeCandidateSearchService $candidateSearchService = null,
         ?EstimateGenerationLearningEvidenceService $learningEvidenceService = null,
         ?NormativeCandidateRerankerInterface $reranker = null,
+        ?WorkIntentClassifier $workIntentClassifier = null,
     ) {
         $this->candidateSearchService = $candidateSearchService ?? app(NormativeCandidateSearchService::class);
         $this->learningEvidenceService = $learningEvidenceService ?? app(EstimateGenerationLearningEvidenceService::class);
         $this->reranker = $reranker ?? app(NormativeCandidateRerankerInterface::class);
+        $this->workIntentClassifier = $workIntentClassifier ?? app(WorkIntentClassifier::class);
     }
 
     /**
@@ -53,6 +58,11 @@ class EstimateNormativeMatcher
             return null;
         }
 
+        $intent = $this->workIntentClassifier->classify($workItem, $context);
+        $workItem = [
+            ...$workItem,
+            'work_intent' => $this->intentPayload($intent),
+        ];
         $tokens = $this->tokensForWorkItem($workItem, $context);
         $candidates = $this->candidateSearchService->search($version, $workItem, $context, $tokens, max($limit * 10, 50));
 
@@ -68,7 +78,8 @@ class EstimateNormativeMatcher
                 $context,
                 $tokens,
                 $priceVersions,
-                $learningEvidence[(int) $norm->id] ?? $this->emptyLearningEvidence()
+                $learningEvidence[(int) $norm->id] ?? $this->emptyLearningEvidence(),
+                $intent
             ))
             ->filter(static fn (array $candidate): bool => (float) $candidate['score'] > 0)
             ->sortByDesc('score')
@@ -126,6 +137,11 @@ class EstimateNormativeMatcher
             return null;
         }
 
+        $intent = $this->workIntentClassifier->classify($workItem, $context);
+        $workItem = [
+            ...$workItem,
+            'work_intent' => $this->intentPayload($intent),
+        ];
         $tokens = $this->tokensForWorkItem($workItem, $context);
         $learningEvidence = $this->learningEvidenceService->summarizeForCandidates(collect([$norm]), $workItem, $context);
         $candidate = $this->scoreNorm(
@@ -134,7 +150,8 @@ class EstimateNormativeMatcher
             $context,
             $tokens,
             $priceVersions,
-            $learningEvidence[(int) $norm->id] ?? $this->emptyLearningEvidence()
+            $learningEvidence[(int) $norm->id] ?? $this->emptyLearningEvidence(),
+            $intent
         );
 
         return [
@@ -288,7 +305,8 @@ class EstimateNormativeMatcher
         array $context,
         array $tokens,
         Collection $priceVersions,
-        array $learningEvidence
+        array $learningEvidence,
+        WorkIntentData $intent
     ): array
     {
         $name = mb_strtolower($norm->name);
@@ -332,6 +350,12 @@ class EstimateNormativeMatcher
         if ($scopeType !== '' && $this->collectionMatchesScope((string) ($norm->collection?->norm_type?->value ?? ''), $scopeType)) {
             $score += 4;
             $reasons[] = 'scope_collection';
+        }
+
+        $scopeMismatch = !$this->intentAllowsNorm($intent, $norm);
+        if ($scopeMismatch) {
+            $score -= 120;
+            $reasons[] = 'scope_mismatch';
         }
 
         $learningScore = (float) ($learningEvidence['learning_score'] ?? 0);
@@ -392,6 +416,7 @@ class EstimateNormativeMatcher
                 $resourceCount,
                 $pricedCount,
                 !$unitMatches,
+                $scopeMismatch,
                 $learningNegativeCount
             ),
             'resources' => $resources,
@@ -516,6 +541,7 @@ class EstimateNormativeMatcher
         int $resourceCount,
         int $pricedCount,
         bool $unitMismatch,
+        bool $scopeMismatch,
         int $learningNegativeCount = 0
     ): array
     {
@@ -537,11 +563,76 @@ class EstimateNormativeMatcher
             $warnings[] = 'unit_mismatch';
         }
 
+        if ($scopeMismatch) {
+            $warnings[] = 'scope_mismatch';
+        }
+
         if ($learningNegativeCount > 0) {
             $warnings[] = 'learning_negative_evidence';
         }
 
         return $warnings;
+    }
+
+    private function intentAllowsNorm(WorkIntentData $intent, EstimateNorm $norm): bool
+    {
+        $sectionCode = (string) ($norm->section_code ?? $norm->section?->code ?? '');
+        $normType = (string) ($norm->collection?->norm_type?->value ?? $norm->collection?->norm_type ?? '');
+
+        if ($normType !== '' && in_array($normType, $intent->forbiddenNormTypes, true)) {
+            return false;
+        }
+
+        foreach ($intent->forbiddenSectionPrefixes as $prefix) {
+            if ($sectionCode !== '' && str_starts_with($sectionCode, $prefix)) {
+                return false;
+            }
+        }
+
+        if ($intent->preferredSectionPrefixes !== [] && !$this->sectionStartsWithAny($sectionCode, $intent->preferredSectionPrefixes)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * @param array<int, string> $prefixes
+     */
+    private function sectionStartsWithAny(string $sectionCode, array $prefixes): bool
+    {
+        if ($sectionCode === '') {
+            return false;
+        }
+
+        foreach ($prefixes as $prefix) {
+            if ($prefix !== '' && str_starts_with($sectionCode, $prefix)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function intentPayload(WorkIntentData $intent): array
+    {
+        return [
+            'scope' => $intent->scope,
+            'action' => $intent->action,
+            'object' => $intent->object,
+            'material' => $intent->material,
+            'system' => $intent->system,
+            'expected_dimensions' => $intent->expectedDimensions,
+            'preferred_norm_types' => $intent->preferredNormTypes,
+            'forbidden_norm_types' => $intent->forbiddenNormTypes,
+            'preferred_section_prefixes' => $intent->preferredSectionPrefixes,
+            'forbidden_section_prefixes' => $intent->forbiddenSectionPrefixes,
+            'confidence' => $intent->confidence,
+            'signals' => $intent->signals,
+        ];
     }
 
     /**

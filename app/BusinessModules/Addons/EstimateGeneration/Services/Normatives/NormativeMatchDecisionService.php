@@ -13,6 +13,10 @@ class NormativeMatchDecisionService
     private const REVIEW_CONFIDENCE_THRESHOLD = 0.55;
     private const CANDIDATE_CONFIDENCE_THRESHOLD = 0.35;
 
+    public function __construct(
+        private readonly ?WorkIntentClassifier $workIntentClassifier = null,
+    ) {}
+
     /**
      * @param array<string, mixed> $candidate
      * @param array<string, mixed> $workItem
@@ -86,7 +90,7 @@ class NormativeMatchDecisionService
         if ($confidence >= self::REVIEW_CONFIDENCE_THRESHOLD) {
             $warnings[] = 'requires_normative_review';
 
-            return new NormativeMatchDecisionData('review_priced', true, $confidence, $reasons, array_values(array_unique($warnings)), $candidate);
+            return new NormativeMatchDecisionData('candidate', false, $confidence, $reasons, array_values(array_unique($warnings)), $candidate);
         }
 
         $status = $confidence >= self::CANDIDATE_CONFIDENCE_THRESHOLD ? 'candidate' : 'rejected';
@@ -109,20 +113,169 @@ class NormativeMatchDecisionService
      */
     private function scopeCompatible(array $candidate, array $workItem): bool
     {
-        $intent = is_array($workItem['work_intent'] ?? null) ? $workItem['work_intent'] : [];
+        $intent = $this->workIntent($workItem);
         $scope = (string) ($intent['scope'] ?? '');
 
-        if ($scope === '') {
-            return true;
+        if ($this->hasForbiddenDomain($candidate, $workItem, $intent)) {
+            return false;
         }
 
         $sectionCode = $this->candidateSectionCode($candidate);
 
-        if (in_array($scope, ['engineering', 'roof', 'walls', 'facade', 'finishing'], true) && str_starts_with($sectionCode, '01')) {
+        if ($scope === '' || in_array($scope, ['general', 'general_work'], true)) {
+            return true;
+        }
+
+        $intentForbiddenPrefixes = $this->stringList($intent['forbidden_section_prefixes'] ?? []);
+        if ($intentForbiddenPrefixes !== [] && $this->startsWithAny($sectionCode, $intentForbiddenPrefixes)) {
+            return false;
+        }
+
+        $intentPreferredPrefixes = $this->stringList($intent['preferred_section_prefixes'] ?? []);
+        if ($intentPreferredPrefixes !== [] && $sectionCode !== '') {
+            return $this->startsWithAny($sectionCode, $intentPreferredPrefixes);
+        }
+
+        $allowedPrefixes = $this->allowedSectionPrefixes($scope, (string) ($intent['system'] ?? ''), (string) ($intent['action'] ?? ''));
+        if ($allowedPrefixes !== [] && $sectionCode !== '') {
+            return $this->startsWithAny($sectionCode, $allowedPrefixes);
+        }
+
+        $forbiddenPrefixes = $this->forbiddenSectionPrefixes($scope);
+        if ($forbiddenPrefixes !== [] && $this->startsWithAny($sectionCode, $forbiddenPrefixes)) {
             return false;
         }
 
         return true;
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @return array<string, mixed>
+     */
+    private function workIntent(array $workItem): array
+    {
+        if (is_array($workItem['work_intent'] ?? null)) {
+            return $workItem['work_intent'];
+        }
+
+        $classifier = $this->workIntentClassifier ?? new WorkIntentClassifier(new NormativeScopeRuleCatalog());
+        $intent = $classifier->classify($workItem);
+
+        return [
+            'scope' => $intent->scope,
+            'action' => $intent->action,
+            'object' => $intent->object,
+            'material' => $intent->material,
+            'system' => $intent->system,
+            'preferred_section_prefixes' => $intent->preferredSectionPrefixes,
+            'forbidden_section_prefixes' => $intent->forbiddenSectionPrefixes,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $candidate
+     * @param array<string, mixed> $workItem
+     * @param array<string, mixed> $intent
+     */
+    private function hasForbiddenDomain(array $candidate, array $workItem, array $intent): bool
+    {
+        $candidateText = $this->candidateText($candidate);
+        $workText = $this->workText($workItem);
+        $scope = (string) ($intent['scope'] ?? '');
+        $system = (string) ($intent['system'] ?? '');
+        $action = (string) ($intent['action'] ?? '');
+
+        if ($this->containsAny($candidateText, ['кран портальн', 'портальный кран', 'кран козлов']) && !$this->containsAny($workText, ['кран', 'подъемн'])) {
+            return true;
+        }
+
+        if ($this->containsAny($candidateText, ['железнодорож', 'земляное полотно']) && !$this->containsAny($workText, ['железнодорож', 'рельс', 'путь'])) {
+            return true;
+        }
+
+        if ($this->containsAny($candidateText, ['бурени', 'скважин']) && !$this->containsAny($workText, ['бурени', 'скважин'])) {
+            return true;
+        }
+
+        if ($this->containsAny($candidateText, ['взрыв', 'взрываем']) && !$this->containsAny($workText, ['взрыв', 'взрываем'])) {
+            return true;
+        }
+
+        if ($this->containsAny($candidateText, ['шпунт']) && !$this->containsAny($workText, ['шпунт'])) {
+            return true;
+        }
+
+        if (
+            $this->containsAny($candidateText, ['водопроводн арматур', 'арматур водопровод'])
+            && !in_array($system, ['water_supply', 'sewerage'], true)
+            && $action !== 'pipe_layout'
+        ) {
+            return true;
+        }
+
+        if (
+            $this->containsAny($candidateText, ['землян', 'разработк грунт', 'котлован', 'транше'])
+            && !in_array($scope, ['foundation', 'site'], true)
+            && !in_array($action, ['excavation', 'backfill'], true)
+        ) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function allowedSectionPrefixes(string $scope, string $system, string $action): array
+    {
+        if ($scope === 'engineering') {
+            if ($system === 'electrical' || in_array($action, ['cable_installation', 'socket_installation'], true)) {
+                return ['08'];
+            }
+
+            if ($system === 'ventilation' || $action === 'ventilation_installation') {
+                return ['20'];
+            }
+
+            if ($system === 'heating' && $action === 'heating_equipment') {
+                return ['18', '20'];
+            }
+
+            if (in_array($system, ['heating', 'water_supply', 'sewerage'], true) || $action === 'pipe_layout') {
+                return ['16', '18'];
+            }
+
+            return ['08', '16', '18', '20'];
+        }
+
+        return match ($scope) {
+            'roof' => ['10', '12', '26'],
+            'walls' => $action === 'masonry' ? ['08'] : ['07', '08'],
+            'slabs' => ['06', '07'],
+            'facade' => ['15', '26'],
+            'finishing' => ['15'],
+            'openings' => ['10', '15'],
+            'temporary' => ['08', '09'],
+            'site' => ['01', '27'],
+            'foundation' => in_array($action, ['excavation', 'backfill'], true)
+                ? ['01']
+                : (in_array($action, ['concreting', 'reinforcement', 'formwork'], true) ? ['01', '06'] : ['01', '06', '07', '08']),
+            default => [],
+        };
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function forbiddenSectionPrefixes(string $scope): array
+    {
+        return match ($scope) {
+            'engineering', 'roof', 'walls', 'facade', 'finishing', 'openings' => ['01', '03', '05', '09', '27', '28'],
+            'temporary' => ['01', '27', '28'],
+            default => [],
+        };
     }
 
     /**
@@ -138,6 +291,80 @@ class NormativeMatchDecisionService
         }
 
         return substr((string) ($candidate['code'] ?? ''), 0, 2);
+    }
+
+    /**
+     * @param array<string, mixed> $candidate
+     */
+    private function candidateText(array $candidate): string
+    {
+        $section = is_array($candidate['section'] ?? null) ? $candidate['section'] : [];
+        $collection = is_array($candidate['collection'] ?? null) ? $candidate['collection'] : [];
+
+        return mb_strtolower(trim(implode(' ', array_filter([
+            (string) ($candidate['code'] ?? ''),
+            (string) ($candidate['name'] ?? ''),
+            (string) ($candidate['section_name'] ?? ''),
+            (string) ($section['name'] ?? ''),
+            (string) ($collection['name'] ?? ''),
+        ]))));
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    private function workText(array $workItem): string
+    {
+        return mb_strtolower(trim(implode(' ', array_filter([
+            (string) ($workItem['name'] ?? ''),
+            (string) ($workItem['description'] ?? ''),
+            (string) ($workItem['work_category'] ?? ''),
+            (string) ($workItem['normative_search_text'] ?? ''),
+        ]))));
+    }
+
+    /**
+     * @param array<int, string> $prefixes
+     */
+    private function startsWithAny(string $value, array $prefixes): bool
+    {
+        foreach ($prefixes as $prefix) {
+            if ($value !== '' && str_starts_with($value, $prefix)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param mixed $values
+     * @return array<int, string>
+     */
+    private function stringList(mixed $values): array
+    {
+        if (!is_array($values)) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            array_map(static fn (mixed $value): string => trim((string) $value), $values),
+            static fn (string $value): bool => $value !== ''
+        ));
+    }
+
+    /**
+     * @param array<int, string> $needles
+     */
+    private function containsAny(string $text, array $needles): bool
+    {
+        foreach ($needles as $needle) {
+            if (str_contains($text, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

@@ -51,6 +51,7 @@ final class EstimateGenerationAuditService
             'not_found' => 0,
             'unit_mismatch' => 0,
             'scope_mismatch' => 0,
+            'safe_norm_required' => 0,
         ];
         $maxLineTotal = 0.0;
 
@@ -68,6 +69,10 @@ final class EstimateGenerationAuditService
 
             if (in_array('scope_mismatch', $flags, true)) {
                 $counters['scope_mismatch']++;
+            }
+
+            if (in_array('safe_norm_required', $flags, true) || in_array('pricing_not_calculated', $flags, true)) {
+                $counters['safe_norm_required']++;
             }
 
             if (in_array($matchStatus, ['not_found', 'unmatched'], true) || in_array('normative_not_found', $flags, true)) {
