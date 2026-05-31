@@ -358,15 +358,8 @@ class EVMService
     private function calculateBAC(Project $project, ?int $visibleOrganizationId = null): float
     {
         $projectBudget = (float) $project->budget_amount;
-        $scheduleBac = null;
 
         if ($visibleOrganizationId === null) {
-            $scheduleBac = $this->calculateScheduleBAC($project);
-
-            if ($scheduleBac > 0) {
-                return $scheduleBac;
-            }
-
             if ($projectBudget > 0) {
                 return $projectBudget;
             }
@@ -410,7 +403,7 @@ class EVMService
             return $contractBac;
         }
 
-        $scheduleBac ??= $this->calculateScheduleBAC($project);
+        $scheduleBac = $this->calculateScheduleBAC($project);
 
         if ($scheduleBac > 0) {
             return $scheduleBac;

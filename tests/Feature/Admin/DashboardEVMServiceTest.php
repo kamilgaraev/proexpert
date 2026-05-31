@@ -135,8 +135,8 @@ class DashboardEVMServiceTest extends TestCase
 
         $metrics = app(EVMService::class)->calculateMetrics($project);
 
-        $this->assertSame(2000.0, $metrics['bac']);
-        $this->assertSame(1000.0, $metrics['pv']);
+        $this->assertSame(3000.0, $metrics['bac']);
+        $this->assertSame(1500.0, $metrics['pv']);
     }
 
     public function test_project_schedule_changes_invalidate_evm_cache_for_project(): void
@@ -167,7 +167,7 @@ class DashboardEVMServiceTest extends TestCase
         $this->assertFalse(Cache::has($this->evmCacheKey($project)));
     }
 
-    public function test_full_budget_uses_schedule_total_when_tasks_do_not_include_resources(): void
+    public function test_full_budget_uses_project_budget_when_schedule_has_lower_resource_plan(): void
     {
         Carbon::setTestNow(Carbon::parse('2026-01-15 12:00:00'));
 
@@ -207,8 +207,8 @@ class DashboardEVMServiceTest extends TestCase
 
         $metrics = app(EVMService::class)->calculateMetrics($project);
 
-        $this->assertSame(214300.0, $metrics['bac']);
-        $this->assertSame(214300.0, $metrics['pv']);
+        $this->assertSame(200000000.0, $metrics['bac']);
+        $this->assertSame(200000000.0, $metrics['pv']);
     }
 
     public function test_schedule_task_plan_changes_invalidate_evm_cache_for_project(): void
