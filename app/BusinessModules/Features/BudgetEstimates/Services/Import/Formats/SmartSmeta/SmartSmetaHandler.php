@@ -22,7 +22,7 @@ final class SmartSmetaHandler extends CustomExcelHandler
 
     public function detect(ImportSession $session, string $filePath): ImportDetectionResult
     {
-        $text = $this->firstRowsText($filePath);
+        $text = $this->firstRowsText($filePath, 40);
         $hasMarker = str_contains($text, 'smartsmeta')
             || str_contains($text, 'smeta.ru')
             || str_contains($text, 'смартсмета');
@@ -35,19 +35,9 @@ final class SmartSmetaHandler extends CustomExcelHandler
             detectedType: 'smartsmeta',
             formatSlug: $this->slug(),
             label: $this->label(),
-            confidence: 0.82,
+            confidence: 0.93,
             requiresConfirmation: true,
             indicators: ['smartsmeta_marker'],
         );
-    }
-
-    private function firstRowsText(string $filePath): string
-    {
-        $rows = $this->reader->readRows($filePath, 40);
-
-        return mb_strtolower(implode(' ', array_map(
-            static fn (array $row): string => implode(' ', array_map(static fn (mixed $value): string => (string) $value, $row)),
-            $rows
-        )));
     }
 }

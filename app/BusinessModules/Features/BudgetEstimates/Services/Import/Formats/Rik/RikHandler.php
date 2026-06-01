@@ -22,7 +22,7 @@ final class RikHandler extends CustomExcelHandler
 
     public function detect(ImportSession $session, string $filePath): ImportDetectionResult
     {
-        $text = $this->firstRowsText($filePath);
+        $text = $this->firstRowsText($filePath, 30);
         $hasMarker = str_contains($text, 'рик')
             || str_contains($text, 'ресурсно-индекс')
             || str_contains($text, 'winрик');
@@ -35,19 +35,9 @@ final class RikHandler extends CustomExcelHandler
             detectedType: 'rik',
             formatSlug: $this->slug(),
             label: $this->label(),
-            confidence: 0.82,
+            confidence: 0.93,
             requiresConfirmation: true,
             indicators: ['rik_marker'],
         );
-    }
-
-    private function firstRowsText(string $filePath): string
-    {
-        $rows = $this->reader->readRows($filePath, 30);
-
-        return mb_strtolower(implode(' ', array_map(
-            static fn (array $row): string => implode(' ', array_map(static fn (mixed $value): string => (string) $value, $row)),
-            $rows
-        )));
     }
 }

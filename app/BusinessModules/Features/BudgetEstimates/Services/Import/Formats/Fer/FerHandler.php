@@ -22,7 +22,7 @@ final class FerHandler extends CustomExcelHandler
 
     public function detect(ImportSession $session, string $filePath): ImportDetectionResult
     {
-        $text = $this->firstRowsText($filePath);
+        $text = $this->firstRowsText($filePath, 80);
         $hasMarker = str_contains($text, 'фер')
             || str_contains($text, 'гэсн')
             || str_contains($text, 'фссц')
@@ -36,19 +36,9 @@ final class FerHandler extends CustomExcelHandler
             detectedType: 'fer',
             formatSlug: $this->slug(),
             label: $this->label(),
-            confidence: 0.78,
+            confidence: 0.9,
             requiresConfirmation: true,
             indicators: ['fer_normative_marker'],
         );
-    }
-
-    private function firstRowsText(string $filePath): string
-    {
-        $rows = $this->reader->readRows($filePath, 80);
-
-        return mb_strtolower(implode(' ', array_map(
-            static fn (array $row): string => implode(' ', array_map(static fn (mixed $value): string => (string) $value, $row)),
-            $rows
-        )));
     }
 }

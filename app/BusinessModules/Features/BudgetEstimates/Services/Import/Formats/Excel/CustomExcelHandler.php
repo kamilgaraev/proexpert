@@ -359,6 +359,22 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
         );
     }
 
+    protected function firstRowsText(string $filePath, ?int $maxRows = 40): string
+    {
+        $parts = [];
+
+        foreach ($this->reader->readWorksheets($filePath, $maxRows) as $worksheet) {
+            foreach ($worksheet['rows'] as $row) {
+                $parts[] = implode(' ', array_map(
+                    static fn (mixed $value): string => (string) $value,
+                    $row
+                ));
+            }
+        }
+
+        return mb_strtolower(implode(' ', $parts));
+    }
+
     /**
      * @param array<int, array<int, mixed>> $rows
      */
