@@ -186,7 +186,7 @@ final class PdfEstimateTableNormalizer
             $cursor--;
         }
 
-        $numericTail = array_values(array_filter($tailCells, fn (string $token): bool => $this->isNumberToken($token)));
+        $numericTail = $this->numericValuesFromTailCells($tailCells);
         if (count($numericTail) < 2 || $cursor < 1) {
             return null;
         }
@@ -219,10 +219,10 @@ final class PdfEstimateTableNormalizer
             return null;
         }
 
-        $quantity = $this->number($numericTail[0]);
-        $total = $this->number($numericTail[count($numericTail) - 1]);
+        $quantity = $numericTail[0];
+        $total = $numericTail[count($numericTail) - 1];
         $unitPrice = count($numericTail) >= 3
-            ? $this->number($numericTail[1])
+            ? $numericTail[1]
             : ($quantity !== 0.0 ? round($total / $quantity, 6) : 0.0);
 
         return new EstimateImportRowDTO(
@@ -248,6 +248,62 @@ final class PdfEstimateTableNormalizer
     private function isNumberToken(string $token): bool
     {
         return preg_match('/^-?\d+(?:[,.]\d+)?$/u', $token) === 1;
+    }
+
+    /**
+     * @param array<int, string> $tailCells
+     * @return array<int, float>
+     */
+    private function numericValuesFromTailCells(array $tailCells): array
+    {
+        $tokens = array_values(array_filter($tailCells, fn (string $token): bool => $this->isNumberToken($token)));
+        if (count($tokens) < 2) {
+            return [];
+        }
+
+        $values = [];
+        $index = 0;
+        while ($index < count($tokens)) {
+            $value = $this->readNumericValue($tokens, $index, $index > 0);
+            $values[] = $value['value'];
+            $index = $value['next_index'];
+        }
+
+        return $values;
+    }
+
+    /**
+     * @param array<int, string> $tokens
+     * @return array{value: float, next_index: int}
+     */
+    private function readNumericValue(array $tokens, int $index, bool $allowGrouped): array
+    {
+        $token = $tokens[$index];
+        if (!$allowGrouped || preg_match('/^-?\d{1,3}$/u', $token) !== 1) {
+            return ['value' => $this->number($token), 'next_index' => $index + 1];
+        }
+
+        $group = [$token];
+        $cursor = $index + 1;
+        $hasDecimalGroup = false;
+        while (
+            $cursor < count($tokens)
+            && preg_match('/^\d{3}(?:[,.]\d+)?$/u', $tokens[$cursor]) === 1
+        ) {
+            $group[] = $tokens[$cursor];
+            $hasDecimalGroup = str_contains($tokens[$cursor], ',') || str_contains($tokens[$cursor], '.');
+            $cursor++;
+
+            if ($hasDecimalGroup) {
+                break;
+            }
+        }
+
+        if (count($group) > 1 && ($hasDecimalGroup || count($group) > 2)) {
+            return ['value' => $this->number(implode('', $group)), 'next_index' => $cursor];
+        }
+
+        return ['value' => $this->number($token), 'next_index' => $index + 1];
     }
 
     private function isUnitScaleToken(string $token): bool
