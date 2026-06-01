@@ -209,15 +209,15 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
     
     // === PROJECT EVENTS CALENDAR ===
     Route::prefix('events')->group(function () {
-        Route::get('/', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ProjectEventController::class, 'index']);
-        Route::post('/', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ProjectEventController::class, 'store']);
-        Route::get('/calendar', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ProjectEventController::class, 'calendar']);
-        Route::get('/upcoming', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ProjectEventController::class, 'upcoming']);
-        Route::get('/today', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ProjectEventController::class, 'today']);
-        Route::get('/statistics', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ProjectEventController::class, 'statistics']);
-        Route::get('/{event}', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ProjectEventController::class, 'show']);
-        Route::put('/{event}', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ProjectEventController::class, 'update']);
-        Route::delete('/{event}', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ProjectEventController::class, 'destroy']);
-        Route::get('/{event}/conflicts', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ProjectEventController::class, 'conflicts']);
+        Route::get('/', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ProjectEventController::class, 'index'])->middleware('authorize:schedule.view,project,project');
+        Route::post('/', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ProjectEventController::class, 'store'])->middleware('authorize:schedule.create,project,project');
+        Route::get('/calendar', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ProjectEventController::class, 'calendar'])->middleware('authorize:schedule.view,project,project');
+        Route::get('/upcoming', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ProjectEventController::class, 'upcoming'])->middleware('authorize:schedule.view,project,project');
+        Route::get('/today', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ProjectEventController::class, 'today'])->middleware('authorize:schedule.view,project,project');
+        Route::get('/statistics', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ProjectEventController::class, 'statistics'])->middleware('authorize:schedule.view,project,project');
+        Route::get('/{event}', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ProjectEventController::class, 'show'])->middleware('authorize:schedule.view,project,project');
+        Route::put('/{event}', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ProjectEventController::class, 'update'])->middleware('authorize:schedule.edit,project,project');
+        Route::delete('/{event}', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ProjectEventController::class, 'destroy'])->middleware('authorize:schedule.edit,project,project');
+        Route::get('/{event}/conflicts', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ProjectEventController::class, 'conflicts'])->middleware('authorize:schedule.view,project,project');
     });
 });
