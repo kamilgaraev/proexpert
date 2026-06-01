@@ -72,6 +72,22 @@ services:
         limits:
           memory: 2.5G
 
+  worker-ifc:
+    image: ghcr.io/kamilgaraev/proexpert/prohelper:${PROHELPER_IMAGE_TAG:-latest}
+    container_name: prohelper-worker-ifc
+    restart: unless-stopped
+    command: "php -d memory_limit=3072M artisan queue:work redis --queue=ifc-processing --memory=3072 --timeout=7200 --tries=1"
+    env_file: .env
+    volumes:
+      - ./storage/logs:/var/www/html/storage/logs
+    networks:
+      - prohelper-network
+    logging: *json-logging
+    deploy:
+      resources:
+        limits:
+          memory: 3.5G
+
   scheduler:
     image: ghcr.io/kamilgaraev/proexpert/prohelper:${PROHELPER_IMAGE_TAG:-latest}
     container_name: prohelper-scheduler

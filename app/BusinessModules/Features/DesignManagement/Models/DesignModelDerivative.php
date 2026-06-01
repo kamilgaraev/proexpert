@@ -25,14 +25,21 @@ final class DesignModelDerivative extends Model
         'derivative_format',
         'derivative_file_path',
         'status',
+        'progress_percent',
+        'processing_stage',
         'prepared_at',
+        'processing_started_at',
+        'processing_finished_at',
         'failed_reason',
         'metadata',
     ];
 
     protected $casts = [
         'status' => DesignDerivativeStatusEnum::class,
+        'progress_percent' => 'integer',
         'prepared_at' => 'datetime',
+        'processing_started_at' => 'datetime',
+        'processing_finished_at' => 'datetime',
         'metadata' => 'array',
     ];
 
@@ -40,6 +47,7 @@ final class DesignModelDerivative extends Model
         'viewer_provider' => 'thatopen',
         'derivative_format' => 'thatopen_frag',
         'status' => 'missing',
+        'progress_percent' => 0,
         'metadata' => '{}',
     ];
 

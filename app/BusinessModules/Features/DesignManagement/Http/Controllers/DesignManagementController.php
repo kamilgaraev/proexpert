@@ -10,6 +10,7 @@ use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignArtifactV
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignModelDerivativeResource;
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignPackageResource;
 use App\BusinessModules\Features\DesignManagement\Services\DesignManagementService;
+use App\BusinessModules\Features\DesignManagement\Services\DesignModelViewerPreparationService;
 use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignModelMultipartUploader;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -27,6 +28,7 @@ final class DesignManagementController extends Controller
 {
     public function __construct(
         private readonly DesignManagementService $service,
+        private readonly DesignModelViewerPreparationService $viewerPreparationService,
         private readonly DesignModelMultipartUploader $multipartUploadService,
         private readonly DesignManagementModule $module,
     ) {
@@ -323,6 +325,29 @@ final class DesignManagementController extends Controller
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Throwable $e) {
             return $this->failed('store_derivative', $versionId, $e);
+        }
+    }
+
+    public function prepareViewer(Request $request, int $versionId): JsonResponse
+    {
+        try {
+            $version = $this->service->findVersion($this->organizationId($request), $versionId);
+
+            if ($version === null) {
+                return AdminResponse::error(trans_message('design_management.errors.version_not_found'), 404);
+            }
+
+            $derivative = $this->viewerPreparationService->queuePreparation($version, (int) auth()->id());
+
+            return AdminResponse::success(
+                new DesignModelDerivativeResource($derivative),
+                trans_message('design_management.messages.viewer_preparation_queued'),
+                202
+            );
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            return $this->failed('prepare_viewer', $versionId, $e);
         }
     }
 

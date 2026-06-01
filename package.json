@@ -23,5 +23,10 @@
         "redoc-cli": "latest",
         "tailwindcss": "^3.4.13",
         "vite": "^6.0.11"
+    },
+    "dependencies": {
+        "@thatopen/fragments": "^3.4.5",
+        "three": "^0.184.0",
+        "web-ifc": "^0.0.77"
     }
 }

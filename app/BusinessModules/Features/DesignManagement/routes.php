@@ -37,6 +37,9 @@ Route::prefix('api/v1/admin/design-management')
         Route::post('/model-versions/{versionId}/derivatives', [DesignManagementController::class, 'storeDerivative'])
             ->middleware('authorize:design-management.models.prepare_viewer')
             ->name('model_versions.derivatives.store');
+        Route::post('/model-versions/{versionId}/viewer/preparation', [DesignManagementController::class, 'prepareViewer'])
+            ->middleware('authorize:design-management.models.prepare_viewer')
+            ->name('model_versions.viewer.prepare');
         Route::get('/model-versions/{versionId}/viewer', [DesignManagementController::class, 'viewerPayload'])
             ->middleware('authorize:design-management.models.view')
             ->name('model_versions.viewer');

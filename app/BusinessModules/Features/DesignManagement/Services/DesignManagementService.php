@@ -227,6 +227,10 @@ final class DesignManagementService
                     'prepared_by' => $userId,
                     'derivative_file_path' => null,
                     'status' => DesignDerivativeStatusEnum::PROCESSING,
+                    'progress_percent' => 0,
+                    'processing_stage' => 'uploading',
+                    'processing_started_at' => now(),
+                    'processing_finished_at' => null,
                     'failed_reason' => null,
                     'metadata' => $payload['metadata'] ?? [],
                 ]
@@ -237,6 +241,8 @@ final class DesignManagementService
             } catch (DomainException $exception) {
                 $derivative->update([
                     'status' => DesignDerivativeStatusEnum::FAILED,
+                    'processing_stage' => 'failed',
+                    'processing_finished_at' => now(),
                     'failed_reason' => $exception->getMessage(),
                 ]);
 
@@ -246,7 +252,10 @@ final class DesignManagementService
             $derivative->update([
                 'derivative_file_path' => $path,
                 'status' => DesignDerivativeStatusEnum::READY,
+                'progress_percent' => 100,
+                'processing_stage' => 'ready',
                 'prepared_at' => now(),
+                'processing_finished_at' => now(),
             ]);
 
             return $derivative->fresh(['version']);
@@ -492,6 +501,8 @@ final class DesignManagementService
                 'viewer_provider' => 'thatopen',
                 'derivative_format' => 'thatopen_frag',
                 'download_url' => null,
+                'progress_percent' => 0,
+                'processing_stage' => null,
                 'metadata' => [],
             ];
         }
@@ -502,9 +513,13 @@ final class DesignManagementService
             'viewer_provider' => $derivative->viewer_provider,
             'derivative_format' => $derivative->derivative_format,
             'download_url' => $this->fileService->temporaryUrl($derivative->derivative_file_path, 60, $organization),
+            'progress_percent' => (int) $derivative->progress_percent,
+            'processing_stage' => $derivative->processing_stage,
             'metadata' => $derivative->metadata ?? [],
             'failed_reason' => $derivative->failed_reason,
             'prepared_at' => optional($derivative->prepared_at)?->toISOString(),
+            'processing_started_at' => optional($derivative->processing_started_at)?->toISOString(),
+            'processing_finished_at' => optional($derivative->processing_finished_at)?->toISOString(),
         ];
     }
 

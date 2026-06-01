@@ -7,6 +7,7 @@ namespace Tests\Feature\DesignManagement;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
+use App\BusinessModules\Features\DesignManagement\Jobs\PrepareDesignModelViewerJob;
 use App\BusinessModules\Features\DesignManagement\Services\DesignManagementService;
 use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignModelMultipartUploader;
 use App\Domain\Authorization\Models\AuthorizationContext;
@@ -18,6 +19,7 @@ use App\Services\Storage\FileService;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Routing\Route as LaravelRoute;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Testing\TestResponse;
@@ -39,6 +41,7 @@ final class DesignManagementApiTest extends TestCase
         $this->assertRoutePermission('POST', 'api/v1/admin/design-management/model-uploads/{uploadId}/complete', 'design-management.models.upload');
         $this->assertRoutePermission('DELETE', 'api/v1/admin/design-management/model-uploads/{uploadId}', 'design-management.models.upload');
         $this->assertRoutePermission('POST', 'api/v1/admin/design-management/model-versions/{versionId}/derivatives', 'design-management.models.prepare_viewer');
+        $this->assertRoutePermission('POST', 'api/v1/admin/design-management/model-versions/{versionId}/viewer/preparation', 'design-management.models.prepare_viewer');
         $this->assertRoutePermission('GET', 'api/v1/admin/design-management/model-versions/{versionId}/viewer', 'design-management.models.view');
         $this->assertRoutePermission('GET', 'api/v1/admin/design-management/model-versions/{versionId}/source-file', 'design-management.models.view');
         $this->assertRoutePermission('GET', 'api/v1/admin/design-management/model-versions/{versionId}/derivative-file', 'design-management.models.view');
@@ -288,6 +291,69 @@ final class DesignManagementApiTest extends TestCase
 
         $derivative = DesignModelDerivative::query()->firstOrFail();
         Storage::disk('s3')->assertExists((string) $derivative->derivative_file_path);
+    }
+
+    public function test_prepare_viewer_endpoint_queues_server_side_derivative_processing(): void
+    {
+        Queue::fake();
+        $this->fakeFileStorage();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $version = $this->uploadModel($context, $project);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/design-management/model-versions/{$version->id}/viewer/preparation");
+
+        $response->assertStatus(202);
+        $response->assertJsonPath('data.version_id', $version->id);
+        $response->assertJsonPath('data.status', 'queued');
+        $response->assertJsonPath('data.progress_percent', 0);
+        $response->assertJsonPath('data.processing_stage', 'queued');
+
+        $derivative = DesignModelDerivative::query()->firstOrFail();
+        $this->assertSame('queued', $derivative->status->value);
+        $this->assertSame(0, $derivative->progress_percent);
+        $this->assertSame('queued', $derivative->processing_stage);
+
+        Queue::assertPushedOn('ifc-processing', PrepareDesignModelViewerJob::class);
+    }
+
+    public function test_prepare_viewer_endpoint_is_idempotent_for_running_processing(): void
+    {
+        Queue::fake();
+        $this->fakeFileStorage();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $version = $this->uploadModel($context, $project);
+
+        DesignModelDerivative::query()->create([
+            'organization_id' => $version->organization_id,
+            'project_id' => $version->project_id,
+            'version_id' => $version->id,
+            'created_by' => $context->user->id,
+            'updated_by' => $context->user->id,
+            'prepared_by' => $context->user->id,
+            'viewer_provider' => 'thatopen',
+            'derivative_format' => 'thatopen_frag',
+            'status' => 'processing',
+            'progress_percent' => 35,
+            'processing_stage' => 'converting',
+            'metadata' => ['prepared_on' => 'server'],
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/design-management/model-versions/{$version->id}/viewer/preparation");
+
+        $response->assertStatus(202);
+        $response->assertJsonPath('data.status', 'processing');
+        $response->assertJsonPath('data.progress_percent', 35);
+        $response->assertJsonPath('data.processing_stage', 'converting');
+
+        Queue::assertNothingPushed();
     }
 
     public function test_source_file_endpoint_streams_uploaded_ifc_through_api(): void

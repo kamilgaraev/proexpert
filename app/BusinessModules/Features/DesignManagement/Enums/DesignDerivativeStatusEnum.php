@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\DesignManagement\Enums;
 enum DesignDerivativeStatusEnum: string
 {
     case MISSING = 'missing';
+    case QUEUED = 'queued';
     case PROCESSING = 'processing';
     case READY = 'ready';
     case FAILED = 'failed';

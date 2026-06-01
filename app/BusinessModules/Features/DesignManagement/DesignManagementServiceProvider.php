@@ -17,6 +17,10 @@ final class DesignManagementServiceProvider extends ServiceProvider
         $this->app->singleton(Services\DesignManagementService::class);
         $this->app->singleton(Services\DesignModelMultipartUploadService::class);
         $this->app->bind(
+            Services\Contracts\DesignIfcToFragmentsConverterContract::class,
+            Services\DesignIfcToFragmentsConverter::class
+        );
+        $this->app->bind(
             Services\Contracts\DesignModelMultipartUploader::class,
             static fn ($app): Services\DesignModelMultipartUploadService => $app->make(
                 Services\DesignModelMultipartUploadService::class
