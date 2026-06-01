@@ -1282,20 +1282,23 @@ class DashboardService
                 $query->where('contract_performance_acts.project_id', $projectId);
             }
 
-            $total = (clone $query)->count();
+            $stats = $query
+                ->selectRaw('
+                    COUNT(*) as total,
+                    COUNT(CASE WHEN contract_performance_acts.is_approved = true THEN 1 END) as confirmed_count,
+                    COALESCE(SUM(CASE WHEN contract_performance_acts.is_approved = true THEN contract_performance_acts.amount ELSE 0 END), 0) as confirmed_amount,
+                    COUNT(CASE WHEN contract_performance_acts.is_approved = false OR contract_performance_acts.is_approved IS NULL THEN 1 END) as pending_count,
+                    COALESCE(SUM(CASE WHEN contract_performance_acts.is_approved = false OR contract_performance_acts.is_approved IS NULL THEN contract_performance_acts.amount ELSE 0 END), 0) as pending_amount
+                ')
+                ->first();
 
             // Подсчет по статусам (is_approved: true = confirmed, false/null = pending)
-            $confirmedCount = (clone $query)->where('contract_performance_acts.is_approved', true)->count();
-            $confirmedAmount = (clone $query)->where('contract_performance_acts.is_approved', true)->sum('contract_performance_acts.amount');
+            $total = (int) ($stats->total ?? 0);
+            $confirmedCount = (int) ($stats->confirmed_count ?? 0);
+            $confirmedAmount = (float) ($stats->confirmed_amount ?? 0);
 
-            $pendingCount = (clone $query)->where(function($q) {
-                $q->where('contract_performance_acts.is_approved', false)
-                  ->orWhereNull('contract_performance_acts.is_approved');
-            })->count();
-            $pendingAmount = (clone $query)->where(function($q) {
-                $q->where('contract_performance_acts.is_approved', false)
-                  ->orWhereNull('contract_performance_acts.is_approved');
-            })->sum('contract_performance_acts.amount');
+            $pendingCount = (int) ($stats->pending_count ?? 0);
+            $pendingAmount = (float) ($stats->pending_amount ?? 0);
 
             return [
                 'total' => $total,
@@ -1541,7 +1544,9 @@ class DashboardService
             $amounts = [];
 
             foreach ($byContractor as $item) {
-                $contractor = Contractor::find($item['contractor_id']);
+                $contractor = $contracts
+                    ->firstWhere('contractor_id', $item['contractor_id'])
+                    ?->contractor;
                 $labels[] = $contractor?->name ?? 'Неизвестно';
                 $counts[] = $item['count'];
                 $amounts[] = $item['total_amount'];
@@ -1691,24 +1696,42 @@ class DashboardService
         $tags = $this->getCacheTags($organizationId, $projectId);
 
         return $this->remember($cacheKey, $tags, self::CACHE_TTL_MEDIUM, function () use ($organizationId, $projectId) {
-            $query = Contract::where('organization_id', $organizationId)
-                ->where('is_fixed_amount', true);
+            $completedWorksTotals = DB::table('completed_works')
+                ->select('contract_id')
+                ->selectRaw('SUM(total_amount) as completed_amount')
+                ->where('status', 'confirmed')
+                ->groupBy('contract_id');
+
+            $query = Contract::query()
+                ->leftJoinSub($completedWorksTotals, 'completed_work_totals', function ($join) {
+                    $join->on('completed_work_totals.contract_id', '=', 'contracts.id');
+                })
+                ->where('contracts.organization_id', $organizationId)
+                ->where('contracts.is_fixed_amount', true);
 
             if ($projectId) {
-                $query->where('project_id', $projectId);
+                $query->where('contracts.project_id', $projectId);
             }
 
-            $contracts = $query->get();
+            $completionExpression = 'CASE WHEN contracts.total_amount > 0 THEN (COALESCE(completed_work_totals.completed_amount, 0) / contracts.total_amount) * 100 ELSE 0 END';
 
-            $totalContracts = $contracts->count();
-            $avgCompletion = $contracts->avg(fn($c) => $c->completion_percentage ?? 0);
-            $onTime = $contracts->filter(fn($c) => !$c->is_overdue)->count();
-            $overdue = $contracts->filter(fn($c) => $c->is_overdue)->count();
-            $nearingLimit = $contracts->filter(fn($c) => $c->isNearingLimit())->count();
+            $stats = $query
+                ->selectRaw("
+                    COUNT(*) as total_contracts,
+                    COALESCE(AVG({$completionExpression}), 0) as average_completion,
+                    COUNT(CASE WHEN contracts.end_date < ? AND contracts.status = ? THEN 1 END) as overdue,
+                    COUNT(CASE WHEN {$completionExpression} >= 90 THEN 1 END) as nearing_limit
+                ", [now(), ContractStatusEnum::ACTIVE->value])
+                ->first();
+
+            $totalContracts = (int) ($stats->total_contracts ?? 0);
+            $overdue = (int) ($stats->overdue ?? 0);
+            $onTime = max(0, $totalContracts - $overdue);
+            $nearingLimit = (int) ($stats->nearing_limit ?? 0);
 
             return [
                 'total_contracts' => $totalContracts,
-                'average_completion' => round((float) $avgCompletion, 2),
+                'average_completion' => round((float) ($stats->average_completion ?? 0), 2),
                 'on_time' => $onTime,
                 'overdue' => $overdue,
                 'nearing_limit' => $nearingLimit,
@@ -2044,11 +2067,21 @@ class DashboardService
      */
     private function calculateTotalContractAmountForProject($contracts, ?int $projectId = null): float
     {
-        $total = 0;
-        foreach ($contracts as $contract) {
-            $total += $this->calculateSingleContractAmountForProject($contract, $projectId);
+        $contractCollection = collect($contracts);
+
+        if ($contractCollection->isEmpty()) {
+            return 0.0;
         }
-        return $total;
+
+        if ($projectId === null) {
+            return (float) $contractCollection->sum(fn (Contract $contract): float => (float) ($contract->total_amount ?? 0));
+        }
+
+        $context = $this->buildContractAmountContext($contractCollection, $projectId);
+
+        return (float) $contractCollection->sum(
+            fn (Contract $contract): float => $this->calculateContractAmountFromContext($contract, $projectId, $context)
+        );
     }
 
     /**
@@ -2058,6 +2091,120 @@ class DashboardService
     public function calculateTotalAmountForContracts($contracts, ?int $projectId = null): float
     {
         return $this->calculateTotalContractAmountForProject($contracts, $projectId);
+    }
+
+    private function buildContractAmountContext($contracts, int $projectId): array
+    {
+        $contractIds = collect($contracts)
+            ->pluck('id')
+            ->filter()
+            ->map(fn ($id): int => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($contractIds->isEmpty()) {
+            return [
+                'allocations' => collect(),
+                'act_totals' => collect(),
+                'project_act_totals' => collect(),
+                'project_counts' => collect(),
+            ];
+        }
+
+        return [
+            'allocations' => DB::table('contract_project_allocations')
+                ->whereIn('contract_id', $contractIds)
+                ->where('project_id', $projectId)
+                ->where('is_active', true)
+                ->whereNull('deleted_at')
+                ->get()
+                ->keyBy('contract_id'),
+            'act_totals' => DB::table('contract_performance_acts')
+                ->select('contract_id')
+                ->selectRaw('SUM(amount) as total_amount')
+                ->whereIn('contract_id', $contractIds)
+                ->where('is_approved', true)
+                ->groupBy('contract_id')
+                ->pluck('total_amount', 'contract_id'),
+            'project_act_totals' => DB::table('contract_performance_acts')
+                ->select('contract_id')
+                ->selectRaw('SUM(amount) as total_amount')
+                ->whereIn('contract_id', $contractIds)
+                ->where('project_id', $projectId)
+                ->where('is_approved', true)
+                ->groupBy('contract_id')
+                ->pluck('total_amount', 'contract_id'),
+            'project_counts' => DB::table('contract_project')
+                ->select('contract_id')
+                ->selectRaw('COUNT(*) as projects_count')
+                ->whereIn('contract_id', $contractIds)
+                ->groupBy('contract_id')
+                ->pluck('projects_count', 'contract_id'),
+        ];
+    }
+
+    private function calculateContractAmountFromContext(Contract $contract, int $projectId, array $context): float
+    {
+        $fullAmount = (float) ($contract->total_amount ?? 0);
+
+        if (!$contract->is_multi_project) {
+            return $fullAmount;
+        }
+
+        $allocation = $context['allocations']->get($contract->id);
+
+        if ($allocation) {
+            $allocatedAmount = $this->calculateAllocationRowAmount($allocation, $fullAmount, $contract->id, $context);
+
+            if ($allocatedAmount !== null) {
+                return $allocatedAmount;
+            }
+        }
+
+        return $this->calculateAutoContractAmountFromContext($contract->id, $fullAmount, $context);
+    }
+
+    private function calculateAllocationRowAmount(object $allocation, float $fullAmount, int $contractId, array $context): ?float
+    {
+        return match ((string) $allocation->allocation_type) {
+            'fixed' => (float) ($allocation->allocated_amount ?? 0),
+            'percentage' => $fullAmount * ((float) ($allocation->allocated_percentage ?? 0) / 100),
+            'auto' => $this->calculateAutoContractAmountFromContext($contractId, $fullAmount, $context),
+            'custom' => $this->calculateCustomAllocationAmount($allocation, $fullAmount),
+            default => null,
+        };
+    }
+
+    private function calculateCustomAllocationAmount(object $allocation, float $fullAmount): float
+    {
+        $formula = $allocation->custom_formula ?? null;
+
+        if (is_string($formula)) {
+            $decoded = json_decode($formula, true);
+            $formula = is_array($decoded) ? $decoded : null;
+        }
+
+        if (!is_array($formula) || ($formula['type'] ?? null) !== 'coefficient') {
+            return 0.0;
+        }
+
+        return $fullAmount * (float) ($formula['coefficient'] ?? 1);
+    }
+
+    private function calculateAutoContractAmountFromContext(int $contractId, float $fullAmount, array $context): float
+    {
+        $totalActsAmount = (float) ($context['act_totals']->get($contractId) ?? 0);
+
+        if ($totalActsAmount == 0.0) {
+            $projectsCount = (int) ($context['project_counts']->get($contractId) ?? 1);
+            $projectsCount = $projectsCount > 0 ? $projectsCount : 1;
+
+            return $fullAmount / $projectsCount;
+        }
+
+        $projectActsAmount = (float) ($context['project_act_totals']->get($contractId) ?? 0);
+
+        return $fullAmount * ($projectActsAmount / $totalActsAmount);
     }
 
     /**
