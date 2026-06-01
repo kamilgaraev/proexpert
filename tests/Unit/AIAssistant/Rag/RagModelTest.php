@@ -27,4 +27,14 @@ class RagModelTest extends TestCase
         $this->assertContains('metadata', array_keys($chunk->getCasts()));
         $this->assertContains('embedding_created_at', array_keys($chunk->getCasts()));
     }
+
+    public function test_source_title_is_normalized_to_database_limit(): void
+    {
+        $source = new RagSource();
+        $source->title = str_repeat('Very long RAG source title ', 12);
+
+        $this->assertLessThanOrEqual(255, mb_strlen($source->title));
+        $this->assertStringStartsWith('Very long RAG source title', $source->title);
+        $this->assertStringEndsWith('...', $source->title);
+    }
 }

@@ -16,8 +16,6 @@ use Throwable;
 
 class RagIndexer
 {
-    private const SOURCE_TITLE_LIMIT = 255;
-
     public function __construct(
         private readonly RagEmbeddingProviderInterface $embeddingProvider,
         private readonly RagSourceRegistry $sourceRegistry
@@ -139,12 +137,7 @@ class RagIndexer
 
     private function sourceTitle(string $title): string
     {
-        $title = $this->normalizeText($title);
-        if (mb_strlen($title) <= self::SOURCE_TITLE_LIMIT) {
-            return $title;
-        }
-
-        return rtrim(mb_substr($title, 0, self::SOURCE_TITLE_LIMIT - 3)).'...';
+        return RagSource::normalizeTitle($title);
     }
 
     /**

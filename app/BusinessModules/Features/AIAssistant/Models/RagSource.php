@@ -13,6 +13,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class RagSource extends Model
 {
+    public const TITLE_LIMIT = 255;
+
     protected $table = 'ai_rag_sources';
 
     protected $fillable = [
@@ -33,6 +35,25 @@ class RagSource extends Model
         'metadata' => 'array',
         'indexed_at' => 'datetime',
     ];
+
+    public function setTitleAttribute(string $value): void
+    {
+        $this->attributes['title'] = self::normalizeTitle($value);
+    }
+
+    public static function normalizeTitle(string $value): string
+    {
+        $value = str_replace(["\r\n", "\r"], "\n", $value);
+        $value = preg_replace('/[ \t]+/u', ' ', $value) ?? $value;
+        $value = preg_replace("/\n{3,}/", "\n\n", $value) ?? $value;
+        $value = trim($value);
+
+        if (mb_strlen($value) <= self::TITLE_LIMIT) {
+            return $value;
+        }
+
+        return rtrim(mb_substr($value, 0, self::TITLE_LIMIT - 3)).'...';
+    }
 
     public function organization(): BelongsTo
     {
