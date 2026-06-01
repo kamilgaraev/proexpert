@@ -4,12 +4,17 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Procurement;
 
+use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\Procurement\Enums\SupplierPartyStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierProposalIntakeSourceEnum;
+use App\BusinessModules\Features\Procurement\Http\Resources\PurchaseOrderResource;
 use App\BusinessModules\Features\Procurement\Models\ExternalSupplierContact;
+use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
+use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
 use App\BusinessModules\Features\Procurement\Models\SupplierParty;
+use App\BusinessModules\Features\Procurement\Services\PurchaseOrderService;
 use App\BusinessModules\Features\Procurement\Services\SupplierPartyService;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalComparisonService;
 use App\BusinessModules\Features\Procurement\Services\SupplierProposalService;
@@ -22,6 +27,133 @@ use Tests\TestCase;
 
 class SupplierPartyWorkflowTest extends TestCase
 {
+    public function test_purchase_order_resource_prefers_supplier_snapshot_over_registered_supplier_relation(): void
+    {
+        $organization = Organization::factory()->create();
+        $registeredSupplier = Supplier::query()->create([
+            'organization_id' => $organization->id,
+            'name' => 'Registered Internal Supplier',
+            'tax_number' => '7700000001',
+            'is_active' => true,
+        ]);
+        $supplierParty = SupplierParty::query()->create([
+            'organization_id' => $organization->id,
+            'type' => 'external',
+            'status' => 'selected',
+            'display_name' => 'Accepted Quote Supplier',
+            'email' => 'accepted@example.test',
+            'tax_id' => '7711223344',
+        ]);
+        $purchaseRequest = PurchaseRequest::query()->create([
+            'organization_id' => $organization->id,
+            'request_number' => 'PR-RESOURCE-001',
+            'status' => 'approved',
+        ]);
+        $order = PurchaseOrder::query()->create([
+            'organization_id' => $organization->id,
+            'purchase_request_id' => $purchaseRequest->id,
+            'supplier_id' => $registeredSupplier->id,
+            'supplier_party_id' => $supplierParty->id,
+            'supplier_snapshot' => [
+                'type' => 'external',
+                'status' => 'selected',
+                'display_name' => 'Accepted Quote Supplier',
+                'email' => 'accepted@example.test',
+                'tax_id' => '7711223344',
+                'registered_supplier_id' => null,
+            ],
+            'order_number' => 'PO-RESOURCE-001',
+            'order_date' => now()->toDateString(),
+            'status' => 'confirmed',
+            'total_amount' => 0,
+            'currency' => 'RUB',
+        ]);
+
+        $payload = (new PurchaseOrderResource($order->load(['supplier', 'supplierParty'])))->resolve();
+
+        $this->assertNull($payload['supplier']['id']);
+        $this->assertSame('Accepted Quote Supplier', $payload['supplier']['name']);
+        $this->assertSame('7711223344', $payload['supplier']['inn']);
+    }
+
+    public function test_receipt_document_prefers_supplier_snapshot_over_registered_supplier_relation(): void
+    {
+        $organization = Organization::factory()->create([
+            'name' => 'Buyer Organization',
+        ]);
+        $registeredSupplier = Supplier::query()->create([
+            'organization_id' => $organization->id,
+            'name' => 'Registered Internal Supplier',
+            'tax_number' => '7700000001',
+            'is_active' => true,
+        ]);
+        $supplierParty = SupplierParty::query()->create([
+            'organization_id' => $organization->id,
+            'type' => 'external',
+            'status' => 'selected',
+            'display_name' => 'Accepted Quote Supplier',
+            'email' => 'accepted@example.test',
+            'tax_id' => '7711223344',
+        ]);
+        $warehouse = OrganizationWarehouse::query()->create([
+            'organization_id' => $organization->id,
+            'name' => 'Main warehouse',
+            'code' => 'WH-SNAPSHOT-001',
+            'warehouse_type' => OrganizationWarehouse::TYPE_CENTRAL,
+            'is_main' => true,
+            'is_active' => true,
+        ]);
+        $purchaseRequest = PurchaseRequest::query()->create([
+            'organization_id' => $organization->id,
+            'request_number' => 'PR-DOCUMENT-001',
+            'status' => 'approved',
+        ]);
+        $order = PurchaseOrder::query()->create([
+            'organization_id' => $organization->id,
+            'purchase_request_id' => $purchaseRequest->id,
+            'supplier_id' => $registeredSupplier->id,
+            'supplier_party_id' => $supplierParty->id,
+            'supplier_snapshot' => [
+                'type' => 'external',
+                'status' => 'selected',
+                'display_name' => 'Accepted Quote Supplier',
+                'email' => 'accepted@example.test',
+                'phone' => '+7 900 000-00-01',
+                'tax_id' => '7711223344',
+                'registered_supplier_id' => null,
+            ],
+            'order_number' => 'PO-DOCUMENT-001',
+            'order_date' => now()->toDateString(),
+            'status' => 'confirmed',
+            'total_amount' => 0,
+            'currency' => 'RUB',
+        ]);
+        $item = PurchaseOrderItem::query()->create([
+            'purchase_order_id' => $order->id,
+            'material_name' => 'Concrete mix',
+            'quantity' => 1,
+            'unit' => 'pcs',
+            'unit_price' => 0,
+            'total_price' => 0,
+        ]);
+
+        $document = app(PurchaseOrderService::class)->buildReceiptDocumentPreview(
+            $order->load(['organization', 'supplier', 'supplierParty']),
+            $warehouse->id,
+            [
+                [
+                    'item_id' => $item->id,
+                    'quantity_received' => 1,
+                    'price' => 0,
+                ],
+            ]
+        );
+
+        $this->assertSame('Accepted Quote Supplier', $document['supplier']['name']);
+        $this->assertSame('7711223344', $document['supplier']['inn']);
+        $this->assertSame('accepted@example.test', $document['supplier']['email']);
+    }
+
     public function test_unregistered_supplier_flow_attaches_same_party_to_procurement_documents(): void
     {
         $organization = Organization::factory()->create();

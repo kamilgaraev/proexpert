@@ -133,6 +133,11 @@ class PaymentDocumentController extends Controller
                     'integer',
                     Rule::exists('contracts', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
                 ],
+                'purchase_order_id' => [
+                    'nullable',
+                    'integer',
+                    Rule::exists('purchase_orders', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                ],
                 'estimate_id' => [
                     'nullable',
                     'integer',

@@ -13,6 +13,7 @@ use App\BusinessModules\Core\Payments\Events\PaymentRequestReceived;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Models\Project;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -528,6 +529,10 @@ class PaymentDocumentService
             $query->forProject($filters['project_id']);
         }
 
+        if (isset($filters['purchase_order_id'])) {
+            $this->applyPurchaseOrderFilter($query, (int) $filters['purchase_order_id']);
+        }
+
         if (isset($filters['contract_id'])) {
             $contractId = $filters['contract_id'];
             // Ищем документы, связанные с контрактом напрямую или через акт
@@ -589,6 +594,37 @@ class PaymentDocumentService
         $query->orderBy($sortBy, $sortOrder);
 
         return $query->get();
+    }
+
+    private function applyPurchaseOrderFilter(Builder $query, int $purchaseOrderId): void
+    {
+        $query->where(function (Builder $paymentQuery) use ($purchaseOrderId): void {
+            $paymentQuery
+                ->where('metadata->purchase_order_id', $purchaseOrderId)
+                ->orWhere('metadata->purchase_order_id', (string) $purchaseOrderId)
+                ->orWhereExists(function ($existsQuery) use ($purchaseOrderId): void {
+                    $existsQuery
+                        ->select(DB::raw(1))
+                        ->from('purchase_orders')
+                        ->where('purchase_orders.id', $purchaseOrderId)
+                        ->whereColumn('purchase_orders.organization_id', 'payment_documents.organization_id')
+                        ->whereNotNull('purchase_orders.contract_id')
+                        ->where('payment_documents.invoice_type', InvoiceType::MATERIAL_PURCHASE->value)
+                        ->where(function ($contractQuery): void {
+                            $contractQuery
+                                ->where(function ($sourceQuery): void {
+                                    $sourceQuery
+                                        ->where('payment_documents.source_type', Contract::class)
+                                        ->whereColumn('payment_documents.source_id', 'purchase_orders.contract_id');
+                                })
+                                ->orWhere(function ($invoiceableQuery): void {
+                                    $invoiceableQuery
+                                        ->where('payment_documents.invoiceable_type', Contract::class)
+                                        ->whereColumn('payment_documents.invoiceable_id', 'purchase_orders.contract_id');
+                                });
+                        });
+                });
+        });
     }
 
     /**

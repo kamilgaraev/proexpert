@@ -85,18 +85,50 @@ class PurchaseOrderResource extends JsonResource
 
     private function supplierPayload(): array
     {
-        if ($this->supplier) {
-            return [
-                'id' => $this->supplier->id,
-                'name' => $this->supplier->name,
-                'inn' => $this->supplier->inn,
-            ];
-        }
+        $snapshot = is_array($this->supplier_snapshot) ? $this->supplier_snapshot : [];
+        $supplier = $this->relationLoaded('supplier') ? $this->supplier : null;
+        $externalSupplierContact = $this->relationLoaded('externalSupplierContact')
+            ? $this->externalSupplierContact
+            : null;
+        $supplierParty = $this->relationLoaded('supplierParty') ? $this->supplierParty : null;
+        $supplierId = array_key_exists('registered_supplier_id', $snapshot)
+            ? $snapshot['registered_supplier_id']
+            : $this->supplier_id;
 
         return [
-            'id' => null,
-            'name' => $this->externalSupplierContact?->name ?? 'Внешний поставщик',
-            'inn' => $this->externalSupplierContact?->tax_number,
+            'id' => is_numeric($supplierId) ? (int) $supplierId : null,
+            'party_id' => $this->supplier_party_id,
+            'name' => $this->firstFilledString(
+                $snapshot['display_name'] ?? null,
+                $snapshot['name'] ?? null,
+                $supplierParty?->display_name,
+                $externalSupplierContact?->name,
+                $supplier?->name
+            ) ?? 'Внешний поставщик',
+            'inn' => $this->firstFilledString(
+                $snapshot['tax_id'] ?? null,
+                $supplierParty?->tax_id,
+                $externalSupplierContact?->tax_number,
+                $supplier?->inn,
+                $supplier?->tax_number
+            ),
         ];
+    }
+
+    private function firstFilledString(mixed ...$values): ?string
+    {
+        foreach ($values as $value) {
+            if (! is_string($value) && ! is_numeric($value)) {
+                continue;
+            }
+
+            $normalized = trim((string) $value);
+
+            if ($normalized !== '') {
+                return $normalized;
+            }
+        }
+
+        return null;
     }
 }

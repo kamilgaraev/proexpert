@@ -131,7 +131,13 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
         $this->assertSame($purchaseRequest->id, $purchaseOrder->purchase_request_id);
         $this->assertSame($secondSupplier->id, $purchaseOrder->supplier_id);
         $this->assertSame(1, $purchaseOrder->items()->count());
-        $this->createPaidProcurementPaymentDocument($context, $purchaseOrder, 950);
+        $paymentDocument = $this->createPaidProcurementPaymentDocument($context, $purchaseOrder, 950);
+
+        $paymentDocumentsResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/payments/documents?purchase_order_id={$purchaseOrder->id}");
+
+        $paymentDocumentsResponse->assertOk();
+        $paymentDocumentsResponse->assertJsonPath('data.0.id', $paymentDocument->id);
 
         $orderIndexResponse = $this->withHeaders($context->authHeaders())
             ->getJson('/api/v1/admin/procurement/purchase-orders?per_page=20&status=confirmed');
@@ -757,6 +763,46 @@ class ProcurementSupplierFlowCoreExperienceControllerTest extends TestCase
             'amount' => 900,
         ]);
         $this->assertSame($contractId, PaymentDocument::query()->findOrFail($paymentId)->source_id);
+    }
+
+    public function test_purchase_order_payload_prefers_supplier_snapshot_from_offer(): void
+    {
+        $context = AdminApiTestContext::create();
+        $supplier = $this->createSupplier($context->organization->id, 'Catalog Supplier', 'catalog@example.test');
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $purchaseOrder = PurchaseOrder::query()->create([
+            'organization_id' => $context->organization->id,
+            'supplier_id' => $supplier->id,
+            'order_number' => 'PO-SNAPSHOT-'.uniqid(),
+            'order_date' => now()->toDateString(),
+            'status' => PurchaseOrderStatusEnum::CONFIRMED,
+            'total_amount' => 1500,
+            'currency' => 'RUB',
+            'supplier_snapshot' => [
+                'type' => 'external',
+                'display_name' => 'Supplier From Offer',
+                'tax_id' => '7711999900',
+                'registered_supplier_id' => null,
+            ],
+        ]);
+
+        $indexResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/procurement/purchase-orders?per_page=20');
+
+        $indexResponse->assertOk();
+        $indexResponse->assertJsonPath('data.0.supplier.id', null);
+        $indexResponse->assertJsonPath('data.0.supplier.name', 'Supplier From Offer');
+        $indexResponse->assertJsonPath('data.0.supplier.inn', '7711999900');
+
+        $showResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}");
+
+        $showResponse->assertOk();
+        $showResponse->assertJsonPath('data.supplier.id', null);
+        $showResponse->assertJsonPath('data.supplier.name', 'Supplier From Offer');
+        $showResponse->assertJsonPath('data.supplier.inn', '7711999900');
     }
 
     private function createProposalThroughApi(

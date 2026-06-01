@@ -501,21 +501,38 @@ class PurchaseOrderService
         $partySnapshot = is_array($party?->snapshot) ? $party->snapshot : [];
 
         return [
-            'name' => $supplier?->name
-                ?? $contact?->name
-                ?? $party?->display_name
-                ?? $snapshot['display_name']
-                ?? $snapshot['name']
-                ?? null,
-            'inn' => $supplier?->inn
-                ?? $supplier?->tax_number
-                ?? $contact?->tax_number
-                ?? $party?->tax_id
-                ?? $snapshot['tax_id']
-                ?? null,
-            'phone' => $supplier?->phone ?? $contact?->phone ?? $party?->phone ?? $snapshot['phone'] ?? null,
-            'email' => $supplier?->email ?? $contact?->email ?? $party?->email ?? $snapshot['email'] ?? null,
-            'address' => $supplier?->address ?? $contact?->address ?? $partySnapshot['address'] ?? $snapshot['address'] ?? null,
+            'name' => $this->firstFilledString(
+                $snapshot['display_name'] ?? null,
+                $snapshot['name'] ?? null,
+                $party?->display_name,
+                $contact?->name,
+                $supplier?->name
+            ),
+            'inn' => $this->firstFilledString(
+                $snapshot['tax_id'] ?? null,
+                $party?->tax_id,
+                $contact?->tax_number,
+                $supplier?->inn,
+                $supplier?->tax_number
+            ),
+            'phone' => $this->firstFilledString(
+                $snapshot['phone'] ?? null,
+                $party?->phone,
+                $contact?->phone,
+                $supplier?->phone
+            ),
+            'email' => $this->firstFilledString(
+                $snapshot['email'] ?? null,
+                $party?->email,
+                $contact?->email,
+                $supplier?->email
+            ),
+            'address' => $this->firstFilledString(
+                $snapshot['address'] ?? null,
+                $partySnapshot['address'] ?? null,
+                $contact?->address,
+                $supplier?->address
+            ),
         ];
     }
 
@@ -604,6 +621,23 @@ class PurchaseOrderService
         $name = $supplierSnapshot['display_name'] ?? null;
 
         return $name === null ? null : (string) $name;
+    }
+
+    private function firstFilledString(mixed ...$values): ?string
+    {
+        foreach ($values as $value) {
+            if (! is_string($value) && ! is_numeric($value)) {
+                continue;
+            }
+
+            $normalized = trim((string) $value);
+
+            if ($normalized !== '') {
+                return $normalized;
+            }
+        }
+
+        return null;
     }
 
     private function receivedItemsPayload(PurchaseOrder $order, array $items): array
