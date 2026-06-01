@@ -12,8 +12,10 @@ final class SpreadsheetHeaderDetector
             '№ п/п' => 34,
             'n пп' => 28,
             'п/п' => 26,
+            'номер позиции' => 32,
+            '№ позиции' => 30,
+            'позиция №' => 24,
             'номер' => 24,
-            'позиция' => 22,
             '№' => 20,
             'no' => 16,
             'number' => 16,
@@ -22,6 +24,7 @@ final class SpreadsheetHeaderDetector
             'наименование работ' => 36,
             'наименование затрат' => 34,
             'наименование' => 32,
+            'позиция' => 30,
             'описание' => 28,
             'работ' => 24,
             'затрат' => 22,
@@ -62,8 +65,10 @@ final class SpreadsheetHeaderDetector
             'всего руб' => 38,
             'общая стоимость' => 34,
             'стоимость всего' => 34,
+            'стоимость руб' => 32,
             'итого' => 28,
             'сумма' => 26,
+            'стоимость' => 22,
             'total' => 20,
             'amount' => 20,
         ],
@@ -128,6 +133,27 @@ final class SpreadsheetHeaderDetector
         );
 
         return $best;
+    }
+
+    public function detectHeaderRow(array $rows, int $headerRow): array
+    {
+        $rawHeaders = $rows[$headerRow] ?? [];
+        $mapping = $this->mapHeaders($rawHeaders);
+        $score = $this->scoreMapping($mapping, $rawHeaders);
+
+        return [
+            'header_row' => $headerRow,
+            'score' => $score,
+            'raw_headers' => $rawHeaders,
+            'column_mapping' => $mapping,
+            'detected_columns' => array_flip($mapping),
+            'header_candidates' => $mapping !== [] ? [[
+                'row_index' => $headerRow,
+                'score' => $score,
+                'headers' => $rawHeaders,
+                'mapping' => $mapping,
+            ]] : [],
+        ];
     }
 
     public function mapHeaders(array $headers): array

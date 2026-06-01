@@ -6,6 +6,7 @@ namespace Tests\Feature\Api\V1\Admin;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\EstimateExportService;
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportDTO;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Exceptions\UnsupportedEstimateImportFormatException;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateImportService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\StagingAreaService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\VoiceCommandService;
@@ -69,6 +70,29 @@ class EstimateImportExportControllerWorkflowTest extends TestCase
         $response->assertOk()
             ->assertJsonPath('success', true)
             ->assertJsonPath('data', []);
+    }
+
+    public function test_detect_type_returns_business_error_for_unsupported_format(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+
+        $this->mock(EstimateImportService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('detectEstimateType')
+                ->once()
+                ->with('session-1')
+                ->andThrow(UnsupportedEstimateImportFormatException::create());
+        });
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/projects/{$project->id}/estimates/import/detect-type", [
+                'file_id' => 'session-1',
+            ]);
+
+        $response->assertStatus(422)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', trans_message('estimate.import_unsupported_format'));
     }
 
     public function test_import_map_returns_preview_validation_and_file_totals(): void

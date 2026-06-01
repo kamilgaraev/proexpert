@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services\Import;
 
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportDTO;
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateTypeDetectionDTO;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Exceptions\UnsupportedEstimateImportFormatException;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportFormatDetector;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportFormatRegistry;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportStructureResult;
@@ -63,7 +64,7 @@ class EstimateImportService
         try {
             $detection = $this->runtimeDetector->detect($session, $fullPath);
             if ($detection === null || $detection->confidence <= 0.0) {
-                throw new RuntimeException(trans_message('estimate.import_unsupported_format'));
+                throw UnsupportedEstimateImportFormatException::create();
             }
 
             $options = $session->options ?? [];
@@ -87,6 +88,13 @@ class EstimateImportService
                     'warnings' => $detection->warnings,
                 ],
             );
+        } catch (UnsupportedEstimateImportFormatException $e) {
+            Log::warning('[EstimateImport] Unsupported import format', [
+                'session_id' => $sessionId,
+                'error' => $e->getMessage(),
+            ]);
+
+            throw $e;
         } catch (Throwable $e) {
             Log::error('[EstimateImport] Type detection failed', [
                 'session_id' => $sessionId,

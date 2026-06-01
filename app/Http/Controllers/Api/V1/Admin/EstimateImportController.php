@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Exceptions\UnsupportedEstimateImportFormatException;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateImportService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\StagingAreaService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\VoiceCommandService;
@@ -145,6 +146,16 @@ class EstimateImportController extends Controller
                 'candidates' => $detectionDTO->candidates,
                 'metadata' => $metadata,
             ]);
+        } catch (UnsupportedEstimateImportFormatException $e) {
+            Log::warning('[EstimateImport] detectType unsupported format', [
+                'file_id' => $fileId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(
+                $e->getMessage(),
+                Response::HTTP_UNPROCESSABLE_ENTITY
+            );
         } catch (\Throwable $e) {
             Log::error('[EstimateImport] detectType failed', [
                 'file_id' => $fileId,
