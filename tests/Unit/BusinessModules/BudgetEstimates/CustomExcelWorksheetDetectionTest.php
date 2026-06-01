@@ -5,10 +5,16 @@ declare(strict_types=1);
 namespace Tests\Unit\BusinessModules\BudgetEstimates;
 
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateImportService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportPipelineService;
+use App\Models\Estimate;
+use App\Models\EstimateItem;
+use App\Models\EstimateSection;
 use App\Models\ImportSession;
 use App\Models\Organization;
+use App\Models\Project;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
@@ -138,6 +144,98 @@ final class CustomExcelWorksheetDetectionTest extends TestCase
             self::assertSame('Rough finish/2', $itemsByName['Floor screed']['section_path'] ?? null);
             self::assertSame('Clean finish/1', $itemsByName['Stretch ceiling']['section_path'] ?? null);
             self::assertSame($additionalCostsSection, $itemsByName['Delivery']['section_path'] ?? null);
+        } finally {
+            if (file_exists($filePath)) {
+                unlink($filePath);
+            }
+        }
+    }
+
+    public function test_custom_excel_import_keeps_sheet_titles_as_parents_and_extra_costs_standalone(): void
+    {
+        $filePath = $this->createWorkbookWithTitleTotalsAndExtraCosts();
+
+        try {
+            Queue::fake();
+            Storage::fake('s3');
+
+            $organization = Organization::factory()->create();
+            $user = User::factory()->create();
+            $project = Project::factory()->create([
+                'organization_id' => $organization->id,
+            ]);
+            $storedPath = "org-{$organization->id}/estimate-imports/" . basename($filePath);
+
+            Storage::disk('s3')->put($storedPath, (string) file_get_contents($filePath));
+
+            $session = ImportSession::create([
+                'user_id' => $user->id,
+                'organization_id' => $organization->id,
+                'status' => 'uploading',
+                'file_path' => $storedPath,
+                'file_name' => 'estimate.xlsx',
+                'file_size' => filesize($filePath),
+                'file_format' => 'xlsx',
+                'options' => [],
+                'stats' => ['progress' => 0],
+            ]);
+
+            /** @var EstimateImportService $service */
+            $service = app(EstimateImportService::class);
+            $service->detectEstimateType($session->id);
+            $service->detectFormat($session->id);
+
+            $session = $session->fresh();
+            $options = $session->options ?? [];
+            $options['estimate_settings'] = [
+                'name' => 'Imported custom estimate',
+                'type' => 'local',
+                'project_id' => $project->id,
+                'organization_id' => $organization->id,
+                'financial_mode' => 'plain',
+            ];
+            $options['validate_only'] = false;
+            $session->update([
+                'options' => $options,
+            ]);
+
+            app(ImportPipelineService::class)->run($session->fresh());
+
+            $estimateId = (int) ($session->fresh()->stats['estimate_id'] ?? 0);
+            self::assertGreaterThan(0, $estimateId);
+
+            /** @var Estimate $estimate */
+            $estimate = Estimate::query()->findOrFail($estimateId);
+
+            self::assertSame(10800.0, (float) $estimate->total_amount);
+
+            $roughRoot = EstimateSection::query()
+                ->where('estimate_id', $estimateId)
+                ->where('name', 'Rough finish')
+                ->whereNull('parent_section_id')
+                ->firstOrFail();
+            $cleanRoot = EstimateSection::query()
+                ->where('estimate_id', $estimateId)
+                ->where('name', 'Clean finish')
+                ->whereNull('parent_section_id')
+                ->firstOrFail();
+
+            self::assertSame(3000.0, (float) $roughRoot->fresh()->section_total_amount);
+            self::assertSame(7000.0, (float) $cleanRoot->fresh()->section_total_amount);
+            self::assertSame(2, EstimateSection::query()->where('parent_section_id', $roughRoot->id)->count());
+            self::assertSame(1, EstimateSection::query()->where('parent_section_id', $cleanRoot->id)->count());
+            self::assertSame(0, EstimateItem::query()->where('estimate_section_id', $roughRoot->id)->count());
+
+            $extraRows = EstimateItem::query()
+                ->where('estimate_id', $estimateId)
+                ->whereIn('name', ['Delivery', 'Cleaning'])
+                ->get()
+                ->keyBy('name');
+
+            self::assertSame(500.0, (float) $extraRows->get('Delivery')->total_amount);
+            self::assertSame(300.0, (float) $extraRows->get('Cleaning')->total_amount);
+            self::assertNull($extraRows->get('Delivery')->parent_work_id);
+            self::assertNull($extraRows->get('Cleaning')->parent_work_id);
         } finally {
             if (file_exists($filePath)) {
                 unlink($filePath);

@@ -839,7 +839,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
                 isSection: false,
                 itemType: 'work',
                 sectionPath: $sectionName,
-                rawData: $row,
+                rawData: array_merge($row, ['disable_sub_item_grouping' => true]),
                 currentTotalAmount: $amount,
             );
         }

@@ -526,7 +526,8 @@ class ImportPipelineService
                 $data['_parent_index'], 
                 $data['warnings'], 
                 $data['has_math_mismatch'],
-                $data['anomaly']
+                $data['anomaly'],
+                $data['disable_sub_item_grouping']
             );
             
             if (!$isSubItem) {
@@ -566,11 +567,7 @@ class ImportPipelineService
         // Resolve Parent
         $currentPath = $dto->sectionPath ?: $dto->sectionNumber; 
         
-        $parentId = null;
-        if (str_contains($currentPath, '.')) {
-             $parentPath = substr($currentPath, 0, strrpos($currentPath, '.'));
-             $parentId = $sectionMap[$parentPath] ?? null;
-        }
+        $parentId = $this->resolveParentSectionId((string) $currentPath, $sectionMap);
 
         $section = EstimateSection::create([
             'estimate_id' => $estimateId,
@@ -692,8 +689,44 @@ class ImportPipelineService
             'created_at' => now(),
             'updated_at' => now(),
             'metadata' => json_encode($metadata),
-            'is_not_accounted' => $isNotAccounted
+            'is_not_accounted' => $isNotAccounted,
+            'disable_sub_item_grouping' => is_array($dto->rawData)
+                && (($dto->rawData['disable_sub_item_grouping'] ?? false) === true)
         ];
+    }
+
+    private function parentPathFromSectionPath(string $path): ?string
+    {
+        $slashPosition = strrpos($path, '/');
+        $dotPosition = strrpos($path, '.');
+
+        $positions = array_filter(
+            [$slashPosition, $dotPosition],
+            static fn ($position): bool => $position !== false && $position > 0
+        );
+
+        if ($positions === []) {
+            return null;
+        }
+
+        $parentPath = substr($path, 0, max($positions));
+
+        return $parentPath !== '' ? $parentPath : null;
+    }
+
+    private function resolveParentSectionId(string $path, array $sectionMap): ?int
+    {
+        $candidatePath = $path;
+
+        while (($parentPath = $this->parentPathFromSectionPath($candidatePath)) !== null) {
+            if (isset($sectionMap[$parentPath])) {
+                return $sectionMap[$parentPath];
+            }
+
+            $candidatePath = $parentPath;
+        }
+
+        return null;
     }
 
     /**

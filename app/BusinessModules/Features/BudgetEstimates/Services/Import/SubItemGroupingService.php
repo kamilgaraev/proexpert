@@ -63,6 +63,10 @@ class SubItemGroupingService
 
     private function isSubItem(array $row, ?int $parentLevel): bool
     {
+        if (!empty($row['disable_sub_item_grouping'])) {
+            return false;
+        }
+
         if (!empty($row['is_sub_item'])) {
             return true;
         }
