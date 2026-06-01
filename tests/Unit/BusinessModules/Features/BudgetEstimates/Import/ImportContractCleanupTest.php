@@ -14,6 +14,7 @@ use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\Csv\LocalCsvHandler;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\Excel\CustomExcelHandler;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\Pdf\PdfEstimateHandler;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportPipelineService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\GrandSmetaXMLParser;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\UniversalXmlParser;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Pdf\PdfEstimateOcrExtractor;
@@ -25,11 +26,16 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\Runtime
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetAiColumnMapper;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetHeaderDetector;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Spreadsheet\SpreadsheetTableReader;
+use App\Models\Estimate;
+use App\Models\EstimateItem;
+use App\Models\EstimateSection;
 use App\Models\ImportSession;
+use App\Models\Organization;
 use Generator;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use ReflectionClass;
 use Tests\TestCase;
 
 class ImportContractCleanupTest extends TestCase
@@ -558,6 +564,48 @@ class ImportContractCleanupTest extends TestCase
         }
     }
 
+    public function test_import_pipeline_prunes_empty_leaf_sections_for_non_grand_smeta_handlers(): void
+    {
+        $estimate = $this->createEstimate();
+        $emptyRoot = $this->createSection($estimate, '1', 'Empty root');
+        $emptyChild = $this->createSection($estimate, '1.1', 'Empty child', $emptyRoot->id);
+        $keptRoot = $this->createSection($estimate, '2', 'Kept root');
+        $keptChild = $this->createSection($estimate, '2.1', 'Kept child', $keptRoot->id);
+
+        EstimateItem::query()->create([
+            'estimate_id' => $estimate->id,
+            'estimate_section_id' => $keptChild->id,
+            'position_number' => '1',
+            'name' => 'Kept work',
+            'quantity' => 1,
+            'unit_price' => 100,
+            'direct_costs' => 100,
+            'total_amount' => 100,
+            'is_manual' => true,
+        ]);
+
+        $removed = $this->invokePruneEmptyLeafSections($estimate, 'custom_excel');
+
+        self::assertSame(2, $removed);
+        self::assertFalse(EstimateSection::query()->whereKey($emptyChild->id)->exists());
+        self::assertFalse(EstimateSection::query()->whereKey($emptyRoot->id)->exists());
+        self::assertTrue(EstimateSection::query()->whereKey($keptRoot->id)->exists());
+        self::assertTrue(EstimateSection::query()->whereKey($keptChild->id)->exists());
+    }
+
+    public function test_import_pipeline_keeps_empty_grand_smeta_sections(): void
+    {
+        $estimate = $this->createEstimate();
+        $root = $this->createSection($estimate, '1', 'GrandSmeta root');
+        $child = $this->createSection($estimate, '1.1', 'GrandSmeta child', $root->id);
+
+        $removed = $this->invokePruneEmptyLeafSections($estimate, 'grandsmeta');
+
+        self::assertSame(0, $removed);
+        self::assertTrue(EstimateSection::query()->whereKey($root->id)->exists());
+        self::assertTrue(EstimateSection::query()->whereKey($child->id)->exists());
+    }
+
     private function createTemporarySpreadsheet(array $rows): string
     {
         $spreadsheet = new Spreadsheet();
@@ -617,5 +665,47 @@ class ImportContractCleanupTest extends TestCase
         file_put_contents($filePath, $content);
 
         return $filePath;
+    }
+
+    private function createEstimate(): Estimate
+    {
+        $organization = Organization::factory()->create();
+
+        return Estimate::query()->create([
+            'organization_id' => $organization->id,
+            'number' => 'IMP-' . uniqid(),
+            'name' => 'Import cleanup test',
+            'type' => 'local',
+            'status' => 'draft',
+            'estimate_date' => now()->format('Y-m-d'),
+            'vat_rate' => 20,
+            'overhead_rate' => 15,
+            'profit_rate' => 12,
+        ]);
+    }
+
+    private function createSection(
+        Estimate $estimate,
+        string $number,
+        string $name,
+        ?int $parentSectionId = null
+    ): EstimateSection {
+        return EstimateSection::query()->create([
+            'estimate_id' => $estimate->id,
+            'parent_section_id' => $parentSectionId,
+            'section_number' => $number,
+            'full_section_number' => $number,
+            'name' => $name,
+            'sort_order' => (int) str_replace('.', '', $number),
+        ]);
+    }
+
+    private function invokePruneEmptyLeafSections(Estimate $estimate, string $handlerSlug): int
+    {
+        $reflection = new ReflectionClass(ImportPipelineService::class);
+        $service = $reflection->newInstanceWithoutConstructor();
+        $method = $reflection->getMethod('pruneEmptyLeafSections');
+
+        return $method->invoke($service, $estimate, $handlerSlug);
     }
 }

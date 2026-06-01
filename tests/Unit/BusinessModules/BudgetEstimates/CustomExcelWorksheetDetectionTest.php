@@ -225,6 +225,12 @@ final class CustomExcelWorksheetDetectionTest extends TestCase
             self::assertSame(2, EstimateSection::query()->where('parent_section_id', $roughRoot->id)->count());
             self::assertSame(1, EstimateSection::query()->where('parent_section_id', $cleanRoot->id)->count());
             self::assertSame(0, EstimateItem::query()->where('estimate_section_id', $roughRoot->id)->count());
+            self::assertFalse(
+                EstimateSection::query()
+                    ->where('estimate_id', $estimateId)
+                    ->where('name', 'Empty trailing section')
+                    ->exists()
+            );
 
             $extraRows = EstimateItem::query()
                 ->where('estimate_id', $estimateId)
@@ -346,6 +352,7 @@ final class CustomExcelWorksheetDetectionTest extends TestCase
         $roughSheet->fromArray([1, 'work', 'Ceiling primer', 'm2', 10, 100, 1000], null, 'A6');
         $roughSheet->setCellValue('A8', '2. Floors');
         $roughSheet->fromArray([2, 'work', 'Floor screed', 'm2', 10, 200, 2000], null, 'A9');
+        $roughSheet->setCellValue('A11', '3. Empty trailing section');
 
         $cleanSheet = $spreadsheet->createSheet();
         $cleanSheet->setTitle('Clean finish');

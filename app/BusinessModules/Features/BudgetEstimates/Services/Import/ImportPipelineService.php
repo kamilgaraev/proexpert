@@ -23,6 +23,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\Classification\
 class ImportPipelineService
 {
     private const BATCH_SIZE = 100;
+    private const GRAND_SMETA_HANDLER_SLUG = 'grandsmeta';
 
     private array $unitCache = [];
 
@@ -156,6 +157,11 @@ class ImportPipelineService
         try {
             $estimate = $this->resolveEstimate($session);
             $this->processStream($stream, $estimate, $stats, $session);
+            $removedEmptySections = $this->pruneEmptyLeafSections($estimate, $handler->slug());
+            if ($removedEmptySections > 0) {
+                $stats['sections_created'] = max(0, $stats['sections_created'] - $removedEmptySections);
+                $stats['empty_sections_removed'] = $removedEmptySections;
+            }
             
             if (method_exists($handler, 'getFooterData')) {
                 $footerData = $handler->getFooterData();
@@ -590,6 +596,44 @@ class ImportPipelineService
             return $sectionMap[$path];
         }
         return $lastSectionId;
+    }
+
+    private function pruneEmptyLeafSections(Estimate $estimate, string $handlerSlug): int
+    {
+        if ($handlerSlug === self::GRAND_SMETA_HANDLER_SLUG) {
+            return 0;
+        }
+
+        $removed = 0;
+
+        do {
+            $sectionIds = EstimateSection::query()
+                ->where('estimate_id', $estimate->id)
+                ->whereNotExists(function ($query): void {
+                    $query
+                        ->selectRaw('1')
+                        ->from('estimate_sections as child_sections')
+                        ->whereColumn('child_sections.parent_section_id', 'estimate_sections.id');
+                })
+                ->whereNotExists(function ($query): void {
+                    $query
+                        ->selectRaw('1')
+                        ->from('estimate_items as section_items')
+                        ->whereColumn('section_items.estimate_section_id', 'estimate_sections.id')
+                        ->whereNull('section_items.deleted_at');
+                })
+                ->pluck('id');
+
+            if ($sectionIds->isEmpty()) {
+                break;
+            }
+
+            $removed += EstimateSection::query()
+                ->whereIn('id', $sectionIds)
+                ->delete();
+        } while (true);
+
+        return $removed;
     }
 
     private function prepareWorkData($dto, Estimate $estimate, ?int $sectionId): array
