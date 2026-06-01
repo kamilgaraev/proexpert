@@ -208,6 +208,10 @@
       "handover-acceptance.inspect",
       "handover-acceptance.punch-list.create",
       "handover-acceptance.punch-list.resolve"
+    ],
+    "design-management": [
+      "design-management.view",
+      "design-management.models.view"
     ]
   },
   "interface_access": [

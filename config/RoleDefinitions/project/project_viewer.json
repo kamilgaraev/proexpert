@@ -96,6 +96,10 @@
       "site_requests.view",
       "site_requests.templates.view",
       "site_requests.calendar.view"
+    ],
+    "design-management": [
+      "design-management.view",
+      "design-management.models.view"
     ]
   },
   

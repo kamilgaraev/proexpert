@@ -47,6 +47,7 @@ use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\Proje
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseSiteRequestFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseWarehouseFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseWorkFactSource;
+use App\BusinessModules\Features\DesignManagement\Services\DesignPulseFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\OpenAIRagEmbeddingProvider;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
@@ -183,6 +184,7 @@ class AIAssistantServiceProvider extends ServiceProvider
                 $app->make(ProjectPulseConstructionErpFactSource::class),
                 $app->make(ProjectPulseReportFactSource::class),
                 $app->make(ProjectPulseWorkFactSource::class),
+                $app->make(DesignPulseFactSource::class),
                 $app->make(ProjectPulsePeopleFactSource::class),
             ]);
         });

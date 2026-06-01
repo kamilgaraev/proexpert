@@ -1,0 +1,60 @@
+{
+  "name": "ПИР",
+  "slug": "design-management",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "pto",
+  "description": "Проектные комплекты, IFC-модели, версии и подготовка моделей к просмотру.",
+  "class_name": "App\\BusinessModules\\Features\\DesignManagement\\DesignManagementModule",
+  "service_provider": "App\\BusinessModules\\Features\\DesignManagement\\DesignManagementServiceProvider",
+  "pricing": {
+    "base_price": 4900,
+    "currency": "RUB",
+    "included_in_plans": ["profi", "enterprise"],
+    "duration_days": 30
+  },
+  "permissions": [
+    "design-management.view",
+    "design-management.create",
+    "design-management.edit",
+    "design-management.delete",
+    "design-management.models.upload",
+    "design-management.models.view",
+    "design-management.models.prepare_viewer",
+    "design-management.review",
+    "design-management.approve",
+    "design-management.export",
+    "design-management.settings.manage"
+  ],
+  "features": [
+    "Проектные комплекты по проектам",
+    "Загрузка и хранение версий IFC-моделей",
+    "Подготовка модели к просмотру в браузере",
+    "История версий и готовность просмотра"
+  ],
+  "dependencies": [
+    "organizations",
+    "users",
+    "project-management",
+    "file-management"
+  ],
+  "optional_integrations": [
+    "executive-documentation",
+    "quality-control",
+    "handover-acceptance"
+  ],
+  "conflicts": [],
+  "limits": {
+    "max_ifc_file_size_mb": 500,
+    "max_models_per_project": null,
+    "model_retention_days": 3650
+  },
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "development_status": "beta",
+  "icon": "box",
+  "display_order": 37,
+  "tags": ["pir", "design", "bim", "ifc"]
+}

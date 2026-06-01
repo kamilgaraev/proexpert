@@ -89,6 +89,28 @@ class PermissionTranslatorTest extends TestCase
         $this->assertStringNotContainsString('unknown.permission', $flattenedValues);
     }
 
+    public function test_design_management_permissions_are_translated_for_frontend(): void
+    {
+        $translated = PermissionTranslator::translatePermissionsData([
+            'module_permissions' => [
+                'design_management' => [
+                    'design-management.view',
+                    'design-management.models.upload',
+                    'design-management.models.prepare_viewer',
+                    'design-management.settings.manage',
+                ],
+            ],
+        ]);
+
+        $flattenedValues = json_encode($this->valuesOnly($translated), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+
+        $this->assertSame('ПИР и BIM-модели', $translated['module_groups']['design_management']);
+        $this->assertSame('Просмотр ПИР', $translated['module_permissions']['design_management']['design-management.view']);
+        $this->assertSame('Загрузка IFC-моделей', $translated['module_permissions']['design_management']['design-management.models.upload']);
+        $this->assertStringNotContainsString('design-management.models.prepare_viewer', $flattenedValues);
+        $this->assertStringNotContainsString('design-management.settings.manage', $flattenedValues);
+    }
+
     private function valuesOnly(array $value): array
     {
         $values = [];
