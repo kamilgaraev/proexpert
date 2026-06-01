@@ -21,7 +21,7 @@ final class DesignViewerConverterProfileTest extends TestCase
         $this->assertIsString($script);
         $this->assertStringContainsString('VIEWER_GEOMETRY_PROFILE', $script);
         $this->assertStringContainsString('importer.classes.abstract.clear()', $script);
-        $this->assertStringContainsString('importer.classes.elements.clear()', $script);
+        $this->assertStringNotContainsString('importer.classes.elements.clear()', $script);
         $this->assertStringContainsString('importer.relations.clear()', $script);
     }
 }

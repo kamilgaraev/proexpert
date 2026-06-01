@@ -75,7 +75,6 @@ const configureViewerImporter = (importer) => {
   importer.replaceStoreyElevation = true;
   importer.distanceThreshold = null;
   importer.classes.abstract.clear();
-  importer.classes.elements.clear();
   importer.relations.clear();
 };
 
