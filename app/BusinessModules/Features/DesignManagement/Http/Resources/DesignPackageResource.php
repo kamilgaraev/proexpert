@@ -9,6 +9,7 @@ use App\BusinessModules\Features\DesignManagement\Enums\DesignPackageStatusEnum;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
+use App\BusinessModules\Features\DesignManagement\Support\DesignViewerConverter;
 use BackedEnum;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -50,11 +51,9 @@ final class DesignPackageResource extends JsonResource
                 'artifacts_count' => $artifactsCount,
                 'models_count' => $artifactsCount,
                 'current_version_id' => $currentVersion?->id,
-                'derivative_status' => $derivative
-                    ? $this->enumValue($derivative->status)
-                    : DesignDerivativeStatusEnum::MISSING->value,
+                'derivative_status' => $this->derivativeStatus($derivative),
                 'has_ready_viewer' => $derivative !== null
-                    && $this->enumValue($derivative->status) === DesignDerivativeStatusEnum::READY->value,
+                    && $this->derivativeStatus($derivative) === DesignDerivativeStatusEnum::READY->value,
                 'is_overdue' => in_array('planned_issue_overdue', $problemFlags, true),
             ],
             'created_at' => $package->created_at?->toIso8601String(),
@@ -118,7 +117,10 @@ final class DesignPackageResource extends JsonResource
             $flags[] = 'model_missing';
         }
 
-        if ($currentVersion instanceof DesignArtifactVersion && !$derivative instanceof DesignModelDerivative) {
+        if (
+            $currentVersion instanceof DesignArtifactVersion
+            && (!$derivative instanceof DesignModelDerivative || DesignViewerConverter::isStale($derivative))
+        ) {
             $flags[] = 'viewer_not_prepared';
         }
 
@@ -156,5 +158,14 @@ final class DesignPackageResource extends JsonResource
     private function enumValue(mixed $value): string
     {
         return $value instanceof BackedEnum ? $value->value : (string) ($value ?? DesignPackageStatusEnum::DRAFT->value);
+    }
+
+    private function derivativeStatus(?DesignModelDerivative $derivative): string
+    {
+        if (!$derivative instanceof DesignModelDerivative || DesignViewerConverter::isStale($derivative)) {
+            return DesignDerivativeStatusEnum::MISSING->value;
+        }
+
+        return $this->enumValue($derivative->status);
     }
 }

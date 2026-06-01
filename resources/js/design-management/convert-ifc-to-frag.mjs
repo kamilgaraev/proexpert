@@ -1,3 +1,4 @@
+import { readSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import * as FRAGS from "@thatopen/fragments";
@@ -34,19 +35,32 @@ try {
   importer.includeUniqueAttributes = false;
   importer.includeRelationNames = false;
   importer.replaceStoreyElevation = true;
-  importer.distanceThreshold = 100000;
+  importer.distanceThreshold = null;
 
   emit({ event: "progress", progress: 0, stage: "reading" });
-  const bytes = new Uint8Array(await fs.readFile(inputPath));
+  const handle = await fs.open(inputPath, "r");
+  const chunkSize = 1024 * 1024;
+  const readCallback = (offset) => {
+    const buffer = new Uint8Array(chunkSize);
+    const bytesRead = readSync(handle.fd, buffer, 0, chunkSize, offset);
+
+    return buffer.slice(0, bytesRead);
+  };
 
   emit({ event: "progress", progress: 5, stage: "converting" });
-  const fragmentsData = await importer.process({
-    bytes,
-    raw: false,
-    progressCallback: (progress) => {
-      emit({ event: "progress", progress: normalizeProgress(progress), stage: "converting" });
-    },
-  });
+  let fragmentsData;
+  try {
+    fragmentsData = await importer.process({
+      readFromCallback: true,
+      readCallback,
+      raw: false,
+      progressCallback: (progress) => {
+        emit({ event: "progress", progress: normalizeProgress(progress), stage: "converting" });
+      },
+    });
+  } finally {
+    await handle.close();
+  }
 
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, Buffer.from(fragmentsData));

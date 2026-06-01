@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\DesignManagement\Http\Resources;
 
 use App\BusinessModules\Features\DesignManagement\Enums\DesignDerivativeStatusEnum;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
+use App\BusinessModules\Features\DesignManagement\Support\DesignViewerConverter;
 use BackedEnum;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -16,7 +17,11 @@ final class DesignModelDerivativeResource extends JsonResource
     {
         /** @var DesignModelDerivative $derivative */
         $derivative = $this->resource;
-        $status = $this->enumValue($derivative->status);
+        $isStale = DesignViewerConverter::isStale($derivative);
+        $status = $isStale ? DesignDerivativeStatusEnum::MISSING->value : $this->enumValue($derivative->status);
+        $metadata = $isStale
+            ? DesignViewerConverter::staleMetadata($derivative->metadata ?? [])
+            : ($derivative->metadata ?? []);
 
         return [
             'id' => $derivative->id,
@@ -31,7 +36,7 @@ final class DesignModelDerivativeResource extends JsonResource
             'prepared_at' => $derivative->prepared_at?->toIso8601String(),
             'processing_started_at' => $derivative->processing_started_at?->toIso8601String(),
             'processing_finished_at' => $derivative->processing_finished_at?->toIso8601String(),
-            'metadata' => $derivative->metadata ?? [],
+            'metadata' => $metadata,
             'created_at' => $derivative->created_at?->toIso8601String(),
             'updated_at' => $derivative->updated_at?->toIso8601String(),
         ];

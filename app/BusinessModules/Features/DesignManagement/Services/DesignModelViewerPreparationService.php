@@ -9,6 +9,7 @@ use App\BusinessModules\Features\DesignManagement\Jobs\PrepareDesignModelViewerJ
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
 use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignIfcToFragmentsConverterContract;
+use App\BusinessModules\Features\DesignManagement\Support\DesignViewerConverter;
 use App\Models\Organization;
 use App\Services\Storage\FileService;
 use BackedEnum;
@@ -48,8 +49,11 @@ final class DesignModelViewerPreparationService
             if ($derivative instanceof DesignModelDerivative) {
                 $status = $this->statusValue($derivative->status);
 
+                if ($status === DesignDerivativeStatusEnum::READY->value && DesignViewerConverter::isCurrent($derivative)) {
+                    return $derivative;
+                }
+
                 if (in_array($status, [
-                    DesignDerivativeStatusEnum::READY->value,
                     DesignDerivativeStatusEnum::QUEUED->value,
                     DesignDerivativeStatusEnum::PROCESSING->value,
                 ], true)) {
@@ -91,6 +95,8 @@ final class DesignModelViewerPreparationService
 
         $sourcePath = null;
         $targetPath = null;
+        $sourceSizeBytes = null;
+        $derivativeSizeBytes = null;
 
         try {
             $version = $derivative->version;
@@ -110,11 +116,21 @@ final class DesignModelViewerPreparationService
                 (string) $version->source_file_path,
                 $sourcePath
             );
+            $sourceSizeBytes = $this->localFileSize(
+                $sourcePath,
+                'Temporary IFC file is not readable.',
+                'Temporary IFC file is empty.'
+            );
 
             $this->markProcessing($derivative, 15, 'converting');
             $this->converter->convert($sourcePath, $targetPath, function (mixed $progress, string $stage) use ($derivative): void {
                 $this->markProcessing($derivative, $this->normalizeConverterProgress($progress), $stage);
             });
+            $derivativeSizeBytes = $this->localFileSize(
+                $targetPath,
+                'Prepared viewer file is not readable.',
+                'Prepared viewer file is empty.'
+            );
 
             $this->markProcessing($derivative, 95, 'uploading');
             $derivativePath = $this->pathService->derivativePath(
@@ -135,8 +151,9 @@ final class DesignModelViewerPreparationService
                 'prepared_at' => now(),
                 'processing_finished_at' => now(),
                 'failed_reason' => null,
-                'metadata' => array_merge($derivative->metadata ?? [], [
-                    'prepared_on' => 'server',
+                'metadata' => DesignViewerConverter::preparedMetadata($derivative->metadata ?? [], [
+                    'source_size_bytes' => $sourceSizeBytes,
+                    'derivative_size_bytes' => $derivativeSizeBytes,
                 ]),
             ])->save();
         } catch (Throwable $exception) {
@@ -172,7 +189,7 @@ final class DesignModelViewerPreparationService
             'processing_started_at' => null,
             'processing_finished_at' => null,
             'failed_reason' => null,
-            'metadata' => ['prepared_on' => 'server'],
+            'metadata' => DesignViewerConverter::preparedMetadata(),
         ];
     }
 
@@ -205,6 +222,12 @@ final class DesignModelViewerPreparationService
 
     private function copyPathToStorageFile(int $organizationId, string $localPath, string $storagePath): void
     {
+        $this->localFileSize(
+            $localPath,
+            'Prepared viewer file is not readable.',
+            'Prepared viewer file is empty.'
+        );
+
         $organization = Organization::query()->find($organizationId);
         $source = fopen($localPath, 'rb');
 
@@ -221,6 +244,21 @@ final class DesignModelViewerPreparationService
         if (!$stored) {
             throw new DomainException(trans_message('design_management.errors.derivative_file_not_available'));
         }
+    }
+
+    private function localFileSize(string $path, string $missingMessage, string $emptyMessage): int
+    {
+        if (!is_file($path)) {
+            throw new RuntimeException($missingMessage);
+        }
+
+        $size = filesize($path);
+
+        if ($size === false || $size <= 0) {
+            throw new RuntimeException($emptyMessage);
+        }
+
+        return (int) $size;
     }
 
     private function markProcessing(DesignModelDerivative $derivative, int $progressPercent, string $stage): void

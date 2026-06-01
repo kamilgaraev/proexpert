@@ -52,7 +52,10 @@ final class DesignIfcToFragmentsConverter implements DesignIfcToFragmentsConvert
         $this->consumeProgressLine(trim($outputBuffer), $progress);
 
         if (!$process->isSuccessful()) {
-            throw new RuntimeException('IFC converter failed.');
+            $errorOutput = trim($process->getErrorOutput());
+            throw new RuntimeException($errorOutput === ''
+                ? 'IFC converter failed.'
+                : 'IFC converter failed: ' . $errorOutput);
         }
 
         if (!is_file($targetPath) || filesize($targetPath) === 0) {

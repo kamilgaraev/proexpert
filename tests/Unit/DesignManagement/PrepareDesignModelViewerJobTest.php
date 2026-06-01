@@ -56,6 +56,9 @@ final class PrepareDesignModelViewerJobTest extends TestCase
         $this->assertIsString($derivative->derivative_file_path);
         Storage::disk('s3')->assertExists($derivative->derivative_file_path);
         $this->assertSame('fragment binary', Storage::disk('s3')->get($derivative->derivative_file_path));
+        $this->assertSame(strlen('IFC source'), $derivative->metadata['source_size_bytes']);
+        $this->assertSame(strlen('fragment binary'), $derivative->metadata['derivative_size_bytes']);
+        $this->assertSame(2, $derivative->metadata['converter_version']);
     }
 
     public function test_job_marks_derivative_failed_when_converter_fails(): void
@@ -87,6 +90,36 @@ final class PrepareDesignModelViewerJobTest extends TestCase
             $derivative->failed_reason
         );
         $this->assertNotNull($derivative->processing_finished_at);
+        $this->assertNull($derivative->derivative_file_path);
+    }
+
+    public function test_job_marks_derivative_failed_when_converter_creates_empty_file(): void
+    {
+        $this->fakeFileStorage();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $package = $this->package($context, $project);
+        $version = $this->storedVersion($package, $context->user->id);
+        Storage::disk('s3')->put($version->source_file_path, 'IFC source');
+        $derivative = $this->queuedDerivative($version, $context->user->id);
+
+        $this->mock(DesignIfcToFragmentsConverterContract::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('convert')
+                ->once()
+                ->andReturnUsing(static function (string $sourcePath, string $outputPath, callable $progress): void {
+                    self::assertFileExists($sourcePath);
+                    $progress(45, 'converting');
+                    file_put_contents($outputPath, '');
+                });
+        });
+
+        (new PrepareDesignModelViewerJob((int) $derivative->id))->handle(
+            $this->app->make(DesignModelViewerPreparationService::class)
+        );
+
+        $derivative->refresh();
+        $this->assertSame('failed', $derivative->status->value);
+        $this->assertSame('failed', $derivative->processing_stage);
         $this->assertNull($derivative->derivative_file_path);
     }
 

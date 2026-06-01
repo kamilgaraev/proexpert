@@ -12,6 +12,7 @@ use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
+use App\BusinessModules\Features\DesignManagement\Support\DesignViewerConverter;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Services\Storage\FileService;
@@ -232,7 +233,7 @@ final class DesignManagementService
                     'processing_started_at' => now(),
                     'processing_finished_at' => null,
                     'failed_reason' => null,
-                    'metadata' => $payload['metadata'] ?? [],
+                    'metadata' => DesignViewerConverter::preparedMetadata($payload['metadata'] ?? []),
                 ]
             );
 
@@ -256,6 +257,7 @@ final class DesignManagementService
                 'processing_stage' => 'ready',
                 'prepared_at' => now(),
                 'processing_finished_at' => now(),
+                'metadata' => DesignViewerConverter::preparedMetadata($derivative->metadata ?? []),
             ]);
 
             return $derivative->fresh(['version']);
@@ -321,7 +323,8 @@ final class DesignManagementService
 
                 return $item->viewer_provider === 'thatopen'
                     && $item->derivative_format === 'thatopen_frag'
-                    && $status === DesignDerivativeStatusEnum::READY->value;
+                    && $status === DesignDerivativeStatusEnum::READY->value
+                    && DesignViewerConverter::isCurrent($item);
             });
 
         if (!$derivative instanceof DesignModelDerivative || empty($derivative->derivative_file_path)) {
@@ -504,6 +507,23 @@ final class DesignManagementService
                 'progress_percent' => 0,
                 'processing_stage' => null,
                 'metadata' => [],
+            ];
+        }
+
+        if (DesignViewerConverter::isStale($derivative)) {
+            return [
+                'id' => $derivative->id,
+                'status' => DesignDerivativeStatusEnum::MISSING->value,
+                'viewer_provider' => $derivative->viewer_provider,
+                'derivative_format' => $derivative->derivative_format,
+                'download_url' => null,
+                'progress_percent' => 0,
+                'processing_stage' => 'stale',
+                'metadata' => DesignViewerConverter::staleMetadata($derivative->metadata ?? []),
+                'failed_reason' => null,
+                'prepared_at' => optional($derivative->prepared_at)?->toISOString(),
+                'processing_started_at' => optional($derivative->processing_started_at)?->toISOString(),
+                'processing_finished_at' => optional($derivative->processing_finished_at)?->toISOString(),
             ];
         }
 

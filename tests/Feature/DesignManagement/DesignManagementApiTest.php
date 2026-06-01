@@ -273,6 +273,49 @@ final class DesignManagementApiTest extends TestCase
         $this->assertArrayNotHasKey('path', $response->json('data.source'));
     }
 
+    public function test_viewer_endpoint_marks_old_converter_derivative_as_missing(): void
+    {
+        $this->fakeFileStorage();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $version = $this->uploadModel($context, $project);
+        $path = "org-{$context->organization->id}/pir/projects/{$project->id}/packages/1/models/{$version->id}/viewer/model.frag";
+        Storage::disk('s3')->put($path, 'old fragment binary');
+
+        DesignModelDerivative::query()->create([
+            'organization_id' => $version->organization_id,
+            'project_id' => $version->project_id,
+            'version_id' => $version->id,
+            'created_by' => $context->user->id,
+            'updated_by' => $context->user->id,
+            'prepared_by' => $context->user->id,
+            'viewer_provider' => 'thatopen',
+            'derivative_format' => 'thatopen_frag',
+            'derivative_file_path' => $path,
+            'status' => 'ready',
+            'progress_percent' => 100,
+            'processing_stage' => 'ready',
+            'metadata' => ['prepared_on' => 'server'],
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/design-management/model-versions/{$version->id}/viewer");
+
+        $response->assertOk();
+        $response->assertJsonPath('data.derivative.status', 'missing');
+        $response->assertJsonPath('data.derivative.download_url', null);
+        $response->assertJsonPath('data.derivative.processing_stage', 'stale');
+        $response->assertJsonPath('data.derivative.metadata.is_stale', true);
+        $response->assertJsonPath('data.derivative.metadata.required_converter_version', 2);
+
+        $downloadResponse = $this->withHeaders($context->authHeaders())
+            ->get("/api/v1/admin/design-management/model-versions/{$version->id}/derivative-file");
+
+        $downloadResponse->assertStatus(422);
+    }
+
     public function test_derivative_upload_accepts_frag_file(): void
     {
         $this->fakeFileStorage();
@@ -354,6 +397,47 @@ final class DesignManagementApiTest extends TestCase
         $response->assertJsonPath('data.processing_stage', 'converting');
 
         Queue::assertNothingPushed();
+    }
+
+    public function test_prepare_viewer_endpoint_requeues_old_ready_derivative(): void
+    {
+        Queue::fake();
+        $this->fakeFileStorage();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $version = $this->uploadModel($context, $project);
+
+        $derivative = DesignModelDerivative::query()->create([
+            'organization_id' => $version->organization_id,
+            'project_id' => $version->project_id,
+            'version_id' => $version->id,
+            'created_by' => $context->user->id,
+            'updated_by' => $context->user->id,
+            'prepared_by' => $context->user->id,
+            'viewer_provider' => 'thatopen',
+            'derivative_format' => 'thatopen_frag',
+            'derivative_file_path' => 'org-1/pir/old/model.frag',
+            'status' => 'ready',
+            'progress_percent' => 100,
+            'processing_stage' => 'ready',
+            'metadata' => ['prepared_on' => 'server'],
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/design-management/model-versions/{$version->id}/viewer/preparation");
+
+        $response->assertStatus(202);
+        $response->assertJsonPath('data.status', 'queued');
+        $response->assertJsonPath('data.progress_percent', 0);
+        $response->assertJsonPath('data.metadata.converter_version', 2);
+
+        $derivative->refresh();
+        $this->assertSame('queued', $derivative->status->value);
+        $this->assertNull($derivative->derivative_file_path);
+
+        Queue::assertPushedOn('ifc-processing', PrepareDesignModelViewerJob::class);
     }
 
     public function test_source_file_endpoint_streams_uploaded_ifc_through_api(): void
