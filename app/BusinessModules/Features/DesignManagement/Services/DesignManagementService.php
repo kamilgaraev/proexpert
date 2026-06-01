@@ -30,7 +30,8 @@ final class DesignManagementService
     ];
 
     private const VERSION_RELATIONS = [
-        'artifact.package',
+        'artifact.project:id,name,organization_id',
+        'artifact.package.project:id,name,organization_id',
         'derivatives',
         'readyDerivative',
     ];
@@ -180,6 +181,7 @@ final class DesignManagementService
                 [
                     'organization_id' => $version->organization_id,
                     'project_id' => $version->project_id,
+                    'created_by' => $userId,
                     'updated_by' => $userId,
                     'prepared_by' => $userId,
                     'derivative_file_path' => null,
@@ -232,7 +234,6 @@ final class DesignManagementService
             ],
             'source' => [
                 'download_url' => $this->fileService->temporaryUrl($version->source_file_path, 60, $organization),
-                'path' => $version->source_file_path,
                 'mime_type' => $version->source_mime_type,
                 'size_bytes' => $version->source_size_bytes,
                 'original_name' => $version->source_original_name,

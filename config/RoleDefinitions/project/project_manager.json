@@ -271,6 +271,9 @@
     ],
     "handover-acceptance": [
       "*"
+    ],
+    "design-management": [
+      "*"
     ]
   },
   "interface_access": [

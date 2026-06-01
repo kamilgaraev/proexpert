@@ -476,6 +476,9 @@
     "executive-documentation": [
       "*"
     ],
+    "design-management": [
+      "*"
+    ],
     "safety-management": [
       "*"
     ],
