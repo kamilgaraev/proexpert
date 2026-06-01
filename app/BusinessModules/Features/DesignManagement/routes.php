@@ -22,6 +22,15 @@ Route::prefix('api/v1/admin/design-management')
         Route::post('/packages/{packageId}/models', [DesignManagementController::class, 'uploadModel'])
             ->middleware('authorize:design-management.models.upload')
             ->name('models.upload');
+        Route::post('/packages/{packageId}/models/multipart/start', [DesignManagementController::class, 'startMultipartUpload'])
+            ->middleware('authorize:design-management.models.upload')
+            ->name('models.multipart.start');
+        Route::post('/model-uploads/{uploadId}/complete', [DesignManagementController::class, 'completeMultipartUpload'])
+            ->middleware('authorize:design-management.models.upload')
+            ->name('model_uploads.complete');
+        Route::delete('/model-uploads/{uploadId}', [DesignManagementController::class, 'abortMultipartUpload'])
+            ->middleware('authorize:design-management.models.upload')
+            ->name('model_uploads.abort');
         Route::post('/model-versions/{versionId}/derivatives', [DesignManagementController::class, 'storeDerivative'])
             ->middleware('authorize:design-management.models.prepare_viewer')
             ->name('model_versions.derivatives.store');

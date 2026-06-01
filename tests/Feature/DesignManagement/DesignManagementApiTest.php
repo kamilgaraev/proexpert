@@ -8,17 +8,20 @@ use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
 use App\BusinessModules\Features\DesignManagement\Services\DesignManagementService;
+use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignModelMultipartUploader;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use App\Services\Storage\FileService;
+use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Routing\Route as LaravelRoute;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Testing\TestResponse;
+use Mockery;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -31,6 +34,9 @@ final class DesignManagementApiTest extends TestCase
         $this->assertRoutePermission('POST', 'api/v1/admin/design-management/packages', 'design-management.create');
         $this->assertRoutePermission('GET', 'api/v1/admin/design-management/packages/{packageId}', 'design-management.view');
         $this->assertRoutePermission('POST', 'api/v1/admin/design-management/packages/{packageId}/models', 'design-management.models.upload');
+        $this->assertRoutePermission('POST', 'api/v1/admin/design-management/packages/{packageId}/models/multipart/start', 'design-management.models.upload');
+        $this->assertRoutePermission('POST', 'api/v1/admin/design-management/model-uploads/{uploadId}/complete', 'design-management.models.upload');
+        $this->assertRoutePermission('DELETE', 'api/v1/admin/design-management/model-uploads/{uploadId}', 'design-management.models.upload');
         $this->assertRoutePermission('POST', 'api/v1/admin/design-management/model-versions/{versionId}/derivatives', 'design-management.models.prepare_viewer');
         $this->assertRoutePermission('GET', 'api/v1/admin/design-management/model-versions/{versionId}/viewer', 'design-management.models.view');
         $this->assertRoutePermission('POST', 'api/v1/admin/design-management/model-versions/{versionId}/mark-current', 'design-management.edit');
@@ -97,6 +103,107 @@ final class DesignManagementApiTest extends TestCase
             $version->source_file_path
         );
         Storage::disk('s3')->assertExists($version->source_file_path);
+    }
+
+    public function test_project_manager_can_start_multipart_ifc_upload(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $packageId = $this->createPackage($context, $project);
+
+        $this->mock(DesignModelMultipartUploader::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('start')
+                ->once()
+                ->andReturn([
+                    'upload_id' => 'upload-123',
+                    'part_size_bytes' => 8_388_608,
+                    'parts_count' => 2,
+                    'parts' => [
+                        ['part_number' => 1, 'upload_url' => 'https://storage.example.test/part-1', 'method' => 'PUT'],
+                        ['part_number' => 2, 'upload_url' => 'https://storage.example.test/part-2', 'method' => 'PUT'],
+                    ],
+                ]);
+        });
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/design-management/packages/{$packageId}/models/multipart/start", [
+                'title' => 'Архитектурная модель',
+                'version_number' => '1',
+                'revision' => 'R01',
+                'original_name' => 'building.ifc',
+                'file_size_bytes' => 12_000_000,
+                'content_type' => 'application/octet-stream',
+                'make_current' => true,
+            ]);
+
+        $response->assertCreated();
+        $response->assertJsonPath('data.upload_id', 'upload-123');
+        $response->assertJsonPath('data.part_size_bytes', 8_388_608);
+        $response->assertJsonPath('data.parts.0.method', 'PUT');
+    }
+
+    public function test_project_manager_can_complete_multipart_ifc_upload(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $packageId = $this->createPackage($context, $project);
+        $package = DesignPackage::query()->findOrFail($packageId);
+        $version = $this->storedVersion($package, $context->user);
+
+        $this->mock(DesignModelMultipartUploader::class, function (MockInterface $mock) use ($version): void {
+            $mock->shouldReceive('complete')
+                ->once()
+                ->withArgs(static fn (int $organizationId, int $userId, string $uploadId): bool => $uploadId === 'upload-123')
+                ->andReturn($version);
+        });
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/design-management/model-uploads/upload-123/complete');
+
+        $response->assertCreated();
+        $response->assertJsonPath('data.id', $version->id);
+        $response->assertJsonPath('data.source_original_name', 'building.ifc');
+    }
+
+    public function test_ifc_upload_streams_file_to_storage(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $packageId = $this->createPackage($context, $project);
+        $disk = Mockery::mock(Filesystem::class);
+
+        $disk->shouldReceive('put')
+            ->once()
+            ->with(
+                Mockery::type('string'),
+                Mockery::on(static fn (mixed $contents): bool => is_resource($contents)),
+                'private'
+            )
+            ->andReturn(true);
+
+        $this->app->forgetInstance(DesignManagementService::class);
+        $this->mock(FileService::class, function (MockInterface $mock) use ($disk): void {
+            $mock->shouldReceive('disk')->andReturn($disk)->byDefault();
+        });
+        $this->app->forgetInstance(DesignManagementService::class);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->post("/api/v1/admin/design-management/packages/{$packageId}/models", [
+                'title' => 'Архитектурная модель',
+                'version_number' => '1',
+                'file' => UploadedFile::fake()->createWithContent(
+                    'building.ifc',
+                    str_repeat("ISO-10303-21;\n", 64)
+                ),
+            ]);
+
+        $response->assertCreated();
     }
 
     public function test_viewer_endpoint_returns_source_and_derivative_blocks(): void
@@ -250,6 +357,38 @@ final class DesignManagementApiTest extends TestCase
                     'converted_in_browser' => true,
                 ],
             ]);
+    }
+
+    private function storedVersion(DesignPackage $package, User $user): DesignArtifactVersion
+    {
+        $artifact = $package->artifacts()->create([
+            'organization_id' => $package->organization_id,
+            'project_id' => $package->project_id,
+            'created_by' => $user->id,
+            'updated_by' => $user->id,
+            'artifact_type' => 'model',
+            'title' => 'Архитектурная модель',
+            'status' => 'active',
+            'metadata' => [],
+        ]);
+
+        return $artifact->versions()->create([
+            'organization_id' => $package->organization_id,
+            'project_id' => $package->project_id,
+            'created_by' => $user->id,
+            'updated_by' => $user->id,
+            'uploaded_by' => $user->id,
+            'title' => 'Архитектурная модель',
+            'version_number' => '1',
+            'source_format' => 'ifc',
+            'source_file_path' => 'org-' . $package->organization_id . '/pir/model-uploads/upload-123/building.ifc',
+            'source_original_name' => 'building.ifc',
+            'source_mime_type' => 'application/octet-stream',
+            'source_size_bytes' => 12_000_000,
+            'status' => 'uploaded',
+            'is_current' => true,
+            'metadata' => [],
+        ]);
     }
 
     private function fakeFileStorage(): void

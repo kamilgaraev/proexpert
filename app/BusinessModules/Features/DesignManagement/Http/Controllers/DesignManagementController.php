@@ -10,6 +10,7 @@ use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignArtifactV
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignModelDerivativeResource;
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignPackageResource;
 use App\BusinessModules\Features\DesignManagement\Services\DesignManagementService;
+use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignModelMultipartUploader;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use DomainException;
@@ -25,6 +26,7 @@ final class DesignManagementController extends Controller
 {
     public function __construct(
         private readonly DesignManagementService $service,
+        private readonly DesignModelMultipartUploader $multipartUploadService,
         private readonly DesignManagementModule $module,
     ) {
     }
@@ -157,6 +159,78 @@ final class DesignManagementController extends Controller
         }
     }
 
+    public function startMultipartUpload(Request $request, int $packageId): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'original_name' => ['required', 'string', 'max:255', $this->extensionNameRule('ifc')],
+                'file_size_bytes' => ['required', 'integer', 'min:1', 'max:' . ($this->maxIfcSizeKilobytes() * 1024)],
+                'content_type' => ['nullable', 'string', 'max:120'],
+                'title' => ['required', 'string', 'max:255'],
+                'version_number' => ['required', 'string', 'max:80'],
+                'revision' => ['nullable', 'string', 'max:80'],
+                'discipline' => ['nullable', 'string', 'max:120'],
+                'stage' => ['nullable', 'string', 'max:120'],
+                'model_date' => ['nullable', 'date'],
+                'make_current' => ['nullable', 'boolean'],
+                'metadata' => ['nullable', 'array'],
+                'artifact_metadata' => ['nullable', 'array'],
+            ]);
+            $package = $this->service->findPackage($this->organizationId($request), $packageId);
+
+            if ($package === null) {
+                return AdminResponse::error(trans_message('design_management.errors.package_not_found'), 404);
+            }
+
+            return AdminResponse::success(
+                $this->multipartUploadService->start($package, (int) auth()->id(), $validated),
+                null,
+                201
+            );
+        } catch (ValidationException $e) {
+            return $this->validationFailed($e);
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            return $this->failed('start_multipart_upload', $packageId, $e);
+        }
+    }
+
+    public function completeMultipartUpload(Request $request, string $uploadId): JsonResponse
+    {
+        try {
+            return AdminResponse::success(
+                new DesignArtifactVersionResource($this->multipartUploadService->complete(
+                    $this->organizationId($request),
+                    (int) auth()->id(),
+                    $uploadId
+                )),
+                trans_message('design_management.messages.model_upload_completed'),
+                201
+            );
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            return $this->failed('complete_multipart_upload', null, $e);
+        }
+    }
+
+    public function abortMultipartUpload(Request $request, string $uploadId): JsonResponse
+    {
+        try {
+            $this->multipartUploadService->abort($this->organizationId($request), (int) auth()->id(), $uploadId);
+
+            return AdminResponse::success(
+                ['aborted' => true],
+                null
+            );
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            return $this->failed('abort_multipart_upload', null, $e);
+        }
+    }
+
     public function storeDerivative(Request $request, int $versionId): JsonResponse
     {
         try {
@@ -220,6 +294,15 @@ final class DesignManagementController extends Controller
     {
         return static function (string $attribute, mixed $value, \Closure $fail) use ($extension): void {
             if (!$value instanceof UploadedFile || strtolower($value->getClientOriginalExtension()) !== $extension) {
+                $fail(trans_message("design_management.errors.{$extension}_file_required"));
+            }
+        };
+    }
+
+    private function extensionNameRule(string $extension): callable
+    {
+        return static function (string $attribute, mixed $value, \Closure $fail) use ($extension): void {
+            if (!is_string($value) || strtolower((string) pathinfo($value, PATHINFO_EXTENSION)) !== $extension) {
                 $fail(trans_message("design_management.errors.{$extension}_file_required"));
             }
         };

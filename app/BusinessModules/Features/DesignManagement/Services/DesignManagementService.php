@@ -140,6 +140,47 @@ final class DesignManagementService
         });
     }
 
+    public function registerStoredIfcModel(
+        DesignPackage $package,
+        int $userId,
+        string $sourcePath,
+        array $fileInfo,
+        array $payload
+    ): DesignArtifactVersion {
+        $this->assertPackageBelongsToOrganization($package, (int) $package->organization_id);
+        $this->assertIfcOriginalName((string) $fileInfo['original_name']);
+
+        return DB::transaction(function () use ($package, $userId, $sourcePath, $fileInfo, $payload): DesignArtifactVersion {
+            $artifact = $this->resolveArtifact($package, $userId, $payload);
+
+            $version = $artifact->versions()->create([
+                'organization_id' => $package->organization_id,
+                'project_id' => $package->project_id,
+                'created_by' => $userId,
+                'updated_by' => $userId,
+                'uploaded_by' => $userId,
+                'title' => $payload['title'] ?? $artifact->title,
+                'version_number' => (string) $payload['version_number'],
+                'revision' => $payload['revision'] ?? null,
+                'source_format' => 'ifc',
+                'source_file_path' => $sourcePath,
+                'source_original_name' => (string) $fileInfo['original_name'],
+                'source_mime_type' => (string) ($fileInfo['mime_type'] ?? 'application/x-step'),
+                'source_size_bytes' => (int) $fileInfo['size_bytes'],
+                'model_date' => $payload['model_date'] ?? null,
+                'status' => DesignVersionStatusEnum::UPLOADED,
+                'is_current' => false,
+                'metadata' => $payload['metadata'] ?? [],
+            ]);
+
+            if ((bool) ($payload['make_current'] ?? true)) {
+                $this->setCurrentVersion($version, $userId);
+            }
+
+            return $version->fresh(self::VERSION_RELATIONS);
+        });
+    }
+
     public function storeDerivative(
         DesignArtifactVersion $version,
         int $userId,
@@ -299,16 +340,20 @@ final class DesignManagementService
     private function storeUploadedFile(UploadedFile $file, string $path, int $organizationId): void
     {
         $organization = Organization::query()->find($organizationId);
-        $contents = $this->readUploadedFile($file);
+        $stream = $this->readUploadedFileStream($file);
 
-        $stored = $this->fileService->disk($organization)->put($path, $contents, 'private');
+        try {
+            $stored = $this->fileService->disk($organization)->put($path, $stream, 'private');
+        } finally {
+            fclose($stream);
+        }
 
         if (!$stored) {
             throw new DomainException(trans_message('design_management.errors.file_upload_failed'));
         }
     }
 
-    private function readUploadedFile(UploadedFile $file): string
+    private function readUploadedFileStream(UploadedFile $file): mixed
     {
         $realPath = $file->getRealPath();
 
@@ -316,13 +361,13 @@ final class DesignManagementService
             throw new DomainException(trans_message('design_management.errors.file_upload_failed'));
         }
 
-        $contents = file_get_contents($realPath);
+        $stream = fopen($realPath, 'rb');
 
-        if ($contents === false) {
+        if ($stream === false) {
             throw new DomainException(trans_message('design_management.errors.file_upload_failed'));
         }
 
-        return $contents;
+        return $stream;
     }
 
     private function assertProjectBelongsToOrganization(int $projectId, int $organizationId): void
@@ -347,6 +392,13 @@ final class DesignManagementService
     private function assertIfcFile(UploadedFile $file): void
     {
         if (strtolower($file->getClientOriginalExtension()) !== 'ifc') {
+            throw new DomainException(trans_message('design_management.errors.ifc_file_required'));
+        }
+    }
+
+    private function assertIfcOriginalName(string $originalName): void
+    {
+        if (strtolower((string) pathinfo($originalName, PATHINFO_EXTENSION)) !== 'ifc') {
             throw new DomainException(trans_message('design_management.errors.ifc_file_required'));
         }
     }

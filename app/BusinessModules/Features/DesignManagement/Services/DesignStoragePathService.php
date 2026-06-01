@@ -35,6 +35,23 @@ final class DesignStoragePathService
             . $safeExtension;
     }
 
+    public function multipartSourcePath(
+        int $organizationId,
+        int $projectId,
+        int $packageId,
+        string $uploadId,
+        string $originalName
+    ): string {
+        return sprintf(
+            'org-%d/pir/projects/%d/packages/%d/model-uploads/%s/source/%s',
+            $organizationId,
+            $projectId,
+            $packageId,
+            $this->safeUploadId($uploadId),
+            $this->safeFileName($originalName, 'model.ifc')
+        );
+    }
+
     private function basePath(int $organizationId, int $projectId, int $packageId, int $versionId): string
     {
         return sprintf(
@@ -63,5 +80,12 @@ final class DesignStoragePathService
         }
 
         return $safeStem . '.' . $safeExtension;
+    }
+
+    private function safeUploadId(string $uploadId): string
+    {
+        $safeUploadId = preg_replace('/[^a-zA-Z0-9-]+/', '', $uploadId);
+
+        return $safeUploadId !== '' ? $safeUploadId : (string) Str::uuid();
     }
 }
