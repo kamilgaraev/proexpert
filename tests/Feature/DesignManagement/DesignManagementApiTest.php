@@ -35,6 +35,7 @@ final class DesignManagementApiTest extends TestCase
         $this->assertRoutePermission('GET', 'api/v1/admin/design-management/packages', 'design-management.view');
         $this->assertRoutePermission('POST', 'api/v1/admin/design-management/packages', 'design-management.create');
         $this->assertRoutePermission('GET', 'api/v1/admin/design-management/packages/{packageId}', 'design-management.view');
+        $this->assertRoutePermission('POST', 'api/v1/admin/design-management/packages/{packageId}/workflow', 'design-management.view');
         $this->assertRoutePermission('POST', 'api/v1/admin/design-management/packages/{packageId}/models', 'design-management.models.upload');
         $this->assertRoutePermission('POST', 'api/v1/admin/design-management/packages/{packageId}/models/multipart/start', 'design-management.models.upload');
         $this->assertRoutePermission('POST', 'api/v1/admin/design-management/model-uploads/{uploadId}/parts/{partNumber}', 'design-management.models.upload');
@@ -334,6 +335,210 @@ final class DesignManagementApiTest extends TestCase
 
         $derivative = DesignModelDerivative::query()->firstOrFail();
         Storage::disk('s3')->assertExists((string) $derivative->derivative_file_path);
+    }
+
+    public function test_project_manager_can_move_package_through_stage_two_workflow(): void
+    {
+        $this->fakeFileStorage();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $version = $this->uploadModel($context, $project);
+        $this->uploadDerivative($context, $version)->assertCreated();
+        $package = DesignPackage::query()->firstOrFail();
+
+        $submitResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/design-management/packages/{$package->id}/workflow", [
+                'action' => 'submit_for_review',
+                'comment' => 'Комплект готов к проверке',
+            ]);
+
+        $submitResponse->assertOk();
+        $submitResponse->assertJsonPath('data.status', 'under_review');
+        $submitResponse->assertJsonPath('data.workflow_summary.next_action', 'return_to_work');
+        $submitResponse->assertJsonPath('data.workflow_summary.available_action_details.0.requires_comment', true);
+        $submitResponse->assertJsonPath('data.workflow_history.0.action', 'submit_for_review');
+        $this->assertContains('approve', $submitResponse->json('data.available_actions'));
+
+        $returnResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/design-management/packages/{$package->id}/workflow", [
+                'action' => 'return_to_work',
+                'comment' => 'Нужно уточнить ведомость изменений',
+            ]);
+
+        $returnResponse->assertOk();
+        $returnResponse->assertJsonPath('data.status', 'in_work');
+        $returnResponse->assertJsonPath('data.workflow_history.1.action', 'return_to_work');
+        $returnResponse->assertJsonPath('data.workflow_history.1.comment', 'Нужно уточнить ведомость изменений');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/design-management/packages/{$package->id}/workflow", [
+                'action' => 'submit_for_review',
+            ])
+            ->assertOk();
+
+        $approveResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/design-management/packages/{$package->id}/workflow", [
+                'action' => 'approve',
+            ]);
+
+        $approveResponse->assertOk();
+        $approveResponse->assertJsonPath('data.status', 'approved');
+        $approveResponse->assertJsonPath('data.workflow_summary.next_action', 'issue');
+
+        $issueResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/design-management/packages/{$package->id}/workflow", [
+                'action' => 'issue',
+            ]);
+
+        $issueResponse->assertOk();
+        $issueResponse->assertJsonPath('data.status', 'issued');
+        $issueResponse->assertJsonPath('data.available_actions', []);
+
+        $this->assertSame('issued', DesignPackage::query()->findOrFail($package->id)->status->value);
+    }
+
+    public function test_return_to_work_requires_comment(): void
+    {
+        $this->fakeFileStorage();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $version = $this->uploadModel($context, $project);
+        $this->uploadDerivative($context, $version)->assertCreated();
+        $package = DesignPackage::query()->firstOrFail();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/design-management/packages/{$package->id}/workflow", [
+                'action' => 'submit_for_review',
+            ])
+            ->assertOk();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/design-management/packages/{$package->id}/workflow", [
+                'action' => 'return_to_work',
+            ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('message', trans_message('design_management.errors.workflow_comment_required'));
+        $response->assertJsonValidationErrors(['comment']);
+        $this->assertSame('under_review', $package->fresh()->status->value);
+    }
+
+    public function test_package_under_review_rejects_model_changes(): void
+    {
+        $this->fakeFileStorage();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $version = $this->uploadModel($context, $project);
+        $this->uploadDerivative($context, $version)->assertCreated();
+        $package = DesignPackage::query()->firstOrFail();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/design-management/packages/{$package->id}/workflow", [
+                'action' => 'submit_for_review',
+            ])
+            ->assertOk();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->post("/api/v1/admin/design-management/packages/{$package->id}/models", [
+                'title' => 'Обновленная архитектурная модель',
+                'version_number' => '2',
+                'file' => UploadedFile::fake()->createWithContent(
+                    'building-v2.ifc',
+                    "ISO-10303-21;\nHEADER;\nENDSEC;\nEND-ISO-10303-21;"
+                ),
+            ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('message', trans_message('design_management.errors.package_locked_for_model_changes'));
+        $this->assertSame(1, DesignArtifactVersion::query()->count());
+    }
+
+    public function test_package_cannot_be_submitted_without_ready_viewer(): void
+    {
+        $this->fakeFileStorage();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess(['design-management.approve']);
+        $this->allowModuleAccess();
+        $version = $this->uploadModel($context, $project);
+        $package = $version->artifact->package;
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/design-management/packages/{$package->id}/workflow", [
+                'action' => 'submit_for_review',
+            ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('message', trans_message('design_management.errors.workflow_action_not_available'));
+        $this->assertSame('draft', $package->fresh()->status->value);
+    }
+
+    public function test_package_workflow_actions_are_idempotent_for_retried_requests(): void
+    {
+        $this->fakeFileStorage();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $version = $this->uploadModel($context, $project);
+        $this->uploadDerivative($context, $version)->assertCreated();
+        $package = DesignPackage::query()->firstOrFail();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/design-management/packages/{$package->id}/workflow", [
+                'action' => 'submit_for_review',
+                'comment' => 'ready for review',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'under_review');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/design-management/packages/{$package->id}/workflow", [
+                'action' => 'submit_for_review',
+                'comment' => 'ready for review',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'under_review');
+
+        $history = $package->fresh()->metadata['workflow_history'] ?? [];
+
+        $this->assertCount(1, $history);
+        $this->assertSame('submit_for_review', $history[0]['action']);
+        $this->assertSame('draft', $history[0]['from_status']);
+        $this->assertSame('under_review', $history[0]['to_status']);
+    }
+
+    public function test_package_approval_requires_approve_permission(): void
+    {
+        $this->fakeFileStorage();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess(['design-management.approve']);
+        $this->allowModuleAccess();
+        $version = $this->uploadModel($context, $project);
+        $this->uploadDerivative($context, $version)->assertCreated();
+        $package = DesignPackage::query()->firstOrFail();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/design-management/packages/{$package->id}/workflow", [
+                'action' => 'submit_for_review',
+            ])
+            ->assertOk();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/design-management/packages/{$package->id}/workflow", [
+                'action' => 'approve',
+            ]);
+
+        $response->assertForbidden();
+        $response->assertJsonPath('message', trans_message('design_management.errors.workflow_action_forbidden'));
+        $this->assertSame('under_review', $package->fresh()->status->value);
     }
 
     public function test_prepare_viewer_endpoint_queues_server_side_derivative_processing(): void

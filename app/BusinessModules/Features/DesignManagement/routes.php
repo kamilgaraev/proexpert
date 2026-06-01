@@ -19,6 +19,9 @@ Route::prefix('api/v1/admin/design-management')
         Route::get('/packages/{packageId}', [DesignManagementController::class, 'showPackage'])
             ->middleware('authorize:design-management.view')
             ->name('packages.show');
+        Route::post('/packages/{packageId}/workflow', [DesignManagementController::class, 'transitionPackageWorkflow'])
+            ->middleware('authorize:design-management.view')
+            ->name('packages.workflow');
         Route::post('/packages/{packageId}/models', [DesignManagementController::class, 'uploadModel'])
             ->middleware('authorize:design-management.models.upload')
             ->name('models.upload');

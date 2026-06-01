@@ -12,6 +12,7 @@ use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
+use App\BusinessModules\Features\DesignManagement\Support\DesignPackageWorkflow;
 use App\BusinessModules\Features\DesignManagement\Support\DesignViewerConverter;
 use App\Models\Organization;
 use App\Models\Project;
@@ -100,11 +101,12 @@ final class DesignManagementService
         $this->assertIfcFile($file);
 
         return DB::transaction(function () use ($package, $userId, $file, $payload): DesignArtifactVersion {
-            $artifact = $this->resolveArtifact($package, $userId, $payload);
+            $lockedPackage = $this->lockedPackageForModelChanges($package);
+            $artifact = $this->resolveArtifact($lockedPackage, $userId, $payload);
 
             $version = $artifact->versions()->create([
-                'organization_id' => $package->organization_id,
-                'project_id' => $package->project_id,
+                'organization_id' => $lockedPackage->organization_id,
+                'project_id' => $lockedPackage->project_id,
                 'created_by' => $userId,
                 'updated_by' => $userId,
                 'uploaded_by' => $userId,
@@ -123,14 +125,14 @@ final class DesignManagementService
             ]);
 
             $path = $this->pathService->sourcePath(
-                (int) $package->organization_id,
-                (int) $package->project_id,
-                (int) $package->id,
+                (int) $lockedPackage->organization_id,
+                (int) $lockedPackage->project_id,
+                (int) $lockedPackage->id,
                 (int) $version->id,
                 $file->getClientOriginalName()
             );
 
-            $this->storeUploadedFile($file, $path, (int) $package->organization_id);
+            $this->storeUploadedFile($file, $path, (int) $lockedPackage->organization_id);
             $version->update(['source_file_path' => $path]);
 
             if ((bool) ($payload['make_current'] ?? true)) {
@@ -152,11 +154,12 @@ final class DesignManagementService
         $this->assertIfcOriginalName((string) $fileInfo['original_name']);
 
         return DB::transaction(function () use ($package, $userId, $sourcePath, $fileInfo, $payload): DesignArtifactVersion {
-            $artifact = $this->resolveArtifact($package, $userId, $payload);
+            $lockedPackage = $this->lockedPackageForModelChanges($package);
+            $artifact = $this->resolveArtifact($lockedPackage, $userId, $payload);
 
             $version = $artifact->versions()->create([
-                'organization_id' => $package->organization_id,
-                'project_id' => $package->project_id,
+                'organization_id' => $lockedPackage->organization_id,
+                'project_id' => $lockedPackage->project_id,
                 'created_by' => $userId,
                 'updated_by' => $userId,
                 'uploaded_by' => $userId,
@@ -199,6 +202,7 @@ final class DesignManagementService
         }
 
         return DB::transaction(function () use ($version, $userId, $file, $payload, $package): DesignModelDerivative {
+            $lockedPackage = $this->lockedPackageForModelChanges($package);
             $format = (string) ($payload['derivative_format'] ?? 'thatopen_frag');
             $provider = (string) ($payload['viewer_provider'] ?? 'thatopen');
 
@@ -209,7 +213,7 @@ final class DesignManagementService
             $path = $this->pathService->derivativePath(
                 (int) $version->organization_id,
                 (int) $version->project_id,
-                (int) $package->id,
+                (int) $lockedPackage->id,
                 (int) $version->id,
                 $file->getClientOriginalExtension() ?: 'frag'
             );
@@ -343,9 +347,87 @@ final class DesignManagementService
     public function markCurrent(DesignArtifactVersion $version, int $userId): DesignArtifactVersion
     {
         return DB::transaction(function () use ($version, $userId): DesignArtifactVersion {
+            $version->loadMissing('artifact.package');
+            $package = $version->artifact?->package;
+
+            if (!$package instanceof DesignPackage) {
+                throw new DomainException(trans_message('design_management.errors.version_not_found'));
+            }
+
+            $this->lockedPackageForModelChanges($package);
             $this->setCurrentVersion($version, $userId);
 
             return $version->fresh(self::VERSION_RELATIONS);
+        });
+    }
+
+    public function ensurePackageAcceptsModelChanges(DesignPackage $package): void
+    {
+        $this->assertPackageAcceptsModelChanges($package);
+    }
+
+    public function ensureVersionPackageAcceptsModelChanges(DesignArtifactVersion $version): void
+    {
+        $version->loadMissing('artifact.package');
+        $package = $version->artifact?->package;
+
+        if (!$package instanceof DesignPackage) {
+            throw new DomainException(trans_message('design_management.errors.version_not_found'));
+        }
+
+        $this->assertPackageAcceptsModelChanges($package);
+    }
+
+    public function transitionPackageWorkflow(
+        DesignPackage $package,
+        int $userId,
+        string $action,
+        ?string $comment = null
+    ): DesignPackage {
+        return DB::transaction(function () use ($package, $userId, $action, $comment): DesignPackage {
+            $lockedPackage = DesignPackage::forOrganization((int) $package->organization_id)
+                ->whereKey($package->id)
+                ->lockForUpdate()
+                ->with(self::PACKAGE_RELATIONS)
+                ->first();
+
+            if (!$lockedPackage instanceof DesignPackage) {
+                throw new DomainException(trans_message('design_management.errors.package_not_found'));
+            }
+
+            if (DesignPackageWorkflow::isCompletedAction($lockedPackage, $action)) {
+                return $lockedPackage->fresh(self::PACKAGE_RELATIONS);
+            }
+
+            $nextStatus = DesignPackageWorkflow::nextStatus($lockedPackage, $action);
+
+            if ($nextStatus === null) {
+                throw new DomainException(trans_message('design_management.errors.workflow_action_not_available'));
+            }
+
+            $metadata = $lockedPackage->metadata ?? [];
+            $history = is_array($metadata['workflow_history'] ?? null)
+                ? array_values($metadata['workflow_history'])
+                : [];
+
+            $history[] = [
+                'action' => $action,
+                'from_status' => $this->enumValue($lockedPackage->status),
+                'to_status' => $nextStatus->value,
+                'user_id' => $userId,
+                'comment' => $comment,
+                'at' => now()->toISOString(),
+            ];
+
+            $metadata['workflow_history'] = array_slice($history, -50);
+
+            $lockedPackage->update([
+                'status' => $nextStatus,
+                'updated_by' => $userId,
+                'metadata' => $metadata,
+            ]);
+
+            return $lockedPackage->fresh(self::PACKAGE_RELATIONS);
         });
     }
 
@@ -471,6 +553,29 @@ final class DesignManagementService
     {
         if ((int) $package->organization_id !== $organizationId) {
             throw new DomainException(trans_message('design_management.errors.package_not_found'));
+        }
+    }
+
+    private function lockedPackageForModelChanges(DesignPackage $package): DesignPackage
+    {
+        $lockedPackage = DesignPackage::forOrganization((int) $package->organization_id)
+            ->whereKey($package->id)
+            ->lockForUpdate()
+            ->first();
+
+        if (!$lockedPackage instanceof DesignPackage) {
+            throw new DomainException(trans_message('design_management.errors.package_not_found'));
+        }
+
+        $this->assertPackageAcceptsModelChanges($lockedPackage);
+
+        return $lockedPackage;
+    }
+
+    private function assertPackageAcceptsModelChanges(DesignPackage $package): void
+    {
+        if (!DesignPackageWorkflow::canChangeModels($package)) {
+            throw new DomainException(trans_message('design_management.errors.package_locked_for_model_changes'));
         }
     }
 

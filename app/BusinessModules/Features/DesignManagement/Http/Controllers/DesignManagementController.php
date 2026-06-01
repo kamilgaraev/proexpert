@@ -12,8 +12,11 @@ use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignPackageRe
 use App\BusinessModules\Features\DesignManagement\Services\DesignManagementService;
 use App\BusinessModules\Features\DesignManagement\Services\DesignModelViewerPreparationService;
 use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignModelMultipartUploader;
+use App\BusinessModules\Features\DesignManagement\Support\DesignPackageWorkflow;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use App\Models\User;
 use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
@@ -31,6 +34,7 @@ final class DesignManagementController extends Controller
         private readonly DesignModelViewerPreparationService $viewerPreparationService,
         private readonly DesignModelMultipartUploader $multipartUploadService,
         private readonly DesignManagementModule $module,
+        private readonly AuthorizationService $authorizationService,
     ) {
     }
 
@@ -141,6 +145,51 @@ final class DesignManagementController extends Controller
             return AdminResponse::error($e->getMessage(), 422);
         } catch (\Throwable $e) {
             return $this->failed('upload_model', $packageId, $e);
+        }
+    }
+
+    public function transitionPackageWorkflow(Request $request, int $packageId): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'action' => ['required', 'string', Rule::in(DesignPackageWorkflow::actions())],
+                'comment' => ['nullable', 'string', 'max:1000'],
+            ]);
+            $package = $this->service->findPackage($this->organizationId($request), $packageId);
+
+            if ($package === null) {
+                return AdminResponse::error(trans_message('design_management.errors.package_not_found'), 404);
+            }
+
+            if (!$this->canRunWorkflowAction($request, $package->project_id, (string) $validated['action'])) {
+                return AdminResponse::error(trans_message('design_management.errors.workflow_action_forbidden'), 403);
+            }
+
+            $comment = trim((string) ($validated['comment'] ?? ''));
+
+            if (DesignPackageWorkflow::requiresComment((string) $validated['action']) && $comment === '') {
+                return AdminResponse::error(
+                    trans_message('design_management.errors.workflow_comment_required'),
+                    422,
+                    ['comment' => [trans_message('design_management.errors.workflow_comment_required')]]
+                );
+            }
+
+            return AdminResponse::success(
+                new DesignPackageResource($this->service->transitionPackageWorkflow(
+                    $package,
+                    (int) auth()->id(),
+                    (string) $validated['action'],
+                    $comment !== '' ? $comment : null
+                )),
+                trans_message('design_management.messages.workflow_updated')
+            );
+        } catch (ValidationException $e) {
+            return $this->validationFailed($e);
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            return $this->failed('transition_package_workflow', $packageId, $e);
         }
     }
 
@@ -337,6 +386,8 @@ final class DesignManagementController extends Controller
                 return AdminResponse::error(trans_message('design_management.errors.version_not_found'), 404);
             }
 
+            $this->service->ensureVersionPackageAcceptsModelChanges($version);
+
             $derivative = $this->viewerPreparationService->queuePreparation($version, (int) auth()->id());
 
             return AdminResponse::success(
@@ -409,6 +460,26 @@ final class DesignManagementController extends Controller
     private function packageStatuses(): array
     {
         return array_map(static fn (DesignPackageStatusEnum $status): string => $status->value, DesignPackageStatusEnum::cases());
+    }
+
+    private function canRunWorkflowAction(Request $request, int $projectId, string $action): bool
+    {
+        $user = $request->user();
+
+        if (!$user instanceof User) {
+            return false;
+        }
+
+        $permission = DesignPackageWorkflow::permissionForAction($action);
+
+        if ($permission === null) {
+            return false;
+        }
+
+        return $this->authorizationService->can($user, $permission, [
+            'organization_id' => $this->organizationId($request),
+            'project_id' => $projectId,
+        ]);
     }
 
     private function paginationMeta(LengthAwarePaginator $paginator): array

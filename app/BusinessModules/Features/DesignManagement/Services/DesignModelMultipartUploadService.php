@@ -29,6 +29,8 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
 
     public function start(DesignPackage $package, int $userId, array $payload): array
     {
+        $this->designManagementService->ensurePackageAcceptsModelChanges($package);
+
         $fileSizeBytes = (int) $payload['file_size_bytes'];
         $partsCount = max(1, (int) ceil($fileSizeBytes / self::PART_SIZE_BYTES));
 
@@ -189,6 +191,8 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
         if (!$package instanceof DesignPackage) {
             throw new DomainException(trans_message('design_management.errors.package_not_found'));
         }
+
+        $this->designManagementService->ensurePackageAcceptsModelChanges($package);
 
         $version = $this->designManagementService->registerStoredIfcModel(
             $package,
