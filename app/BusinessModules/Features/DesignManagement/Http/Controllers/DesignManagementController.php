@@ -21,6 +21,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 final class DesignManagementController extends Controller
 {
@@ -156,6 +157,40 @@ final class DesignManagementController extends Controller
             );
         } catch (\Throwable $e) {
             return $this->failed('viewer_payload', $versionId, $e);
+        }
+    }
+
+    public function downloadSourceFile(Request $request, int $versionId): JsonResponse|StreamedResponse
+    {
+        try {
+            $version = $this->service->findVersion($this->organizationId($request), $versionId);
+
+            if ($version === null) {
+                return AdminResponse::error(trans_message('design_management.errors.version_not_found'), 404);
+            }
+
+            return $this->streamModelFile($this->service->sourceFileStream($version));
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            return $this->failed('download_source_file', $versionId, $e);
+        }
+    }
+
+    public function downloadDerivativeFile(Request $request, int $versionId): JsonResponse|StreamedResponse
+    {
+        try {
+            $version = $this->service->findVersion($this->organizationId($request), $versionId);
+
+            if ($version === null) {
+                return AdminResponse::error(trans_message('design_management.errors.version_not_found'), 404);
+            }
+
+            return $this->streamModelFile($this->service->derivativeFileStream($version));
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            return $this->failed('download_derivative_file', $versionId, $e);
         }
     }
 
@@ -371,6 +406,28 @@ final class DesignManagementController extends Controller
             'prev' => $paginator->previousPageUrl(),
             'next' => $paginator->nextPageUrl(),
         ];
+    }
+
+    /**
+     * @param array{stream: resource, filename: string, mime_type: string} $file
+     */
+    private function streamModelFile(array $file): StreamedResponse
+    {
+        $stream = $file['stream'];
+
+        return response()->streamDownload(
+            static function () use ($stream): void {
+                fpassthru($stream);
+                if (is_resource($stream)) {
+                    fclose($stream);
+                }
+            },
+            (string) $file['filename'],
+            [
+                'Content-Type' => (string) $file['mime_type'],
+                'Cache-Control' => 'no-store',
+            ]
+        );
     }
 
     private function validationFailed(ValidationException $e): JsonResponse

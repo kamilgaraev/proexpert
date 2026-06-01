@@ -40,6 +40,12 @@ Route::prefix('api/v1/admin/design-management')
         Route::get('/model-versions/{versionId}/viewer', [DesignManagementController::class, 'viewerPayload'])
             ->middleware('authorize:design-management.models.view')
             ->name('model_versions.viewer');
+        Route::get('/model-versions/{versionId}/source-file', [DesignManagementController::class, 'downloadSourceFile'])
+            ->middleware('authorize:design-management.models.view')
+            ->name('model_versions.source_file');
+        Route::get('/model-versions/{versionId}/derivative-file', [DesignManagementController::class, 'downloadDerivativeFile'])
+            ->middleware('authorize:design-management.models.view')
+            ->name('model_versions.derivative_file');
         Route::post('/model-versions/{versionId}/mark-current', [DesignManagementController::class, 'markCurrent'])
             ->middleware('authorize:design-management.edit')
             ->name('model_versions.mark_current');

@@ -283,6 +283,51 @@ final class DesignManagementService
         ];
     }
 
+    /**
+     * @return array{stream: resource, filename: string, mime_type: string}
+     */
+    public function sourceFileStream(DesignArtifactVersion $version): array
+    {
+        return $this->fileStream(
+            (int) $version->organization_id,
+            (string) $version->source_file_path,
+            $version->source_original_name ?: 'model.ifc',
+            $version->source_mime_type ?: 'application/x-step',
+            trans_message('design_management.errors.source_file_not_available')
+        );
+    }
+
+    /**
+     * @return array{stream: resource, filename: string, mime_type: string}
+     */
+    public function derivativeFileStream(DesignArtifactVersion $version): array
+    {
+        $version->loadMissing('derivatives');
+
+        $derivative = $version->derivatives
+            ->first(static function (DesignModelDerivative $item): bool {
+                $status = $item->status instanceof DesignDerivativeStatusEnum
+                    ? $item->status->value
+                    : (string) $item->status;
+
+                return $item->viewer_provider === 'thatopen'
+                    && $item->derivative_format === 'thatopen_frag'
+                    && $status === DesignDerivativeStatusEnum::READY->value;
+            });
+
+        if (!$derivative instanceof DesignModelDerivative || empty($derivative->derivative_file_path)) {
+            throw new DomainException(trans_message('design_management.errors.derivative_file_not_available'));
+        }
+
+        return $this->fileStream(
+            (int) $version->organization_id,
+            (string) $derivative->derivative_file_path,
+            pathinfo((string) $derivative->derivative_file_path, PATHINFO_BASENAME) ?: 'model.frag',
+            'application/octet-stream',
+            trans_message('design_management.errors.derivative_file_not_available')
+        );
+    }
+
     public function markCurrent(DesignArtifactVersion $version, int $userId): DesignArtifactVersion
     {
         return DB::transaction(function () use ($version, $userId): DesignArtifactVersion {
@@ -368,6 +413,34 @@ final class DesignManagementService
         }
 
         return $stream;
+    }
+
+    /**
+     * @return array{stream: resource, filename: string, mime_type: string}
+     */
+    private function fileStream(
+        int $organizationId,
+        string $path,
+        string $filename,
+        string $mimeType,
+        string $errorMessage
+    ): array {
+        if ($path === '' || $path === 'pending') {
+            throw new DomainException($errorMessage);
+        }
+
+        $organization = Organization::query()->find($organizationId);
+        $stream = $this->fileService->disk($organization)->readStream($path);
+
+        if (!is_resource($stream)) {
+            throw new DomainException($errorMessage);
+        }
+
+        return [
+            'stream' => $stream,
+            'filename' => $filename,
+            'mime_type' => $mimeType,
+        ];
     }
 
     private function assertProjectBelongsToOrganization(int $projectId, int $organizationId): void

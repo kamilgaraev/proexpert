@@ -40,6 +40,8 @@ final class DesignManagementApiTest extends TestCase
         $this->assertRoutePermission('DELETE', 'api/v1/admin/design-management/model-uploads/{uploadId}', 'design-management.models.upload');
         $this->assertRoutePermission('POST', 'api/v1/admin/design-management/model-versions/{versionId}/derivatives', 'design-management.models.prepare_viewer');
         $this->assertRoutePermission('GET', 'api/v1/admin/design-management/model-versions/{versionId}/viewer', 'design-management.models.view');
+        $this->assertRoutePermission('GET', 'api/v1/admin/design-management/model-versions/{versionId}/source-file', 'design-management.models.view');
+        $this->assertRoutePermission('GET', 'api/v1/admin/design-management/model-versions/{versionId}/derivative-file', 'design-management.models.view');
         $this->assertRoutePermission('POST', 'api/v1/admin/design-management/model-versions/{versionId}/mark-current', 'design-management.edit');
     }
 
@@ -286,6 +288,43 @@ final class DesignManagementApiTest extends TestCase
 
         $derivative = DesignModelDerivative::query()->firstOrFail();
         Storage::disk('s3')->assertExists((string) $derivative->derivative_file_path);
+    }
+
+    public function test_source_file_endpoint_streams_uploaded_ifc_through_api(): void
+    {
+        $this->fakeFileStorage();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $version = $this->uploadModel($context, $project);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->get("/api/v1/admin/design-management/model-versions/{$version->id}/source-file");
+
+        $response->assertOk();
+        $response->assertDownload('building.ifc');
+        $this->assertSame(
+            "ISO-10303-21;\nHEADER;\nENDSEC;\nEND-ISO-10303-21;",
+            $response->streamedContent()
+        );
+    }
+
+    public function test_derivative_file_endpoint_streams_ready_frag_through_api(): void
+    {
+        $this->fakeFileStorage();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $version = $this->uploadModel($context, $project);
+        $this->uploadDerivative($context, $version)->assertCreated();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->get("/api/v1/admin/design-management/model-versions/{$version->id}/derivative-file");
+
+        $response->assertOk();
+        $this->assertSame('fragment binary', $response->streamedContent());
     }
 
     public function test_derivative_upload_rejects_non_frag_file(): void
