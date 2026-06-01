@@ -10,7 +10,7 @@ use BackedEnum;
 
 final class DesignViewerConverter
 {
-    private const DEFAULT_VERSION = 2;
+    private const DEFAULT_VERSION = 3;
 
     public static function version(): int
     {

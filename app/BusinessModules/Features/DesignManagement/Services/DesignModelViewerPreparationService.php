@@ -123,7 +123,7 @@ final class DesignModelViewerPreparationService
             );
 
             $this->markProcessing($derivative, 15, 'converting');
-            $this->converter->convert($sourcePath, $targetPath, function (mixed $progress, string $stage) use ($derivative): void {
+            $conversionResult = $this->converter->convert($sourcePath, $targetPath, function (mixed $progress, string $stage) use ($derivative): void {
                 $this->markProcessing($derivative, $this->normalizeConverterProgress($progress), $stage);
             });
             $derivativeSizeBytes = $this->localFileSize(
@@ -131,6 +131,7 @@ final class DesignModelViewerPreparationService
                 'Prepared viewer file is not readable.',
                 'Prepared viewer file is empty.'
             );
+            $conversionResult->assertRenderableGeometry();
 
             $this->markProcessing($derivative, 95, 'uploading');
             $derivativePath = $this->pathService->derivativePath(
@@ -151,10 +152,10 @@ final class DesignModelViewerPreparationService
                 'prepared_at' => now(),
                 'processing_finished_at' => now(),
                 'failed_reason' => null,
-                'metadata' => DesignViewerConverter::preparedMetadata($derivative->metadata ?? [], [
+                'metadata' => DesignViewerConverter::preparedMetadata($derivative->metadata ?? [], array_merge([
                     'source_size_bytes' => $sourceSizeBytes,
                     'derivative_size_bytes' => $derivativeSizeBytes,
-                ]),
+                ], $conversionResult->metadata())),
             ])->save();
         } catch (Throwable $exception) {
             $this->markFailed($derivative, $exception);

@@ -11,6 +11,7 @@ use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
 use App\BusinessModules\Features\DesignManagement\Services\DesignManagementService;
 use App\BusinessModules\Features\DesignManagement\Services\DesignModelViewerPreparationService;
 use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignIfcToFragmentsConverterContract;
+use App\BusinessModules\Features\DesignManagement\Support\DesignViewerConversionResult;
 use App\Models\Project;
 use App\Services\Storage\FileService;
 use Illuminate\Support\Facades\Storage;
@@ -34,12 +35,27 @@ final class PrepareDesignModelViewerJobTest extends TestCase
         $this->mock(DesignIfcToFragmentsConverterContract::class, function (MockInterface $mock): void {
             $mock->shouldReceive('convert')
                 ->once()
-                ->andReturnUsing(static function (string $sourcePath, string $outputPath, callable $progress): void {
+                ->andReturnUsing(static function (string $sourcePath, string $outputPath, callable $progress): DesignViewerConversionResult {
                     self::assertFileExists($sourcePath);
                     self::assertSame('IFC source', file_get_contents($sourcePath));
 
                     $progress(45, 'converting');
                     file_put_contents($outputPath, 'fragment binary');
+
+                    return DesignViewerConversionResult::fromPayload([
+                        'metrics' => [
+                            'format' => 'thatopen_frag',
+                            'local_id_count' => 12,
+                            'category_count' => 4,
+                            'sample_count' => 24,
+                            'representation_count' => 8,
+                            'shell_count' => 8,
+                            'bounding_box' => [
+                                'min' => ['x' => -2.5, 'y' => -1.0, 'z' => 0.0],
+                                'max' => ['x' => 8.0, 'y' => 12.0, 'z' => 3.5],
+                            ],
+                        ],
+                    ]);
                 });
         });
 
@@ -58,7 +74,14 @@ final class PrepareDesignModelViewerJobTest extends TestCase
         $this->assertSame('fragment binary', Storage::disk('s3')->get($derivative->derivative_file_path));
         $this->assertSame(strlen('IFC source'), $derivative->metadata['source_size_bytes']);
         $this->assertSame(strlen('fragment binary'), $derivative->metadata['derivative_size_bytes']);
-        $this->assertSame(2, $derivative->metadata['converter_version']);
+        $this->assertSame(3, $derivative->metadata['converter_version']);
+        $this->assertSame(12, $derivative->metadata['geometry']['local_id_count']);
+        $this->assertSame(24, $derivative->metadata['geometry']['sample_count']);
+        $this->assertSame(8, $derivative->metadata['geometry']['representation_count']);
+        $this->assertEquals(
+            ['x' => -2.5, 'y' => -1.0, 'z' => 0.0],
+            $derivative->metadata['geometry']['bounding_box']['min']
+        );
     }
 
     public function test_job_marks_derivative_failed_when_converter_fails(): void
@@ -121,6 +144,50 @@ final class PrepareDesignModelViewerJobTest extends TestCase
         $this->assertSame('failed', $derivative->status->value);
         $this->assertSame('failed', $derivative->processing_stage);
         $this->assertNull($derivative->derivative_file_path);
+    }
+
+    public function test_job_marks_derivative_failed_when_prepared_file_has_no_renderable_geometry(): void
+    {
+        $this->fakeFileStorage();
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $package = $this->package($context, $project);
+        $version = $this->storedVersion($package, $context->user->id);
+        Storage::disk('s3')->put($version->source_file_path, 'IFC source');
+        $derivative = $this->queuedDerivative($version, $context->user->id);
+
+        $this->mock(DesignIfcToFragmentsConverterContract::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('convert')
+                ->once()
+                ->andReturnUsing(static function (string $sourcePath, string $outputPath, callable $progress): DesignViewerConversionResult {
+                    self::assertFileExists($sourcePath);
+                    $progress(45, 'converting');
+                    file_put_contents($outputPath, 'fragment binary');
+
+                    return DesignViewerConversionResult::fromPayload([
+                        'metrics' => [
+                            'format' => 'thatopen_frag',
+                            'local_id_count' => 0,
+                            'sample_count' => 0,
+                            'representation_count' => 0,
+                            'shell_count' => 0,
+                            'bounding_box' => null,
+                        ],
+                    ]);
+                });
+        });
+
+        (new PrepareDesignModelViewerJob((int) $derivative->id))->handle(
+            $this->app->make(DesignModelViewerPreparationService::class)
+        );
+
+        $derivative->refresh();
+        $this->assertSame('failed', $derivative->status->value);
+        $this->assertSame('failed', $derivative->processing_stage);
+        $this->assertNull($derivative->derivative_file_path);
+        Storage::disk('s3')->assertMissing(
+            "org-{$version->organization_id}/pir/projects/{$version->project_id}/packages/{$package->id}/models/{$version->id}/viewer/model.frag"
+        );
     }
 
     private function fakeFileStorage(): void
