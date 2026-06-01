@@ -57,6 +57,33 @@ class ImportContractCleanupTest extends TestCase
         }
     }
 
+    public function test_custom_excel_handler_uses_table_from_non_active_worksheet(): void
+    {
+        $filePath = $this->createTemporarySpreadsheetWithCover([
+            ['No', 'Name', 'Unit', 'Qty', 'Price', 'Total'],
+            ['1', 'Montazh', 'sht', 2, 100, 200],
+        ]);
+
+        try {
+            $handler = new CustomExcelHandler(new SpreadsheetTableReader(), new SpreadsheetHeaderDetector());
+            $session = new ImportSession();
+            $detection = $handler->detect($session, $filePath);
+            $structure = $handler->detectStructure($session, $filePath);
+            $preview = $handler->preview($session, $filePath, $structure);
+
+            self::assertSame('custom_excel', $detection->formatSlug);
+            self::assertGreaterThan(0.5, $detection->confidence);
+            self::assertSame(1, $structure->metadata['worksheet_index'] ?? null);
+            self::assertSame('Works', $structure->metadata['worksheet_name'] ?? null);
+            self::assertSame(1, $structure->headerRow);
+            self::assertCount(1, $preview->items);
+            self::assertSame('Montazh', $preview->items[0]['item_name'] ?? null);
+            self::assertSame(200.0, $preview->totals['total_amount'] ?? null);
+        } finally {
+            @unlink($filePath);
+        }
+    }
+
     public function test_custom_excel_handler_maps_commercial_estimate_columns(): void
     {
         $filePath = $this->createTemporarySpreadsheet([
@@ -543,6 +570,32 @@ class ImportContractCleanupTest extends TestCase
             }
         }
 
+        $filePath = tempnam(sys_get_temp_dir(), 'estimate-import-') . '.xlsx';
+        (new Xlsx($spreadsheet))->save($filePath);
+        $spreadsheet->disconnectWorksheets();
+
+        return $filePath;
+    }
+
+    private function createTemporarySpreadsheetWithCover(array $rows): string
+    {
+        $spreadsheet = new Spreadsheet();
+        $cover = $spreadsheet->getActiveSheet();
+        $cover->setTitle('Cover');
+        $cover->setCellValue('A1', 'Estimate cover');
+        $cover->setCellValue('A2', 'No import table here');
+
+        $sheet = $spreadsheet->createSheet();
+        $sheet->setTitle('Works');
+
+        foreach ($rows as $rowIndex => $row) {
+            foreach ($row as $columnIndex => $value) {
+                $cell = Coordinate::stringFromColumnIndex($columnIndex + 1) . ($rowIndex + 1);
+                $sheet->setCellValue($cell, $value);
+            }
+        }
+
+        $spreadsheet->setActiveSheetIndex(0);
         $filePath = tempnam(sys_get_temp_dir(), 'estimate-import-') . '.xlsx';
         (new Xlsx($spreadsheet))->save($filePath);
         $spreadsheet->disconnectWorksheets();
