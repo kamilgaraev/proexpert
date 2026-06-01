@@ -37,7 +37,7 @@ final class DesignIfcToFragmentsConverter implements DesignIfcToFragmentsConvert
             (float) config('design_management.viewer_converter_timeout', 7200)
         );
 
-        $process->run(function (string $type, string $buffer) use (&$outputBuffer, $progress): void {
+        $process->run(function (string $type, string $buffer) use (&$outputBuffer, &$resultPayload, $progress): void {
             if ($type !== Process::OUT) {
                 return;
             }
