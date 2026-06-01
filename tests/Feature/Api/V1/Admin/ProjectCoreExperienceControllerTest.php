@@ -66,7 +66,7 @@ class ProjectCoreExperienceControllerTest extends TestCase
         $indexResponse->assertOk();
         $indexResponse->assertJsonPath('success', true);
 
-        $indexIds = collect($indexResponse->json('data'))->pluck('id')->all();
+        $indexIds = collect($indexResponse->json('data.data', $indexResponse->json('data')))->pluck('id')->all();
         $this->assertContains($ownedActive->id, $indexIds);
         $this->assertContains($ownedArchived->id, $indexIds);
         $this->assertContains($participantProject->id, $indexIds);
@@ -167,6 +167,38 @@ class ProjectCoreExperienceControllerTest extends TestCase
         $this->assertSame('2222222.22', (string) $project->budget_amount);
         $this->assertSame('111.11', (string) $project->site_area_m2);
         $this->assertSame('CNT-002', $project->contract_number);
+    }
+
+    public function test_project_status_update_reuses_existing_coordinates_without_type_error(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+
+        $project = Project::factory()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Training Project',
+            'latitude' => 55.7558,
+            'longitude' => 37.6173,
+            'status' => 'active',
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/projects/{$project->id}", [
+                'name' => $project->name,
+                'address' => $project->address,
+                'description' => $project->description,
+                'status' => 'completed',
+            ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('success', true);
+        $response->assertJsonPath('data.status', 'completed');
+
+        $project->refresh();
+
+        $this->assertSame('completed', $project->status);
+        $this->assertSame('55.7558000', (string) $project->latitude);
+        $this->assertSame('37.6173000', (string) $project->longitude);
     }
 
     public function test_project_show_update_delete_hide_foreign_projects(): void

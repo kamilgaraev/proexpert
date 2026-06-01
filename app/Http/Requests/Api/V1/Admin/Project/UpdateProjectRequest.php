@@ -92,8 +92,12 @@ class UpdateProjectRequest extends FormRequest
         return new ProjectDTO(
             name: $validated['name'] ?? $currentProject->name,
             address: $validated['address'] ?? $currentProject->address,
-            latitude: array_key_exists('latitude', $validated) ? ($validated['latitude'] !== null ? (float) $validated['latitude'] : null) : $currentProject->latitude,
-            longitude: array_key_exists('longitude', $validated) ? ($validated['longitude'] !== null ? (float) $validated['longitude'] : null) : $currentProject->longitude,
+            latitude: array_key_exists('latitude', $validated)
+                ? $this->nullableFloat($validated['latitude'])
+                : $this->nullableFloat($currentProject->latitude),
+            longitude: array_key_exists('longitude', $validated)
+                ? $this->nullableFloat($validated['longitude'])
+                : $this->nullableFloat($currentProject->longitude),
             description: $validated['description'] ?? $currentProject->description,
             customer: $validated['customer'] ?? $currentProject->customer,
             designer: $validated['designer'] ?? $currentProject->designer,
@@ -120,5 +124,10 @@ class UpdateProjectRequest extends FormRequest
             accounting_data: $validated['accounting_data'] ?? $currentProject->accounting_data,
             use_in_accounting_reports: $validated['use_in_accounting_reports'] ?? $currentProject->use_in_accounting_reports
         );
+    }
+
+    private function nullableFloat(mixed $value): ?float
+    {
+        return $value !== null ? (float) $value : null;
     }
 }
