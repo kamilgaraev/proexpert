@@ -163,6 +163,8 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
                 $this->structureForWorksheet($structure, $worksheet)
             );
         }
+
+        yield from $this->additionalCostRowsToDtos($structure);
     }
 
     /**
@@ -174,6 +176,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
         $headerRow = $structure->headerRow ?? 0;
         $mapping = $this->mappingForStructure($structure);
         $currentSectionPath = null;
+        $currentRootSectionPath = null;
         $generatedSectionNumber = 0;
         $sectionLevelOffset = 0;
 
@@ -181,35 +184,39 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
             if ($rowNumber <= $headerRow) {
                 $section = $this->detectStandaloneSectionRow($row);
                 if ($section !== null) {
-                    $sectionNumber = $section['number'];
-                    if ($sectionNumber === null || $sectionNumber === '') {
-                        $generatedSectionNumber++;
-                        $sectionNumber = (string) $generatedSectionNumber;
-                    }
-
-                    $sectionPath = $section['path'] ?: (($section['number'] ?? null) === null ? $section['name'] : $sectionNumber);
-                    $currentSectionPath = $sectionPath;
-
-                    yield new EstimateImportRowDTO(
-                        rowNumber: (int) $rowNumber,
-                        sectionNumber: $sectionNumber,
-                        itemName: $section['name'],
-                        isSection: true,
-                        itemType: 'section',
-                        level: $section['level'] + $sectionLevelOffset,
-                        sectionPath: $sectionPath,
-                        rawData: $row,
+                    $sectionDto = $this->makeSectionRowDto(
+                        (int) $rowNumber,
+                        $row,
+                        $section,
+                        $currentRootSectionPath,
+                        $generatedSectionNumber,
+                        $sectionLevelOffset,
                     );
+                    $currentSectionPath = $sectionDto->sectionPath;
 
-                    if (($section['number'] ?? null) === null && $sectionLevelOffset === 0) {
-                        $sectionLevelOffset = 1;
-                    }
+                    yield $sectionDto;
                 }
 
                 continue;
             }
 
             if ($this->isEmptyRow($row) || $this->isRepeatedHeader($row, $mapping)) {
+                continue;
+            }
+
+            $standaloneSection = $this->detectStandaloneSectionRow($row);
+            if ($standaloneSection !== null) {
+                $sectionDto = $this->makeSectionRowDto(
+                    (int) $rowNumber,
+                    $row,
+                    $standaloneSection,
+                    $currentRootSectionPath,
+                    $generatedSectionNumber,
+                    $sectionLevelOffset,
+                );
+                $currentSectionPath = $sectionDto->sectionPath;
+
+                yield $sectionDto;
                 continue;
             }
 
@@ -230,26 +237,17 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
             }
 
             if ($section !== null) {
-                $sectionNumber = $section['number'];
-                if ($sectionNumber === null || $sectionNumber === '') {
-                    $generatedSectionNumber++;
-                    $sectionNumber = (string) $generatedSectionNumber;
-                }
-
-                $sectionPath = $section['path'] ?: (($section['number'] ?? null) === null ? $section['name'] : $sectionNumber);
-                $currentSectionPath = $sectionPath;
-
-                yield new EstimateImportRowDTO(
-                    rowNumber: (int) $rowNumber,
-                    sectionNumber: $sectionNumber,
-                    itemName: $section['name'],
-                    isSection: true,
-                    itemType: 'section',
-                    level: $section['level'] + $sectionLevelOffset,
-                    sectionPath: $sectionPath,
-                    rawData: $row,
+                $sectionDto = $this->makeSectionRowDto(
+                    (int) $rowNumber,
+                    $row,
+                    $section,
+                    $currentRootSectionPath,
+                    $generatedSectionNumber,
+                    $sectionLevelOffset,
                 );
+                $currentSectionPath = $sectionDto->sectionPath;
 
+                yield $sectionDto;
                 continue;
             }
 
@@ -272,6 +270,66 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
                 currentTotalAmount: $total,
             );
         }
+    }
+
+    private function makeSectionRowDto(
+        int $rowNumber,
+        array $row,
+        array $section,
+        ?string &$currentRootSectionPath,
+        int &$generatedSectionNumber,
+        int &$sectionLevelOffset,
+    ): EstimateImportRowDTO {
+        $sectionNumber = $section['number'];
+        if ($sectionNumber === null || $sectionNumber === '') {
+            $generatedSectionNumber++;
+            $sectionNumber = (string) $generatedSectionNumber;
+        }
+
+        $sectionPath = $this->resolveSectionPath($section, $sectionNumber, $currentRootSectionPath);
+        $level = (int) $section['level'] + $sectionLevelOffset;
+
+        if (($section['number'] ?? null) === null && $sectionLevelOffset === 0) {
+            $sectionLevelOffset = 1;
+        }
+
+        return new EstimateImportRowDTO(
+            rowNumber: $rowNumber,
+            sectionNumber: $sectionNumber,
+            itemName: $section['name'],
+            isSection: true,
+            itemType: 'section',
+            level: $level,
+            sectionPath: $sectionPath,
+            rawData: $row,
+        );
+    }
+
+    private function resolveSectionPath(array $section, string $sectionNumber, ?string &$currentRootSectionPath): string
+    {
+        $localPath = $this->cleanSectionPathPart(
+            (string) ($section['path'] ?: (($section['number'] ?? null) === null ? $section['name'] : $sectionNumber))
+        );
+
+        if (($section['number'] ?? null) === null) {
+            $currentRootSectionPath = $localPath;
+
+            return $localPath;
+        }
+
+        if ($currentRootSectionPath !== null && $currentRootSectionPath !== '') {
+            return "{$currentRootSectionPath}/{$localPath}";
+        }
+
+        return $localPath;
+    }
+
+    private function cleanSectionPathPart(string $value): string
+    {
+        $value = trim(str_replace(["\r", "\n", "\xc2\xa0"], ' ', $value));
+        $value = preg_replace('/\s+/u', ' ', $value) ?? $value;
+
+        return trim($value, "/ \t\n\r\0\x0B");
     }
 
     protected function mappingForStructure(ImportStructureResult $structure): array
@@ -495,7 +553,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
         }));
 
         if ($selected !== []) {
-            return $selected;
+            return $this->withAdditionalCostRows($selected, $candidates);
         }
 
         if ($candidates !== []) {
@@ -512,6 +570,291 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
         ]];
     }
 
+    private function withAdditionalCostRows(array $selected, array $candidates): array
+    {
+        $additionalCostRows = $this->detectAdditionalCostRows($candidates, $selected);
+        if ($additionalCostRows !== []) {
+            $selected[0]['additional_cost_rows'] = $additionalCostRows;
+        }
+
+        return $selected;
+    }
+
+    private function detectAdditionalCostRows(array $candidates, array $selected): array
+    {
+        $selectedIndexes = array_fill_keys(
+            array_map(static fn (array $candidate): int => (int) $candidate['index'], $selected),
+            true
+        );
+        $selectedNames = array_values(array_filter(array_map(
+            fn (array $candidate): string => $this->normalizeTextForMatching((string) $candidate['name']),
+            $selected
+        )));
+        $selectedTotals = array_values(array_filter(array_map(
+            fn (array $candidate): ?float => $this->worksheetItemsTotal($candidate),
+            $selected
+        ), static fn (?float $total): bool => $total !== null && $total > 0.0));
+        $additionalCostRows = [];
+
+        foreach ($candidates as $candidate) {
+            if (isset($selectedIndexes[(int) $candidate['index']])) {
+                continue;
+            }
+
+            foreach ($candidate['rows'] as $rowNumber => $row) {
+                $costLine = $this->costLineFromRow($row, (int) $rowNumber, $candidate);
+                if ($costLine === null) {
+                    continue;
+                }
+
+                if ($this->shouldSkipTitleCostLine($costLine['item_name'])) {
+                    continue;
+                }
+
+                if ($this->matchesSelectedWorksheetTotal($costLine, $selectedNames, $selectedTotals)) {
+                    continue;
+                }
+
+                $additionalCostRows[] = $costLine;
+            }
+        }
+
+        return $additionalCostRows;
+    }
+
+    private function worksheetItemsTotal(array $candidate): ?float
+    {
+        $mapping = $candidate['detection']['column_mapping'] ?? [];
+        $headerRow = $candidate['detection']['header_row'] ?? null;
+        if (!is_array($mapping) || $headerRow === null) {
+            return null;
+        }
+
+        $total = 0.0;
+        foreach ($candidate['rows'] as $rowNumber => $row) {
+            if ((int) $rowNumber <= (int) $headerRow) {
+                continue;
+            }
+
+            if ($this->isEmptyRow($row) || $this->detectStandaloneSectionRow($row) !== null) {
+                continue;
+            }
+
+            $name = $this->value($row, $mapping['name'] ?? null);
+            $positionNumber = $this->value($row, $mapping['position_number'] ?? ($mapping['section_number'] ?? null));
+            $code = $this->value($row, $mapping['code'] ?? null);
+            if ($name === '' && $positionNumber === '' && $code === '') {
+                continue;
+            }
+
+            if ($this->isFooterRow($name !== '' ? $name : $positionNumber)) {
+                continue;
+            }
+
+            $amount = $this->number($this->value($row, $mapping['total_price'] ?? ($mapping['current_total_amount'] ?? null)));
+            if ($amount !== null) {
+                $total += $amount;
+            }
+        }
+
+        return $total > 0.0 ? $total : null;
+    }
+
+    private function costLineFromRow(array $row, int $rowNumber, array $worksheet): ?array
+    {
+        $textParts = [];
+        $amount = null;
+
+        foreach ($row as $value) {
+            $text = trim(str_replace(["\r", "\n", "\xc2\xa0"], ' ', (string) $value));
+            if ($text === '') {
+                continue;
+            }
+
+            if ($this->looksLikeAmountCell($value, $text)) {
+                $parsed = $this->number($text);
+                if ($parsed !== null) {
+                    $amount = $parsed;
+                    continue;
+                }
+            }
+
+            $textParts[] = $text;
+        }
+
+        $label = trim(implode(' ', $textParts));
+        if ($label === '' || $amount === null || $amount <= 0.0) {
+            return null;
+        }
+
+        return [
+            'row_number' => $rowNumber,
+            'item_name' => $label,
+            'amount' => $amount,
+            'worksheet_index' => (int) $worksheet['index'],
+            'worksheet_name' => (string) $worksheet['name'],
+        ];
+    }
+
+    private function looksLikeAmountCell(mixed $value, string $text): bool
+    {
+        if (is_int($value) || is_float($value)) {
+            return true;
+        }
+
+        return preg_match('/^-?\d[\d\s.,]*(?:\p{Sc}|руб\.?|р\.?)?$/iu', $text) === 1;
+    }
+
+    private function shouldSkipTitleCostLine(string $label): bool
+    {
+        $normalized = $this->normalizeTextForMatching($label);
+
+        if ($normalized === '') {
+            return true;
+        }
+
+        if (
+            str_starts_with($normalized, 'итого')
+            || str_starts_with($normalized, 'всего')
+            || str_starts_with($normalized, 'total')
+            || str_contains($normalized, 'в том числе')
+        ) {
+            return true;
+        }
+
+        return in_array($normalized, [
+            'работы',
+            'материалы',
+            'материалы и пр',
+            'work',
+            'works',
+            'materials',
+        ], true);
+    }
+
+    private function matchesSelectedWorksheetTotal(array $costLine, array $selectedNames, array $selectedTotals): bool
+    {
+        $label = $this->normalizeTextForMatching((string) $costLine['item_name']);
+
+        foreach ($selectedNames as $selectedName) {
+            if (
+                $selectedName !== ''
+                && (
+                    str_contains($label, $selectedName)
+                    || $this->titleLineReferencesWorksheet($label, $selectedName)
+                )
+            ) {
+                return true;
+            }
+        }
+
+        foreach ($selectedTotals as $selectedTotal) {
+            if (abs((float) $costLine['amount'] - (float) $selectedTotal) < 0.01) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function titleLineReferencesWorksheet(string $label, string $selectedName): bool
+    {
+        if (!str_starts_with($label, 'стоимость') && !str_starts_with($label, 'cost')) {
+            return false;
+        }
+
+        return array_intersect($this->tokenStems($label), $this->tokenStems($selectedName)) !== [];
+    }
+
+    private function tokenStems(string $value): array
+    {
+        $tokens = preg_split('/\s+/u', $value, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+
+        return array_values(array_unique(array_filter(array_map(
+            static function (string $token): ?string {
+                if (mb_strlen($token) < 4) {
+                    return null;
+                }
+
+                return mb_substr($token, 0, 5);
+            },
+            $tokens
+        ))));
+    }
+
+    private function additionalCostRowsFromSelection(array $worksheets): array
+    {
+        $additionalCostRows = [];
+        foreach ($worksheets as $worksheet) {
+            if (is_array($worksheet['additional_cost_rows'] ?? null)) {
+                array_push($additionalCostRows, ...$worksheet['additional_cost_rows']);
+            }
+        }
+
+        return $additionalCostRows;
+    }
+
+    private function additionalCostRowsToDtos(ImportStructureResult $structure): Generator
+    {
+        $rows = $structure->metadata['additional_cost_rows'] ?? [];
+        if (!is_array($rows) || $rows === []) {
+            return;
+        }
+
+        $sectionName = trans_message('estimate.import_additional_costs_section');
+        if ($sectionName === 'estimate.import_additional_costs_section') {
+            $sectionName = 'Дополнительные расходы';
+        }
+
+        $firstRowNumber = isset($rows[0]['row_number']) ? (int) $rows[0]['row_number'] : 0;
+
+        yield new EstimateImportRowDTO(
+            rowNumber: max(1, $firstRowNumber - 1),
+            sectionNumber: null,
+            itemName: $sectionName,
+            isSection: true,
+            itemType: 'section',
+            level: 1,
+            sectionPath: $sectionName,
+            rawData: ['source' => 'title_sheet'],
+        );
+
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+
+            $amount = isset($row['amount']) ? (float) $row['amount'] : null;
+            if ($amount === null || $amount <= 0.0) {
+                continue;
+            }
+
+            yield new EstimateImportRowDTO(
+                rowNumber: isset($row['row_number']) ? (int) $row['row_number'] : 0,
+                sectionNumber: null,
+                itemName: (string) ($row['item_name'] ?? ''),
+                unit: null,
+                quantity: 1.0,
+                unitPrice: $amount,
+                isSection: false,
+                itemType: 'work',
+                sectionPath: $sectionName,
+                rawData: $row,
+                currentTotalAmount: $amount,
+            );
+        }
+    }
+
+    private function normalizeTextForMatching(string $value): string
+    {
+        $value = mb_strtolower($value);
+        $value = str_replace(["\r", "\n", "\t", "\xc2\xa0"], ' ', $value);
+        $value = preg_replace('/[^\p{L}\p{N}]+/u', ' ', $value) ?? $value;
+        $value = preg_replace('/\s+/u', ' ', $value) ?? $value;
+
+        return trim($value);
+    }
+
     /**
      * @param array{index: int, name: string} $worksheet
      * @param array<int, array{index: int, name: string, detection: array<string, mixed>, score: int, confidence: float}> $worksheets
@@ -520,11 +863,13 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
     private function worksheetMetadata(array $worksheet, array $worksheets = []): array
     {
         $worksheets = $worksheets !== [] ? $worksheets : [$worksheet];
+        $additionalCostRows = $this->additionalCostRowsFromSelection($worksheets);
 
         return [
             'worksheet_index' => $worksheet['index'],
             'worksheet_name' => $worksheet['name'],
             'worksheet_title' => $worksheet['name'],
+            'additional_cost_rows' => $additionalCostRows,
             'worksheet_indices' => array_map(
                 static fn (array $item): int => (int) $item['index'],
                 $worksheets
@@ -747,7 +1092,7 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
             'number' => $normalizedNumber,
             'name' => $sectionName !== '' ? $sectionName : ($normalizedNumber ?? ''),
             'path' => $normalizedNumber,
-            'level' => $normalizedNumber !== null ? substr_count($normalizedNumber, '.') : 0,
+            'level' => $normalizedNumber !== null ? substr_count($normalizedNumber, '.') + 1 : 1,
         ];
     }
 
@@ -811,11 +1156,33 @@ class CustomExcelHandler implements RuntimeImportFormatHandlerInterface
             return null;
         }
 
-        if (preg_match('/-?\d+(?:[\s.,]\d+)?/u', str_replace(' ', '', $value), $match) !== 1) {
+        $normalized = str_replace([" ", "\xc2\xa0"], '', $value);
+        $normalized = preg_replace('/[^\d,.\-]/u', '', $normalized) ?? '';
+        if ($normalized === '' || preg_match('/\d/u', $normalized) !== 1) {
             return null;
         }
 
-        return (float) str_replace(',', '.', $match[0]);
+        $lastComma = strrpos($normalized, ',');
+        $lastDot = strrpos($normalized, '.');
+
+        if ($lastComma !== false && $lastDot !== false) {
+            $decimalSeparator = $lastComma > $lastDot ? ',' : '.';
+            $thousandsSeparator = $decimalSeparator === ',' ? '.' : ',';
+            $normalized = str_replace($thousandsSeparator, '', $normalized);
+            $normalized = str_replace($decimalSeparator, '.', $normalized);
+        } elseif ($lastComma !== false || $lastDot !== false) {
+            $separator = $lastComma !== false ? ',' : '.';
+            $parts = explode($separator, $normalized);
+            $fraction = end($parts);
+
+            if (count($parts) === 2 && strlen((string) $fraction) === 3) {
+                $normalized = implode('', $parts);
+            } else {
+                $normalized = str_replace($separator, '.', $normalized);
+            }
+        }
+
+        return is_numeric($normalized) ? (float) $normalized : null;
     }
 
     protected function nullable(string $value): ?string

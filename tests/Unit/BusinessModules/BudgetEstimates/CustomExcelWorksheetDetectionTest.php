@@ -82,6 +82,69 @@ final class CustomExcelWorksheetDetectionTest extends TestCase
         }
     }
 
+    public function test_custom_excel_keeps_worksheet_sections_and_title_extra_costs(): void
+    {
+        $filePath = $this->createWorkbookWithTitleTotalsAndExtraCosts();
+
+        try {
+            Storage::fake('s3');
+
+            $organization = Organization::factory()->create();
+            $user = User::factory()->create();
+            $storedPath = "org-{$organization->id}/estimate-imports/" . basename($filePath);
+
+            Storage::disk('s3')->put($storedPath, (string) file_get_contents($filePath));
+
+            $session = ImportSession::create([
+                'user_id' => $user->id,
+                'organization_id' => $organization->id,
+                'status' => 'uploading',
+                'file_path' => $storedPath,
+                'file_name' => 'estimate.xlsx',
+                'file_size' => filesize($filePath),
+                'file_format' => 'xlsx',
+                'options' => [],
+                'stats' => ['progress' => 0],
+            ]);
+
+            /** @var EstimateImportService $service */
+            $service = app(EstimateImportService::class);
+
+            $service->detectEstimateType($session->id);
+            $service->detectFormat($session->id);
+
+            $preview = $service->preview($session->id);
+
+            self::assertSame(10800.0, $preview->getTotalAmount());
+            self::assertSame(5, $preview->getItemsCount());
+
+            $itemNames = array_column($preview->items, 'item_name');
+            self::assertContains('Delivery', $itemNames);
+            self::assertContains('Cleaning', $itemNames);
+
+            $sectionPaths = array_column($preview->sections, 'section_path');
+            self::assertContains('Rough finish/1', $sectionPaths);
+            self::assertContains('Rough finish/2', $sectionPaths);
+            self::assertContains('Clean finish/1', $sectionPaths);
+
+            $itemsByName = [];
+            foreach ($preview->items as $item) {
+                $itemsByName[$item['item_name']] = $item;
+            }
+
+            $additionalCostsSection = trans_message('estimate.import_additional_costs_section');
+
+            self::assertSame('Rough finish/1', $itemsByName['Ceiling primer']['section_path'] ?? null);
+            self::assertSame('Rough finish/2', $itemsByName['Floor screed']['section_path'] ?? null);
+            self::assertSame('Clean finish/1', $itemsByName['Stretch ceiling']['section_path'] ?? null);
+            self::assertSame($additionalCostsSection, $itemsByName['Delivery']['section_path'] ?? null);
+        } finally {
+            if (file_exists($filePath)) {
+                unlink($filePath);
+            }
+        }
+    }
+
     private function createWorkbookWithTitleSheet(): string
     {
         $spreadsheet = new Spreadsheet();
@@ -146,6 +209,69 @@ final class CustomExcelWorksheetDetectionTest extends TestCase
         }
 
         $filePath = $directory . '/custom_excel_title_sheet_' . uniqid('', true) . '.xlsx';
+        (new Xlsx($spreadsheet))->save($filePath);
+        $spreadsheet->disconnectWorksheets();
+
+        return $filePath;
+    }
+
+    private function createWorkbookWithTitleTotalsAndExtraCosts(): string
+    {
+        $spreadsheet = new Spreadsheet();
+        $titleSheet = $spreadsheet->getActiveSheet();
+        $titleSheet->setTitle('Title');
+        $titleSheet->setCellValue('A1', 'Estimate');
+        $titleSheet->setCellValue('A7', 'Cost rough finish');
+        $titleSheet->setCellValue('C7', 3000);
+        $titleSheet->setCellValue('A10', 'Cost clean finish');
+        $titleSheet->setCellValue('C10', 7000);
+        $titleSheet->setCellValue('A13', 'Delivery');
+        $titleSheet->setCellValue('C13', 500);
+        $titleSheet->setCellValue('A14', 'Cleaning');
+        $titleSheet->setCellValue('C14', 300);
+        $titleSheet->setCellValue('A16', 'Total');
+        $titleSheet->setCellValue('C16', 10800);
+
+        $roughSheet = $spreadsheet->createSheet();
+        $roughSheet->setTitle('Rough finish');
+        $roughSheet->setCellValue('A1', 'Rough finish');
+        $roughSheet->setCellValue('A3', '1. Ceilings');
+        $roughSheet->fromArray([
+            'number',
+            'type',
+            'description',
+            'unit',
+            'qty',
+            'price',
+            'total',
+        ], null, 'A5');
+        $roughSheet->fromArray([1, 'work', 'Ceiling primer', 'm2', 10, 100, 1000], null, 'A6');
+        $roughSheet->setCellValue('A8', '2. Floors');
+        $roughSheet->fromArray([2, 'work', 'Floor screed', 'm2', 10, 200, 2000], null, 'A9');
+
+        $cleanSheet = $spreadsheet->createSheet();
+        $cleanSheet->setTitle('Clean finish');
+        $cleanSheet->setCellValue('A1', 'Clean finish');
+        $cleanSheet->setCellValue('A3', '1. Ceilings');
+        $cleanSheet->fromArray([
+            'number',
+            'type',
+            'description',
+            'unit',
+            'qty',
+            'price',
+            'total',
+        ], null, 'A5');
+        $cleanSheet->fromArray([1, 'work', 'Stretch ceiling', 'm2', 10, 700, 7000], null, 'A6');
+
+        $spreadsheet->setActiveSheetIndex(0);
+
+        $directory = storage_path('app/temp');
+        if (!is_dir($directory)) {
+            mkdir($directory, 0777, true);
+        }
+
+        $filePath = $directory . '/custom_excel_title_extra_costs_' . uniqid('', true) . '.xlsx';
         (new Xlsx($spreadsheet))->save($filePath);
         $spreadsheet->disconnectWorksheets();
 

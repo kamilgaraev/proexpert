@@ -115,6 +115,7 @@ return [
     'import_low_confidence' => 'Формат сметы определен с низкой уверенностью, проверьте сопоставление колонок.',
     'import_header_not_found' => 'Не удалось определить строку с заголовками колонок.',
     'import_sections_not_found' => 'Разделы не найдены, позиции будут импортированы общим списком.',
+    'import_additional_costs_section' => 'Дополнительные расходы',
     'import_pdf_parser_unavailable' => 'PDF не удалось прочитать: модуль чтения PDF недоступен.',
     'import_pdf_text_layer_empty' => 'В PDF не найден текстовый слой, потребуется распознавание или ручная проверка.',
     'import_pdf_text_extract_failed' => 'Не удалось извлечь текст из PDF.',
