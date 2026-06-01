@@ -5,12 +5,15 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin;
 
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Domain\Authorization\Services\ModulePermissionChecker;
+use App\Domain\Authorization\Services\PermissionResolver;
 use App\Enums\ContractorType;
 use App\Enums\OrganizationCapability;
 use App\Models\Contractor;
 use App\Models\ContractorInvitation;
 use App\Models\Organization;
 use App\Models\User;
+use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Mockery\MockInterface;
@@ -160,6 +163,30 @@ class OrganizationSearchControllerTest extends TestCase
 
         $response->assertStatus(422);
         $this->assertStringNotContainsString('Р', $response->json('message'));
+    }
+
+    public function test_organization_owner_can_search_organizations_through_contractor_portal_permissions(): void
+    {
+        $this->mock(AccessController::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('hasModuleAccess')
+                ->andReturnUsing(static fn (int $organizationId, string $moduleSlug): bool => $moduleSlug === 'contractor-portal');
+        });
+        app()->forgetInstance(ModulePermissionChecker::class);
+        app()->forgetInstance(PermissionResolver::class);
+        app()->forgetInstance(AuthorizationService::class);
+
+        $context = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $targetOrganization = Organization::factory()->verified()->create([
+            'name' => 'Payment Supplier Search',
+            'city' => 'Kazan',
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/organizations/search?city=Kazan&per_page=10');
+
+        $response->assertOk();
+        $response->assertJsonPath('success', true);
+        $response->assertJsonPath('data.0.id', $targetOrganization->id);
     }
 
     private function allowAdminAccess(): void

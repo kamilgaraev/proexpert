@@ -74,6 +74,37 @@ it('organization_owner role grants projects view through project management modu
     expect($canView)->toBeTrue();
 });
 
+it('organization_owner role grants organization search through contractor portal module', function () {
+    $this->mock(AccessController::class, function (MockInterface $mock): void {
+        $mock->shouldReceive('hasModuleAccess')
+            ->andReturnUsing(static fn (int $organizationId, string $moduleSlug): bool => $moduleSlug === 'contractor-portal');
+    });
+    app()->forgetInstance(ModulePermissionChecker::class);
+    app()->forgetInstance(PermissionResolver::class);
+    app()->forgetInstance(AuthorizationService::class);
+
+    $org = Organization::factory()->create();
+    $user = User::factory()->create(['current_organization_id' => $org->id]);
+
+    $context = AuthorizationContext::getOrganizationContext($org->id);
+
+    UserRoleAssignment::create([
+        'user_id' => $user->id,
+        'context_id' => $context->id,
+        'role_slug' => 'organization_owner',
+        'role_type' => UserRoleAssignment::TYPE_SYSTEM,
+        'is_active' => true,
+    ]);
+
+    $authService = app(AuthorizationService::class);
+
+    $canSearch = $authService->can($user, 'organizations.search', [
+        'organization_id' => $org->id,
+    ]);
+
+    expect($canSearch)->toBeTrue();
+});
+
 it('user without role cannot access admin interface', function () {
     $org = Organization::factory()->create();
     $user = User::factory()->create(['current_organization_id' => $org->id]);
