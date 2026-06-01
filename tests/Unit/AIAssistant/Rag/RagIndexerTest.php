@@ -133,6 +133,32 @@ class RagIndexerTest extends TestCase
         $this->assertSame(3, $provider->calls);
     }
 
+    public function test_truncates_source_title_to_database_limit(): void
+    {
+        [$organizationId, $projectId] = $this->seedScope();
+        $provider = new RecordingEmbeddingProvider([0.1, 0.2, 0.3]);
+        $indexer = new RagIndexer($provider, new RagSourceRegistry([]));
+        $longTitle = str_repeat('Very long imported estimate section title ', 12);
+
+        $indexer->indexChunk(new RagChunkData(
+            organizationId: $organizationId,
+            projectId: $projectId,
+            sourceType: 'estimate',
+            entityType: 'estimate_section',
+            entityId: 987,
+            title: $longTitle,
+            content: 'estimate section content',
+            metadata: ['estimate_id' => 123],
+            updatedAt: now()
+        ));
+
+        $storedTitle = (string) RagSource::query()->value('title');
+
+        $this->assertLessThanOrEqual(255, mb_strlen($storedTitle));
+        $this->assertStringStartsWith('Very long imported estimate section title', $storedTitle);
+        $this->assertStringEndsWith('...', $storedTitle);
+    }
+
     /**
      * @return array{0: int, 1: int}
      */

@@ -16,6 +16,8 @@ use Throwable;
 
 class RagIndexer
 {
+    private const SOURCE_TITLE_LIMIT = 255;
+
     public function __construct(
         private readonly RagEmbeddingProviderInterface $embeddingProvider,
         private readonly RagSourceRegistry $sourceRegistry
@@ -53,7 +55,7 @@ class RagIndexer
                 ],
                 [
                     'project_id' => $chunk->projectId,
-                    'title' => $chunk->title,
+                    'title' => $this->sourceTitle($chunk->title),
                     'checksum' => $checksum,
                     'metadata' => $chunk->metadata,
                     'indexed_at' => now(),
@@ -133,6 +135,16 @@ class RagIndexer
         $value = preg_replace("/\n{3,}/", "\n\n", $value) ?? $value;
 
         return trim($value);
+    }
+
+    private function sourceTitle(string $title): string
+    {
+        $title = $this->normalizeText($title);
+        if (mb_strlen($title) <= self::SOURCE_TITLE_LIMIT) {
+            return $title;
+        }
+
+        return rtrim(mb_substr($title, 0, self::SOURCE_TITLE_LIMIT - 3)).'...';
     }
 
     /**
