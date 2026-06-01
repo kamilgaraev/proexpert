@@ -396,6 +396,22 @@ class SubscriptionPackageBundlingTest extends TestCase
         );
     }
 
+    public function test_enterprise_pto_package_grants_effective_design_management_module(): void
+    {
+        $plan = $this->createPlan('enterprise', [
+            ['package_slug' => 'estimates-pto', 'tier' => 'enterprise'],
+        ]);
+
+        $this->createSubscription($plan);
+        $this->createPackageModules('estimates-pto', 'enterprise');
+
+        $accessController = app(AccessController::class);
+        $activeModuleSlugs = $accessController->getActiveModules($this->organization->id)->pluck('slug')->all();
+
+        $this->assertTrue($accessController->hasModuleAccess($this->organization->id, 'design-management'));
+        $this->assertContains('design-management', $activeModuleSlugs);
+    }
+
     public function test_auto_activate_manifest_grants_contractor_portal_without_activation(): void
     {
         Module::create([
