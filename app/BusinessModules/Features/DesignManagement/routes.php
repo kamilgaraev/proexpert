@@ -25,6 +25,9 @@ Route::prefix('api/v1/admin/design-management')
         Route::post('/packages/{packageId}/models/multipart/start', [DesignManagementController::class, 'startMultipartUpload'])
             ->middleware('authorize:design-management.models.upload')
             ->name('models.multipart.start');
+        Route::post('/model-uploads/{uploadId}/parts/{partNumber}', [DesignManagementController::class, 'uploadMultipartPart'])
+            ->middleware('authorize:design-management.models.upload')
+            ->name('model_uploads.parts.store');
         Route::post('/model-uploads/{uploadId}/complete', [DesignManagementController::class, 'completeMultipartUpload'])
             ->middleware('authorize:design-management.models.upload')
             ->name('model_uploads.complete');

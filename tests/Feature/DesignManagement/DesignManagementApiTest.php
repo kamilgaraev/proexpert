@@ -35,6 +35,7 @@ final class DesignManagementApiTest extends TestCase
         $this->assertRoutePermission('GET', 'api/v1/admin/design-management/packages/{packageId}', 'design-management.view');
         $this->assertRoutePermission('POST', 'api/v1/admin/design-management/packages/{packageId}/models', 'design-management.models.upload');
         $this->assertRoutePermission('POST', 'api/v1/admin/design-management/packages/{packageId}/models/multipart/start', 'design-management.models.upload');
+        $this->assertRoutePermission('POST', 'api/v1/admin/design-management/model-uploads/{uploadId}/parts/{partNumber}', 'design-management.models.upload');
         $this->assertRoutePermission('POST', 'api/v1/admin/design-management/model-uploads/{uploadId}/complete', 'design-management.models.upload');
         $this->assertRoutePermission('DELETE', 'api/v1/admin/design-management/model-uploads/{uploadId}', 'design-management.models.upload');
         $this->assertRoutePermission('POST', 'api/v1/admin/design-management/model-versions/{versionId}/derivatives', 'design-management.models.prepare_viewer');
@@ -118,11 +119,11 @@ final class DesignManagementApiTest extends TestCase
                 ->once()
                 ->andReturn([
                     'upload_id' => 'upload-123',
-                    'part_size_bytes' => 8_388_608,
+                    'part_size_bytes' => 5_242_880,
                     'parts_count' => 2,
                     'parts' => [
-                        ['part_number' => 1, 'upload_url' => 'https://storage.example.test/part-1', 'method' => 'PUT'],
-                        ['part_number' => 2, 'upload_url' => 'https://storage.example.test/part-2', 'method' => 'PUT'],
+                        ['part_number' => 1, 'method' => 'POST'],
+                        ['part_number' => 2, 'method' => 'POST'],
                     ],
                 ]);
         });
@@ -140,8 +141,45 @@ final class DesignManagementApiTest extends TestCase
 
         $response->assertCreated();
         $response->assertJsonPath('data.upload_id', 'upload-123');
-        $response->assertJsonPath('data.part_size_bytes', 8_388_608);
-        $response->assertJsonPath('data.parts.0.method', 'PUT');
+        $response->assertJsonPath('data.part_size_bytes', 5_242_880);
+        $response->assertJsonPath('data.parts.0.method', 'POST');
+    }
+
+    public function test_project_manager_can_upload_multipart_ifc_part_through_api(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $this->mock(DesignModelMultipartUploader::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('uploadPart')
+                ->once()
+                ->withArgs(static fn (
+                    int $organizationId,
+                    int $userId,
+                    string $uploadId,
+                    int $partNumber,
+                    UploadedFile $chunk
+                ): bool => $uploadId === 'upload-123'
+                    && $partNumber === 1
+                    && $chunk->getClientOriginalName() === 'building.ifc.part-1')
+                ->andReturn([
+                    'upload_id' => 'upload-123',
+                    'part_number' => 1,
+                    'etag' => '"etag-1"',
+                    'size_bytes' => 1024,
+                ]);
+        });
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->post('/api/v1/admin/design-management/model-uploads/upload-123/parts/1', [
+                'chunk' => UploadedFile::fake()->createWithContent('building.ifc.part-1', str_repeat('A', 1024)),
+            ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('data.upload_id', 'upload-123');
+        $response->assertJsonPath('data.part_number', 1);
+        $response->assertJsonPath('data.size_bytes', 1024);
     }
 
     public function test_project_manager_can_complete_multipart_ifc_upload(): void

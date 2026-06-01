@@ -215,6 +215,32 @@ final class DesignManagementController extends Controller
         }
     }
 
+    public function uploadMultipartPart(Request $request, string $uploadId, int $partNumber): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'chunk' => ['required', 'file', 'max:' . $this->maxIfcSizeKilobytes()],
+            ]);
+
+            return AdminResponse::success(
+                $this->multipartUploadService->uploadPart(
+                    $this->organizationId($request),
+                    (int) auth()->id(),
+                    $uploadId,
+                    $partNumber,
+                    $validated['chunk']
+                ),
+                null
+            );
+        } catch (ValidationException $e) {
+            return $this->validationFailed($e);
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            return $this->failed('upload_multipart_part', null, $e);
+        }
+    }
+
     public function abortMultipartUpload(Request $request, string $uploadId): JsonResponse
     {
         try {

@@ -67,6 +67,7 @@ return [
         'models_failed' => 'Не удалось загрузить версии моделей.',
         'upload_model_failed' => 'Не удалось загрузить IFC-модель.',
         'start_multipart_upload_failed' => 'Не удалось подготовить загрузку IFC-модели.',
+        'upload_multipart_part_failed' => 'Не удалось загрузить часть IFC-модели.',
         'complete_multipart_upload_failed' => 'Не удалось завершить загрузку IFC-модели.',
         'abort_multipart_upload_failed' => 'Не удалось отменить загрузку IFC-модели.',
         'store_model_failed' => 'Не удалось загрузить IFC-модель.',

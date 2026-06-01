@@ -9,13 +9,14 @@ use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
 use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignModelMultipartUploader;
 use Aws\S3\S3ClientInterface;
 use DomainException;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 
 final class DesignModelMultipartUploadService implements DesignModelMultipartUploader
 {
-    private const PART_SIZE_BYTES = 8_388_608;
+    private const PART_SIZE_BYTES = 5_242_880;
     private const MAX_PARTS = 10_000;
     private const CACHE_PREFIX = 'design_management:model_upload:';
 
@@ -66,18 +67,9 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
         $parts = [];
 
         for ($partNumber = 1; $partNumber <= $partsCount; $partNumber++) {
-            $command = $this->s3Client->getCommand('UploadPart', [
-                'Bucket' => $bucket,
-                'Key' => $sourcePath,
-                'UploadId' => $s3UploadId,
-                'PartNumber' => $partNumber,
-            ]);
-            $request = $this->s3Client->createPresignedRequest($command, $expiresAt);
-
             $parts[] = [
                 'part_number' => $partNumber,
-                'upload_url' => (string) $request->getUri(),
-                'method' => 'PUT',
+                'method' => 'POST',
             ];
         }
 
@@ -97,6 +89,7 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
                 'mime_type' => (string) ($payload['content_type'] ?? 'application/octet-stream'),
                 'size_bytes' => $fileSizeBytes,
             ],
+            'uploaded_parts' => [],
             'payload' => $this->modelPayload($payload),
         ], Carbon::now()->addDay());
 
@@ -106,6 +99,62 @@ final class DesignModelMultipartUploadService implements DesignModelMultipartUpl
             'parts_count' => $partsCount,
             'expires_at' => $expiresAt->toISOString(),
             'parts' => $parts,
+        ];
+    }
+
+    public function uploadPart(
+        int $organizationId,
+        int $userId,
+        string $uploadId,
+        int $partNumber,
+        UploadedFile $chunk
+    ): array {
+        $session = $this->session($organizationId, $userId, $uploadId);
+
+        if ($partNumber < 1 || $partNumber > (int) $session['parts_count']) {
+            throw new DomainException(trans_message('design_management.errors.multipart_upload_not_found'));
+        }
+
+        $realPath = $chunk->getRealPath();
+        if (!$realPath || !is_file($realPath)) {
+            throw new DomainException(trans_message('design_management.errors.file_upload_failed'));
+        }
+
+        $stream = fopen($realPath, 'rb');
+        if ($stream === false) {
+            throw new DomainException(trans_message('design_management.errors.file_upload_failed'));
+        }
+
+        try {
+            $result = $this->s3Client->uploadPart([
+                'Bucket' => (string) $session['bucket'],
+                'Key' => (string) $session['source_path'],
+                'UploadId' => (string) $session['s3_upload_id'],
+                'PartNumber' => $partNumber,
+                'Body' => $stream,
+                'ContentLength' => (int) $chunk->getSize(),
+            ]);
+        } finally {
+            fclose($stream);
+        }
+
+        $etag = (string) ($result->get('ETag') ?? '');
+        if ($etag === '') {
+            throw new DomainException(trans_message('design_management.errors.multipart_upload_failed'));
+        }
+
+        $session['uploaded_parts'][$partNumber] = [
+            'PartNumber' => $partNumber,
+            'ETag' => $etag,
+            'Size' => (int) $chunk->getSize(),
+        ];
+        Cache::put($this->cacheKey($uploadId), $session, Carbon::now()->addDay());
+
+        return [
+            'upload_id' => $uploadId,
+            'part_number' => $partNumber,
+            'etag' => $etag,
+            'size_bytes' => (int) $chunk->getSize(),
         ];
     }
 
