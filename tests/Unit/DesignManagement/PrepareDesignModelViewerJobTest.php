@@ -74,7 +74,7 @@ final class PrepareDesignModelViewerJobTest extends TestCase
         $this->assertSame('fragment binary', Storage::disk('s3')->get($derivative->derivative_file_path));
         $this->assertSame(strlen('IFC source'), $derivative->metadata['source_size_bytes']);
         $this->assertSame(strlen('fragment binary'), $derivative->metadata['derivative_size_bytes']);
-        $this->assertSame(3, $derivative->metadata['converter_version']);
+        $this->assertSame(4, $derivative->metadata['converter_version']);
         $this->assertSame(12, $derivative->metadata['geometry']['local_id_count']);
         $this->assertSame(24, $derivative->metadata['geometry']['sample_count']);
         $this->assertSame(8, $derivative->metadata['geometry']['representation_count']);

@@ -10,6 +10,7 @@ final readonly class DesignViewerConversionResult
 {
     private function __construct(
         private string $format,
+        private string $profile,
         private bool $raw,
         private int $localIdCount,
         private int $categoryCount,
@@ -28,6 +29,7 @@ final readonly class DesignViewerConversionResult
 
         return new self(
             format: (string) ($metrics['format'] ?? 'thatopen_frag'),
+            profile: (string) ($metrics['profile'] ?? 'unknown'),
             raw: (bool) ($metrics['raw'] ?? false),
             localIdCount: self::integerMetric($metrics, 'local_id_count'),
             categoryCount: self::integerMetric($metrics, 'category_count'),
@@ -54,6 +56,7 @@ final readonly class DesignViewerConversionResult
     {
         return [
             'format' => $this->format,
+            'profile' => $this->profile,
             'raw' => $this->raw,
             'geometry' => [
                 'local_id_count' => $this->localIdCount,

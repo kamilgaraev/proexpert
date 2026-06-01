@@ -308,7 +308,7 @@ final class DesignManagementApiTest extends TestCase
         $response->assertJsonPath('data.derivative.download_url', null);
         $response->assertJsonPath('data.derivative.processing_stage', 'stale');
         $response->assertJsonPath('data.derivative.metadata.is_stale', true);
-        $response->assertJsonPath('data.derivative.metadata.required_converter_version', 3);
+        $response->assertJsonPath('data.derivative.metadata.required_converter_version', 4);
 
         $downloadResponse = $this->withHeaders($context->authHeaders())
             ->get("/api/v1/admin/design-management/model-versions/{$version->id}/derivative-file");
@@ -431,7 +431,7 @@ final class DesignManagementApiTest extends TestCase
         $response->assertStatus(202);
         $response->assertJsonPath('data.status', 'queued');
         $response->assertJsonPath('data.progress_percent', 0);
-        $response->assertJsonPath('data.metadata.converter_version', 3);
+        $response->assertJsonPath('data.metadata.converter_version', 4);
 
         $derivative->refresh();
         $this->assertSame('queued', $derivative->status->value);

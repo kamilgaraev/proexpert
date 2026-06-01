@@ -6,6 +6,7 @@ import pako from "pako";
 import * as FRAGS from "@thatopen/fragments";
 
 const [, , inputPath, outputPath] = process.argv;
+const VIEWER_GEOMETRY_PROFILE = "geometry_first_stage_one";
 
 const emit = (payload) => {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
@@ -68,6 +69,16 @@ const hasValidBounds = (bounds) => {
   return bounds.max.x > bounds.min.x || bounds.max.y > bounds.min.y || bounds.max.z > bounds.min.z;
 };
 
+const configureViewerImporter = (importer) => {
+  importer.includeUniqueAttributes = false;
+  importer.includeRelationNames = false;
+  importer.replaceStoreyElevation = true;
+  importer.distanceThreshold = null;
+  importer.classes.abstract.clear();
+  importer.classes.elements.clear();
+  importer.relations.clear();
+};
+
 const inspectFragments = (bytes, raw = false) => {
   const fragmentBytes = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   const modelBytes = raw ? fragmentBytes : pako.inflate(fragmentBytes);
@@ -124,10 +135,7 @@ try {
   importer.webIfcSettings = {
     COORDINATE_TO_ORIGIN: true,
   };
-  importer.includeUniqueAttributes = false;
-  importer.includeRelationNames = false;
-  importer.replaceStoreyElevation = true;
-  importer.distanceThreshold = null;
+  configureViewerImporter(importer);
 
   emit({ event: "progress", progress: 0, stage: "reading" });
   const handle = await fs.open(inputPath, "r");
@@ -155,7 +163,10 @@ try {
   }
 
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
-  const metrics = inspectFragments(fragmentsData, false);
+  const metrics = {
+    profile: VIEWER_GEOMETRY_PROFILE,
+    ...inspectFragments(fragmentsData, false),
+  };
   await fs.writeFile(outputPath, Buffer.from(fragmentsData));
   emit({ event: "result", metrics });
   emit({ event: "progress", progress: 100, stage: "written" });
