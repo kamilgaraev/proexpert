@@ -428,7 +428,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'scenario' => 'brick_house',
                 'role' => $account['contour'],
             ]),
-            'project_access_mode' => 'all',
+            'project_access_mode' => 'all_projects',
         ]);
 
         $this->assignOrganizationRole($userId, $organizationId, 'organization_owner');
@@ -479,6 +479,7 @@ class BrickHouseDemoSeeder extends Seeder
             ['slug' => 'payments', 'name' => 'Платежи', 'type' => 'core', 'category' => 'finance'],
             ['slug' => 'reports', 'name' => 'Отчеты', 'type' => 'core', 'category' => 'analytics'],
             ['slug' => 'dashboard-widgets', 'name' => 'Виджеты дашборда', 'type' => 'service', 'category' => 'analytics'],
+            ['slug' => 'ai-assistant', 'name' => 'AI Ассистент', 'type' => 'addon', 'category' => 'ai'],
             ['slug' => 'data-filters', 'name' => 'Фильтры данных', 'type' => 'service', 'category' => 'productivity'],
             ['slug' => 'catalog-management', 'name' => 'Каталог материалов', 'type' => 'feature', 'category' => 'catalog'],
             ['slug' => 'data-export', 'name' => 'Экспорт данных', 'type' => 'service', 'category' => 'documents'],

@@ -191,7 +191,7 @@ class PermissionResolver
             return false;
         }
 
-        [$module, $action] = $parts;
+        [$module, $action] = $this->normalizeAdminModulePermissionParts($parts[0], $parts[1]);
         
         $modulesToCheck = $this->expandModuleVariants($module);
         
@@ -231,6 +231,25 @@ class PermissionResolver
     /**
      * Получить все системные права роли
      */
+    protected function normalizeAdminModulePermissionParts(string $module, string $action): array
+    {
+        if ($module !== 'admin') {
+            return [$module, $action];
+        }
+
+        $adminModulePrefixes = [
+            'ai_assistant',
+        ];
+
+        foreach ($adminModulePrefixes as $modulePrefix) {
+            if (str_starts_with($action, $modulePrefix . '.')) {
+                return [$modulePrefix, substr($action, strlen($modulePrefix) + 1)];
+            }
+        }
+
+        return [$module, $action];
+    }
+
     public function getSystemPermissions(UserRoleAssignment $assignment): array
     {
         $organizationId = $this->extractOrganizationId($assignment);

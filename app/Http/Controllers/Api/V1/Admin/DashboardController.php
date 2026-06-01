@@ -15,9 +15,9 @@ use App\Enums\Contract\ContractStatusEnum;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Validation\Rule;
 use Carbon\Carbon;
 use App\Http\Responses\AdminResponse;
+use App\Rules\ProjectAccessibleRule;
 
 class DashboardController extends Controller
 {
@@ -726,7 +726,7 @@ class DashboardController extends Controller
             'project_id' => [
                 $required ? 'required' : 'nullable',
                 'integer',
-                Rule::exists('projects', 'id')->where('organization_id', $organizationId),
+                new ProjectAccessibleRule($organizationId),
             ],
         ]);
 

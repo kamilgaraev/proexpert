@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin\ProjectPulse;
 
 use App\BusinessModules\Features\AIAssistant\Models\ProjectPulseReport;
+use App\Enums\ProjectOrganizationRole;
 use App\Models\Project;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
+use App\Services\Project\ProjectParticipantService;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -77,6 +79,67 @@ class ProjectPulseReportTest extends TestCase
                 'generated_at',
             ],
         ]);
+    }
+
+    public function test_project_participant_can_load_current_project_pulse_report(): void
+    {
+        $ownerContext = AdminApiTestContext::create(roleSlug: 'organization_owner');
+        $participantContext = AdminApiTestContext::create(
+            organizationAttributes: [
+                'capabilities' => ['general_contracting'],
+                'primary_business_type' => 'general_contracting',
+            ],
+            roleSlug: 'organization_owner'
+        );
+        $project = Project::factory()->create([
+            'organization_id' => $ownerContext->organization->id,
+            'name' => 'Contractor project',
+        ]);
+
+        app(ProjectParticipantService::class)->attach(
+            $project,
+            $participantContext->organization->id,
+            ProjectOrganizationRole::CONTRACTOR,
+            $ownerContext->user
+        );
+
+        ProjectPulseReport::create([
+            'organization_id' => $participantContext->organization->id,
+            'project_id' => $project->id,
+            'scope_type' => 'project',
+            'report_date' => now()->toDateString(),
+            'period_preset' => 'today',
+            'period_from' => now()->startOfDay(),
+            'period_to' => now()->endOfDay(),
+            'status' => 'good',
+            'ai_status' => 'rules_only',
+            'summary' => [
+                'title' => 'Works are on track',
+                'text' => 'No critical events found.',
+            ],
+            'metrics' => [],
+            'urgent_actions' => [],
+            'risk_groups' => [],
+            'finance' => [
+                'performed_amount' => 0,
+                'paid_amount' => 0,
+                'pending_acts_amount' => 0,
+                'deviation_items' => [],
+            ],
+            'activity' => [],
+            'recommendations' => [],
+            'raw_facts' => [],
+            'created_by_user_id' => $participantContext->user->id,
+            'generated_at' => now(),
+        ]);
+
+        $response = $this
+            ->withHeaders($participantContext->authHeaders())
+            ->getJson('/api/v1/admin/ai-assistant/project-pulse/current?project_id=' . $project->id);
+
+        $response->assertOk();
+        $response->assertJsonPath('data.scope.organization_id', $participantContext->organization->id);
+        $response->assertJsonPath('data.scope.project_id', $project->id);
     }
 
     public function test_owner_can_open_project_pulse_report_from_history(): void

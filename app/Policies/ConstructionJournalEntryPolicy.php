@@ -22,7 +22,7 @@ class ConstructionJournalEntryPolicy
 
     private function hasModulePermission(User $user, array $permissions, ?Project $project = null): bool
     {
-        $organizationId = $project?->organization_id ?? $user->current_organization_id;
+        $organizationId = $user->current_organization_id;
 
         if (!$organizationId) {
             return false;

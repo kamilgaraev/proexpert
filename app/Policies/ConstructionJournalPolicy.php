@@ -58,7 +58,7 @@ class ConstructionJournalPolicy
             return false;
         }
 
-        return $this->hasModulePermission($user, ['view', '*'], $project->organization_id, $project->id);
+        return $this->hasModulePermission($user, ['view', '*'], null, $project->id);
     }
 
     public function view(User $user, Project|ConstructionJournal $model): bool
@@ -68,7 +68,7 @@ class ConstructionJournalPolicy
                 return false;
             }
 
-            return $this->hasModulePermission($user, ['view', '*'], $model->organization_id, $model->id);
+            return $this->hasModulePermission($user, ['view', '*'], null, $model->id);
         }
 
         $project = $model->project;
@@ -77,7 +77,7 @@ class ConstructionJournalPolicy
             return false;
         }
 
-        return $this->hasModulePermission($user, ['view', '*'], $project->organization_id, $project->id);
+        return $this->hasModulePermission($user, ['view', '*'], null, $project->id);
     }
 
     public function create(User $user, Project $project): bool
@@ -86,7 +86,7 @@ class ConstructionJournalPolicy
             return false;
         }
 
-        return $this->hasModulePermission($user, ['create', '*'], $project->organization_id, $project->id);
+        return $this->hasModulePermission($user, ['create', '*'], null, $project->id);
     }
 
     public function update(User $user, ConstructionJournal $journal): bool
@@ -101,7 +101,7 @@ class ConstructionJournalPolicy
             return false;
         }
 
-        return $this->hasModulePermission($user, ['edit', '*'], $project->organization_id, $project->id);
+        return $this->hasModulePermission($user, ['edit', '*'], null, $project->id);
     }
 
     public function delete(User $user, ConstructionJournal $journal): bool
@@ -112,7 +112,7 @@ class ConstructionJournalPolicy
             return false;
         }
 
-        return $this->hasModulePermission($user, ['delete', '*'], $project->organization_id, $project->id);
+        return $this->hasModulePermission($user, ['delete', '*'], null, $project->id);
     }
 
     public function export(User $user, ConstructionJournal $journal): bool
@@ -123,6 +123,6 @@ class ConstructionJournalPolicy
             return false;
         }
 
-        return $this->hasModulePermission($user, ['export', '*'], $project->organization_id, $project->id);
+        return $this->hasModulePermission($user, ['export', '*'], null, $project->id);
     }
 }

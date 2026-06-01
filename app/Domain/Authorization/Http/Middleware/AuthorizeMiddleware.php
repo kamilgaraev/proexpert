@@ -3,8 +3,9 @@
 namespace App\Domain\Authorization\Http\Middleware;
 
 use App\Domain\Authorization\Services\AuthorizationService;
-use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Http\Responses\AdminResponse;
+use App\Models\Organization;
+use App\Models\Project;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response as ResponseAlias;
@@ -90,8 +91,7 @@ class AuthorizeMiddleware
                 $projectId = $this->extractContextId($request, $contextParam ?? 'project_id', 'project');
                 if ($projectId) {
                     $context['project_id'] = $projectId;
-                    // Также получаем organization_id проекта
-                    $organizationId = $this->getProjectOrganizationId($projectId);
+                    $organizationId = $this->getProjectOrganizationId($request, $projectId);
                     if ($organizationId) {
                         $context['organization_id'] = $organizationId;
                     }
@@ -129,6 +129,14 @@ class AuthorizeMiddleware
     {
         // Сначала пробуем из route параметров
         $value = $request->route($param);
+
+        if ($value instanceof Project) {
+            return $value->id;
+        }
+
+        if (is_object($value) && isset($value->id)) {
+            return (int) $value->id;
+        }
         
         // Если не нашли, пробуем из query параметров
         if (!$value) {
@@ -169,11 +177,26 @@ class AuthorizeMiddleware
     /**
      * Получить ID организации для проекта
      */
-    protected function getProjectOrganizationId(int $projectId): ?int
+    protected function getProjectOrganizationId(Request $request, int $projectId): ?int
     {
-        // Здесь нужно получить organization_id проекта из базы данных
-        // Это зависит от структуры модели Project
-        $project = \App\Models\Project::find($projectId);
-        return $project ? $project->organization_id : null;
+        $currentOrganization = $request->attributes->get('current_organization');
+
+        if ($currentOrganization instanceof Organization) {
+            return $currentOrganization->id;
+        }
+
+        $project = Project::query()->find($projectId);
+
+        if (!$project instanceof Project) {
+            return null;
+        }
+
+        $organizationId = $this->getOrganizationFromRequest($request);
+
+        if ($organizationId && $project->hasOrganization($organizationId)) {
+            return $organizationId;
+        }
+
+        return $project->organization_id;
     }
 }

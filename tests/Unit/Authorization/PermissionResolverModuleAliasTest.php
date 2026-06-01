@@ -93,4 +93,29 @@ class PermissionResolverModuleAliasTest extends TestCase
         $this->assertContains('contractor-portal', $resolver->variants('contractor_marketplace'));
         $this->assertContains('contractor_marketplace', $resolver->variants('contractor-portal'));
     }
+
+    public function test_admin_ai_assistant_permission_uses_ai_assistant_module_alias(): void
+    {
+        $resolver = new class extends PermissionResolver {
+            public function __construct()
+            {
+            }
+
+            public function normalize(string $module, string $action): array
+            {
+                return $this->normalizeAdminModulePermissionParts($module, $action);
+            }
+
+            public function variants(string $module): array
+            {
+                return $this->expandModuleVariants($module);
+            }
+        };
+
+        [$module, $action] = $resolver->normalize('admin', 'ai_assistant.project_pulse.view');
+
+        $this->assertSame('ai_assistant', $module);
+        $this->assertSame('project_pulse.view', $action);
+        $this->assertContains('ai-assistant', $resolver->variants($module));
+    }
 }
