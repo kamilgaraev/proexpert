@@ -4,6 +4,7 @@ namespace App\BusinessModules\Features\SiteRequests\Http\Resources;
 
 use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
+use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\Services\Storage\FileService;
 use Illuminate\Http\Request;
@@ -23,6 +24,8 @@ class SiteRequestResource extends JsonResource
     {
         $equipmentType = $this->resolveEquipmentType();
         $equipmentTypeValue = $this->resolveEquipmentTypeValue();
+        $chainSummary = app(ProcurementChainService::class)
+            ->forSiteRequest($this->resource, $request->user());
 
         return [
             'id' => $this->id,
@@ -94,6 +97,7 @@ class SiteRequestResource extends JsonResource
             'has_calendar_event' => $this->hasCalendarEvent(),
             'can_create_payment' => $this->canCreatePayment(),
             'has_payment' => $this->hasPaymentDocument(),
+            'procurement_chain_summary' => $chainSummary->compact()->toArray(),
 
             // Связи
             'project' => $this->whenLoaded('project', fn() => [

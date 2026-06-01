@@ -2,6 +2,7 @@
 
 use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementApprovalController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementAuditEventController;
+use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementChainController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementDashboardController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementIssueController;
 use App\BusinessModules\Features\Procurement\Http\Controllers\ProcurementSettingsController;
@@ -28,6 +29,24 @@ Route::prefix('api/v1/admin/procurement')
     ->name('admin.procurement.')
     ->middleware(AdminRouteStack::middleware(['procurement.active']))
     ->group(function () {
+        Route::prefix('chains')->name('chains.')->group(function () {
+            Route::get('/site-requests/{id}', [ProcurementChainController::class, 'siteRequest'])
+                ->middleware('authorize:procurement.view')
+                ->name('site_requests.show');
+            Route::get('/purchase-requests/{id}', [ProcurementChainController::class, 'purchaseRequest'])
+                ->middleware('authorize:procurement.view')
+                ->name('purchase_requests.show');
+            Route::get('/purchase-orders/{id}', [ProcurementChainController::class, 'purchaseOrder'])
+                ->middleware('authorize:procurement.view')
+                ->name('purchase_orders.show');
+            Route::get('/payment-documents/{id}', [ProcurementChainController::class, 'paymentDocument'])
+                ->middleware('authorize:procurement.view')
+                ->name('payment_documents.show');
+            Route::get('/purchase-receipts/{id}', [ProcurementChainController::class, 'purchaseReceipt'])
+                ->middleware('authorize:procurement.view')
+                ->name('purchase_receipts.show');
+        });
+
         Route::prefix('purchase-requests')->name('purchase_requests.')->group(function () {
             Route::get('/', [PurchaseRequestController::class, 'index'])
                 ->middleware('authorize:procurement.purchase_requests.view')
@@ -104,6 +123,9 @@ Route::prefix('api/v1/admin/procurement')
             Route::post('/{id}/mark-in-delivery', [PurchaseOrderController::class, 'markInDelivery'])
                 ->middleware('authorize:procurement.purchase_orders.mark_delivery')
                 ->name('mark_in_delivery');
+            Route::post('/{id}/payment-document', [ProcurementChainController::class, 'createOrOpenPaymentDocument'])
+                ->middleware('authorize:payments.invoice.create')
+                ->name('payment_document');
             Route::post('/{id}/receipt-document/pdf', [PurchaseOrderController::class, 'receiptDocumentPdf'])
                 ->middleware('authorize:procurement.purchase_orders.receive')
                 ->name('receipt_document_pdf');

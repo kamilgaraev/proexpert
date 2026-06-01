@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Features\Procurement\Http\Resources;
 
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
+use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
 use App\BusinessModules\Features\Procurement\Services\PurchaseOrderPaymentGateService;
 use Illuminate\Http\Request;
@@ -17,6 +18,8 @@ class PurchaseOrderResource extends JsonResource
             ->forPurchaseOrder($this->resource);
         $paymentSummary = app(PurchaseOrderPaymentGateService::class)
             ->summary($this->resource);
+        $chainSummary = app(ProcurementChainService::class)
+            ->forPurchaseOrder($this->resource, $request->user());
 
         return [
             'id' => $this->id,
@@ -47,6 +50,7 @@ class PurchaseOrderResource extends JsonResource
             'can_receive_materials' => $workflowSummary->canReceiveMaterials,
             'workflow_summary' => $workflowSummary->toArray(),
             'payment_summary' => $paymentSummary,
+            'procurement_chain_summary' => $chainSummary->compact()->toArray(),
             'has_contract' => $this->hasContract(),
             'supplier' => $this->supplierPayload(),
             'external_supplier_contact' => $this->whenLoaded(

@@ -11,6 +11,7 @@ use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\Models\Contract;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 use function trans_message;
@@ -40,6 +41,17 @@ final class PurchaseOrderPaymentGateService
             'blocker' => $blocker,
             'documents_count' => $this->linkedDocumentsQuery($order)->count(),
         ];
+    }
+
+    /**
+     * @return Collection<int, PaymentDocument>
+     */
+    public function linkedDocuments(PurchaseOrder $order): Collection
+    {
+        return $this->linkedDocumentsQuery($order)
+            ->orderByDesc('document_date')
+            ->orderByDesc('id')
+            ->get();
     }
 
     public function assertCanReceive(PurchaseOrder $order, array $items): void

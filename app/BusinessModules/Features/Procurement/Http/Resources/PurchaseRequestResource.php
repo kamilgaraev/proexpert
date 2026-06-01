@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Features\Procurement\Http\Resources;
 
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
+use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -14,6 +15,8 @@ class PurchaseRequestResource extends JsonResource
     {
         $workflowSummary = app(ProcurementLifecycleService::class)
             ->forPurchaseRequest($this->resource);
+        $chainSummary = app(ProcurementChainService::class)
+            ->forPurchaseRequest($this->resource, $request->user());
 
         return [
             'id' => $this->id,
@@ -33,6 +36,7 @@ class PurchaseRequestResource extends JsonResource
             'can_be_approved' => $this->canBeApproved(),
             'can_be_rejected' => $this->canBeRejected(),
             'workflow_summary' => $workflowSummary->toArray(),
+            'procurement_chain_summary' => $chainSummary->compact()->toArray(),
             'site_request' => $this->whenLoaded('siteRequest', fn() => [
                 'id' => $this->siteRequest->id,
                 'title' => $this->siteRequest->title,

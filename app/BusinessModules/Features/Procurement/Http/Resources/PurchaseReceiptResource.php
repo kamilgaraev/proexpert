@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Procurement\Http\Resources;
 
+use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -24,6 +25,10 @@ class PurchaseReceiptResource extends JsonResource
             'status_color' => $this->status->color(),
             'notes' => $this->notes,
             'metadata' => $this->metadata,
+            'procurement_chain_summary' => app(ProcurementChainService::class)
+                ->forPurchaseReceipt($this->resource, $request->user())
+                ->compact()
+                ->toArray(),
             'warehouse' => $this->whenLoaded('warehouse', fn() => $this->warehouse ? [
                 'id' => $this->warehouse->id,
                 'name' => $this->warehouse->name,

@@ -163,6 +163,12 @@
       "payments.reports.view",
       "payments.reports.export"
     ],
+    "procurement": [
+      "procurement.view",
+      "procurement.chain.view",
+      "procurement.purchase_requests.view",
+      "procurement.purchase_orders.view"
+    ],
     "basic-warehouse": [
       "warehouse.view",
       "warehouse.reports",

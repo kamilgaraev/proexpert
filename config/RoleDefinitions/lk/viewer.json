@@ -101,6 +101,10 @@
     "payments": [
       "payments.invoice.view",
       "payments.transaction.view"
+    ],
+    "procurement": [
+      "procurement.view",
+      "procurement.chain.view"
     ]
   },
   "interface_access": [

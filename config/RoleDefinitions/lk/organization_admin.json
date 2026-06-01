@@ -424,6 +424,7 @@
     ],
     "procurement": [
       "procurement.view",
+      "procurement.chain.view",
       "procurement.audit.view",
       "procurement.manage",
       "procurement.purchase_requests.view",

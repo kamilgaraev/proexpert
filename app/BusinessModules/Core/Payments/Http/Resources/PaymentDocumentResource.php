@@ -2,7 +2,9 @@
 
 namespace App\BusinessModules\Core\Payments\Http\Resources;
 
+use App\BusinessModules\Core\Payments\Enums\InvoiceType;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\Http\Resources\ModelJsonResource;
 use Illuminate\Http\Request;
 
@@ -25,6 +27,10 @@ class PaymentDocumentResource extends ModelJsonResource
             // Если по статусу нельзя отменить, но пользователь владелец - разрешаем
             $canBeCancelled = $user->isOrganizationOwner($document->organization_id);
         }
+        $hasProcurementChain = $this->hasProcurementChain($document);
+        $procurementChainSummary = $hasProcurementChain
+            ? app(ProcurementChainService::class)->forPaymentDocument($document, $user)->compact()->toArray()
+            : null;
 
         return [
             'id' => $this->id,
@@ -73,9 +79,23 @@ class PaymentDocumentResource extends ModelJsonResource
             'site_requests_count' => $this->when($document->relationLoaded('siteRequests'), fn() => $document->siteRequests->count()),
             'payer_name' => $document->getPayerName(),
             'payee_name' => $document->getPayeeName(),
+            'procurement_chain_summary' => $procurementChainSummary,
+            'procurement_chain_href' => $hasProcurementChain
+                ? '/procurement/chains/payment-documents/'.$document->id
+                : null,
             'created_at' => $this->created_at->toIso8601String(),
             'updated_at' => $this->updated_at->toIso8601String(),
         ];
     }
-}
 
+    private function hasProcurementChain(PaymentDocument $document): bool
+    {
+        $metadata = is_array($document->metadata) ? $document->metadata : [];
+
+        if (isset($metadata['purchase_order_id'])) {
+            return true;
+        }
+
+        return $document->invoice_type === InvoiceType::MATERIAL_PURCHASE;
+    }
+}
