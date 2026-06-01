@@ -13,6 +13,8 @@ use Illuminate\Support\Facades\Schema;
 
 class AccessController
 {
+    private const EFFECTIVE_MODULES_CACHE_PREFIX = 'org_effective_active_modules_v2';
+
     public function hasModuleAccess(int $organizationId, string $moduleSlug): bool
     {
         return $this->getActiveModules($organizationId)
@@ -56,7 +58,7 @@ class AccessController
 
     public function getActiveModules(int $organizationId): Collection
     {
-        $cacheKey = "org_effective_active_modules_{$organizationId}";
+        $cacheKey = self::EFFECTIVE_MODULES_CACHE_PREFIX."_{$organizationId}";
 
         return Cache::remember($cacheKey, 60, function () use ($organizationId): Collection {
             return $this->entitlements()->getEffectiveModules($organizationId);
@@ -129,6 +131,7 @@ class AccessController
     public function clearAccessCache(int $organizationId): void
     {
         $specificKeys = [
+            self::EFFECTIVE_MODULES_CACHE_PREFIX."_{$organizationId}",
             "org_effective_active_modules_{$organizationId}",
             "org_active_modules_{$organizationId}",
             "active_modules_{$organizationId}",

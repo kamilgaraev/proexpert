@@ -396,6 +396,53 @@ class SubscriptionPackageBundlingTest extends TestCase
         );
     }
 
+    public function test_auto_activate_manifest_grants_contractor_portal_without_activation(): void
+    {
+        Module::create([
+            'name' => 'Contractor portal',
+            'slug' => 'contractor-portal',
+            'version' => '1.0.0',
+            'type' => 'addon',
+            'billing_model' => 'subscription',
+            'category' => 'collaboration',
+            'description' => 'Contractor portal',
+            'pricing_config' => [
+                'base_price' => 3490,
+                'currency' => 'RUB',
+                'duration_days' => 30,
+                'marketplace_visible' => false,
+            ],
+            'features' => [],
+            'permissions' => [
+                'contractor_marketplace.categories.view',
+                'contractor_marketplace.profile.view',
+            ],
+            'dependencies' => [],
+            'conflicts' => [],
+            'limits' => [],
+            'display_order' => 1,
+            'is_active' => true,
+            'is_system_module' => false,
+            'can_deactivate' => true,
+        ]);
+
+        $this->assertSame(0, OrganizationModuleActivation::query()
+            ->where('organization_id', $this->organization->id)
+            ->count());
+
+        $accessController = app(AccessController::class);
+
+        $this->assertTrue($accessController->hasModuleAccess($this->organization->id, 'contractor-portal'));
+        $this->assertTrue($accessController->hasModulePermission(
+            $this->organization->id,
+            'contractor_marketplace.categories.view'
+        ));
+        $this->assertContains(
+            'contractor-portal',
+            $accessController->getActiveModules($this->organization->id)->pluck('slug')->all()
+        );
+    }
+
     public function test_expired_package_does_not_grant_effective_warehouse_module(): void
     {
         $this->createPackageModules('supply-warehouse', 'pro');

@@ -25,7 +25,10 @@ class OrganizationEntitlementService
     {
         $systemSlugs = Module::query()
             ->where('is_active', true)
-            ->where('can_deactivate', false)
+            ->where(function ($query): void {
+                $query->where('can_deactivate', false)
+                    ->orWhere('is_system_module', true);
+            })
             ->pluck('slug')
             ->all();
 
@@ -43,6 +46,7 @@ class OrganizationEntitlementService
 
         $slugs = array_values(array_unique(array_merge(
             $systemSlugs,
+            $this->getAlwaysOnModuleSlugs(),
             $directSlugs,
             array_keys($this->getPackageModuleSources($organizationId))
         )));
@@ -222,6 +226,17 @@ class OrganizationEntitlementService
     private function getPackageTierModules(string $packageSlug, string $tier): array
     {
         return $this->packageCatalog->tierModules($packageSlug, $tier);
+    }
+
+    private function getAlwaysOnModuleSlugs(): array
+    {
+        return collect($this->packageCatalog->moduleDefinitions())
+            ->filter(static fn (array $module): bool => ($module['auto_activate'] ?? false) === true
+                || ($module['is_system_module'] ?? false) === true
+                || ($module['can_deactivate'] ?? true) === false)
+            ->keys()
+            ->values()
+            ->all();
     }
 
     private function getPackageConfig(string $packageSlug): array

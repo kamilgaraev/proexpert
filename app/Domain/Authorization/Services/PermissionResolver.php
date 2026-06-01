@@ -15,6 +15,8 @@ use Illuminate\Support\Facades\Log;
  */
 class PermissionResolver
 {
+    private const CACHE_SCHEMA_VERSION = 'v2';
+
     protected RoleScanner $roleScanner;
     protected ModulePermissionChecker $moduleChecker;
     protected LoggingService $logging;
@@ -204,7 +206,7 @@ class PermissionResolver
         
         // Проверяем каждый модуль из списка
         foreach ($modulesToCheck as $moduleToCheck) {
-            $cacheKey = "module_active_{$moduleToCheck}_{$organizationId}";
+            $cacheKey = "module_active_".self::CACHE_SCHEMA_VERSION."_{$moduleToCheck}_{$organizationId}";
             $isActive = Cache::remember($cacheKey, 300, function () use ($moduleToCheck, $organizationId) {
                 return $this->moduleChecker->isModuleActive($moduleToCheck, $organizationId);
             });
@@ -501,7 +503,7 @@ class PermissionResolver
         $userVersion = Cache::get("user_permission_version_{$userId}", 0);
         $globalVersion = Cache::get("permission_global_version", 0);
         
-        $baseKey = "permission_{$userId}_{$roleSlug}_{$permission}_" . md5(json_encode($context));
+        $baseKey = "permission_".self::CACHE_SCHEMA_VERSION."_{$userId}_{$roleSlug}_{$permission}_" . md5(json_encode($context));
         return "{$baseKey}_v{$userVersion}_{$globalVersion}";
     }
 

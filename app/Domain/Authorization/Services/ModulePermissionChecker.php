@@ -216,6 +216,7 @@ class ModulePermissionChecker
     {
         if ($organizationId && $moduleSlug) {
             Cache::forget("module_active_{$moduleSlug}_{$organizationId}");
+            Cache::forget("module_active_v2_{$moduleSlug}_{$organizationId}");
         }
         
         if ($organizationId) {

@@ -10,7 +10,9 @@ use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Activity\ActivityEvent;
+use App\Models\Module;
 use App\Models\Organization;
+use App\Models\OrganizationModuleActivation;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -62,6 +64,28 @@ final class MarketplaceProfileControllerTest extends TestCase
             ->all();
 
         $this->assertContains('monolith', $slugs);
+    }
+
+    public function test_owner_can_open_landing_marketplace_without_manual_module_activation(): void
+    {
+        [$organization, $user] = $this->createLandingContext('organization_owner');
+        $module = $this->createContractorPortalModule();
+
+        $this->assertFalse(OrganizationModuleActivation::query()
+            ->where('organization_id', $organization->id)
+            ->where('module_id', $module->id)
+            ->exists());
+
+        $categories = $this->withHeaders($this->landingHeaders($user, $organization))
+            ->getJson('/api/v1/landing/contractor-marketplace/categories');
+        $profile = $this->withHeaders($this->landingHeaders($user, $organization))
+            ->getJson('/api/v1/landing/contractor-marketplace/profile');
+
+        $categories->assertOk()
+            ->assertJsonPath('success', true);
+        $profile->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.organization_id', $organization->id);
     }
 
     public function test_profile_update_stores_categories_and_regions_for_current_organization(): void
@@ -268,19 +292,19 @@ final class MarketplaceProfileControllerTest extends TestCase
     /**
      * @return array{0: Organization, 1: User}
      */
-    private function createLandingContext(): array
+    private function createLandingContext(string $roleSlug = 'organization_admin'): array
     {
         $organization = Organization::factory()->verified()->create();
         $user = User::factory()->create([
             'current_organization_id' => $organization->id,
         ]);
 
-        $this->attachUserToOrganization($user, $organization);
+        $this->attachUserToOrganization($user, $organization, $roleSlug);
 
         return [$organization, $user];
     }
 
-    private function attachUserToOrganization(User $user, Organization $organization): void
+    private function attachUserToOrganization(User $user, Organization $organization, string $roleSlug = 'organization_admin'): void
     {
         $organization->users()->syncWithoutDetaching([
             $user->id => [
@@ -292,9 +316,40 @@ final class MarketplaceProfileControllerTest extends TestCase
 
         UserRoleAssignment::assignRole(
             user: $user,
-            roleSlug: 'organization_admin',
+            roleSlug: $roleSlug,
             context: AuthorizationContext::getOrganizationContext($organization->id)
         );
+    }
+
+    private function createContractorPortalModule(): Module
+    {
+        return Module::query()->create([
+            'name' => 'Contractor portal',
+            'slug' => 'contractor-portal',
+            'version' => '1.0.0',
+            'type' => 'addon',
+            'billing_model' => 'subscription',
+            'category' => 'collaboration',
+            'description' => 'Contractor portal',
+            'pricing_config' => [
+                'base_price' => 3490,
+                'currency' => 'RUB',
+                'duration_days' => 30,
+                'marketplace_visible' => false,
+            ],
+            'features' => [],
+            'permissions' => [
+                'contractor_marketplace.categories.view',
+                'contractor_marketplace.profile.view',
+            ],
+            'dependencies' => [],
+            'conflicts' => [],
+            'limits' => [],
+            'display_order' => 1,
+            'is_active' => true,
+            'is_system_module' => false,
+            'can_deactivate' => true,
+        ]);
     }
 
     private function landingHeaders(User $user, Organization $organization): array
