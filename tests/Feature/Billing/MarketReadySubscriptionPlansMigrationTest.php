@@ -22,10 +22,12 @@ final class MarketReadySubscriptionPlansMigrationTest extends TestCase
             ->keyBy('slug');
 
         self::assertCount(5, $plans);
-        self::assertSame(19900, (int) $plans['business']->price);
-        self::assertSame(10, (int) $plans['business']->max_users);
-        self::assertSame(29900, (int) $plans['profi']->price);
-        self::assertSame(30, (int) $plans['profi']->max_users);
+        self::assertSame(9900, (int) $plans['start']->price);
+        self::assertSame(7, (int) $plans['start']->max_users);
+        self::assertSame(24900, (int) $plans['business']->price);
+        self::assertSame(15, (int) $plans['business']->max_users);
+        self::assertSame(39900, (int) $plans['profi']->price);
+        self::assertSame(40, (int) $plans['profi']->max_users);
         self::assertSame(99000, (int) $plans['enterprise']->price);
         self::assertSame(100, (int) $plans['enterprise']->max_users);
         self::assertSame(500, (int) $plans['enterprise']->max_contractor_invitations);
@@ -39,7 +41,7 @@ final class MarketReadySubscriptionPlansMigrationTest extends TestCase
 
         $payload = (new SubscriptionPlanResource($plan))->resolve();
 
-        self::assertSame(10, $payload['max_users']);
+        self::assertSame(15, $payload['max_users']);
         self::assertSame(50, $payload['max_contractor_invitations']);
     }
 }

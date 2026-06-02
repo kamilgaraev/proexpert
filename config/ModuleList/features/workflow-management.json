@@ -3,7 +3,7 @@
   "slug": "workflow-management", 
   "version": "1.0.0",
   "type": "feature",
-  "billing_model": "subscription",
+  "billing_model": "free",
   "category": "workflow",
   "description": "Система управления выполненными работами",
   
@@ -11,11 +11,11 @@
   "service_provider": "App\\BusinessModules\\Features\\WorkflowManagement\\WorkflowManagementServiceProvider",
   
   "pricing": {
-    "base_price": 1990,
+    "base_price": 0,
     "currency": "RUB", 
-    "included_in_plans": ["business", "profi", "enterprise"],
-    "duration_days": 30,
-    "trial_days": 7
+    "included_in_plans": ["free", "start", "business", "profi", "enterprise"],
+    "duration_days": 0,
+    "trial_days": 0
   },
   
   "permissions": [
@@ -52,9 +52,9 @@
   "routes": "routes.php",
   "migrations": "migrations/",
   
-  "auto_activate": false,
-  "is_system_module": false,
-  "can_deactivate": true,
+  "auto_activate": true,
+  "is_system_module": true,
+  "can_deactivate": false,
   "icon": "workflow",
   "display_order": 13
 }

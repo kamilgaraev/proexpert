@@ -31,12 +31,12 @@ class ActReportingModule implements ModuleInterface, ConfigurableInterface
 
     public function getType(): ModuleType
     {
-        return ModuleType::ADDON;
+        return ModuleType::CORE;
     }
 
     public function getBillingModel(): BillingModel
     {
-        return BillingModel::SUBSCRIPTION;
+        return BillingModel::FREE;
     }
 
     public function getManifest(): array
@@ -46,12 +46,10 @@ class ActReportingModule implements ModuleInterface, ConfigurableInterface
 
     public function install(): void
     {
-        // Модуль использует существующие таблицы актов
     }
 
     public function uninstall(): void
     {
-        // Платный модуль можно отключить, данные сохраняются
     }
 
     public function upgrade(string $fromVersion): void
@@ -61,7 +59,6 @@ class ActReportingModule implements ModuleInterface, ConfigurableInterface
 
     public function canActivate(int $organizationId): bool
     {
-        // Проверяем что необходимые модули активированы
         $accessController = app(\App\Modules\Core\AccessController::class);
         return $accessController->hasModuleAccess($organizationId, 'organizations') &&
                $accessController->hasModuleAccess($organizationId, 'users') &&

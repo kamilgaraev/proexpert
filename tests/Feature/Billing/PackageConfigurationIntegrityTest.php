@@ -11,6 +11,16 @@ class PackageConfigurationIntegrityTest extends TestCase
     private const SYSTEM_MODULES = [
         'organizations',
         'users',
+        'project-management',
+        'contract-management',
+        'catalog-management',
+        'workflow-management',
+        'act-reporting',
+        'payments',
+        'reports',
+        'dashboard-widgets',
+        'data-filters',
+        'brigades',
     ];
 
     public function refreshDatabase(): void {}
@@ -58,6 +68,11 @@ class PackageConfigurationIntegrityTest extends TestCase
                 ['package_slug' => 'holding-analytics', 'tier' => 'enterprise'],
                 ['package_slug' => 'estimates-pto', 'tier' => 'enterprise'],
                 ['package_slug' => 'ai-contour', 'tier' => 'enterprise'],
+                ['package_slug' => 'site-quality-handover', 'tier' => 'enterprise'],
+                ['package_slug' => 'construction-safety', 'tier' => 'enterprise'],
+                ['package_slug' => 'machinery-and-labor', 'tier' => 'enterprise'],
+                ['package_slug' => 'workforce-management', 'tier' => 'enterprise'],
+                ['package_slug' => 'change-control', 'tier' => 'enterprise'],
             ],
         ];
 
@@ -81,6 +96,15 @@ class PackageConfigurationIntegrityTest extends TestCase
 
             $this->assertModulesExist($modules, $moduleSlugs, $planSlug);
             $this->assertDependenciesClosed($modules, $moduleSlugs, $planSlug);
+        }
+    }
+
+    public function test_foundation_contains_completed_work_and_document_core(): void
+    {
+        $foundationModules = config('module_packages.foundation_modules');
+
+        foreach (['workflow-management', 'act-reporting', 'payments', 'reports'] as $moduleSlug) {
+            $this->assertContains($moduleSlug, $foundationModules);
         }
     }
 

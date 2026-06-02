@@ -11,7 +11,7 @@
   "pricing": {
     "base_price": 0,
     "currency": "RUB",
-    "included_in_plans": ["free", "trial", "business", "profi", "enterprise"],
+    "included_in_plans": ["free", "trial", "start", "business", "profi", "enterprise"],
     "duration_days": 0,
     "trial_days": 0
   },

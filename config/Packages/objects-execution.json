@@ -12,6 +12,10 @@
         "project-management",
         "contract-management",
         "catalog-management",
+        "workflow-management",
+        "act-reporting",
+        "payments",
+        "reports",
         "dashboard-widgets",
         "data-filters",
         "brigades"
@@ -66,25 +70,27 @@
     "tiers": {
         "base": {
             "label": "Старт",
-            "description": "Единый порядок по объектам, договорам и ответственным.",
-            "price": 4900,
+            "description": "Единый порядок по объектам, договорам, графику и заявкам с площадки.",
+            "price": 6900,
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [
                 "project-management",
                 "contract-management",
+                "schedule-management",
+                "site-requests",
                 "one-c-basic-exchange"
             ],
             "highlights": [
                 "Объекты и договоры",
-                "Ответственные и статусы",
-                "Базовый контроль исполнения"
+                "График работ",
+                "Заявки с объекта"
             ]
         },
         "pro": {
             "label": "Рост",
             "description": "Контроль нескольких объектов с графиком работ и заявками с площадки.",
-            "price": 7900,
+            "price": 9900,
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [
@@ -103,7 +109,7 @@
         "enterprise": {
             "label": "Корпоративный",
             "description": "Расширенный контур исполнения для сложной структуры ролей и нескольких направлений.",
-            "price": 11900,
+            "price": 12900,
             "billing_model": "subscription",
             "duration_days": 30,
             "modules": [

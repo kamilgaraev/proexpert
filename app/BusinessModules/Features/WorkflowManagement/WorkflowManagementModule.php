@@ -36,7 +36,7 @@ class WorkflowManagementModule implements ModuleInterface, ConfigurableInterface
 
     public function getBillingModel(): BillingModel
     {
-        return BillingModel::SUBSCRIPTION;
+        return BillingModel::FREE;
     }
 
     public function getManifest(): array
@@ -46,12 +46,10 @@ class WorkflowManagementModule implements ModuleInterface, ConfigurableInterface
 
     public function install(): void
     {
-        // Модуль использует существующие таблицы заявок и выполненных работ
     }
 
     public function uninstall(): void
     {
-        // Модуль можно отключить, данные сохраняются
     }
 
     public function upgrade(string $fromVersion): void
@@ -61,7 +59,6 @@ class WorkflowManagementModule implements ModuleInterface, ConfigurableInterface
 
     public function canActivate(int $organizationId): bool
     {
-        // Проверяем что необходимые модули активированы
         $accessController = app(\App\Modules\Core\AccessController::class);
         return $accessController->hasModuleAccess($organizationId, 'organizations') &&
                $accessController->hasModuleAccess($organizationId, 'users') &&

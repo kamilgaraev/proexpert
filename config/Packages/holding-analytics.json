@@ -12,6 +12,10 @@
         "project-management",
         "contract-management",
         "catalog-management",
+        "workflow-management",
+        "act-reporting",
+        "payments",
+        "reports",
         "dashboard-widgets",
         "data-filters",
         "brigades"
