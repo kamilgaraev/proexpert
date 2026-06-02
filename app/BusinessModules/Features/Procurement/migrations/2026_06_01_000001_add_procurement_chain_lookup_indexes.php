@@ -15,7 +15,7 @@ return new class extends Migration {
         DB::statement(
             "CREATE INDEX IF NOT EXISTS payment_documents_procurement_order_lookup_idx
             ON payment_documents ((metadata->>'purchase_order_id'))
-            WHERE deleted_at IS NULL AND metadata IS NOT NULL AND metadata::jsonb ? 'purchase_order_id'"
+            WHERE deleted_at IS NULL AND metadata IS NOT NULL AND jsonb_exists(metadata::jsonb, 'purchase_order_id')"
         );
     }
 
