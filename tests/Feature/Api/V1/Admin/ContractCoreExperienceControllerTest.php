@@ -83,7 +83,7 @@ class ContractCoreExperienceControllerTest extends TestCase
 
         $indexResponse->assertOk();
         $indexResponse->assertJsonPath('success', true);
-        $contractIds = collect($indexResponse->json('data'))->pluck('id')->all();
+        $contractIds = collect($indexResponse->json('data.data'))->pluck('id')->all();
         $this->assertContains($contract->id, $contractIds);
         $this->assertNotContains($otherProjectContract->id, $contractIds);
 
@@ -257,7 +257,7 @@ class ContractCoreExperienceControllerTest extends TestCase
             ->getJson("/api/v1/admin/projects/{$project->id}/contracts?per_page=20");
 
         $indexResponse->assertOk();
-        $indexIds = collect($indexResponse->json('data'))->pluck('id')->all();
+        $indexIds = collect($indexResponse->json('data.data'))->pluck('id')->all();
         $this->assertContains($ownContract->id, $indexIds);
         $this->assertNotContains($otherContract->id, $indexIds);
 
@@ -281,6 +281,41 @@ class ContractCoreExperienceControllerTest extends TestCase
             ->deleteJson("/api/v1/admin/projects/{$project->id}/contracts/{$otherContract->id}");
         $otherDeleteResponse->assertNotFound();
         $this->assertNotSoftDeleted('contracts', ['id' => $otherContract->id]);
+    }
+
+    public function test_contractor_participant_can_open_contract_owned_by_current_organization(): void
+    {
+        $participantContext = AdminApiTestContext::create();
+        $ownerOrganization = Organization::factory()->verified()->create();
+        $project = Project::factory()->create([
+            'organization_id' => $ownerOrganization->id,
+            'name' => 'Participant Owned Contract Project',
+        ]);
+        $this->attachProjectParticipant($project, $participantContext->organization, ProjectOrganizationRole::CONTRACTOR);
+
+        $ownerAsContractor = $this->createContractor(
+            $participantContext->organization,
+            'Owner Organization Counterparty',
+            $ownerOrganization
+        );
+        $contract = $this->createContract($participantContext->organization, $project, $ownerAsContractor, [
+            'number' => 'PARTICIPANT-OWNED',
+        ]);
+        $this->allowAdminAccess();
+
+        $indexResponse = $this->withHeaders($participantContext->authHeaders())
+            ->getJson("/api/v1/admin/projects/{$project->id}/contracts?per_page=20");
+
+        $indexResponse->assertOk();
+        $indexIds = collect($indexResponse->json('data.data'))->pluck('id')->all();
+        $this->assertContains($contract->id, $indexIds);
+
+        $showResponse = $this->withHeaders($participantContext->authHeaders())
+            ->getJson("/api/v1/admin/projects/{$project->id}/contracts/{$contract->id}");
+
+        $showResponse->assertOk();
+        $showResponse->assertJsonPath('data.id', $contract->id);
+        $showResponse->assertJsonPath('data.organization_id', $participantContext->organization->id);
     }
 
     private function createContractor(

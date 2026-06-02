@@ -255,7 +255,11 @@ class ContractController extends Controller
         
         // Проверка для подрядчика: может видеть только свои контракты
         $projectContext = ProjectContextMiddleware::getProjectContext($request);
-        if ($projectContext && in_array($projectContext->role->value, ['contractor', 'subcontractor'])) {
+        if (
+            $projectContext
+            && (int) $contractData->organization_id !== (int) $organizationId
+            && in_array($projectContext->role->value, ['contractor', 'subcontractor'])
+        ) {
             // Для подрядчика: Contractor находится в базе организации ЗАКАЗЧИКА (contract_organization_id)
             // с source_organization_id = организация подрядчика (projectContext->organizationId)
             $contractor = \App\Models\Contractor::where('organization_id', $contractData->organization_id)
