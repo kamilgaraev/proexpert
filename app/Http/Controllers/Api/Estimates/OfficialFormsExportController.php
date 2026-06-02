@@ -6,14 +6,15 @@ use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\OfficialFormsExportService;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
+use App\Services\Contract\ContractAccessService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
-use Illuminate\Support\Facades\Storage;
 
 class OfficialFormsExportController extends Controller
 {
     public function __construct(
-        protected OfficialFormsExportService $exportService
+        protected OfficialFormsExportService $exportService,
+        protected ContractAccessService $contractAccessService
     ) {}
 
     public function exportKS2(Request $request, int $actId): Response
@@ -22,12 +23,9 @@ class OfficialFormsExportController extends Controller
             'format' => 'required|in:xlsx,pdf',
         ]);
 
-        $act = ContractPerformanceAct::with([
-            'contract.contractor',
-            'contract.project.organization',
-            'contract.organization',
-            'completedWorks.workType.measurementUnit'
-        ])->findOrFail($actId);
+        $act = $this->resolveAccessibleAct($request, $actId, [
+            'completedWorks.workType.measurementUnit',
+        ]);
         $contract = $act->contract;
 
         $format = $request->input('format', 'xlsx');
@@ -54,12 +52,9 @@ class OfficialFormsExportController extends Controller
             'format' => 'required|in:xlsx,pdf',
         ]);
 
-        $act = ContractPerformanceAct::with([
-            'contract.contractor',
-            'contract.project.organization',
-            'contract.organization',
-            'contract.estimate'
-        ])->findOrFail($actId);
+        $act = $this->resolveAccessibleAct($request, $actId, [
+            'contract.estimate',
+        ]);
         $contract = $act->contract;
 
         $format = $request->input('format', 'xlsx');
@@ -86,13 +81,10 @@ class OfficialFormsExportController extends Controller
             'format' => 'required|in:xlsx,pdf',
         ]);
 
-        $act = ContractPerformanceAct::with([
-            'contract.contractor',
-            'contract.project.organization',
-            'contract.organization',
+        $act = $this->resolveAccessibleAct($request, $actId, [
             'contract.estimate',
-            'completedWorks.workType.measurementUnit'
-        ])->findOrFail($actId);
+            'completedWorks.workType.measurementUnit',
+        ]);
         $contract = $act->contract;
 
         $format = $request->input('format', 'xlsx');
@@ -126,5 +118,30 @@ class OfficialFormsExportController extends Controller
             ->header('Content-Type', 'application/zip')
             ->header('Content-Disposition', "attachment; filename=\"{$zipFilename}\"");
     }
-}
 
+    private function resolveAccessibleAct(Request $request, int $actId, array $relations = []): ContractPerformanceAct
+    {
+        $act = ContractPerformanceAct::with(array_merge([
+            'contract.contractor',
+            'contract.project.organization',
+            'contract.organization',
+        ], $relations))->findOrFail($actId);
+
+        $organizationId = $this->getOrganizationId($request);
+
+        if (!$organizationId || !$act->contract || !$this->contractAccessService->canAccess($act->contract, $organizationId)) {
+            abort(404);
+        }
+
+        return $act;
+    }
+
+    private function getOrganizationId(Request $request): ?int
+    {
+        $organization = $request->attributes->get('current_organization');
+
+        return $organization?->id
+            ?? $request->user()?->organization_id
+            ?? $request->user()?->current_organization_id;
+    }
+}

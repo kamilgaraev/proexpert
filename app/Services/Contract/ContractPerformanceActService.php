@@ -7,7 +7,6 @@ use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Models\File;
 use App\Repositories\Interfaces\ContractPerformanceActRepositoryInterface;
-use App\Repositories\Interfaces\ContractRepositoryInterface;
 use App\Services\Logging\LoggingService;
 use App\Services\Storage\FileService;
 use Exception;
@@ -19,7 +18,7 @@ class ContractPerformanceActService
 {
     protected ContractPerformanceActRepositoryInterface $actRepository;
 
-    protected ContractRepositoryInterface $contractRepository;
+    protected ContractAccessService $contractAccessService;
 
     protected LoggingService $logging;
 
@@ -27,19 +26,19 @@ class ContractPerformanceActService
 
     public function __construct(
         ContractPerformanceActRepositoryInterface $actRepository,
-        ContractRepositoryInterface $contractRepository,
+        ContractAccessService $contractAccessService,
         LoggingService $logging,
         FileService $fileService
     ) {
         $this->actRepository = $actRepository;
-        $this->contractRepository = $contractRepository;
+        $this->contractAccessService = $contractAccessService;
         $this->logging = $logging;
         $this->fileService = $fileService;
     }
 
     protected function getContractOrFail(int $contractId, int $organizationId, ?int $projectId = null): Contract
     {
-        $contract = $this->contractRepository->findAccessible($contractId, $organizationId);
+        $contract = $this->contractAccessService->findAccessible($contractId, $organizationId, $projectId);
         if (! $contract) {
             throw new Exception('Contract not found or does not belong to the organization.');
         }

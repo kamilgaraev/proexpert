@@ -9,6 +9,7 @@ use App\Models\Contract;
 use App\Models\CompletedWork;
 use App\Models\PerformanceActLine;
 use App\Exceptions\BusinessLogicException;
+use App\Services\Contract\ContractAccessService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -18,7 +19,8 @@ use Illuminate\Database\Eloquent\Collection;
 class ActReportService
 {
     public function __construct(
-        private readonly ActReportWorkflowService $workflowService
+        private readonly ActReportWorkflowService $workflowService,
+        private readonly ContractAccessService $contractAccessService
     ) {
     }
 
@@ -68,8 +70,8 @@ class ActReportService
             'completedWorks',
             'lines',
             'files',
-        ])->whereHas('contract', function ($q) use ($organizationId) {
-            $q->where('organization_id', $organizationId);
+        ])->whereHas('contract', function (Builder $q) use ($organizationId): void {
+            $this->contractAccessService->applyAccessibleScope($q, $organizationId);
         });
 
         $this->applyFilters($query, $filters);
@@ -228,9 +230,7 @@ class ActReportService
      */
     protected function validateContract(int $organizationId, int $contractId): Contract
     {
-        $contract = Contract::where('id', $contractId)
-            ->where('organization_id', $organizationId)
-            ->first();
+        $contract = $this->contractAccessService->findAccessible($contractId, $organizationId);
 
         if (!$contract) {
             throw new BusinessLogicException(trans_message('act_reports.contract_not_found'), 404);

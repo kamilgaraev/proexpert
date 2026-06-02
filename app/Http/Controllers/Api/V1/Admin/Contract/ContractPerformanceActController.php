@@ -11,7 +11,7 @@ use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceA
 use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActResource;
 use App\Http\Responses\AdminResponse;
 use App\Models\ContractPerformanceAct;
-use App\Models\Organization;
+use App\Services\Contract\ContractAccessService;
 use App\Services\Contract\ContractPerformanceActService;
 use App\Services\Storage\FileService;
 use Exception;
@@ -26,7 +26,8 @@ class ContractPerformanceActController extends Controller
     public function __construct(
         protected ContractPerformanceActService $actService,
         protected OfficialFormsExportService $officialExportService,
-        protected FileService $fileService
+        protected FileService $fileService,
+        protected ContractAccessService $contractAccessService
     ) {
     }
 
@@ -238,20 +239,19 @@ class ContractPerformanceActController extends Controller
         $actId = $this->getRequiredRouteInt($request, 'performance_act');
 
         try {
-            $organizationId = $this->getOrganizationId($request);
-            $act = ContractPerformanceAct::with(['contract', 'files.user'])->find($actId);
+            $act = $this->resolveAct($request, $actId);
 
-            if (!$act || (int) $act->contract->organization_id !== $organizationId) {
+            if (!$act) {
                 return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
 
-            $organization = Organization::find($organizationId);
+            $storageOrganization = $act->contract?->organization;
 
-            if (!$organization) {
+            if (!$storageOrganization) {
                 return AdminResponse::error(trans_message('contract.organization_context_missing'), Response::HTTP_BAD_REQUEST);
             }
 
-            $disk = $this->fileService->disk($organization);
+            $disk = $this->fileService->disk($storageOrganization);
             $files = $act->files->map(function ($file) use ($disk) {
                 $downloadUrl = null;
 
@@ -331,7 +331,8 @@ class ContractPerformanceActController extends Controller
         $projectId = $this->getRouteInt($request, 'project');
 
         $act = ContractPerformanceAct::with([
-            'contract',
+            'contract.organization',
+            'contract.contractor',
             'completedWorks.workType',
             'completedWorks.user',
             'files.user',
@@ -341,15 +342,15 @@ class ContractPerformanceActController extends Controller
             return null;
         }
 
-        if ((int) $act->contract->organization_id !== $organizationId) {
-            return null;
-        }
-
         if ($contractId !== null && (int) $act->contract_id !== $contractId) {
             return null;
         }
 
         if ($projectId !== null && (int) $act->project_id !== $projectId) {
+            return null;
+        }
+
+        if (!$this->contractAccessService->canAccess($act->contract, $organizationId, $projectId)) {
             return null;
         }
 

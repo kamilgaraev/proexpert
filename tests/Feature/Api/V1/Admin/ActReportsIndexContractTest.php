@@ -7,6 +7,7 @@ namespace Tests\Feature\Api\V1\Admin;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Models\Contractor;
+use App\Enums\ContractorType;
 use App\Models\Organization;
 use App\Models\Project;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -61,6 +62,40 @@ class ActReportsIndexContractTest extends TestCase
         $draftResponse->assertJsonPath('summary.total_acts', 1);
         $draftResponse->assertJsonPath('summary.approved_acts', 0);
         $draftResponse->assertJsonPath('summary.total_amount', 1000);
+    }
+
+    public function test_contractor_organization_can_read_acts_for_owner_contract(): void
+    {
+        $contractorContext = AdminApiTestContext::create();
+        $ownerOrganization = Organization::factory()->verified()->create();
+        $project = Project::factory()->create(['organization_id' => $ownerOrganization->id]);
+        $contractor = Contractor::query()->create([
+            'organization_id' => $ownerOrganization->id,
+            'source_organization_id' => $contractorContext->organization->id,
+            'name' => 'Connected contractor',
+            'contractor_type' => ContractorType::INVITED_ORGANIZATION->value,
+            'connected_at' => now(),
+        ]);
+        $contract = $this->createContract($ownerOrganization, $project, $contractor, 'ACT-CONTRACTOR');
+        $act = $this->createAct($contract, $project, 'KS-2-CONTRACTOR', 3000, true);
+
+        $indexResponse = $this->withHeaders($contractorContext->authHeaders())
+            ->getJson('/api/v1/admin/act-reports?' . http_build_query([
+                'contract_id' => $contract->id,
+                'per_page' => 10,
+            ]));
+
+        $indexResponse->assertOk();
+        $indexResponse->assertJsonPath('success', true);
+        $indexResponse->assertJsonPath('data.0.id', $act->id);
+        $indexResponse->assertJsonPath('summary.total_acts', 1);
+
+        $showResponse = $this->withHeaders($contractorContext->authHeaders())
+            ->getJson("/api/v1/admin/act-reports/{$act->id}");
+
+        $showResponse->assertOk();
+        $showResponse->assertJsonPath('success', true);
+        $showResponse->assertJsonPath('data.id', $act->id);
     }
 
     private function createContract(

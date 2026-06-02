@@ -7,6 +7,7 @@ namespace Tests\Feature\Api\V1\Admin;
 use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\ContractPerformanceAct;
+use App\Enums\ContractorType;
 use App\Models\File;
 use App\Models\Organization;
 use App\Models\PersonalFile;
@@ -129,6 +130,39 @@ class ActFileControllerWorkflowTest extends TestCase
         $this->assertSame('act binary content', $downloadResponse->streamedContent());
     }
 
+    public function test_contractor_organization_can_list_files_for_owner_contract_act(): void
+    {
+        $contractorContext = AdminApiTestContext::create();
+        $ownerOrganization = Organization::factory()->verified()->create();
+        $ownerUser = User::factory()->create(['current_organization_id' => $ownerOrganization->id]);
+        [$organization, $user, $act] = $this->createActFixture(
+            $ownerOrganization,
+            $ownerUser,
+            $contractorContext->organization
+        );
+        $file = File::query()->create([
+            'organization_id' => $organization->id,
+            'fileable_id' => $act->id,
+            'fileable_type' => ContractPerformanceAct::class,
+            'user_id' => $user->id,
+            'name' => 'act-scan.pdf',
+            'original_name' => 'act-scan.pdf',
+            'path' => "org-{$organization->id}/acts/{$act->id}/documents/act-scan.pdf",
+            'mime_type' => 'application/pdf',
+            'size' => 18,
+            'disk' => 's3',
+            'type' => 'document',
+            'category' => 'act_document',
+        ]);
+
+        $response = $this->withHeaders($contractorContext->authHeaders())
+            ->getJson("/api/v1/admin/act-reports/{$act->id}/files");
+
+        $response->assertOk();
+        $response->assertJsonPath('success', true);
+        $response->assertJsonPath('data.0.id', $file->id);
+    }
+
     public function test_act_file_copy_to_personal_storage_does_not_create_record_when_storage_copy_fails(): void
     {
         $context = AdminApiTestContext::create();
@@ -167,12 +201,21 @@ class ActFileControllerWorkflowTest extends TestCase
         $this->assertSame(0, PersonalFile::query()->where('user_id', $context->user->id)->count());
     }
 
-    private function createActFixture(Organization $organization, User $user): array
+    private function createActFixture(
+        Organization $organization,
+        User $user,
+        ?Organization $contractorOrganization = null
+    ): array
     {
         $project = Project::factory()->create(['organization_id' => $organization->id]);
         $contractor = Contractor::query()->create([
             'organization_id' => $organization->id,
+            'source_organization_id' => $contractorOrganization?->id,
             'name' => 'Contractor',
+            'contractor_type' => $contractorOrganization
+                ? ContractorType::INVITED_ORGANIZATION->value
+                : ContractorType::MANUAL->value,
+            'connected_at' => $contractorOrganization ? now() : null,
         ]);
         $contract = Contract::query()->create([
             'organization_id' => $organization->id,

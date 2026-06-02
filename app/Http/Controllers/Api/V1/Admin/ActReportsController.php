@@ -22,6 +22,7 @@ use App\Services\Acting\ActingPolicyResolver;
 use App\Services\Acting\KS3SummaryService;
 use App\Services\ActReport\ActReportService;
 use App\Services\ActReport\ActReportWorkflowService;
+use App\Services\Contract\ContractAccessService;
 use App\Services\Export\ExcelExporterService;
 use App\Services\Storage\FileService;
 use App\Services\Workflow\WorkflowGuardService;
@@ -58,7 +59,8 @@ class ActReportsController extends Controller
         protected ActingAvailabilityService $actingAvailabilityService,
         protected KS3SummaryService $ks3SummaryService,
         protected ActingActWizardService $actingActWizardService,
-        protected ActReportWorkflowService $workflowService
+        protected ActReportWorkflowService $workflowService,
+        protected ContractAccessService $contractAccessService
     ) {
         $this->middleware('auth:api_admin');
         $this->middleware('organization.context');
@@ -394,7 +396,9 @@ class ActReportsController extends Controller
     {
         $organizationId = $this->getCurrentOrganizationId($request);
 
-            if ($act->contract->organization_id !== $organizationId) {
+        $act->loadMissing('contract.contractor');
+
+        if (!$act->contract || !$this->contractAccessService->canAccess($act->contract, $organizationId)) {
             throw new BusinessLogicException(
                 trans_message('act_reports.access_denied'),
                 403
@@ -416,10 +420,7 @@ class ActReportsController extends Controller
 
     protected function getOrganizationContractOrFail(int $organizationId, int $contractId): Contract
     {
-        $contract = Contract::query()
-            ->where('id', $contractId)
-            ->where('organization_id', $organizationId)
-            ->first();
+        $contract = $this->contractAccessService->findAccessible($contractId, $organizationId);
 
         if (!$contract) {
             throw new BusinessLogicException(trans_message('act_reports.contract_not_found'), 404);
@@ -660,6 +661,8 @@ class ActReportsController extends Controller
             $file = $this->storeActFile($act, $data['file'], $request, 'act_document', $data['description'] ?? null);
 
             return AdminResponse::success($this->formatActFile($file), trans_message('act_reports.file_uploaded'), 201);
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (\Throwable $e) {
             Log::error('act_reports.file_upload_failed', [
                 'act_id' => $act instanceof ContractPerformanceAct ? $act->id : $act,
@@ -684,6 +687,8 @@ class ActReportsController extends Controller
                     ->map(fn (File $file): array => $this->formatActFile($file))
                     ->values()
             );
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode());
         } catch (\Throwable $e) {
             return AdminResponse::error(trans_message('act_reports.load_failed'), 500);
         }
