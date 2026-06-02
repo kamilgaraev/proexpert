@@ -51,6 +51,9 @@ final class WarehouseDashboardService
         ];
 
         $lowStock = $stock->filter(static fn (array $item): bool => (bool) ($item['is_low_stock'] ?? false))->values();
+        $missingLocationCount = $stock
+            ->filter(static fn (array $item): bool => empty($item['location_code']))
+            ->count();
         $topMaterials = $lowStock
             ->sortBy(static fn (array $item): float => (float) ($item['available_quantity'] ?? 0))
             ->take(5)
@@ -116,6 +119,20 @@ final class WarehouseDashboardService
             ->where('warehouse_id', $warehouseId)
             ->where('status', ProjectMaterialDeliveryStatusEnum::PROBLEM->value)
             ->count();
+        $reservedQuantity = (float) $stock->sum(
+            static fn (array $item): float => (float) ($item['reserved_quantity'] ?? 0)
+        );
+        $signals = [
+            'low_stock' => $lowStock->count(),
+            'blocked_tasks' => $blockedTasksCount,
+            'expiring_reservations' => $expiringReservationsCount,
+            'overdue_material_requests' => $requests['overdue_material'],
+            'urgent_material_requests' => $requests['urgent_material'],
+            'purchase_orders_due' => $procurement['purchase_orders_due'],
+            'problem_deliveries' => $problemDeliveriesCount,
+            'active_inventory' => $activeInventoriesCount,
+            'missing_locations' => $missingLocationCount,
+        ];
 
         return [
             'stats' => [
@@ -123,7 +140,7 @@ final class WarehouseDashboardService
                 'total_value' => (float) $stock->sum(static fn (array $item): float => (float) ($item['total_value'] ?? 0)),
                 'unique_items' => $stock->count(),
                 'low_stock_items' => $lowStock->count(),
-                'reserved_quantity' => (float) $stock->sum(static fn (array $item): float => (float) ($item['reserved_quantity'] ?? 0)),
+                'reserved_quantity' => $reservedQuantity,
                 'active_tasks' => $activeTasksCount,
                 'active_reservations' => $activeReservationsCount,
                 'active_inventories' => $activeInventoriesCount,
@@ -164,6 +181,122 @@ final class WarehouseDashboardService
                 'overdue_material_requests' => $requests['overdue_material'],
                 'problem_deliveries' => $problemDeliveriesCount,
             ],
+            'operational_queue' => $this->buildOperationalQueue($signals),
+            'attention' => $this->buildAttention($signals),
+            'workload' => [
+                'urgent_total' => $blockedTasksCount + $problemDeliveriesCount + $requests['overdue_material'],
+                'active_total' => $activeTasksCount + $activeDeliveriesCount + $requests['pending_material'],
+                'blocked_total' => $blockedTasksCount + $problemDeliveriesCount,
+                'today_total' => $procurement['purchase_orders_due'] + $expiringReservationsCount + $activeInventoriesCount,
+            ],
+            'storage_health' => [
+                'zones_count' => $zonesCount,
+                'missing_location_count' => $missingLocationCount,
+                'low_stock_count' => $lowStock->count(),
+                'reserved_quantity' => $reservedQuantity,
+                'total_positions' => (float) $stock->sum(static fn (array $item): float => (float) ($item['total_quantity'] ?? 0)),
+                'total_value' => (float) $stock->sum(static fn (array $item): float => (float) ($item['total_value'] ?? 0)),
+            ],
+            'quick_filters' => [
+                'stock' => [
+                    'low_stock' => $lowStock->count(),
+                    'missing_locations' => $missingLocationCount,
+                    'reserved_quantity' => $reservedQuantity,
+                ],
+                'tasks' => [
+                    'active' => $activeTasksCount,
+                    'blocked' => $blockedTasksCount,
+                ],
+                'requests' => [
+                    'pending' => $requests['pending_material'],
+                    'urgent' => $requests['urgent_material'],
+                    'overdue' => $requests['overdue_material'],
+                ],
+                'procurement' => [
+                    'pending_purchase_requests' => $procurement['pending_purchase_requests'],
+                    'purchase_orders_due' => $procurement['purchase_orders_due'],
+                ],
+                'deliveries' => [
+                    'active' => $activeDeliveriesCount,
+                    'problem' => $problemDeliveriesCount,
+                ],
+            ],
+        ];
+    }
+
+    /**
+     * @param array<string, int> $signals
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function buildOperationalQueue(array $signals): array
+    {
+        $queue = [
+            $this->queueItem('blocked_tasks', 'critical', $signals['blocked_tasks'], 'open_blocked_tasks', true),
+            $this->queueItem('problem_deliveries', 'critical', $signals['problem_deliveries'], 'open_problem_deliveries', true),
+            $this->queueItem(
+                'overdue_material_requests',
+                'critical',
+                $signals['overdue_material_requests'],
+                'open_overdue_requests',
+                true
+            ),
+            $this->queueItem('low_stock', 'warning', $signals['low_stock'], 'open_low_stock'),
+            $this->queueItem('purchase_orders_due', 'warning', $signals['purchase_orders_due'], 'open_due_purchase_orders'),
+            $this->queueItem('urgent_material_requests', 'warning', $signals['urgent_material_requests'], 'open_urgent_requests'),
+            $this->queueItem('expiring_reservations', 'warning', $signals['expiring_reservations'], 'open_expiring_reservations'),
+            $this->queueItem('missing_locations', 'warning', $signals['missing_locations'], 'open_missing_locations'),
+            $this->queueItem('active_inventory', 'info', $signals['active_inventory'], 'open_inventory'),
+        ];
+
+        return collect($queue)
+            ->filter(static fn (array $item): bool => $item['count'] > 0)
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function queueItem(
+        string $kind,
+        string $severity,
+        int $count,
+        string $actionCode,
+        bool $isBlocking = false
+    ): array {
+        return [
+            'kind' => $kind,
+            'severity' => $severity,
+            'count' => $count,
+            'action_code' => $actionCode,
+            'is_blocking' => $isBlocking,
+        ];
+    }
+
+    /**
+     * @param array<string, int> $signals
+     *
+     * @return array<string, int|bool>
+     */
+    private function buildAttention(array $signals): array
+    {
+        $critical = $signals['blocked_tasks']
+            + $signals['problem_deliveries']
+            + $signals['overdue_material_requests'];
+        $warning = $signals['low_stock']
+            + $signals['purchase_orders_due']
+            + $signals['urgent_material_requests']
+            + $signals['expiring_reservations']
+            + $signals['missing_locations'];
+        $info = $signals['active_inventory'];
+
+        return [
+            'critical' => $critical,
+            'warning' => $warning,
+            'info' => $info,
+            'total' => $critical + $warning + $info,
+            'has_critical' => $critical > 0,
         ];
     }
 
