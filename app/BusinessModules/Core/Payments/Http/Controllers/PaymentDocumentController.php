@@ -23,6 +23,9 @@ use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use App\Http\Responses\AdminResponse;
 use App\Models\Contract;
+use App\Rules\ProjectAccessibleRule;
+use App\Services\Contract\ContractAccessService;
+use Closure;
 
 use function trans_message;
 
@@ -126,12 +129,17 @@ class PaymentDocumentController extends Controller
                 'project_id' => [
                     'nullable',
                     'integer',
-                    Rule::exists('projects', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                    new ProjectAccessibleRule(),
                 ],
                 'contract_id' => [
                     'nullable',
                     'integer',
-                    Rule::exists('contracts', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
+                    $this->accessibleContractRule(
+                        $organizationId,
+                        $request->filled('project_id') && is_numeric($request->input('project_id'))
+                            ? (int) $request->input('project_id')
+                            : null
+                    ),
                 ],
                 'purchase_order_id' => [
                     'nullable',
@@ -180,6 +188,22 @@ class PaymentDocumentController extends Controller
 
             return AdminResponse::error(trans_message('payments.documents.load_error'), 500);
         }
+    }
+
+    private function accessibleContractRule(int $organizationId, ?int $projectId = null): Closure
+    {
+        return function (string $attribute, mixed $value, Closure $fail) use ($organizationId, $projectId): void {
+            if ($value === null || $value === '') {
+                return;
+            }
+
+            if (
+                !is_numeric($value)
+                || app(ContractAccessService::class)->findAccessible((int) $value, $organizationId, $projectId) === null
+            ) {
+                $fail(trans_message('contract.contract_not_found'));
+            }
+        };
     }
 
     /**
