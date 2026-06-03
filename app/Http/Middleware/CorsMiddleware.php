@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Http\Exceptions\PostTooLargeException;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Config;
@@ -199,6 +200,7 @@ class CorsMiddleware
                 $e instanceof \Illuminate\Validation\ValidationException ||
                 $e instanceof \Illuminate\Auth\AuthenticationException ||
                 $e instanceof \Illuminate\Auth\Access\AuthorizationException ||
+                $e instanceof PostTooLargeException ||
                 $e instanceof \InvalidArgumentException) { // Для ошибок конфигурации (например, guard не определён)
                 
                 // Сохраняем CORS заголовки в запросе для Handler
