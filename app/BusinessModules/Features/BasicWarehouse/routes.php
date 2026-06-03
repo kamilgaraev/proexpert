@@ -236,6 +236,9 @@ Route::middleware(AdminRouteStack::middleware())
             Route::post('/{deliveryId}/ship', [ProjectMaterialDeliveryController::class, 'ship'])
                 ->whereNumber('deliveryId')
                 ->name('ship');
+            Route::post('/{deliveryId}/receive', [ProjectMaterialDeliveryController::class, 'receive'])
+                ->whereNumber('deliveryId')
+                ->name('receive');
             Route::post('/{deliveryId}/cancel', [ProjectMaterialDeliveryController::class, 'cancel'])
                 ->whereNumber('deliveryId')
                 ->name('cancel');

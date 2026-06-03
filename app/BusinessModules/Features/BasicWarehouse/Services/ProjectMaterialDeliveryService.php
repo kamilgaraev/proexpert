@@ -16,6 +16,11 @@ use Illuminate\Support\Facades\DB;
 
 class ProjectMaterialDeliveryService
 {
+    public function __construct(
+        private readonly ProjectWarehouseService $projectWarehouseService
+    ) {
+    }
+
     public function createFromAllocation(
         WarehouseProjectAllocation $allocation,
         User $user,
@@ -166,11 +171,23 @@ class ProjectMaterialDeliveryService
             }
 
             $fromStatus = $delivery->status;
-            $delivery->shipped_quantity = $newShippedQuantity;
-            $delivery->status = ProjectMaterialDeliveryStatusEnum::IN_TRANSIT;
-            $delivery->shipped_at = $delivery->shipped_at ?? now();
-            $delivery->responsible_user_id = $data['responsible_user_id'] ?? $delivery->responsible_user_id ?? $user->id;
-            $delivery->notes = $data['notes'] ?? $delivery->notes;
+            $movement = $this->projectWarehouseService->shipToProject(
+                $delivery,
+                $user,
+                $quantity,
+                isset($data['responsible_user_id']) ? (int) $data['responsible_user_id'] : null,
+                $data['notes'] ?? null
+            );
+
+            $delivery->forceFill([
+                'shipped_quantity' => $newShippedQuantity,
+                'outbound_movement_id' => $movement->id,
+                'project_warehouse_id' => $movement->to_warehouse_id,
+                'status' => ProjectMaterialDeliveryStatusEnum::IN_TRANSIT,
+                'shipped_at' => $delivery->shipped_at ?? now(),
+                'responsible_user_id' => $data['responsible_user_id'] ?? $delivery->responsible_user_id ?? $user->id,
+                'notes' => $data['notes'] ?? $delivery->notes,
+            ]);
             $this->assertDeliveryCanBeSaved($delivery);
             $delivery->save();
 
@@ -198,15 +215,20 @@ class ProjectMaterialDeliveryService
             }
 
             $fromStatus = $delivery->status;
-            $delivery->accepted_quantity = $newAcceptedQuantity;
-            $delivery->receiver_user_id = $user->id;
-            $delivery->delivered_at = $delivery->delivered_at ?? now();
-            $delivery->accepted_at = $newAcceptedQuantity >= (float) $delivery->shipped_quantity ? now() : null;
-            $delivery->status = $newAcceptedQuantity >= (float) $delivery->shipped_quantity
-                ? ProjectMaterialDeliveryStatusEnum::ACCEPTED
-                : ProjectMaterialDeliveryStatusEnum::PARTIALLY_DELIVERED;
-            $delivery->notes = $notes ?? $delivery->notes;
-            $delivery->save();
+            $movement = $this->projectWarehouseService->receiveOnProject($delivery, $user, $quantity, $notes);
+
+            $delivery->forceFill([
+                'accepted_quantity' => $newAcceptedQuantity,
+                'inbound_movement_id' => $movement->id,
+                'project_warehouse_id' => $movement->warehouse_id,
+                'receiver_user_id' => $user->id,
+                'delivered_at' => $delivery->delivered_at ?? now(),
+                'accepted_at' => $newAcceptedQuantity >= (float) $delivery->shipped_quantity ? now() : null,
+                'status' => $newAcceptedQuantity >= (float) $delivery->shipped_quantity
+                    ? ProjectMaterialDeliveryStatusEnum::ACCEPTED
+                    : ProjectMaterialDeliveryStatusEnum::PARTIALLY_DELIVERED,
+                'notes' => $notes ?? $delivery->notes,
+            ])->save();
 
             $this->recordEvent($delivery, $user, 'received', $fromStatus, $delivery->status, $quantity, $notes);
 

@@ -34,7 +34,7 @@ class ProjectMaterialDeliveryController extends Controller
 
             $deliveries = ProjectMaterialDelivery::query()
                 ->where('organization_id', $organizationId)
-                ->with(['project', 'material.measurementUnit', 'warehouse', 'latestEvent'])
+                ->with(['project', 'material.measurementUnit', 'warehouse', 'projectWarehouse', 'latestEvent'])
                 ->when(!$user->isOrganizationAdmin($organizationId), function ($query) use ($user): void {
                     $query->whereHas('project.users', function ($usersQuery) use ($user): void {
                         $usersQuery->where('users.id', $user->id);
@@ -94,7 +94,7 @@ class ProjectMaterialDeliveryController extends Controller
     {
         try {
             $delivery = $this->findDeliveryForUser($request, $deliveryId)
-                ->load(['project', 'material.measurementUnit', 'warehouse', 'responsibleUser', 'receiverUser', 'events.user']);
+                ->load(['project', 'material.measurementUnit', 'warehouse', 'projectWarehouse', 'responsibleUser', 'receiverUser', 'events.user']);
 
             return MobileResponse::success(new ProjectMaterialDeliveryResource($delivery));
         } catch (\Throwable $exception) {
@@ -120,7 +120,7 @@ class ProjectMaterialDeliveryController extends Controller
             $delivery = $this->findDeliveryForUser($request, $deliveryId);
             $updated = $this->deliveryService
                 ->receive($delivery, $request->user(), (float) $validated['quantity'], $validated['notes'] ?? null)
-                ->load(['project', 'material.measurementUnit', 'warehouse', 'latestEvent']);
+                ->load(['project', 'material.measurementUnit', 'warehouse', 'projectWarehouse', 'latestEvent']);
 
             return MobileResponse::success(
                 new ProjectMaterialDeliveryResource($updated),

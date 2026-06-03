@@ -33,7 +33,7 @@ class ProjectMaterialDeliveryController extends Controller
 
             $deliveries = ProjectMaterialDelivery::query()
                 ->where('organization_id', $organizationId)
-                ->with(['project', 'material.measurementUnit', 'warehouse', 'latestEvent'])
+                ->with(['project', 'material.measurementUnit', 'warehouse', 'projectWarehouse', 'latestEvent'])
                 ->when($request->integer('project_id') > 0, fn ($query) => $query->where('project_id', $request->integer('project_id')))
                 ->when($request->integer('material_id') > 0, fn ($query) => $query->where('material_id', $request->integer('material_id')))
                 ->when($request->filled('status'), fn ($query) => $query->where('status', $request->string('status')->toString()))
@@ -90,6 +90,7 @@ class ProjectMaterialDeliveryController extends Controller
                     'project',
                     'material.measurementUnit',
                     'warehouse',
+                    'projectWarehouse',
                     'responsibleUser',
                     'receiverUser',
                     'latestEvent',
@@ -120,7 +121,7 @@ class ProjectMaterialDeliveryController extends Controller
 
             $delivery = $this->findDelivery($request, $deliveryId);
             $updated = $this->deliveryService->ship($delivery, $request->user(), $validated)
-                ->load(['project', 'material.measurementUnit', 'warehouse', 'latestEvent']);
+                ->load(['project', 'material.measurementUnit', 'warehouse', 'projectWarehouse', 'latestEvent']);
 
             return AdminResponse::success(
                 new ProjectMaterialDeliveryResource($updated),
@@ -142,6 +143,39 @@ class ProjectMaterialDeliveryController extends Controller
         }
     }
 
+    public function receive(Request $request, int $deliveryId): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'quantity' => ['required', 'numeric', 'min:0.001'],
+                'notes' => ['nullable', 'string'],
+            ]);
+
+            $delivery = $this->findDelivery($request, $deliveryId);
+            $updated = $this->deliveryService
+                ->receive($delivery, $request->user(), (float) $validated['quantity'], $validated['notes'] ?? null)
+                ->load(['project', 'material.measurementUnit', 'warehouse', 'projectWarehouse', 'latestEvent']);
+
+            return AdminResponse::success(
+                new ProjectMaterialDeliveryResource($updated),
+                trans_message('basic_warehouse.project_material_deliveries.received')
+            );
+        } catch (ValidationException $exception) {
+            return AdminResponse::error(trans_message('errors.validation_failed'), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            Log::error('warehouse.project_material_deliveries.receive.error', [
+                'organization_id' => $request->user()?->current_organization_id,
+                'user_id' => $request->user()?->id,
+                'delivery_id' => $deliveryId,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('basic_warehouse.project_material_deliveries.errors.receive_failed'), 500);
+        }
+    }
+
     public function cancel(Request $request, int $deliveryId): JsonResponse
     {
         try {
@@ -151,7 +185,7 @@ class ProjectMaterialDeliveryController extends Controller
 
             $delivery = $this->findDelivery($request, $deliveryId);
             $updated = $this->deliveryService->cancel($delivery, $request->user(), $validated['notes'] ?? null)
-                ->load(['project', 'material.measurementUnit', 'warehouse', 'latestEvent']);
+                ->load(['project', 'material.measurementUnit', 'warehouse', 'projectWarehouse', 'latestEvent']);
 
             return AdminResponse::success(
                 new ProjectMaterialDeliveryResource($updated),

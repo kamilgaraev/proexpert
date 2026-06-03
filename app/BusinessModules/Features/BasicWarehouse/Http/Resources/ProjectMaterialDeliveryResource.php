@@ -55,11 +55,17 @@ class ProjectMaterialDeliveryResource extends JsonResource
                 'id' => $delivery->warehouse->id,
                 'name' => $delivery->warehouse->name,
             ] : null),
+            'project_warehouse' => $this->whenLoaded('projectWarehouse', fn (): ?array => $delivery->projectWarehouse ? [
+                'id' => $delivery->projectWarehouse->id,
+                'name' => $delivery->projectWarehouse->name,
+                'warehouse_type' => $delivery->projectWarehouse->warehouse_type,
+            ] : null),
             'linked_entities' => [
                 'allocation_id' => $delivery->warehouse_project_allocation_id,
                 'site_request_id' => $delivery->site_request_id,
                 'purchase_request_id' => $delivery->purchase_request_id,
                 'purchase_order_id' => $delivery->purchase_order_id,
+                'project_warehouse_id' => $delivery->project_warehouse_id,
                 'outbound_movement_id' => $delivery->outbound_movement_id,
                 'inbound_movement_id' => $delivery->inbound_movement_id,
             ],
