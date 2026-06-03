@@ -180,6 +180,29 @@ final class WarehouseCustodyFlowTest extends TestCase
         ]);
     }
 
+    public function test_mobile_issue_requires_warehouse_stock_permission(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $this->denyWarehouseStockAccess();
+        $setup = $this->createProjectWarehouseContext($context);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/mobile/warehouse/custody/issue', [
+                'project_id' => $setup['project']->id,
+                'project_warehouse_id' => $setup['projectWarehouse']->id,
+                'material_id' => $setup['material']->id,
+                'responsible_user_id' => $setup['responsibleUser']->id,
+                'quantity' => 5,
+            ]);
+
+        $response->assertStatus(403);
+        $this->assertDatabaseMissing('organization_warehouses', [
+            'warehouse_type' => OrganizationWarehouse::TYPE_CUSTODY,
+            'project_id' => $setup['project']->id,
+            'responsible_user_id' => $setup['responsibleUser']->id,
+        ]);
+    }
+
     private function createProjectWarehouseContext(AdminApiTestContext $context): array
     {
         $project = Project::factory()->create([
@@ -241,6 +264,26 @@ final class WarehouseCustodyFlowTest extends TestCase
             $mock->shouldReceive('can')->andReturn(true);
             $mock->shouldReceive('hasRole')->andReturn(true);
             $mock->shouldReceive('getUserRoleSlugs')->andReturn(['web_admin']);
+            $mock->shouldReceive('getUserRoles')->andReturnUsing(
+                static function (User $user, ?AuthorizationContext $context = null) {
+                    return $user->roleAssignments()
+                        ->where('is_active', true)
+                        ->when($context !== null, static fn ($query) => $query->where('context_id', $context->id))
+                        ->get();
+                }
+            );
+        });
+    }
+
+    private function denyWarehouseStockAccess(): void
+    {
+        $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('canAccessInterface')->andReturn(true);
+            $mock->shouldReceive('can')->andReturnUsing(
+                static fn (User $user, string $permission, ?array $context = null): bool => $permission !== 'warehouse.manage_stock'
+            );
+            $mock->shouldReceive('hasRole')->andReturn(true);
+            $mock->shouldReceive('getUserRoleSlugs')->andReturn(['foreman']);
             $mock->shouldReceive('getUserRoles')->andReturnUsing(
                 static function (User $user, ?AuthorizationContext $context = null) {
                     return $user->roleAssignments()
