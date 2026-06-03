@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\PaymentRequestService;
 use App\Http\Controllers\Controller;
@@ -250,8 +251,13 @@ class PaymentRequestController extends Controller
 
     private function validateListFilters(Request $request, int $organizationId): array
     {
-        return $request->validate([
-            'status' => ['nullable', 'string'],
+        $allowedStatuses = array_map(
+            fn (PaymentDocumentStatus $status): string => $status->value,
+            PaymentDocumentStatus::cases()
+        );
+
+        $filters = $request->validate([
+            'status' => ['nullable', 'string', Rule::in([...$allowedStatuses, 'pending'])],
             'project_id' => [
                 'nullable',
                 'integer',
@@ -265,6 +271,12 @@ class PaymentRequestController extends Controller
             'date_from' => ['nullable', 'date'],
             'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
         ]);
+
+        if (($filters['status'] ?? null) === 'pending') {
+            $filters['status'] = PaymentDocumentStatus::PENDING_APPROVAL->value;
+        }
+
+        return $filters;
     }
 
     private function buildRequestsResponse(Collection $requests, string $message): JsonResponse

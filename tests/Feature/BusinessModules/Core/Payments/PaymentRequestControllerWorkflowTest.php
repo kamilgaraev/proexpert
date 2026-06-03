@@ -106,6 +106,23 @@ class PaymentRequestControllerWorkflowTest extends TestCase
         $statisticsResponse->assertJsonPath('data.rejected_count', 1);
     }
 
+    public function test_incoming_requests_accept_pending_status_alias(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $contractor = $this->createContractor($context);
+        $pending = $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::PENDING_APPROVAL);
+        $this->createPaymentRequest($context, $contractor, PaymentDocumentStatus::APPROVED);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/payments/requests/incoming?status=pending&per_page=20');
+
+        $response->assertOk();
+        $response->assertJsonCount(1, 'data');
+        $response->assertJsonPath('data.0.id', $pending->id);
+        $response->assertJsonPath('data.0.status', PaymentDocumentStatus::PENDING_APPROVAL->value);
+    }
+
     private function createContractor(AdminApiTestContext $context): Contractor
     {
         return Contractor::query()->create([
