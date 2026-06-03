@@ -35,6 +35,10 @@ Route::middleware(AdminRouteStack::middleware())
         Route::prefix('warehouses')->name('warehouses.')->group(function () {
 
             Route::prefix('custody')->name('custody.')->middleware('authorize:warehouse.manage_stock')->group(function () {
+                Route::get('/summary', [WarehouseCustodyController::class, 'summary'])
+                    ->name('summary');
+                Route::get('/export', [WarehouseCustodyController::class, 'export'])
+                    ->name('export');
                 Route::get('/balances', [WarehouseCustodyController::class, 'balances'])
                     ->name('balances');
                 Route::post('/issue', [WarehouseCustodyController::class, 'issue'])

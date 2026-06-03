@@ -8,6 +8,7 @@ use App\BusinessModules\Features\BasicWarehouse\Http\Requests\IssueToResponsible
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\ReturnFromResponsibleRequest;
 use App\BusinessModules\Features\BasicWarehouse\Http\Resources\WarehouseCustodyBalanceResource;
 use App\BusinessModules\Features\BasicWarehouse\Http\Resources\WarehouseMovementResource;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseCustodyExportService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseCustodyService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -23,9 +24,9 @@ use function trans_message;
 final class WarehouseCustodyController extends Controller
 {
     public function __construct(
-        private readonly WarehouseCustodyService $custodyService
-    ) {
-    }
+        private readonly WarehouseCustodyService $custodyService,
+        private readonly WarehouseCustodyExportService $exportService
+    ) {}
 
     public function balances(Request $request): JsonResponse
     {
@@ -34,7 +35,8 @@ final class WarehouseCustodyController extends Controller
                 (int) $request->user()->current_organization_id,
                 $request->query('project_id') !== null ? (int) $request->query('project_id') : null,
                 $request->query('responsible_user_id') !== null ? (int) $request->query('responsible_user_id') : null,
-                $request->query('material_id') !== null ? (int) $request->query('material_id') : null
+                $request->query('material_id') !== null ? (int) $request->query('material_id') : null,
+                $request->query('search') !== null ? (string) $request->query('search') : null
             );
 
             $payload = WarehouseCustodyBalanceResource::collection($balances)->resolve($request);
@@ -46,6 +48,58 @@ final class WarehouseCustodyController extends Controller
             );
         } catch (Throwable $exception) {
             return $this->error($request, 'custody_balances', $exception, trans_message('basic_warehouse.custody.errors.load_failed'));
+        }
+    }
+
+    public function summary(Request $request): JsonResponse
+    {
+        try {
+            $payload = $this->custodyService->getSummary(
+                (int) $request->user()->current_organization_id,
+                $request->query('project_id') !== null ? (int) $request->query('project_id') : null,
+                $request->query('responsible_user_id') !== null ? (int) $request->query('responsible_user_id') : null,
+                $request->query('material_id') !== null ? (int) $request->query('material_id') : null,
+                $request->query('search') !== null ? (string) $request->query('search') : null
+            );
+
+            return $this->success(
+                $request,
+                $payload,
+                trans_message('basic_warehouse.custody.summary_loaded')
+            );
+        } catch (Throwable $exception) {
+            return $this->error($request, 'custody_summary', $exception, trans_message('basic_warehouse.custody.errors.summary_failed'));
+        }
+    }
+
+    public function export(Request $request): JsonResponse
+    {
+        try {
+            $mode = (string) $request->query('mode', 'summary');
+            $path = $this->exportService->export(
+                (int) $request->user()->current_organization_id,
+                [
+                    'project_id' => $request->query('project_id') !== null ? (int) $request->query('project_id') : null,
+                    'responsible_user_id' => $request->query('responsible_user_id') !== null ? (int) $request->query('responsible_user_id') : null,
+                    'material_id' => $request->query('material_id') !== null ? (int) $request->query('material_id') : null,
+                    'search' => $request->query('search') !== null ? (string) $request->query('search') : null,
+                ],
+                $mode
+            );
+
+            return $this->success(
+                $request,
+                [
+                    'url' => $this->exportService->temporaryUrl($path),
+                    'path' => $path,
+                    'mode' => $mode === 'detail' ? 'detail' : 'summary',
+                ],
+                trans_message('basic_warehouse.custody.exported')
+            );
+        } catch (InvalidArgumentException $exception) {
+            return $this->error($request, 'custody_export_validation', $exception, $exception->getMessage(), 422);
+        } catch (Throwable $exception) {
+            return $this->error($request, 'custody_export', $exception, trans_message('basic_warehouse.custody.errors.export_failed'));
         }
     }
 

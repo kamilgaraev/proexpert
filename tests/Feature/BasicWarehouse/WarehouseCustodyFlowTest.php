@@ -12,6 +12,8 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Material;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\Storage\FileService;
+use Illuminate\Support\Facades\Storage;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -152,7 +154,7 @@ final class WarehouseCustodyFlowTest extends TestCase
             ->assertOk();
 
         $response = $this->withHeaders($context->authHeaders())
-            ->getJson('/api/v1/admin/warehouses/custody/balances?project_id=' . $setup['project']->id);
+            ->getJson('/api/v1/admin/warehouses/custody/balances?project_id='.$setup['project']->id);
 
         $response->assertOk();
         $response->assertJsonPath('success', true);
@@ -160,6 +162,98 @@ final class WarehouseCustodyFlowTest extends TestCase
         $response->assertJsonPath('data.0.material_id', $setup['material']->id);
         $response->assertJsonPath('data.0.responsible_user_id', $setup['responsibleUser']->id);
         $response->assertJsonPath('data.0.available_quantity', 12.5);
+    }
+
+    public function test_admin_can_get_responsible_custody_summary(): void
+    {
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        $setup = $this->createProjectWarehouseContext($context);
+        $secondResponsible = $this->createResponsibleUser($context, $setup['project']);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/custody/issue', [
+                'project_id' => $setup['project']->id,
+                'project_warehouse_id' => $setup['projectWarehouse']->id,
+                'material_id' => $setup['material']->id,
+                'responsible_user_id' => $setup['responsibleUser']->id,
+                'quantity' => 12.5,
+            ])
+            ->assertOk();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/custody/issue', [
+                'project_id' => $setup['project']->id,
+                'project_warehouse_id' => $setup['projectWarehouse']->id,
+                'material_id' => $setup['material']->id,
+                'responsible_user_id' => $secondResponsible->id,
+                'quantity' => 7.5,
+            ])
+            ->assertOk();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/warehouses/custody/summary?project_id='.$setup['project']->id);
+
+        $response->assertOk();
+        $response->assertJsonPath('success', true);
+        $response->assertJsonPath('data.summary.responsible_users_count', 2);
+        $response->assertJsonPath('data.summary.positions_count', 2);
+        $response->assertJsonPath('data.summary.materials_count', 1);
+        $response->assertJsonPath('data.summary.projects_count', 1);
+        $this->assertEquals(20.0, $response->json('data.summary.total_quantity'));
+
+        $rows = collect($response->json('data.rows'))->keyBy('responsible_user_id');
+
+        $this->assertEquals(12.5, $rows->get($setup['responsibleUser']->id)['total_quantity']);
+        $this->assertEquals(1, $rows->get($setup['responsibleUser']->id)['positions_count']);
+        $this->assertEquals(7.5, $rows->get($secondResponsible->id)['total_quantity']);
+        $this->assertEquals(1, $rows->get($secondResponsible->id)['positions_count']);
+    }
+
+    public function test_admin_can_export_responsible_custody_detail_and_summary(): void
+    {
+        Storage::fake('s3');
+
+        $this->mock(FileService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('disk')->andReturn(Storage::disk('s3'));
+            $mock->shouldReceive('temporaryUrl')->andReturnUsing(
+                static fn (?string $path): string => 'https://files.local/'.basename((string) $path)
+            );
+        });
+
+        $context = AdminApiTestContext::create();
+        $this->allowAdminAccess();
+        $setup = $this->createProjectWarehouseContext($context);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/custody/issue', [
+                'project_id' => $setup['project']->id,
+                'project_warehouse_id' => $setup['projectWarehouse']->id,
+                'material_id' => $setup['material']->id,
+                'responsible_user_id' => $setup['responsibleUser']->id,
+                'quantity' => 12.5,
+            ])
+            ->assertOk();
+
+        $detailResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/warehouses/custody/export?mode=detail&responsible_user_id='.$setup['responsibleUser']->id);
+
+        $detailResponse->assertOk();
+        $detailResponse->assertJsonPath('success', true);
+        $detailResponse->assertJsonPath('data.mode', 'detail');
+        $this->assertStringContainsString('custody_detail_', $detailResponse->json('data.path'));
+        $this->assertStringEndsWith('.xlsx', $detailResponse->json('data.path'));
+
+        $summaryResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/warehouses/custody/export?mode=summary');
+
+        $summaryResponse->assertOk();
+        $summaryResponse->assertJsonPath('success', true);
+        $summaryResponse->assertJsonPath('data.mode', 'summary');
+        $this->assertStringContainsString('custody_summary_', $summaryResponse->json('data.path'));
+        $this->assertStringEndsWith('.xlsx', $summaryResponse->json('data.path'));
+
+        $this->assertCount(2, Storage::disk('s3')->allFiles());
     }
 
     public function test_admin_cannot_issue_more_than_project_stock(): void
@@ -232,7 +326,7 @@ final class WarehouseCustodyFlowTest extends TestCase
             'organization_id' => $context->organization->id,
             'project_id' => $project->id,
             'name' => 'Project warehouse',
-            'code' => 'PRJ-' . $project->id,
+            'code' => 'PRJ-'.$project->id,
             'warehouse_type' => OrganizationWarehouse::TYPE_PROJECT,
             'is_main' => false,
             'is_active' => true,
@@ -240,7 +334,7 @@ final class WarehouseCustodyFlowTest extends TestCase
         $material = Material::query()->create([
             'organization_id' => $context->organization->id,
             'name' => 'Nails',
-            'code' => 'NAILS-' . $project->id,
+            'code' => 'NAILS-'.$project->id,
             'default_price' => 10,
             'is_active' => true,
         ]);
@@ -260,6 +354,28 @@ final class WarehouseCustodyFlowTest extends TestCase
             'responsibleUser' => $responsibleUser,
             'material' => $material,
         ];
+    }
+
+    private function createResponsibleUser(AdminApiTestContext $context, Project $project): User
+    {
+        $responsibleUser = User::factory()->create([
+            'current_organization_id' => $context->organization->id,
+        ]);
+
+        $context->organization->users()->attach($responsibleUser->id, [
+            'is_owner' => false,
+            'is_active' => true,
+            'settings' => null,
+        ]);
+
+        $project->users()->attach($responsibleUser->id, [
+            'role' => 'foreman',
+            'assigned_by_user_id' => $context->user->id,
+            'is_active' => true,
+            'assigned_at' => now(),
+        ]);
+
+        return $responsibleUser;
     }
 
     private function allowAdminAccess(): void

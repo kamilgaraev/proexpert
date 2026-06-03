@@ -21,15 +21,17 @@ final class WarehouseCustodyService
     public function __construct(
         private readonly WarehouseService $warehouseService,
         private readonly ProjectWarehouseService $projectWarehouseService
-    ) {
-    }
+    ) {}
 
     public function getBalances(
         int $organizationId,
         ?int $projectId = null,
         ?int $responsibleUserId = null,
-        ?int $materialId = null
+        ?int $materialId = null,
+        ?string $search = null
     ): Collection {
+        $search = trim((string) $search);
+
         return WarehouseBalance::query()
             ->where('organization_id', $organizationId)
             ->where(static function ($query): void {
@@ -44,6 +46,24 @@ final class WarehouseCustodyService
                     ->when($responsibleUserId !== null, static fn ($scope) => $scope->where('responsible_user_id', $responsibleUserId));
             })
             ->when($materialId !== null, static fn ($query) => $query->where('material_id', $materialId))
+            ->when($search !== '', static function ($query) use ($search): void {
+                $query->where(static function ($scope) use ($search): void {
+                    $scope
+                        ->whereHas('material', static function ($materialQuery) use ($search): void {
+                            $materialQuery
+                                ->where('name', 'like', "%{$search}%")
+                                ->orWhere('code', 'like', "%{$search}%");
+                        })
+                        ->orWhereHas('warehouse.project', static function ($projectQuery) use ($search): void {
+                            $projectQuery->where('name', 'like', "%{$search}%");
+                        })
+                        ->orWhereHas('warehouse.responsibleUser', static function ($userQuery) use ($search): void {
+                            $userQuery
+                                ->where('name', 'like', "%{$search}%")
+                                ->orWhere('email', 'like', "%{$search}%");
+                        });
+                });
+            })
             ->with([
                 'warehouse.project:id,name',
                 'warehouse.responsibleUser:id,name,email',
@@ -52,6 +72,80 @@ final class WarehouseCustodyService
             ->orderByDesc('last_movement_at')
             ->orderByDesc('id')
             ->get();
+    }
+
+    public function getSummary(
+        int $organizationId,
+        ?int $projectId = null,
+        ?int $responsibleUserId = null,
+        ?int $materialId = null,
+        ?string $search = null
+    ): array {
+        $balances = $this->getBalances($organizationId, $projectId, $responsibleUserId, $materialId, $search);
+
+        $rows = $balances
+            ->groupBy(static fn (WarehouseBalance $balance): int => (int) $balance->warehouse?->responsible_user_id)
+            ->filter(static fn (Collection $group, int $responsibleId): bool => $responsibleId > 0)
+            ->map(function (Collection $group, int $responsibleId): array {
+                $firstBalance = $group->first();
+                $responsibleUser = $firstBalance?->warehouse?->responsibleUser;
+
+                $materials = $group
+                    ->groupBy('material_id')
+                    ->map(static function (Collection $materialGroup): array {
+                        $materialBalance = $materialGroup->first();
+                        $material = $materialBalance?->material;
+
+                        return [
+                            'material_id' => $material?->id,
+                            'material_name' => $material?->name,
+                            'measurement_unit' => $material?->measurementUnit?->short_name
+                                ?? $material?->measurementUnit?->name,
+                            'total_quantity' => round((float) $materialGroup->sum('available_quantity'), 4),
+                            'positions_count' => $materialGroup->count(),
+                            'projects_count' => $materialGroup
+                                ->pluck('warehouse.project_id')
+                                ->filter()
+                                ->unique()
+                                ->count(),
+                        ];
+                    })
+                    ->values()
+                    ->all();
+
+                $lastMovementAt = $group
+                    ->pluck('last_movement_at')
+                    ->filter()
+                    ->sortDesc()
+                    ->first();
+
+                return [
+                    'responsible_user_id' => $responsibleId,
+                    'responsible_user_name' => $responsibleUser?->name,
+                    'responsible_user_email' => $responsibleUser?->email,
+                    'total_quantity' => round((float) $group->sum('available_quantity'), 4),
+                    'reserved_quantity' => round((float) $group->sum('reserved_quantity'), 4),
+                    'positions_count' => $group->count(),
+                    'materials_count' => $group->pluck('material_id')->unique()->count(),
+                    'projects_count' => $group->pluck('warehouse.project_id')->filter()->unique()->count(),
+                    'last_movement_at' => $lastMovementAt?->toDateTimeString(),
+                    'materials' => $materials,
+                ];
+            })
+            ->sortBy('responsible_user_name')
+            ->values();
+
+        return [
+            'rows' => $rows->all(),
+            'summary' => [
+                'responsible_users_count' => $rows->count(),
+                'positions_count' => $balances->count(),
+                'materials_count' => $balances->pluck('material_id')->unique()->count(),
+                'projects_count' => $balances->pluck('warehouse.project_id')->filter()->unique()->count(),
+                'total_quantity' => round((float) $balances->sum('available_quantity'), 4),
+                'reserved_quantity' => round((float) $balances->sum('reserved_quantity'), 4),
+            ],
+        ];
     }
 
     public function issueToResponsible(int $organizationId, User $actor, array $data): array
@@ -112,7 +206,7 @@ final class WarehouseCustodyService
                 ->where('is_active', true)
                 ->findOrFail((int) $data['custody_warehouse_id']);
 
-            if (!$custodyWarehouse->project_id || !$custodyWarehouse->responsible_user_id) {
+            if (! $custodyWarehouse->project_id || ! $custodyWarehouse->responsible_user_id) {
                 throw new InvalidArgumentException(trans_message('basic_warehouse.custody.errors.invalid_custody_warehouse'));
             }
 
@@ -175,7 +269,7 @@ final class WarehouseCustodyService
                 $warehouse->restore();
             }
 
-            if (!$warehouse->is_active) {
+            if (! $warehouse->is_active) {
                 $warehouse->forceFill(['is_active' => true])->save();
             }
 
@@ -190,7 +284,7 @@ final class WarehouseCustodyService
                 'project' => $project->name,
                 'user' => $responsibleUser->name,
             ]),
-            'code' => 'CUST-' . $project->id . '-' . $responsibleUser->id,
+            'code' => 'CUST-'.$project->id.'-'.$responsibleUser->id,
             'warehouse_type' => OrganizationWarehouse::TYPE_CUSTODY,
             'is_main' => false,
             'is_active' => true,
@@ -204,7 +298,7 @@ final class WarehouseCustodyService
     private function markTransferMovements(array $result, string $category, int $responsibleUserId): void
     {
         foreach (['movement_out', 'movement_in'] as $key) {
-            if (!isset($result[$key]) || !$result[$key] instanceof WarehouseMovement) {
+            if (! isset($result[$key]) || ! $result[$key] instanceof WarehouseMovement) {
                 continue;
             }
 
