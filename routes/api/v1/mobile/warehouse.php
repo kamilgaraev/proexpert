@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\V1\Mobile\WarehouseScanController;
 use App\Http\Controllers\Api\V1\Mobile\WarehouseController;
 use App\Http\Controllers\Api\V1\Mobile\WarehouseTaskController;
 use App\Http\Controllers\Api\V1\Mobile\ProjectMaterialDeliveryController;
+use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseCustodyController;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.context', 'can:access-mobile-app'])->group(function () {
@@ -17,6 +18,9 @@ Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.conte
     Route::get('/warehouse/project-material-deliveries/project-stock', [ProjectMaterialDeliveryController::class, 'projectStock'])->name('warehouse.project-material-deliveries.project-stock');
     Route::get('/warehouse/project-material-deliveries/{deliveryId}', [ProjectMaterialDeliveryController::class, 'show'])->name('warehouse.project-material-deliveries.show');
     Route::post('/warehouse/project-material-deliveries/{deliveryId}/receive', [ProjectMaterialDeliveryController::class, 'receive'])->name('warehouse.project-material-deliveries.receive');
+    Route::get('/warehouse/custody/balances', [WarehouseCustodyController::class, 'balances'])->name('warehouse.custody.balances');
+    Route::post('/warehouse/custody/issue', [WarehouseCustodyController::class, 'issue'])->name('warehouse.custody.issue');
+    Route::post('/warehouse/custody/return', [WarehouseCustodyController::class, 'returnToProject'])->name('warehouse.custody.return');
     Route::post('/warehouse/operations/receipt', [WarehouseController::class, 'receipt'])->name('warehouse.operations.receipt');
     Route::post('/warehouse/operations/transfer', [WarehouseController::class, 'transfer'])->name('warehouse.operations.transfer');
     Route::post('/warehouse/scan/resolve', [WarehouseScanController::class, 'resolve'])->name('warehouse.scan.resolve');

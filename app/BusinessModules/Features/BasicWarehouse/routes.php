@@ -6,6 +6,7 @@ use App\BusinessModules\Features\BasicWarehouse\Controllers\ProjectAllocationCon
 use App\BusinessModules\Features\BasicWarehouse\Controllers\ProjectMaterialDeliveryController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehousePhotoController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseController;
+use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseCustodyController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseIdentifierController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseLogisticUnitController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseOperationsController;
@@ -32,6 +33,15 @@ Route::middleware(AdminRouteStack::middleware())
     ->group(function () {
         
         Route::prefix('warehouses')->name('warehouses.')->group(function () {
+
+            Route::prefix('custody')->name('custody.')->middleware('authorize:warehouse.manage_stock')->group(function () {
+                Route::get('/balances', [WarehouseCustodyController::class, 'balances'])
+                    ->name('balances');
+                Route::post('/issue', [WarehouseCustodyController::class, 'issue'])
+                    ->name('issue');
+                Route::post('/return', [WarehouseCustodyController::class, 'returnToProject'])
+                    ->name('return');
+            });
             
             // Управление складами
             Route::get('/', [WarehouseController::class, 'index']);
