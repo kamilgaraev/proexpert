@@ -3,6 +3,8 @@
 namespace App\BusinessModules\Features\BasicWarehouse\Models;
 
 use App\Models\Organization;
+use App\Models\Project;
+use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -21,6 +23,8 @@ class OrganizationWarehouse extends Model
 
     protected $fillable = [
         'organization_id',
+        'project_id',
+        'responsible_user_id',
         'name',
         'code',
         'address',
@@ -48,6 +52,7 @@ class OrganizationWarehouse extends Model
     const TYPE_CENTRAL = 'central';
     const TYPE_PROJECT = 'project';
     const TYPE_EXTERNAL = 'external';
+    const TYPE_CUSTODY = 'custody';
 
     /**
      * Получить организацию склада
@@ -55,6 +60,16 @@ class OrganizationWarehouse extends Model
     public function organization(): BelongsTo
     {
         return $this->belongsTo(Organization::class);
+    }
+
+    public function project(): BelongsTo
+    {
+        return $this->belongsTo(Project::class);
+    }
+
+    public function responsibleUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'responsible_user_id');
     }
 
     /**

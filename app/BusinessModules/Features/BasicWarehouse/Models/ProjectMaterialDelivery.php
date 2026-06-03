@@ -32,6 +32,7 @@ class ProjectMaterialDelivery extends Model
         'site_request_id',
         'purchase_request_id',
         'purchase_order_id',
+        'project_warehouse_id',
         'outbound_movement_id',
         'inbound_movement_id',
         'source_type',
@@ -90,6 +91,11 @@ class ProjectMaterialDelivery extends Model
     public function warehouse(): BelongsTo
     {
         return $this->belongsTo(OrganizationWarehouse::class, 'warehouse_id');
+    }
+
+    public function projectWarehouse(): BelongsTo
+    {
+        return $this->belongsTo(OrganizationWarehouse::class, 'project_warehouse_id');
     }
 
     public function allocation(): BelongsTo

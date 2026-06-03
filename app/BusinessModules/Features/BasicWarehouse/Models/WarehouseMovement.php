@@ -34,9 +34,12 @@ class WarehouseMovement extends Model
         'from_warehouse_id',
         'to_warehouse_id',
         'project_id',
+        'project_material_delivery_id',
         'user_id',
+        'related_user_id',
         'document_number',
         'reason',
+        'operation_category',
         'metadata',
         'movement_date',
     ];
@@ -55,6 +58,14 @@ class WarehouseMovement extends Model
     const TYPE_TRANSFER_OUT = 'transfer_out';
     const TYPE_ADJUSTMENT = 'adjustment';
     const TYPE_RETURN = 'return';
+
+    const CATEGORY_PROJECT_DELIVERY = 'project_delivery';
+    const CATEGORY_RESPONSIBLE_ISSUE = 'responsible_issue';
+    const CATEGORY_RESPONSIBLE_RETURN = 'responsible_return';
+    const CATEGORY_PRODUCTION_USAGE = 'production_usage';
+    const CATEGORY_LOSS = 'loss';
+    const CATEGORY_DAMAGE = 'damage';
+    const CATEGORY_DISPOSAL = 'disposal';
 
     public function organization(): BelongsTo
     {
@@ -89,6 +100,16 @@ class WarehouseMovement extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function relatedUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'related_user_id');
+    }
+
+    public function projectMaterialDelivery(): BelongsTo
+    {
+        return $this->belongsTo(ProjectMaterialDelivery::class, 'project_material_delivery_id');
     }
 
     public function files(): MorphMany

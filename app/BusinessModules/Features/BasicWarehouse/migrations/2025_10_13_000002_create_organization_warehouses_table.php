@@ -24,7 +24,7 @@ return new class extends Migration
             $table->text('description')->nullable();
             
             // Тип склада
-            $table->enum('warehouse_type', ['central', 'project', 'external'])->default('central');
+            $table->enum('warehouse_type', ['central', 'project', 'external', 'custody'])->default('central');
             
             // Статусы
             $table->boolean('is_main')->default(false);
