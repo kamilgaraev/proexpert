@@ -799,7 +799,7 @@ class WarehouseService implements WarehouseReportDataProvider
     public function getMovementsData(int $organizationId, array $filters = []): array
     {
         $query = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::where('organization_id', $organizationId)
-            ->with(['material.measurementUnit', 'warehouse', 'project', 'user', 'photos']);
+            ->with(['material.measurementUnit', 'warehouse', 'project', 'user', 'relatedUser', 'photos']);
 
         // Применяем фильтры
         if (isset($filters['warehouse_id'])) {
@@ -835,6 +835,8 @@ class WarehouseService implements WarehouseReportDataProvider
             return [
                 'movement_id' => $movement->id,
                 'movement_type' => $movement->movement_type,
+                'operation_category' => $movement->operation_category,
+                'operation_category_label' => $movement->operationCategoryLabel(),
                 'warehouse_id' => $movement->warehouse_id,
                 'warehouse_name' => $movement->warehouse->name,
                 'material_id' => $movement->material_id,
@@ -847,6 +849,14 @@ class WarehouseService implements WarehouseReportDataProvider
                 'project_id' => $movement->project_id,
                 'project_name' => $movement->project->name ?? null,
                 'user_name' => $movement->user->name ?? null,
+                'related_user_id' => $movement->related_user_id,
+                'related_user_name' => $movement->relatedUser->name ?? null,
+                'related_user' => $movement->relatedUser ? [
+                    'id' => $movement->relatedUser->id,
+                    'name' => $movement->relatedUser->name,
+                    'email' => $movement->relatedUser->email,
+                ] : null,
+                'project_material_delivery_id' => $movement->project_material_delivery_id,
                 'document_number' => $movement->document_number,
                 'reason' => $movement->reason,
                 'movement_date' => $movement->movement_date->toDateTimeString(),

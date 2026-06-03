@@ -13,6 +13,8 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 
+use function trans_message;
+
 /**
  * Модель движения активов на складе
  */
@@ -67,6 +69,15 @@ class WarehouseMovement extends Model
     const CATEGORY_DAMAGE = 'damage';
     const CATEGORY_DISPOSAL = 'disposal';
     const CATEGORY_INVENTORY_ADJUSTMENT = 'inventory_adjustment';
+
+    public function operationCategoryLabel(): ?string
+    {
+        if (!$this->operation_category) {
+            return null;
+        }
+
+        return trans_message('basic_warehouse.operation_categories.' . $this->operation_category);
+    }
 
     public function organization(): BelongsTo
     {
@@ -156,4 +167,3 @@ class WarehouseMovement extends Model
         ])->values()->all();
     }
 }
-

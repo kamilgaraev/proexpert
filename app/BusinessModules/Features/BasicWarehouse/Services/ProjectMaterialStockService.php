@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BasicWarehouse\Services;
 
 use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliveryStatusEnum;
+use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\Models\JournalMaterial;
 use App\Models\User;
 use Illuminate\Support\Collection;
@@ -30,30 +32,34 @@ class ProjectMaterialStockService
                 'project',
                 'material.measurementUnit',
                 'warehouse',
+                'projectWarehouse',
                 'journalMaterials.journalEntry.journal',
             ])
             ->orderByDesc('accepted_at')
             ->orderByDesc('id')
             ->get();
 
+        $warehouseQuantities = $this->warehouseQuantities($organizationId, $deliveries);
         $items = $deliveries
             ->groupBy(fn (ProjectMaterialDelivery $delivery): string => $this->stockKey($delivery))
-            ->map(fn (Collection $materialDeliveries): array => $this->mapMaterialStock($materialDeliveries))
+            ->map(fn (Collection $materialDeliveries): array => $this->mapMaterialStock($materialDeliveries, $warehouseQuantities))
             ->sortBy([
                 ['project.name', 'asc'],
                 ['material.name', 'asc'],
             ])
             ->values()
-            ->all();
+            ->values();
 
         return [
-            'items' => $items,
+            'items' => $items->all(),
             'summary' => [
-                'materials_count' => count($items),
+                'materials_count' => $items->count(),
                 'deliveries_count' => $deliveries->count(),
-                'accepted_quantity' => round((float) $deliveries->sum(fn (ProjectMaterialDelivery $delivery): float => (float) $delivery->accepted_quantity), 3),
-                'used_quantity' => round((float) $deliveries->sum(fn (ProjectMaterialDelivery $delivery): float => $this->usedQuantity($delivery)), 3),
-                'available_quantity' => round((float) $deliveries->sum(fn (ProjectMaterialDelivery $delivery): float => $this->availableQuantity($delivery)), 3),
+                'accepted_quantity' => round((float) $items->sum('accepted_quantity'), 3),
+                'on_project_quantity' => round((float) $items->sum('on_project_quantity'), 3),
+                'issued_quantity' => round((float) $items->sum('issued_quantity'), 3),
+                'used_quantity' => round((float) $items->sum('used_quantity'), 3),
+                'available_quantity' => round((float) $items->sum('available_quantity'), 3),
             ],
         ];
     }
@@ -66,14 +72,27 @@ class ProjectMaterialStockService
         ]);
     }
 
-    private function mapMaterialStock(Collection $deliveries): array
+    private function mapMaterialStock(Collection $deliveries, array $warehouseQuantities): array
     {
         /** @var ProjectMaterialDelivery $first */
         $first = $deliveries->first();
 
         $acceptedQuantity = (float) $deliveries->sum(fn (ProjectMaterialDelivery $delivery): float => (float) $delivery->accepted_quantity);
         $usedQuantity = (float) $deliveries->sum(fn (ProjectMaterialDelivery $delivery): float => $this->usedQuantity($delivery));
-        $availableQuantity = max(0.0, $acceptedQuantity - $usedQuantity);
+        $legacyAvailableQuantity = max(0.0, $acceptedQuantity - $usedQuantity);
+        $quantities = $warehouseQuantities[$this->stockKey($first)] ?? $this->emptyWarehouseQuantities();
+        $onProjectQuantity = (float) $quantities['on_project_quantity'];
+        $issuedQuantity = (float) $quantities['issued_quantity'];
+        $hasWarehouseFlow = $onProjectQuantity > 0
+            || $issuedQuantity > 0
+            || $deliveries->contains(
+                fn (ProjectMaterialDelivery $delivery): bool => $delivery->project_warehouse_id !== null
+                    || $delivery->outbound_movement_id !== null
+                    || $delivery->inbound_movement_id !== null
+            );
+        $availableQuantity = $hasWarehouseFlow
+            ? $onProjectQuantity + $issuedQuantity
+            : $legacyAvailableQuantity;
 
         return [
             'project' => $first->project ? [
@@ -91,6 +110,8 @@ class ProjectMaterialStockService
                 ] : null,
             ] : null,
             'accepted_quantity' => round($acceptedQuantity, 3),
+            'on_project_quantity' => round($onProjectQuantity, 3),
+            'issued_quantity' => round($issuedQuantity, 3),
             'used_quantity' => round($usedQuantity, 3),
             'available_quantity' => round($availableQuantity, 3),
             'deliveries' => $deliveries
@@ -122,11 +143,17 @@ class ProjectMaterialStockService
                 'id' => $delivery->warehouse->id,
                 'name' => $delivery->warehouse->name,
             ] : null,
+            'project_warehouse' => $delivery->projectWarehouse ? [
+                'id' => $delivery->projectWarehouse->id,
+                'name' => $delivery->projectWarehouse->name,
+                'warehouse_type' => $delivery->projectWarehouse->warehouse_type,
+            ] : null,
             'linked_entities' => [
                 'allocation_id' => $delivery->warehouse_project_allocation_id,
                 'site_request_id' => $delivery->site_request_id,
                 'purchase_request_id' => $delivery->purchase_request_id,
                 'purchase_order_id' => $delivery->purchase_order_id,
+                'project_warehouse_id' => $delivery->project_warehouse_id,
             ],
         ];
     }
@@ -156,5 +183,65 @@ class ProjectMaterialStockService
     private function availableQuantity(ProjectMaterialDelivery $delivery): float
     {
         return max(0.0, (float) $delivery->accepted_quantity - $this->usedQuantity($delivery));
+    }
+
+    private function warehouseQuantities(int $organizationId, Collection $deliveries): array
+    {
+        $projectIds = $deliveries->pluck('project_id')->filter()->unique()->values();
+        $materialIds = $deliveries->pluck('material_id')->filter()->unique()->values();
+
+        if ($projectIds->isEmpty() || $materialIds->isEmpty()) {
+            return [];
+        }
+
+        $balances = WarehouseBalance::query()
+            ->where('warehouse_balances.organization_id', $organizationId)
+            ->whereIn('warehouse_balances.material_id', $materialIds)
+            ->whereHas('warehouse', function ($query) use ($organizationId, $projectIds): void {
+                $query->where('organization_id', $organizationId)
+                    ->where('is_active', true)
+                    ->whereIn('project_id', $projectIds)
+                    ->whereIn('warehouse_type', [
+                        OrganizationWarehouse::TYPE_PROJECT,
+                        OrganizationWarehouse::TYPE_CUSTODY,
+                    ]);
+            })
+            ->with('warehouse:id,project_id,warehouse_type')
+            ->get();
+
+        $quantities = [];
+
+        foreach ($balances as $balance) {
+            $warehouse = $balance->warehouse;
+
+            if (!$warehouse || !$warehouse->project_id) {
+                continue;
+            }
+
+            $key = implode(':', [
+                $warehouse->project_id,
+                $balance->material_id,
+            ]);
+            $quantities[$key] ??= $this->emptyWarehouseQuantities();
+
+            if ($warehouse->warehouse_type === OrganizationWarehouse::TYPE_PROJECT) {
+                $quantities[$key]['on_project_quantity'] += (float) $balance->available_quantity;
+                continue;
+            }
+
+            if ($warehouse->warehouse_type === OrganizationWarehouse::TYPE_CUSTODY) {
+                $quantities[$key]['issued_quantity'] += (float) $balance->available_quantity;
+            }
+        }
+
+        return $quantities;
+    }
+
+    private function emptyWarehouseQuantities(): array
+    {
+        return [
+            'on_project_quantity' => 0.0,
+            'issued_quantity' => 0.0,
+        ];
     }
 }

@@ -2,16 +2,23 @@
 
 namespace App\BusinessModules\Features\BasicWarehouse\Http\Resources;
 
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use Illuminate\Http\Resources\Json\JsonResource;
 
 class WarehouseMovementResource extends JsonResource
 {
     public function toArray($request): array
     {
+        $movement = $this->resource;
+
         return [
             'id' => $this->id,
+            'movement_id' => $this->id,
             'movement_type' => $this->movement_type,
             'operation_category' => $this->operation_category,
+            'operation_category_label' => $movement instanceof WarehouseMovement
+                ? $movement->operationCategoryLabel()
+                : null,
             'warehouse_id' => $this->warehouse_id,
             'warehouse_name' => $this->warehouse->name ?? null,
             'material_id' => $this->material_id,
@@ -28,6 +35,11 @@ class WarehouseMovementResource extends JsonResource
             'user_name' => $this->user->name ?? null,
             'related_user_id' => $this->related_user_id,
             'related_user_name' => $this->relatedUser->name ?? null,
+            'related_user' => $this->relatedUser ? [
+                'id' => $this->relatedUser->id,
+                'name' => $this->relatedUser->name,
+                'email' => $this->relatedUser->email,
+            ] : null,
             'document_number' => $this->document_number,
             'reason' => $this->reason,
             'movement_date' => $this->movement_date->toDateTimeString(),

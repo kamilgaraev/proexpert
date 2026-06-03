@@ -49,6 +49,16 @@ return [
         'returned_from_responsible' => 'Материалы возвращены на объектовый склад.',
         'production_usage_reason' => 'Использовано в работах по журналу.',
     ],
+    'operation_categories' => [
+        'project_delivery' => 'Доставка на объект',
+        'responsible_issue' => 'Выдача ответственному',
+        'responsible_return' => 'Возврат на объект',
+        'production_usage' => 'Использование в работе',
+        'loss' => 'Утрата',
+        'damage' => 'Порча',
+        'disposal' => 'Утилизация',
+        'inventory_adjustment' => 'Инвентаризационная корректировка',
+    ],
     'validation' => [
         'insufficient_project_stock' => 'На объекте недостаточно материала для выдачи.',
         'insufficient_custody_stock' => 'У ответственного недостаточно материала. Доступно: :available, требуется: :requested.',

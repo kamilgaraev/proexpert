@@ -42,15 +42,20 @@ class WarehouseServiceTest extends TestCase
     public function test_get_movements_data_returns_warehouse_movements(): void
     {
         [$organization, $warehouse, $material, $user] = $this->createWarehouseContext();
+        $relatedUser = User::factory()->create([
+            'current_organization_id' => $organization->id,
+        ]);
 
         $movement = WarehouseMovement::create([
             'organization_id' => $organization->id,
             'warehouse_id' => $warehouse->id,
             'material_id' => $material->id,
             'movement_type' => WarehouseMovement::TYPE_RECEIPT,
+            'operation_category' => WarehouseMovement::CATEGORY_RESPONSIBLE_ISSUE,
             'quantity' => 12.5,
             'price' => 150,
             'user_id' => $user->id,
+            'related_user_id' => $relatedUser->id,
             'document_number' => 'RCPT-1',
             'reason' => 'Initial receipt',
             'movement_date' => '2026-05-01 10:00:00',
@@ -64,6 +69,8 @@ class WarehouseServiceTest extends TestCase
         $this->assertCount(1, $data);
         $this->assertSame($movement->id, $data[0]['movement_id']);
         $this->assertSame(WarehouseMovement::TYPE_RECEIPT, $data[0]['movement_type']);
+        $this->assertSame(WarehouseMovement::CATEGORY_RESPONSIBLE_ISSUE, $data[0]['operation_category']);
+        $this->assertSame(trans_message('basic_warehouse.operation_categories.responsible_issue'), $data[0]['operation_category_label']);
         $this->assertSame($warehouse->id, $data[0]['warehouse_id']);
         $this->assertSame($warehouse->name, $data[0]['warehouse_name']);
         $this->assertSame($material->id, $data[0]['material_id']);
@@ -72,6 +79,9 @@ class WarehouseServiceTest extends TestCase
         $this->assertSame(150.0, $data[0]['price']);
         $this->assertSame(1875.0, $data[0]['total_value']);
         $this->assertSame($user->name, $data[0]['user_name']);
+        $this->assertSame($relatedUser->id, $data[0]['related_user_id']);
+        $this->assertSame($relatedUser->name, $data[0]['related_user_name']);
+        $this->assertSame($relatedUser->id, $data[0]['related_user']['id']);
         $this->assertSame('RCPT-1', $data[0]['document_number']);
     }
 

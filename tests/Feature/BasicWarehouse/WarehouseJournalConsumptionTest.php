@@ -9,6 +9,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
+use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialStockService;
 use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalService;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -186,6 +187,52 @@ final class WarehouseJournalConsumptionTest extends TestCase
         $this->assertFalse($projectMaterial['can_consume_from_custody']);
         $this->assertTrue($projectMaterial['can_issue_from_project']);
         $this->assertTrue($projectMaterial['requires_issue_from_project']);
+    }
+
+    public function test_project_stock_reports_object_custody_and_consumed_quantities(): void
+    {
+        $context = AdminApiTestContext::create();
+        $setup = $this->createAcceptedDeliveryWithCustodyBalance($context, 6);
+
+        WarehouseBalance::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $setup['projectWarehouse']->id,
+            'material_id' => $setup['material']->id,
+            'available_quantity' => 4,
+            'reserved_quantity' => 0,
+            'unit_price' => 12,
+        ]);
+
+        app(ConstructionJournalService::class)->createEntry($setup['journal'], [
+            'entry_date' => '2026-06-03',
+            'work_description' => 'РњРѕРЅС‚Р°Р¶ РєСЂРµРїРµР¶Р°',
+            'materials' => [
+                [
+                    'material_id' => $setup['material']->id,
+                    'project_material_delivery_id' => $setup['delivery']->id,
+                    'material_name' => $setup['material']->name,
+                    'quantity' => 2,
+                    'measurement_unit' => 'С€С‚',
+                ],
+            ],
+        ], $context->user);
+
+        $stock = app(ProjectMaterialStockService::class)->getProjectStock(
+            (int) $context->organization->id,
+            (int) $setup['project']->id
+        );
+        $item = collect($stock['items'])->first();
+
+        $this->assertSame(10.0, $stock['summary']['accepted_quantity']);
+        $this->assertSame(4.0, $stock['summary']['on_project_quantity']);
+        $this->assertSame(4.0, $stock['summary']['issued_quantity']);
+        $this->assertSame(2.0, $stock['summary']['used_quantity']);
+        $this->assertSame(8.0, $stock['summary']['available_quantity']);
+        $this->assertSame(4.0, $item['on_project_quantity']);
+        $this->assertSame(4.0, $item['issued_quantity']);
+        $this->assertSame(8.0, $item['available_quantity']);
+        $this->assertSame($setup['projectWarehouse']->id, $item['deliveries'][0]['project_warehouse']['id']);
+        $this->assertSame($setup['projectWarehouse']->id, $item['deliveries'][0]['linked_entities']['project_warehouse_id']);
     }
 
     private function createAcceptedDeliveryWithCustodyBalance(
