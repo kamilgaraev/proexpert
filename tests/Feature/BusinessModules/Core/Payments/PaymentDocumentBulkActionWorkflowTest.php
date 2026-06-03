@@ -84,6 +84,37 @@ class PaymentDocumentBulkActionWorkflowTest extends TestCase
         ]);
     }
 
+    public function test_register_payment_accepts_numeric_string_amount(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $document = $this->createDocument($context, [
+            'status' => PaymentDocumentStatus::APPROVED,
+            'amount' => 1000,
+            'paid_amount' => 0,
+            'remaining_amount' => 1000,
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/payments/documents/{$document->id}/register-payment", [
+                'amount' => '1000.00',
+                'payment_method' => 'bank_transfer',
+            ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('success', true);
+
+        $document->refresh();
+        $this->assertSame(PaymentDocumentStatus::PAID, $document->status);
+        $this->assertEquals(1000.0, (float) $document->paid_amount);
+        $this->assertEquals(0.0, (float) $document->remaining_amount);
+        $this->assertDatabaseHas('payment_transactions', [
+            'payment_document_id' => $document->id,
+            'amount' => '1000.00',
+            'status' => 'completed',
+        ]);
+    }
+
     private function createDocument(AdminApiTestContext $context, array $overrides = []): PaymentDocument
     {
         return PaymentDocument::query()->create(array_merge([

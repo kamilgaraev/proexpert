@@ -672,6 +672,7 @@ class PaymentDocumentController extends Controller
             }
 
             $validated['created_by_user_id'] = $userId;
+            $validated['amount'] = (float) $validated['amount'];
 
             $paid = $this->service->registerPayment($document, $validated['amount'], $validated);
 
