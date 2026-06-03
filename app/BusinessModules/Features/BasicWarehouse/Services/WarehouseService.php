@@ -272,9 +272,12 @@ class WarehouseService implements WarehouseReportDataProvider
                 'quantity' => $quantity,
                 'price' => $avgWriteOffPrice, // Фиксируем среднюю цену списания
                 'project_id' => $metadata['project_id'] ?? null,
+                'project_material_delivery_id' => $metadata['project_material_delivery_id'] ?? null,
                 'user_id' => $metadata['user_id'] ?? null,
+                'related_user_id' => $metadata['related_user_id'] ?? null,
                 'document_number' => $metadata['document_number'] ?? null,
                 'reason' => $metadata['reason'] ?? null,
+                'operation_category' => $metadata['operation_category'] ?? null,
                 'metadata' => array_merge($metadata, ['batches_source' => $writeOffDetails]),
                 'movement_date' => now(),
             ]);

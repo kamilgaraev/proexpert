@@ -331,6 +331,7 @@ class WarehouseOperationsController extends Controller
                     'user_id' => $request->user()->id,
                     'document_number' => $validated['document_number'] ?? null,
                     'reason' => $validated['reason'],
+                    'operation_category' => $validated['operation_category'],
                     'metadata' => $validated['metadata'] ?? [],
                 ]
             );

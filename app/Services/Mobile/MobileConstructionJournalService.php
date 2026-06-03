@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace App\Services\Mobile;
 
 use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliveryStatusEnum;
+use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
 use App\BusinessModules\Features\BudgetEstimates\Services\ConstructionJournalPayloadService;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
 use App\Enums\ConstructionJournal\JournalStatusEnum;
 use App\Enums\EstimatePositionItemType;
@@ -35,7 +38,8 @@ class MobileConstructionJournalService
     ];
 
     public function __construct(
-        private readonly ConstructionJournalPayloadService $payloadService
+        private readonly ConstructionJournalPayloadService $payloadService,
+        private readonly AuthorizationService $authorizationService
     ) {
     }
 
@@ -205,7 +209,7 @@ class MobileConstructionJournalService
                 ])
                 ->values()
                 ->all(),
-            'project_materials' => $this->buildAcceptedProjectMaterials((int) $journal->organization_id, (int) $journal->project_id),
+            'project_materials' => $this->buildAcceptedProjectMaterials($user, (int) $journal->organization_id, (int) $journal->project_id),
         ];
     }
 
@@ -219,8 +223,14 @@ class MobileConstructionJournalService
         return $this->transformEntryPayload($this->payloadService->mapEntry($entry, $user, $includeJournal));
     }
 
-    private function buildAcceptedProjectMaterials(int $organizationId, int $projectId): array
+    private function buildAcceptedProjectMaterials(User $user, int $organizationId, int $projectId): array
     {
+        $custodyWarehouse = $this->resolveResponsibleCustodyWarehouse($organizationId, $projectId, (int) $user->id);
+        $canIssueFromProject = $this->authorizationService->can($user, 'warehouse.manage_stock', [
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+        ]);
+
         return ProjectMaterialDelivery::query()
             ->where('organization_id', $organizationId)
             ->where('project_id', $projectId)
@@ -229,8 +239,26 @@ class MobileConstructionJournalService
             ->with(['material.measurementUnit', 'allocation'])
             ->orderByDesc('accepted_at')
             ->get()
-            ->filter(static fn (ProjectMaterialDelivery $delivery): bool => $delivery->availableQuantity() > 0)
-            ->map(fn (ProjectMaterialDelivery $delivery): array => $this->mapProjectMaterialOption($delivery))
+            ->filter(function (ProjectMaterialDelivery $delivery) use ($organizationId, $custodyWarehouse, $canIssueFromProject): bool {
+                if ($delivery->availableQuantity() <= 0) {
+                    return false;
+                }
+
+                $custodyQuantity = $custodyWarehouse
+                    ? $this->availableWarehouseQuantity($organizationId, (int) $custodyWarehouse->id, (int) $delivery->material_id)
+                    : 0.0;
+                $projectQuantity = $canIssueFromProject && $delivery->project_warehouse_id
+                    ? $this->availableWarehouseQuantity($organizationId, (int) $delivery->project_warehouse_id, (int) $delivery->material_id)
+                    : 0.0;
+
+                return $custodyQuantity > 0 || $projectQuantity > 0;
+            })
+            ->map(fn (ProjectMaterialDelivery $delivery): array => $this->mapProjectMaterialOption(
+                $delivery,
+                $organizationId,
+                $custodyWarehouse,
+                $canIssueFromProject
+            ))
             ->values()
             ->all();
     }
@@ -369,7 +397,12 @@ class MobileConstructionJournalService
             ->all();
     }
 
-    private function mapProjectMaterialOption(ProjectMaterialDelivery $delivery): array
+    private function mapProjectMaterialOption(
+        ProjectMaterialDelivery $delivery,
+        int $organizationId,
+        ?OrganizationWarehouse $custodyWarehouse,
+        bool $canIssueFromProject
+    ): array
     {
         $material = $delivery->material;
         $measurementUnit = $material?->measurementUnit;
@@ -382,6 +415,15 @@ class MobileConstructionJournalService
             throw new DomainException(trans_message('mobile_construction_journal.errors.material_measurement_unit_missing'));
         }
 
+        $deliveryAvailableQuantity = $delivery->availableQuantity();
+        $custodyAvailableQuantity = $custodyWarehouse
+            ? $this->availableWarehouseQuantity($organizationId, (int) $custodyWarehouse->id, (int) $delivery->material_id)
+            : 0.0;
+        $projectWarehouseAvailableQuantity = $canIssueFromProject && $delivery->project_warehouse_id
+            ? $this->availableWarehouseQuantity($organizationId, (int) $delivery->project_warehouse_id, (int) $delivery->material_id)
+            : 0.0;
+        $availableQuantity = min($deliveryAvailableQuantity, $custodyAvailableQuantity);
+
         return [
             'material_id' => $delivery->material_id,
             'delivery_id' => $delivery->id,
@@ -391,7 +433,14 @@ class MobileConstructionJournalService
             'code' => $material->code,
             'accepted_quantity' => (float) $delivery->accepted_quantity,
             'used_quantity' => $delivery->usedQuantity(),
-            'available_quantity' => $delivery->availableQuantity(),
+            'available_quantity' => $availableQuantity,
+            'custody_warehouse_id' => $custodyWarehouse?->id,
+            'custody_available_quantity' => $custodyAvailableQuantity,
+            'can_consume_from_custody' => $custodyAvailableQuantity > 0,
+            'project_warehouse_id' => $delivery->project_warehouse_id,
+            'project_warehouse_available_quantity' => $projectWarehouseAvailableQuantity,
+            'can_issue_from_project' => $canIssueFromProject && $projectWarehouseAvailableQuantity > 0,
+            'requires_issue_from_project' => $availableQuantity <= 0 && $canIssueFromProject && $projectWarehouseAvailableQuantity > 0,
             'measurement_unit' => [
                 'id' => $measurementUnit->id,
                 'name' => $measurementUnit->name,
@@ -399,6 +448,29 @@ class MobileConstructionJournalService
             ],
             'accepted_at' => $delivery->accepted_at?->toDateTimeString(),
         ];
+    }
+
+    private function resolveResponsibleCustodyWarehouse(
+        int $organizationId,
+        int $projectId,
+        int $responsibleUserId
+    ): ?OrganizationWarehouse {
+        return OrganizationWarehouse::query()
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('responsible_user_id', $responsibleUserId)
+            ->where('warehouse_type', OrganizationWarehouse::TYPE_CUSTODY)
+            ->where('is_active', true)
+            ->first();
+    }
+
+    private function availableWarehouseQuantity(int $organizationId, int $warehouseId, int $materialId): float
+    {
+        return (float) WarehouseBalance::query()
+            ->where('organization_id', $organizationId)
+            ->where('warehouse_id', $warehouseId)
+            ->where('material_id', $materialId)
+            ->sum('available_quantity');
     }
 
     private function requiredEstimateQuantity(EstimateItem $item, string $attribute): float

@@ -59,14 +59,16 @@ class WarehouseOperationsControllerTest extends TestCase
             ])
             ->assertCreated();
 
-        $this->withHeaders($context->authHeaders())
+        $writeOffResponse = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/warehouses/operations/write-off', [
                 'warehouse_id' => $sourceWarehouse->id,
                 'material_id' => $material->id,
                 'quantity' => 12,
                 'reason' => 'Site issue',
+                'operation_category' => WarehouseMovement::CATEGORY_LOSS,
             ])
             ->assertOk();
+        $writeOffResponse->assertJsonPath('data.movement.operation_category', WarehouseMovement::CATEGORY_LOSS);
 
         $this->assertSame(0.0, $this->balanceQuantity($context->organization->id, $sourceWarehouse->id, $material->id, 100));
         $this->assertSame(3.0, $this->balanceQuantity($context->organization->id, $sourceWarehouse->id, $material->id, 150));
@@ -179,6 +181,7 @@ class WarehouseOperationsControllerTest extends TestCase
                 'material_id' => $material->id,
                 'quantity' => 1,
                 'reason' => 'Bad warehouse',
+                'operation_category' => WarehouseMovement::CATEGORY_LOSS,
             ]);
 
         $foreignWarehouseWriteOff->assertStatus(422);
@@ -189,6 +192,7 @@ class WarehouseOperationsControllerTest extends TestCase
                 'material_id' => $foreignMaterial->id,
                 'quantity' => 1,
                 'reason' => 'Bad material',
+                'operation_category' => WarehouseMovement::CATEGORY_LOSS,
             ]);
 
         $foreignMaterialWriteOff->assertStatus(422);
@@ -459,6 +463,7 @@ class WarehouseOperationsControllerTest extends TestCase
                 'material_id' => $material->id,
                 'quantity' => 4,
                 'reason' => 'Too much write off',
+                'operation_category' => WarehouseMovement::CATEGORY_LOSS,
             ]);
 
         $writeOffResponse

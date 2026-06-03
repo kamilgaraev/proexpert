@@ -42,6 +42,15 @@ return [
         'received' => 'Приемка материала подтверждена',
         'in_transit_from_purchase_order' => 'Поставка переведена в доставку по заказу поставщику',
     ],
+    'messages' => [
+        'production_usage_reason' => 'Использовано в работах по журналу.',
+    ],
+    'validation' => [
+        'insufficient_custody_stock' => 'У ответственного недостаточно материала. Доступно: :available, требуется: :requested.',
+        'operation_category_required' => 'Укажите причину списания.',
+        'production_usage_only_from_journal' => 'Расход на работы оформляется через журнал работ.',
+        'journal_consumption_update_not_supported' => 'Материалы с проведенным складским расходом нельзя заменить в журнале. Оформите корректировку отдельной операцией.',
+    ],
     'custody' => [
         'loaded' => 'Остатки ответственных загружены',
         'issued' => 'Материал выдан ответственному',

@@ -5,7 +5,11 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\BudgetEstimates\Services;
 
 use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliveryStatusEnum;
+use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use BackedEnum;
 use App\Enums\ConstructionJournal\JournalEntryStatusEnum;
 use App\Enums\ConstructionJournal\JournalStatusEnum;
@@ -34,6 +38,7 @@ class ConstructionJournalService
         private readonly CompletedWorkFactService $completedWorkFactService,
         private readonly JournalContractCoverageService $journalContractCoverageService,
         private readonly LoggingService $logging,
+        private readonly WarehouseService $warehouseService,
     ) {
     }
 
@@ -88,7 +93,7 @@ class ConstructionJournalService
     public function createEntry(ConstructionJournal $journal, array $data, User $user): ConstructionJournalEntry
     {
         return DB::transaction(function () use ($journal, $data, $user): ConstructionJournalEntry {
-            $this->assertEntryScope($journal, $data);
+            $this->assertEntryScope($journal, $data, null, $user);
 
             $entryNumber = $data['entry_number'] ?? $journal->getNextEntryNumber();
 
@@ -160,6 +165,10 @@ class ConstructionJournalService
     {
         return DB::transaction(function () use ($entry, $data): ConstructionJournalEntry {
             $this->assertEntryScope($entry->journal, $data, $entry);
+
+            if (array_key_exists('materials', $data)) {
+                $this->assertJournalMaterialConsumptionCanBeReplaced($entry);
+            }
 
             $updateData = [];
 
@@ -437,10 +446,14 @@ class ConstructionJournalService
     protected function attachMaterials(ConstructionJournalEntry $entry, array $materials): void
     {
         foreach ($materials as $material) {
+            $consumption = $this->writeOffJournalMaterialFromCustody($entry, $material);
+
             $entry->materials()->create([
                 'material_id' => $material['material_id'] ?? null,
                 'estimate_item_id' => $material['estimate_item_id'] ?? null,
                 'project_material_delivery_id' => $material['project_material_delivery_id'] ?? null,
+                'warehouse_movement_id' => $consumption['movement']?->id,
+                'custody_warehouse_id' => $consumption['custody_warehouse']?->id,
                 'material_name' => $material['material_name'],
                 'quantity' => $material['quantity'],
                 'measurement_unit' => $material['measurement_unit'],
@@ -449,10 +462,63 @@ class ConstructionJournalService
         }
     }
 
+    private function assertJournalMaterialConsumptionCanBeReplaced(ConstructionJournalEntry $entry): void
+    {
+        if ($entry->materials()->whereNotNull('warehouse_movement_id')->exists()) {
+            throw new DomainException(trans_message('basic_warehouse.validation.journal_consumption_update_not_supported'));
+        }
+    }
+
+    private function writeOffJournalMaterialFromCustody(ConstructionJournalEntry $entry, array $material): array
+    {
+        $deliveryId = $material['project_material_delivery_id'] ?? null;
+
+        if (!$deliveryId) {
+            return [
+                'movement' => null,
+                'custody_warehouse' => null,
+            ];
+        }
+
+        $journal = $entry->journal()->firstOrFail();
+        $delivery = $this->resolveAcceptedProjectMaterialDelivery($journal, $material);
+        $responsibleUserId = (int) $entry->created_by_user_id;
+        $custodyWarehouse = $this->resolveResponsibleCustodyWarehouse($journal, $responsibleUserId);
+
+        if (!$custodyWarehouse) {
+            throw new DomainException(trans_message('basic_warehouse.validation.insufficient_custody_stock', [
+                'available' => 0,
+                'requested' => (float) ($material['quantity'] ?? 0),
+            ]));
+        }
+
+        $result = $this->warehouseService->writeOffAsset(
+            (int) $journal->organization_id,
+            (int) $custodyWarehouse->id,
+            (int) $delivery->material_id,
+            (float) $material['quantity'],
+            [
+                'project_id' => (int) $journal->project_id,
+                'user_id' => $responsibleUserId,
+                'related_user_id' => $responsibleUserId,
+                'operation_category' => WarehouseMovement::CATEGORY_PRODUCTION_USAGE,
+                'project_material_delivery_id' => (int) $delivery->id,
+                'construction_journal_entry_id' => (int) $entry->id,
+                'reason' => trans_message('basic_warehouse.messages.production_usage_reason'),
+            ]
+        );
+
+        return [
+            'movement' => $result['movement'],
+            'custody_warehouse' => $custodyWarehouse,
+        ];
+    }
+
     protected function assertProjectMaterialDeliveryScope(
         ConstructionJournal $journal,
         array $material,
-        ?ConstructionJournalEntry $entry = null
+        ?ConstructionJournalEntry $entry = null,
+        ?User $user = null
     ): void {
         $deliveryId = $material['project_material_delivery_id'] ?? null;
 
@@ -460,16 +526,7 @@ class ConstructionJournalService
             return;
         }
 
-        $delivery = ProjectMaterialDelivery::query()
-            ->where('id', $deliveryId)
-            ->where('organization_id', $journal->organization_id)
-            ->where('project_id', $journal->project_id)
-            ->where('status', ProjectMaterialDeliveryStatusEnum::ACCEPTED->value)
-            ->first();
-
-        if (!$delivery) {
-            throw new DomainException(trans_message('construction_journal.errors.invalid_project_material_delivery'));
-        }
+        $delivery = $this->resolveAcceptedProjectMaterialDelivery($journal, $material);
 
         if (
             isset($material['material_id'])
@@ -489,6 +546,61 @@ class ConstructionJournalService
         if ($quantity > $availableQuantity) {
             throw new DomainException(trans_message('construction_journal.errors.project_material_delivery_quantity_exceeded'));
         }
+
+        $responsibleUserId = (int) ($entry?->created_by_user_id ?? $user?->id ?? $journal->created_by_user_id);
+        $custodyWarehouse = $this->resolveResponsibleCustodyWarehouse($journal, $responsibleUserId);
+        $custodyAvailableQuantity = $custodyWarehouse
+            ? $this->availableWarehouseQuantity((int) $journal->organization_id, (int) $custodyWarehouse->id, (int) $delivery->material_id)
+            : 0.0;
+
+        if ($quantity > $custodyAvailableQuantity) {
+            throw new DomainException(trans_message('basic_warehouse.validation.insufficient_custody_stock', [
+                'available' => $custodyAvailableQuantity,
+                'requested' => $quantity,
+            ]));
+        }
+    }
+
+    private function resolveAcceptedProjectMaterialDelivery(ConstructionJournal $journal, array $material): ProjectMaterialDelivery
+    {
+        $delivery = ProjectMaterialDelivery::query()
+            ->where('id', $material['project_material_delivery_id'])
+            ->where('organization_id', $journal->organization_id)
+            ->where('project_id', $journal->project_id)
+            ->where('status', ProjectMaterialDeliveryStatusEnum::ACCEPTED->value)
+            ->first();
+
+        if (!$delivery) {
+            throw new DomainException(trans_message('construction_journal.errors.invalid_project_material_delivery'));
+        }
+
+        return $delivery;
+    }
+
+    private function resolveResponsibleCustodyWarehouse(
+        ConstructionJournal $journal,
+        int $responsibleUserId
+    ): ?OrganizationWarehouse {
+        if ($responsibleUserId <= 0) {
+            return null;
+        }
+
+        return OrganizationWarehouse::query()
+            ->where('organization_id', $journal->organization_id)
+            ->where('project_id', $journal->project_id)
+            ->where('responsible_user_id', $responsibleUserId)
+            ->where('warehouse_type', OrganizationWarehouse::TYPE_CUSTODY)
+            ->where('is_active', true)
+            ->first();
+    }
+
+    private function availableWarehouseQuantity(int $organizationId, int $warehouseId, int $materialId): float
+    {
+        return (float) WarehouseBalance::query()
+            ->where('organization_id', $organizationId)
+            ->where('warehouse_id', $warehouseId)
+            ->where('material_id', $materialId)
+            ->sum('available_quantity');
     }
 
     protected function generateJournalNumber(Project $project): string
@@ -523,7 +635,12 @@ class ConstructionJournalService
         }
     }
 
-    protected function assertEntryScope(ConstructionJournal $journal, array $data, ?ConstructionJournalEntry $entry = null): void
+    protected function assertEntryScope(
+        ConstructionJournal $journal,
+        array $data,
+        ?ConstructionJournalEntry $entry = null,
+        ?User $user = null
+    ): void
     {
         $estimateId = $data['estimate_id'] ?? $entry?->estimate_id;
         $scheduleTaskId = $data['schedule_task_id'] ?? $entry?->schedule_task_id;
@@ -540,7 +657,7 @@ class ConstructionJournalService
         foreach (($data['materials'] ?? []) as $material) {
             $this->assertMaterialScope($journal, $material['material_id'] ?? null);
             $this->assertEstimateResourceItemScope($journal, $material['estimate_item_id'] ?? null, $estimateId, ['material']);
-            $this->assertProjectMaterialDeliveryScope($journal, $material, $entry);
+            $this->assertProjectMaterialDeliveryScope($journal, $material, $entry, $user);
         }
 
         foreach (($data['equipment'] ?? []) as $equipment) {

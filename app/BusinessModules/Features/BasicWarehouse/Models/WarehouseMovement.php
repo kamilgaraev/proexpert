@@ -66,6 +66,7 @@ class WarehouseMovement extends Model
     const CATEGORY_LOSS = 'loss';
     const CATEGORY_DAMAGE = 'damage';
     const CATEGORY_DISPOSAL = 'disposal';
+    const CATEGORY_INVENTORY_ADJUSTMENT = 'inventory_adjustment';
 
     public function organization(): BelongsTo
     {
