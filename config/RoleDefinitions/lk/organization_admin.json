@@ -300,6 +300,9 @@
     "basic-warehouse": [
       "warehouse.view",
       "warehouse.manage_stock",
+      "warehouse.issue_to_responsible",
+      "warehouse.return_from_responsible",
+      "warehouse.view_custody",
       "warehouse.receipts",
       "warehouse.write_offs",
       "warehouse.transfers",

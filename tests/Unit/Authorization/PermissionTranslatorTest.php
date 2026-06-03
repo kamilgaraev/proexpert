@@ -105,10 +105,27 @@ class PermissionTranslatorTest extends TestCase
         $flattenedValues = json_encode($this->valuesOnly($translated), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 
         $this->assertSame('ПИР и BIM-модели', $translated['module_groups']['design_management']);
-        $this->assertSame('Просмотр ПИР', $translated['module_permissions']['design_management']['design-management.view']);
-        $this->assertSame('Загрузка IFC-моделей', $translated['module_permissions']['design_management']['design-management.models.upload']);
+        $this->assertSame('Просмотр ПИР: просмотр', $translated['module_permissions']['design_management']['design-management.view']);
+        $this->assertSame('Загрузка IFC-моделей: загрузка', $translated['module_permissions']['design_management']['design-management.models.upload']);
         $this->assertStringNotContainsString('design-management.models.prepare_viewer', $flattenedValues);
         $this->assertStringNotContainsString('design-management.settings.manage', $flattenedValues);
+    }
+
+    public function test_warehouse_custody_permissions_are_translated_for_frontend(): void
+    {
+        $translated = PermissionTranslator::translatePermissionsData([
+            'module_permissions' => [
+                'basic_warehouse' => [
+                    'warehouse.issue_to_responsible',
+                    'warehouse.return_from_responsible',
+                    'warehouse.view_custody',
+                ],
+            ],
+        ]);
+
+        $this->assertSame('Выдача материалов ответственным', $translated['module_permissions']['basic_warehouse']['warehouse.issue_to_responsible']);
+        $this->assertSame('Возврат материалов от ответственных', $translated['module_permissions']['basic_warehouse']['warehouse.return_from_responsible']);
+        $this->assertSame('Просмотр остатков у ответственных', $translated['module_permissions']['basic_warehouse']['warehouse.view_custody']);
     }
 
     private function valuesOnly(array $value): array

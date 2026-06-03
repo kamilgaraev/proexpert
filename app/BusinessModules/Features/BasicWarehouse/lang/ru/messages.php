@@ -43,9 +43,14 @@ return [
         'in_transit_from_purchase_order' => 'Поставка переведена в доставку по заказу поставщику',
     ],
     'messages' => [
+        'project_warehouse_auto_created' => 'Объектовый склад создан автоматически.',
+        'custody_warehouse_auto_created' => 'Склад ответственного создан автоматически.',
+        'issued_to_responsible' => 'Материалы выданы ответственному.',
+        'returned_from_responsible' => 'Материалы возвращены на объектовый склад.',
         'production_usage_reason' => 'Использовано в работах по журналу.',
     ],
     'validation' => [
+        'insufficient_project_stock' => 'На объекте недостаточно материала для выдачи.',
         'insufficient_custody_stock' => 'У ответственного недостаточно материала. Доступно: :available, требуется: :requested.',
         'operation_category_required' => 'Укажите причину списания.',
         'production_usage_only_from_journal' => 'Расход на работы оформляется через журнал работ.',
