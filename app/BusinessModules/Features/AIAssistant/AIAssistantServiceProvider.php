@@ -42,7 +42,6 @@ use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\Proje
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulsePeopleFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseProcurementFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseProjectFactSource;
-use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseReportFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseScheduleFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseSiteRequestFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseWarehouseFactSource;
@@ -182,7 +181,6 @@ class AIAssistantServiceProvider extends ServiceProvider
                 $app->make(ProjectPulseContractFactSource::class),
                 $app->make(ProjectPulseScheduleFactSource::class),
                 $app->make(ProjectPulseConstructionErpFactSource::class),
-                $app->make(ProjectPulseReportFactSource::class),
                 $app->make(ProjectPulseWorkFactSource::class),
                 $app->make(DesignPulseFactSource::class),
                 $app->make(ProjectPulsePeopleFactSource::class),

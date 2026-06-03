@@ -5,7 +5,6 @@ use App\Http\Controllers\Api\V1\Admin\ContractController;
 use App\Http\Controllers\Api\V1\Admin\CompletedWorkController;
 use App\Http\Controllers\Api\V1\Admin\ProjectOrganizationController;
 use App\Http\Controllers\Api\V1\Admin\MaterialAnalyticsController;
-use App\Http\Controllers\Api\V1\Admin\CustomReportController;
 use App\Http\Controllers\Api\V1\Admin\SpecificationController;
 use App\Http\Controllers\Api\V1\Admin\AgreementController;
 use App\Http\Controllers\Api\V1\Admin\ProjectContextController;
@@ -192,15 +191,6 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::get('/materials', [MaterialAnalyticsController::class, 'getMaterialAnalytics']);
         Route::get('/costs', [MaterialAnalyticsController::class, 'getCostAnalytics']);
         Route::get('/usage', [MaterialAnalyticsController::class, 'getUsageAnalytics']);
-    });
-    
-    // === CUSTOM REPORTS (в контексте проекта) ===
-    Route::prefix('reports')->group(function () {
-        Route::get('/', [CustomReportController::class, 'index']);
-        Route::post('/', [CustomReportController::class, 'store']);
-        Route::get('/{report}', [CustomReportController::class, 'show']);
-        Route::post('/{report}/generate', [CustomReportController::class, 'generate']);
-        Route::delete('/{report}', [CustomReportController::class, 'destroy']);
     });
     
     // === ESTIMATES (сметы в контексте проекта) ===

@@ -117,7 +117,7 @@ final class ActivityAuditBridge
             Str::startsWith($event, 'user_invitation.') => 'users',
             Str::startsWith($event, 'contractor.') => 'contractors',
             Str::startsWith($event, 'subscription.'), Str::startsWith($event, 'billing.') => 'billing',
-            Str::startsWith($event, 'report.'), Str::startsWith($event, 'custom_report.') => 'reports',
+            Str::startsWith($event, 'report.') => 'reports',
             Str::startsWith($event, 'organization.') => 'organization',
             Str::startsWith($event, 'module.') => 'modules',
             Str::startsWith($event, 'workflow.') => 'workflow',
@@ -232,10 +232,6 @@ final class ActivityAuditBridge
 
         if (Str::startsWith($event, 'subscription.')) {
             return $this->subject('subscription', $context['subscription_id'] ?? null, $context['plan_name'] ?? $context['status'] ?? null);
-        }
-
-        if (Str::startsWith($event, 'custom_report.')) {
-            return $this->subject('custom_report', $context['report_id'] ?? null, $context['report_name'] ?? null);
         }
 
         if (Str::startsWith($event, 'report.')) {

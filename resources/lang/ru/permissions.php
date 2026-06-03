@@ -569,8 +569,6 @@ return [
                 'financial_analytics' => 'Финансовая аналитика',
                 'performance_metrics' => 'Метрики эффективности',
                 'predictive_analytics' => 'Предиктивная аналитика',
-                'custom_reports' => 'Пользовательские отчеты',
-                'automated_reports' => 'Автоматические отчеты',
                 'api_access' => 'API доступ',
                 'unlimited_export' => 'Неограниченный экспорт',
             ],

@@ -103,22 +103,6 @@ Schedule::command('modules:convert-expired-trials')
     })
     ->appendOutputTo(storage_path('logs/schedule-trial-expired.log'));
 
-Schedule::command('custom-reports:execute-scheduled')
-    ->hourly()
-    ->withoutOverlapping(30)
-    ->onFailure(function () {
-        Log::channel('stderr')->error('Scheduled custom-reports:execute-scheduled command failed.');
-    })
-    ->appendOutputTo(storage_path('logs/schedule-custom-reports-execute.log'));
-
-Schedule::command('custom-reports:cleanup-executions --days=90')
-    ->dailyAt('04:00')
-    ->withoutOverlapping(60)
-    ->onFailure(function () {
-        Log::channel('stderr')->error('Scheduled custom-reports:cleanup-executions command failed.');
-    })
-    ->appendOutputTo(storage_path('logs/schedule-custom-reports-cleanup.log'));
-
 Schedule::command('temp-files:cleanup --hours=48')
     ->dailyAt('04:10')
     ->withoutOverlapping(30)

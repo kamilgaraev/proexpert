@@ -569,8 +569,6 @@ return [
                 'financial_analytics' => 'Financial Analytics',
                 'performance_metrics' => 'Performance Metrics',
                 'predictive_analytics' => 'Predictive Analytics',
-                'custom_reports' => 'Custom Reports',
-                'automated_reports' => 'Automated Reports',
                 'api_access' => 'API Access',
                 'unlimited_export' => 'Unlimited Export',
             ],

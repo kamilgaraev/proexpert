@@ -562,15 +562,6 @@ class ActivityAuditBridgeTest extends TestCase
                 61,
                 'Pro',
             ],
-            'custom report created' => [
-                'custom_report.created',
-                ['report_id' => 71, 'report_name' => 'Weekly'],
-                'reports',
-                'created',
-                'custom_report',
-                71,
-                'Weekly',
-            ],
             'ai action executed' => [
                 'ai.assistant.action.executed',
                 ['action' => 81, 'tool' => 'project-pulse'],

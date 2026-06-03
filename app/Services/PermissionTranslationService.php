@@ -87,9 +87,6 @@ class PermissionTranslationService
                 'reports.view',
                 'reports.export',
                 'reports.manage_templates',
-                'reports.custom_reports',
-                'reports.share',
-                'reports.schedule',
                 'reports.official_reports',
                 'reports.predictive'
             ],

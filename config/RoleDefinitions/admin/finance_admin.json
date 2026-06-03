@@ -26,7 +26,6 @@
     "reports": [
       "reports.view",
       "reports.export",
-      "reports.schedule",
       "reports.official_reports",
       "reports.predictive"
     ],

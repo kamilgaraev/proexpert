@@ -377,10 +377,6 @@ return [
             'title' => ':actor продлил подписку :subject',
             'description' => 'Подписка организации продлена.',
         ],
-        'custom_report.created' => [
-            'title' => ':actor создал отчет :subject',
-            'description' => 'Пользовательский отчет сохранен.',
-        ],
         'ai.assistant.action.executed' => [
             'title' => ':actor выполнил действие ИИ-ассистента :subject',
             'description' => 'ИИ-ассистент выполнил запрошенное действие.',

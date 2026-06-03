@@ -27,8 +27,7 @@
     "reports": [
       "reports.view",
       "reports.export",
-      "reports.official_reports",
-      "reports.schedule"
+      "reports.official_reports"
     ],
     "finance": [
       "finance.*"

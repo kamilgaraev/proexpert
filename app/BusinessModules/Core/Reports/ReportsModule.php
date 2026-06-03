@@ -84,9 +84,6 @@ class ReportsModule implements ModuleInterface, ConfigurableInterface
             'reports.view',
             'reports.export',
             'reports.manage_templates',
-            'reports.custom_reports',
-            'reports.share',
-            'reports.schedule',
             'reports.official_reports',
             'reports.predictive',
         ];
@@ -96,27 +93,21 @@ class ReportsModule implements ModuleInterface, ConfigurableInterface
     {
         return [
             'Базовые отчеты (материалы, работы, проекты)',
-            'Конструктор произвольных отчетов',
             'Финансовая аналитика и KPI',
             'Генерация официальных форм (М-29 и др.)',
             'Прогнозирование и ML-аналитика',
-            'Автоматическая рассылка отчетов',
         ];
     }
 
     public function getLimits(): array
     {
-        return [
-            'max_custom_reports' => 10,
-            'max_scheduled_reports' => 5,
-        ];
+        return [];
     }
 
     public function getDefaultSettings(): array
     {
         return [
             'default_export_format' => 'pdf',
-            'enable_external_data_sources' => false,
             'report_retention_days' => 30,
         ];
     }
