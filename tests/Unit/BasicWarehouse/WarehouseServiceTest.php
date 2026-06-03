@@ -167,6 +167,23 @@ class WarehouseServiceTest extends TestCase
         $this->assertSame('X', $data['assets'][0]['xyz_category']);
     }
 
+    public function test_get_abc_xyz_analysis_accepts_string_date_filters(): void
+    {
+        [$organization, $warehouse, $material, $user] = $this->createWarehouseContext();
+        $this->createWriteOff($organization->id, $warehouse->id, $material->id, $user->id, 5, 100);
+
+        $data = $this->service->getAbcXyzAnalysis($organization->id, [
+            'date_from' => now()->subDays(10)->toDateString(),
+            'date_to' => now()->toDateString(),
+            'warehouse_id' => (string) $warehouse->id,
+        ]);
+
+        $this->assertSame(now()->subDays(10)->toDateString(), $data['analysis_period']['date_from']);
+        $this->assertSame(now()->toDateString(), $data['analysis_period']['date_to']);
+        $this->assertSame(1, $data['summary']['total_assets_analyzed']);
+        $this->assertSame($material->id, $data['assets'][0]['asset_id']);
+    }
+
     private function createWarehouseContext(): array
     {
         $organization = Organization::factory()->create();

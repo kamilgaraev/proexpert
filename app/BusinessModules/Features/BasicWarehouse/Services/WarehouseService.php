@@ -1220,8 +1220,12 @@ class WarehouseService implements WarehouseReportDataProvider
      */
     public function getAbcXyzAnalysis(int $organizationId, array $filters = []): array
     {
-        $dateFrom = $filters['date_from'] ?? now()->subYear();
-        $dateTo = $filters['date_to'] ?? now();
+        $dateFrom = isset($filters['date_from'])
+            ? Carbon::parse((string) $filters['date_from'])->startOfDay()
+            : now()->subYear()->startOfDay();
+        $dateTo = isset($filters['date_to'])
+            ? Carbon::parse((string) $filters['date_to'])->endOfDay()
+            : now()->endOfDay();
         $warehouseId = isset($filters['warehouse_id']) ? (int) $filters['warehouse_id'] : null;
 
         // Получаем движения за период
