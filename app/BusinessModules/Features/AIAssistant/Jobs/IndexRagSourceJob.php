@@ -21,6 +21,7 @@ class IndexRagSourceJob implements ShouldQueue
         public ?string $sourceType = null,
         public ?int $runId = null
     ) {
+        $this->onConnection($this->connectionName());
         $this->onQueue($this->queueName());
     }
 
@@ -70,5 +71,16 @@ class IndexRagSourceJob implements ShouldQueue
         }
 
         return is_string($queue) && trim($queue) !== '' ? $queue : 'ai-rag';
+    }
+
+    private function connectionName(): string
+    {
+        try {
+            $connection = config('ai-assistant.rag.queue_connection', 'redis_ai_rag');
+        } catch (Throwable) {
+            return 'redis_ai_rag';
+        }
+
+        return is_string($connection) && trim($connection) !== '' ? $connection : 'redis_ai_rag';
     }
 }
