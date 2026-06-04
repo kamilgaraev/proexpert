@@ -48,6 +48,9 @@ class BrickHouseDemoSeeder extends Seeder
         'performance_acts' => 0,
         'payment_documents' => 0,
         'activity_events' => 0,
+        'workforce_records' => 0,
+        'safety_records' => 0,
+        'quality_defects' => 0,
     ];
 
     public function run(): void
@@ -218,6 +221,33 @@ class BrickHouseDemoSeeder extends Seeder
                 workTypes: $contractorWorkTypes,
                 materials: $contractorMaterials,
                 scope: 'SUB'
+            );
+
+            $this->seedWorkforceDemo(
+                projectId: $projectId,
+                general: $general,
+                contractor: $contractor
+            );
+
+            $this->seedSafetyDemo(
+                projectId: $projectId,
+                general: $general,
+                contractor: $contractor
+            );
+
+            $this->seedQualityDemo(
+                projectId: $projectId,
+                general: $general,
+                contractor: $contractor,
+                contractors: $contractors,
+                scheduleTasks: [
+                    'general' => $generalScheduleTasks,
+                    'contractor' => $contractorScheduleTasks,
+                ],
+                journals: [
+                    'general' => $generalJournal,
+                    'contractor' => $contractorJournal,
+                ]
             );
 
             $acts = [
@@ -782,6 +812,9 @@ class BrickHouseDemoSeeder extends Seeder
                     'dashboard-widgets' => ['dashboard.view', 'dashboard.contracts.statistics', 'dashboard.recent_activity.view'],
                     'ai-assistant' => ['ai_assistant.chat', 'admin.ai_assistant.project_pulse.view', 'admin.ai_assistant.project_pulse.generate'],
                     'site-requests' => ['site_requests.view', 'site_requests.approve', 'site_requests.assign', 'site_requests.change_status'],
+                    'workforce-management' => ['workforce.view', 'workforce.employees.basic', 'workforce.attendance.manage', 'workforce.payroll-source.validate'],
+                    'safety-management' => ['safety-management.view', 'safety-management.permits.manage', 'safety-management.incidents.review', 'safety-management.violations.resolve'],
+                    'quality-control' => ['quality-control.view', 'quality-control.inspect', 'quality-control.approve', 'quality-control.defects.view', 'quality-control.defects.assign', 'quality-control.defects.verify'],
                     'reports' => ['reports.view', 'reports.export'],
                 ],
             ],
@@ -805,6 +838,8 @@ class BrickHouseDemoSeeder extends Seeder
                     'workflow-management' => ['completed_works.view', 'completed_works.create', 'completed_works.edit', 'completed_works.materials.sync'],
                     'file-management' => ['personal_files.view', 'personal_files.upload', 'report_files.view'],
                     'quality-control' => ['quality-control.view', 'quality-control.inspect', 'quality-control.defects.view', 'quality-control.defects.resolve'],
+                    'safety-management' => ['safety-management.view', 'safety-management.briefings.manage', 'safety-management.violations.create'],
+                    'workforce-management' => ['workforce.view', 'workforce.employees.basic', 'workforce.production-labor.view'],
                 ],
             ],
             [
@@ -828,6 +863,9 @@ class BrickHouseDemoSeeder extends Seeder
                     'workflow-management' => ['completed_works.view', 'completed_works.create', 'completed_works.edit'],
                     'basic-warehouse' => ['warehouse.view', 'warehouse.receipts', 'warehouse.write_offs', 'warehouse.view_custody'],
                     'schedule-management' => ['schedule.view', 'schedule.notifications'],
+                    'workforce-management' => ['workforce.view', 'workforce.attendance.manage', 'workforce.attendance.scan-confirm'],
+                    'safety-management' => ['safety-management.view', 'safety-management.incidents.create', 'safety-management.violations.create', 'safety-management.briefings.manage'],
+                    'quality-control' => ['quality-control.view', 'quality-control.defects.view', 'quality-control.defects.create', 'quality-control.defects.resolve'],
                 ],
                 'conditions' => ['project_scope' => 'assigned_projects'],
             ],
@@ -902,6 +940,9 @@ class BrickHouseDemoSeeder extends Seeder
                     'contract-management' => ['contracts.view', 'contracts.completed_works.view', 'contracts.performance_acts.view', 'contracts.performance_acts.create', 'contracts.performance_acts.edit', 'contracts.payments.view'],
                     'schedule-management' => ['schedule.view', 'schedule.edit', 'schedule.assign'],
                     'site-requests' => ['site_requests.view', 'site_requests.approve', 'site_requests.assign', 'site_requests.change_status'],
+                    'workforce-management' => ['workforce.view', 'workforce.employees.basic', 'workforce.production-labor.manage', 'workforce.payroll-source.manage'],
+                    'safety-management' => ['safety-management.view', 'safety-management.permits.manage', 'safety-management.incidents.review', 'safety-management.violations.resolve'],
+                    'quality-control' => ['quality-control.view', 'quality-control.inspect', 'quality-control.defects.view', 'quality-control.defects.assign'],
                     'dashboard-widgets' => ['dashboard.view', 'dashboard.recent_activity.view'],
                     'ai-assistant' => ['ai_assistant.chat', 'admin.ai_assistant.project_pulse.view'],
                 ],
@@ -925,6 +966,9 @@ class BrickHouseDemoSeeder extends Seeder
                     'workflow-management' => ['completed_works.view', 'completed_works.create', 'completed_works.edit'],
                     'schedule-management' => ['schedule.view', 'schedule.export'],
                     'file-management' => ['personal_files.view', 'personal_files.upload', 'report_files.view'],
+                    'quality-control' => ['quality-control.view', 'quality-control.inspect', 'quality-control.defects.view', 'quality-control.defects.resolve'],
+                    'safety-management' => ['safety-management.view', 'safety-management.briefings.manage', 'safety-management.violations.create'],
+                    'workforce-management' => ['workforce.view', 'workforce.employees.basic', 'workforce.production-labor.view'],
                 ],
             ],
             [
@@ -948,6 +992,9 @@ class BrickHouseDemoSeeder extends Seeder
                     'workflow-management' => ['completed_works.view', 'completed_works.create', 'completed_works.edit'],
                     'basic-warehouse' => ['warehouse.view', 'warehouse.receipts', 'warehouse.write_offs', 'warehouse.view_custody'],
                     'schedule-management' => ['schedule.view', 'schedule.notifications'],
+                    'workforce-management' => ['workforce.view', 'workforce.attendance.manage', 'workforce.attendance.scan-confirm', 'workforce.production-labor.manage'],
+                    'safety-management' => ['safety-management.view', 'safety-management.incidents.create', 'safety-management.violations.create', 'safety-management.briefings.manage'],
+                    'quality-control' => ['quality-control.view', 'quality-control.defects.view', 'quality-control.defects.create', 'quality-control.defects.resolve'],
                 ],
                 'conditions' => ['project_scope' => 'assigned_projects'],
             ],
@@ -1094,6 +1141,12 @@ class BrickHouseDemoSeeder extends Seeder
             ['slug' => 'schedule-management', 'name' => 'Календарные графики', 'type' => 'feature', 'category' => 'planning'],
             ['slug' => 'basic-warehouse', 'name' => 'Складской учет', 'type' => 'feature', 'category' => 'warehouse'],
             ['slug' => 'site-requests', 'name' => 'Заявки с объекта', 'type' => 'feature', 'category' => 'field'],
+            ['slug' => 'workforce-management', 'name' => 'Персонал и трудозатраты', 'type' => 'feature', 'category' => 'resources'],
+            ['slug' => 'production-labor', 'name' => 'Наряды и выработка', 'type' => 'feature', 'category' => 'resources'],
+            ['slug' => 'safety-management', 'name' => 'Охрана труда и безопасность', 'type' => 'feature', 'category' => 'execution'],
+            ['slug' => 'quality-control', 'name' => 'Контроль качества', 'type' => 'feature', 'category' => 'execution'],
+            ['slug' => 'workflow-management', 'name' => 'Выполненные работы', 'type' => 'feature', 'category' => 'execution'],
+            ['slug' => 'file-management', 'name' => 'Файлы и документы', 'type' => 'feature', 'category' => 'documents'],
             ['slug' => 'payments', 'name' => 'Платежи', 'type' => 'core', 'category' => 'finance'],
             ['slug' => 'reports', 'name' => 'Отчеты', 'type' => 'core', 'category' => 'analytics'],
             ['slug' => 'dashboard-widgets', 'name' => 'Виджеты дашборда', 'type' => 'service', 'category' => 'analytics'],
@@ -2825,6 +2878,829 @@ class BrickHouseDemoSeeder extends Seeder
     }
 
     /**
+     * @param array<string, mixed> $general
+     * @param array<string, mixed> $contractor
+     */
+    private function seedWorkforceDemo(int $projectId, array $general, array $contractor): void
+    {
+        if (!Schema::hasTable('workforce_employees')) {
+            return;
+        }
+
+        $contours = [
+            [
+                'scope' => 'GP',
+                'account' => $general,
+                'manager_key' => 'project_manager',
+                'foreman_key' => 'foreman',
+                'employees' => $this->generalWorkforceEmployees(),
+            ],
+            [
+                'scope' => 'SUB',
+                'account' => $contractor,
+                'manager_key' => 'work_manager',
+                'foreman_key' => 'foreman',
+                'employees' => $this->contractorWorkforceEmployees(),
+            ],
+        ];
+
+        foreach ($contours as $contour) {
+            $this->seedWorkforceContour(
+                projectId: $projectId,
+                account: $contour['account'],
+                scope: $contour['scope'],
+                managerUserId: $this->actorId($contour['account'], $contour['manager_key']),
+                foremanUserId: $this->actorId($contour['account'], $contour['foreman_key']),
+                employees: $contour['employees']
+            );
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $account
+     * @param array<int, array<string, mixed>> $employees
+     */
+    private function seedWorkforceContour(
+        int $projectId,
+        array $account,
+        string $scope,
+        int $managerUserId,
+        int $foremanUserId,
+        array $employees
+    ): void {
+        $organizationId = (int) $account['organization_id'];
+        $departmentIds = [];
+        $positionIds = [];
+        $staffUnitIds = [];
+        $employeeIds = [];
+        $hiredAt = $this->now->copy()->subMonths(7)->startOfMonth();
+
+        foreach ($employees as $employee) {
+            $departmentCode = (string) $employee['department_code'];
+            $positionCode = (string) $employee['position_code'];
+
+            $departmentIds[$departmentCode] ??= $this->upsert('workforce_departments', [
+                'organization_id' => $organizationId,
+                'code' => $departmentCode,
+            ], [
+                'name' => $employee['department_name'],
+                'is_active' => true,
+            ]);
+
+            $positionIds[$positionCode] ??= $this->upsert('workforce_positions', [
+                'organization_id' => $organizationId,
+                'code' => $positionCode,
+            ], [
+                'name' => $employee['position_name'],
+                'category' => $employee['category'],
+                'is_active' => true,
+            ]);
+
+            $staffUnitIds[$positionCode] ??= $this->upsert('workforce_staff_units', [
+                'organization_id' => $organizationId,
+                'code' => "{$scope}-STAFF-{$positionCode}",
+            ], [
+                'department_id' => $departmentIds[$departmentCode],
+                'position_id' => $positionIds[$positionCode],
+                'headcount' => $employee['headcount'],
+                'rate' => 1,
+                'base_salary' => $employee['base_salary'],
+                'valid_from' => $hiredAt->toDateString(),
+                'is_active' => true,
+            ]);
+        }
+
+        $scheduleId = $this->upsert('workforce_work_schedules', [
+            'organization_id' => $organizationId,
+            'code' => "BH-{$scope}-5D",
+        ], [
+            'name' => $scope === 'GP' ? 'Пятидневка ИТР и участка' : 'Сменный график кладочной бригады',
+            'schedule_type' => 'weekly',
+            'hours_per_day' => $scope === 'GP' ? 8 : 9,
+            'week_pattern' => $this->json(['work_days' => [1, 2, 3, 4, 5], 'scenario' => 'brick_house']),
+            'is_active' => true,
+        ]);
+
+        for ($day = 6; $day >= 0; $day--) {
+            $date = $this->now->copy()->subDays($day);
+            $this->upsert('workforce_work_schedule_days', [
+                'organization_id' => $organizationId,
+                'work_schedule_id' => $scheduleId,
+                'work_date' => $date->toDateString(),
+            ], [
+                'day_type' => $date->isWeekend() ? 'day_off' : 'work',
+                'planned_hours' => $date->isWeekend() ? 0 : ($scope === 'GP' ? 8 : 9),
+                'comment' => $date->isWeekend() ? 'Выходной по демо-графику' : 'Рабочий день демо-объекта',
+            ]);
+        }
+
+        foreach ($employees as $index => $employee) {
+            $userId = isset($employee['user_key']) ? $this->actorId($account, (string) $employee['user_key']) : null;
+            $employeeId = $this->upsert('workforce_employees', [
+                'organization_id' => $organizationId,
+                'personnel_number' => $employee['personnel_number'],
+            ], [
+                'user_id' => $userId,
+                'last_name' => $employee['last_name'],
+                'first_name' => $employee['first_name'],
+                'middle_name' => $employee['middle_name'],
+                'employment_status' => 'active',
+                'hire_date' => $hiredAt->copy()->addDays($index * 3)->toDateString(),
+                'external_payroll_ref' => $employee['external_payroll_ref'],
+                'phone' => $employee['phone'],
+                'email' => $employee['email'],
+                'metadata' => $this->json([
+                    'scenario' => 'brick_house',
+                    'scope' => $scope,
+                    'project_id' => $projectId,
+                    'hour_rate' => $employee['hour_rate'],
+                ]),
+            ]);
+
+            $employeeIds[$employee['key']] = $employeeId;
+
+            $this->upsert('workforce_employment_contracts', [
+                'organization_id' => $organizationId,
+                'contract_number' => "BH-{$scope}-TD-" . str_pad((string) ($index + 1), 3, '0', STR_PAD_LEFT),
+            ], [
+                'employee_id' => $employeeId,
+                'contract_date' => $hiredAt->copy()->addDays($index * 3)->toDateString(),
+                'start_date' => $hiredAt->copy()->addDays($index * 3)->toDateString(),
+                'end_date' => null,
+                'status' => 'active',
+                'metadata' => $this->json(['scenario' => 'brick_house']),
+            ]);
+
+            $this->upsert('workforce_employee_assignments', [
+                'organization_id' => $organizationId,
+                'employee_id' => $employeeId,
+                'staff_unit_id' => $staffUnitIds[$employee['position_code']],
+                'valid_from' => $this->now->copy()->subMonths(5)->toDateString(),
+            ], [
+                'department_id' => $departmentIds[$employee['department_code']],
+                'position_id' => $positionIds[$employee['position_code']],
+                'project_id' => $projectId,
+                'work_schedule_id' => $scheduleId,
+                'rate' => 1,
+                'valid_to' => null,
+                'status' => 'active',
+            ]);
+
+            $this->totals['workforce_records'] += 3;
+        }
+
+        $absenceTypeId = $this->upsert('workforce_absence_types', [
+            'organization_id' => $organizationId,
+            'code' => 'SICK_LEAVE',
+        ], [
+            'name' => 'Больничный',
+            'affects_payroll' => true,
+        ]);
+
+        $absenceEmployeeId = $employeeIds[$scope === 'GP' ? 'laborer' : 'helper'] ?? 0;
+        if ($absenceEmployeeId > 0) {
+            $absenceDate = $this->now->copy()->subDays(2)->toDateString();
+            $this->upsert('workforce_absences', [
+                'organization_id' => $organizationId,
+                'employee_id' => $absenceEmployeeId,
+                'absence_type_id' => $absenceTypeId,
+                'start_date' => $absenceDate,
+                'end_date' => $absenceDate,
+            ], [
+                'status' => 'approved',
+                'comment' => 'Демо-отсутствие, учтено в сменной сводке',
+            ]);
+            $this->totals['workforce_records']++;
+        }
+
+        $tripEmployeeId = $employeeIds[$scope === 'GP' ? 'pto_engineer' : 'work_manager'] ?? 0;
+        if ($tripEmployeeId > 0) {
+            $this->upsert('workforce_business_trips', [
+                'organization_id' => $organizationId,
+                'employee_id' => $tripEmployeeId,
+                'project_id' => $projectId,
+                'start_date' => $this->now->copy()->subDays(9)->toDateString(),
+                'end_date' => $this->now->copy()->subDays(8)->toDateString(),
+            ], [
+                'destination' => 'Испытательная лаборатория бетона',
+                'purpose' => 'Передача образцов и получение протоколов для демо-объекта',
+                'status' => 'approved',
+            ]);
+            $this->totals['workforce_records']++;
+        }
+
+        $this->upsert('workforce_orders', [
+            'organization_id' => $organizationId,
+            'order_number' => "BH-{$scope}-ORD-001",
+        ], [
+            'employee_id' => $tripEmployeeId ?: null,
+            'order_date' => $this->now->copy()->subDays(11)->toDateString(),
+            'order_type' => 'business_trip',
+            'status' => 'applied',
+            'payload' => $this->json([
+                'scenario' => 'brick_house',
+                'project_id' => $projectId,
+                'approved_by_user_id' => $managerUserId,
+            ]),
+        ]);
+
+        $periodId = $this->upsert('workforce_payroll_periods', [
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'period_start' => $this->now->copy()->startOfMonth()->toDateString(),
+            'period_end' => $this->now->copy()->endOfMonth()->toDateString(),
+        ], [
+            'status' => 'validated',
+            'created_by_user_id' => $managerUserId,
+            'locked_at' => null,
+            'locked_by_user_id' => null,
+            'source_hash' => hash('sha256', "brick-house-{$scope}-payroll"),
+        ]);
+
+        $statementId = $this->upsert('workforce_payroll_statements', [
+            'organization_id' => $organizationId,
+            'statement_number' => "BH-{$scope}-PAY-" . $this->now->format('Ym'),
+        ], [
+            'payroll_period_id' => $periodId,
+            'status' => 'prepared',
+            'total_hours' => 0,
+            'gross_amount' => 0,
+            'created_by_user_id' => $managerUserId,
+        ]);
+
+        $totalHours = 0.0;
+        $grossAmount = 0.0;
+
+        foreach ($employees as $employee) {
+            $employeeId = $employeeIds[$employee['key']] ?? 0;
+            if ($employeeId === 0) {
+                continue;
+            }
+
+            $employeeHours = 0.0;
+            $employeeGross = 0.0;
+
+            for ($day = 4; $day >= 0; $day--) {
+                $date = $this->now->copy()->subDays($day);
+                $isAbsent = $employee['key'] === ($scope === 'GP' ? 'laborer' : 'helper') && $day === 2;
+                $hours = $date->isWeekend() || $isAbsent ? 0.0 : (float) ($scope === 'GP' ? 8 : 9);
+                $status = $hours > 0 ? 'at_work' : ($isAbsent ? 'absence' : 'scheduled_day_off');
+                $amount = round($hours * (float) $employee['hour_rate'], 2);
+
+                $this->upsert('workforce_attendance_corrections', [
+                    'organization_id' => $organizationId,
+                    'employee_id' => $employeeId,
+                    'work_date' => $date->toDateString(),
+                ], [
+                    'project_id' => $projectId,
+                    'status' => $status,
+                    'hours' => $hours,
+                    'reason' => $status === 'at_work'
+                        ? 'Подтвержденная смена на демо-объекте'
+                        : 'Отклонение учтено в демо-табеле',
+                    'created_by_user_id' => $foremanUserId,
+                ]);
+
+                $this->upsert('workforce_payroll_source_rows', [
+                    'organization_id' => $organizationId,
+                    'payroll_period_id' => $periodId,
+                    'employee_id' => $employeeId,
+                    'project_id' => $projectId,
+                    'work_date' => $date->toDateString(),
+                    'source_type' => 'brick_house_demo',
+                ], [
+                    'work_order_id' => null,
+                    'work_order_line_id' => null,
+                    'timesheet_entry_id' => null,
+                    'hours' => $hours,
+                    'amount' => $amount,
+                    'payload' => $this->json([
+                        'scenario' => 'brick_house',
+                        'status' => $status,
+                        'scope' => $scope,
+                    ]),
+                ]);
+
+                $employeeHours += $hours;
+                $employeeGross += $amount;
+            }
+
+            $this->upsert('workforce_payroll_statement_rows', [
+                'payroll_statement_id' => $statementId,
+                'employee_id' => $employeeId,
+                'project_id' => $projectId,
+            ], [
+                'organization_id' => $organizationId,
+                'payroll_period_id' => $periodId,
+                'hours' => $employeeHours,
+                'gross_amount' => $employeeGross,
+                'source_row_ids' => $this->json(['scenario' => 'brick_house']),
+            ]);
+
+            $totalHours += $employeeHours;
+            $grossAmount += $employeeGross;
+            $this->totals['workforce_records'] += 11;
+        }
+
+        if ($statementId > 0 && Schema::hasTable('workforce_payroll_statements')) {
+            DB::table('workforce_payroll_statements')
+                ->where('id', $statementId)
+                ->update($this->withTimestamps('workforce_payroll_statements', [
+                    'total_hours' => $totalHours,
+                    'gross_amount' => $grossAmount,
+                ], true));
+        }
+
+        foreach (array_slice($employeeIds, 0, 3) as $employeeId) {
+            $tokenHash = hash('sha256', "brick-house-{$scope}-qr-{$employeeId}");
+            $tokenId = $this->upsert('workforce_attendance_qr_tokens', [
+                'token_hash' => $tokenHash,
+            ], [
+                'organization_id' => $organizationId,
+                'employee_id' => $employeeId,
+                'project_id' => $projectId,
+                'work_date' => $this->now->toDateString(),
+                'payload_hash' => hash('sha256', "brick-house-{$scope}-payload-{$employeeId}"),
+                'expires_at' => $this->now->copy()->addHours(8),
+                'used_at' => $this->now->copy()->subHours(3),
+                'used_by_user_id' => $foremanUserId,
+                'status' => 'used',
+                'created_by_user_id' => $foremanUserId,
+            ]);
+
+            $this->upsert('workforce_attendance_scan_events', [
+                'organization_id' => $organizationId,
+                'employee_id' => $employeeId,
+                'project_id' => $projectId,
+                'work_date' => $this->now->toDateString(),
+                'device_id' => "BH-{$scope}-GATE-01",
+            ], [
+                'qr_token_id' => $tokenId,
+                'scanned_by_user_id' => $foremanUserId,
+                'result' => 'success',
+                'result_label' => 'Смена подтверждена',
+                'failure_reason' => null,
+                'scanned_at' => $this->now->copy()->setTime(8, 12),
+                'metadata' => $this->json(['scenario' => 'brick_house', 'scope' => $scope]),
+            ]);
+
+            $this->totals['workforce_records'] += 2;
+        }
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function generalWorkforceEmployees(): array
+    {
+        return [
+            ['key' => 'project_manager', 'user_key' => 'project_manager', 'personnel_number' => 'BH-GP-001', 'external_payroll_ref' => 'BH-GP-PAY-001', 'last_name' => 'Орлова', 'first_name' => 'Мария', 'middle_name' => 'Викторовна', 'department_code' => 'BH-GP-PMO', 'department_name' => 'Проектный офис', 'position_code' => 'BH-GP-PM', 'position_name' => 'Руководитель проекта', 'category' => 'management', 'headcount' => 1, 'base_salary' => 210000, 'hour_rate' => 1450, 'phone' => '+7 916 210-45-01', 'email' => 'demo.gp.project-manager@prohelper.test'],
+            ['key' => 'pto_engineer', 'user_key' => 'pto_engineer', 'personnel_number' => 'BH-GP-002', 'external_payroll_ref' => 'BH-GP-PAY-002', 'last_name' => 'Волков', 'first_name' => 'Сергей', 'middle_name' => 'Игоревич', 'department_code' => 'BH-GP-PTO', 'department_name' => 'Производственно-технический отдел', 'position_code' => 'BH-GP-PTO', 'position_name' => 'Ведущий инженер ПТО', 'category' => 'engineering', 'headcount' => 2, 'base_salary' => 165000, 'hour_rate' => 1180, 'phone' => '+7 916 210-45-02', 'email' => 'demo.gp.pto@prohelper.test'],
+            ['key' => 'foreman', 'user_key' => 'foreman', 'personnel_number' => 'BH-GP-003', 'external_payroll_ref' => 'BH-GP-PAY-003', 'last_name' => 'Смирнов', 'first_name' => 'Илья', 'middle_name' => 'Павлович', 'department_code' => 'BH-GP-SITE', 'department_name' => 'Участок коробки здания', 'position_code' => 'BH-GP-FOREMAN', 'position_name' => 'Прораб участка', 'category' => 'site', 'headcount' => 2, 'base_salary' => 150000, 'hour_rate' => 1090, 'phone' => '+7 916 210-45-03', 'email' => 'demo.gp.foreman@prohelper.test'],
+            ['key' => 'supply_manager', 'user_key' => 'supply_manager', 'personnel_number' => 'BH-GP-004', 'external_payroll_ref' => 'BH-GP-PAY-004', 'last_name' => 'Белова', 'first_name' => 'Наталья', 'middle_name' => 'Олеговна', 'department_code' => 'BH-GP-SUPPLY', 'department_name' => 'Снабжение и склад', 'position_code' => 'BH-GP-SUPPLY', 'position_name' => 'Руководитель снабжения', 'category' => 'supply', 'headcount' => 1, 'base_salary' => 142000, 'hour_rate' => 980, 'phone' => '+7 916 210-45-04', 'email' => 'demo.gp.supply@prohelper.test'],
+            ['key' => 'safety_engineer', 'personnel_number' => 'BH-GP-005', 'external_payroll_ref' => 'BH-GP-PAY-005', 'last_name' => 'Тарасов', 'first_name' => 'Павел', 'middle_name' => 'Андреевич', 'department_code' => 'BH-GP-SITE', 'department_name' => 'Участок коробки здания', 'position_code' => 'BH-GP-HSE', 'position_name' => 'Инженер по охране труда', 'category' => 'safety', 'headcount' => 1, 'base_salary' => 138000, 'hour_rate' => 940, 'phone' => '+7 916 210-45-06', 'email' => 'hse.gp@prohelper.test'],
+            ['key' => 'laborer', 'personnel_number' => 'BH-GP-006', 'external_payroll_ref' => 'BH-GP-PAY-006', 'last_name' => 'Ковалев', 'first_name' => 'Никита', 'middle_name' => 'Сергеевич', 'department_code' => 'BH-GP-SITE', 'department_name' => 'Участок коробки здания', 'position_code' => 'BH-GP-LABOR', 'position_name' => 'Подсобный рабочий', 'category' => 'worker', 'headcount' => 6, 'base_salary' => 92000, 'hour_rate' => 620, 'phone' => '+7 916 210-45-07', 'email' => 'worker.gp@prohelper.test'],
+        ];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function contractorWorkforceEmployees(): array
+    {
+        return [
+            ['key' => 'work_manager', 'user_key' => 'work_manager', 'personnel_number' => 'BH-SUB-001', 'external_payroll_ref' => 'BH-SUB-PAY-001', 'last_name' => 'Захаров', 'first_name' => 'Дмитрий', 'middle_name' => 'Романович', 'department_code' => 'BH-SUB-MGMT', 'department_name' => 'Управление кладочными работами', 'position_code' => 'BH-SUB-WM', 'position_name' => 'Руководитель работ', 'category' => 'management', 'headcount' => 1, 'base_salary' => 172000, 'hour_rate' => 1220, 'phone' => '+7 916 210-46-01', 'email' => 'demo.sub.work-manager@prohelper.test'],
+            ['key' => 'pto_engineer', 'user_key' => 'pto_engineer', 'personnel_number' => 'BH-SUB-002', 'external_payroll_ref' => 'BH-SUB-PAY-002', 'last_name' => 'Егорова', 'first_name' => 'Анна', 'middle_name' => 'Владимировна', 'department_code' => 'BH-SUB-PTO', 'department_name' => 'ПТО подрядчика', 'position_code' => 'BH-SUB-PTO', 'position_name' => 'Инженер ПТО', 'category' => 'engineering', 'headcount' => 1, 'base_salary' => 138000, 'hour_rate' => 980, 'phone' => '+7 916 210-46-02', 'email' => 'demo.sub.pto@prohelper.test'],
+            ['key' => 'foreman', 'user_key' => 'foreman', 'personnel_number' => 'BH-SUB-003', 'external_payroll_ref' => 'BH-SUB-PAY-003', 'last_name' => 'Кузнецов', 'first_name' => 'Андрей', 'middle_name' => 'Николаевич', 'department_code' => 'BH-SUB-SITE', 'department_name' => 'Бригада кладки', 'position_code' => 'BH-SUB-FOREMAN', 'position_name' => 'Прораб кладочных работ', 'category' => 'site', 'headcount' => 1, 'base_salary' => 146000, 'hour_rate' => 1050, 'phone' => '+7 916 210-46-03', 'email' => 'demo.sub.foreman@prohelper.test'],
+            ['key' => 'mason_1', 'personnel_number' => 'BH-SUB-004', 'external_payroll_ref' => 'BH-SUB-PAY-004', 'last_name' => 'Громов', 'first_name' => 'Василий', 'middle_name' => 'Петрович', 'department_code' => 'BH-SUB-SITE', 'department_name' => 'Бригада кладки', 'position_code' => 'BH-SUB-MASON', 'position_name' => 'Каменщик 5 разряда', 'category' => 'worker', 'headcount' => 8, 'base_salary' => 128000, 'hour_rate' => 890, 'phone' => '+7 916 210-46-06', 'email' => 'mason1.sub@prohelper.test'],
+            ['key' => 'mason_2', 'personnel_number' => 'BH-SUB-005', 'external_payroll_ref' => 'BH-SUB-PAY-005', 'last_name' => 'Лазарев', 'first_name' => 'Олег', 'middle_name' => 'Ильич', 'department_code' => 'BH-SUB-SITE', 'department_name' => 'Бригада кладки', 'position_code' => 'BH-SUB-MASON', 'position_name' => 'Каменщик 5 разряда', 'category' => 'worker', 'headcount' => 8, 'base_salary' => 126000, 'hour_rate' => 875, 'phone' => '+7 916 210-46-07', 'email' => 'mason2.sub@prohelper.test'],
+            ['key' => 'helper', 'personnel_number' => 'BH-SUB-006', 'external_payroll_ref' => 'BH-SUB-PAY-006', 'last_name' => 'Фомин', 'first_name' => 'Кирилл', 'middle_name' => 'Денисович', 'department_code' => 'BH-SUB-SITE', 'department_name' => 'Бригада кладки', 'position_code' => 'BH-SUB-HELPER', 'position_name' => 'Подсобный рабочий кладочной бригады', 'category' => 'worker', 'headcount' => 4, 'base_salary' => 88000, 'hour_rate' => 590, 'phone' => '+7 916 210-46-08', 'email' => 'helper.sub@prohelper.test'],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $general
+     * @param array<string, mixed> $contractor
+     */
+    private function seedSafetyDemo(int $projectId, array $general, array $contractor): void
+    {
+        if (!Schema::hasTable('safety_work_permits')) {
+            return;
+        }
+
+        $this->seedSafetyContour($projectId, $general, 'GP', 'project_manager', 'foreman');
+        $this->seedSafetyContour($projectId, $contractor, 'SUB', 'work_manager', 'foreman');
+    }
+
+    /**
+     * @param array<string, mixed> $account
+     */
+    private function seedSafetyContour(int $projectId, array $account, string $scope, string $managerKey, string $foremanKey): void
+    {
+        $organizationId = (int) $account['organization_id'];
+        $managerUserId = $this->actorId($account, $managerKey);
+        $foremanUserId = $this->actorId($account, $foremanKey);
+        $ptoUserId = $this->actorId($account, 'pto_engineer');
+
+        $permitId = $this->upsert('safety_work_permits', [
+            'permit_number' => "BH-HSE-P-{$scope}-001",
+        ], [
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'created_by_user_id' => $foremanUserId,
+            'responsible_user_id' => $foremanUserId,
+            'approved_by_user_id' => $managerUserId,
+            'title' => $scope === 'GP' ? 'Наряд-допуск на работы у котлована' : 'Наряд-допуск на кладку с лесов',
+            'permit_type' => $scope === 'GP' ? 'excavation_zone' : 'working_at_height',
+            'location_name' => $scope === 'GP' ? 'Оси А-Г, отметка -0.600' : 'Фасад по оси 1, второй ярус лесов',
+            'risk_level' => 'high',
+            'valid_from' => $this->now->copy()->subDays(2),
+            'valid_until' => $this->now->copy()->addDays(3),
+            'required_controls' => $this->json(['Ограждение зоны', 'СИЗ', 'Проверка лесов', 'Ответственный на смене']),
+            'status' => 'active',
+            'submitted_at' => $this->now->copy()->subDays(3),
+            'approved_at' => $this->now->copy()->subDays(2)->setTime(7, 30),
+            'activated_at' => $this->now->copy()->subDays(2)->setTime(8, 0),
+            'approval_comment' => 'Контрольные мероприятия подтверждены',
+            'metadata' => $this->json(['scenario' => 'brick_house', 'scope' => $scope]),
+        ]);
+
+        $this->upsert('safety_work_permits', [
+            'permit_number' => "BH-HSE-P-{$scope}-002",
+        ], [
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'created_by_user_id' => $foremanUserId,
+            'responsible_user_id' => $ptoUserId,
+            'approved_by_user_id' => $managerUserId,
+            'closed_by_user_id' => $managerUserId,
+            'title' => 'Наряд на разгрузку и строповку плит перекрытия',
+            'permit_type' => 'lifting_operations',
+            'location_name' => 'Зона разгрузки у временной дороги',
+            'risk_level' => 'medium',
+            'valid_from' => $this->now->copy()->subDays(12),
+            'valid_until' => $this->now->copy()->subDays(10),
+            'required_controls' => $this->json(['Схема строповки', 'Допуск стропальщика', 'Осмотр зоны разгрузки']),
+            'status' => 'closed',
+            'submitted_at' => $this->now->copy()->subDays(13),
+            'approved_at' => $this->now->copy()->subDays(12)->setTime(7, 20),
+            'activated_at' => $this->now->copy()->subDays(12)->setTime(8, 0),
+            'closed_at' => $this->now->copy()->subDays(10)->setTime(18, 20),
+            'approval_comment' => 'Проверено перед началом смены',
+            'close_comment' => 'Работы завершены без замечаний',
+            'metadata' => $this->json(['scenario' => 'brick_house', 'scope' => $scope]),
+        ]);
+
+        $incidentId = $this->upsert('safety_incidents', [
+            'incident_number' => "BH-HSE-I-{$scope}-001",
+        ], [
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'reported_by_user_id' => $foremanUserId,
+            'assigned_to_user_id' => $ptoUserId,
+            'triaged_by_user_id' => $managerUserId,
+            'title' => $scope === 'GP' ? 'Повреждение временного ограждения у склада' : 'Падение кирпича с подмостей без травм',
+            'incident_type' => 'near_miss',
+            'severity' => 'major',
+            'status' => 'corrective_actions',
+            'occurred_at' => $this->now->copy()->subDays(6)->setTime(11, 15),
+            'location_name' => $scope === 'GP' ? 'Склад кирпича, северная сторона' : 'Второй ярус лесов, ось Б',
+            'description' => 'Ситуация зафиксирована на утреннем обходе, работы приостановлены на участке до устранения.',
+            'immediate_actions' => 'Зона ограждена, проведен внеплановый инструктаж, ответственный назначен.',
+            'root_cause' => 'Недостаточный контроль крепления временного ограждения после перемещения материалов.',
+            'triage_comment' => 'Требуется корректирующее действие и повторная проверка.',
+            'triaged_at' => $this->now->copy()->subDays(6)->setTime(12, 10),
+            'investigation_started_at' => $this->now->copy()->subDays(6)->setTime(14, 0),
+            'corrective_actions_started_at' => $this->now->copy()->subDays(5)->setTime(9, 0),
+            'metadata' => $this->json(['scenario' => 'brick_house', 'scope' => $scope, 'permit_id' => $permitId]),
+        ]);
+
+        $this->upsert('safety_incidents', [
+            'incident_number' => "BH-HSE-I-{$scope}-002",
+        ], [
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'reported_by_user_id' => $foremanUserId,
+            'assigned_to_user_id' => $ptoUserId,
+            'triaged_by_user_id' => $managerUserId,
+            'closed_by_user_id' => $managerUserId,
+            'title' => 'Скользкий проход после дождя',
+            'incident_type' => 'unsafe_condition',
+            'severity' => 'minor',
+            'status' => 'closed',
+            'occurred_at' => $this->now->copy()->subDays(18)->setTime(9, 40),
+            'location_name' => 'Проход от бытового городка к зоне кладки',
+            'description' => 'Проход посыпан песком, временное покрытие восстановлено.',
+            'immediate_actions' => 'Выставлены конусы, проход очищен.',
+            'root_cause' => 'Ливневый сток после ночного дождя.',
+            'corrective_actions' => 'Добавлен настил и дополнительная уборка после осадков.',
+            'triage_comment' => 'Закрыто после осмотра.',
+            'triaged_at' => $this->now->copy()->subDays(18)->setTime(10, 10),
+            'investigation_started_at' => $this->now->copy()->subDays(18)->setTime(10, 30),
+            'corrective_actions_started_at' => $this->now->copy()->subDays(18)->setTime(11, 0),
+            'closed_at' => $this->now->copy()->subDays(17)->setTime(16, 30),
+            'metadata' => $this->json(['scenario' => 'brick_house', 'scope' => $scope]),
+        ]);
+
+        $violationId = $this->upsert('safety_violations', [
+            'violation_number' => "BH-HSE-V-{$scope}-001",
+        ], [
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'created_by_user_id' => $ptoUserId,
+            'assigned_to_user_id' => $foremanUserId,
+            'title' => $scope === 'GP' ? 'Не закрыт проход в зону разгрузки' : 'Работа без закрепленного страховочного фала',
+            'severity' => 'critical',
+            'status' => 'open',
+            'location_name' => $scope === 'GP' ? 'Временная дорога у склада' : 'Леса по фасаду, захватка 2',
+            'description' => 'Нарушение выявлено при обходе, требуется устранить до продолжения работ.',
+            'corrective_action' => 'Назначить ответственного, восстановить ограждение и провести повторный инструктаж.',
+            'due_date' => $this->now->copy()->subDay()->toDateString(),
+            'metadata' => $this->json(['scenario' => 'brick_house', 'scope' => $scope]),
+        ]);
+
+        $this->upsert('safety_violations', [
+            'violation_number' => "BH-HSE-V-{$scope}-002",
+        ], [
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'created_by_user_id' => $ptoUserId,
+            'assigned_to_user_id' => $foremanUserId,
+            'resolved_by_user_id' => $foremanUserId,
+            'title' => 'Неактуальная бирка осмотра лесов',
+            'severity' => 'major',
+            'status' => 'resolved',
+            'location_name' => 'Леса по оси В',
+            'description' => 'Бирка осмотра не обновлена после перестановки секции.',
+            'corrective_action' => 'Провести повторный осмотр и обновить бирку допуска.',
+            'due_date' => $this->now->copy()->subDays(8)->toDateString(),
+            'resolved_at' => $this->now->copy()->subDays(7)->setTime(15, 20),
+            'resolution_comment' => 'Осмотр выполнен, бирка обновлена.',
+            'metadata' => $this->json(['scenario' => 'brick_house', 'scope' => $scope]),
+        ]);
+
+        $briefings = [
+            ['number' => "BH-HSE-B-{$scope}-001", 'title' => 'Вводный инструктаж перед работами на высоте', 'type' => 'target', 'days' => 21],
+            ['number' => "BH-HSE-B-{$scope}-002", 'title' => 'Внеплановый инструктаж после замечания по ограждению', 'type' => 'unscheduled', 'days' => 5],
+        ];
+
+        foreach ($briefings as $briefing) {
+            $briefingId = $this->upsert('safety_briefings', [
+                'briefing_number' => $briefing['number'],
+            ], [
+                'organization_id' => $organizationId,
+                'project_id' => $projectId,
+                'conducted_by_user_id' => $foremanUserId,
+                'title' => $briefing['title'],
+                'briefing_type' => $briefing['type'],
+                'location_name' => 'Прорабская на объекте',
+                'conducted_at' => $this->now->copy()->subDays($briefing['days'])->setTime(8, 20),
+                'topics' => $this->json(['СИЗ', 'Маршруты прохода', 'Работы на высоте', 'Порядок фиксации замечаний']),
+                'notes' => 'Демо-инструктаж с внутренними и внешними участниками',
+                'metadata' => $this->json(['scenario' => 'brick_house', 'scope' => $scope]),
+            ]);
+
+            foreach ([
+                ['user_id' => $foremanUserId, 'name' => null, 'role' => 'Прораб'],
+                ['user_id' => $ptoUserId, 'name' => null, 'role' => 'Инженер ПТО'],
+                ['user_id' => null, 'name' => $scope === 'GP' ? 'Виктор Рябов' : 'Михаил Жуков', 'role' => 'Каменщик'],
+            ] as $participant) {
+                $this->upsert('safety_briefing_participants', [
+                    'briefing_id' => $briefingId,
+                    'user_id' => $participant['user_id'],
+                    'external_name' => $participant['name'],
+                ], [
+                    'company_name' => $account['organization_name'],
+                    'role_name' => $participant['role'],
+                    'signed_at' => $this->now->copy()->subDays($briefing['days'])->setTime(8, 45),
+                    'metadata' => $this->json(['scenario' => 'brick_house']),
+                ]);
+            }
+        }
+
+        $this->upsert('safety_corrective_actions', [
+            'action_number' => "BH-HSE-C-{$scope}-001",
+        ], [
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'incident_id' => $incidentId,
+            'violation_id' => null,
+            'created_by_user_id' => $managerUserId,
+            'assigned_to_user_id' => $foremanUserId,
+            'resolved_by_user_id' => null,
+            'verified_by_user_id' => null,
+            'title' => 'Восстановить схему ограждений и закрепить ответственного',
+            'description' => 'Проверить периметр зоны разгрузки, обновить схему и провести повторный обход.',
+            'source_type' => 'incident',
+            'severity' => 'major',
+            'status' => 'open',
+            'due_date' => $this->now->copy()->addDays(2)->toDateString(),
+            'metadata' => $this->json(['scenario' => 'brick_house', 'scope' => $scope]),
+        ]);
+
+        $this->upsert('safety_corrective_actions', [
+            'action_number' => "BH-HSE-C-{$scope}-002",
+        ], [
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'incident_id' => null,
+            'violation_id' => $violationId,
+            'created_by_user_id' => $ptoUserId,
+            'assigned_to_user_id' => $foremanUserId,
+            'resolved_by_user_id' => $foremanUserId,
+            'verified_by_user_id' => $managerUserId,
+            'title' => 'Подтвердить устранение критического замечания',
+            'description' => 'Фотофиксация, обход зоны и отметка ответственного в журнале безопасности.',
+            'source_type' => 'violation',
+            'severity' => 'critical',
+            'status' => 'verified',
+            'due_date' => $this->now->copy()->subDays(1)->toDateString(),
+            'resolution_comment' => 'Ограждение восстановлено, проход закрыт.',
+            'resolved_at' => $this->now->copy()->subHours(8),
+            'verification_comment' => 'Проверено руководителем работ.',
+            'verified_at' => $this->now->copy()->subHours(4),
+            'metadata' => $this->json(['scenario' => 'brick_house', 'scope' => $scope]),
+        ]);
+
+        $this->totals['safety_records'] += 19;
+    }
+
+    /**
+     * @param array<string, mixed> $general
+     * @param array<string, mixed> $contractor
+     * @param array<string, int> $contractors
+     * @param array{general: array<string, int>, contractor: array<string, int>} $scheduleTasks
+     * @param array{general: array<string, mixed>, contractor: array<string, mixed>} $journals
+     */
+    private function seedQualityDemo(
+        int $projectId,
+        array $general,
+        array $contractor,
+        array $contractors,
+        array $scheduleTasks,
+        array $journals
+    ): void {
+        if (!Schema::hasTable('quality_defects')) {
+            return;
+        }
+
+        $this->seedQualityContour(
+            projectId: $projectId,
+            account: $general,
+            scope: 'GP',
+            contractorId: $contractors['contractor_in_general_id'] ?? null,
+            scheduleTasks: $scheduleTasks['general'],
+            completedWorks: $journals['general']['completed_works'] ?? []
+        );
+
+        $this->seedQualityContour(
+            projectId: $projectId,
+            account: $contractor,
+            scope: 'SUB',
+            contractorId: $contractors['general_in_contractor_id'] ?? null,
+            scheduleTasks: $scheduleTasks['contractor'],
+            completedWorks: $journals['contractor']['completed_works'] ?? []
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $account
+     * @param array<string, int> $scheduleTasks
+     * @param array<int, array<string, mixed>> $completedWorks
+     */
+    private function seedQualityContour(
+        int $projectId,
+        array $account,
+        string $scope,
+        ?int $contractorId,
+        array $scheduleTasks,
+        array $completedWorks
+    ): void {
+        $organizationId = (int) $account['organization_id'];
+        $creatorId = $this->actorId($account, 'pto_engineer');
+        $assigneeId = $this->actorId($account, $scope === 'GP' ? 'foreman' : 'foreman');
+        $managerId = $this->actorId($account, $scope === 'GP' ? 'project_manager' : 'work_manager');
+
+        $defects = [
+            [
+                'number' => "BH-QC-{$scope}-001",
+                'title' => $scope === 'GP' ? 'Отклонение вертикали кладки по оси Б' : 'Неравномерная толщина шва на захватке 2',
+                'description' => 'Замечание выявлено при операционном контроле, требуется корректировка до закрытия сменного объема.',
+                'severity' => 'critical',
+                'status' => 'assigned',
+                'task' => 'masonry_outer',
+                'work_index' => 1,
+                'due_days' => -1,
+                'location' => $scope === 'GP' ? '1 этаж, ось Б/3-4' : '1 этаж, ось В/2-3',
+                'history' => ['open', 'assigned'],
+            ],
+            [
+                'number' => "BH-QC-{$scope}-002",
+                'title' => 'Исправление армирования перемычки ожидает проверки',
+                'description' => 'Подрядчик сообщил об устранении, ПТО должен подтвердить результат повторным осмотром.',
+                'severity' => 'major',
+                'status' => 'ready_for_review',
+                'task' => 'belt',
+                'work_index' => 2,
+                'due_days' => 1,
+                'location' => 'Проем ПР-4, первый этаж',
+                'resolved_at' => $this->now->copy()->subHours(5),
+                'history' => ['open', 'assigned', 'in_progress', 'ready_for_review'],
+            ],
+            [
+                'number' => "BH-QC-{$scope}-003",
+                'title' => 'Партия кирпича принята после входного контроля',
+                'description' => 'Проверены паспорта, геометрия и маркировка. Замечание закрыто.',
+                'severity' => 'minor',
+                'status' => 'resolved',
+                'task' => 'masonry_inner',
+                'work_index' => 0,
+                'due_days' => -8,
+                'location' => 'Склад кирпича, партия М150-05',
+                'resolved_at' => $this->now->copy()->subDays(7),
+                'verified_at' => $this->now->copy()->subDays(6),
+                'history' => ['open', 'assigned', 'in_progress', 'ready_for_review', 'resolved'],
+            ],
+        ];
+
+        foreach ($defects as $defect) {
+            $completedWork = $completedWorks[$defect['work_index']] ?? null;
+            $completedWorkId = is_array($completedWork) ? (int) ($completedWork['id'] ?? 0) : 0;
+            $journalEntryId = $completedWorkId > 0 && Schema::hasTable('completed_works')
+                ? (int) DB::table('completed_works')->where('id', $completedWorkId)->value('journal_entry_id')
+                : null;
+
+            $defectId = $this->upsert('quality_defects', [
+                'organization_id' => $organizationId,
+                'defect_number' => $defect['number'],
+            ], [
+                'project_id' => $projectId,
+                'contractor_id' => $contractorId,
+                'created_by' => $creatorId,
+                'assigned_to' => $assigneeId,
+                'title' => $defect['title'],
+                'description' => $defect['description'],
+                'severity' => $defect['severity'],
+                'status' => $defect['status'],
+                'location_name' => $defect['location'],
+                'schedule_task_id' => $scheduleTasks[$defect['task']] ?? null,
+                'construction_journal_entry_id' => $journalEntryId ?: null,
+                'completed_work_id' => $completedWorkId ?: null,
+                'due_date' => $this->now->copy()->addDays($defect['due_days'])->toDateString(),
+                'inspection_required' => true,
+                'resolved_at' => $defect['resolved_at'] ?? null,
+                'verified_at' => $defect['verified_at'] ?? null,
+                'metadata' => $this->json([
+                    'scenario' => 'brick_house',
+                    'scope' => $scope,
+                    'project_id' => $projectId,
+                ]),
+            ]);
+
+            foreach (['before', $defect['status'] === 'resolved' ? 'after' : 'control'] as $photoType) {
+                $this->upsert('quality_defect_photos', [
+                    'quality_defect_id' => $defectId,
+                    'type' => $photoType,
+                ], [
+                    'organization_id' => $organizationId,
+                    'uploaded_by' => $creatorId,
+                    'url' => "https://placehold.co/1200x800/png?text=Brick+House+{$scope}+QC",
+                    'caption' => $photoType === 'before' ? 'Фотофиксация замечания' : 'Контрольный снимок',
+                    'metadata' => $this->json(['scenario' => 'brick_house']),
+                ]);
+            }
+
+            $previous = null;
+            foreach ($defect['history'] as $index => $status) {
+                $changedBy = $status === 'resolved' ? $managerId : ($status === 'assigned' ? $assigneeId : $creatorId);
+                $comment = match ($status) {
+                    'open' => 'Замечание зарегистрировано ПТО',
+                    'assigned' => 'Назначен ответственный за устранение',
+                    'in_progress' => 'Работы по устранению начаты',
+                    'ready_for_review' => 'Ответственный передал результат на проверку',
+                    'resolved' => 'Замечание подтверждено и закрыто',
+                    default => 'Статус обновлен',
+                };
+
+                $this->upsert('quality_defect_status_history', [
+                    'quality_defect_id' => $defectId,
+                    'to_status' => $status,
+                    'comment' => $comment,
+                ], [
+                    'organization_id' => $organizationId,
+                    'from_status' => $previous,
+                    'changed_by' => $changedBy,
+                    'changed_at' => $this->now->copy()->subDays(8 - $index),
+                ]);
+
+                $previous = $status;
+            }
+
+            $this->totals['quality_defects']++;
+        }
+    }
+
+    /**
      * @param array<int, array<string, mixed>> $completedWorks
      */
     private function seedPerformanceAct(
@@ -3257,6 +4133,48 @@ class BrickHouseDemoSeeder extends Seeder
                 'days' => 1,
                 'correlation' => 'brick-house-site-request-completed',
                 'actor_key' => 'pto_engineer',
+            ],
+            [
+                'organization' => $general,
+                'module' => 'safety-management',
+                'event_type' => 'safety.briefing.completed',
+                'action' => 'create',
+                'subject_type' => 'safety_briefing',
+                'subject_id' => null,
+                'subject_label' => 'Внеплановый инструктаж',
+                'title' => 'Проведен инструктаж после обхода безопасности',
+                'description' => 'Прораб провел внеплановый инструктаж, участники подписали журнал.',
+                'days' => 5,
+                'correlation' => 'brick-house-safety-briefing',
+                'actor_key' => 'foreman',
+            ],
+            [
+                'organization' => $contractor,
+                'module' => 'quality-control',
+                'event_type' => 'quality.defect.ready_for_review',
+                'action' => 'update',
+                'subject_type' => 'quality_defect',
+                'subject_id' => null,
+                'subject_label' => 'Армирование перемычки',
+                'title' => 'Замечание качества передано на проверку',
+                'description' => 'Подрядчик устранил замечание по перемычке и ожидает повторного осмотра ПТО.',
+                'days' => 0,
+                'correlation' => 'brick-house-quality-defect-review',
+                'actor_key' => 'foreman',
+            ],
+            [
+                'organization' => $general,
+                'module' => 'workforce-management',
+                'event_type' => 'workforce.payroll.prepared',
+                'action' => 'create',
+                'subject_type' => 'workforce_payroll_statement',
+                'subject_id' => null,
+                'subject_label' => 'Табель объекта',
+                'title' => 'Сформирована ведомость трудозатрат',
+                'description' => 'Смены сотрудников и корректировки явки собраны в расчетную ведомость объекта.',
+                'days' => 0,
+                'correlation' => 'brick-house-workforce-payroll',
+                'actor_key' => 'project_manager',
             ],
             [
                 'organization' => $general,
