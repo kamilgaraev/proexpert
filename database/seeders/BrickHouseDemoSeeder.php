@@ -33,6 +33,9 @@ class BrickHouseDemoSeeder extends Seeder
      */
     private array $totals = [
         'accounts' => 0,
+        'users' => 0,
+        'custom_roles' => 0,
+        'subscriptions' => 0,
         'projects' => 0,
         'contracts' => 0,
         'estimates' => 0,
@@ -51,15 +54,22 @@ class BrickHouseDemoSeeder extends Seeder
     {
         $this->now = now();
         $this->assertRequiredTables();
+        $profiPlan = $this->getProfiPlan();
 
-        $result = DB::transaction(function (): array {
+        $result = DB::transaction(function () use ($profiPlan): array {
             $general = $this->seedAccount($this->generalContractorAccount());
             $contractor = $this->seedAccount($this->contractorAccount());
 
+            $general['subscription_id'] = $this->seedProfiSubscription($general['organization_id'], $profiPlan);
+            $contractor['subscription_id'] = $this->seedProfiSubscription($contractor['organization_id'], $profiPlan);
+
             foreach ([$general, $contractor] as $account) {
-                $this->activateModules($account['organization_id']);
+                $this->activateModules($account['organization_id'], (int) $account['subscription_id']);
                 $this->seedSiteRequestStatuses($account['organization_id']);
             }
+
+            $general['team'] = $this->seedDemoTeam($general, 'GP');
+            $contractor['team'] = $this->seedDemoTeam($contractor, 'SUB');
 
             $generalUnits = $this->seedMeasurementUnits($general['organization_id']);
             $contractorUnits = $this->seedMeasurementUnits($contractor['organization_id']);
@@ -80,7 +90,7 @@ class BrickHouseDemoSeeder extends Seeder
                 organizationId: $general['organization_id'],
                 projectId: $projectId,
                 contractId: $contracts['general_contract_id'],
-                userId: $general['user_id'],
+                userId: $this->actorId($general, 'pto_engineer'),
                 units: $generalUnits,
                 workTypes: $generalWorkTypes,
                 materials: $generalMaterials,
@@ -93,7 +103,7 @@ class BrickHouseDemoSeeder extends Seeder
                 organizationId: $contractor['organization_id'],
                 projectId: $projectId,
                 contractId: $contracts['contractor_contract_id'],
-                userId: $contractor['user_id'],
+                userId: $this->actorId($contractor, 'pto_engineer'),
                 units: $contractorUnits,
                 workTypes: $contractorWorkTypes,
                 materials: $contractorMaterials,
@@ -105,7 +115,8 @@ class BrickHouseDemoSeeder extends Seeder
             $generalScheduleTasks = $this->seedSchedule(
                 organizationId: $general['organization_id'],
                 projectId: $projectId,
-                userId: $general['user_id'],
+                createdByUserId: $this->actorId($general, 'project_manager'),
+                assignedUserId: $this->actorId($general, 'foreman'),
                 units: $generalUnits,
                 workTypes: $generalWorkTypes,
                 materials: $generalMaterials,
@@ -115,7 +126,8 @@ class BrickHouseDemoSeeder extends Seeder
             $contractorScheduleTasks = $this->seedSchedule(
                 organizationId: $contractor['organization_id'],
                 projectId: $projectId,
-                userId: $contractor['user_id'],
+                createdByUserId: $this->actorId($contractor, 'work_manager'),
+                assignedUserId: $this->actorId($contractor, 'foreman'),
                 units: $contractorUnits,
                 workTypes: $contractorWorkTypes,
                 materials: $contractorMaterials,
@@ -124,7 +136,7 @@ class BrickHouseDemoSeeder extends Seeder
 
             $generalWarehouse = $this->seedWarehouse(
                 organizationId: $general['organization_id'],
-                userId: $general['user_id'],
+                userId: $this->actorId($general, 'supply_manager'),
                 projectId: $projectId,
                 materials: $generalMaterials,
                 scope: 'GP'
@@ -132,7 +144,7 @@ class BrickHouseDemoSeeder extends Seeder
 
             $contractorWarehouse = $this->seedWarehouse(
                 organizationId: $contractor['organization_id'],
-                userId: $contractor['user_id'],
+                userId: $this->actorId($contractor, 'storekeeper'),
                 projectId: $projectId,
                 materials: $contractorMaterials,
                 scope: 'SUB'
@@ -141,8 +153,8 @@ class BrickHouseDemoSeeder extends Seeder
             $generalRequests = $this->seedSiteRequests(
                 organizationId: $general['organization_id'],
                 projectId: $projectId,
-                userId: $general['user_id'],
-                assignedUserId: $general['user_id'],
+                userId: $this->actorId($general, 'foreman'),
+                assignedUserId: $this->actorId($general, 'supply_manager'),
                 materials: $generalMaterials,
                 estimateItems: $generalEstimate['items'],
                 scope: 'GP'
@@ -151,8 +163,8 @@ class BrickHouseDemoSeeder extends Seeder
             $contractorRequests = $this->seedSiteRequests(
                 organizationId: $contractor['organization_id'],
                 projectId: $projectId,
-                userId: $contractor['user_id'],
-                assignedUserId: $contractor['user_id'],
+                userId: $this->actorId($contractor, 'foreman'),
+                assignedUserId: $this->actorId($contractor, 'storekeeper'),
                 materials: $contractorMaterials,
                 estimateItems: $contractorEstimate['items'],
                 scope: 'SUB'
@@ -161,7 +173,7 @@ class BrickHouseDemoSeeder extends Seeder
             $this->seedProjectMaterialDeliveries(
                 organizationId: $general['organization_id'],
                 projectId: $projectId,
-                userId: $general['user_id'],
+                userId: $this->actorId($general, 'supply_manager'),
                 warehouse: $generalWarehouse,
                 siteRequests: $generalRequests,
                 materials: $generalMaterials,
@@ -171,7 +183,7 @@ class BrickHouseDemoSeeder extends Seeder
             $this->seedProjectMaterialDeliveries(
                 organizationId: $contractor['organization_id'],
                 projectId: $projectId,
-                userId: $contractor['user_id'],
+                userId: $this->actorId($contractor, 'storekeeper'),
                 warehouse: $contractorWarehouse,
                 siteRequests: $contractorRequests,
                 materials: $contractorMaterials,
@@ -183,7 +195,8 @@ class BrickHouseDemoSeeder extends Seeder
                 projectId: $projectId,
                 contractId: $contracts['general_contract_id'],
                 contractorId: $contractors['contractor_in_general_id'],
-                userId: $general['user_id'],
+                createdByUserId: $this->actorId($general, 'foreman'),
+                approvedByUserId: $this->actorId($general, 'pto_engineer'),
                 scheduleTasks: $generalScheduleTasks,
                 estimate: $generalEstimate,
                 units: $generalUnits,
@@ -197,7 +210,8 @@ class BrickHouseDemoSeeder extends Seeder
                 projectId: $projectId,
                 contractId: $contracts['contractor_contract_id'],
                 contractorId: $contractors['general_in_contractor_id'],
-                userId: $contractor['user_id'],
+                createdByUserId: $this->actorId($contractor, 'foreman'),
+                approvedByUserId: $this->actorId($contractor, 'pto_engineer'),
                 scheduleTasks: $contractorScheduleTasks,
                 estimate: $contractorEstimate,
                 units: $contractorUnits,
@@ -210,7 +224,8 @@ class BrickHouseDemoSeeder extends Seeder
                 'general' => $this->seedPerformanceAct(
                     contractId: $contracts['general_contract_id'],
                     projectId: $projectId,
-                    userId: $general['user_id'],
+                    createdByUserId: $this->actorId($general, 'pto_engineer'),
+                    approvedByUserId: $this->actorId($general, 'project_manager'),
                     completedWorks: $generalJournal['completed_works'],
                     number: 'КС-2-КД-ГП-01',
                     description: 'Акт приемки выполненных работ по фундаменту и кирпичной кладке первого этажа'
@@ -218,7 +233,8 @@ class BrickHouseDemoSeeder extends Seeder
                 'contractor' => $this->seedPerformanceAct(
                     contractId: $contracts['contractor_contract_id'],
                     projectId: $projectId,
-                    userId: $contractor['user_id'],
+                    createdByUserId: $this->actorId($contractor, 'pto_engineer'),
+                    approvedByUserId: $this->actorId($contractor, 'work_manager'),
                     completedWorks: $contractorJournal['completed_works'],
                     number: 'КС-2-КД-ПДР-01',
                     description: 'Акт подрядчика по кладке наружных и внутренних стен первого этажа'
@@ -295,6 +311,9 @@ class BrickHouseDemoSeeder extends Seeder
             'organizations',
             'users',
             'organization_user',
+            'authorization_contexts',
+            'organization_custom_roles',
+            'user_role_assignments',
             'modules',
             'organization_module_activations',
             'projects',
@@ -340,6 +359,8 @@ class BrickHouseDemoSeeder extends Seeder
             'payment_documents',
             'payment_document_site_requests',
             'activity_events',
+            'subscription_plans',
+            'organization_subscriptions',
         ];
 
         $missingTables = array_values(array_filter(
@@ -353,6 +374,31 @@ class BrickHouseDemoSeeder extends Seeder
                 . implode(', ', $missingTables)
             );
         }
+    }
+
+    /**
+     * @return array{id: int, duration_in_days: int, included_packages: array<int, array<string, mixed>>}
+     */
+    private function getProfiPlan(): array
+    {
+        if (!Schema::hasTable('subscription_plans')) {
+            throw new RuntimeException('BrickHouseDemoSeeder: Таблица subscription_plans не найдена.');
+        }
+
+        $plan = DB::table('subscription_plans')
+            ->where('slug', 'profi')
+            ->where('is_active', true)
+            ->first();
+
+        if (!$plan instanceof \stdClass) {
+            throw new RuntimeException('BrickHouseDemoSeeder: Не найден активный тариф "profi". Проверьте миграции и синхронизацию тарифов.');
+        }
+
+        return [
+            'id' => (int) $plan->id,
+            'duration_in_days' => (int) ($plan->duration_in_days ?: 30),
+            'included_packages' => $this->decodeJsonArray($plan->included_packages ?? null),
+        ];
     }
 
     /**
@@ -444,7 +490,579 @@ class BrickHouseDemoSeeder extends Seeder
         ];
     }
 
-    private function assignOrganizationRole(int $userId, int $organizationId, string $roleSlug): void
+    /**
+     * @param array{id: int, duration_in_days: int, included_packages: array<int, array<string, mixed>>} $profiPlan
+     */
+    private function seedProfiSubscription(int $organizationId, array $profiPlan): int
+    {
+        if (!Schema::hasTable('organization_subscriptions')) {
+            return 0;
+        }
+
+        $startsAt = $this->now->copy();
+        $endsAt = $startsAt->copy()->addDays(max(1, $profiPlan['duration_in_days']));
+        $subscriptionData = $this->filterColumns('organization_subscriptions', [
+            'organization_id' => $organizationId,
+            'subscription_plan_id' => $profiPlan['id'],
+            'status' => 'active',
+            'starts_at' => $startsAt,
+            'ends_at' => $endsAt,
+            'next_billing_at' => $endsAt,
+            'is_auto_payment_enabled' => true,
+            'canceled_at' => null,
+            'payment_gateway_subscription_id' => null,
+            'payment_gateway_customer_id' => null,
+            'payment_failure_notified_at' => null,
+            'trial_ends_at' => null,
+        ]);
+
+        $currentSubscription = DB::table('organization_subscriptions')
+            ->where('organization_id', $organizationId)
+            ->where('subscription_plan_id', $profiPlan['id'])
+            ->orderByDesc('id')
+            ->first();
+
+        if (!$currentSubscription instanceof \stdClass) {
+            $subscriptionId = DB::table('organization_subscriptions')->insertGetId(
+                $this->withTimestamps('organization_subscriptions', $subscriptionData, false)
+            );
+
+            $this->deactivateOtherDemoSubscriptions($organizationId, $profiPlan['id']);
+            $this->seedPlanPackageSubscriptions($organizationId, (int) $subscriptionId, $profiPlan, $endsAt);
+            $this->totals['subscriptions']++;
+
+            return (int) $subscriptionId;
+        }
+
+        DB::table('organization_subscriptions')
+            ->where('id', $currentSubscription->id)
+            ->update(
+                $this->withTimestamps('organization_subscriptions', $subscriptionData, true)
+            );
+
+        $this->deactivateOtherDemoSubscriptions($organizationId, $profiPlan['id']);
+        $this->seedPlanPackageSubscriptions($organizationId, (int) $currentSubscription->id, $profiPlan, $endsAt);
+        $this->totals['subscriptions']++;
+
+        return (int) $currentSubscription->id;
+    }
+
+    /**
+     * @param array{id: int, duration_in_days: int, included_packages: array<int, array<string, mixed>>} $profiPlan
+     */
+    private function seedPlanPackageSubscriptions(
+        int $organizationId,
+        int $subscriptionId,
+        array $profiPlan,
+        Carbon $endsAt
+    ): void {
+        if (!Schema::hasTable('organization_package_subscriptions')) {
+            return;
+        }
+
+        foreach ($profiPlan['included_packages'] as $package) {
+            $packageSlug = $package['package_slug'] ?? $package['slug'] ?? null;
+            $tier = $package['tier'] ?? null;
+
+            if (!is_string($packageSlug) || !is_string($tier)) {
+                continue;
+            }
+
+            $this->upsert('organization_package_subscriptions', [
+                'organization_id' => $organizationId,
+                'package_slug' => $packageSlug,
+            ], [
+                'subscription_id' => $subscriptionId,
+                'is_bundled_with_plan' => true,
+                'tier' => $tier,
+                'price_paid' => 0,
+                'activated_at' => $this->now,
+                'expires_at' => $endsAt,
+            ]);
+        }
+    }
+
+    private function deactivateOtherDemoSubscriptions(int $organizationId, int $activePlanId): void
+    {
+        DB::table('organization_subscriptions')
+            ->where('organization_id', $organizationId)
+            ->where('subscription_plan_id', '!=', $activePlanId)
+            ->where('status', 'active')
+            ->update($this->withTimestamps('organization_subscriptions', [
+                'status' => 'canceled',
+                'canceled_at' => $this->now,
+            ], true));
+    }
+
+    /**
+     * @param array<string, mixed> $account
+     * @return array<string, array<string, mixed>>
+     */
+    private function seedDemoTeam(array $account, string $scope): array
+    {
+        $members = $scope === 'GP'
+            ? $this->generalTeamMembers()
+            : $this->contractorTeamMembers();
+
+        $team = [];
+
+        foreach ($members as $member) {
+            $roleSlug = $member['role_slug'];
+
+            $this->seedCustomRole(
+                organizationId: $account['organization_id'],
+                createdByUserId: $account['user_id'],
+                roleSlug: $roleSlug,
+                name: $member['role_name'],
+                description: $member['role_description'],
+                systemPermissions: $member['system_permissions'],
+                modulePermissions: $member['module_permissions'],
+                interfaceAccess: $member['interface_access'],
+                conditions: $member['conditions'] ?? null
+            );
+
+            $userId = $this->seedTeamUser($account, $member);
+            $this->assignCustomOrganizationRole(
+                userId: $userId,
+                organizationId: $account['organization_id'],
+                roleSlug: $roleSlug,
+                assignedByUserId: $account['user_id']
+            );
+
+            foreach (($member['system_role_slugs'] ?? []) as $systemRoleSlug) {
+                $this->assignOrganizationRole(
+                    userId: $userId,
+                    organizationId: $account['organization_id'],
+                    roleSlug: $systemRoleSlug,
+                    assignedBy: $account['user_id']
+                );
+            }
+
+            $team[$member['key']] = [
+                'user_id' => $userId,
+                'name' => $member['name'],
+                'email' => $member['email'],
+                'role_slug' => $roleSlug,
+                'project_role' => $member['project_role'],
+            ];
+        }
+
+        return $team;
+    }
+
+    /**
+     * @param array<string, mixed> $account
+     * @param array<string, mixed> $member
+     */
+    private function seedTeamUser(array $account, array $member): int
+    {
+        $userId = $this->upsert('users', [
+            'email' => $member['email'],
+        ], [
+            'name' => $member['name'],
+            'email' => $member['email'],
+            'email_verified_at' => $this->now,
+            'password' => Hash::make(self::PASSWORD),
+            'phone' => $member['phone'],
+            'position' => $member['position'],
+            'avatar_path' => null,
+            'is_active' => true,
+            'current_organization_id' => $account['organization_id'],
+            'settings' => $this->json([
+                'demo_account' => true,
+                'scenario' => 'brick_house',
+                'role_key' => $member['key'],
+                'role_slug' => $member['role_slug'],
+            ]),
+            'has_completed_onboarding' => true,
+        ]);
+
+        $this->upsert('organization_user', [
+            'organization_id' => $account['organization_id'],
+            'user_id' => $userId,
+        ], [
+            'is_owner' => false,
+            'is_active' => true,
+            'settings' => $this->json([
+                'demo_account' => true,
+                'scenario' => 'brick_house',
+                'role_key' => $member['key'],
+                'role_slug' => $member['role_slug'],
+            ]),
+            'project_access_mode' => $member['project_access_mode'],
+        ]);
+
+        $this->totals['users']++;
+
+        return $userId;
+    }
+
+    private function seedCustomRole(
+        int $organizationId,
+        int $createdByUserId,
+        string $roleSlug,
+        string $name,
+        string $description,
+        array $systemPermissions,
+        array $modulePermissions,
+        array $interfaceAccess,
+        ?array $conditions
+    ): void {
+        if (!Schema::hasTable('organization_custom_roles')) {
+            return;
+        }
+
+        $this->upsert('organization_custom_roles', [
+            'organization_id' => $organizationId,
+            'slug' => $roleSlug,
+        ], [
+            'name' => $name,
+            'description' => $description,
+            'system_permissions' => $this->json($systemPermissions),
+            'module_permissions' => $this->json($modulePermissions),
+            'interface_access' => $this->json($interfaceAccess),
+            'conditions' => $conditions === null ? null : $this->json($conditions),
+            'is_active' => true,
+            'created_by' => $createdByUserId,
+        ]);
+
+        $this->totals['custom_roles']++;
+    }
+
+    private function assignCustomOrganizationRole(
+        int $userId,
+        int $organizationId,
+        string $roleSlug,
+        int $assignedByUserId
+    ): void {
+        if (!Schema::hasTable('authorization_contexts') || !Schema::hasTable('user_role_assignments')) {
+            return;
+        }
+
+        $context = AuthorizationContext::getOrganizationContext($organizationId);
+
+        UserRoleAssignment::query()->updateOrCreate(
+            [
+                'user_id' => $userId,
+                'role_slug' => $roleSlug,
+                'context_id' => $context->id,
+            ],
+            [
+                'role_type' => UserRoleAssignment::TYPE_CUSTOM,
+                'assigned_by' => $assignedByUserId,
+                'expires_at' => null,
+                'is_active' => true,
+            ]
+        );
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function generalTeamMembers(): array
+    {
+        return [
+            [
+                'key' => 'project_manager',
+                'role_slug' => 'brick_house_gp_project_manager',
+                'role_name' => 'Руководитель проекта генподряда',
+                'role_description' => 'Отвечает за сроки, бюджет, участников, договоры и ключевые согласования по объекту.',
+                'name' => 'Мария Орлова',
+                'email' => 'demo.gp.project-manager@prohelper.test',
+                'phone' => '+7 916 210-45-01',
+                'position' => 'Руководитель проекта',
+                'project_role' => 'project_manager',
+                'project_access_mode' => 'all_projects',
+                'interface_access' => ['admin', 'lk'],
+                'system_permissions' => $this->baseAdminPermissions(),
+                'module_permissions' => [
+                    'project-management' => ['projects.view', 'projects.edit', 'projects.analytics', 'projects.organizations.manage', 'projects.statistics'],
+                    'contract-management' => ['contracts.view', 'contracts.edit', 'contracts.analytics', 'contracts.performance_acts.view', 'contracts.performance_acts.export'],
+                    'schedule-management' => ['schedule.view', 'schedule.edit', 'schedule.assign', 'schedule.approve', 'schedule.export'],
+                    'dashboard-widgets' => ['dashboard.view', 'dashboard.contracts.statistics', 'dashboard.recent_activity.view'],
+                    'ai-assistant' => ['ai_assistant.chat', 'admin.ai_assistant.project_pulse.view', 'admin.ai_assistant.project_pulse.generate'],
+                    'site-requests' => ['site_requests.view', 'site_requests.approve', 'site_requests.assign', 'site_requests.change_status'],
+                    'reports' => ['reports.view', 'reports.export'],
+                ],
+            ],
+            [
+                'key' => 'pto_engineer',
+                'role_slug' => 'brick_house_gp_pto_engineer',
+                'role_name' => 'Инженер ПТО генподряда',
+                'role_description' => 'Ведет сметы, общий журнал работ, объемы, акты и исполнительную документацию.',
+                'name' => 'Сергей Волков',
+                'email' => 'demo.gp.pto@prohelper.test',
+                'phone' => '+7 916 210-45-02',
+                'position' => 'Ведущий инженер ПТО',
+                'project_role' => 'site_engineer',
+                'project_access_mode' => 'assigned_projects',
+                'interface_access' => ['admin', 'mobile'],
+                'system_permissions' => $this->baseAdminPermissions(),
+                'module_permissions' => [
+                    'budget-estimates' => ['budget-estimates.view', 'budget-estimates.view_all', 'budget-estimates.create', 'budget-estimates.edit', 'budget-estimates.approve', 'construction-journal.view', 'construction-journal.create', 'construction-journal.edit', 'construction-journal.approve', 'construction-journal.export'],
+                    'contract-management' => ['contracts.view', 'contracts.completed_works.view', 'contracts.performance_acts.view', 'contracts.performance_acts.create', 'contracts.performance_acts.edit', 'contracts.performance_acts.export'],
+                    'schedule-management' => ['schedule.view', 'schedule.edit', 'schedule.export'],
+                    'workflow-management' => ['completed_works.view', 'completed_works.create', 'completed_works.edit', 'completed_works.materials.sync'],
+                    'file-management' => ['personal_files.view', 'personal_files.upload', 'report_files.view'],
+                    'quality-control' => ['quality-control.view', 'quality-control.inspect', 'quality-control.defects.view', 'quality-control.defects.resolve'],
+                ],
+            ],
+            [
+                'key' => 'foreman',
+                'role_slug' => 'brick_house_gp_foreman',
+                'role_name' => 'Прораб участка генподряда',
+                'role_description' => 'Создает заявки с объекта, заполняет журнал работ и фиксирует фактические объемы.',
+                'name' => 'Илья Смирнов',
+                'email' => 'demo.gp.foreman@prohelper.test',
+                'phone' => '+7 916 210-45-03',
+                'position' => 'Прораб участка',
+                'project_role' => 'foreman',
+                'project_access_mode' => 'assigned_projects',
+                'interface_access' => ['admin', 'mobile'],
+                'system_role_slugs' => ['foreman'],
+                'system_permissions' => $this->baseFieldPermissions(),
+                'module_permissions' => [
+                    'project-management' => ['projects.view', 'projects.materials.view', 'projects.work_types.view'],
+                    'site-requests' => ['site_requests.view', 'site_requests.create', 'site_requests.edit', 'site_requests.files.upload', 'site_requests.calendar.view'],
+                    'budget-estimates' => ['budget-estimates.view', 'construction-journal.view', 'construction-journal.create', 'construction-journal.edit', 'construction-journal.export'],
+                    'workflow-management' => ['completed_works.view', 'completed_works.create', 'completed_works.edit'],
+                    'basic-warehouse' => ['warehouse.view', 'warehouse.receipts', 'warehouse.write_offs', 'warehouse.view_custody'],
+                    'schedule-management' => ['schedule.view', 'schedule.notifications'],
+                ],
+                'conditions' => ['project_scope' => 'assigned_projects'],
+            ],
+            [
+                'key' => 'supply_manager',
+                'role_slug' => 'brick_house_gp_supply_manager',
+                'role_name' => 'Снабженец генподряда',
+                'role_description' => 'Отвечает за склад, резервы, поставки материалов и обработку заявок с объекта.',
+                'name' => 'Наталья Белова',
+                'email' => 'demo.gp.supply@prohelper.test',
+                'phone' => '+7 916 210-45-04',
+                'position' => 'Руководитель снабжения',
+                'project_role' => 'supply_manager',
+                'project_access_mode' => 'assigned_projects',
+                'interface_access' => ['admin', 'lk'],
+                'system_permissions' => $this->baseAdminPermissions(),
+                'module_permissions' => [
+                    'basic-warehouse' => ['warehouse.view', 'warehouse.manage_stock', 'warehouse.receipts', 'warehouse.write_offs', 'warehouse.transfers', 'warehouse.inventory', 'warehouse.reports', 'warehouse.advanced.view', 'warehouse.advanced.reservations', 'warehouse.advanced.analytics'],
+                    'site-requests' => ['site_requests.view', 'site_requests.approve', 'site_requests.assign', 'site_requests.change_status', 'site_requests.statistics', 'site_requests.calendar.view'],
+                    'catalog-management' => ['materials.view', 'materials.create', 'materials.edit', 'materials.balances.view', 'suppliers.view', 'suppliers.create', 'suppliers.edit'],
+                    'procurement' => ['procurement.view', 'procurement.manage', 'procurement.purchase_requests.view', 'procurement.purchase_orders.view', 'procurement.purchase_orders.receive'],
+                    'material-analytics' => ['materials.analytics.summary', 'materials.analytics.low_stock', 'materials.analytics.movement_report', 'materials.analytics.inventory_report'],
+                ],
+            ],
+            [
+                'key' => 'accountant',
+                'role_slug' => 'brick_house_gp_accountant',
+                'role_name' => 'Бухгалтер проекта генподряда',
+                'role_description' => 'Ведет платежные документы, оплаты подрядчику, сверку и финансовые отчеты.',
+                'name' => 'Оксана Лебедева',
+                'email' => 'demo.gp.accountant@prohelper.test',
+                'phone' => '+7 916 210-45-05',
+                'position' => 'Бухгалтер проекта',
+                'project_role' => 'accountant',
+                'project_access_mode' => 'all_projects',
+                'interface_access' => ['admin', 'lk'],
+                'system_permissions' => ['admin.access', 'admin.dashboard.view', 'admin.projects.view', 'organization.view', 'billing.view', 'profile.view', 'profile.edit'],
+                'module_permissions' => [
+                    'payments' => ['payments.dashboard.view', 'payments.invoice.view', 'payments.invoice.create', 'payments.invoice.edit', 'payments.transaction.view', 'payments.transaction.register', 'payments.schedule.view', 'payments.reconciliation.view', 'payments.reports.view', 'payments.reports.export'],
+                    'contract-management' => ['contracts.view', 'contracts.analytics', 'contracts.performance_acts.view', 'contracts.performance_acts.export', 'contracts.payments.view', 'contracts.payments.create', 'contracts.payments.edit'],
+                    'budget-estimates' => ['budget-estimates.view', 'budget-estimates.view_all', 'budget-estimates.export'],
+                    'basic-warehouse' => ['warehouse.view', 'warehouse.reports', 'warehouse.export_m4', 'warehouse.export_m11'],
+                    'reports' => ['reports.view', 'reports.export', 'reports.official_reports'],
+                    'dashboard-widgets' => ['dashboard.view', 'dashboard.contracts.statistics'],
+                ],
+                'conditions' => ['budget' => ['daily_limit' => 5000000]],
+            ],
+        ];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function contractorTeamMembers(): array
+    {
+        return [
+            [
+                'key' => 'work_manager',
+                'role_slug' => 'brick_house_sub_work_manager',
+                'role_name' => 'Руководитель работ подрядчика',
+                'role_description' => 'Координирует договор, график, бригады, акты и коммуникацию с генподрядчиком.',
+                'name' => 'Дмитрий Захаров',
+                'email' => 'demo.sub.work-manager@prohelper.test',
+                'phone' => '+7 916 210-46-01',
+                'position' => 'Руководитель работ',
+                'project_role' => 'contractor_manager',
+                'project_access_mode' => 'all_projects',
+                'interface_access' => ['admin', 'lk'],
+                'system_permissions' => $this->baseAdminPermissions(),
+                'module_permissions' => [
+                    'project-management' => ['projects.view', 'projects.statistics'],
+                    'contract-management' => ['contracts.view', 'contracts.completed_works.view', 'contracts.performance_acts.view', 'contracts.performance_acts.create', 'contracts.performance_acts.edit', 'contracts.payments.view'],
+                    'schedule-management' => ['schedule.view', 'schedule.edit', 'schedule.assign'],
+                    'site-requests' => ['site_requests.view', 'site_requests.approve', 'site_requests.assign', 'site_requests.change_status'],
+                    'dashboard-widgets' => ['dashboard.view', 'dashboard.recent_activity.view'],
+                    'ai-assistant' => ['ai_assistant.chat', 'admin.ai_assistant.project_pulse.view'],
+                ],
+            ],
+            [
+                'key' => 'pto_engineer',
+                'role_slug' => 'brick_house_sub_pto_engineer',
+                'role_name' => 'Инженер ПТО подрядчика',
+                'role_description' => 'Готовит исполнительные объемы, акты подрядчика и подтверждает записи журнала.',
+                'name' => 'Анна Егорова',
+                'email' => 'demo.sub.pto@prohelper.test',
+                'phone' => '+7 916 210-46-02',
+                'position' => 'Инженер ПТО',
+                'project_role' => 'site_engineer',
+                'project_access_mode' => 'assigned_projects',
+                'interface_access' => ['admin', 'mobile'],
+                'system_permissions' => $this->baseAdminPermissions(),
+                'module_permissions' => [
+                    'budget-estimates' => ['budget-estimates.view', 'budget-estimates.create', 'budget-estimates.edit', 'construction-journal.view', 'construction-journal.create', 'construction-journal.edit', 'construction-journal.approve', 'construction-journal.export'],
+                    'contract-management' => ['contracts.view', 'contracts.completed_works.view', 'contracts.performance_acts.view', 'contracts.performance_acts.create', 'contracts.performance_acts.edit', 'contracts.performance_acts.export'],
+                    'workflow-management' => ['completed_works.view', 'completed_works.create', 'completed_works.edit'],
+                    'schedule-management' => ['schedule.view', 'schedule.export'],
+                    'file-management' => ['personal_files.view', 'personal_files.upload', 'report_files.view'],
+                ],
+            ],
+            [
+                'key' => 'foreman',
+                'role_slug' => 'brick_house_sub_foreman',
+                'role_name' => 'Прораб кладочных работ',
+                'role_description' => 'Заполняет журнал подрядчика, создает заявки и фиксирует сменные объемы кладки.',
+                'name' => 'Андрей Кузнецов',
+                'email' => 'demo.sub.foreman@prohelper.test',
+                'phone' => '+7 916 210-46-03',
+                'position' => 'Прораб кладочных работ',
+                'project_role' => 'foreman',
+                'project_access_mode' => 'assigned_projects',
+                'interface_access' => ['admin', 'mobile'],
+                'system_role_slugs' => ['foreman'],
+                'system_permissions' => $this->baseFieldPermissions(),
+                'module_permissions' => [
+                    'project-management' => ['projects.view', 'projects.materials.view', 'projects.work_types.view'],
+                    'site-requests' => ['site_requests.view', 'site_requests.create', 'site_requests.edit', 'site_requests.files.upload', 'site_requests.calendar.view'],
+                    'budget-estimates' => ['budget-estimates.view', 'construction-journal.view', 'construction-journal.create', 'construction-journal.edit', 'construction-journal.export'],
+                    'workflow-management' => ['completed_works.view', 'completed_works.create', 'completed_works.edit'],
+                    'basic-warehouse' => ['warehouse.view', 'warehouse.receipts', 'warehouse.write_offs', 'warehouse.view_custody'],
+                    'schedule-management' => ['schedule.view', 'schedule.notifications'],
+                ],
+                'conditions' => ['project_scope' => 'assigned_projects'],
+            ],
+            [
+                'key' => 'storekeeper',
+                'role_slug' => 'brick_house_sub_storekeeper',
+                'role_name' => 'Кладовщик объекта подрядчика',
+                'role_description' => 'Принимает материалы, ведет остатки, резервы и выдачу на бригады.',
+                'name' => 'Роман Федоров',
+                'email' => 'demo.sub.storekeeper@prohelper.test',
+                'phone' => '+7 916 210-46-04',
+                'position' => 'Кладовщик объекта',
+                'project_role' => 'storekeeper',
+                'project_access_mode' => 'assigned_projects',
+                'interface_access' => ['admin', 'mobile'],
+                'system_permissions' => $this->baseFieldPermissions(),
+                'module_permissions' => [
+                    'basic-warehouse' => ['warehouse.view', 'warehouse.manage_stock', 'warehouse.receipts', 'warehouse.write_offs', 'warehouse.transfers', 'warehouse.inventory', 'warehouse.advanced.view', 'warehouse.advanced.barcode'],
+                    'site-requests' => ['site_requests.view', 'site_requests.change_status', 'site_requests.calendar.view'],
+                    'catalog-management' => ['materials.view', 'materials.balances.view', 'work_types.view'],
+                    'material-analytics' => ['materials.analytics.low_stock', 'materials.analytics.movement_report'],
+                ],
+            ],
+            [
+                'key' => 'accountant',
+                'role_slug' => 'brick_house_sub_accountant',
+                'role_name' => 'Бухгалтер подрядчика',
+                'role_description' => 'Выставляет счета, подтверждает поступления и контролирует оплату актов.',
+                'name' => 'Елена Морозова',
+                'email' => 'demo.sub.accountant@prohelper.test',
+                'phone' => '+7 916 210-46-05',
+                'position' => 'Бухгалтер подрядчика',
+                'project_role' => 'accountant',
+                'project_access_mode' => 'all_projects',
+                'interface_access' => ['admin', 'lk'],
+                'system_permissions' => ['admin.access', 'admin.dashboard.view', 'admin.projects.view', 'organization.view', 'billing.view', 'profile.view', 'profile.edit'],
+                'module_permissions' => [
+                    'payments' => ['payments.dashboard.view', 'payments.invoice.view', 'payments.invoice.create', 'payments.invoice.edit', 'payments.transaction.view', 'payments.transaction.register', 'payments.schedule.view', 'payments.reports.view', 'payments.reports.export'],
+                    'contract-management' => ['contracts.view', 'contracts.performance_acts.view', 'contracts.performance_acts.export', 'contracts.payments.view', 'contracts.payments.create'],
+                    'budget-estimates' => ['budget-estimates.view', 'budget-estimates.export'],
+                    'reports' => ['reports.view', 'reports.export'],
+                    'dashboard-widgets' => ['dashboard.view', 'dashboard.contracts.statistics'],
+                ],
+                'conditions' => ['budget' => ['daily_limit' => 2500000]],
+            ],
+        ];
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function baseAdminPermissions(): array
+    {
+        return [
+            'admin.access',
+            'admin.dashboard.view',
+            'admin.projects.view',
+            'profile.view',
+            'profile.edit',
+            'organization.view',
+        ];
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function baseFieldPermissions(): array
+    {
+        return [
+            'admin.access',
+            'admin.dashboard.view',
+            'admin.projects.view',
+            'profile.view',
+            'profile.edit',
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $account
+     */
+    private function actorId(array $account, string $key): int
+    {
+        $team = $account['team'] ?? [];
+
+        if (is_array($team) && isset($team[$key]['user_id'])) {
+            return (int) $team[$key]['user_id'];
+        }
+
+        return (int) $account['user_id'];
+    }
+
+    /**
+     * @param array<string, mixed> $account
+     * @return array{user_id: int, name: string, email: string}
+     */
+    private function actor(array $account, string $key): array
+    {
+        $team = $account['team'] ?? [];
+
+        if (is_array($team) && isset($team[$key])) {
+            return [
+                'user_id' => (int) $team[$key]['user_id'],
+                'name' => (string) $team[$key]['name'],
+                'email' => (string) $team[$key]['email'],
+            ];
+        }
+
+        return [
+            'user_id' => (int) $account['user_id'],
+            'name' => (string) $account['name'],
+            'email' => (string) $account['email'],
+        ];
+    }
+
+    private function assignOrganizationRole(int $userId, int $organizationId, string $roleSlug, ?int $assignedBy = null): void
     {
         if (!Schema::hasTable('authorization_contexts') || !Schema::hasTable('user_role_assignments')) {
             return;
@@ -460,14 +1078,14 @@ class BrickHouseDemoSeeder extends Seeder
             ],
             [
                 'role_type' => UserRoleAssignment::TYPE_SYSTEM,
-                'assigned_by' => null,
+                'assigned_by' => $assignedBy,
                 'expires_at' => null,
                 'is_active' => true,
             ]
         );
     }
 
-    private function activateModules(int $organizationId): void
+    private function activateModules(int $organizationId, int $subscriptionId): void
     {
         $modules = [
             ['slug' => 'project-management', 'name' => 'Управление проектами', 'type' => 'feature', 'category' => 'core'],
@@ -519,6 +1137,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'organization_id' => $organizationId,
                 'module_id' => $moduleId,
             ], [
+                'subscription_id' => $subscriptionId > 0 ? $subscriptionId : null,
                 'status' => 'active',
                 'activated_at' => $this->now->copy()->subMonths(5),
                 'expires_at' => null,
@@ -760,18 +1379,38 @@ class BrickHouseDemoSeeder extends Seeder
             ]),
         ]);
 
-        $this->upsert('project_user', [
-            'project_id' => $projectId,
-            'user_id' => $general['user_id'],
-        ], [
-            'role' => 'project_manager',
-        ]);
+        $this->seedProjectUser($projectId, $general['user_id'], 'project_manager', $general['user_id']);
+        $this->seedProjectUser($projectId, $contractor['user_id'], 'contractor_manager', $general['user_id']);
 
+        foreach (($general['team'] ?? []) as $member) {
+            $this->seedProjectUser(
+                $projectId,
+                (int) $member['user_id'],
+                (string) $member['project_role'],
+                $general['user_id']
+            );
+        }
+
+        foreach (($contractor['team'] ?? []) as $member) {
+            $this->seedProjectUser(
+                $projectId,
+                (int) $member['user_id'],
+                (string) $member['project_role'],
+                $contractor['user_id']
+            );
+        }
+    }
+
+    private function seedProjectUser(int $projectId, int $userId, string $role, int $assignedByUserId): void
+    {
         $this->upsert('project_user', [
             'project_id' => $projectId,
-            'user_id' => $contractor['user_id'],
+            'user_id' => $userId,
         ], [
-            'role' => 'contractor_manager',
+            'role' => $role,
+            'assigned_by_user_id' => $assignedByUserId,
+            'is_active' => true,
+            'assigned_at' => $this->now->copy()->subMonths(4),
         ]);
     }
 
@@ -1102,7 +1741,8 @@ class BrickHouseDemoSeeder extends Seeder
     private function seedSchedule(
         int $organizationId,
         int $projectId,
-        int $userId,
+        int $createdByUserId,
+        int $assignedUserId,
         array $units,
         array $workTypes,
         array $materials,
@@ -1121,7 +1761,7 @@ class BrickHouseDemoSeeder extends Seeder
             'organization_id' => $organizationId,
             'name' => $name,
         ], [
-            'created_by_user_id' => $userId,
+            'created_by_user_id' => $createdByUserId,
             'description' => $scope === 'GP'
                 ? 'Сводный график с критическим путем, поставками и контрольными точками генподряда.'
                 : 'Рабочий график подрядчика: кладка, армопояса, перемычки и сдача захваток.',
@@ -1130,7 +1770,7 @@ class BrickHouseDemoSeeder extends Seeder
             'baseline_start_date' => $this->now->copy()->subMonths(5)->startOfMonth()->toDateString(),
             'baseline_end_date' => $this->now->copy()->addMonths(7)->endOfMonth()->toDateString(),
             'baseline_saved_at' => $this->now->copy()->subMonths(4),
-            'baseline_saved_by_user_id' => $userId,
+            'baseline_saved_by_user_id' => $createdByUserId,
             'actual_start_date' => $this->now->copy()->subMonths(5)->startOfMonth()->addDays(2)->toDateString(),
             'status' => 'active',
             'is_template' => false,
@@ -1159,8 +1799,8 @@ class BrickHouseDemoSeeder extends Seeder
                 'organization_id' => $organizationId,
                 'parent_task_id' => null,
                 'work_type_id' => $workTypes[$task['work']] ?? null,
-                'assigned_user_id' => $userId,
-                'created_by_user_id' => $userId,
+                'assigned_user_id' => $assignedUserId,
+                'created_by_user_id' => $createdByUserId,
                 'name' => $task['name'],
                 'description' => $task['description'],
                 'task_type' => $task['type'] ?? 'task',
@@ -1203,7 +1843,7 @@ class BrickHouseDemoSeeder extends Seeder
             ]);
 
             $taskIds[$task['key']] = $taskId;
-            $this->seedTaskResources($taskId, $scheduleId, $organizationId, $userId, $task, $materials);
+            $this->seedTaskResources($taskId, $scheduleId, $organizationId, $createdByUserId, $task, $materials);
             $this->totals['schedule_tasks']++;
         }
 
@@ -1217,7 +1857,7 @@ class BrickHouseDemoSeeder extends Seeder
                 ], [
                     'schedule_id' => $scheduleId,
                     'organization_id' => $organizationId,
-                    'created_by_user_id' => $userId,
+                    'created_by_user_id' => $createdByUserId,
                     'lag_days' => in_array($taskKey, ['masonry_inner', 'belt'], true) ? -2 : 0,
                     'lag_hours' => 0,
                     'lag_type' => 'days',
@@ -1235,7 +1875,7 @@ class BrickHouseDemoSeeder extends Seeder
             $previousTaskId = $taskId;
         }
 
-        $this->seedMilestones($scheduleId, $organizationId, $userId, $taskIds, $scope);
+        $this->seedMilestones($scheduleId, $organizationId, $createdByUserId, $taskIds, $scope);
 
         return $taskIds;
     }
@@ -1951,7 +2591,8 @@ class BrickHouseDemoSeeder extends Seeder
         int $projectId,
         int $contractId,
         int $contractorId,
-        int $userId,
+        int $createdByUserId,
+        int $approvedByUserId,
         array $scheduleTasks,
         array $estimate,
         array $units,
@@ -1973,7 +2614,7 @@ class BrickHouseDemoSeeder extends Seeder
             'start_date' => $this->now->copy()->subMonths(5)->startOfMonth()->toDateString(),
             'end_date' => null,
             'status' => 'active',
-            'created_by_user_id' => $userId,
+            'created_by_user_id' => $createdByUserId,
         ]);
 
         $entries = [
@@ -2054,8 +2695,8 @@ class BrickHouseDemoSeeder extends Seeder
                 'entry_date' => $entryDate->toDateString(),
                 'work_description' => $entry['description'],
                 'status' => $entry['status'],
-                'created_by_user_id' => $userId,
-                'approved_by_user_id' => $isApproved ? $userId : null,
+                'created_by_user_id' => $createdByUserId,
+                'approved_by_user_id' => $isApproved ? $approvedByUserId : null,
                 'approved_at' => $isApproved ? $entryDate->copy()->addHours(7) : null,
                 'weather_conditions' => $this->json([
                     'temperature' => $entry['date_offset'] < -10 ? '+12 C' : '+18 C',
@@ -2131,7 +2772,7 @@ class BrickHouseDemoSeeder extends Seeder
                     'contract_id' => $contractId,
                     'schedule_task_id' => $scheduleTaskId,
                     'work_type_id' => $workTypeId,
-                    'user_id' => $userId,
+                    'user_id' => $createdByUserId,
                     'contractor_id' => $contractorId,
                     'quantity' => $entry['quantity'],
                     'completed_quantity' => $entry['quantity'],
@@ -2189,7 +2830,8 @@ class BrickHouseDemoSeeder extends Seeder
     private function seedPerformanceAct(
         int $contractId,
         int $projectId,
-        int $userId,
+        int $createdByUserId,
+        int $approvedByUserId,
         array $completedWorks,
         string $number,
         string $description
@@ -2213,16 +2855,16 @@ class BrickHouseDemoSeeder extends Seeder
             'status' => 'approved',
             'is_approved' => true,
             'approval_date' => $this->now->copy()->subDays(2)->toDateString(),
-            'created_by_user_id' => $userId,
-            'submitted_by_user_id' => $userId,
+            'created_by_user_id' => $createdByUserId,
+            'submitted_by_user_id' => $createdByUserId,
             'submitted_at' => $this->now->copy()->subDays(3)->addHours(2),
-            'approved_by_user_id' => $userId,
+            'approved_by_user_id' => $approvedByUserId,
             'rejected_by_user_id' => null,
             'rejected_at' => null,
             'rejection_reason' => null,
-            'signed_by_user_id' => $userId,
+            'signed_by_user_id' => $approvedByUserId,
             'signed_at' => $this->now->copy()->subDays(2)->addHours(4),
-            'locked_by_user_id' => $userId,
+            'locked_by_user_id' => $approvedByUserId,
             'locked_at' => $this->now->copy()->subDays(2)->addHours(5),
         ]);
 
@@ -2248,7 +2890,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'unit_price' => $work['unit_price'],
                 'amount' => $work['amount'],
                 'manual_reason' => null,
-                'created_by' => $userId,
+                'created_by' => $createdByUserId,
             ]);
         }
 
@@ -2281,6 +2923,11 @@ class BrickHouseDemoSeeder extends Seeder
             return [];
         }
 
+        $generalAccountantId = $this->actorId($general, 'accountant');
+        $generalApproverId = $this->actorId($general, 'project_manager');
+        $contractorAccountantId = $this->actorId($contractor, 'accountant');
+        $contractorApproverId = $this->actorId($contractor, 'work_manager');
+
         $documents = [
             'gp_advance' => [
                 'organization_id' => $general['organization_id'],
@@ -2303,7 +2950,9 @@ class BrickHouseDemoSeeder extends Seeder
                 'purpose' => 'Аванс 20% по договору ГП-ПДР-ЛД-02/2026',
                 'due_offset' => -122,
                 'paid_offset' => -121,
-                'user_id' => $general['user_id'],
+                'user_id' => $generalAccountantId,
+                'approver_id' => $generalApproverId,
+                'recipient_user_id' => $contractorAccountantId,
                 'site_request_id' => null,
             ],
             'gp_act_payment' => [
@@ -2327,7 +2976,9 @@ class BrickHouseDemoSeeder extends Seeder
                 'purpose' => 'Оплата по акту КС-2-КД-ГП-01',
                 'due_offset' => 5,
                 'paid_offset' => null,
-                'user_id' => $general['user_id'],
+                'user_id' => $generalAccountantId,
+                'approver_id' => $generalApproverId,
+                'recipient_user_id' => $contractorAccountantId,
                 'site_request_id' => null,
             ],
             'gp_materials' => [
@@ -2351,7 +3002,9 @@ class BrickHouseDemoSeeder extends Seeder
                 'purpose' => 'Закупка материалов по заявкам с объекта',
                 'due_offset' => -7,
                 'paid_offset' => -6,
-                'user_id' => $general['user_id'],
+                'user_id' => $generalAccountantId,
+                'approver_id' => $generalApproverId,
+                'recipient_user_id' => null,
                 'site_request_id' => $siteRequests['general']['brick_delivery'] ?? null,
             ],
             'sub_advance_income' => [
@@ -2375,7 +3028,9 @@ class BrickHouseDemoSeeder extends Seeder
                 'purpose' => 'Аванс по договору на кладочные работы',
                 'due_offset' => -122,
                 'paid_offset' => -121,
-                'user_id' => $contractor['user_id'],
+                'user_id' => $contractorAccountantId,
+                'approver_id' => $contractorApproverId,
+                'recipient_user_id' => $contractorAccountantId,
                 'site_request_id' => null,
             ],
             'sub_act_invoice' => [
@@ -2399,7 +3054,9 @@ class BrickHouseDemoSeeder extends Seeder
                 'purpose' => 'Оплата по акту КС-2-КД-ПДР-01',
                 'due_offset' => 5,
                 'paid_offset' => null,
-                'user_id' => $contractor['user_id'],
+                'user_id' => $contractorAccountantId,
+                'approver_id' => $contractorApproverId,
+                'recipient_user_id' => $contractorAccountantId,
                 'site_request_id' => null,
             ],
         ];
@@ -2454,7 +3111,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'metadata' => $this->json(['demo' => true, 'scenario' => 'brick_house']),
                 'notes' => 'Демо-платеж связан с договором, сметой или заявкой',
                 'created_by_user_id' => $document['user_id'],
-                'approved_by_user_id' => $document['status'] === 'approved' || $document['status'] === 'paid' ? $document['user_id'] : null,
+                'approved_by_user_id' => $document['status'] === 'approved' || $document['status'] === 'paid' ? $document['approver_id'] : null,
                 'submitted_at' => $this->now->copy()->subDays(3),
                 'approved_at' => $document['status'] === 'approved' || $document['status'] === 'paid' ? $this->now->copy()->subDays(2) : null,
                 'issued_at' => $this->now->copy()->subDays(3),
@@ -2466,7 +3123,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'recipient_viewed_at' => $document['payee_organization_id'] ? $this->now->copy()->subDay() : null,
                 'recipient_confirmed_at' => $document['status'] === 'paid' && $document['payee_organization_id'] ? $paidAt : null,
                 'recipient_confirmation_comment' => $document['status'] === 'paid' ? 'Поступление подтверждено в демо-сценарии' : null,
-                'recipient_confirmed_by_user_id' => $document['status'] === 'paid' ? $document['user_id'] : null,
+                'recipient_confirmed_by_user_id' => $document['status'] === 'paid' ? $document['recipient_user_id'] : null,
             ]);
 
             if ($document['site_request_id']) {
@@ -2529,6 +3186,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'description' => 'Генподрядчик завел объект, сроки, бюджет и участников.',
                 'days' => 150,
                 'correlation' => 'brick-house-project-created',
+                'actor_key' => 'project_manager',
             ],
             [
                 'organization' => $general,
@@ -2542,6 +3200,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'description' => 'Карточка подрядчика синхронизирована, договор переведен в работу.',
                 'days' => 138,
                 'correlation' => 'brick-house-contract-active',
+                'actor_key' => 'project_manager',
             ],
             [
                 'organization' => $contractor,
@@ -2555,6 +3214,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'description' => 'Подрядчик согласовал ресурсную смету на кладку и армопояса.',
                 'days' => 132,
                 'correlation' => 'brick-house-sub-estimate-approved',
+                'actor_key' => 'pto_engineer',
             ],
             [
                 'organization' => $general,
@@ -2568,6 +3228,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'description' => 'Оплачен аванс 20% по договору кладочных работ.',
                 'days' => 121,
                 'correlation' => 'brick-house-advance-paid',
+                'actor_key' => 'accountant',
             ],
             [
                 'organization' => $general,
@@ -2581,6 +3242,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'description' => 'Кладочные материалы приняты на склад объекта и зарезервированы под график.',
                 'days' => 9,
                 'correlation' => 'brick-house-brick-received',
+                'actor_key' => 'supply_manager',
             ],
             [
                 'organization' => $contractor,
@@ -2594,6 +3256,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'description' => 'ПТО подтвердило корректировку ряда по оси Д, замечание закрыто.',
                 'days' => 1,
                 'correlation' => 'brick-house-site-request-completed',
+                'actor_key' => 'pto_engineer',
             ],
             [
                 'organization' => $general,
@@ -2607,19 +3270,22 @@ class BrickHouseDemoSeeder extends Seeder
                 'description' => 'Приняты фундамент, наружная кладка и перегородки первого этажа.',
                 'days' => 2,
                 'correlation' => 'brick-house-act-approved',
+                'actor_key' => 'pto_engineer',
             ],
         ];
 
         foreach ($events as $event) {
             $organization = $event['organization'];
+            $actor = $this->actor($organization, $event['actor_key']);
+
             $this->upsert('activity_events', [
                 'organization_id' => $organization['organization_id'],
                 'correlation_id' => $event['correlation'],
             ], [
-                'actor_user_id' => $organization['user_id'],
+                'actor_user_id' => $actor['user_id'],
                 'actor_type' => 'user',
-                'actor_name' => $organization['name'],
-                'actor_email' => $organization['email'],
+                'actor_name' => $actor['name'],
+                'actor_email' => $actor['email'],
                 'interface' => 'admin',
                 'module' => $event['module'],
                 'event_type' => $event['event_type'],
@@ -2967,5 +3633,23 @@ class BrickHouseDemoSeeder extends Seeder
     private function json(array $value): string
     {
         return json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function decodeJsonArray(mixed $value): array
+    {
+        if (is_array($value)) {
+            return $value;
+        }
+
+        if (!is_string($value) || trim($value) === '') {
+            return [];
+        }
+
+        $decoded = json_decode($value, true);
+
+        return is_array($decoded) ? $decoded : [];
     }
 }
