@@ -73,6 +73,7 @@ return [
             'https://ai.api.cloud.yandex.net/foundationModels/v1/textEmbedding'
         ),
         'embedding_dimensions' => $configEnv('AI_RAG_EMBEDDING_DIMENSIONS', 256),
+        'queue_connection' => $configEnv('AI_RAG_QUEUE_CONNECTION', 'redis_ai_rag'),
         'queue' => $configEnv('AI_RAG_QUEUE', 'ai-rag'),
         'scheduled_limit' => $configEnv('AI_RAG_SCHEDULED_LIMIT', 50),
         'stale_after_hours' => $configEnv('AI_RAG_STALE_AFTER_HOURS', 24),
