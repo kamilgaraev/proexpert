@@ -42,6 +42,8 @@ class CustomRoleService
         ?string $description = null,
         ?User $createdBy = null
     ): OrganizationCustomRole {
+        $systemPermissions = RolePermissionNormalizer::normalizeSystemPermissions($systemPermissions, $interfaceAccess);
+
         // Валидируем права
         $this->validatePermissions($organizationId, $systemPermissions, $modulePermissions);
         
@@ -85,6 +87,8 @@ class CustomRoleService
         if (isset($data['interface_access'])) {
             $this->validateInterfaceAccess($data['interface_access']);
         }
+
+        $data = $this->normalizeRoleData($role, $data);
 
         return DB::transaction(function () use ($role, $data) {
             return $role->update($data);
@@ -276,6 +280,9 @@ class CustomRoleService
     {
         // Базовые системные права, которые можно назначать в кастомных ролях
         return [
+            'admin.access' => 'Доступ к административной панели',
+            'admin.view' => 'Просмотр административной панели',
+            'dashboard.view' => 'Просмотр дашборда',
             'profile.view' => 'Просмотр профиля',
             'profile.edit' => 'Редактирование профиля',
             'organization.view' => 'Просмотр организации',
@@ -357,5 +364,18 @@ class CustomRoleService
                 ]);
             }
         }
+    }
+
+    private function normalizeRoleData(OrganizationCustomRole $role, array $data): array
+    {
+        $interfaceAccess = $data['interface_access'] ?? ($role->interface_access ?? []);
+        $systemPermissions = $data['system_permissions'] ?? ($role->system_permissions ?? []);
+
+        $data['system_permissions'] = RolePermissionNormalizer::normalizeSystemPermissions(
+            $systemPermissions,
+            $interfaceAccess
+        );
+
+        return $data;
     }
 }

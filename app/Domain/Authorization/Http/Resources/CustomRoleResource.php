@@ -2,6 +2,7 @@
 
 namespace App\Domain\Authorization\Http\Resources;
 
+use App\Domain\Authorization\Services\RolePermissionNormalizer;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -14,14 +15,20 @@ class CustomRoleResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $systemPermissions = RolePermissionNormalizer::normalizeSystemPermissions(
+            $this->system_permissions ?? [],
+            $this->interface_access ?? []
+        );
+        $modulePermissions = $this->module_permissions ?? [];
+
         return [
             'id' => $this->id,
             'organization_id' => $this->organization_id,
             'name' => $this->name,
             'slug' => $this->slug,
             'description' => $this->description,
-            'system_permissions' => $this->system_permissions ?? [],
-            'module_permissions' => $this->module_permissions ?? [],
+            'system_permissions' => $systemPermissions,
+            'module_permissions' => $modulePermissions,
             'interface_access' => $this->interface_access ?? [],
             'conditions' => $this->when($this->conditions, $this->conditions),
             'is_active' => $this->is_active,
@@ -32,13 +39,13 @@ class CustomRoleResource extends JsonResource
             ],
             'assignments_count' => $this->whenCounted('assignments'),
             'active_assignments_count' => $this->when(
-                $this->relationLoaded('assignments'),
+                $this->resource->relationLoaded('assignments'),
                 function () {
                     return $this->assignments->where('is_active', true)->count();
                 }
             ),
             'assignments' => $this->when(
-                $this->relationLoaded('assignments'),
+                $this->resource->relationLoaded('assignments'),
                 function () {
                     return $this->assignments->map(function ($assignment) {
                         return [
@@ -61,9 +68,12 @@ class CustomRoleResource extends JsonResource
                 }
             ),
             'permissions_summary' => [
-                'system_permissions_count' => count($this->system_permissions ?? []),
-                'module_permissions_count' => array_sum(array_map('count', $this->module_permissions ?? [])),
-                'has_wildcard' => in_array('*', $this->system_permissions ?? []),
+                'system_permissions_count' => count($systemPermissions),
+                'module_permissions_count' => array_sum(array_map(
+                    static fn ($permissions): int => is_countable($permissions) ? count($permissions) : 0,
+                    $modulePermissions
+                )),
+                'has_wildcard' => in_array('*', $systemPermissions),
                 'interfaces' => $this->interface_access ?? [],
             ],
             'created_at' => $this->created_at,

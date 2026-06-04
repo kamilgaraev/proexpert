@@ -75,6 +75,37 @@ class RoleDefinitionJsonContractTest extends TestCase
         }
     }
 
+    public function test_role_translations_cover_all_role_definitions(): void
+    {
+        $translations = require $this->basePath . '/lang/ru/roles.php';
+
+        foreach ($this->roleDefinitionFiles() as $filePath) {
+            $role = json_decode((string) file_get_contents($filePath), true, 512, JSON_THROW_ON_ERROR);
+            $slug = $role['slug'] ?? null;
+
+            $this->assertIsString($slug, "Role slug is missing in {$filePath}");
+            $this->assertArrayHasKey($slug, $translations, "Role translation is missing for {$slug}");
+            $this->assertNotSame('', trim((string) ($translations[$slug]['name'] ?? '')), "Role name is empty for {$slug}");
+            $this->assertNotSame('', trim((string) ($translations[$slug]['description'] ?? '')), "Role description is empty for {$slug}");
+        }
+    }
+
+    public function test_customer_role_definitions_are_not_assignable_in_general_catalog(): void
+    {
+        foreach ($this->roleDefinitionFiles() as $filePath) {
+            if (!str_contains($filePath, DIRECTORY_SEPARATOR . 'customer' . DIRECTORY_SEPARATOR)) {
+                continue;
+            }
+
+            $role = json_decode((string) file_get_contents($filePath), true, 512, JSON_THROW_ON_ERROR);
+
+            $this->assertFalse(
+                $role['assignable'] ?? true,
+                sprintf('Customer role %s must not be shown in the general assignable role catalog', $role['slug'] ?? $filePath),
+            );
+        }
+    }
+
     /**
      * @return list<string>
      */
@@ -192,4 +223,3 @@ class RoleDefinitionJsonContractTest extends TestCase
         return $keys;
     }
 }
-

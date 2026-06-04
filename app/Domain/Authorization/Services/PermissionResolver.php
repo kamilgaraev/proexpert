@@ -270,14 +270,7 @@ class PermissionResolver
                 $interfaceAccess = $customRole ? ($customRole->interface_access ?? []) : [];
             }
 
-            // 3. Авто-добавление admin.access
-            if (in_array('admin', $interfaceAccess)) {
-                $perms[] = 'admin.access';
-                $perms[] = 'admin.view';
-                $perms[] = 'dashboard.view';
-            }
-
-            return array_unique($perms);
+            return RolePermissionNormalizer::normalizeSystemPermissions($perms, $interfaceAccess);
         });
     }
 

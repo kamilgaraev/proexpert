@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "context": "organization",
   "interface": "customer",
+  "assignable": false,
   "description": "Рабочий доступ к customer-порталу без управления ролями.",
   "system_permissions": [
     "dashboard.view",
