@@ -1900,6 +1900,12 @@ class BrickHouseDemoSeeder extends Seeder
             $this->totals['schedule_tasks']++;
         }
 
+        if (Schema::hasTable('task_dependencies')) {
+            DB::table('task_dependencies')
+                ->where('schedule_id', $scheduleId)
+                ->delete();
+        }
+
         $previousTaskId = null;
         foreach ($taskIds as $taskKey => $taskId) {
             if ($previousTaskId !== null) {
@@ -2128,6 +2134,12 @@ class BrickHouseDemoSeeder extends Seeder
             'insulation' => ['available' => $scope === 'GP' ? 96 : 24, 'reserved' => $scope === 'GP' ? 18 : 6, 'price' => 1520.00, 'min' => 20, 'max' => 180, 'loc' => 'D-01', 'batch' => "{$scope}-WOOL-0626"],
         ];
 
+        if ($scope === 'GP') {
+            $stocks['slab'] = ['available' => 0, 'reserved' => 32, 'price' => 18600.00, 'min' => 0, 'max' => 40, 'loc' => 'E-01', 'batch' => "{$scope}-SLAB-0626"];
+            $stocks['roofing'] = ['available' => 0, 'reserved' => 318, 'price' => 920.00, 'min' => 0, 'max' => 360, 'loc' => 'F-02', 'batch' => "{$scope}-ROOF-0726"];
+            $stocks['facing_brick'] = ['available' => 0, 'reserved' => 28400, 'price' => 52.00, 'min' => 0, 'max' => 32000, 'loc' => 'A-04', 'batch' => "{$scope}-FACE-0726"];
+        }
+
         foreach ($stocks as $materialKey => $stock) {
             $materialId = $materials[$materialKey] ?? null;
             if (!$materialId) {
@@ -2279,68 +2291,239 @@ class BrickHouseDemoSeeder extends Seeder
             return [];
         }
 
-        $requests = [
-            'brick_delivery' => [
-                'title' => $scope === 'GP' ? 'Доставить кирпич М150 на кладку второго этажа' : 'Получить кирпич М150 на захватку Б',
-                'type' => 'material_request',
-                'status' => 'fulfilled',
-                'priority' => 'high',
-                'material' => 'brick',
-                'estimate_item' => '3.1',
-                'quantity' => $scope === 'GP' ? 6200 : 4200,
-                'unit' => 'шт',
-                'required_offset' => -3,
-                'description' => 'Материал нужен для продолжения кладки без простоя бригады.',
-            ],
-            'mortar_today' => [
-                'title' => 'Раствор М100 на дневную смену кладки',
-                'type' => 'material_request',
-                'status' => 'in_progress',
-                'priority' => 'urgent',
-                'material' => 'mortar',
-                'estimate_item' => '3.2',
-                'quantity' => 8.5,
-                'unit' => 'м³',
-                'required_offset' => 1,
-                'description' => 'Поставка раствора к 09:30, разгрузка у оси Г-7.',
-            ],
-            'masons' => [
-                'title' => 'Усилить бригаду каменщиков на армопояс',
-                'type' => 'personnel_request',
-                'status' => 'approved',
-                'priority' => 'medium',
-                'material' => null,
-                'estimate_item' => '3.5',
-                'quantity' => null,
-                'unit' => null,
-                'required_offset' => 4,
-                'description' => 'Нужно добавить 4 каменщика на 6 смен для закрытия контрольной точки.',
-            ],
-            'crane' => [
-                'title' => 'Автокран 25 т для перемычек и плит',
-                'type' => 'equipment_request',
-                'status' => 'pending',
-                'priority' => 'high',
-                'material' => null,
-                'estimate_item' => '4.2',
-                'quantity' => null,
-                'unit' => null,
-                'required_offset' => 10,
-                'description' => 'Кран нужен под монтаж перемычек и разгрузку плит перекрытия.',
-            ],
-            'quality_issue' => [
-                'title' => 'Проверить геометрию кладки по оси Д',
-                'type' => 'issue_report',
-                'status' => 'completed',
-                'priority' => 'medium',
-                'material' => null,
-                'estimate_item' => '3.1',
-                'quantity' => null,
-                'unit' => null,
-                'required_offset' => -1,
-                'description' => 'Прораб отметил отклонение по шнуру, ПТО подтвердило корректировку ряда.',
-            ],
-        ];
+        $requests = $scope === 'GP'
+            ? [
+                'brick_delivery' => [
+                    'title' => 'Доставить кирпич М150 на кладку второго этажа',
+                    'type' => 'material_request',
+                    'status' => 'fulfilled',
+                    'priority' => 'high',
+                    'material' => 'brick',
+                    'estimate_item' => '3.1',
+                    'quantity' => 6200,
+                    'unit' => 'шт',
+                    'required_offset' => -3,
+                    'description' => 'Материал нужен для продолжения кладки без простоя бригады.',
+                ],
+                'mortar_today' => [
+                    'title' => 'Раствор М100 на дневную смену кладки',
+                    'type' => 'material_request',
+                    'status' => 'in_progress',
+                    'priority' => 'urgent',
+                    'material' => 'mortar',
+                    'estimate_item' => '3.2',
+                    'quantity' => 8.5,
+                    'unit' => 'м³',
+                    'required_offset' => 1,
+                    'description' => 'Поставка раствора к 09:30, разгрузка у оси Г-7.',
+                ],
+                'rebar_topup' => [
+                    'title' => 'Довезти арматуру А500С на армопояс второго этажа',
+                    'type' => 'material_request',
+                    'status' => 'approved',
+                    'priority' => 'high',
+                    'material' => 'rebar',
+                    'estimate_item' => '3.5',
+                    'quantity' => 2.4,
+                    'unit' => 'т',
+                    'required_offset' => 2,
+                    'description' => 'Запас на складе ниже резерва, требуется пополнение до вязки каркасов по осям А-Г.',
+                ],
+                'mesh_restock' => [
+                    'title' => 'Пополнить сетку для армирования кладки',
+                    'type' => 'material_request',
+                    'status' => 'completed',
+                    'priority' => 'medium',
+                    'material' => 'mesh',
+                    'estimate_item' => '3.4',
+                    'quantity' => 180,
+                    'unit' => 'м²',
+                    'required_offset' => -9,
+                    'description' => 'Закрыть потребность по наружным стенам и перегородкам первого этажа.',
+                ],
+                'slab_delivery' => [
+                    'title' => 'Плиты ПБ к монтажу перекрытия',
+                    'type' => 'material_request',
+                    'status' => 'pending',
+                    'priority' => 'high',
+                    'material' => 'slab',
+                    'estimate_item' => '4.1',
+                    'quantity' => 32,
+                    'unit' => 'шт',
+                    'required_offset' => 12,
+                    'description' => 'Поставка согласована с окном работы автокрана и готовностью армопояса.',
+                ],
+                'roofing_preorder' => [
+                    'title' => 'Подтвердить поставку металлочерепицы',
+                    'type' => 'material_request',
+                    'status' => 'approved',
+                    'priority' => 'medium',
+                    'material' => 'roofing',
+                    'estimate_item' => '4.3',
+                    'quantity' => 318,
+                    'unit' => 'м²',
+                    'required_offset' => 36,
+                    'description' => 'Цвет выбран заказчиком, поставщик держит резерв до конца недели.',
+                ],
+                'facing_brick_preorder' => [
+                    'title' => 'Зарезервировать облицовочный кирпич',
+                    'type' => 'material_request',
+                    'status' => 'pending',
+                    'priority' => 'medium',
+                    'material' => 'facing_brick',
+                    'estimate_item' => '4.4',
+                    'quantity' => 28400,
+                    'unit' => 'шт',
+                    'required_offset' => 58,
+                    'description' => 'Нужна ранняя бронь партии, чтобы фасад не ушел из графика после закрытия контура.',
+                ],
+                'masons' => [
+                    'title' => 'Усилить бригаду каменщиков на армопояс',
+                    'type' => 'personnel_request',
+                    'status' => 'approved',
+                    'priority' => 'medium',
+                    'material' => null,
+                    'estimate_item' => '3.5',
+                    'quantity' => null,
+                    'unit' => null,
+                    'required_offset' => 4,
+                    'description' => 'Нужно добавить 4 каменщика на 6 смен для закрытия контрольной точки.',
+                ],
+                'crane' => [
+                    'title' => 'Автокран 25 т для перемычек и плит',
+                    'type' => 'equipment_request',
+                    'status' => 'pending',
+                    'priority' => 'high',
+                    'material' => null,
+                    'estimate_item' => '4.2',
+                    'quantity' => null,
+                    'unit' => null,
+                    'required_offset' => 10,
+                    'description' => 'Кран нужен под монтаж перемычек и разгрузку плит перекрытия.',
+                ],
+                'quality_issue' => [
+                    'title' => 'Проверить геометрию кладки по оси Д',
+                    'type' => 'issue_report',
+                    'status' => 'completed',
+                    'priority' => 'medium',
+                    'material' => null,
+                    'estimate_item' => '3.1',
+                    'quantity' => null,
+                    'unit' => null,
+                    'required_offset' => -1,
+                    'description' => 'Прораб отметил отклонение по шнуру, ПТО подтвердило корректировку ряда.',
+                ],
+                'survey_request' => [
+                    'title' => 'Исполнительная съемка армопояса перед плитами',
+                    'type' => 'issue_report',
+                    'status' => 'approved',
+                    'priority' => 'medium',
+                    'material' => null,
+                    'estimate_item' => '4.6',
+                    'quantity' => null,
+                    'unit' => null,
+                    'required_offset' => 7,
+                    'description' => 'Геодезист должен проверить отметки опирания до допуска плит.',
+                ],
+            ]
+            : [
+                'brick_delivery' => [
+                    'title' => 'Получить кирпич М150 на захватку Б',
+                    'type' => 'material_request',
+                    'status' => 'fulfilled',
+                    'priority' => 'high',
+                    'material' => 'brick',
+                    'estimate_item' => '4.1',
+                    'quantity' => 4200,
+                    'unit' => 'шт',
+                    'required_offset' => -3,
+                    'description' => 'Материал нужен для кладки наружной стены второго этажа по осям Б-Г.',
+                ],
+                'mortar_today' => [
+                    'title' => 'Раствор М100 на дневную смену подрядчика',
+                    'type' => 'material_request',
+                    'status' => 'in_progress',
+                    'priority' => 'urgent',
+                    'material' => 'mortar',
+                    'estimate_item' => '3.2',
+                    'quantity' => 6.5,
+                    'unit' => 'м³',
+                    'required_offset' => 1,
+                    'description' => 'Поставка раствора к 09:00, разгрузка у бытового городка подрядчика.',
+                ],
+                'rebar_topup' => [
+                    'title' => 'Получить арматуру на перемычки второго этажа',
+                    'type' => 'material_request',
+                    'status' => 'approved',
+                    'priority' => 'high',
+                    'material' => 'rebar',
+                    'estimate_item' => '3.5',
+                    'quantity' => 0.9,
+                    'unit' => 'т',
+                    'required_offset' => 2,
+                    'description' => 'Каркасы перемычек нужно подготовить до окна бетонирования.',
+                ],
+                'mesh_restock' => [
+                    'title' => 'Сетка кладочная на захватку второго этажа',
+                    'type' => 'material_request',
+                    'status' => 'completed',
+                    'priority' => 'medium',
+                    'material' => 'mesh',
+                    'estimate_item' => '3.4',
+                    'quantity' => 90,
+                    'unit' => 'м²',
+                    'required_offset' => -8,
+                    'description' => 'Сетка получена со склада, закрыла армирование рядов на захватке 1.',
+                ],
+                'masons' => [
+                    'title' => 'Дополнительные каменщики на вторую смену',
+                    'type' => 'personnel_request',
+                    'status' => 'approved',
+                    'priority' => 'medium',
+                    'material' => null,
+                    'estimate_item' => '4.1',
+                    'quantity' => null,
+                    'unit' => null,
+                    'required_offset' => 3,
+                    'description' => 'Нужно усиление бригады на 5 смен, чтобы не сорвать сдачу захватки генподряду.',
+                ],
+                'crane' => [
+                    'title' => 'Автокран для перемычек и разгрузки плит',
+                    'type' => 'equipment_request',
+                    'status' => 'pending',
+                    'priority' => 'high',
+                    'material' => null,
+                    'estimate_item' => '4.2',
+                    'quantity' => null,
+                    'unit' => null,
+                    'required_offset' => 10,
+                    'description' => 'Подтвердить окно работы крана и ответственного стропальщика.',
+                ],
+                'quality_issue' => [
+                    'title' => 'Устранить замечание по толщине шва',
+                    'type' => 'issue_report',
+                    'status' => 'completed',
+                    'priority' => 'medium',
+                    'material' => null,
+                    'estimate_item' => '4.1',
+                    'quantity' => null,
+                    'unit' => null,
+                    'required_offset' => -1,
+                    'description' => 'Захватка исправлена, ПТО подрядчика подготовило фотофиксацию.',
+                ],
+                'survey_request' => [
+                    'title' => 'Согласовать исполнительную схему кладки',
+                    'type' => 'issue_report',
+                    'status' => 'approved',
+                    'priority' => 'medium',
+                    'material' => null,
+                    'estimate_item' => '4.3',
+                    'quantity' => null,
+                    'unit' => null,
+                    'required_offset' => 5,
+                    'description' => 'Передать ПТО генподряда схему отклонений и привязку к осям.',
+                ],
+            ];
 
         $ids = [];
 
@@ -2572,9 +2755,83 @@ class BrickHouseDemoSeeder extends Seeder
         }
 
         $deliveries = [
-            'brick_delivery' => ['material' => 'brick', 'status' => 'accepted', 'requested' => $scope === 'GP' ? 6200 : 4200, 'reserved' => $scope === 'GP' ? 6200 : 4200, 'shipped' => $scope === 'GP' ? 6200 : 4200, 'accepted' => $scope === 'GP' ? 6200 : 4200],
-            'mortar_today' => ['material' => 'mortar', 'status' => 'in_transit', 'requested' => 8.5, 'reserved' => 8.5, 'shipped' => 8.5, 'accepted' => 0],
+            'brick_delivery' => [
+                'material' => 'brick',
+                'status' => 'accepted',
+                'requested' => $scope === 'GP' ? 6200 : 4200,
+                'reserved' => $scope === 'GP' ? 6200 : 4200,
+                'shipped' => $scope === 'GP' ? 6200 : 4200,
+                'accepted' => $scope === 'GP' ? 6200 : 4200,
+                'planned_offset' => -3,
+                'shipped_offset' => -4,
+                'delivered_offset' => -3,
+                'accepted_offset' => -2,
+            ],
+            'mortar_today' => [
+                'material' => 'mortar',
+                'status' => 'in_transit',
+                'requested' => $scope === 'GP' ? 8.5 : 6.5,
+                'reserved' => $scope === 'GP' ? 8.5 : 6.5,
+                'shipped' => $scope === 'GP' ? 8.5 : 6.5,
+                'accepted' => 0,
+                'planned_offset' => 1,
+                'shipped_offset' => 0,
+                'delivered_offset' => null,
+                'accepted_offset' => null,
+            ],
+            'rebar_topup' => [
+                'material' => 'rebar',
+                'status' => 'reserved',
+                'requested' => $scope === 'GP' ? 2.4 : 0.9,
+                'reserved' => $scope === 'GP' ? 2.4 : 0.9,
+                'shipped' => 0,
+                'accepted' => 0,
+                'planned_offset' => 2,
+                'shipped_offset' => null,
+                'delivered_offset' => null,
+                'accepted_offset' => null,
+            ],
+            'mesh_restock' => [
+                'material' => 'mesh',
+                'status' => 'accepted',
+                'requested' => $scope === 'GP' ? 180 : 90,
+                'reserved' => $scope === 'GP' ? 180 : 90,
+                'shipped' => $scope === 'GP' ? 180 : 90,
+                'accepted' => $scope === 'GP' ? 180 : 90,
+                'planned_offset' => -9,
+                'shipped_offset' => -10,
+                'delivered_offset' => -9,
+                'accepted_offset' => -8,
+            ],
         ];
+
+        if ($scope === 'GP') {
+            $deliveries['slab_delivery'] = [
+                'material' => 'slab',
+                'status' => 'requested',
+                'requested' => 32,
+                'reserved' => 0,
+                'shipped' => 0,
+                'accepted' => 0,
+                'planned_offset' => 12,
+                'shipped_offset' => null,
+                'delivered_offset' => null,
+                'accepted_offset' => null,
+            ];
+
+            $deliveries['roofing_preorder'] = [
+                'material' => 'roofing',
+                'status' => 'requested',
+                'requested' => 318,
+                'reserved' => 0,
+                'shipped' => 0,
+                'accepted' => 0,
+                'planned_offset' => 36,
+                'shipped_offset' => null,
+                'delivered_offset' => null,
+                'accepted_offset' => null,
+            ];
+        }
 
         foreach ($deliveries as $requestKey => $delivery) {
             $siteRequestId = $siteRequests[$requestKey] ?? 0;
@@ -2602,10 +2859,10 @@ class BrickHouseDemoSeeder extends Seeder
                 'reserved_quantity' => $delivery['reserved'],
                 'shipped_quantity' => $delivery['shipped'],
                 'accepted_quantity' => $delivery['accepted'],
-                'planned_delivery_date' => $this->now->copy()->addDays($requestKey === 'brick_delivery' ? -3 : 1)->toDateString(),
-                'shipped_at' => $this->now->copy()->subDays($requestKey === 'brick_delivery' ? 4 : 0),
-                'delivered_at' => $requestKey === 'brick_delivery' ? $this->now->copy()->subDays(3) : null,
-                'accepted_at' => $requestKey === 'brick_delivery' ? $this->now->copy()->subDays(2) : null,
+                'planned_delivery_date' => $this->now->copy()->addDays($delivery['planned_offset'])->toDateString(),
+                'shipped_at' => $delivery['shipped_offset'] === null ? null : $this->now->copy()->addDays($delivery['shipped_offset']),
+                'delivered_at' => $delivery['delivered_offset'] === null ? null : $this->now->copy()->addDays($delivery['delivered_offset']),
+                'accepted_at' => $delivery['accepted_offset'] === null ? null : $this->now->copy()->addDays($delivery['accepted_offset']),
                 'responsible_user_id' => $userId,
                 'receiver_user_id' => $userId,
                 'notes' => 'Демо-доставка материала по заявке с объекта',
@@ -2613,7 +2870,21 @@ class BrickHouseDemoSeeder extends Seeder
             ]);
 
             if (Schema::hasTable('project_material_delivery_events')) {
-                foreach (['reserved', 'shipped', $delivery['status']] as $index => $status) {
+                $eventStatuses = [];
+
+                if ((float) $delivery['reserved'] > 0) {
+                    $eventStatuses[] = 'reserved';
+                }
+
+                if ((float) $delivery['shipped'] > 0) {
+                    $eventStatuses[] = 'shipped';
+                }
+
+                if (!in_array($delivery['status'], $eventStatuses, true)) {
+                    $eventStatuses[] = $delivery['status'];
+                }
+
+                foreach ($eventStatuses as $index => $status) {
                     $this->upsert('project_material_delivery_events', [
                         'project_material_delivery_id' => $deliveryId,
                         'event_type' => "status_{$status}",
@@ -2621,7 +2892,7 @@ class BrickHouseDemoSeeder extends Seeder
                         'user_id' => $userId,
                         'from_status' => $index === 0 ? 'requested' : null,
                         'to_status' => $status,
-                        'quantity' => $status === 'accepted' ? $delivery['accepted'] : $delivery['reserved'],
+                        'quantity' => $status === 'accepted' ? $delivery['accepted'] : ($status === 'shipped' ? $delivery['shipped'] : $delivery['reserved']),
                         'notes' => 'Демо-событие доставки материала',
                         'metadata' => $this->json(['demo' => true]),
                         'occurred_at' => $this->now->copy()->subDays(max(0, 3 - $index)),
@@ -2670,64 +2941,249 @@ class BrickHouseDemoSeeder extends Seeder
             'created_by_user_id' => $createdByUserId,
         ]);
 
-        $entries = [
-            [
-                'number' => 1,
-                'date_offset' => -28,
-                'task' => 'foundation',
-                'item' => '2.1',
-                'work' => 'foundation',
-                'material' => 'concrete',
-                'quantity' => 54.6,
-                'unit' => 'м³',
-                'description' => 'Выполнено бетонирование фундаментной плиты, приняты контрольные кубики, вибрирование выполнено по карте.',
-                'workers' => ['Бетонщики' => 8, 'Арматурщики' => 4],
-                'equipment' => ['Бетононасос' => 1, 'Глубинный вибратор' => 4],
-                'status' => 'approved',
-            ],
-            [
-                'number' => 2,
-                'date_offset' => -18,
-                'task' => 'masonry_outer',
-                'item' => '3.1',
-                'work' => 'masonry_outer',
-                'material' => 'brick',
-                'quantity' => 42.2,
-                'unit' => 'м³',
-                'description' => 'Завершена кладка наружных стен первого этажа по осям А-Е, выполнена перевязка углов и проемов.',
-                'workers' => ['Каменщики' => 10, 'Подсобные рабочие' => 4],
-                'equipment' => ['Растворосмеситель' => 1, 'Леса фасадные' => 2],
-                'status' => 'approved',
-            ],
-            [
-                'number' => 3,
-                'date_offset' => -11,
-                'task' => 'masonry_inner',
-                'item' => '3.3',
-                'work' => 'masonry_inner',
-                'material' => 'brick',
-                'quantity' => 168.0,
-                'unit' => 'м²',
-                'description' => 'Выполнены внутренние перегородки первого этажа, оставлены технологические проемы под инженерные сети.',
-                'workers' => ['Каменщики' => 8, 'Подсобные рабочие' => 3],
-                'equipment' => ['Растворосмеситель' => 1],
-                'status' => 'approved',
-            ],
-            [
-                'number' => 4,
-                'date_offset' => -4,
-                'task' => 'belt',
-                'item' => '3.5',
-                'work' => 'belt',
-                'material' => 'rebar',
-                'quantity' => 12.4,
-                'unit' => 'м³',
-                'description' => 'Начато устройство армопояса по наружному контуру, установлены каркасы и опалубка на северном фасаде.',
-                'workers' => ['Арматурщики' => 5, 'Плотники' => 3],
-                'equipment' => ['Вибратор для бетона' => 2],
-                'status' => 'submitted',
-            ],
-        ];
+        $entries = $scope === 'GP'
+            ? [
+                [
+                    'number' => 1,
+                    'date_offset' => -62,
+                    'task' => 'foundation',
+                    'item' => '2.1',
+                    'work' => 'foundation',
+                    'material' => 'concrete',
+                    'quantity' => 54.6,
+                    'unit' => 'м³',
+                    'description' => 'Выполнено бетонирование фундаментной плиты, приняты контрольные кубики, вибрирование выполнено по карте.',
+                    'workers' => ['Бетонщики' => 8, 'Арматурщики' => 4],
+                    'equipment' => ['Бетононасос' => 1, 'Глубинный вибратор' => 4],
+                    'status' => 'approved',
+                ],
+                [
+                    'number' => 2,
+                    'date_offset' => -54,
+                    'task' => 'waterproofing',
+                    'item' => '2.3',
+                    'work' => 'waterproofing',
+                    'material' => null,
+                    'quantity' => 246.0,
+                    'unit' => 'м²',
+                    'description' => 'Закрыта гидроизоляция фундаментной плиты и примыканий, оформлен акт скрытых работ.',
+                    'workers' => ['Изолировщики' => 5, 'Подсобные рабочие' => 2],
+                    'equipment' => ['Газовая горелка' => 3],
+                    'status' => 'approved',
+                ],
+                [
+                    'number' => 3,
+                    'date_offset' => -28,
+                    'task' => 'masonry_outer_1f',
+                    'item' => '3.1',
+                    'work' => 'masonry_outer',
+                    'material' => 'brick',
+                    'quantity' => 42.2,
+                    'unit' => 'м³',
+                    'description' => 'Завершена кладка наружных стен первого этажа по осям А-Е, выполнена перевязка углов и проемов.',
+                    'workers' => ['Каменщики' => 10, 'Подсобные рабочие' => 4],
+                    'equipment' => ['Растворосмеситель' => 1, 'Леса фасадные' => 2],
+                    'status' => 'approved',
+                ],
+                [
+                    'number' => 4,
+                    'date_offset' => -22,
+                    'task' => 'masonry_outer',
+                    'item' => '3.4',
+                    'work' => 'masonry_outer',
+                    'material' => 'mesh',
+                    'quantity' => 160.0,
+                    'unit' => 'м²',
+                    'description' => 'Выполнено армирование кладки сеткой через три ряда на наружном контуре первого этажа.',
+                    'workers' => ['Каменщики' => 7, 'Подсобные рабочие' => 2],
+                    'equipment' => ['Ручной инструмент каменщика' => 7],
+                    'status' => 'approved',
+                ],
+                [
+                    'number' => 5,
+                    'date_offset' => -18,
+                    'task' => 'masonry_inner_1f',
+                    'item' => '3.3',
+                    'work' => 'masonry_inner',
+                    'material' => 'brick',
+                    'quantity' => 168.0,
+                    'unit' => 'м²',
+                    'description' => 'Выполнены внутренние перегородки первого этажа, оставлены технологические проемы под инженерные сети.',
+                    'workers' => ['Каменщики' => 8, 'Подсобные рабочие' => 3],
+                    'equipment' => ['Растворосмеситель' => 1],
+                    'status' => 'approved',
+                ],
+                [
+                    'number' => 6,
+                    'date_offset' => -12,
+                    'task' => 'lintels',
+                    'item' => '3.5',
+                    'work' => 'belt',
+                    'material' => 'rebar',
+                    'quantity' => 7.2,
+                    'unit' => 'м³',
+                    'description' => 'Забетонированы перемычки проемов ПР-1 - ПР-4, каркасы приняты ПТО до бетонирования.',
+                    'workers' => ['Арматурщики' => 4, 'Плотники' => 3, 'Бетонщики' => 3],
+                    'equipment' => ['Глубинный вибратор' => 2],
+                    'status' => 'approved',
+                ],
+                [
+                    'number' => 7,
+                    'date_offset' => -8,
+                    'task' => 'quality',
+                    'item' => '4.6',
+                    'work' => 'quality',
+                    'material' => null,
+                    'quantity' => 4.0,
+                    'unit' => 'шт',
+                    'description' => 'ПТО сформировало комплект исполнительных схем по фундаменту и кладке первого этажа.',
+                    'workers' => ['Инженер ПТО' => 2],
+                    'equipment' => ['Лазерный дальномер' => 1],
+                    'status' => 'approved',
+                ],
+                [
+                    'number' => 8,
+                    'date_offset' => -4,
+                    'task' => 'belt',
+                    'item' => '3.5',
+                    'work' => 'belt',
+                    'material' => 'rebar',
+                    'quantity' => 12.4,
+                    'unit' => 'м³',
+                    'description' => 'Начато устройство армопояса по наружному контуру, установлены каркасы и опалубка на северном фасаде.',
+                    'workers' => ['Арматурщики' => 5, 'Плотники' => 3],
+                    'equipment' => ['Вибратор для бетона' => 2],
+                    'status' => 'submitted',
+                ],
+                [
+                    'number' => 9,
+                    'date_offset' => -1,
+                    'task' => 'masonry_outer_2f',
+                    'item' => '3.1',
+                    'work' => 'masonry_outer',
+                    'material' => 'brick',
+                    'quantity' => 18.6,
+                    'unit' => 'м³',
+                    'description' => 'Продолжается кладка второго этажа по осям Б-Г, фронт работ передан подрядчику на следующую смену.',
+                    'workers' => ['Каменщики' => 9, 'Подсобные рабочие' => 3],
+                    'equipment' => ['Леса фасадные' => 2, 'Растворосмеситель' => 1],
+                    'status' => 'submitted',
+                ],
+            ]
+            : [
+                [
+                    'number' => 1,
+                    'date_offset' => -26,
+                    'task' => 'masonry_outer_axis_a',
+                    'item' => '3.1',
+                    'work' => 'masonry_outer',
+                    'material' => 'brick',
+                    'quantity' => 31.8,
+                    'unit' => 'м³',
+                    'description' => 'Выполнена кладка наружных стен первой захватки, геометрия проверена перед перестановкой лесов.',
+                    'workers' => ['Каменщики' => 8, 'Подсобные рабочие' => 3],
+                    'equipment' => ['Растворосмеситель' => 1, 'Леса фасадные' => 1],
+                    'status' => 'approved',
+                ],
+                [
+                    'number' => 2,
+                    'date_offset' => -19,
+                    'task' => 'masonry_outer_axis_c',
+                    'item' => '3.1',
+                    'work' => 'masonry_outer',
+                    'material' => 'brick',
+                    'quantity' => 27.4,
+                    'unit' => 'м³',
+                    'description' => 'Закрыта кладка наружных стен первой очереди по осям В-Е, замечания ПТО устранены в смену.',
+                    'workers' => ['Каменщики' => 9, 'Подсобные рабочие' => 3],
+                    'equipment' => ['Растворосмеситель' => 1, 'Леса фасадные' => 1],
+                    'status' => 'approved',
+                ],
+                [
+                    'number' => 3,
+                    'date_offset' => -16,
+                    'task' => 'masonry_inner_wet_zones',
+                    'item' => '3.3',
+                    'work' => 'masonry_inner',
+                    'material' => 'brick',
+                    'quantity' => 96.0,
+                    'unit' => 'м²',
+                    'description' => 'Выполнены перегородки мокрых зон и шахт инженерных коммуникаций первого этажа.',
+                    'workers' => ['Каменщики' => 6, 'Подсобные рабочие' => 2],
+                    'equipment' => ['Ручной инструмент каменщика' => 6],
+                    'status' => 'approved',
+                ],
+                [
+                    'number' => 4,
+                    'date_offset' => -12,
+                    'task' => 'masonry_inner',
+                    'item' => '3.4',
+                    'work' => 'masonry_inner',
+                    'material' => 'mesh',
+                    'quantity' => 90.0,
+                    'unit' => 'м²',
+                    'description' => 'Сетка кладочная уложена в рядах перегородок, фотофиксация передана ПТО подрядчика.',
+                    'workers' => ['Каменщики' => 5, 'Подсобные рабочие' => 2],
+                    'equipment' => ['Ручной инструмент каменщика' => 5],
+                    'status' => 'approved',
+                ],
+                [
+                    'number' => 5,
+                    'date_offset' => -7,
+                    'task' => 'lintels',
+                    'item' => '3.5',
+                    'work' => 'belt',
+                    'material' => 'rebar',
+                    'quantity' => 5.6,
+                    'unit' => 'м³',
+                    'description' => 'Подготовлены и частично забетонированы перемычки ПР-1 - ПР-3, контроль защитного слоя выполнен.',
+                    'workers' => ['Арматурщики' => 4, 'Плотники' => 2],
+                    'equipment' => ['Глубинный вибратор' => 1],
+                    'status' => 'approved',
+                ],
+                [
+                    'number' => 6,
+                    'date_offset' => -3,
+                    'task' => 'belt',
+                    'item' => '3.5',
+                    'work' => 'belt',
+                    'material' => 'rebar',
+                    'quantity' => 8.4,
+                    'unit' => 'м³',
+                    'description' => 'Армопояс первого этажа готовится к приемке генподрядом перед бетонированием оставшегося участка.',
+                    'workers' => ['Арматурщики' => 5, 'Плотники' => 3],
+                    'equipment' => ['Вибратор для бетона' => 2],
+                    'status' => 'submitted',
+                ],
+                [
+                    'number' => 7,
+                    'date_offset' => -1,
+                    'task' => 'masonry_second_outer',
+                    'item' => '4.1',
+                    'work' => 'masonry_outer',
+                    'material' => 'brick',
+                    'quantity' => 16.4,
+                    'unit' => 'м³',
+                    'description' => 'Начата кладка наружной стены второго этажа на захватке Б, кирпич получен по заявке.',
+                    'workers' => ['Каменщики' => 8, 'Подсобные рабочие' => 3],
+                    'equipment' => ['Леса фасадные' => 1, 'Растворосмеситель' => 1],
+                    'status' => 'submitted',
+                ],
+                [
+                    'number' => 8,
+                    'date_offset' => 0,
+                    'task' => 'quality',
+                    'item' => '4.3',
+                    'work' => 'quality',
+                    'material' => null,
+                    'quantity' => 2.0,
+                    'unit' => 'шт',
+                    'description' => 'ПТО подрядчика подготовило исполнительные схемы по кладке первого этажа и реестр фото скрытых работ.',
+                    'workers' => ['Инженер ПТО' => 1],
+                    'equipment' => ['Лазерный дальномер' => 1],
+                    'status' => 'approved',
+                ],
+            ];
 
         $completedWorks = [];
 
@@ -2735,7 +3191,11 @@ class BrickHouseDemoSeeder extends Seeder
             $scheduleTaskId = $scheduleTasks[$entry['task']] ?? null;
             $estimateItemId = $estimate['items'][$entry['item']] ?? null;
             $workTypeId = $workTypes[$entry['work']] ?? reset($workTypes);
-            $materialId = $materials[$entry['material']] ?? null;
+            $materialKey = $entry['material'] ?? null;
+            $materialId = is_string($materialKey) ? ($materials[$materialKey] ?? null) : null;
+            $materialUsage = is_string($materialKey)
+                ? $this->journalMaterialUsage($materialKey, (float) $entry['quantity'], (string) $entry['unit'])
+                : null;
             $entryDate = $this->now->copy()->addDays($entry['date_offset']);
             $isApproved = $entry['status'] === 'approved';
 
@@ -2796,15 +3256,15 @@ class BrickHouseDemoSeeder extends Seeder
                 ]);
             }
 
-            if ($materialId) {
+            if ($materialId && $materialUsage !== null) {
                 $journalMaterialId = $this->upsert('journal_materials', [
                     'journal_entry_id' => $entryId,
-                    'material_name' => $entry['material'] === 'brick' ? 'Кирпич керамический полнотелый М150' : ($entry['material'] === 'concrete' ? 'Бетон B25 П4 F200 W6' : 'Арматура А500С 12 мм'),
+                    'material_name' => $materialUsage['name'],
                 ], [
                     'material_id' => $materialId,
                     'estimate_item_id' => $estimateItemId,
-                    'quantity' => $entry['material'] === 'brick' ? $entry['quantity'] * 395 : ($entry['material'] === 'concrete' ? $entry['quantity'] : 1.7),
-                    'measurement_unit' => $entry['material'] === 'brick' ? 'шт' : ($entry['material'] === 'concrete' ? 'м³' : 'т'),
+                    'quantity' => $materialUsage['quantity'],
+                    'measurement_unit' => $materialUsage['unit'],
                     'notes' => 'Материал списан по демо-журналу',
                 ]);
             } else {
@@ -2841,16 +3301,14 @@ class BrickHouseDemoSeeder extends Seeder
                     'planning_status' => 'actual',
                 ]);
 
-                if ($materialId) {
+                if ($materialId && $materialUsage !== null) {
                     $this->upsert('completed_work_materials', [
                         'completed_work_id' => $completedWorkId,
                         'material_id' => $materialId,
                     ], [
-                        'quantity' => $entry['material'] === 'brick' ? $entry['quantity'] * 395 : ($entry['material'] === 'concrete' ? $entry['quantity'] : 1.7),
-                        'unit_price' => $entry['material'] === 'brick' ? 34.50 : ($entry['material'] === 'concrete' ? 6800.00 : 74200.00),
-                        'total_amount' => $entry['material'] === 'brick'
-                            ? round($entry['quantity'] * 395 * 34.50, 2)
-                            : ($entry['material'] === 'concrete' ? round($entry['quantity'] * 6800.00, 2) : round(1.7 * 74200.00, 2)),
+                        'quantity' => $materialUsage['quantity'],
+                        'unit_price' => $materialUsage['unit_price'],
+                        'total_amount' => round((float) $materialUsage['quantity'] * (float) $materialUsage['unit_price'], 2),
                         'notes' => 'Материал из демо-списания по выполненной работе',
                     ]);
                 }
@@ -3621,6 +4079,56 @@ class BrickHouseDemoSeeder extends Seeder
                 'verified_at' => $this->now->copy()->subDays(6),
                 'history' => ['open', 'assigned', 'in_progress', 'ready_for_review', 'resolved'],
             ],
+            [
+                'number' => "BH-QC-{$scope}-004",
+                'title' => 'Недостаточная фотофиксация армирования кладки',
+                'description' => 'Перед закрытием сменного объема требуется добавить фотографии рядов с сеткой и привязкой к осям.',
+                'severity' => 'major',
+                'status' => 'in_progress',
+                'task' => 'quality',
+                'work_index' => 3,
+                'due_days' => 0,
+                'location' => $scope === 'GP' ? '1 этаж, оси Г-Д/4-5' : '1 этаж, оси В-Г/2-3',
+                'history' => ['open', 'assigned', 'in_progress'],
+            ],
+            [
+                'number' => "BH-QC-{$scope}-005",
+                'title' => 'Сколы кирпича на лицевой поверхности ряда',
+                'description' => 'Поврежденные кирпичи заменены до приемки захватки, повторный осмотр замечаний не выявил.',
+                'severity' => 'minor',
+                'status' => 'resolved',
+                'task' => 'masonry_outer',
+                'work_index' => 1,
+                'due_days' => -12,
+                'location' => $scope === 'GP' ? '1 этаж, южный фасад' : '1 этаж, захватка А',
+                'resolved_at' => $this->now->copy()->subDays(11),
+                'verified_at' => $this->now->copy()->subDays(10),
+                'history' => ['open', 'assigned', 'in_progress', 'ready_for_review', 'resolved'],
+            ],
+            [
+                'number' => "BH-QC-{$scope}-006",
+                'title' => 'Акт скрытых работ по перемычкам требует подписи',
+                'description' => 'Каркасы проверены, но пакет исполнительной документации не закрыт со стороны ответственного ПТО.',
+                'severity' => 'major',
+                'status' => 'assigned',
+                'task' => 'lintels',
+                'work_index' => 5,
+                'due_days' => 1,
+                'location' => 'Проемы ПР-1 - ПР-4, первый этаж',
+                'history' => ['open', 'assigned'],
+            ],
+            [
+                'number' => "BH-QC-{$scope}-007",
+                'title' => 'Проверить ширину опирания плит до допуска крана',
+                'description' => 'Замечание связано с будущей задачей графика: без подтверждения опорных зон монтаж плит нельзя выпускать в дневной план.',
+                'severity' => 'critical',
+                'status' => 'assigned',
+                'task' => 'slabs',
+                'work_index' => 2,
+                'due_days' => 3,
+                'location' => 'Армопояс первого этажа, оси А-Е',
+                'history' => ['open', 'assigned'],
+            ],
         ];
 
         foreach ($defects as $defect) {
@@ -3803,6 +4311,8 @@ class BrickHouseDemoSeeder extends Seeder
         $generalApproverId = $this->actorId($general, 'project_manager');
         $contractorAccountantId = $this->actorId($contractor, 'accountant');
         $contractorApproverId = $this->actorId($contractor, 'work_manager');
+        $generalActAmount = $this->performanceActAmount($acts['general'] ?? 0, 8620000.00);
+        $contractorActAmount = $this->performanceActAmount($acts['contractor'] ?? 0, 8620000.00);
 
         $documents = [
             'gp_advance' => [
@@ -3843,7 +4353,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'payer_organization_id' => $general['organization_id'],
                 'payee_organization_id' => $contractor['organization_id'],
                 'payee_contractor_id' => $contractors['contractor_in_general_id'],
-                'amount' => 8620000.00,
+                'amount' => $generalActAmount,
                 'paid_amount' => 0,
                 'status' => 'approved',
                 'source_type' => ContractPerformanceAct::class,
@@ -3883,6 +4393,84 @@ class BrickHouseDemoSeeder extends Seeder
                 'recipient_user_id' => null,
                 'site_request_id' => $siteRequests['general']['brick_delivery'] ?? null,
             ],
+            'gp_rebar_topup' => [
+                'organization_id' => $general['organization_id'],
+                'project_id' => $projectId,
+                'estimate_id' => $estimates['general'],
+                'document_type' => 'expense',
+                'document_number' => 'РКО-ГП-ЛД-011',
+                'document_date' => $this->now->copy()->subDay()->toDateString(),
+                'direction' => 'outgoing',
+                'invoice_type' => 'material_purchase',
+                'payer_organization_id' => $general['organization_id'],
+                'payee_organization_id' => null,
+                'payee_contractor_id' => null,
+                'amount' => 178080.00,
+                'paid_amount' => 0,
+                'status' => 'approved',
+                'source_type' => 'project',
+                'source_id' => $projectId,
+                'description' => 'Резерв и закупка арматуры для армопояса второго этажа',
+                'purpose' => 'Арматура А500С по заявке на пополнение резерва',
+                'due_offset' => 2,
+                'paid_offset' => null,
+                'user_id' => $generalAccountantId,
+                'approver_id' => $generalApproverId,
+                'recipient_user_id' => null,
+                'site_request_id' => $siteRequests['general']['rebar_topup'] ?? null,
+            ],
+            'gp_slab_supplier_invoice' => [
+                'organization_id' => $general['organization_id'],
+                'project_id' => $projectId,
+                'estimate_id' => $estimates['general'],
+                'document_type' => 'invoice',
+                'document_number' => 'СЧ-ГП-ЛД-019',
+                'document_date' => $this->now->copy()->addDays(2)->toDateString(),
+                'direction' => 'outgoing',
+                'invoice_type' => 'material_purchase',
+                'payer_organization_id' => $general['organization_id'],
+                'payee_organization_id' => null,
+                'payee_contractor_id' => null,
+                'amount' => 595200.00,
+                'paid_amount' => 0,
+                'status' => 'approved',
+                'source_type' => 'project',
+                'source_id' => $projectId,
+                'description' => 'Счет поставщика плит перекрытия ПБ',
+                'purpose' => 'Плиты ПБ по заявке на монтаж перекрытия',
+                'due_offset' => 9,
+                'paid_offset' => null,
+                'user_id' => $generalAccountantId,
+                'approver_id' => $generalApproverId,
+                'recipient_user_id' => null,
+                'site_request_id' => $siteRequests['general']['slab_delivery'] ?? null,
+            ],
+            'gp_roofing_preorder' => [
+                'organization_id' => $general['organization_id'],
+                'project_id' => $projectId,
+                'estimate_id' => $estimates['general'],
+                'document_type' => 'invoice',
+                'document_number' => 'СЧ-ГП-ЛД-022',
+                'document_date' => $this->now->copy()->addDays(6)->toDateString(),
+                'direction' => 'outgoing',
+                'invoice_type' => 'material_purchase',
+                'payer_organization_id' => $general['organization_id'],
+                'payee_organization_id' => null,
+                'payee_contractor_id' => null,
+                'amount' => 292560.00,
+                'paid_amount' => 0,
+                'status' => 'approved',
+                'source_type' => 'project',
+                'source_id' => $projectId,
+                'description' => 'Бронь партии металлочерепицы выбранного цвета',
+                'purpose' => 'Предоплата поставки кровельного материала',
+                'due_offset' => 14,
+                'paid_offset' => null,
+                'user_id' => $generalAccountantId,
+                'approver_id' => $generalApproverId,
+                'recipient_user_id' => null,
+                'site_request_id' => $siteRequests['general']['roofing_preorder'] ?? null,
+            ],
             'sub_advance_income' => [
                 'organization_id' => $contractor['organization_id'],
                 'project_id' => $projectId,
@@ -3921,7 +4509,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'payer_organization_id' => $general['organization_id'],
                 'payee_organization_id' => $contractor['organization_id'],
                 'payer_contractor_id' => $contractors['general_in_contractor_id'],
-                'amount' => 8620000.00,
+                'amount' => $contractorActAmount,
                 'paid_amount' => 0,
                 'status' => 'approved',
                 'source_type' => ContractPerformanceAct::class,
@@ -3934,6 +4522,84 @@ class BrickHouseDemoSeeder extends Seeder
                 'approver_id' => $contractorApproverId,
                 'recipient_user_id' => $contractorAccountantId,
                 'site_request_id' => null,
+            ],
+            'sub_mesh_restock' => [
+                'organization_id' => $contractor['organization_id'],
+                'project_id' => $projectId,
+                'estimate_id' => $estimates['contractor'],
+                'document_type' => 'expense',
+                'document_number' => 'РКО-ПДР-ЛД-004',
+                'document_date' => $this->now->copy()->subDays(8)->toDateString(),
+                'direction' => 'outgoing',
+                'invoice_type' => 'material_purchase',
+                'payer_organization_id' => $contractor['organization_id'],
+                'payee_organization_id' => null,
+                'payee_contractor_id' => null,
+                'amount' => 16650.00,
+                'paid_amount' => 16650.00,
+                'status' => 'paid',
+                'source_type' => 'project',
+                'source_id' => $projectId,
+                'description' => 'Сетка кладочная для первой захватки подрядчика',
+                'purpose' => 'Закупка сетки по заявке мастера участка',
+                'due_offset' => -8,
+                'paid_offset' => -7,
+                'user_id' => $contractorAccountantId,
+                'approver_id' => $contractorApproverId,
+                'recipient_user_id' => null,
+                'site_request_id' => $siteRequests['contractor']['mesh_restock'] ?? null,
+            ],
+            'sub_mortar_today' => [
+                'organization_id' => $contractor['organization_id'],
+                'project_id' => $projectId,
+                'estimate_id' => $estimates['contractor'],
+                'document_type' => 'invoice',
+                'document_number' => 'СЧ-ПДР-ЛД-008',
+                'document_date' => $this->now->copy()->toDateString(),
+                'direction' => 'outgoing',
+                'invoice_type' => 'material_purchase',
+                'payer_organization_id' => $contractor['organization_id'],
+                'payee_organization_id' => null,
+                'payee_contractor_id' => null,
+                'amount' => 33150.00,
+                'paid_amount' => 0,
+                'status' => 'approved',
+                'source_type' => 'project',
+                'source_id' => $projectId,
+                'description' => 'Раствор М100 на текущую смену кладки',
+                'purpose' => 'Поставка раствора по срочной заявке прораба',
+                'due_offset' => 1,
+                'paid_offset' => null,
+                'user_id' => $contractorAccountantId,
+                'approver_id' => $contractorApproverId,
+                'recipient_user_id' => null,
+                'site_request_id' => $siteRequests['contractor']['mortar_today'] ?? null,
+            ],
+            'sub_rebar_topup' => [
+                'organization_id' => $contractor['organization_id'],
+                'project_id' => $projectId,
+                'estimate_id' => $estimates['contractor'],
+                'document_type' => 'expense',
+                'document_number' => 'РКО-ПДР-ЛД-009',
+                'document_date' => $this->now->copy()->subDay()->toDateString(),
+                'direction' => 'outgoing',
+                'invoice_type' => 'material_purchase',
+                'payer_organization_id' => $contractor['organization_id'],
+                'payee_organization_id' => null,
+                'payee_contractor_id' => null,
+                'amount' => 66780.00,
+                'paid_amount' => 0,
+                'status' => 'approved',
+                'source_type' => 'project',
+                'source_id' => $projectId,
+                'description' => 'Арматура на перемычки второго этажа',
+                'purpose' => 'Пополнение резерва арматуры по заявке мастера',
+                'due_offset' => 2,
+                'paid_offset' => null,
+                'user_id' => $contractorAccountantId,
+                'approver_id' => $contractorApproverId,
+                'recipient_user_id' => null,
+                'site_request_id' => $siteRequests['contractor']['rebar_topup'] ?? null,
             ],
         ];
 
@@ -4028,6 +4694,19 @@ class BrickHouseDemoSeeder extends Seeder
                 ->where('id', $siteRequestId)
                 ->update($this->withTimestamps('site_requests', ['payment_document_id' => $paymentDocumentId], true));
         }
+    }
+
+    private function performanceActAmount(int $actId, float $fallback): float
+    {
+        if ($actId <= 0 || !Schema::hasTable('contract_performance_acts')) {
+            return $fallback;
+        }
+
+        $amount = DB::table('contract_performance_acts')
+            ->where('id', $actId)
+            ->value('amount');
+
+        return $amount === null ? $fallback : (float) $amount;
     }
 
     /**
@@ -4323,6 +5002,75 @@ class BrickHouseDemoSeeder extends Seeder
     }
 
     /**
+     * @return array{name: string, quantity: float, unit: string, unit_price: float}
+     */
+    private function journalMaterialUsage(string $materialKey, float $workQuantity, string $workUnit): array
+    {
+        return match ($materialKey) {
+            'brick' => [
+                'name' => 'Кирпич керамический полнотелый М150',
+                'quantity' => round($workQuantity * ($workUnit === 'м²' ? 48 : 395), 2),
+                'unit' => 'шт',
+                'unit_price' => 34.50,
+            ],
+            'facing_brick' => [
+                'name' => 'Кирпич облицовочный лицевой М175',
+                'quantity' => round($workQuantity * ($workUnit === 'м²' ? 52 : 410), 2),
+                'unit' => 'шт',
+                'unit_price' => 52.00,
+            ],
+            'mortar' => [
+                'name' => 'Раствор кладочный М100',
+                'quantity' => round($workQuantity * 0.18, 2),
+                'unit' => 'м³',
+                'unit_price' => 5100.00,
+            ],
+            'concrete' => [
+                'name' => 'Бетон B25 П4 F200 W6',
+                'quantity' => $workQuantity,
+                'unit' => 'м³',
+                'unit_price' => 6800.00,
+            ],
+            'rebar' => [
+                'name' => 'Арматура А500С 12 мм',
+                'quantity' => round(max(0.1, $workQuantity * 0.14), 2),
+                'unit' => 'т',
+                'unit_price' => 74200.00,
+            ],
+            'mesh' => [
+                'name' => 'Сетка кладочная 50x50x4',
+                'quantity' => $workQuantity,
+                'unit' => 'м²',
+                'unit_price' => 185.00,
+            ],
+            'insulation' => [
+                'name' => 'Минеральная вата 100 мм',
+                'quantity' => round($workQuantity / 6, 2),
+                'unit' => 'упак',
+                'unit_price' => 1520.00,
+            ],
+            'slab' => [
+                'name' => 'Плиты перекрытия ПБ',
+                'quantity' => $workQuantity,
+                'unit' => 'шт',
+                'unit_price' => 18600.00,
+            ],
+            'roofing' => [
+                'name' => 'Металлочерепица 0,5 мм',
+                'quantity' => $workQuantity,
+                'unit' => 'м²',
+                'unit_price' => 920.00,
+            ],
+            default => [
+                'name' => 'Цемент М500 Д0',
+                'quantity' => round(max(0.05, $workQuantity * 0.02), 2),
+                'unit' => 'т',
+                'unit_price' => 8200.00,
+            ],
+        };
+    }
+
+    /**
      * @return array<int, array<string, mixed>>
      */
     private function generalEstimateSections(): array
@@ -4414,17 +5162,35 @@ class BrickHouseDemoSeeder extends Seeder
     {
         return [
             ['key' => 'site_preparation', 'wbs' => '1.1', 'name' => 'Подготовка площадки', 'description' => 'Ограждение, временные дороги, бытовой городок.', 'phase' => 'подготовка', 'work' => 'site_preparation', 'start_offset' => -150, 'duration' => 18, 'progress' => 100, 'status' => 'completed', 'priority' => 'high', 'critical' => true, 'cost' => 1300000, 'resources' => ['people' => 8], 'material_resources' => [], 'equipment_resources' => [['role' => 'Погрузчик', 'name' => 'Фронтальный погрузчик', 'units' => 1, 'hours' => 96, 'rate' => 2500]]],
+            ['key' => 'survey_layout', 'wbs' => '1.1.1', 'name' => 'Геодезическая разбивка пятна дома', 'description' => 'Вынос осей, закрепление реперов, исполнительная схема основания.', 'phase' => 'подготовка', 'work' => 'quality', 'start_offset' => -146, 'duration' => 5, 'progress' => 100, 'status' => 'completed', 'priority' => 'high', 'critical' => true, 'cost' => 420000, 'resources' => ['people' => 3], 'material_resources' => [], 'equipment_resources' => []],
+            ['key' => 'temporary_utilities', 'wbs' => '1.1.2', 'name' => 'Временное электроснабжение и вода', 'description' => 'Щиты, ввод воды, освещение складской зоны и бытового городка.', 'phase' => 'подготовка', 'work' => 'engineering', 'start_offset' => -144, 'duration' => 12, 'progress' => 100, 'status' => 'completed', 'priority' => 'normal', 'critical' => false, 'cost' => 760000, 'resources' => ['people' => 4], 'material_resources' => [], 'equipment_resources' => []],
             ['key' => 'earthworks', 'wbs' => '1.2', 'name' => 'Котлован и основание', 'description' => 'Разработка котлована, песчаная подготовка, геодезия.', 'phase' => 'подготовка', 'work' => 'earthworks', 'start_offset' => -132, 'duration' => 24, 'progress' => 100, 'status' => 'completed', 'priority' => 'high', 'critical' => true, 'cost' => 1850000, 'resources' => ['people' => 7], 'material_resources' => [], 'equipment_resources' => [['role' => 'Экскаватор', 'name' => 'Экскаватор 20 т', 'units' => 1, 'hours' => 144, 'rate' => 3200]]],
+            ['key' => 'base_preparation', 'wbs' => '1.3', 'name' => 'Песчаная подготовка и подбетонка', 'description' => 'Уплотнение основания, приемка плотности, подготовка под плиту.', 'phase' => 'подготовка', 'work' => 'foundation', 'start_offset' => -116, 'duration' => 10, 'progress' => 100, 'status' => 'completed', 'priority' => 'high', 'critical' => true, 'cost' => 1260000, 'resources' => ['people' => 8], 'material_resources' => [['role' => 'Бетон B25', 'material' => 'concrete', 'quantity' => 18, 'unit_price' => 6800]], 'equipment_resources' => [['role' => 'Каток', 'name' => 'Виброкаток 7 т', 'units' => 1, 'hours' => 40, 'rate' => 2800]]],
+            ['key' => 'foundation_rebar', 'wbs' => '2.1.1', 'name' => 'Армирование фундаментной плиты', 'description' => 'Нижняя и верхняя сетка, выпуски под стены, контроль защитного слоя.', 'phase' => 'фундамент', 'work' => 'foundation', 'start_offset' => -108, 'duration' => 14, 'progress' => 100, 'status' => 'completed', 'priority' => 'critical', 'critical' => true, 'cost' => 4200000, 'resources' => ['people' => 12], 'material_resources' => [['role' => 'Арматура', 'material' => 'rebar', 'quantity' => 18.4, 'unit_price' => 74200]], 'equipment_resources' => []],
+            ['key' => 'foundation_formwork', 'wbs' => '2.1.2', 'name' => 'Опалубка и закладные фундамента', 'description' => 'Контур опалубки, закладные инженерных вводов, приемка ПТО.', 'phase' => 'фундамент', 'work' => 'foundation', 'start_offset' => -98, 'duration' => 8, 'progress' => 100, 'status' => 'completed', 'priority' => 'critical', 'critical' => true, 'cost' => 1850000, 'resources' => ['people' => 10], 'material_resources' => [], 'equipment_resources' => []],
             ['key' => 'foundation', 'wbs' => '2.1', 'name' => 'Монолитный фундамент', 'description' => 'Арматура, опалубка, бетон, уход за бетоном.', 'phase' => 'фундамент', 'work' => 'foundation', 'start_offset' => -108, 'duration' => 38, 'progress' => 100, 'status' => 'completed', 'priority' => 'critical', 'critical' => true, 'cost' => 14600000, 'resources' => ['people' => 18], 'material_resources' => [['role' => 'Бетон B25', 'material' => 'concrete', 'quantity' => 154, 'unit_price' => 6800], ['role' => 'Арматура', 'material' => 'rebar', 'quantity' => 18.4, 'unit_price' => 74200]], 'equipment_resources' => [['role' => 'Бетононасос', 'name' => 'Бетононасос 42 м', 'units' => 1, 'hours' => 64, 'rate' => 4200]]],
             ['key' => 'waterproofing', 'wbs' => '2.2', 'name' => 'Гидроизоляция и обратная засыпка', 'description' => 'Гидроизоляция плиты, дренаж, обратная засыпка.', 'phase' => 'фундамент', 'work' => 'waterproofing', 'start_offset' => -70, 'duration' => 16, 'progress' => 100, 'status' => 'completed', 'priority' => 'high', 'critical' => true, 'cost' => 3100000, 'resources' => ['people' => 8], 'material_resources' => [], 'equipment_resources' => []],
+            ['key' => 'foundation_acceptance', 'wbs' => '2.3', 'name' => 'Приемка скрытых работ фундамента', 'description' => 'Акты скрытых работ, фотофиксация, исполнительная схема и подписи сторон.', 'phase' => 'ПТО', 'work' => 'quality', 'start_offset' => -62, 'duration' => 5, 'progress' => 100, 'status' => 'completed', 'priority' => 'high', 'critical' => true, 'cost' => 380000, 'resources' => ['people' => 3], 'material_resources' => [], 'equipment_resources' => []],
             ['key' => 'masonry_outer', 'wbs' => '3.1', 'name' => 'Наружные кирпичные стены', 'description' => 'Кладка первого и второго этажей с армированием рядов.', 'phase' => 'коробка', 'work' => 'masonry_outer', 'start_offset' => -54, 'duration' => 62, 'progress' => 64, 'status' => 'in_progress', 'priority' => 'critical', 'critical' => true, 'cost' => 18600000, 'resources' => ['people' => 16], 'material_resources' => [['role' => 'Кирпич М150', 'material' => 'brick', 'quantity' => 74260, 'unit_price' => 34.5], ['role' => 'Раствор М100', 'material' => 'mortar', 'quantity' => 74, 'unit_price' => 5100], ['role' => 'Сетка кладочная', 'material' => 'mesh', 'quantity' => 680, 'unit_price' => 185]], 'equipment_resources' => [['role' => 'Леса', 'name' => 'Фасадные леса', 'units' => 2, 'hours' => 360, 'rate' => 420]]],
+            ['key' => 'masonry_outer_1f', 'wbs' => '3.1.1', 'name' => 'Наружные стены первого этажа', 'description' => 'Захватки А и Б, контроль вертикали и перевязки углов.', 'phase' => 'коробка', 'work' => 'masonry_outer', 'start_offset' => -54, 'duration' => 26, 'progress' => 100, 'status' => 'completed', 'priority' => 'critical', 'critical' => true, 'cost' => 9200000, 'resources' => ['people' => 14], 'material_resources' => [['role' => 'Кирпич М150', 'material' => 'brick', 'quantity' => 37920, 'unit_price' => 34.5], ['role' => 'Раствор М100', 'material' => 'mortar', 'quantity' => 38, 'unit_price' => 5100]], 'equipment_resources' => []],
             ['key' => 'masonry_inner', 'wbs' => '3.2', 'name' => 'Внутренние перегородки', 'description' => 'Перегородки первого этажа завершены, второй этаж в работе.', 'phase' => 'коробка', 'work' => 'masonry_inner', 'start_offset' => -32, 'duration' => 44, 'progress' => 48, 'status' => 'in_progress', 'priority' => 'high', 'critical' => false, 'cost' => 4200000, 'resources' => ['people' => 10], 'material_resources' => [['role' => 'Кирпич М150', 'material' => 'brick', 'quantity' => 31800, 'unit_price' => 34.5]], 'equipment_resources' => []],
+            ['key' => 'masonry_inner_1f', 'wbs' => '3.2.1', 'name' => 'Перегородки первого этажа', 'description' => 'Санузлы, кладовые, шахты инженерных коммуникаций.', 'phase' => 'коробка', 'work' => 'masonry_inner', 'start_offset' => -28, 'duration' => 18, 'progress' => 100, 'status' => 'completed', 'priority' => 'high', 'critical' => false, 'cost' => 1840000, 'resources' => ['people' => 8], 'material_resources' => [['role' => 'Кирпич М150', 'material' => 'brick', 'quantity' => 14200, 'unit_price' => 34.5]], 'equipment_resources' => []],
             ['key' => 'belt', 'wbs' => '3.3', 'name' => 'Армопояса и перемычки', 'description' => 'Армопояса первого этажа, перемычки проемов.', 'phase' => 'коробка', 'work' => 'belt', 'start_offset' => -6, 'duration' => 26, 'progress' => 35, 'status' => 'in_progress', 'priority' => 'critical', 'critical' => true, 'cost' => 5200000, 'resources' => ['people' => 12], 'material_resources' => [['role' => 'Арматура', 'material' => 'rebar', 'quantity' => 4.8, 'unit_price' => 74200]], 'equipment_resources' => [['role' => 'Вибратор', 'name' => 'Вибратор для бетона', 'units' => 2, 'hours' => 72, 'rate' => 300]]],
+            ['key' => 'lintels', 'wbs' => '3.4', 'name' => 'Монолитные перемычки проемов', 'description' => 'Каркасы, опалубка и бетонирование перемычек первого этажа.', 'phase' => 'коробка', 'work' => 'belt', 'start_offset' => -2, 'duration' => 14, 'progress' => 55, 'status' => 'in_progress', 'priority' => 'high', 'critical' => true, 'cost' => 2100000, 'resources' => ['people' => 8], 'material_resources' => [['role' => 'Арматура', 'material' => 'rebar', 'quantity' => 1.4, 'unit_price' => 74200], ['role' => 'Бетон B25', 'material' => 'concrete', 'quantity' => 9.2, 'unit_price' => 6800]], 'equipment_resources' => [['role' => 'Вибратор', 'name' => 'Вибратор для бетона', 'units' => 1, 'hours' => 32, 'rate' => 300]]],
+            ['key' => 'masonry_outer_2f', 'wbs' => '3.5', 'name' => 'Наружные стены второго этажа', 'description' => 'Кладка захваток Б-Е, контроль проемов и армирования рядов.', 'phase' => 'коробка', 'work' => 'masonry_outer', 'start_offset' => 4, 'duration' => 34, 'progress' => 18, 'status' => 'in_progress', 'priority' => 'critical', 'critical' => true, 'cost' => 7100000, 'resources' => ['people' => 16], 'material_resources' => [['role' => 'Кирпич М150', 'material' => 'brick', 'quantity' => 36340, 'unit_price' => 34.5], ['role' => 'Раствор М100', 'material' => 'mortar', 'quantity' => 36, 'unit_price' => 5100]], 'equipment_resources' => [['role' => 'Леса', 'name' => 'Фасадные леса', 'units' => 2, 'hours' => 192, 'rate' => 420]]],
+            ['key' => 'masonry_inner_2f', 'wbs' => '3.6', 'name' => 'Перегородки второго этажа', 'description' => 'Внутренние перегородки после закрытия наружного контура этажа.', 'phase' => 'коробка', 'work' => 'masonry_inner', 'start_offset' => 22, 'duration' => 26, 'progress' => 0, 'status' => 'not_started', 'priority' => 'normal', 'critical' => false, 'cost' => 2360000, 'resources' => ['people' => 9], 'material_resources' => [['role' => 'Кирпич М150', 'material' => 'brick', 'quantity' => 17600, 'unit_price' => 34.5]], 'equipment_resources' => []],
             ['key' => 'slabs', 'wbs' => '4.1', 'name' => 'Плиты перекрытия', 'description' => 'Разгрузка и монтаж плит перекрытия.', 'phase' => 'контур', 'work' => 'slabs', 'start_offset' => 18, 'duration' => 12, 'progress' => 0, 'status' => 'waiting', 'priority' => 'high', 'critical' => true, 'cost' => 3900000, 'resources' => ['people' => 8], 'material_resources' => [['role' => 'Плиты ПБ', 'material' => 'slab', 'quantity' => 32, 'unit_price' => 18600]], 'equipment_resources' => [['role' => 'Автокран', 'name' => 'Автокран 25 т', 'units' => 1, 'hours' => 80, 'rate' => 5200]]],
+            ['key' => 'slabs_acceptance', 'wbs' => '4.1.1', 'name' => 'Приемка плит и опорных зон', 'description' => 'Паспорта ЖБИ, ширина опирания, журнал строповки и допуск крана.', 'phase' => 'контур', 'work' => 'quality', 'start_offset' => 15, 'duration' => 5, 'progress' => 0, 'status' => 'waiting', 'priority' => 'high', 'critical' => true, 'cost' => 360000, 'resources' => ['people' => 3], 'material_resources' => [], 'equipment_resources' => []],
             ['key' => 'roof', 'wbs' => '4.2', 'name' => 'Кровля', 'description' => 'Стропильная система, утепление и металлочерепица.', 'phase' => 'контур', 'work' => 'roof', 'start_offset' => 34, 'duration' => 34, 'progress' => 0, 'status' => 'not_started', 'priority' => 'normal', 'critical' => true, 'cost' => 6800000, 'resources' => ['people' => 9], 'material_resources' => [['role' => 'Металлочерепица', 'material' => 'roofing', 'quantity' => 318, 'unit_price' => 920]], 'equipment_resources' => []],
+            ['key' => 'windows_contour', 'wbs' => '4.3', 'name' => 'Закрытие теплового контура', 'description' => 'Подготовка проемов, временная защита, контроль влажности перед отделкой.', 'phase' => 'контур', 'work' => 'engineering', 'start_offset' => 58, 'duration' => 20, 'progress' => 0, 'status' => 'not_started', 'priority' => 'normal', 'critical' => false, 'cost' => 2400000, 'resources' => ['people' => 6], 'material_resources' => [], 'equipment_resources' => []],
             ['key' => 'facade', 'wbs' => '5.1', 'name' => 'Фасад и утепление', 'description' => 'Минвата, облицовочный кирпич, расшивка швов.', 'phase' => 'фасад', 'work' => 'facade', 'start_offset' => 72, 'duration' => 48, 'progress' => 0, 'status' => 'not_started', 'priority' => 'normal', 'critical' => false, 'cost' => 11800000, 'resources' => ['people' => 14], 'material_resources' => [['role' => 'Минвата', 'material' => 'insulation', 'quantity' => 96, 'unit_price' => 1520], ['role' => 'Облицовочный кирпич', 'material' => 'facing_brick', 'quantity' => 28400, 'unit_price' => 52]], 'equipment_resources' => []],
+            ['key' => 'facade_insulation', 'wbs' => '5.1.1', 'name' => 'Фасадное утепление', 'description' => 'Минеральная вата, крепеж, ветровая защита и контроль мостиков холода.', 'phase' => 'фасад', 'work' => 'facade', 'start_offset' => 72, 'duration' => 22, 'progress' => 0, 'status' => 'not_started', 'priority' => 'normal', 'critical' => false, 'cost' => 4200000, 'resources' => ['people' => 8], 'material_resources' => [['role' => 'Минвата', 'material' => 'insulation', 'quantity' => 96, 'unit_price' => 1520]], 'equipment_resources' => []],
+            ['key' => 'facade_facing', 'wbs' => '5.1.2', 'name' => 'Облицовочная кладка фасада', 'description' => 'Лицевой кирпич, расшивка швов, приемка образца фасада.', 'phase' => 'фасад', 'work' => 'facade', 'start_offset' => 94, 'duration' => 32, 'progress' => 0, 'status' => 'not_started', 'priority' => 'normal', 'critical' => false, 'cost' => 7600000, 'resources' => ['people' => 12], 'material_resources' => [['role' => 'Облицовочный кирпич', 'material' => 'facing_brick', 'quantity' => 28400, 'unit_price' => 52]], 'equipment_resources' => []],
             ['key' => 'engineering', 'wbs' => '6.1', 'name' => 'Инженерные вводы', 'description' => 'Закладные, проходки, вводы воды, канализации и электрики.', 'phase' => 'инженерия', 'work' => 'engineering', 'start_offset' => 54, 'duration' => 32, 'progress' => 12, 'status' => 'waiting', 'priority' => 'normal', 'critical' => false, 'cost' => 3900000, 'resources' => ['people' => 6], 'material_resources' => [], 'equipment_resources' => []],
+            ['key' => 'rough_electrical', 'wbs' => '6.2', 'name' => 'Черновая электрика и закладные', 'description' => 'Гильзы, проходки, трассы под кабель и приемка скрытых работ.', 'phase' => 'инженерия', 'work' => 'engineering', 'start_offset' => 64, 'duration' => 22, 'progress' => 0, 'status' => 'not_started', 'priority' => 'normal', 'critical' => false, 'cost' => 1950000, 'resources' => ['people' => 5], 'material_resources' => [], 'equipment_resources' => []],
+            ['key' => 'rough_plumbing', 'wbs' => '6.3', 'name' => 'Черновые сантехнические вводы', 'description' => 'Вводы воды, канализация, гильзы через фундамент и стены.', 'phase' => 'инженерия', 'work' => 'engineering', 'start_offset' => 70, 'duration' => 20, 'progress' => 0, 'status' => 'not_started', 'priority' => 'normal', 'critical' => false, 'cost' => 1680000, 'resources' => ['people' => 4], 'material_resources' => [], 'equipment_resources' => []],
             ['key' => 'quality', 'wbs' => '7.1', 'name' => 'Исполнительная документация', 'description' => 'Схемы, акты скрытых работ, фотофиксация и отчеты.', 'phase' => 'ПТО', 'work' => 'quality', 'start_offset' => -50, 'duration' => 196, 'progress' => 41, 'status' => 'in_progress', 'priority' => 'normal', 'critical' => false, 'cost' => 1600000, 'resources' => ['people' => 3], 'material_resources' => [], 'equipment_resources' => []],
+            ['key' => 'customer_walkthrough', 'wbs' => '7.2', 'name' => 'Обход заказчика по коробке дома', 'description' => 'Фиксация замечаний, фото, срок устранения и связь с графиком.', 'phase' => 'ПТО', 'work' => 'quality', 'start_offset' => 8, 'duration' => 3, 'progress' => 0, 'status' => 'waiting', 'priority' => 'high', 'critical' => false, 'cost' => 180000, 'resources' => ['people' => 4], 'material_resources' => [], 'equipment_resources' => []],
         ];
     }
 
@@ -4435,10 +5201,18 @@ class BrickHouseDemoSeeder extends Seeder
     {
         return [
             ['key' => 'masonry_outer', 'wbs' => '1.1', 'name' => 'Наружные стены первого этажа', 'description' => 'Кладка наружных стен, контроль геометрии, армирование рядов.', 'phase' => 'кладка', 'work' => 'masonry_outer', 'start_offset' => -54, 'duration' => 30, 'progress' => 100, 'status' => 'completed', 'priority' => 'critical', 'critical' => true, 'cost' => 9200000, 'resources' => ['people' => 14], 'material_resources' => [['role' => 'Кирпич М150', 'material' => 'brick', 'quantity' => 37920, 'unit_price' => 34.5], ['role' => 'Раствор М100', 'material' => 'mortar', 'quantity' => 38, 'unit_price' => 5100]], 'equipment_resources' => []],
+            ['key' => 'masonry_outer_axis_a', 'wbs' => '1.1.1', 'name' => 'Кладка наружных стен по осям А-Б', 'description' => 'Первая захватка, контроль перевязки углов и армирования.', 'phase' => 'кладка', 'work' => 'masonry_outer', 'start_offset' => -54, 'duration' => 12, 'progress' => 100, 'status' => 'completed', 'priority' => 'critical', 'critical' => true, 'cost' => 3650000, 'resources' => ['people' => 10], 'material_resources' => [['role' => 'Кирпич М150', 'material' => 'brick', 'quantity' => 14800, 'unit_price' => 34.5]], 'equipment_resources' => []],
+            ['key' => 'masonry_outer_axis_c', 'wbs' => '1.1.2', 'name' => 'Кладка наружных стен по осям В-Е', 'description' => 'Вторая захватка, оконные проемы и контроль вертикали.', 'phase' => 'кладка', 'work' => 'masonry_outer', 'start_offset' => -42, 'duration' => 16, 'progress' => 100, 'status' => 'completed', 'priority' => 'critical', 'critical' => true, 'cost' => 4200000, 'resources' => ['people' => 12], 'material_resources' => [['role' => 'Кирпич М150', 'material' => 'brick', 'quantity' => 16800, 'unit_price' => 34.5], ['role' => 'Раствор М100', 'material' => 'mortar', 'quantity' => 16.8, 'unit_price' => 5100]], 'equipment_resources' => []],
             ['key' => 'masonry_inner', 'wbs' => '1.2', 'name' => 'Перегородки первого этажа', 'description' => 'Внутренние перегородки и проемы под инженерные коммуникации.', 'phase' => 'кладка', 'work' => 'masonry_inner', 'start_offset' => -28, 'duration' => 22, 'progress' => 100, 'status' => 'completed', 'priority' => 'high', 'critical' => false, 'cost' => 3600000, 'resources' => ['people' => 9], 'material_resources' => [['role' => 'Кирпич М150', 'material' => 'brick', 'quantity' => 18200, 'unit_price' => 34.5]], 'equipment_resources' => []],
+            ['key' => 'masonry_inner_wet_zones', 'wbs' => '1.2.1', 'name' => 'Перегородки мокрых зон', 'description' => 'Санузлы и техпомещение с проемами под инженерные стояки.', 'phase' => 'кладка', 'work' => 'masonry_inner', 'start_offset' => -25, 'duration' => 8, 'progress' => 100, 'status' => 'completed', 'priority' => 'normal', 'critical' => false, 'cost' => 980000, 'resources' => ['people' => 6], 'material_resources' => [['role' => 'Кирпич М150', 'material' => 'brick', 'quantity' => 5200, 'unit_price' => 34.5]], 'equipment_resources' => []],
             ['key' => 'belt', 'wbs' => '1.3', 'name' => 'Армопояс первого этажа', 'description' => 'Каркасы, опалубка, бетонирование армопояса.', 'phase' => 'железобетон', 'work' => 'belt', 'start_offset' => -6, 'duration' => 18, 'progress' => 45, 'status' => 'in_progress', 'priority' => 'critical', 'critical' => true, 'cost' => 5100000, 'resources' => ['people' => 10], 'material_resources' => [['role' => 'Арматура', 'material' => 'rebar', 'quantity' => 2.8, 'unit_price' => 74200], ['role' => 'Сетка', 'material' => 'mesh', 'quantity' => 140, 'unit_price' => 185]], 'equipment_resources' => [['role' => 'Вибратор', 'name' => 'Вибратор для бетона', 'units' => 2, 'hours' => 48, 'rate' => 300]]],
+            ['key' => 'lintels', 'wbs' => '1.3.1', 'name' => 'Перемычки первого этажа', 'description' => 'Опалубка, каркасы и бетонирование перемычек по проемам ПР-1 - ПР-6.', 'phase' => 'железобетон', 'work' => 'belt', 'start_offset' => -3, 'duration' => 10, 'progress' => 60, 'status' => 'in_progress', 'priority' => 'high', 'critical' => true, 'cost' => 1460000, 'resources' => ['people' => 7], 'material_resources' => [['role' => 'Арматура', 'material' => 'rebar', 'quantity' => 0.9, 'unit_price' => 74200], ['role' => 'Бетон B25', 'material' => 'concrete', 'quantity' => 6.4, 'unit_price' => 6800]], 'equipment_resources' => [['role' => 'Вибратор', 'name' => 'Вибратор для бетона', 'units' => 1, 'hours' => 24, 'rate' => 300]]],
+            ['key' => 'masonry_second_outer', 'wbs' => '2.1', 'name' => 'Наружные стены второго этажа', 'description' => 'Кладка второй очереди, захватки Б-Е, подготовка под армопояс.', 'phase' => 'кладка второго этажа', 'work' => 'masonry_outer', 'start_offset' => 4, 'duration' => 30, 'progress' => 18, 'status' => 'in_progress', 'priority' => 'critical', 'critical' => true, 'cost' => 8900000, 'resources' => ['people' => 14], 'material_resources' => [['role' => 'Кирпич М150', 'material' => 'brick', 'quantity' => 36340, 'unit_price' => 34.5], ['role' => 'Раствор М100', 'material' => 'mortar', 'quantity' => 36, 'unit_price' => 5100]], 'equipment_resources' => []],
+            ['key' => 'masonry_second_inner', 'wbs' => '2.2', 'name' => 'Перегородки второго этажа', 'description' => 'Подготовка фронта после закрытия наружных стен второго этажа.', 'phase' => 'кладка второго этажа', 'work' => 'masonry_inner', 'start_offset' => 22, 'duration' => 20, 'progress' => 0, 'status' => 'not_started', 'priority' => 'normal', 'critical' => false, 'cost' => 2100000, 'resources' => ['people' => 8], 'material_resources' => [['role' => 'Кирпич М150', 'material' => 'brick', 'quantity' => 11600, 'unit_price' => 34.5]], 'equipment_resources' => []],
             ['key' => 'slabs', 'wbs' => '1.4', 'name' => 'Подготовка к плитам перекрытия', 'description' => 'Разметка опорных зон, подача перемычек, координация автокрана.', 'phase' => 'перекрытия', 'work' => 'slabs', 'start_offset' => 18, 'duration' => 10, 'progress' => 0, 'status' => 'waiting', 'priority' => 'high', 'critical' => true, 'cost' => 2600000, 'resources' => ['people' => 8], 'material_resources' => [], 'equipment_resources' => [['role' => 'Автокран', 'name' => 'Автокран 25 т', 'units' => 1, 'hours' => 40, 'rate' => 5200]]],
+            ['key' => 'slabs_support_check', 'wbs' => '3.1', 'name' => 'Проверка опорных зон под плиты', 'description' => 'Геометрия армопояса, ширина опирания, готовность к допуску крана.', 'phase' => 'перекрытия', 'work' => 'quality', 'start_offset' => 14, 'duration' => 4, 'progress' => 0, 'status' => 'waiting', 'priority' => 'high', 'critical' => true, 'cost' => 240000, 'resources' => ['people' => 3], 'material_resources' => [], 'equipment_resources' => []],
             ['key' => 'quality', 'wbs' => '1.5', 'name' => 'Исполнительная документация кладки', 'description' => 'Фотофиксация, схемы, акты скрытых работ по армированию.', 'phase' => 'ПТО', 'work' => 'quality', 'start_offset' => -54, 'duration' => 82, 'progress' => 52, 'status' => 'in_progress', 'priority' => 'normal', 'critical' => false, 'cost' => 840000, 'resources' => ['people' => 2], 'material_resources' => [], 'equipment_resources' => []],
+            ['key' => 'handover_pack', 'wbs' => '4.1', 'name' => 'Пакет передачи генподряду', 'description' => 'Исполнительные схемы, фото скрытых работ, реестр замечаний и статусы устранения.', 'phase' => 'ПТО', 'work' => 'quality', 'start_offset' => 24, 'duration' => 8, 'progress' => 0, 'status' => 'not_started', 'priority' => 'high', 'critical' => false, 'cost' => 420000, 'resources' => ['people' => 2], 'material_resources' => [], 'equipment_resources' => []],
         ];
     }
 

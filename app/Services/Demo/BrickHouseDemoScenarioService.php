@@ -94,10 +94,14 @@ final class BrickHouseDemoScenarioService
             $this->checkCount('contracts', 'Договоры проекта', 2, $projectId, $organizationIds),
             $this->checkCount('estimates', 'Сметы проекта', 2, $projectId, $organizationIds),
             $this->checkCount('project_schedules', 'Графики проекта', 2, $projectId, $organizationIds),
+            $this->checkCount('schedule_tasks', 'Задачи графиков', 40, $projectId, $organizationIds),
+            $this->checkCount('warehouse_movements', 'Движения склада', 20, $projectId, $organizationIds),
+            $this->checkCount('project_material_deliveries', 'Доставки материалов на объект', 8, $projectId, $organizationIds),
             $this->checkCount('construction_journals', 'Журналы работ', 2, $projectId, $organizationIds),
-            $this->checkCount('site_requests', 'Заявки с объекта', 4, $projectId, $organizationIds),
+            $this->checkCount('site_requests', 'Заявки с объекта', 18, $projectId, $organizationIds),
+            $this->checkCount('completed_works', 'Выполненные работы из журналов', 12, $projectId, $organizationIds),
             $this->checkCount('contract_performance_acts', 'Акты выполненных работ', 2, $projectId, $organizationIds),
-            $this->checkCount('payment_documents', 'Платежные документы', 4, $projectId, $organizationIds),
+            $this->checkCount('payment_documents', 'Платежные документы', 10, $projectId, $organizationIds),
             $this->checkCount('organization_subscriptions', 'Активные подписки организаций', 2, null, $organizationIds),
             $this->checkCount('organization_custom_roles', 'Кастомные роли организаций', 10, null, $organizationIds),
             $this->checkCount('workforce_employees', 'Сотрудники workforce', 12, null, $organizationIds),
@@ -106,7 +110,7 @@ final class BrickHouseDemoScenarioService
             $this->checkCount('safety_incidents', 'Инциденты безопасности', 4, $projectId, $organizationIds),
             $this->checkCount('safety_violations', 'Нарушения безопасности', 4, $projectId, $organizationIds),
             $this->checkCount('safety_briefings', 'Инструктажи безопасности', 4, $projectId, $organizationIds),
-            $this->checkCount('quality_defects', 'Замечания качества', 6, $projectId, $organizationIds),
+            $this->checkCount('quality_defects', 'Замечания качества', 14, $projectId, $organizationIds),
         ];
 
         $failed = array_values(array_filter(
