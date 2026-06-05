@@ -102,6 +102,12 @@ final class BrickHouseDemoScenarioService
             $this->checkCount('completed_works', 'Выполненные работы из журналов', 12, $projectId, $organizationIds),
             $this->checkCount('contract_performance_acts', 'Акты выполненных работ', 2, $projectId, $organizationIds),
             $this->checkCount('payment_documents', 'Платежные документы', 10, $projectId, $organizationIds),
+            $this->checkCount('suppliers', 'Поставщики закупок', 10, null, $organizationIds),
+            $this->checkCount('purchase_requests', 'Заявки на закупку', 10, $projectId, $organizationIds),
+            $this->checkCount('supplier_requests', 'Запросы поставщикам', 10, $projectId, $organizationIds),
+            $this->checkCount('supplier_proposals', 'Коммерческие предложения поставщиков', 10, $projectId, $organizationIds),
+            $this->checkCount('purchase_orders', 'Заказы поставщикам', 10, $projectId, $organizationIds),
+            $this->checkCount('purchase_receipts', 'Приемки по заказам поставщикам', 4, $projectId, $organizationIds),
             $this->checkCount('organization_subscriptions', 'Активные подписки организаций', 2, null, $organizationIds),
             $this->checkCount('organization_custom_roles', 'Кастомные роли организаций', 10, null, $organizationIds),
             $this->checkCount('workforce_employees', 'Сотрудники workforce', 12, null, $organizationIds),
@@ -161,6 +167,28 @@ final class BrickHouseDemoScenarioService
         $completedWorkIds = $this->idsByScope('completed_works', $projectIds, $organizationIds);
         $actIds = $this->idsByColumn('contract_performance_acts', 'contract_id', $contractIds);
         $paymentDocumentIds = $this->idsByScope('payment_documents', $projectIds, $organizationIds);
+        $supplierIds = $this->idsByCodePrefixes('suppliers', $organizationIds, ['BH-GP-SUP-', 'BH-SUB-SUP-']);
+        $supplierPartyIds = $this->idsByColumn('supplier_parties', 'registered_supplier_id', $supplierIds);
+        $purchaseRequestIds = $this->mergeIds(
+            $this->idsByColumn('purchase_requests', 'site_request_id', $siteRequestIds),
+            $this->idsByCodePrefixes('purchase_requests', $organizationIds, ['ЗЗ-ГП-ЛД-', 'ЗЗ-ПДР-ЛД-'], 'request_number')
+        );
+        $supplierRequestIds = $this->mergeIds(
+            $this->idsByColumn('supplier_requests', 'purchase_request_id', $purchaseRequestIds),
+            $this->idsByCodePrefixes('supplier_requests', $organizationIds, ['ЗП-ГП-ЛД-', 'ЗП-ПДР-ЛД-'], 'request_number')
+        );
+        $supplierProposalIds = $this->mergeIds(
+            $this->idsByColumn('supplier_proposals', 'supplier_request_id', $supplierRequestIds),
+            $this->idsByCodePrefixes('supplier_proposals', $organizationIds, ['КП-ГП-', 'КП-ПДР-'], 'proposal_number')
+        );
+        $purchaseOrderIds = $this->mergeIds(
+            $this->idsByColumn('purchase_orders', 'purchase_request_id', $purchaseRequestIds),
+            $this->idsByCodePrefixes('purchase_orders', $organizationIds, ['ЗК-ГП-ЛД-', 'ЗК-ПДР-ЛД-'], 'order_number')
+        );
+        $purchaseReceiptIds = $this->mergeIds(
+            $this->idsByColumn('purchase_receipts', 'purchase_order_id', $purchaseOrderIds),
+            $this->idsByCodePrefixes('purchase_receipts', $organizationIds, ['ПРМ-ГП-ЛД-', 'ПРМ-ПДР-ЛД-'], 'receipt_number')
+        );
         $warehouseIds = $this->ids('organization_warehouses', function (Builder $query) use ($organizationIds): void {
             $query->whereIn('organization_id', $organizationIds)
                 ->whereIn('code', ['GP-BRICK-HOUSE', 'SUB-BRICK-HOUSE']);
@@ -198,6 +226,13 @@ final class BrickHouseDemoScenarioService
             'completedWorkIds',
             'actIds',
             'paymentDocumentIds',
+            'supplierIds',
+            'supplierPartyIds',
+            'purchaseRequestIds',
+            'supplierRequestIds',
+            'supplierProposalIds',
+            'purchaseOrderIds',
+            'purchaseReceiptIds',
             'warehouseIds',
             'materialIds',
             'workTypeIds',
@@ -259,6 +294,22 @@ final class BrickHouseDemoScenarioService
             $this->deleteByIds('payment_document_site_requests', 'payment_document_id', $ids['paymentDocumentIds']),
             $this->deleteByIds('payment_document_contracts', 'payment_document_id', $ids['paymentDocumentIds']),
             $this->deleteByIds('payment_documents', 'id', $ids['paymentDocumentIds']),
+            $this->deleteByIds('purchase_receipt_lines', 'purchase_receipt_id', $ids['purchaseReceiptIds']),
+            $this->deleteByIds('purchase_receipts', 'id', $ids['purchaseReceiptIds']),
+            $this->deleteByIds('purchase_order_items', 'purchase_order_id', $ids['purchaseOrderIds']),
+            $this->deleteByIds('supplier_proposal_decisions', 'supplier_request_id', $ids['supplierRequestIds']),
+            $this->deleteByIds('supplier_proposal_intakes', 'supplier_proposal_id', $ids['supplierProposalIds']),
+            $this->deleteByIds('supplier_proposal_versions', 'supplier_proposal_id', $ids['supplierProposalIds']),
+            $this->deleteByIds('supplier_proposal_lines', 'supplier_proposal_id', $ids['supplierProposalIds']),
+            $this->deleteByIds('supplier_proposals', 'id', $ids['supplierProposalIds']),
+            $this->deleteByIds('purchase_orders', 'id', $ids['purchaseOrderIds']),
+            $this->deleteByIds('supplier_request_versions', 'supplier_request_id', $ids['supplierRequestIds']),
+            $this->deleteByIds('supplier_request_lines', 'supplier_request_id', $ids['supplierRequestIds']),
+            $this->deleteByIds('supplier_requests', 'id', $ids['supplierRequestIds']),
+            $this->deleteByIds('purchase_request_lines', 'purchase_request_id', $ids['purchaseRequestIds']),
+            $this->deleteByIds('purchase_requests', 'id', $ids['purchaseRequestIds']),
+            $this->deleteByIds('supplier_parties', 'id', $ids['supplierPartyIds']),
+            $this->deleteByIds('suppliers', 'id', $ids['supplierIds']),
             $this->deleteByIds('performance_act_completed_works', 'performance_act_id', $ids['actIds']),
             $this->deleteByIds('performance_act_lines', 'performance_act_id', $ids['actIds']),
             $this->deleteByIds('contract_performance_acts', 'id', $ids['actIds']),
@@ -451,6 +502,11 @@ final class BrickHouseDemoScenarioService
         return $this->ids($table, function (Builder $query) use ($column, $values): void {
             $query->whereIn($column, $values);
         });
+    }
+
+    private function mergeIds(array ...$idSets): array
+    {
+        return array_values(array_unique(array_merge(...$idSets)));
     }
 
     private function idsByCodePrefixes(string $table, array $organizationIds, array $prefixes, string $column = 'code'): array

@@ -51,6 +51,11 @@ class BrickHouseDemoSeeder extends Seeder
         'workforce_records' => 0,
         'safety_records' => 0,
         'quality_defects' => 0,
+        'suppliers' => 0,
+        'purchase_requests' => 0,
+        'supplier_proposals' => 0,
+        'purchase_orders' => 0,
+        'purchase_receipts' => 0,
     ];
 
     public function run(): void
@@ -271,6 +276,24 @@ class BrickHouseDemoSeeder extends Seeder
                 ),
             ];
 
+            $procurement = $this->seedProcurement(
+                projectId: $projectId,
+                general: $general,
+                contractor: $contractor,
+                materials: [
+                    'general' => $generalMaterials,
+                    'contractor' => $contractorMaterials,
+                ],
+                warehouses: [
+                    'general' => $generalWarehouse,
+                    'contractor' => $contractorWarehouse,
+                ],
+                siteRequests: [
+                    'general' => $generalRequests,
+                    'contractor' => $contractorRequests,
+                ]
+            );
+
             $payments = $this->seedPaymentDocuments(
                 projectId: $projectId,
                 general: $general,
@@ -285,7 +308,8 @@ class BrickHouseDemoSeeder extends Seeder
                 siteRequests: [
                     'general' => $generalRequests,
                     'contractor' => $contractorRequests,
-                ]
+                ],
+                procurement: $procurement
             );
 
             $this->seedActivityEvents(
@@ -4286,11 +4310,1023 @@ class BrickHouseDemoSeeder extends Seeder
     /**
      * @param array<string, mixed> $general
      * @param array<string, mixed> $contractor
+     * @param array{general: array<string, int>, contractor: array<string, int>} $materials
+     * @param array{general: array<string, int>, contractor: array<string, int>} $warehouses
+     * @param array{general: array<string, int>, contractor: array<string, int>} $siteRequests
+     * @return array{site_request_links: array<int, array{purchase_request_id: int, purchase_order_id: int}>, purchase_requests: array<string, int>, purchase_orders: array<string, int>}
+     */
+    private function seedProcurement(
+        int $projectId,
+        array $general,
+        array $contractor,
+        array $materials,
+        array $warehouses,
+        array $siteRequests
+    ): array {
+        if (
+            !Schema::hasTable('suppliers')
+            || !Schema::hasTable('purchase_requests')
+            || !Schema::hasTable('purchase_orders')
+        ) {
+            return [
+                'site_request_links' => [],
+                'purchase_requests' => [],
+                'purchase_orders' => [],
+            ];
+        }
+
+        $generalProcurement = $this->seedProcurementContour(
+            projectId: $projectId,
+            account: $general,
+            scope: 'GP',
+            materials: $materials['general'],
+            warehouse: $warehouses['general'],
+            siteRequests: $siteRequests['general'],
+            buyerUserId: $this->actorId($general, 'supply_manager'),
+            approverUserId: $this->actorId($general, 'project_manager')
+        );
+
+        $contractorProcurement = $this->seedProcurementContour(
+            projectId: $projectId,
+            account: $contractor,
+            scope: 'SUB',
+            materials: $materials['contractor'],
+            warehouse: $warehouses['contractor'],
+            siteRequests: $siteRequests['contractor'],
+            buyerUserId: $this->actorId($contractor, 'storekeeper'),
+            approverUserId: $this->actorId($contractor, 'work_manager')
+        );
+
+        return [
+            'site_request_links' => $generalProcurement['site_request_links'] + $contractorProcurement['site_request_links'],
+            'purchase_requests' => $generalProcurement['purchase_requests'] + $contractorProcurement['purchase_requests'],
+            'purchase_orders' => $generalProcurement['purchase_orders'] + $contractorProcurement['purchase_orders'],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $account
+     * @param array<string, int> $materials
+     * @param array<string, int> $warehouse
+     * @param array<string, int> $siteRequests
+     * @return array{site_request_links: array<int, array{purchase_request_id: int, purchase_order_id: int}>, purchase_requests: array<string, int>, purchase_orders: array<string, int>}
+     */
+    private function seedProcurementContour(
+        int $projectId,
+        array $account,
+        string $scope,
+        array $materials,
+        array $warehouse,
+        array $siteRequests,
+        int $buyerUserId,
+        int $approverUserId
+    ): array {
+        $organizationId = (int) $account['organization_id'];
+        $links = [];
+        $purchaseRequestIds = [];
+        $purchaseOrderIds = [];
+
+        foreach ($this->procurementScenarios($scope) as $scenario) {
+            $siteRequestId = $siteRequests[$scenario['site_request']] ?? 0;
+            $materialId = $materials[$scenario['material']] ?? 0;
+
+            if ($siteRequestId === 0 || $materialId === 0) {
+                continue;
+            }
+
+            $supplierId = $this->upsert('suppliers', [
+                'organization_id' => $organizationId,
+                'code' => $scenario['supplier_code'],
+            ], [
+                'name' => $scenario['supplier_name'],
+                'contact_person' => $scenario['supplier_contact'],
+                'phone' => $scenario['supplier_phone'],
+                'email' => $scenario['supplier_email'],
+                'address' => $scenario['supplier_address'],
+                'tax_number' => $scenario['supplier_tax_number'],
+                'description' => 'Поставщик демо-сценария закупок кирпичного дома',
+                'is_active' => true,
+                'additional_info' => $this->json([
+                    'demo' => true,
+                    'scenario' => 'brick_house',
+                    'scope' => $scope,
+                    'specialization' => $scenario['supplier_specialization'],
+                ]),
+            ]);
+
+            if ($supplierId === 0) {
+                continue;
+            }
+
+            $this->totals['suppliers']++;
+
+            $supplierSnapshot = $this->supplierSnapshot($scenario, $supplierId);
+            $supplierPartyId = $this->upsert('supplier_parties', [
+                'organization_id' => $organizationId,
+                'type' => 'registered',
+                'registered_supplier_id' => $supplierId,
+            ], [
+                'status' => 'linked',
+                'external_supplier_contact_id' => null,
+                'display_name' => $scenario['supplier_name'],
+                'contact_name' => $scenario['supplier_contact'],
+                'email' => $scenario['supplier_email'],
+                'normalized_email' => strtolower($scenario['supplier_email']),
+                'phone' => $scenario['supplier_phone'],
+                'tax_id' => $scenario['supplier_tax_number'],
+                'snapshot' => $this->json($supplierSnapshot),
+                'linked_at' => $this->now->copy()->subDays(34),
+            ]);
+
+            $subtotalAmount = round((float) $scenario['quantity'] * (float) $scenario['unit_price'], 2);
+            $deliveryAmount = (float) $scenario['delivery_amount'];
+            $totalAmount = round($subtotalAmount + $deliveryAmount, 2);
+            $vatAmount = round($totalAmount * 20 / 120, 2);
+            $neededBy = $this->now->copy()->addDays($scenario['needed_offset']);
+
+            $purchaseRequestId = $this->upsert('purchase_requests', [
+                'organization_id' => $organizationId,
+                'request_number' => $scenario['purchase_request_number'],
+            ], [
+                'site_request_id' => $siteRequestId,
+                'assigned_to' => $buyerUserId,
+                'status' => 'approved',
+                'needed_by' => $neededBy->toDateString(),
+                'budget_amount' => $totalAmount,
+                'budget_currency' => 'RUB',
+                'notes' => $scenario['purchase_request_notes'],
+                'metadata' => $this->json([
+                    'demo' => true,
+                    'scenario' => 'brick_house',
+                    'scope' => $scope,
+                    'site_request_key' => $scenario['site_request'],
+                    'project_id' => $projectId,
+                ]),
+            ]);
+
+            if ($purchaseRequestId === 0) {
+                continue;
+            }
+
+            $purchaseRequestIds[$scenario['key']] = $purchaseRequestId;
+            $this->totals['purchase_requests']++;
+
+            $purchaseRequestLineId = $this->upsert('purchase_request_lines', [
+                'purchase_request_id' => $purchaseRequestId,
+                'name' => $scenario['material_name'],
+            ], [
+                'material_id' => $materialId,
+                'quantity' => $scenario['quantity'],
+                'unit' => $scenario['unit'],
+                'specification' => $scenario['specification'],
+                'needed_by' => $neededBy->toDateString(),
+                'metadata' => $this->json([
+                    'demo' => true,
+                    'source' => 'site_request',
+                    'site_request_id' => $siteRequestId,
+                ]),
+            ]);
+
+            $supplierRequestId = $this->upsert('supplier_requests', [
+                'request_number' => $scenario['supplier_request_number'],
+            ], [
+                'organization_id' => $organizationId,
+                'purchase_request_id' => $purchaseRequestId,
+                'supplier_id' => $supplierId,
+                'external_supplier_contact_id' => null,
+                'supplier_party_id' => $supplierPartyId ?: null,
+                'supplier_snapshot' => $this->json($supplierSnapshot),
+                'status' => 'responded',
+                'sent_at' => $this->now->copy()->addDays($scenario['sent_offset']),
+                'responded_at' => $this->now->copy()->addDays($scenario['proposal_offset']),
+                'cancelled_at' => null,
+                'comment' => $scenario['supplier_request_comment'],
+                'public_token' => hash('sha256', 'brick-house-supplier-request-' . $scenario['supplier_request_number']),
+                'public_token_expires_at' => $this->now->copy()->addDays(21),
+                'public_opened_at' => $this->now->copy()->addDays($scenario['proposal_offset'])->subHours(3),
+                'metadata' => $this->json([
+                    'demo' => true,
+                    'scenario' => 'brick_house',
+                    'scope' => $scope,
+                ]),
+            ]);
+
+            $supplierRequestLineId = $supplierRequestId > 0
+                ? $this->upsert('supplier_request_lines', [
+                    'supplier_request_id' => $supplierRequestId,
+                    'name' => $scenario['material_name'],
+                ], [
+                    'purchase_request_line_id' => $purchaseRequestLineId ?: null,
+                    'material_id' => $materialId,
+                    'quantity' => $scenario['quantity'],
+                    'unit' => $scenario['unit'],
+                    'specification' => $scenario['specification'],
+                    'metadata' => $this->json(['demo' => true, 'scenario' => 'brick_house']),
+                ])
+                : 0;
+
+            $requestLineSnapshot = $this->requestLineSnapshot(
+                lineId: $supplierRequestLineId,
+                purchaseRequestLineId: $purchaseRequestLineId,
+                materialId: $materialId,
+                scenario: $scenario
+            );
+
+            $supplierRequestVersionId = $supplierRequestId > 0
+                ? $this->upsert('supplier_request_versions', [
+                    'supplier_request_id' => $supplierRequestId,
+                    'version_number' => 1,
+                ], [
+                    'organization_id' => $organizationId,
+                    'request_snapshot' => $this->json([
+                        'id' => $supplierRequestId,
+                        'request_number' => $scenario['supplier_request_number'],
+                        'status' => 'responded',
+                        'sent_at' => $this->now->copy()->addDays($scenario['sent_offset'])->toDateTimeString(),
+                        'purchase_request_id' => $purchaseRequestId,
+                    ]),
+                    'line_snapshot' => $this->json([$requestLineSnapshot]),
+                    'supplier_snapshot' => $this->json($supplierSnapshot),
+                    'sent_by' => $buyerUserId,
+                    'sent_at' => $this->now->copy()->addDays($scenario['sent_offset']),
+                ])
+                : 0;
+
+            $proposalId = $supplierRequestId > 0
+                ? $this->upsert('supplier_proposals', [
+                    'proposal_number' => $scenario['proposal_number'],
+                ], [
+                    'organization_id' => $organizationId,
+                    'purchase_order_id' => null,
+                    'supplier_request_id' => $supplierRequestId,
+                    'supplier_request_version_id' => $supplierRequestVersionId ?: null,
+                    'supplier_id' => $supplierId,
+                    'external_supplier_contact_id' => null,
+                    'supplier_party_id' => $supplierPartyId ?: null,
+                    'supplier_snapshot' => $this->json($supplierSnapshot),
+                    'proposal_date' => $this->now->copy()->addDays($scenario['proposal_offset'])->toDateString(),
+                    'status' => 'accepted',
+                    'subtotal_amount' => $subtotalAmount,
+                    'delivery_amount' => $deliveryAmount,
+                    'vat_amount' => $vatAmount,
+                    'total_amount' => $totalAmount,
+                    'currency' => 'RUB',
+                    'vat_mode' => 'included',
+                    'vat_rate' => 20,
+                    'valid_until' => $this->now->copy()->addDays($scenario['proposal_offset'] + 14)->toDateString(),
+                    'delivery_due_date' => $neededBy->toDateString(),
+                    'lead_time_days' => max(1, $scenario['needed_offset'] - $scenario['proposal_offset']),
+                    'payment_terms' => $scenario['payment_terms'],
+                    'delivery_terms' => $scenario['delivery_terms'],
+                    'warranty_terms' => $scenario['warranty_terms'],
+                    'items' => $this->json([$requestLineSnapshot + [
+                        'unit_price' => $scenario['unit_price'],
+                        'total_amount' => $subtotalAmount,
+                    ]]),
+                    'notes' => $scenario['proposal_notes'],
+                    'metadata' => $this->json(['demo' => true, 'scenario' => 'brick_house']),
+                ])
+                : 0;
+
+            if ($proposalId > 0) {
+                $this->totals['supplier_proposals']++;
+            }
+
+            $proposalLineId = $proposalId > 0
+                ? $this->upsert('supplier_proposal_lines', [
+                    'supplier_proposal_id' => $proposalId,
+                    'name' => $scenario['material_name'],
+                ], [
+                    'supplier_request_line_id' => $supplierRequestLineId ?: null,
+                    'material_id' => $materialId,
+                    'quantity' => $scenario['quantity'],
+                    'unit' => $scenario['unit'],
+                    'unit_price' => $scenario['unit_price'],
+                    'total_amount' => $subtotalAmount,
+                    'comment' => $scenario['proposal_line_comment'],
+                    'metadata' => $this->json(['demo' => true, 'scenario' => 'brick_house']),
+                ])
+                : 0;
+
+            $commercialSnapshot = $this->proposalCommercialSnapshot(
+                scenario: $scenario,
+                proposalId: $proposalId,
+                supplierRequestLineId: $supplierRequestLineId,
+                proposalLineId: $proposalLineId,
+                materialId: $materialId,
+                subtotalAmount: $subtotalAmount,
+                deliveryAmount: $deliveryAmount,
+                vatAmount: $vatAmount,
+                totalAmount: $totalAmount,
+                deliveryDueDate: $neededBy->toDateString()
+            );
+
+            $proposalVersionId = $proposalId > 0
+                ? $this->upsert('supplier_proposal_versions', [
+                    'supplier_proposal_id' => $proposalId,
+                    'version_number' => 1,
+                ], [
+                    'organization_id' => $organizationId,
+                    'commercial_snapshot' => $this->json($commercialSnapshot),
+                    'attachment_snapshot' => $this->json([
+                        'intake_attachment_ids' => [],
+                        'document_name' => $scenario['proposal_number'] . '.pdf',
+                    ]),
+                    'created_by' => $buyerUserId,
+                    'created_at' => $this->now->copy()->addDays($scenario['proposal_offset']),
+                ])
+                : 0;
+
+            if ($proposalId > 0) {
+                $this->upsert('supplier_proposal_intakes', [
+                    'supplier_proposal_id' => $proposalId,
+                ], [
+                    'organization_id' => $organizationId,
+                    'supplier_party_id' => $supplierPartyId ?: null,
+                    'source' => 'email',
+                    'received_at' => $this->now->copy()->addDays($scenario['proposal_offset'])->setTime(11, 20),
+                    'entered_by' => $buyerUserId,
+                    'external_reference' => 'mail:' . strtolower($scenario['proposal_number']),
+                    'comment' => 'КП получено и занесено в демо-контур закупок',
+                    'attachment_ids' => $this->json([]),
+                ]);
+            }
+
+            if ($supplierRequestId > 0 && $proposalId > 0) {
+                $this->upsert('supplier_proposal_decisions', [
+                    'supplier_request_id' => $supplierRequestId,
+                ], [
+                    'organization_id' => $organizationId,
+                    'winning_supplier_proposal_id' => $proposalId,
+                    'winning_supplier_proposal_version_id' => $proposalVersionId ?: null,
+                    'cheapest_supplier_proposal_id' => $proposalId,
+                    'cheapest_supplier_proposal_version_id' => $proposalVersionId ?: null,
+                    'status' => 'approved',
+                    'is_lowest_price_selected' => true,
+                    'decision_reason' => $scenario['decision_reason'],
+                    'comparison_snapshot' => $this->json([
+                        [
+                            'proposal_id' => $proposalId,
+                            'proposal_number' => $scenario['proposal_number'],
+                            'supplier_name' => $scenario['supplier_name'],
+                            'total_amount' => $totalAmount,
+                            'delivery_due_date' => $neededBy->toDateString(),
+                            'selected' => true,
+                        ],
+                    ]),
+                    'selected_by' => $approverUserId,
+                    'selected_at' => $this->now->copy()->addDays($scenario['proposal_offset'] + 1),
+                ]);
+            }
+
+            $purchaseOrderId = $this->upsert('purchase_orders', [
+                'order_number' => $scenario['order_number'],
+            ], [
+                'organization_id' => $organizationId,
+                'purchase_request_id' => $purchaseRequestId,
+                'accepted_supplier_proposal_id' => $proposalId ?: null,
+                'accepted_supplier_proposal_version_id' => $proposalVersionId ?: null,
+                'supplier_id' => $supplierId,
+                'external_supplier_contact_id' => null,
+                'supplier_party_id' => $supplierPartyId ?: null,
+                'supplier_snapshot' => $this->json($supplierSnapshot),
+                'contract_id' => null,
+                'order_date' => $this->now->copy()->addDays($scenario['order_offset'])->toDateString(),
+                'status' => $scenario['order_status'],
+                'total_amount' => $totalAmount,
+                'currency' => 'RUB',
+                'pricing_source' => 'accepted_supplier_proposal',
+                'delivery_date' => $neededBy->toDateString(),
+                'sent_at' => $this->now->copy()->addDays($scenario['sent_offset'])->toDateString(),
+                'confirmed_at' => $this->now->copy()->addDays($scenario['confirmed_offset'])->toDateString(),
+                'notes' => $scenario['order_notes'],
+                'metadata' => $this->json([
+                    'demo' => true,
+                    'scenario' => 'brick_house',
+                    'scope' => $scope,
+                    'site_request_id' => $siteRequestId,
+                    'supplier_request_id' => $supplierRequestId,
+                    'supplier_proposal_id' => $proposalId,
+                ]),
+            ]);
+
+            if ($purchaseOrderId === 0) {
+                continue;
+            }
+
+            $purchaseOrderIds[$scenario['key']] = $purchaseOrderId;
+            $this->totals['purchase_orders']++;
+
+            if ($proposalId > 0 && Schema::hasTable('supplier_proposals')) {
+                DB::table('supplier_proposals')
+                    ->where('id', $proposalId)
+                    ->update($this->withTimestamps('supplier_proposals', ['purchase_order_id' => $purchaseOrderId], true));
+            }
+
+            $purchaseOrderItemId = $this->upsert('purchase_order_items', [
+                'purchase_order_id' => $purchaseOrderId,
+                'material_name' => $scenario['material_name'],
+            ], [
+                'material_id' => $materialId,
+                'quantity' => $scenario['quantity'],
+                'unit' => $scenario['unit'],
+                'unit_price' => $scenario['unit_price'],
+                'total_price' => $subtotalAmount,
+                'notes' => 'Позиция заказа поставщику из демо-заявки с объекта',
+                'metadata' => $this->json([
+                    'demo' => true,
+                    'purchase_request_line_id' => $purchaseRequestLineId,
+                    'supplier_proposal_line_id' => $proposalLineId,
+                ]),
+            ]);
+
+            if (($scenario['receipt_quantity'] ?? 0) > 0 && isset($warehouse['warehouse_id']) && $purchaseOrderItemId > 0) {
+                $receiptId = $this->upsert('purchase_receipts', [
+                    'receipt_number' => $scenario['receipt_number'],
+                ], [
+                    'organization_id' => $organizationId,
+                    'purchase_order_id' => $purchaseOrderId,
+                    'warehouse_id' => $warehouse['warehouse_id'],
+                    'received_by_user_id' => $buyerUserId,
+                    'receipt_date' => $this->now->copy()->addDays($scenario['receipt_offset'])->toDateString(),
+                    'status' => 'posted',
+                    'notes' => 'Приемка материала по демо-заказу поставщику',
+                    'metadata' => $this->json([
+                        'demo' => true,
+                        'scenario' => 'brick_house',
+                        'site_request_id' => $siteRequestId,
+                    ]),
+                ]);
+
+                if ($receiptId > 0) {
+                    $this->upsert('purchase_receipt_lines', [
+                        'purchase_receipt_id' => $receiptId,
+                        'purchase_order_item_id' => $purchaseOrderItemId,
+                    ], [
+                        'quantity_received' => $scenario['receipt_quantity'],
+                        'price' => $scenario['unit_price'],
+                        'total_amount' => round((float) $scenario['receipt_quantity'] * (float) $scenario['unit_price'], 2),
+                        'metadata' => $this->json(['demo' => true, 'scenario' => 'brick_house']),
+                    ]);
+
+                    $this->totals['purchase_receipts']++;
+                }
+            }
+
+            $this->linkProcurementToProjectDelivery(
+                organizationId: $organizationId,
+                projectId: $projectId,
+                siteRequestId: $siteRequestId,
+                purchaseRequestId: $purchaseRequestId,
+                purchaseOrderId: $purchaseOrderId
+            );
+
+            $links[(int) $siteRequestId] = [
+                'purchase_request_id' => $purchaseRequestId,
+                'purchase_order_id' => $purchaseOrderId,
+            ];
+        }
+
+        return [
+            'site_request_links' => $links,
+            'purchase_requests' => $purchaseRequestIds,
+            'purchase_orders' => $purchaseOrderIds,
+        ];
+    }
+
+    private function supplierSnapshot(array $scenario, int $supplierId): array
+    {
+        return [
+            'type' => 'registered',
+            'status' => 'linked',
+            'display_name' => $scenario['supplier_name'],
+            'contact_name' => $scenario['supplier_contact'],
+            'email' => $scenario['supplier_email'],
+            'phone' => $scenario['supplier_phone'],
+            'tax_id' => $scenario['supplier_tax_number'],
+            'registered_supplier_id' => $supplierId,
+            'external_supplier_contact_id' => null,
+        ];
+    }
+
+    private function requestLineSnapshot(int $lineId, int $purchaseRequestLineId, int $materialId, array $scenario): array
+    {
+        return [
+            'id' => $lineId ?: null,
+            'purchase_request_line_id' => $purchaseRequestLineId ?: null,
+            'material_id' => $materialId,
+            'name' => $scenario['material_name'],
+            'quantity' => (float) $scenario['quantity'],
+            'unit' => $scenario['unit'],
+            'specification' => $scenario['specification'],
+            'metadata' => ['demo' => true, 'scenario' => 'brick_house'],
+        ];
+    }
+
+    private function proposalCommercialSnapshot(
+        array $scenario,
+        int $proposalId,
+        int $supplierRequestLineId,
+        int $proposalLineId,
+        int $materialId,
+        float $subtotalAmount,
+        float $deliveryAmount,
+        float $vatAmount,
+        float $totalAmount,
+        string $deliveryDueDate
+    ): array {
+        return [
+            'proposal_id' => $proposalId ?: null,
+            'proposal_number' => $scenario['proposal_number'],
+            'proposal_date' => $this->now->copy()->addDays($scenario['proposal_offset'])->toDateString(),
+            'subtotal_amount' => $subtotalAmount,
+            'delivery_amount' => $deliveryAmount,
+            'vat_amount' => $vatAmount,
+            'total_amount' => $totalAmount,
+            'currency' => 'RUB',
+            'vat_mode' => 'included',
+            'vat_rate' => 20,
+            'valid_until' => $this->now->copy()->addDays($scenario['proposal_offset'] + 14)->toDateString(),
+            'delivery_due_date' => $deliveryDueDate,
+            'lead_time_days' => max(1, $scenario['needed_offset'] - $scenario['proposal_offset']),
+            'payment_terms' => $scenario['payment_terms'],
+            'delivery_terms' => $scenario['delivery_terms'],
+            'warranty_terms' => $scenario['warranty_terms'],
+            'lines' => [
+                [
+                    'id' => $proposalLineId ?: null,
+                    'supplier_request_line_id' => $supplierRequestLineId ?: null,
+                    'material_id' => $materialId,
+                    'name' => $scenario['material_name'],
+                    'quantity' => (float) $scenario['quantity'],
+                    'unit' => $scenario['unit'],
+                    'unit_price' => (float) $scenario['unit_price'],
+                    'total_amount' => $subtotalAmount,
+                    'comment' => $scenario['proposal_line_comment'],
+                ],
+            ],
+        ];
+    }
+
+    private function linkProcurementToProjectDelivery(
+        int $organizationId,
+        int $projectId,
+        int $siteRequestId,
+        int $purchaseRequestId,
+        int $purchaseOrderId
+    ): void {
+        if (
+            !Schema::hasTable('project_material_deliveries')
+            || $siteRequestId <= 0
+            || $purchaseRequestId <= 0
+            || $purchaseOrderId <= 0
+        ) {
+            return;
+        }
+
+        DB::table('project_material_deliveries')
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('site_request_id', $siteRequestId)
+            ->update($this->withTimestamps('project_material_deliveries', [
+                'purchase_request_id' => $purchaseRequestId,
+                'purchase_order_id' => $purchaseOrderId,
+            ], true));
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function procurementScenarios(string $scope): array
+    {
+        if ($scope === 'GP') {
+            return [
+                [
+                    'key' => 'gp_brick_delivery',
+                    'site_request' => 'brick_delivery',
+                    'material' => 'brick',
+                    'material_name' => 'Кирпич керамический полнотелый М150',
+                    'quantity' => 6200,
+                    'unit' => 'шт',
+                    'unit_price' => 34.10,
+                    'delivery_amount' => 28000.00,
+                    'needed_offset' => -3,
+                    'order_offset' => -15,
+                    'sent_offset' => -14,
+                    'proposal_offset' => -13,
+                    'confirmed_offset' => -12,
+                    'order_status' => 'delivered',
+                    'receipt_quantity' => 6200,
+                    'receipt_offset' => -2,
+                    'receipt_number' => 'ПРМ-ГП-ЛД-001',
+                    'purchase_request_number' => 'ЗЗ-ГП-ЛД-001',
+                    'supplier_request_number' => 'ЗП-ГП-ЛД-001',
+                    'proposal_number' => 'КП-ГП-КЕРАМИКА-001',
+                    'order_number' => 'ЗК-ГП-ЛД-001',
+                    'supplier_code' => 'BH-GP-SUP-BRICK',
+                    'supplier_name' => 'ООО "Истра Керамика"',
+                    'supplier_contact' => 'Марина Белова',
+                    'supplier_phone' => '+7 495 730-18-41',
+                    'supplier_email' => 'sales@istra-ceramic.prohelper.test',
+                    'supplier_address' => 'Московская область, Истра, Промышленная ул., 8',
+                    'supplier_tax_number' => '5017001401',
+                    'supplier_specialization' => 'Керамический кирпич',
+                    'specification' => 'Марка М150, полнотелый, паллеты с паспортом качества, партия без высолов.',
+                    'purchase_request_notes' => 'Закрытие сменного объема кладки второго этажа без простоя подрядчика.',
+                    'supplier_request_comment' => 'Запросить наличие партии и окно доставки до 12:00.',
+                    'proposal_notes' => 'Цена зафиксирована на партию со склада поставщика.',
+                    'proposal_line_comment' => 'Доставка отдельной строкой, разгрузка силами объекта.',
+                    'order_notes' => 'Кирпич принят кладовщиком, документы приложены к приемке.',
+                    'payment_terms' => '100% оплата после приемки партии на объекте.',
+                    'delivery_terms' => 'Доставка автотранспортом поставщика до зоны разгрузки 1.',
+                    'warranty_terms' => 'Замена боя сверх 2% по акту входного контроля.',
+                    'decision_reason' => 'Выбран поставщик с подтвержденным наличием партии и ближайшим окном доставки.',
+                ],
+                [
+                    'key' => 'gp_mesh_restock',
+                    'site_request' => 'mesh_restock',
+                    'material' => 'mesh',
+                    'material_name' => 'Сетка кладочная 50x50x4',
+                    'quantity' => 180,
+                    'unit' => 'м²',
+                    'unit_price' => 182.00,
+                    'delivery_amount' => 6500.00,
+                    'needed_offset' => -9,
+                    'order_offset' => -13,
+                    'sent_offset' => -12,
+                    'proposal_offset' => -12,
+                    'confirmed_offset' => -11,
+                    'order_status' => 'delivered',
+                    'receipt_quantity' => 180,
+                    'receipt_offset' => -8,
+                    'receipt_number' => 'ПРМ-ГП-ЛД-002',
+                    'purchase_request_number' => 'ЗЗ-ГП-ЛД-002',
+                    'supplier_request_number' => 'ЗП-ГП-ЛД-002',
+                    'proposal_number' => 'КП-ГП-МЕТИЗ-002',
+                    'order_number' => 'ЗК-ГП-ЛД-002',
+                    'supplier_code' => 'BH-GP-SUP-MESH',
+                    'supplier_name' => 'ООО "Метиз Комплект"',
+                    'supplier_contact' => 'Андрей Орлов',
+                    'supplier_phone' => '+7 495 730-18-42',
+                    'supplier_email' => 'orders@metiz-komplekt.prohelper.test',
+                    'supplier_address' => 'Москва, ул. Промышленная, 17',
+                    'supplier_tax_number' => '7715022402',
+                    'supplier_specialization' => 'Армирующая сетка и метизы',
+                    'specification' => 'Карта 2x0,5 м, оцинкованная, сертификат соответствия.',
+                    'purchase_request_notes' => 'Пополнение резерва сетки под армирование рядов кладки.',
+                    'supplier_request_comment' => 'Подтвердить наличие на складе и отгрузку в день заказа.',
+                    'proposal_notes' => 'Поставщик дал цену ниже базовой на остаток партии.',
+                    'proposal_line_comment' => 'Упаковка кратно 10 картам.',
+                    'order_notes' => 'Сетка принята и зарезервирована под кладку второго этажа.',
+                    'payment_terms' => 'Оплата по счету в течение 3 банковских дней.',
+                    'delivery_terms' => 'Самовывоз транспортом генподряда.',
+                    'warranty_terms' => 'Качество по паспорту партии.',
+                    'decision_reason' => 'Самая быстрая отгрузка из доступных поставщиков.',
+                ],
+                [
+                    'key' => 'gp_rebar_topup',
+                    'site_request' => 'rebar_topup',
+                    'material' => 'rebar',
+                    'material_name' => 'Арматура А500С 12 мм',
+                    'quantity' => 2.4,
+                    'unit' => 'т',
+                    'unit_price' => 73500.00,
+                    'delivery_amount' => 18500.00,
+                    'needed_offset' => 2,
+                    'order_offset' => -1,
+                    'sent_offset' => -1,
+                    'proposal_offset' => 0,
+                    'confirmed_offset' => 0,
+                    'order_status' => 'confirmed',
+                    'receipt_quantity' => 0,
+                    'receipt_offset' => null,
+                    'receipt_number' => 'ПРМ-ГП-ЛД-003',
+                    'purchase_request_number' => 'ЗЗ-ГП-ЛД-003',
+                    'supplier_request_number' => 'ЗП-ГП-ЛД-003',
+                    'proposal_number' => 'КП-ГП-СТАЛЬ-003',
+                    'order_number' => 'ЗК-ГП-ЛД-003',
+                    'supplier_code' => 'BH-GP-SUP-REBAR',
+                    'supplier_name' => 'АО "СтальСнаб-М"',
+                    'supplier_contact' => 'Роман Соколов',
+                    'supplier_phone' => '+7 495 730-18-43',
+                    'supplier_email' => 'tender@stalsnab.prohelper.test',
+                    'supplier_address' => 'Москва, 2-й Кабельный проезд, 4',
+                    'supplier_tax_number' => '7722043303',
+                    'supplier_specialization' => 'Металлопрокат и арматура',
+                    'specification' => 'А500С 12 мм, мерная длина 11,7 м, сертификат плавки обязателен.',
+                    'purchase_request_notes' => 'Пополнение под армопояс второго этажа.',
+                    'supplier_request_comment' => 'Подтвердить отгрузку с резкой без задержки графика.',
+                    'proposal_notes' => 'Поставка подтверждена на ближайшее утро.',
+                    'proposal_line_comment' => 'Цена включает погрузку на складе поставщика.',
+                    'order_notes' => 'Заказ подтвержден, ожидает отгрузку.',
+                    'payment_terms' => '50% предоплата, 50% после приемки.',
+                    'delivery_terms' => 'Доставка манипулятором поставщика.',
+                    'warranty_terms' => 'Сертификат качества на каждую партию.',
+                    'decision_reason' => 'Поставщик подтвердил нужный диаметр и дату доставки.',
+                ],
+                [
+                    'key' => 'gp_slab_delivery',
+                    'site_request' => 'slab_delivery',
+                    'material' => 'slab',
+                    'material_name' => 'Плиты перекрытия ПБ',
+                    'quantity' => 32,
+                    'unit' => 'шт',
+                    'unit_price' => 18500.00,
+                    'delivery_amount' => 42000.00,
+                    'needed_offset' => 12,
+                    'order_offset' => 1,
+                    'sent_offset' => 1,
+                    'proposal_offset' => 2,
+                    'confirmed_offset' => 3,
+                    'order_status' => 'confirmed',
+                    'receipt_quantity' => 0,
+                    'receipt_offset' => null,
+                    'receipt_number' => 'ПРМ-ГП-ЛД-004',
+                    'purchase_request_number' => 'ЗЗ-ГП-ЛД-004',
+                    'supplier_request_number' => 'ЗП-ГП-ЛД-004',
+                    'proposal_number' => 'КП-ГП-ЖБИ-004',
+                    'order_number' => 'ЗК-ГП-ЛД-004',
+                    'supplier_code' => 'BH-GP-SUP-SLAB',
+                    'supplier_name' => 'ООО "Подмосковье ЖБИ"',
+                    'supplier_contact' => 'Игорь Зайцев',
+                    'supplier_phone' => '+7 495 730-18-44',
+                    'supplier_email' => 'pb@mosjbi.prohelper.test',
+                    'supplier_address' => 'Московская область, Дедовск, Заводская ул., 5',
+                    'supplier_tax_number' => '5017004404',
+                    'supplier_specialization' => 'Железобетонные изделия',
+                    'specification' => 'Плиты ПБ по спецификации проекта, паспорта и схема раскладки обязательны.',
+                    'purchase_request_notes' => 'Поставка синхронизирована с окном автокрана.',
+                    'supplier_request_comment' => 'Запросить подтверждение номенклатуры и время подачи машин.',
+                    'proposal_notes' => 'Поставщик подтвердил две машины с интервалом 40 минут.',
+                    'proposal_line_comment' => 'Цена без учета разгрузки краном генподряда.',
+                    'order_notes' => 'Ожидает готовность армопояса и допуск ПТО.',
+                    'payment_terms' => '30% предоплата, остаток после приемки плит.',
+                    'delivery_terms' => 'Доставка по графику монтажа плит.',
+                    'warranty_terms' => 'Паспорта ЖБИ и гарантия завода 12 месяцев.',
+                    'decision_reason' => 'Выбран поставщик с подтвержденной номенклатурой ПБ и датой подачи.',
+                ],
+                [
+                    'key' => 'gp_roofing_preorder',
+                    'site_request' => 'roofing_preorder',
+                    'material' => 'roofing',
+                    'material_name' => 'Металлочерепица 0,5 мм',
+                    'quantity' => 318,
+                    'unit' => 'м²',
+                    'unit_price' => 910.00,
+                    'delivery_amount' => 22000.00,
+                    'needed_offset' => 36,
+                    'order_offset' => 6,
+                    'sent_offset' => 6,
+                    'proposal_offset' => 7,
+                    'confirmed_offset' => 8,
+                    'order_status' => 'sent',
+                    'receipt_quantity' => 0,
+                    'receipt_offset' => null,
+                    'receipt_number' => 'ПРМ-ГП-ЛД-005',
+                    'purchase_request_number' => 'ЗЗ-ГП-ЛД-005',
+                    'supplier_request_number' => 'ЗП-ГП-ЛД-005',
+                    'proposal_number' => 'КП-ГП-КРОВЛЯ-005',
+                    'order_number' => 'ЗК-ГП-ЛД-005',
+                    'supplier_code' => 'BH-GP-SUP-ROOF',
+                    'supplier_name' => 'ООО "Кровля Профи"',
+                    'supplier_contact' => 'Светлана Миронова',
+                    'supplier_phone' => '+7 495 730-18-45',
+                    'supplier_email' => 'roof@roof-profi.prohelper.test',
+                    'supplier_address' => 'Москва, Дмитровское шоссе, 163',
+                    'supplier_tax_number' => '7713055505',
+                    'supplier_specialization' => 'Кровельные материалы',
+                    'specification' => 'Металлочерепица 0,5 мм, цвет RAL 7024, комплект планок и крепежа.',
+                    'purchase_request_notes' => 'Ранняя бронь выбранного заказчиком цвета.',
+                    'supplier_request_comment' => 'Запросить срок производства и резерв цвета.',
+                    'proposal_notes' => 'Цена действует 14 дней, производство после подтверждения заказа.',
+                    'proposal_line_comment' => 'Комплектующие включены в доставку.',
+                    'order_notes' => 'Заказ отправлен поставщику, ожидается подтверждение производства.',
+                    'payment_terms' => '70% предоплата до запуска производства.',
+                    'delivery_terms' => 'Доставка после готовности кровельного фронта.',
+                    'warranty_terms' => 'Гарантия покрытия 15 лет.',
+                    'decision_reason' => 'Поставщик держит нужный цвет и комплектующие в одном заказе.',
+                ],
+                [
+                    'key' => 'gp_facing_brick_preorder',
+                    'site_request' => 'facing_brick_preorder',
+                    'material' => 'facing_brick',
+                    'material_name' => 'Кирпич облицовочный лицевой М175',
+                    'quantity' => 28400,
+                    'unit' => 'шт',
+                    'unit_price' => 51.20,
+                    'delivery_amount' => 68000.00,
+                    'needed_offset' => 58,
+                    'order_offset' => 9,
+                    'sent_offset' => 9,
+                    'proposal_offset' => 10,
+                    'confirmed_offset' => 11,
+                    'order_status' => 'sent',
+                    'receipt_quantity' => 0,
+                    'receipt_offset' => null,
+                    'receipt_number' => 'ПРМ-ГП-ЛД-006',
+                    'purchase_request_number' => 'ЗЗ-ГП-ЛД-006',
+                    'supplier_request_number' => 'ЗП-ГП-ЛД-006',
+                    'proposal_number' => 'КП-ГП-ФАСАД-006',
+                    'order_number' => 'ЗК-ГП-ЛД-006',
+                    'supplier_code' => 'BH-GP-SUP-FACE',
+                    'supplier_name' => 'ООО "Фасадный кирпич"',
+                    'supplier_contact' => 'Павел Карпов',
+                    'supplier_phone' => '+7 495 730-18-46',
+                    'supplier_email' => 'face@facade-brick.prohelper.test',
+                    'supplier_address' => 'Тула, Новомосковское шоссе, 12',
+                    'supplier_tax_number' => '7107006606',
+                    'supplier_specialization' => 'Облицовочный кирпич',
+                    'specification' => 'М175, оттенок графит, единая партия, бой не более 1,5%.',
+                    'purchase_request_notes' => 'Резерв фасадной партии до закрытия теплового контура.',
+                    'supplier_request_comment' => 'Запросить образец, паспорт партии и условия хранения резерва.',
+                    'proposal_notes' => 'Поставщик готов держать резерв партии до даты фасадных работ.',
+                    'proposal_line_comment' => 'Поставка четырьмя машинами по отдельному графику.',
+                    'order_notes' => 'Заказ отправлен, ожидается подтверждение резерва партии.',
+                    'payment_terms' => '20% бронь партии, остаток перед отгрузкой.',
+                    'delivery_terms' => 'Поставка партиями по заявкам генподряда.',
+                    'warranty_terms' => 'Подбор оттенка и замена боя сверх нормы.',
+                    'decision_reason' => 'Выбран единый оттенок партии и приемлемые условия резерва.',
+                ],
+            ];
+        }
+
+        return [
+            [
+                'key' => 'sub_brick_delivery',
+                'site_request' => 'brick_delivery',
+                'material' => 'brick',
+                'material_name' => 'Кирпич керамический полнотелый М150',
+                'quantity' => 4200,
+                'unit' => 'шт',
+                'unit_price' => 34.80,
+                'delivery_amount' => 16000.00,
+                'needed_offset' => -3,
+                'order_offset' => -8,
+                'sent_offset' => -8,
+                'proposal_offset' => -7,
+                'confirmed_offset' => -7,
+                'order_status' => 'delivered',
+                'receipt_quantity' => 4200,
+                'receipt_offset' => -2,
+                'receipt_number' => 'ПРМ-ПДР-ЛД-001',
+                'purchase_request_number' => 'ЗЗ-ПДР-ЛД-001',
+                'supplier_request_number' => 'ЗП-ПДР-ЛД-001',
+                'proposal_number' => 'КП-ПДР-КИРПИЧ-001',
+                'order_number' => 'ЗК-ПДР-ЛД-001',
+                'supplier_code' => 'BH-SUB-SUP-BRICK',
+                'supplier_name' => 'ООО "КладМатериал"',
+                'supplier_contact' => 'Денис Климов',
+                'supplier_phone' => '+7 495 740-21-11',
+                'supplier_email' => 'order@klad-material.prohelper.test',
+                'supplier_address' => 'Москва, Рязанский проспект, 31',
+                'supplier_tax_number' => '7721011101',
+                'supplier_specialization' => 'Кладочные материалы',
+                'specification' => 'Кирпич М150, подача на захватку подрядчика, паллеты с маркировкой.',
+                'purchase_request_notes' => 'Закрыть вторую захватку кладки без ожидания склада генподряда.',
+                'supplier_request_comment' => 'Подтвердить быструю доставку к бытовому городку подрядчика.',
+                'proposal_notes' => 'КП принято мастером подрядчика.',
+                'proposal_line_comment' => 'Доставка малотоннажным транспортом.',
+                'order_notes' => 'Кирпич принят на склад подрядчика.',
+                'payment_terms' => 'Оплата после приемки.',
+                'delivery_terms' => 'Доставка до склада подрядчика на объекте.',
+                'warranty_terms' => 'Замена боя по входному контролю.',
+                'decision_reason' => 'Лучший срок поставки для сменного плана подрядчика.',
+            ],
+            [
+                'key' => 'sub_mesh_restock',
+                'site_request' => 'mesh_restock',
+                'material' => 'mesh',
+                'material_name' => 'Сетка кладочная 50x50x4',
+                'quantity' => 90,
+                'unit' => 'м²',
+                'unit_price' => 185.00,
+                'delivery_amount' => 0.00,
+                'needed_offset' => -8,
+                'order_offset' => -10,
+                'sent_offset' => -10,
+                'proposal_offset' => -9,
+                'confirmed_offset' => -9,
+                'order_status' => 'delivered',
+                'receipt_quantity' => 90,
+                'receipt_offset' => -8,
+                'receipt_number' => 'ПРМ-ПДР-ЛД-002',
+                'purchase_request_number' => 'ЗЗ-ПДР-ЛД-002',
+                'supplier_request_number' => 'ЗП-ПДР-ЛД-002',
+                'proposal_number' => 'КП-ПДР-СЕТКА-002',
+                'order_number' => 'ЗК-ПДР-ЛД-002',
+                'supplier_code' => 'BH-SUB-SUP-MESH',
+                'supplier_name' => 'ИП Гордеев А.С.',
+                'supplier_contact' => 'Александр Гордеев',
+                'supplier_phone' => '+7 495 740-21-12',
+                'supplier_email' => 'gordeev@mesh-supply.prohelper.test',
+                'supplier_address' => 'Московская область, Красногорск, Заводская ул., 3',
+                'supplier_tax_number' => '5024012202',
+                'supplier_specialization' => 'Сетка и крепеж',
+                'specification' => 'Карта 2x0,5 м, доставка включена в цену.',
+                'purchase_request_notes' => 'Закрыть армирование рядов на первой захватке.',
+                'supplier_request_comment' => 'Подтвердить наличие 90 м² и отгрузку сегодня.',
+                'proposal_notes' => 'Поставщик подтвердил доставку в день запроса.',
+                'proposal_line_comment' => 'Цена без отдельной доставки.',
+                'order_notes' => 'Сетка получена и списана в журнал работ.',
+                'payment_terms' => 'Оплата по факту приемки.',
+                'delivery_terms' => 'Доставка до КПП объекта.',
+                'warranty_terms' => 'Качество по паспорту партии.',
+                'decision_reason' => 'Материал был в наличии и без отдельной логистики.',
+            ],
+            [
+                'key' => 'sub_mortar_today',
+                'site_request' => 'mortar_today',
+                'material' => 'mortar',
+                'material_name' => 'Раствор кладочный М100',
+                'quantity' => 6.5,
+                'unit' => 'м³',
+                'unit_price' => 5100.00,
+                'delivery_amount' => 4500.00,
+                'needed_offset' => 1,
+                'order_offset' => 0,
+                'sent_offset' => 0,
+                'proposal_offset' => 0,
+                'confirmed_offset' => 0,
+                'order_status' => 'in_delivery',
+                'receipt_quantity' => 0,
+                'receipt_offset' => null,
+                'receipt_number' => 'ПРМ-ПДР-ЛД-003',
+                'purchase_request_number' => 'ЗЗ-ПДР-ЛД-003',
+                'supplier_request_number' => 'ЗП-ПДР-ЛД-003',
+                'proposal_number' => 'КП-ПДР-РАСТВОР-003',
+                'order_number' => 'ЗК-ПДР-ЛД-003',
+                'supplier_code' => 'BH-SUB-SUP-MORTAR',
+                'supplier_name' => 'ООО "Раствор-Сервис"',
+                'supplier_contact' => 'Олег Антонов',
+                'supplier_phone' => '+7 495 740-21-13',
+                'supplier_email' => 'dispatch@rastvor-service.prohelper.test',
+                'supplier_address' => 'Москва, ул. Бетонная, 6',
+                'supplier_tax_number' => '7723013303',
+                'supplier_specialization' => 'Готовые растворы',
+                'specification' => 'Раствор М100, подача миксером к 09:00, осадка конуса по паспорту.',
+                'purchase_request_notes' => 'Срочная поставка на дневную смену кладки.',
+                'supplier_request_comment' => 'Запросить окно подачи и контакт водителя.',
+                'proposal_notes' => 'Поставщик подтвердил машину в пути.',
+                'proposal_line_comment' => 'Доставка включена отдельной строкой.',
+                'order_notes' => 'Машина в пути, приемка ожидается утром.',
+                'payment_terms' => 'Оплата по счету после подтверждения объема.',
+                'delivery_terms' => 'Подача миксером на площадку подрядчика.',
+                'warranty_terms' => 'Паспорт смеси на рейс.',
+                'decision_reason' => 'Единственный поставщик с подтвержденным утренним окном.',
+            ],
+            [
+                'key' => 'sub_rebar_topup',
+                'site_request' => 'rebar_topup',
+                'material' => 'rebar',
+                'material_name' => 'Арматура А500С 12 мм',
+                'quantity' => 0.9,
+                'unit' => 'т',
+                'unit_price' => 74200.00,
+                'delivery_amount' => 9000.00,
+                'needed_offset' => 2,
+                'order_offset' => 0,
+                'sent_offset' => 0,
+                'proposal_offset' => 1,
+                'confirmed_offset' => 1,
+                'order_status' => 'confirmed',
+                'receipt_quantity' => 0,
+                'receipt_offset' => null,
+                'receipt_number' => 'ПРМ-ПДР-ЛД-004',
+                'purchase_request_number' => 'ЗЗ-ПДР-ЛД-004',
+                'supplier_request_number' => 'ЗП-ПДР-ЛД-004',
+                'proposal_number' => 'КП-ПДР-АРМ-004',
+                'order_number' => 'ЗК-ПДР-ЛД-004',
+                'supplier_code' => 'BH-SUB-SUP-REBAR',
+                'supplier_name' => 'ООО "Металл Участок"',
+                'supplier_contact' => 'Евгений Фролов',
+                'supplier_phone' => '+7 495 740-21-14',
+                'supplier_email' => 'metal@uchastok.prohelper.test',
+                'supplier_address' => 'Москва, ул. Складская, 9',
+                'supplier_tax_number' => '7724014404',
+                'supplier_specialization' => 'Мелкие партии металлопроката',
+                'specification' => 'А500С 12 мм, партия до 1 т, резка под перемычки.',
+                'purchase_request_notes' => 'Пополнение под каркасы перемычек второго этажа.',
+                'supplier_request_comment' => 'Подтвердить резку и доставку на следующий день.',
+                'proposal_notes' => 'Поставщик подтвердил резку по ведомости.',
+                'proposal_line_comment' => 'Цена включает резку.',
+                'order_notes' => 'Заказ подтвержден, ожидается отгрузка.',
+                'payment_terms' => '50% предоплата, остаток по приемке.',
+                'delivery_terms' => 'Доставка манипулятором до склада подрядчика.',
+                'warranty_terms' => 'Сертификат на партию.',
+                'decision_reason' => 'Поставщик принимает малый объем без удорожания резки.',
+            ],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $general
+     * @param array<string, mixed> $contractor
      * @param array<string, int> $contracts
      * @param array<string, int> $contractors
      * @param array<string, int> $estimates
      * @param array<string, int> $acts
      * @param array<string, array<string, int>> $siteRequests
+     * @param array{site_request_links?: array<int, array{purchase_request_id: int, purchase_order_id: int}>} $procurement
      * @return array<string, int>
      */
     private function seedPaymentDocuments(
@@ -4301,7 +5337,8 @@ class BrickHouseDemoSeeder extends Seeder
         array $contractors,
         array $estimates,
         array $acts,
-        array $siteRequests
+        array $siteRequests,
+        array $procurement = []
     ): array {
         if (!Schema::hasTable('payment_documents')) {
             return [];
@@ -4610,6 +5647,19 @@ class BrickHouseDemoSeeder extends Seeder
             $paidAmount = (float) $document['paid_amount'];
             $remainingAmount = round((float) $document['amount'] - $paidAmount, 2);
             $paidAt = $document['paid_offset'] === null ? null : $this->now->copy()->addDays($document['paid_offset']);
+            $metadata = [
+                'demo' => true,
+                'scenario' => 'brick_house',
+            ];
+
+            if ($document['site_request_id']) {
+                $procurementLink = $procurement['site_request_links'][(int) $document['site_request_id']] ?? null;
+
+                if (is_array($procurementLink)) {
+                    $metadata['purchase_request_id'] = $procurementLink['purchase_request_id'] ?? null;
+                    $metadata['purchase_order_id'] = $procurementLink['purchase_order_id'] ?? null;
+                }
+            }
 
             $ids[$key] = $this->upsert('payment_documents', [
                 'document_number' => $document['document_number'],
@@ -4650,7 +5700,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'bank_bik' => '044525001',
                 'bank_correspondent_account' => '30101810400000000225',
                 'bank_name' => 'АО "Демо Банк"',
-                'metadata' => $this->json(['demo' => true, 'scenario' => 'brick_house']),
+                'metadata' => $this->json($metadata),
                 'notes' => 'Демо-платеж связан с договором, сметой или заявкой',
                 'created_by_user_id' => $document['user_id'],
                 'approved_by_user_id' => $document['status'] === 'approved' || $document['status'] === 'paid' ? $document['approver_id'] : null,
