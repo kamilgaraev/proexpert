@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\AIAssistant\Rag;
 
 use App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use PHPUnit\Framework\TestCase;
 
@@ -20,10 +21,30 @@ class IndexRagSourceJobTest extends TestCase
         $this->assertSame('project', $job->sourceType);
         $this->assertSame('redis_ai_rag', $job->connection);
         $this->assertSame('ai-rag', $job->queue);
+        $this->assertSame(1, $job->tries);
+        $this->assertSame(1800, $job->timeout);
+        $this->assertTrue($job->failOnTimeout);
 
         $job->handle($indexer);
 
         $this->assertSame([[10, 20, 'project']], $indexer->calls);
+    }
+
+    public function test_job_does_not_index_when_run_cannot_be_marked_running(): void
+    {
+        $job = new IndexRagSourceJob(10, 20, 'project', 30);
+        $indexer = new RecordingRagIndexer();
+        $coordinator = $this->createMock(RagIndexingCoordinator::class);
+
+        $coordinator
+            ->expects($this->once())
+            ->method('markRunning')
+            ->with(30)
+            ->willReturn(null);
+
+        $job->handle($indexer, $coordinator);
+
+        $this->assertSame([], $indexer->calls);
     }
 }
 
