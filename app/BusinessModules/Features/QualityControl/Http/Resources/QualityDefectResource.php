@@ -6,8 +6,10 @@ namespace App\BusinessModules\Features\QualityControl\Http\Resources;
 
 use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefectPhoto;
+use App\BusinessModules\Features\QualityControl\Models\QualityDefectStatusHistory;
 use App\BusinessModules\Features\QualityControl\Services\QualityDefectWorkflowService;
 use App\Models\Organization;
+use App\Models\User;
 use App\Services\Storage\FileService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -51,8 +53,15 @@ final class QualityDefectResource extends JsonResource
             'can_be_resolved' => $defect->canBeResolved(),
             'can_be_verified' => $defect->canBeVerified(),
             'workflow_summary' => $workflow->toArray(),
-            'problem_flags' => $workflow->problemFlags,
+            'problem_flags' => array_map(
+                fn (array $flag): array => $this->problemFlagPayload($flag),
+                $workflow->problemFlags
+            ),
             'available_actions' => $workflow->availableActions,
+            'available_action_details' => array_map(
+                fn (string $action): array => $this->actionPayload($action),
+                $workflow->availableActions
+            ),
             'project' => $this->whenLoaded('project', fn () => $this->project ? [
                 'id' => $this->project->id,
                 'name' => $this->project->name,
@@ -72,16 +81,63 @@ final class QualityDefectResource extends JsonResource
             'photos' => $this->whenLoaded('photos', fn () => $this->photos->map(
                 fn (QualityDefectPhoto $photo): array => $this->photoPayload($photo, $defect)
             )),
-            'status_history' => $this->whenLoaded('statusHistory', fn () => $this->statusHistory->map(fn ($history) => [
-                'id' => $history->id,
-                'from_status' => $history->from_status?->value,
-                'to_status' => $history->to_status->value,
-                'comment' => $history->comment,
-                'changed_by' => $history->changed_by,
-                'changed_at' => $history->changed_at?->toIso8601String(),
-            ])),
+            'status_history' => $this->whenLoaded(
+                'statusHistory',
+                fn () => $this->statusHistory->map(
+                    fn (QualityDefectStatusHistory $history): array => $this->historyPayload($history)
+                )
+            ),
             'created_at' => $defect->created_at->toIso8601String(),
             'updated_at' => $defect->updated_at->toIso8601String(),
+        ];
+    }
+
+    private function actionPayload(string $action): array
+    {
+        return [
+            'key' => $action,
+            'label' => trans_message('quality_control.workflow.actions.' . $action),
+        ];
+    }
+
+    private function problemFlagPayload(array $flag): array
+    {
+        $code = (string) ($flag['code'] ?? $flag['key'] ?? '');
+        $message = (string) ($flag['message'] ?? $flag['label'] ?? '');
+
+        return array_merge($flag, [
+            'code' => $code,
+            'key' => $code,
+            'message' => $message,
+            'label' => $message,
+        ]);
+    }
+
+    private function historyPayload(QualityDefectStatusHistory $history): array
+    {
+        $changedBy = $history->relationLoaded('changedBy')
+            ? $history->changedBy
+            : null;
+
+        return [
+            'id' => $history->id,
+            'from_status' => $history->from_status?->value,
+            'to_status' => $history->to_status->value,
+            'comment' => $history->comment,
+            'changed_by_id' => $history->changed_by,
+            'changed_by' => $changedBy ? $this->userPayload($changedBy) : null,
+            'changed_by_user' => $changedBy ? $this->userPayload($changedBy) : null,
+            'changed_at' => $history->changed_at?->toIso8601String(),
+            'created_at' => $history->changed_at?->toIso8601String(),
+        ];
+    }
+
+    private function userPayload(User $user): array
+    {
+        return [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
         ];
     }
 
@@ -108,7 +164,10 @@ final class QualityDefectResource extends JsonResource
             'path' => $path,
             'preview_url' => $previewUrl,
             'caption' => $photo->caption,
-            'uploaded_by' => $photo->uploaded_by,
+            'uploaded_by_id' => $photo->uploaded_by,
+            'uploaded_by' => $photo->relationLoaded('uploadedBy') && $photo->uploadedBy
+                ? $this->userPayload($photo->uploadedBy)
+                : null,
             'created_at' => $photo->created_at?->toIso8601String(),
         ];
     }

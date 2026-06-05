@@ -37,6 +37,9 @@ Route::prefix('api/v1/admin/quality-control')
             Route::post('/{id}/reject', [QualityDefectController::class, 'reject'])
                 ->middleware('authorize:quality-control.defects.reject')
                 ->name('reject');
+            Route::post('/{id}/cancel', [QualityDefectController::class, 'cancel'])
+                ->middleware('authorize:quality-control.defects.reject')
+                ->name('cancel');
         });
     });
 

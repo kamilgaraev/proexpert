@@ -4,15 +4,26 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Api\V1\Admin\WorkType;
 
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\Models\User;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
 
 class StoreWorkTypeRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return Gate::allows('admin.catalogs.manage');
+        /** @var User|null $user */
+        $user = $this->user();
+        $organizationId = (int) $this->attributes->get('current_organization_id');
+
+        if (!$user || $organizationId <= 0) {
+            return false;
+        }
+
+        return app(AuthorizationService::class)->can($user, 'work_types.create', [
+            'organization_id' => $organizationId,
+        ]);
     }
 
     public function rules(): array

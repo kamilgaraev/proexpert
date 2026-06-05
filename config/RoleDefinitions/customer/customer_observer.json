@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "context": "organization",
   "interface": "customer",
+  "assignable": false,
   "description": "Наблюдатель customer-организации: только чтение сигналов и проектных данных.",
   "system_permissions": [
     "dashboard.view",

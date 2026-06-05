@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "context": "organization",
   "interface": "customer",
+  "assignable": false,
   "description": "Юридическая роль customer-организации: договоры, замечания и запросы.",
   "system_permissions": [
     "dashboard.view",

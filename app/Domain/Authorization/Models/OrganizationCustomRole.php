@@ -2,6 +2,7 @@
 
 namespace App\Domain\Authorization\Models;
 
+use App\Domain\Authorization\Services\RolePermissionNormalizer;
 use App\Models\User;
 use App\Models\Organization;
 use Illuminate\Database\Eloquent\Model;
@@ -101,6 +102,13 @@ class OrganizationCustomRole extends Model
                 $role->slug = self::generateSlug($role->name, $role->organization_id);
             }
         });
+
+        static::saving(function (self $role) {
+            $role->system_permissions = RolePermissionNormalizer::normalizeSystemPermissions(
+                $role->system_permissions ?? [],
+                $role->interface_access ?? []
+            );
+        });
     }
 
     /**
@@ -180,6 +188,8 @@ class OrganizationCustomRole extends Model
         ?string $description = null,
         ?User $createdBy = null
     ): self {
+        $systemPermissions = RolePermissionNormalizer::normalizeSystemPermissions($systemPermissions, $interfaceAccess);
+
         return static::create([
             'organization_id' => $organizationId,
             'name' => $name,

@@ -8,6 +8,7 @@ use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Domain\Authorization\Services\CustomRoleService;
+use App\Domain\Authorization\Services\RolePayloadFormatter;
 use App\Domain\Authorization\Services\RoleScanner;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\LandingResponse;
@@ -28,6 +29,7 @@ class CustomUserManagementController extends Controller
         protected CustomRoleService $customRoleService,
         protected AuthorizationService $authService,
         protected RoleScanner $roleScanner,
+        protected RolePayloadFormatter $rolePayloadFormatter,
         protected UserRepository $userRepository,
         protected SubscriptionLimitsService $subscriptionLimitsService
     ) {
@@ -131,7 +133,12 @@ class CustomUserManagementController extends Controller
         }
 
         try {
-            $systemRoles = $this->roleScanner->getAllRoles()->toArray();
+            $systemRoles = $this->roleScanner->getAllRoles()
+                ->filter(fn (array $role): bool => $this->rolePayloadFormatter->isAssignableSystemRole($role))
+                ->map(fn (array $role, string $slug): array => $this->rolePayloadFormatter->formatSystemRole($slug, $role))
+                ->sortBy('name', SORT_NATURAL)
+                ->values()
+                ->toArray();
             $customRoles = collect([]);
 
             try {
@@ -141,16 +148,11 @@ class CustomUserManagementController extends Controller
             }
 
             return LandingResponse::success([
-                'system_roles' => array_keys($systemRoles),
-                'custom_roles' => $customRoles->map(function ($role) {
-                    return [
-                        'id' => $role->id,
-                        'name' => $role->name,
-                        'slug' => $role->slug,
-                        'description' => $role->description,
-                        'is_active' => $role->is_active,
-                    ];
-                })->values()->toArray(),
+                'system_roles' => $systemRoles,
+                'custom_roles' => $customRoles
+                    ->map(fn ($role): array => $this->rolePayloadFormatter->formatCustomRole($role))
+                    ->values()
+                    ->toArray(),
                 'organization_id' => $organizationId,
             ], trans_message('landing.custom_users.roles_loaded'));
         } catch (\Throwable $e) {

@@ -18,6 +18,7 @@ return [
         'redis:notifications' => 120,
         'redis:notifications-low' => 300,
         'redis:ai-rag' => 600,
+        'redis_ai_rag:ai-rag' => 600,
     ],
     
     'trim' => [
@@ -116,7 +117,7 @@ return [
                 'memory' => 512,
             ],
             'supervisor-ai-rag' => [
-                'connection' => 'redis',
+                'connection' => env('AI_RAG_QUEUE_CONNECTION', 'redis_ai_rag'),
                 'queue' => [env('AI_RAG_QUEUE', 'ai-rag')],
                 'balance' => 'auto',
                 'autoScalingStrategy' => 'time',
@@ -140,7 +141,7 @@ return [
                 'memory' => 512,
             ],
             'supervisor-ai-rag' => [
-                'connection' => 'redis',
+                'connection' => env('AI_RAG_QUEUE_CONNECTION', 'redis_ai_rag'),
                 'queue' => [env('AI_RAG_QUEUE', 'ai-rag')],
                 'balance' => 'simple',
                 'processes' => 1,

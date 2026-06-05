@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "context": "organization",
   "interface": "customer",
+  "assignable": false,
   "description": "Финансовая роль customer-организации: видит деньги, договоры и отклонения.",
   "system_permissions": [
     "dashboard.view",

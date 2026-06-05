@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "context": "organization",
   "interface": "customer",
+  "assignable": false,
   "description": "Полный доступ к customer-порталу организации.",
   "system_permissions": [
     "dashboard.view",

@@ -72,6 +72,15 @@ return [
             'after_commit' => false,
         ],
 
+        'redis_ai_rag' => [
+            'driver' => 'redis',
+            'connection' => env('AI_RAG_REDIS_QUEUE_CONNECTION', env('REDIS_QUEUE_CONNECTION', 'default')),
+            'queue' => env('AI_RAG_QUEUE', 'ai-rag'),
+            'retry_after' => (int) env('AI_RAG_QUEUE_RETRY_AFTER', ((int) env('AI_RAG_JOB_TIMEOUT', 1800)) + 300),
+            'block_for' => null,
+            'after_commit' => false,
+        ],
+
         'redis_estimate_generation' => [
             'driver' => 'redis',
             'connection' => env('REDIS_ESTIMATE_GENERATION_QUEUE_CONNECTION', env('REDIS_QUEUE_CONNECTION', 'default')),

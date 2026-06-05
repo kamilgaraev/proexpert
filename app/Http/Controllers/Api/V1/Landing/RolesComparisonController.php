@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Landing;
 
+use App\Domain\Authorization\Services\RolePayloadFormatter;
 use App\Domain\Authorization\Services\RoleScanner;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\LandingResponse;
@@ -15,7 +16,8 @@ use function trans_message;
 class RolesComparisonController extends Controller
 {
     public function __construct(
-        protected RoleScanner $roleScanner
+        protected RoleScanner $roleScanner,
+        protected RolePayloadFormatter $rolePayloadFormatter
     ) {
     }
 
@@ -23,8 +25,13 @@ class RolesComparisonController extends Controller
     {
         $allRoles = $this->roleScanner->getAllRoles();
         $comparison = [];
+        $includeUnassignable = $request->boolean('include_unassignable', false);
 
         foreach ($allRoles as $roleSlug => $roleData) {
+            if (!$includeUnassignable && !$this->rolePayloadFormatter->isAssignableSystemRole($roleData)) {
+                continue;
+            }
+
             $comparison[] = $this->formatRoleForComparison($roleSlug, $roleData);
         }
 
@@ -49,25 +56,32 @@ class RolesComparisonController extends Controller
     protected function formatRoleForComparison(string $roleSlug, array $roleData): array
     {
         $systemPermissions = $roleData['system_permissions'] ?? [];
+        $normalizedSystemPermissions = $this->rolePayloadFormatter->normalizedSystemPermissions($roleData);
+        $modulePermissions = $roleData['module_permissions'] ?? [];
+        $permissions = $this->rolePayloadFormatter->translatedPermissionsForRole($roleData);
         $canManageRoles = $this->getCanManageRoles($roleData);
         $timeRestrictions = $this->getTimeRestrictions($roleData);
 
         return [
             'slug' => $roleSlug,
-            'name' => $roleData['name'] ?? $roleSlug,
-            'description' => $roleData['description'] ?? '',
+            'name' => $this->rolePayloadFormatter->translatedRoleName($roleSlug, $roleData),
+            'description' => $this->rolePayloadFormatter->translatedRoleDescription($roleSlug, $roleData),
             'context' => $this->translateContext($roleData['context'] ?? 'unknown'),
             'context_slug' => $roleData['context'] ?? 'unknown',
             'interfaces' => $this->translateInterfaces($roleData['interface_access'] ?? []),
             'interfaces_slugs' => $roleData['interface_access'] ?? [],
+            'assignable' => $this->rolePayloadFormatter->isAssignableSystemRole($roleData),
             'billing_access' => $this->hasBillingAccess($systemPermissions),
             'can_manage_roles' => $canManageRoles['can'],
             'cannot_manage_roles' => $canManageRoles['cannot'],
             'time_restrictions' => $timeRestrictions,
-            'system_permissions_count' => count($systemPermissions),
-            'module_permissions_count' => $this->countModulePermissions($roleData['module_permissions'] ?? []),
-            'has_all_permissions' => in_array('*', $systemPermissions, true),
-            'has_all_modules' => isset($roleData['module_permissions']['*']),
+            'permissions' => $permissions,
+            'permission_groups' => $this->rolePayloadFormatter->permissionGroups($permissions),
+            'permission_preview' => $this->rolePayloadFormatter->permissionPreview($permissions),
+            'system_permissions_count' => count($normalizedSystemPermissions),
+            'module_permissions_count' => $this->rolePayloadFormatter->countModulePermissions($modulePermissions),
+            'has_all_permissions' => in_array('*', $normalizedSystemPermissions, true),
+            'has_all_modules' => isset($modulePermissions['*']),
         ];
     }
 
@@ -128,23 +142,6 @@ class RolesComparisonController extends Controller
         ];
     }
 
-    protected function countModulePermissions(array $modulePermissions): int
-    {
-        $count = 0;
-
-        foreach ($modulePermissions as $module => $permissions) {
-            if ($module === '*' && is_array($permissions) && in_array('*', $permissions, true)) {
-                return 999;
-            }
-
-            if (is_array($permissions)) {
-                $count += count($permissions);
-            }
-        }
-
-        return $count;
-    }
-
     protected function translateContext(string $context): string
     {
         return match ($context) {
@@ -183,7 +180,7 @@ class RolesComparisonController extends Controller
 
         foreach ($roleSlugs as $slug) {
             $role = $allRoles->get($slug);
-            $translated[] = $role ? ($role['name'] ?? $slug) : $slug;
+            $translated[] = $role ? $this->rolePayloadFormatter->translatedRoleName($slug, $role) : $slug;
         }
 
         return $translated;

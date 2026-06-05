@@ -27,6 +27,7 @@ class IndexRagSourceJob implements ShouldQueue
         public ?string $sourceType = null,
         public ?int $runId = null
     ) {
+        $this->onConnection($this->connectionName());
         $this->onQueue($this->queueName());
         $this->tries = $this->configInt('ai-assistant.rag.job_tries', 1);
         $this->timeout = $this->configInt('ai-assistant.rag.job_timeout', 1800);
@@ -91,5 +92,16 @@ class IndexRagSourceJob implements ShouldQueue
         }
 
         return is_numeric($value) && (int) $value > 0 ? (int) $value : $default;
+    }
+
+    private function connectionName(): string
+    {
+        try {
+            $connection = config('ai-assistant.rag.queue_connection', 'redis_ai_rag');
+        } catch (Throwable) {
+            return 'redis_ai_rag';
+        }
+
+        return is_string($connection) && trim($connection) !== '' ? $connection : 'redis_ai_rag';
     }
 }

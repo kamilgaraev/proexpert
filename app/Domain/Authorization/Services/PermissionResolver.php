@@ -270,14 +270,7 @@ class PermissionResolver
                 $interfaceAccess = $customRole ? ($customRole->interface_access ?? []) : [];
             }
 
-            // 3. Авто-добавление admin.access
-            if (in_array('admin', $interfaceAccess)) {
-                $perms[] = 'admin.access';
-                $perms[] = 'admin.view';
-                $perms[] = 'dashboard.view';
-            }
-
-            return array_unique($perms);
+            return RolePermissionNormalizer::normalizeSystemPermissions($perms, $interfaceAccess);
         });
     }
 
@@ -552,6 +545,15 @@ class PermissionResolver
             'report_templates' => 'report-templates',
             'warehouse' => 'basic-warehouse',
             'mdm' => 'catalog-management',
+            'materials' => 'catalog-management',
+            'suppliers' => 'catalog-management',
+            'contractors' => 'catalog-management',
+            'work_types' => 'catalog-management',
+            'work-types' => 'catalog-management',
+            'measurement_units' => 'catalog-management',
+            'measurement-units' => 'catalog-management',
+            'cost_categories' => 'catalog-management',
+            'cost-categories' => 'catalog-management',
             'completed_works' => 'workflow-management',
             'completed-works' => 'workflow-management',
             'workforce' => 'workforce-management',
