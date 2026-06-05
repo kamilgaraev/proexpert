@@ -190,6 +190,21 @@ final class QualityDefectService
         return $this->transition($defect, QualityDefectStatusEnum::REJECTED, $userId, [], $comment);
     }
 
+    public function cancel(QualityDefect $defect, int $userId, string $comment): QualityDefect
+    {
+        if (!in_array($defect->status, [
+            QualityDefectStatusEnum::DRAFT,
+            QualityDefectStatusEnum::OPEN,
+            QualityDefectStatusEnum::ASSIGNED,
+            QualityDefectStatusEnum::IN_PROGRESS,
+            QualityDefectStatusEnum::REJECTED,
+        ], true)) {
+            throw new DomainException(trans_message('quality_control.errors.cancel_invalid_status'));
+        }
+
+        return $this->transition($defect, QualityDefectStatusEnum::CANCELLED, $userId, [], $comment);
+    }
+
     private function transition(
         QualityDefect $defect,
         QualityDefectStatusEnum $toStatus,

@@ -229,6 +229,29 @@ final class QualityDefectController extends Controller
         }
     }
 
+    public function cancel(Request $request, int $id): JsonResponse
+    {
+        try {
+            $organizationId = (int) $request->attributes->get('current_organization_id');
+            $validated = $request->validate([
+                'comment' => ['required', 'string', 'max:1000'],
+            ]);
+            $defect = $this->findOrFail($id, $organizationId);
+
+            return AdminResponse::success(new QualityDefectResource($this->service->cancel(
+                $defect,
+                (int) auth()->id(),
+                $validated['comment']
+            )));
+        } catch (ValidationException $e) {
+            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            return $this->failedAction('cancel', $id, $e);
+        }
+    }
+
     private function findOrFail(int $id, int $organizationId)
     {
         $defect = $this->service->find($id, $organizationId);
