@@ -15,6 +15,12 @@ class IndexRagSourceJob implements ShouldQueue
 {
     use Queueable;
 
+    public int $tries;
+
+    public int $timeout;
+
+    public bool $failOnTimeout = true;
+
     public function __construct(
         public int $organizationId,
         public ?int $projectId = null,
@@ -22,13 +28,17 @@ class IndexRagSourceJob implements ShouldQueue
         public ?int $runId = null
     ) {
         $this->onQueue($this->queueName());
+        $this->tries = $this->configInt('ai-assistant.rag.job_tries', 1);
+        $this->timeout = $this->configInt('ai-assistant.rag.job_timeout', 1800);
     }
 
     public function handle(RagIndexer $indexer, ?RagIndexingCoordinator $coordinator = null): void
     {
         if ($this->runId !== null) {
             $coordinator ??= app(RagIndexingCoordinator::class);
-            $coordinator->markRunning($this->runId);
+            if ($coordinator->markRunning($this->runId) === null) {
+                return;
+            }
         }
 
         $indexed = $indexer->indexOrganization($this->organizationId, $this->projectId, $this->sourceType);
@@ -70,5 +80,16 @@ class IndexRagSourceJob implements ShouldQueue
         }
 
         return is_string($queue) && trim($queue) !== '' ? $queue : 'ai-rag';
+    }
+
+    private function configInt(string $key, int $default): int
+    {
+        try {
+            $value = config($key, $default);
+        } catch (Throwable) {
+            return $default;
+        }
+
+        return is_numeric($value) && (int) $value > 0 ? (int) $value : $default;
     }
 }

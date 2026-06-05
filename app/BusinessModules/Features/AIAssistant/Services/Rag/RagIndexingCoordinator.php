@@ -148,6 +148,15 @@ class RagIndexingCoordinator
             return null;
         }
 
+        if (in_array($run->status, [RagIndexRun::STATUS_SUCCEEDED, RagIndexRun::STATUS_FAILED], true)) {
+            Log::warning('ai_assistant.rag.index_run_already_finished', [
+                'run_id' => $runId,
+                'status' => $run->status,
+            ]);
+
+            return null;
+        }
+
         $run->forceFill([
             'status' => RagIndexRun::STATUS_RUNNING,
             'started_at' => $run->started_at ?? now(),
