@@ -25,7 +25,10 @@ class WorkTypeController extends Controller
 
     public function __construct(private readonly WorkTypeService $workTypeService)
     {
-        $this->middleware('can:admin.catalogs.manage');
+        $this->middleware('authorize:work_types.view')->only(['index', 'show']);
+        $this->middleware('authorize:work_types.create')->only(['store']);
+        $this->middleware('authorize:work_types.edit')->only(['update']);
+        $this->middleware('authorize:work_types.delete')->only(['destroy']);
     }
 
     public function index(Request $request): JsonResponse

@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Admin;
 
+use App\Models\Module;
 use App\Models\Material;
 use App\Models\MeasurementUnit;
 use App\Models\Organization;
+use App\Models\OrganizationModuleActivation;
 use App\Models\WorkType;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Support\AdminApiTestContext;
@@ -18,7 +20,7 @@ class WorkTypeControllerWorkflowTest extends TestCase
 
     public function test_index_is_tenant_scoped_and_tolerates_admin_registry_filters(): void
     {
-        $context = AdminApiTestContext::create();
+        $context = $this->createContextWithCatalogModule();
         $unit = $this->unitFor($context->organization->id);
         $workType = $this->createWorkType($context->organization->id, $unit->id, [
             'name' => 'Concrete works',
@@ -44,9 +46,26 @@ class WorkTypeControllerWorkflowTest extends TestCase
         $this->assertNotContains($foreignWorkType->id, $ids);
     }
 
+    public function test_index_allows_work_type_view_without_catalog_manage_permission(): void
+    {
+        $context = $this->createContextWithCatalogModule('foreman');
+        $unit = $this->unitFor($context->organization->id);
+        $workType = $this->createWorkType($context->organization->id, $unit->id, [
+            'name' => 'Masonry works',
+            'category' => 'masonry',
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/work-types?per_page=10&page=1');
+
+        $response->assertOk();
+        $response->assertJsonPath('success', true);
+        $response->assertJsonPath('data.0.id', $workType->id);
+    }
+
     public function test_store_update_show_and_delete_are_scoped_to_current_organization(): void
     {
-        $context = AdminApiTestContext::create();
+        $context = $this->createContextWithCatalogModule();
         $unit = $this->unitFor($context->organization->id);
         $foreignOrganization = Organization::factory()->verified()->create();
         $foreignUnit = $this->unitFor($foreignOrganization->id);
@@ -113,7 +132,7 @@ class WorkTypeControllerWorkflowTest extends TestCase
 
     public function test_work_type_name_must_be_unique_only_inside_current_organization(): void
     {
-        $context = AdminApiTestContext::create();
+        $context = $this->createContextWithCatalogModule();
         $unit = $this->unitFor($context->organization->id);
         $foreignOrganization = Organization::factory()->verified()->create();
         $foreignUnit = $this->unitFor($foreignOrganization->id);
@@ -143,7 +162,7 @@ class WorkTypeControllerWorkflowTest extends TestCase
 
     public function test_work_types_used_by_materials_cannot_be_deleted(): void
     {
-        $context = AdminApiTestContext::create();
+        $context = $this->createContextWithCatalogModule();
         $unit = $this->unitFor($context->organization->id);
         $workType = $this->createWorkType($context->organization->id, $unit->id);
 
@@ -168,6 +187,59 @@ class WorkTypeControllerWorkflowTest extends TestCase
             'id' => $workType->id,
             'deleted_at' => null,
         ]);
+    }
+
+    private function createContextWithCatalogModule(string $roleSlug = 'web_admin'): AdminApiTestContext
+    {
+        $context = AdminApiTestContext::create(roleSlug: $roleSlug);
+        $this->activateCatalogManagementModule($context->organization->id);
+
+        return $context;
+    }
+
+    private function activateCatalogManagementModule(int $organizationId): void
+    {
+        $module = Module::query()->updateOrCreate(
+            ['slug' => 'catalog-management'],
+            [
+                'name' => 'Catalog management',
+                'version' => '1.0.0',
+                'type' => 'feature',
+                'billing_model' => 'free',
+                'category' => 'catalog',
+                'description' => 'Catalog management',
+                'pricing_config' => ['base_price' => 0, 'currency' => 'RUB'],
+                'features' => [],
+                'permissions' => ['*'],
+                'dependencies' => [],
+                'conflicts' => [],
+                'limits' => [],
+                'display_order' => 1,
+                'is_active' => true,
+                'is_system_module' => false,
+                'can_deactivate' => true,
+            ],
+        );
+
+        OrganizationModuleActivation::query()->updateOrCreate(
+            [
+                'organization_id' => $organizationId,
+                'module_id' => $module->id,
+            ],
+            [
+                'status' => 'active',
+                'activated_at' => now(),
+                'expires_at' => null,
+                'trial_ends_at' => null,
+                'last_used_at' => now(),
+                'paid_amount' => 0,
+                'payment_details' => [],
+                'module_settings' => [],
+                'usage_stats' => [],
+                'is_bundled_with_plan' => true,
+                'is_auto_renew_enabled' => false,
+            ],
+        );
     }
 
     private function unitFor(int $organizationId): MeasurementUnit
