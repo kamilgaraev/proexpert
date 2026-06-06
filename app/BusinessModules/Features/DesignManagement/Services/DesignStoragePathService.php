@@ -35,6 +35,23 @@ final class DesignStoragePathService
             . $safeExtension;
     }
 
+    public function documentSourcePath(
+        int $organizationId,
+        int $projectId,
+        int $packageId,
+        int $versionId,
+        string $originalName
+    ): string {
+        return sprintf(
+            'org-%d/pir/projects/%d/packages/%d/documents/%d/source/%s',
+            $organizationId,
+            $projectId,
+            $packageId,
+            $versionId,
+            $this->safeFileName($originalName, 'document.pdf')
+        );
+    }
+
     public function multipartSourcePath(
         int $organizationId,
         int $projectId,
@@ -63,7 +80,7 @@ final class DesignStoragePathService
         );
     }
 
-    private function safeFileName(string $name, string $fallback): string
+    private function safeFileName(string $name, string $defaultName): string
     {
         $baseName = basename(str_replace('\\', '/', $name));
         $extension = strtolower((string) pathinfo($baseName, PATHINFO_EXTENSION));
@@ -71,12 +88,12 @@ final class DesignStoragePathService
         $safeStem = Str::slug(Str::ascii($stem), '-');
 
         if ($safeStem === '') {
-            $safeStem = (string) pathinfo($fallback, PATHINFO_FILENAME);
+            $safeStem = (string) pathinfo($defaultName, PATHINFO_FILENAME);
         }
 
         $safeExtension = preg_replace('/[^a-z0-9]+/', '', $extension);
         if (!$safeExtension) {
-            $safeExtension = (string) pathinfo($fallback, PATHINFO_EXTENSION);
+            $safeExtension = (string) pathinfo($defaultName, PATHINFO_EXTENSION);
         }
 
         return $safeStem . '.' . $safeExtension;

@@ -22,6 +22,12 @@ final class DesignPackageResource extends JsonResource
         $derivative = DesignPackageWorkflow::preferredDerivative($currentVersion);
         $problemFlags = DesignPackageWorkflow::problemFlags($package, $currentVersion, $derivative);
         $artifactsCount = $package->relationLoaded('artifacts') ? $package->artifacts->count() : 0;
+        $models = $package->relationLoaded('artifacts')
+            ? $package->artifacts->filter(fn ($artifact): bool => $this->enumValue($artifact->artifact_type) === 'model')->values()
+            : null;
+        $documents = $package->relationLoaded('artifacts')
+            ? $package->artifacts->filter(fn ($artifact): bool => $this->enumValue($artifact->artifact_type) !== 'model')->values()
+            : null;
         $availableActions = DesignPackageWorkflow::availableActions($package);
 
         return [
@@ -30,18 +36,31 @@ final class DesignPackageResource extends JsonResource
             'project_id' => $package->project_id,
             'title' => $package->title,
             'stage' => $package->stage,
+            'project_stage' => $this->enumValue($package->project_stage),
+            'project_stage_label' => trans_message('design_management.project_stages.' . $this->enumValue($package->project_stage)),
+            'object_type' => $this->enumValue($package->object_type),
+            'object_type_label' => trans_message('design_management.object_types.' . $this->enumValue($package->object_type)),
+            'normative_profile_code' => $package->normative_profile_code,
             'discipline' => $package->discipline,
             'status' => $status,
             'status_label' => trans_message("design_management.statuses.packages.{$status}"),
             'planned_issue_date' => $package->planned_issue_date?->format('Y-m-d'),
+            'issued_at' => $package->issued_at?->toIso8601String(),
+            'issued_by' => $package->issued_by,
             'metadata' => $package->metadata ?? [],
             'project' => $this->whenLoaded('project', fn () => $package->project ? [
                 'id' => $package->project->id,
                 'name' => $package->project->name,
             ] : null),
-            'models_count' => $package->relationLoaded('artifacts') ? $package->artifacts->count() : null,
-            'models' => DesignArtifactResource::collection($this->whenLoaded('artifacts')),
+            'models_count' => $models?->count(),
+            'documents_count' => $documents?->count(),
+            'models' => $models !== null ? DesignArtifactResource::collection($models) : null,
+            'documents' => $documents !== null ? DesignArtifactResource::collection($documents) : null,
             'artifacts' => DesignArtifactResource::collection($this->whenLoaded('artifacts')),
+            'sections' => DesignPackageSectionResource::collection($this->whenLoaded('sections')),
+            'review_comments' => DesignReviewCommentResource::collection($this->whenLoaded('reviewComments')),
+            'workflow_events' => DesignWorkflowEventResource::collection($this->whenLoaded('workflowEvents')),
+            'latest_completeness_check' => new DesignCompletenessCheckResource($this->whenLoaded('latestCompletenessCheck')),
             'current_version' => $currentVersion ? new DesignArtifactVersionResource($currentVersion) : null,
             'derivative' => $derivative ? new DesignModelDerivativeResource($derivative) : $this->missingDerivative(),
             'problem_flags' => $problemFlags,

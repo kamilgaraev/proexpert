@@ -5,12 +5,15 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\DesignManagement\Http\Controllers;
 
 use App\BusinessModules\Features\DesignManagement\DesignManagementModule;
+use App\BusinessModules\Features\DesignManagement\Enums\DesignObjectTypeEnum;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignPackageStatusEnum;
+use App\BusinessModules\Features\DesignManagement\Enums\DesignProjectStageEnum;
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignArtifactVersionResource;
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignModelDerivativeResource;
 use App\BusinessModules\Features\DesignManagement\Http\Resources\DesignPackageResource;
 use App\BusinessModules\Features\DesignManagement\Services\DesignManagementService;
 use App\BusinessModules\Features\DesignManagement\Services\DesignModelViewerPreparationService;
+use App\BusinessModules\Features\DesignManagement\Services\DesignWorkflowService;
 use App\BusinessModules\Features\DesignManagement\Services\Contracts\DesignModelMultipartUploader;
 use App\BusinessModules\Features\DesignManagement\Support\DesignPackageWorkflow;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -31,6 +34,7 @@ final class DesignManagementController extends Controller
 {
     public function __construct(
         private readonly DesignManagementService $service,
+        private readonly DesignWorkflowService $workflowService,
         private readonly DesignModelViewerPreparationService $viewerPreparationService,
         private readonly DesignModelMultipartUploader $multipartUploadService,
         private readonly DesignManagementModule $module,
@@ -45,6 +49,9 @@ final class DesignManagementController extends Controller
                 'project_id' => ['nullable', 'integer'],
                 'status' => ['nullable', 'string', Rule::in($this->packageStatuses())],
                 'discipline' => ['nullable', 'string', 'max:120'],
+                'project_stage' => ['nullable', 'string', Rule::in($this->projectStages())],
+                'object_type' => ['nullable', 'string', Rule::in($this->objectTypes())],
+                'normative_profile_code' => ['nullable', 'string', 'max:120'],
                 'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
                 'page' => ['nullable', 'integer', 'min:1'],
             ]);
@@ -70,6 +77,9 @@ final class DesignManagementController extends Controller
                 'project_id' => ['required', 'integer'],
                 'title' => ['required', 'string', 'max:255'],
                 'stage' => ['nullable', 'string', 'max:120'],
+                'project_stage' => ['nullable', 'string', Rule::in($this->projectStages())],
+                'object_type' => ['nullable', 'string', Rule::in($this->objectTypes())],
+                'normative_profile_code' => ['nullable', 'string', 'max:120'],
                 'discipline' => ['nullable', 'string', 'max:120'],
                 'status' => ['nullable', 'string', Rule::in($this->packageStatuses())],
                 'planned_issue_date' => ['nullable', 'date'],
@@ -176,7 +186,7 @@ final class DesignManagementController extends Controller
             }
 
             return AdminResponse::success(
-                new DesignPackageResource($this->service->transitionPackageWorkflow(
+                new DesignPackageResource($this->workflowService->transition(
                     $package,
                     (int) auth()->id(),
                     (string) $validated['action'],
@@ -460,6 +470,16 @@ final class DesignManagementController extends Controller
     private function packageStatuses(): array
     {
         return array_map(static fn (DesignPackageStatusEnum $status): string => $status->value, DesignPackageStatusEnum::cases());
+    }
+
+    private function projectStages(): array
+    {
+        return array_map(static fn (DesignProjectStageEnum $stage): string => $stage->value, DesignProjectStageEnum::cases());
+    }
+
+    private function objectTypes(): array
+    {
+        return array_map(static fn (DesignObjectTypeEnum $type): string => $type->value, DesignObjectTypeEnum::cases());
     }
 
     private function canRunWorkflowAction(Request $request, int $projectId, string $action): bool

@@ -6,12 +6,15 @@ namespace App\BusinessModules\Features\DesignManagement\Services;
 
 use App\BusinessModules\Features\DesignManagement\Enums\DesignArtifactTypeEnum;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignDerivativeStatusEnum;
+use App\BusinessModules\Features\DesignManagement\Enums\DesignObjectTypeEnum;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignPackageStatusEnum;
+use App\BusinessModules\Features\DesignManagement\Enums\DesignProjectStageEnum;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignVersionStatusEnum;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
+use App\BusinessModules\Features\DesignManagement\Support\DesignNormativeCatalog;
 use App\BusinessModules\Features\DesignManagement\Support\DesignPackageWorkflow;
 use App\BusinessModules\Features\DesignManagement\Support\DesignViewerConverter;
 use App\Models\Organization;
@@ -28,12 +31,21 @@ final class DesignManagementService
     private const PACKAGE_RELATIONS = [
         'project:id,name,organization_id',
         'artifacts.currentVersion.readyDerivative',
+        'artifacts.currentVersion.sheets',
         'artifacts.versions.derivatives',
+        'artifacts.versions.sheets',
+        'sections.artifacts.currentVersion.sheets',
+        'sections.artifacts.versions.sheets',
+        'reviewComments',
+        'workflowEvents',
+        'latestCompletenessCheck',
     ];
 
     private const VERSION_RELATIONS = [
         'artifact.project:id,name,organization_id',
         'artifact.package.project:id,name,organization_id',
+        'artifact.section',
+        'sheets',
         'derivatives',
         'readyDerivative',
     ];
@@ -41,6 +53,7 @@ final class DesignManagementService
     public function __construct(
         private readonly DesignStoragePathService $pathService,
         private readonly FileService $fileService,
+        private readonly DesignSectionGenerationService $sectionGenerationService,
     ) {
     }
 
@@ -53,6 +66,9 @@ final class DesignManagementService
             ->when(!empty($filters['project_id']), static fn ($query) => $query->where('project_id', (int) $filters['project_id']))
             ->when(!empty($filters['status']), static fn ($query) => $query->where('status', (string) $filters['status']))
             ->when(!empty($filters['discipline']), static fn ($query) => $query->where('discipline', (string) $filters['discipline']))
+            ->when(!empty($filters['project_stage']), static fn ($query) => $query->where('project_stage', (string) $filters['project_stage']))
+            ->when(!empty($filters['object_type']), static fn ($query) => $query->where('object_type', (string) $filters['object_type']))
+            ->when(!empty($filters['normative_profile_code']), static fn ($query) => $query->where('normative_profile_code', (string) $filters['normative_profile_code']))
             ->orderByDesc('id')
             ->paginate($perPage);
     }
@@ -60,19 +76,33 @@ final class DesignManagementService
     public function createPackage(int $organizationId, int $userId, array $payload): DesignPackage
     {
         $this->assertProjectBelongsToOrganization((int) $payload['project_id'], $organizationId);
+        $projectStage = $this->normalizeProjectStage($payload);
+        $objectType = $this->normalizeObjectType($payload);
+        $profileCode = is_string($payload['normative_profile_code'] ?? null) && trim((string) $payload['normative_profile_code']) !== ''
+            ? trim((string) $payload['normative_profile_code'])
+            : $this->defaultProfileCode($projectStage, $objectType);
 
-        $package = DesignPackage::query()->create([
-            'organization_id' => $organizationId,
-            'project_id' => (int) $payload['project_id'],
-            'created_by' => $userId,
-            'updated_by' => $userId,
-            'title' => $payload['title'],
-            'stage' => $payload['stage'] ?? null,
-            'discipline' => $payload['discipline'] ?? null,
-            'status' => $payload['status'] ?? DesignPackageStatusEnum::DRAFT,
-            'planned_issue_date' => $payload['planned_issue_date'] ?? null,
-            'metadata' => $payload['metadata'] ?? [],
-        ]);
+        $package = DB::transaction(function () use ($organizationId, $userId, $payload, $projectStage, $objectType, $profileCode): DesignPackage {
+            $package = DesignPackage::query()->create([
+                'organization_id' => $organizationId,
+                'project_id' => (int) $payload['project_id'],
+                'created_by' => $userId,
+                'updated_by' => $userId,
+                'title' => $payload['title'],
+                'stage' => $payload['stage'] ?? strtoupper($projectStage),
+                'project_stage' => $projectStage,
+                'object_type' => $objectType,
+                'normative_profile_code' => $profileCode,
+                'discipline' => $payload['discipline'] ?? null,
+                'status' => $payload['status'] ?? DesignPackageStatusEnum::DRAFT,
+                'planned_issue_date' => $payload['planned_issue_date'] ?? null,
+                'metadata' => $payload['metadata'] ?? [],
+            ]);
+
+            $this->sectionGenerationService->generateForPackage($package);
+
+            return $package;
+        });
 
         return $package->fresh(self::PACKAGE_RELATIONS);
     }
@@ -113,11 +143,14 @@ final class DesignManagementService
                 'title' => $payload['title'] ?? $artifact->title,
                 'version_number' => (string) $payload['version_number'],
                 'revision' => $payload['revision'] ?? null,
+                'revision_label' => $payload['revision_label'] ?? ($payload['revision'] ?? null),
                 'source_format' => 'ifc',
+                'file_format' => 'ifc',
                 'source_file_path' => 'pending',
                 'source_original_name' => $file->getClientOriginalName(),
                 'source_mime_type' => $file->getClientMimeType() ?: 'application/x-step',
                 'source_size_bytes' => (int) $file->getSize(),
+                'source_sha256' => $this->sha256($file),
                 'model_date' => $payload['model_date'] ?? null,
                 'status' => DesignVersionStatusEnum::UPLOADED,
                 'is_current' => false,
@@ -166,11 +199,14 @@ final class DesignManagementService
                 'title' => $payload['title'] ?? $artifact->title,
                 'version_number' => (string) $payload['version_number'],
                 'revision' => $payload['revision'] ?? null,
+                'revision_label' => $payload['revision_label'] ?? ($payload['revision'] ?? null),
                 'source_format' => 'ifc',
+                'file_format' => 'ifc',
                 'source_file_path' => $sourcePath,
                 'source_original_name' => (string) $fileInfo['original_name'],
                 'source_mime_type' => (string) ($fileInfo['mime_type'] ?? 'application/x-step'),
                 'source_size_bytes' => (int) $fileInfo['size_bytes'],
+                'source_sha256' => $fileInfo['sha256'] ?? null,
                 'model_date' => $payload['model_date'] ?? null,
                 'status' => DesignVersionStatusEnum::UPLOADED,
                 'is_current' => false,
@@ -378,59 +414,6 @@ final class DesignManagementService
         $this->assertPackageAcceptsModelChanges($package);
     }
 
-    public function transitionPackageWorkflow(
-        DesignPackage $package,
-        int $userId,
-        string $action,
-        ?string $comment = null
-    ): DesignPackage {
-        return DB::transaction(function () use ($package, $userId, $action, $comment): DesignPackage {
-            $lockedPackage = DesignPackage::forOrganization((int) $package->organization_id)
-                ->whereKey($package->id)
-                ->lockForUpdate()
-                ->with(self::PACKAGE_RELATIONS)
-                ->first();
-
-            if (!$lockedPackage instanceof DesignPackage) {
-                throw new DomainException(trans_message('design_management.errors.package_not_found'));
-            }
-
-            if (DesignPackageWorkflow::isCompletedAction($lockedPackage, $action)) {
-                return $lockedPackage->fresh(self::PACKAGE_RELATIONS);
-            }
-
-            $nextStatus = DesignPackageWorkflow::nextStatus($lockedPackage, $action);
-
-            if ($nextStatus === null) {
-                throw new DomainException(trans_message('design_management.errors.workflow_action_not_available'));
-            }
-
-            $metadata = $lockedPackage->metadata ?? [];
-            $history = is_array($metadata['workflow_history'] ?? null)
-                ? array_values($metadata['workflow_history'])
-                : [];
-
-            $history[] = [
-                'action' => $action,
-                'from_status' => $this->enumValue($lockedPackage->status),
-                'to_status' => $nextStatus->value,
-                'user_id' => $userId,
-                'comment' => $comment,
-                'at' => now()->toISOString(),
-            ];
-
-            $metadata['workflow_history'] = array_slice($history, -50);
-
-            $lockedPackage->update([
-                'status' => $nextStatus,
-                'updated_by' => $userId,
-                'metadata' => $metadata,
-            ]);
-
-            return $lockedPackage->fresh(self::PACKAGE_RELATIONS);
-        });
-    }
-
     private function resolveArtifact(DesignPackage $package, int $userId, array $payload): DesignArtifact
     {
         if (!empty($payload['artifact_id'])) {
@@ -598,6 +581,36 @@ final class DesignManagementService
         if (strtolower($file->getClientOriginalExtension()) !== 'frag') {
             throw new DomainException(trans_message('design_management.errors.frag_file_required'));
         }
+    }
+
+    private function normalizeProjectStage(array $payload): string
+    {
+        $value = strtolower((string) ($payload['project_stage'] ?? $payload['stage'] ?? DesignProjectStageEnum::RD->value));
+
+        return in_array($value, array_map(static fn (DesignProjectStageEnum $stage): string => $stage->value, DesignProjectStageEnum::cases()), true)
+            ? $value
+            : DesignProjectStageEnum::RD->value;
+    }
+
+    private function normalizeObjectType(array $payload): string
+    {
+        $value = (string) ($payload['object_type'] ?? DesignObjectTypeEnum::NON_LINEAR_NON_PRODUCTION->value);
+
+        return in_array($value, array_map(static fn (DesignObjectTypeEnum $type): string => $type->value, DesignObjectTypeEnum::cases()), true)
+            ? $value
+            : DesignObjectTypeEnum::NON_LINEAR_NON_PRODUCTION->value;
+    }
+
+    private function defaultProfileCode(string $projectStage, string $objectType): string
+    {
+        return DesignNormativeCatalog::profileFor($projectStage, $objectType);
+    }
+
+    private function sha256(UploadedFile $file): ?string
+    {
+        $realPath = $file->getRealPath();
+
+        return $realPath && is_file($realPath) ? hash_file('sha256', $realPath) : null;
     }
 
     private function derivativePayload(?DesignModelDerivative $derivative, ?Organization $organization): array

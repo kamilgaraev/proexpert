@@ -26,11 +26,17 @@ final class DesignArtifactVersion extends Model
         'title',
         'version_number',
         'revision',
+        'revision_label',
         'source_format',
+        'file_format',
         'source_file_path',
         'source_original_name',
         'source_mime_type',
         'source_size_bytes',
+        'source_sha256',
+        'page_count',
+        'sheet_count',
+        'extracted_metadata',
         'model_date',
         'status',
         'is_current',
@@ -40,6 +46,9 @@ final class DesignArtifactVersion extends Model
     protected $casts = [
         'status' => DesignVersionStatusEnum::class,
         'source_size_bytes' => 'integer',
+        'page_count' => 'integer',
+        'sheet_count' => 'integer',
+        'extracted_metadata' => 'array',
         'model_date' => 'date',
         'is_current' => 'boolean',
         'metadata' => 'array',
@@ -47,9 +56,11 @@ final class DesignArtifactVersion extends Model
 
     protected $attributes = [
         'source_format' => 'ifc',
+        'file_format' => 'ifc',
         'status' => 'uploaded',
         'is_current' => false,
         'metadata' => '{}',
+        'extracted_metadata' => '{}',
     ];
 
     public function organization(): BelongsTo
@@ -85,6 +96,11 @@ final class DesignArtifactVersion extends Model
     public function derivatives(): HasMany
     {
         return $this->hasMany(DesignModelDerivative::class, 'version_id')->orderByDesc('id');
+    }
+
+    public function sheets(): HasMany
+    {
+        return $this->hasMany(DesignDocumentSheet::class, 'version_id')->orderBy('file_page_number')->orderBy('sheet_number');
     }
 
     public function readyDerivative(): HasOne

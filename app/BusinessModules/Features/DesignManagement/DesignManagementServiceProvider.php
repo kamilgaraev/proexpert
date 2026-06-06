@@ -14,6 +14,14 @@ final class DesignManagementServiceProvider extends ServiceProvider
     {
         $this->app->singleton(DesignManagementModule::class);
         $this->app->singleton(Services\DesignStoragePathService::class);
+        $this->app->singleton(Services\DesignNormativeCatalogService::class);
+        $this->app->singleton(Services\DesignSectionGenerationService::class);
+        $this->app->singleton(Services\DesignDocumentMetadataExtractor::class);
+        $this->app->singleton(Services\DesignDocumentArtifactService::class);
+        $this->app->singleton(Services\DesignCompletenessService::class);
+        $this->app->singleton(Services\DesignReviewService::class);
+        $this->app->singleton(Services\DesignWorkflowService::class);
+        $this->app->singleton(Services\DesignPackageIssueRegisterService::class);
         $this->app->singleton(Services\DesignManagementService::class);
         $this->app->singleton(Services\DesignModelMultipartUploadService::class);
         $this->app->bind(

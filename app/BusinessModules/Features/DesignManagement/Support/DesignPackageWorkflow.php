@@ -6,36 +6,51 @@ namespace App\BusinessModules\Features\DesignManagement\Support;
 
 use App\BusinessModules\Features\DesignManagement\Enums\DesignDerivativeStatusEnum;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignPackageStatusEnum;
+use App\BusinessModules\Features\DesignManagement\Enums\DesignReviewCommentSeverityEnum;
+use App\BusinessModules\Features\DesignManagement\Enums\DesignReviewCommentStatusEnum;
+use App\BusinessModules\Features\DesignManagement\Models\DesignArtifact;
 use App\BusinessModules\Features\DesignManagement\Models\DesignArtifactVersion;
 use App\BusinessModules\Features\DesignManagement\Models\DesignModelDerivative;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
+use App\BusinessModules\Features\DesignManagement\Models\DesignReviewComment;
 use BackedEnum;
 
 final class DesignPackageWorkflow
 {
-    public const SUBMIT_FOR_REVIEW = 'submit_for_review';
+    public const SUBMIT_NORM_CONTROL = 'submit_norm_control';
     public const RETURN_TO_WORK = 'return_to_work';
+    public const SUBMIT_CUSTOMER_REVIEW = 'submit_customer_review';
     public const APPROVE = 'approve';
     public const ISSUE = 'issue';
+    public const ARCHIVE = 'archive';
 
     private const MODEL_CHANGE_STATUSES = [
         DesignPackageStatusEnum::DRAFT->value,
         DesignPackageStatusEnum::IN_WORK->value,
+        DesignPackageStatusEnum::RETURNED->value,
+    ];
+
+    private const DOCUMENT_CHANGE_STATUSES = [
+        DesignPackageStatusEnum::DRAFT->value,
+        DesignPackageStatusEnum::IN_WORK->value,
+        DesignPackageStatusEnum::RETURNED->value,
     ];
 
     private const BLOCKING_FLAGS = [
-        'model_missing',
-        'viewer_not_prepared',
-        'viewer_preparation_failed',
+        'required_sections_not_generated',
+        'completeness_blocked',
+        'open_blocking_comments',
     ];
 
     public static function actions(): array
     {
         return [
-            self::SUBMIT_FOR_REVIEW,
+            self::SUBMIT_NORM_CONTROL,
             self::RETURN_TO_WORK,
+            self::SUBMIT_CUSTOMER_REVIEW,
             self::APPROVE,
             self::ISSUE,
+            self::ARCHIVE,
         ];
     }
 
@@ -44,17 +59,15 @@ final class DesignPackageWorkflow
         $status = self::statusValue($package->status);
 
         if (in_array($status, self::MODEL_CHANGE_STATUSES, true)) {
-            $currentVersion = self::currentVersion($package);
-            $flags = self::problemFlags($package, $currentVersion, self::preferredDerivative($currentVersion));
-
-            return array_intersect($flags, self::BLOCKING_FLAGS) === []
-                ? [self::SUBMIT_FOR_REVIEW]
-                : [];
+            return [self::SUBMIT_NORM_CONTROL];
         }
 
         return match ($status) {
-            DesignPackageStatusEnum::UNDER_REVIEW->value => [self::RETURN_TO_WORK, self::APPROVE],
+            DesignPackageStatusEnum::READY_FOR_NORM_CONTROL->value => [self::SUBMIT_NORM_CONTROL],
+            DesignPackageStatusEnum::UNDER_NORM_CONTROL->value => [self::RETURN_TO_WORK, self::SUBMIT_CUSTOMER_REVIEW],
+            DesignPackageStatusEnum::UNDER_CUSTOMER_REVIEW->value => [self::RETURN_TO_WORK, self::APPROVE],
             DesignPackageStatusEnum::APPROVED->value => [self::ISSUE],
+            DesignPackageStatusEnum::ISSUED->value => [self::ARCHIVE],
             default => [],
         };
     }
@@ -62,6 +75,11 @@ final class DesignPackageWorkflow
     public static function canChangeModels(DesignPackage $package): bool
     {
         return in_array(self::statusValue($package->status), self::MODEL_CHANGE_STATUSES, true);
+    }
+
+    public static function canChangeDocuments(DesignPackage $package): bool
+    {
+        return in_array(self::statusValue($package->status), self::DOCUMENT_CHANGE_STATUSES, true);
     }
 
     public static function requiresComment(string $action): bool
@@ -72,10 +90,12 @@ final class DesignPackageWorkflow
     public static function permissionForAction(string $action): ?string
     {
         return match ($action) {
-            self::SUBMIT_FOR_REVIEW => 'design-management.edit',
+            self::SUBMIT_NORM_CONTROL => 'design-management.edit',
             self::RETURN_TO_WORK => 'design-management.review',
+            self::SUBMIT_CUSTOMER_REVIEW => 'design-management.review',
             self::APPROVE,
             self::ISSUE => 'design-management.approve',
+            self::ARCHIVE => 'design-management.approve',
             default => null,
         };
     }
@@ -92,10 +112,12 @@ final class DesignPackageWorkflow
     public static function targetStatus(string $action): ?DesignPackageStatusEnum
     {
         return match ($action) {
-            self::SUBMIT_FOR_REVIEW => DesignPackageStatusEnum::UNDER_REVIEW,
-            self::RETURN_TO_WORK => DesignPackageStatusEnum::IN_WORK,
+            self::SUBMIT_NORM_CONTROL => DesignPackageStatusEnum::UNDER_NORM_CONTROL,
+            self::RETURN_TO_WORK => DesignPackageStatusEnum::RETURNED,
+            self::SUBMIT_CUSTOMER_REVIEW => DesignPackageStatusEnum::UNDER_CUSTOMER_REVIEW,
             self::APPROVE => DesignPackageStatusEnum::APPROVED,
             self::ISSUE => DesignPackageStatusEnum::ISSUED,
+            self::ARCHIVE => DesignPackageStatusEnum::ARCHIVED,
             default => null,
         };
     }
@@ -114,13 +136,16 @@ final class DesignPackageWorkflow
             return null;
         }
 
-        foreach ($package->artifacts as $artifact) {
+        $modelArtifacts = $package->artifacts
+            ->filter(static fn (DesignArtifact $artifact): bool => self::statusValue($artifact->artifact_type) === 'model');
+
+        foreach ($modelArtifacts as $artifact) {
             if ($artifact->relationLoaded('currentVersion') && $artifact->currentVersion instanceof DesignArtifactVersion) {
                 return $artifact->currentVersion;
             }
         }
 
-        foreach ($package->artifacts as $artifact) {
+        foreach ($modelArtifacts as $artifact) {
             if ($artifact->relationLoaded('versions')) {
                 $version = $artifact->versions->first();
 
@@ -160,10 +185,6 @@ final class DesignPackageWorkflow
         $flags = [];
         $status = self::statusValue($package->status);
 
-        if (!$currentVersion instanceof DesignArtifactVersion) {
-            $flags[] = 'model_missing';
-        }
-
         if (
             $currentVersion instanceof DesignArtifactVersion
             && (!$derivative instanceof DesignModelDerivative || DesignViewerConverter::isStale($derivative))
@@ -190,6 +211,26 @@ final class DesignPackageWorkflow
             $flags[] = 'planned_issue_overdue';
         }
 
+        if ($package->relationLoaded('sections') && $package->sections->isEmpty()) {
+            $flags[] = 'required_sections_not_generated';
+        }
+
+        if ($package->relationLoaded('latestCompletenessCheck') && $package->latestCompletenessCheck !== null) {
+            $checkStatus = self::statusValue($package->latestCompletenessCheck->status);
+
+            if ($checkStatus === 'blocked') {
+                $flags[] = 'completeness_blocked';
+            }
+
+            if ($checkStatus === 'warning') {
+                $flags[] = 'completeness_warning';
+            }
+        }
+
+        if ($package->relationLoaded('reviewComments') && self::hasOpenBlockingComments($package)) {
+            $flags[] = 'open_blocking_comments';
+        }
+
         return $flags;
     }
 
@@ -204,10 +245,26 @@ final class DesignPackageWorkflow
         $availableActions = self::availableActions($package);
         $nextAction = $availableActions[0] ?? null;
         $derivativeStatus = self::derivativeStatus($derivative);
+        $modelsCount = $package->relationLoaded('artifacts')
+            ? $package->artifacts->filter(static fn (DesignArtifact $artifact): bool => self::statusValue($artifact->artifact_type) === 'model')->count()
+            : $artifactsCount;
+        $sectionsCount = $package->relationLoaded('sections') ? $package->sections->count() : null;
+        $documentsCount = $package->relationLoaded('artifacts')
+            ? $package->artifacts->filter(static fn (DesignArtifact $artifact): bool => self::statusValue($artifact->artifact_type) !== 'model')->count()
+            : null;
+        $currentDocumentsCount = $package->relationLoaded('artifacts')
+            ? $package->artifacts->filter(static fn (DesignArtifact $artifact): bool => self::statusValue($artifact->artifact_type) !== 'model'
+                && $artifact->relationLoaded('currentVersion')
+                && $artifact->currentVersion instanceof DesignArtifactVersion)->count()
+            : null;
+        $latestCheck = $package->relationLoaded('latestCompletenessCheck') ? $package->latestCompletenessCheck : null;
 
         return [
             'artifacts_count' => $artifactsCount,
-            'models_count' => $artifactsCount,
+            'models_count' => $modelsCount,
+            'sections_count' => $sectionsCount,
+            'documents_count' => $documentsCount,
+            'current_documents_count' => $currentDocumentsCount,
             'current_version_id' => $currentVersion?->id,
             'derivative_status' => $derivativeStatus,
             'has_ready_viewer' => $derivative instanceof DesignModelDerivative
@@ -222,6 +279,13 @@ final class DesignPackageWorkflow
             'available_actions' => $availableActions,
             'available_action_details' => self::actionDetails($availableActions),
             'problem_flags' => self::problemFlagDetails($problemFlags),
+            'latest_completeness_check' => $latestCheck ? [
+                'id' => $latestCheck->id,
+                'status' => self::statusValue($latestCheck->status),
+                'blocking_count' => $latestCheck->blocking_count,
+                'warning_count' => $latestCheck->warning_count,
+                'checked_at' => $latestCheck->checked_at?->toIso8601String(),
+            ] : null,
         ];
     }
 
@@ -296,6 +360,19 @@ final class DesignPackageWorkflow
         return in_array($status, $known, true)
             ? trans_message("design_management.statuses.packages.{$status}")
             : $status;
+    }
+
+    private static function hasOpenBlockingComments(DesignPackage $package): bool
+    {
+        $closedStatuses = [
+            DesignReviewCommentStatusEnum::RESOLVED->value,
+            DesignReviewCommentStatusEnum::ACCEPTED->value,
+        ];
+
+        return $package->reviewComments->contains(static function (DesignReviewComment $comment) use ($closedStatuses): bool {
+            return self::statusValue($comment->severity) === DesignReviewCommentSeverityEnum::BLOCKING->value
+                && !in_array(self::statusValue($comment->status), $closedStatuses, true);
+        });
     }
 
     private static function statusValue(mixed $value): string

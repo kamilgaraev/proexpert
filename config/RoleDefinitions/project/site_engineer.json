@@ -211,7 +211,9 @@
     ],
     "design-management": [
       "design-management.view",
-      "design-management.models.view"
+      "design-management.models.view",
+      "design-management.documents.view",
+      "design-management.normative_catalog.view"
     ]
   },
   "interface_access": [

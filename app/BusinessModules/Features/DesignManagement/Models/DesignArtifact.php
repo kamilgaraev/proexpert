@@ -20,9 +20,13 @@ final class DesignArtifact extends Model
         'organization_id',
         'project_id',
         'package_id',
+        'section_id',
         'created_by',
         'updated_by',
         'artifact_type',
+        'document_code',
+        'document_title',
+        'requires_sheet_registry',
         'title',
         'discipline',
         'stage',
@@ -32,6 +36,7 @@ final class DesignArtifact extends Model
 
     protected $casts = [
         'artifact_type' => DesignArtifactTypeEnum::class,
+        'requires_sheet_registry' => 'boolean',
         'metadata' => 'array',
     ];
 
@@ -56,6 +61,11 @@ final class DesignArtifact extends Model
         return $this->belongsTo(DesignPackage::class, 'package_id');
     }
 
+    public function section(): BelongsTo
+    {
+        return $this->belongsTo(DesignPackageSection::class, 'section_id');
+    }
+
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
@@ -74,6 +84,11 @@ final class DesignArtifact extends Model
     public function currentVersion(): HasOne
     {
         return $this->hasOne(DesignArtifactVersion::class, 'artifact_id')->where('is_current', true);
+    }
+
+    public function sheets(): HasMany
+    {
+        return $this->hasMany(DesignDocumentSheet::class, 'artifact_id')->orderBy('file_page_number')->orderBy('sheet_number');
     }
 
     public function scopeForOrganization(Builder $query, int $organizationId): Builder

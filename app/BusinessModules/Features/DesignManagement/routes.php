@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\BusinessModules\Features\DesignManagement\Http\Controllers\DesignManagementController;
+use App\BusinessModules\Features\DesignManagement\Http\Controllers\DesignDocumentationController;
 use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
 
@@ -22,6 +23,42 @@ Route::prefix('api/v1/admin/design-management')
         Route::post('/packages/{packageId}/workflow', [DesignManagementController::class, 'transitionPackageWorkflow'])
             ->middleware('authorize:design-management.view')
             ->name('packages.workflow');
+        Route::get('/normative-sources', [DesignDocumentationController::class, 'normativeSources'])
+            ->middleware('authorize:design-management.normative_catalog.view')
+            ->name('normative_sources.index');
+        Route::get('/document-templates', [DesignDocumentationController::class, 'documentTemplates'])
+            ->middleware('authorize:design-management.normative_catalog.view')
+            ->name('document_templates.index');
+        Route::get('/packages/{packageId}/sections', [DesignDocumentationController::class, 'sections'])
+            ->middleware('authorize:design-management.documents.view')
+            ->name('packages.sections.index');
+        Route::post('/packages/{packageId}/sections/generate', [DesignDocumentationController::class, 'generateSections'])
+            ->middleware('authorize:design-management.documents.manage_structure')
+            ->name('packages.sections.generate');
+        Route::post('/packages/{packageId}/sections/{sectionId}/documents', [DesignDocumentationController::class, 'uploadDocument'])
+            ->middleware('authorize:design-management.documents.upload')
+            ->name('packages.sections.documents.upload');
+        Route::put('/document-versions/{versionId}/sheets', [DesignDocumentationController::class, 'replaceSheets'])
+            ->middleware('authorize:design-management.documents.edit')
+            ->name('document_versions.sheets.replace');
+        Route::get('/document-versions/{versionId}/source-file', [DesignDocumentationController::class, 'downloadDocumentSourceFile'])
+            ->middleware('authorize:design-management.documents.view')
+            ->name('document_versions.source_file');
+        Route::post('/packages/{packageId}/completeness-checks', [DesignDocumentationController::class, 'runCompletenessCheck'])
+            ->middleware('authorize:design-management.norm_control.run')
+            ->name('packages.completeness_checks.store');
+        Route::get('/packages/{packageId}/review-comments', [DesignDocumentationController::class, 'reviewComments'])
+            ->middleware('authorize:design-management.review')
+            ->name('packages.review_comments.index');
+        Route::post('/packages/{packageId}/review-comments', [DesignDocumentationController::class, 'storeReviewComment'])
+            ->middleware('authorize:design-management.review')
+            ->name('packages.review_comments.store');
+        Route::patch('/review-comments/{commentId}', [DesignDocumentationController::class, 'updateReviewComment'])
+            ->middleware('authorize:design-management.review')
+            ->name('review_comments.update');
+        Route::get('/packages/{packageId}/issue-register', [DesignDocumentationController::class, 'issueRegister'])
+            ->middleware('authorize:design-management.export')
+            ->name('packages.issue_register');
         Route::post('/packages/{packageId}/models', [DesignManagementController::class, 'uploadModel'])
             ->middleware('authorize:design-management.models.upload')
             ->name('models.upload');

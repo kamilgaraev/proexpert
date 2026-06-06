@@ -5,7 +5,7 @@
   "type": "feature",
   "billing_model": "subscription",
   "category": "pto",
-  "description": "Проектные комплекты, IFC-модели, версии и подготовка моделей к просмотру.",
+  "description": "Проектная документация РФ, ПД/РД, IFC-модели, нормоконтроль, замечания и выпуск комплектов.",
   "class_name": "App\\BusinessModules\\Features\\DesignManagement\\DesignManagementModule",
   "service_provider": "App\\BusinessModules\\Features\\DesignManagement\\DesignManagementServiceProvider",
   "pricing": {
@@ -22,13 +22,25 @@
     "design-management.models.upload",
     "design-management.models.view",
     "design-management.models.prepare_viewer",
+    "design-management.documents.view",
+    "design-management.documents.upload",
+    "design-management.documents.edit",
+    "design-management.documents.manage_structure",
+    "design-management.normative_catalog.view",
+    "design-management.norm_control.run",
     "design-management.review",
     "design-management.approve",
     "design-management.export",
     "design-management.settings.manage"
   ],
   "features": [
+    "Структура ПД и РД по нормативным профилям РФ",
     "Проектные комплекты по проектам",
+    "Загрузка PDF, DWG, DXF, DOCX, XLSX, XML, ZIP и IFC",
+    "Реестр листов, ведомости и версии документов",
+    "Нормоконтроль комплектности и форматов",
+    "Замечания по разделам, документам, листам и BIM-элементам",
+    "Журнал workflow и выпуск комплектов",
     "Загрузка и хранение версий IFC-моделей",
     "Подготовка модели к просмотру в браузере",
     "История версий и готовность просмотра"
@@ -56,5 +68,5 @@
   "development_status": "beta",
   "icon": "box",
   "display_order": 37,
-  "tags": ["pir", "design", "bim", "ifc"]
+  "tags": ["pir", "design", "bim", "ifc", "spds", "gost"]
 }
