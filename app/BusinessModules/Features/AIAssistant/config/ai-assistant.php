@@ -75,7 +75,7 @@ return [
         'embedding_dimensions' => $configEnv('AI_RAG_EMBEDDING_DIMENSIONS', 256),
         'queue_connection' => $configEnv('AI_RAG_QUEUE_CONNECTION', 'redis_ai_rag'),
         'queue' => $configEnv('AI_RAG_QUEUE', 'ai-rag'),
-        'job_tries' => $configEnv('AI_RAG_JOB_TRIES', 1),
+        'job_tries' => $configEnv('AI_RAG_JOB_TRIES', 3),
         'job_timeout' => $configEnv('AI_RAG_JOB_TIMEOUT', 1800),
         'scheduled_limit' => $configEnv('AI_RAG_SCHEDULED_LIMIT', 50),
         'stale_after_hours' => $configEnv('AI_RAG_STALE_AFTER_HOURS', 24),

@@ -21,7 +21,7 @@ class IndexRagSourceJobTest extends TestCase
         $this->assertSame('project', $job->sourceType);
         $this->assertSame('redis_ai_rag', $job->connection);
         $this->assertSame('ai-rag', $job->queue);
-        $this->assertSame(1, $job->tries);
+        $this->assertSame(3, $job->tries);
         $this->assertSame(1800, $job->timeout);
         $this->assertTrue($job->failOnTimeout);
 

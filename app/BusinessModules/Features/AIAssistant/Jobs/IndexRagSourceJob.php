@@ -29,7 +29,7 @@ class IndexRagSourceJob implements ShouldQueue
     ) {
         $this->onConnection($this->connectionName());
         $this->onQueue($this->queueName());
-        $this->tries = $this->configInt('ai-assistant.rag.job_tries', 1);
+        $this->tries = $this->configInt('ai-assistant.rag.job_tries', 3);
         $this->timeout = $this->configInt('ai-assistant.rag.job_timeout', 1800);
     }
 
