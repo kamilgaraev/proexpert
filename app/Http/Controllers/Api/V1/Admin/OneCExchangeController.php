@@ -9,6 +9,7 @@ use App\Http\Requests\Api\V1\Admin\OneCExchange\CreateOneCTokenRequest;
 use App\Http\Requests\Api\V1\Admin\OneCExchange\ManualOneCExchangeRequest;
 use App\Http\Requests\Api\V1\Admin\OneCExchange\StoreOneCMappingRequest;
 use App\Http\Responses\AdminResponse;
+use App\Services\OneCExchange\OneCExchangeJournalService;
 use App\Services\OneCExchange\OneCExchangeRunService;
 use App\Services\OneCExchange\OneCManualExchangeService;
 use App\Services\OneCExchange\OneCMappingService;
@@ -26,6 +27,7 @@ final class OneCExchangeController extends Controller
         private readonly OneCTokenService $tokens,
         private readonly OneCMappingService $mappings,
         private readonly OneCExchangeRunService $runs,
+        private readonly OneCExchangeJournalService $journal,
         private readonly OneCManualExchangeService $manualExchange
     ) {
     }
@@ -88,6 +90,47 @@ final class OneCExchangeController extends Controller
         ));
     }
 
+    public function referenceMappings(Request $request): JsonResponse
+    {
+        return $this->guarded(function (int $organizationId) use ($request): JsonResponse {
+            $mappings = $this->mappings->registry(
+                $organizationId,
+                $request->only(['scope', 'status', 'source', 'search']),
+                (int) $request->integer('per_page', 20)
+            );
+
+            return AdminResponse::paginated(
+                $mappings->items(),
+                $this->paginationMeta($mappings),
+                trans_message('one_c_exchange.reference_mappings_loaded')
+            );
+        });
+    }
+
+    public function showReferenceMapping(int $mappingId): JsonResponse
+    {
+        return $this->guarded(function (int $organizationId) use ($mappingId): JsonResponse {
+            $mapping = $this->mappings->show($organizationId, $mappingId);
+
+            if (!$mapping) {
+                return AdminResponse::error(
+                    trans_message('one_c_exchange.mapping_not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
+            }
+
+            return AdminResponse::success($mapping, trans_message('one_c_exchange.reference_mapping_loaded'));
+        });
+    }
+
+    public function storeReferenceMapping(StoreOneCMappingRequest $request): JsonResponse
+    {
+        return $this->guarded(fn (int $organizationId) => AdminResponse::success(
+            $this->mappings->payload($this->mappings->upsert($organizationId, $request->validated())),
+            trans_message('one_c_exchange.reference_mapping_saved')
+        ));
+    }
+
     public function import(ManualOneCExchangeRequest $request): JsonResponse
     {
         return $this->guarded(fn (int $organizationId) => AdminResponse::success(
@@ -111,15 +154,89 @@ final class OneCExchangeController extends Controller
 
             return AdminResponse::paginated(
                 $history->items(),
-                [
-                    'current_page' => $history->currentPage(),
-                    'per_page' => $history->perPage(),
-                    'total' => $history->total(),
-                    'last_page' => $history->lastPage(),
-                ],
+                $this->paginationMeta($history),
                 trans_message('one_c_exchange.history_loaded')
             );
         });
+    }
+
+    public function journal(Request $request): JsonResponse
+    {
+        return $this->guarded(function (int $organizationId) use ($request): JsonResponse {
+            $journal = $this->journal->list(
+                $organizationId,
+                $request->only(['scope', 'status', 'direction', 'entity_type', 'search']),
+                (int) $request->integer('per_page', 20)
+            );
+
+            return AdminResponse::paginated(
+                $journal->items(),
+                $this->paginationMeta($journal),
+                trans_message('one_c_exchange.operations_loaded')
+            );
+        });
+    }
+
+    public function showJournalOperation(int $operationId): JsonResponse
+    {
+        return $this->guarded(function (int $organizationId) use ($operationId): JsonResponse {
+            $operation = $this->journal->show($organizationId, $operationId);
+
+            if (!$operation) {
+                return AdminResponse::error(
+                    trans_message('one_c_exchange.operation_not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
+            }
+
+            return AdminResponse::success($operation, trans_message('one_c_exchange.operation_loaded'));
+        });
+    }
+
+    public function retryJournalOperation(int $operationId): JsonResponse
+    {
+        return $this->guarded(function (int $organizationId) use ($operationId): JsonResponse {
+            $result = $this->journal->retry($organizationId, $operationId, Auth::id());
+
+            if (!$result['operation']) {
+                return AdminResponse::error(
+                    trans_message('one_c_exchange.operation_not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
+            }
+
+            if (!$result['allowed']) {
+                return AdminResponse::error((string) $result['message'], Response::HTTP_CONFLICT);
+            }
+
+            return AdminResponse::success($result['operation'], (string) $result['message']);
+        });
+    }
+
+    public function deadLetterJournalOperation(int $operationId): JsonResponse
+    {
+        return $this->guarded(function (int $organizationId) use ($operationId): JsonResponse {
+            $operation = $this->journal->moveToDeadLetter($organizationId, $operationId);
+
+            if (!$operation) {
+                return AdminResponse::error(
+                    trans_message('one_c_exchange.operation_not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
+            }
+
+            return AdminResponse::success($operation, trans_message('one_c_exchange.operation_dead_lettered'));
+        });
+    }
+
+    private function paginationMeta($paginator): array
+    {
+        return [
+            'current_page' => $paginator->currentPage(),
+            'per_page' => $paginator->perPage(),
+            'total' => $paginator->total(),
+            'last_page' => $paginator->lastPage(),
+        ];
     }
 
     private function guarded(callable $callback): JsonResponse

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\OneCExchange;
 
 use App\Enums\OneCExchangeStatus;
+use App\Enums\OneCExchangeScope;
 use App\Models\OneCExchangeRun;
 use App\Models\OneCExchangeToken;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -69,17 +70,10 @@ final class OneCExchangeRunService
                 ->where('organization_id', $organizationId)
                 ->latest()
                 ->first(),
-            'available_scopes' => [
-                'counterparties',
-                'employees',
-                'projects',
-                'materials',
-                'cost_categories',
-                'acts',
-                'payment_documents',
-                'advance_transactions',
-                'procurement_documents',
-            ],
+            'available_scopes' => array_map(
+                static fn (OneCExchangeScope $scope): string => $scope->value,
+                OneCExchangeScope::cases()
+            ),
             'manual_only' => true,
         ];
     }

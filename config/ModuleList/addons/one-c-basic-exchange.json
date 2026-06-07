@@ -21,14 +21,17 @@
     "one_c_exchange.manage_mappings",
     "one_c_exchange.import",
     "one_c_exchange.export",
-    "one_c_exchange.history.view"
+    "one_c_exchange.history.view",
+    "one_c_exchange.retry",
+    "one_c_exchange.dead_letter.manage"
   ],
   "features": [
     "API-токен для 1C",
     "Импорт справочников",
     "Экспорт документов",
     "Сопоставление справочников",
-    "Журнал обмена"
+    "Журнал обмена",
+    "Повторная доставка и dead-letter"
   ],
   "dependencies": [
     "organizations",

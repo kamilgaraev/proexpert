@@ -218,6 +218,8 @@ final class OneCExchangeControllerWorkflowTest extends TestCase
                 'one_c_exchange.import',
                 'one_c_exchange.export',
                 'one_c_exchange.history.view',
+                'one_c_exchange.retry',
+                'one_c_exchange.dead_letter.manage',
             ],
         ]);
     }

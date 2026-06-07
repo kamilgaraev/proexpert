@@ -128,6 +128,30 @@ class PermissionTranslatorTest extends TestCase
         $this->assertSame('Просмотр остатков у ответственных', $translated['module_permissions']['basic_warehouse']['warehouse.view_custody']);
     }
 
+    public function test_one_c_exchange_retry_permissions_are_translated_for_frontend(): void
+    {
+        $translated = PermissionTranslator::translatePermissionsData([
+            'module_permissions' => [
+                'one-c-basic-exchange' => [
+                    'one_c_exchange.view',
+                    'one_c_exchange.history.view',
+                    'one_c_exchange.retry',
+                    'one_c_exchange.dead_letter.manage',
+                ],
+            ],
+        ]);
+
+        $flattenedValues = json_encode($this->valuesOnly($translated), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+
+        $this->assertSame('1C: базовый обмен', $translated['module_groups']['one-c-basic-exchange']);
+        $this->assertSame('Просмотр обмена с 1C', $translated['module_permissions']['one-c-basic-exchange']['one_c_exchange.view']);
+        $this->assertSame('Просмотр журнала обмена с 1C', $translated['module_permissions']['one-c-basic-exchange']['one_c_exchange.history.view']);
+        $this->assertSame('Повторная доставка обмена с 1C', $translated['module_permissions']['one-c-basic-exchange']['one_c_exchange.retry']);
+        $this->assertSame('Управление ручной проверкой обмена с 1C', $translated['module_permissions']['one-c-basic-exchange']['one_c_exchange.dead_letter.manage']);
+        $this->assertStringNotContainsString('one_c_exchange.retry', $flattenedValues);
+        $this->assertStringNotContainsString('one_c_exchange.dead_letter.manage', $flattenedValues);
+    }
+
     private function valuesOnly(array $value): array
     {
         $values = [];
