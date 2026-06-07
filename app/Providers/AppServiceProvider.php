@@ -117,6 +117,14 @@ class AppServiceProvider extends ServiceProvider
         // Доп соглашения и спецификации
         $this->app->bind(\App\Repositories\Interfaces\SupplementaryAgreementRepositoryInterface::class, \App\Repositories\SupplementaryAgreementRepository::class);
         $this->app->bind(\App\Repositories\Interfaces\SpecificationRepositoryInterface::class, \App\Repositories\SpecificationRepository::class);
+        $this->app->bind(
+            \App\Services\OneCExchange\Contracts\OneCExchangeOperationRepositoryInterface::class,
+            \App\Services\OneCExchange\Repositories\EloquentOneCExchangeOperationRepository::class
+        );
+        $this->app->bind(
+            \App\Services\OneCExchange\Contracts\OneCExchangeClientInterface::class,
+            \App\Services\OneCExchange\Transport\HttpOneCExchangeClient::class
+        );
 
         // Регистрируем модульную систему
         $this->app->singleton(ModuleRegistry::class);

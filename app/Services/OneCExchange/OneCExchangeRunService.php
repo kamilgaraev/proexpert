@@ -74,7 +74,8 @@ final class OneCExchangeRunService
                 static fn (OneCExchangeScope $scope): string => $scope->value,
                 OneCExchangeScope::cases()
             ),
-            'manual_only' => true,
+            'manual_only' => ! (bool) config('one_c_exchange.delivery.enabled', false),
+            'worker_enabled' => (bool) config('one_c_exchange.delivery.enabled', false),
         ];
     }
 

@@ -10,6 +10,7 @@ use App\Services\OneCExchange\Support\OneCExchangePayloadSanitizer;
 use App\Services\OneCExchange\Support\OneCExchangeRetryPolicy;
 use Carbon\CarbonImmutable;
 use DateTimeImmutable;
+use DateTimeInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -252,9 +253,9 @@ final class OneCExchangeJournalService
             sourceIsActual: (bool) ($data['source_is_actual'] ?? true),
             now: new DateTimeImmutable()
         );
-        $nextRetryAt = $decision->nextRetryAt
-            ? CarbonImmutable::instance($decision->nextRetryAt)
-            : null;
+        $nextRetryAt = array_key_exists('next_retry_at', $data) && $data['next_retry_at'] !== null
+            ? $this->carbon($data['next_retry_at'])
+            : ($decision->nextRetryAt ? CarbonImmutable::instance($decision->nextRetryAt) : null);
         $retryable = array_key_exists('retryable', $data)
             ? (bool) $data['retryable']
             : $decision->retryable;
@@ -279,6 +280,8 @@ final class OneCExchangeJournalService
             'received_at' => $data['received_at'] ?? ($status === 'pending' || $status === 'queued' ? null : now()),
         ]);
 
+        $isDeadLetter = $decision->deadLetter || $status === 'dead_letter';
+
         $operation->update([
             'status' => $decision->deadLetter ? 'dead_letter' : $status,
             'failure_type' => $failureType,
@@ -287,7 +290,7 @@ final class OneCExchangeJournalService
             'retryable' => $retryable,
             'next_retry_at' => $nextRetryAt,
             'last_attempt_at' => now(),
-            'dead_lettered_at' => $decision->deadLetter ? now() : $operation->dead_lettered_at,
+            'dead_lettered_at' => $isDeadLetter ? now() : $operation->dead_lettered_at,
             'retry_count' => max(0, $attemptNumber - 1),
             'finished_at' => $this->isTerminalStatus($status) ? now() : null,
         ]);
@@ -372,9 +375,26 @@ final class OneCExchangeJournalService
         return hash('sha256', json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
     }
 
+    private function carbon(mixed $value): ?CarbonImmutable
+    {
+        if ($value instanceof CarbonImmutable) {
+            return $value;
+        }
+
+        if ($value instanceof DateTimeInterface) {
+            return CarbonImmutable::instance($value);
+        }
+
+        if (is_string($value) && $value !== '') {
+            return CarbonImmutable::parse($value);
+        }
+
+        return null;
+    }
+
     private function isTerminalStatus(string $status): bool
     {
-        return in_array($status, ['completed', 'accepted', 'posted', 'rejected', 'failed', 'dead_letter'], true);
+        return in_array($status, ['delivered', 'completed', 'accepted', 'posted', 'rejected', 'failed', 'dead_letter', 'cancelled'], true);
     }
 
     private function date(mixed $value): ?string

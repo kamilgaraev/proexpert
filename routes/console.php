@@ -236,6 +236,18 @@ Schedule::command('estimates:regional-prices:sync-fgiscs --region=RU-TA --latest
     })
     ->appendOutputTo(storage_path('logs/schedule-regional-prices-sync.log'));
 
+$oneCExchangeScheduledLimit = max(1, (int) config('one_c_exchange.delivery.scheduled_limit', 50));
+
+if ((bool) config('one_c_exchange.delivery.enabled', false)) {
+    Schedule::command("one-c-exchange:deliver --limit={$oneCExchangeScheduledLimit}")
+        ->everyMinute()
+        ->withoutOverlapping(10)
+        ->onFailure(function () {
+            Log::channel('stderr')->error('Scheduled one-c-exchange:deliver command failed.');
+        })
+        ->appendOutputTo(storage_path('logs/schedule-one-c-exchange-deliver.log'));
+}
+
 Artisan::command('projects:geocode-help', function () {
     $this->info('Available geocoding command:');
     $this->info('  php artisan projects:geocode [options]');

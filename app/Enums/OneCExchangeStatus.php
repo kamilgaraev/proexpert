@@ -8,7 +8,10 @@ enum OneCExchangeStatus: string
 {
     case Pending = 'pending';
     case Queued = 'queued';
+    case Processing = 'processing';
+    case RetryScheduled = 'retry_scheduled';
     case Sent = 'sent';
+    case Delivered = 'delivered';
     case Accepted = 'accepted';
     case Posted = 'posted';
     case Completed = 'completed';
@@ -16,4 +19,5 @@ enum OneCExchangeStatus: string
     case Failed = 'failed';
     case RequiresMapping = 'requires_mapping';
     case DeadLetter = 'dead_letter';
+    case Cancelled = 'cancelled';
 }
