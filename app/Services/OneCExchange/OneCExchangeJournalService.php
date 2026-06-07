@@ -22,6 +22,7 @@ final class OneCExchangeJournalService
         private readonly OneCExchangePayloadSanitizer $sanitizer,
         private readonly OneCExchangeRetryPolicy $retryPolicy,
         private readonly OneCExchangeIncidentNotificationService $incidentNotifications,
+        private readonly OneCExchangeConflictService $conflicts,
     ) {
     }
 
@@ -30,7 +31,7 @@ final class OneCExchangeJournalService
         $payload = $data['payload'] ?? [];
         $safePayload = is_array($payload) ? $this->sanitizer->preview($payload) : null;
 
-        return OneCExchangeOperation::query()->create([
+        $operation = OneCExchangeOperation::query()->create([
             'organization_id' => $organizationId,
             'run_id' => $data['run_id'] ?? null,
             'created_by' => $data['created_by'] ?? null,
@@ -57,6 +58,10 @@ final class OneCExchangeJournalService
             'started_at' => $data['started_at'] ?? now(),
             'finished_at' => $data['finished_at'] ?? null,
         ]);
+
+        $this->conflicts->syncOperationConflict($operation);
+
+        return $operation;
     }
 
     public function recordAttempt(OneCExchangeOperation $operation, array $data): OneCExchangeMessage
@@ -71,6 +76,7 @@ final class OneCExchangeJournalService
         });
 
         $this->notifyIncident((int) $message->operation_id);
+        $this->syncConflict((int) $message->operation_id);
 
         return $message;
     }
@@ -164,6 +170,8 @@ final class OneCExchangeJournalService
             return $result;
         }
 
+        $this->syncConflict((int) $result['operation_id']);
+
         return [
             'operation' => $this->show($organizationId, (int) $result['operation_id']),
             'allowed' => true,
@@ -208,6 +216,7 @@ final class OneCExchangeJournalService
         }
 
         $this->notifyIncident($operationId);
+        $this->syncConflict($operationId);
 
         return $this->show($organizationId, $operationId);
     }
@@ -410,6 +419,15 @@ final class OneCExchangeJournalService
 
         if ($operation instanceof OneCExchangeOperation) {
             $this->incidentNotifications->notifyOperation($operation);
+        }
+    }
+
+    private function syncConflict(int $operationId): void
+    {
+        $operation = OneCExchangeOperation::query()->find($operationId);
+
+        if ($operation instanceof OneCExchangeOperation) {
+            $this->conflicts->syncOperationConflict($operation);
         }
     }
 

@@ -51,6 +51,15 @@ Route::prefix('one-c-exchange')->name('one-c-exchange.')->group(function (): voi
     Route::get('/history', [OneCExchangeController::class, 'history'])
         ->middleware('authorize:one_c_exchange.history.view')
         ->name('history');
+    Route::get('/conflicts', [OneCExchangeController::class, 'conflicts'])
+        ->middleware('authorize:one_c_exchange.conflicts.view')
+        ->name('conflicts');
+    Route::get('/conflicts/{conflictId}', [OneCExchangeController::class, 'showConflict'])
+        ->middleware('authorize:one_c_exchange.conflicts.view')
+        ->name('conflicts.show');
+    Route::post('/conflicts/{conflictId}/actions', [OneCExchangeController::class, 'resolveConflict'])
+        ->middleware('authorize:one_c_exchange.conflicts.resolve')
+        ->name('conflicts.actions');
     Route::get('/journal', [OneCExchangeController::class, 'journal'])
         ->middleware('authorize:one_c_exchange.history.view')
         ->name('journal');

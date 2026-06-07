@@ -23,7 +23,9 @@
     "one_c_exchange.export",
     "one_c_exchange.history.view",
     "one_c_exchange.retry",
-    "one_c_exchange.dead_letter.manage"
+    "one_c_exchange.dead_letter.manage",
+    "one_c_exchange.conflicts.view",
+    "one_c_exchange.conflicts.resolve"
   ],
   "features": [
     "API-токен для 1C",
@@ -31,7 +33,8 @@
     "Экспорт документов",
     "Сопоставление справочников",
     "Журнал обмена",
-    "Повторная доставка и dead-letter"
+    "Повторная доставка и ручная проверка",
+    "Разрешение конфликтов обмена"
   ],
   "dependencies": [
     "organizations",

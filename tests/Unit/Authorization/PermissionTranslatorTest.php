@@ -137,6 +137,8 @@ class PermissionTranslatorTest extends TestCase
                     'one_c_exchange.history.view',
                     'one_c_exchange.retry',
                     'one_c_exchange.dead_letter.manage',
+                    'one_c_exchange.conflicts.view',
+                    'one_c_exchange.conflicts.resolve',
                 ],
             ],
         ]);
@@ -148,8 +150,12 @@ class PermissionTranslatorTest extends TestCase
         $this->assertSame('Просмотр журнала обмена с 1C', $translated['module_permissions']['one-c-basic-exchange']['one_c_exchange.history.view']);
         $this->assertSame('Повторная доставка обмена с 1C', $translated['module_permissions']['one-c-basic-exchange']['one_c_exchange.retry']);
         $this->assertSame('Управление ручной проверкой обмена с 1C', $translated['module_permissions']['one-c-basic-exchange']['one_c_exchange.dead_letter.manage']);
+        $this->assertSame('Просмотр конфликтов обмена с 1C', $translated['module_permissions']['one-c-basic-exchange']['one_c_exchange.conflicts.view']);
+        $this->assertSame('Разрешение конфликтов обмена с 1C', $translated['module_permissions']['one-c-basic-exchange']['one_c_exchange.conflicts.resolve']);
         $this->assertStringNotContainsString('one_c_exchange.retry', $flattenedValues);
         $this->assertStringNotContainsString('one_c_exchange.dead_letter.manage', $flattenedValues);
+        $this->assertStringNotContainsString('one_c_exchange.conflicts.view', $flattenedValues);
+        $this->assertStringNotContainsString('one_c_exchange.conflicts.resolve', $flattenedValues);
     }
 
     private function valuesOnly(array $value): array

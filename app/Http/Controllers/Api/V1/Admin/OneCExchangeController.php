@@ -8,8 +8,10 @@ use App\Enums\OneCExchangeScope;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Admin\OneCExchange\CreateOneCTokenRequest;
 use App\Http\Requests\Api\V1\Admin\OneCExchange\ManualOneCExchangeRequest;
+use App\Http\Requests\Api\V1\Admin\OneCExchange\ResolveOneCConflictRequest;
 use App\Http\Requests\Api\V1\Admin\OneCExchange\StoreOneCMappingRequest;
 use App\Http\Responses\AdminResponse;
+use App\Services\OneCExchange\OneCExchangeConflictService;
 use App\Services\OneCExchange\OneCExchangeJournalService;
 use App\Services\OneCExchange\OneCExchangeMonitoringService;
 use App\Services\OneCExchange\OneCExchangeRunService;
@@ -33,6 +35,7 @@ final class OneCExchangeController extends Controller
         private readonly OneCExchangeRunService $runs,
         private readonly OneCExchangeJournalService $journal,
         private readonly OneCExchangeMonitoringService $monitoring,
+        private readonly OneCExchangeConflictService $conflicts,
         private readonly OneCManualExchangeService $manualExchange
     ) {
     }
@@ -230,6 +233,66 @@ final class OneCExchangeController extends Controller
         });
     }
 
+    public function conflicts(Request $request): JsonResponse
+    {
+        return $this->guarded(function (int $organizationId) use ($request): JsonResponse {
+            $filters = $this->conflictFilters($request);
+
+            if ($filters instanceof JsonResponse) {
+                return $filters;
+            }
+
+            $conflicts = $this->conflicts->list(
+                $organizationId,
+                $filters,
+                (int) $request->integer('per_page', 20)
+            );
+
+            return AdminResponse::paginated(
+                $conflicts->items(),
+                $this->paginationMeta($conflicts),
+                trans_message('one_c_exchange.conflicts_loaded')
+            );
+        });
+    }
+
+    public function showConflict(int $conflictId): JsonResponse
+    {
+        return $this->guarded(function (int $organizationId) use ($conflictId): JsonResponse {
+            $conflict = $this->conflicts->show($organizationId, $conflictId);
+
+            if (!$conflict) {
+                return AdminResponse::error(
+                    trans_message('one_c_exchange.conflict_not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
+            }
+
+            return AdminResponse::success($conflict, trans_message('one_c_exchange.conflict_loaded'));
+        });
+    }
+
+    public function resolveConflict(ResolveOneCConflictRequest $request, int $conflictId): JsonResponse
+    {
+        return $this->guarded(function (int $organizationId) use ($request, $conflictId): JsonResponse {
+            $result = $this->conflicts->resolve(
+                $organizationId,
+                $conflictId,
+                Auth::id(),
+                $request->validated()
+            );
+
+            if (!$result['allowed']) {
+                return AdminResponse::error(
+                    (string) $result['message'],
+                    (int) $result['code']
+                );
+            }
+
+            return AdminResponse::success($result['conflict'], (string) $result['message']);
+        });
+    }
+
     public function showJournalOperation(int $operationId): JsonResponse
     {
         return $this->guarded(function (int $organizationId) use ($operationId): JsonResponse {
@@ -310,6 +373,29 @@ final class OneCExchangeController extends Controller
         if ($validator->fails()) {
             return AdminResponse::error(
                 trans_message('one_c_exchange.monitoring_filters_invalid'),
+                Response::HTTP_UNPROCESSABLE_ENTITY
+            );
+        }
+
+        return $validator->validated();
+    }
+
+    private function conflictFilters(Request $request): array|JsonResponse
+    {
+        $validator = Validator::make($request->query(), [
+            'scope' => ['nullable', 'string', Rule::in($this->scopeValues())],
+            'status' => ['nullable', 'string', Rule::in(['open', 'in_review', 'postponed', 'assigned', 'resolved', 'closed', 'obsolete'])],
+            'severity' => ['nullable', 'string', Rule::in(['critical', 'warning', 'info'])],
+            'entity_type' => ['nullable', 'string', 'max:80'],
+            'conflict_type' => ['nullable', 'string', 'max:64'],
+            'age' => ['nullable', 'string', Rule::in(['overdue', 'today', 'week', 'older'])],
+            'search' => ['nullable', 'string', 'max:120'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        if ($validator->fails()) {
+            return AdminResponse::error(
+                trans_message('one_c_exchange.conflict_filters_invalid'),
                 Response::HTTP_UNPROCESSABLE_ENTITY
             );
         }

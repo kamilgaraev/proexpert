@@ -361,6 +361,110 @@ final class OneCExchangeControllerWorkflowTest extends TestCase
             ->assertJsonPath('errors.scope.0', 'Заполните поле «раздел обмена».');
     }
 
+    public function test_conflict_resolution_contract_returns_business_comparison_and_rejects_stale_decisions(): void
+    {
+        Carbon::setTestNow('2026-06-07 12:00:00');
+        $this->beforeApplicationDestroyed(static fn () => Carbon::setTestNow());
+
+        $context = AdminApiTestContext::create();
+        $module = $this->createOneCModule();
+        $this->activateModule($context->organization->id, $module->id);
+
+        $operation = OneCExchangeOperation::query()->create([
+            'organization_id' => $context->organization->id,
+            'operation_key' => 'conflict-payment-100',
+            'correlation_id' => 'correlation-conflict-payment-100',
+            'direction' => 'export',
+            'scope' => 'payment_documents',
+            'entity_type' => 'payment_document',
+            'entity_id' => '100',
+            'external_id' => '1c-payment-100',
+            'status' => 'rejected',
+            'failure_type' => 'value_mismatch',
+            'safe_error_code' => 'value_mismatch',
+            'safe_error_message' => 'Сумма платежа отличается от значения в 1C.',
+            'retry_count' => 1,
+            'max_attempts' => 5,
+            'retryable' => false,
+            'source_hash' => 'source-hash-v1',
+            'payload_hash' => 'payload-hash-v1',
+            'safe_payload_preview' => [
+                'number' => 'ПЛ-100',
+                'token' => 'plain-secret-token',
+                'stack_trace' => 'hidden stack',
+            ],
+            'summary' => [
+                'field_differences' => [
+                    [
+                        'field' => 'amount',
+                        'prohelper_value' => 125000,
+                        'one_c_value' => 120000,
+                    ],
+                    [
+                        'field' => 'contractor',
+                        'prohelper_value' => 'ООО Строй',
+                        'one_c_value' => 'ООО Строй',
+                    ],
+                ],
+            ],
+        ]);
+
+        $listResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/one-c-exchange/conflicts?status=open&scope=payment_documents');
+
+        $listResponse->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.0.operation_key', 'conflict-payment-100')
+            ->assertJsonPath('data.0.title', 'Значения ProHelper и 1C не совпадают')
+            ->assertJsonPath('data.0.comparison_fields.0.field', 'amount')
+            ->assertJsonPath('data.0.comparison_fields.0.prohelper_value', 125000)
+            ->assertJsonPath('data.0.comparison_fields.0.one_c_value', 120000)
+            ->assertJsonMissing(['token' => 'plain-secret-token'])
+            ->assertJsonMissing(['stack_trace' => 'hidden stack']);
+
+        $conflictId = (int) $listResponse->json('data.0.id');
+        $version = (int) $listResponse->json('data.0.version');
+
+        $detailResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/one-c-exchange/conflicts/{$conflictId}");
+
+        $detailResponse->assertOk()
+            ->assertJsonPath('data.id', $conflictId)
+            ->assertJsonPath('data.history.0.action', 'created')
+            ->assertJsonPath('data.available_actions.0.type', 'accept_prohelper');
+
+        $resolveResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/one-c-exchange/conflicts/{$conflictId}/actions", [
+                'action' => 'accept_prohelper',
+                'expected_version' => $version,
+                'comment' => 'Оставляем оперативные данные ProHelper, 1C обновит сумму после повторной доставки.',
+            ]);
+
+        $resolveResponse->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.status', 'resolved')
+            ->assertJsonPath('data.resolution.decision', 'prohelper')
+            ->assertJsonPath('data.history.0.action', 'accept_prohelper')
+            ->assertJsonPath('data.history.0.comment', 'Оставляем оперативные данные ProHelper, 1C обновит сумму после повторной доставки.');
+
+        $this->assertDatabaseHas('one_c_exchange_operations', [
+            'id' => $operation->id,
+            'status' => 'queued',
+            'retryable' => true,
+        ]);
+
+        $staleResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/one-c-exchange/conflicts/{$conflictId}/actions", [
+                'action' => 'accept_one_c',
+                'expected_version' => $version,
+                'comment' => 'Повторное решение со старой версией не должно сохраниться.',
+            ]);
+
+        $staleResponse->assertStatus(409)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'Конфликт изменился. Обновите карточку и проверьте актуальные данные.');
+    }
+
     private function createOneCModule(): Module
     {
         return Module::query()->create([
@@ -382,6 +486,8 @@ final class OneCExchangeControllerWorkflowTest extends TestCase
                 'one_c_exchange.history.view',
                 'one_c_exchange.retry',
                 'one_c_exchange.dead_letter.manage',
+                'one_c_exchange.conflicts.view',
+                'one_c_exchange.conflicts.resolve',
             ],
         ]);
     }

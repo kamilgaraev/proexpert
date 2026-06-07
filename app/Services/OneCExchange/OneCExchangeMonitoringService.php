@@ -41,6 +41,7 @@ final class OneCExchangeMonitoringService
         private readonly OneCExchangeMonitoringFormatter $formatter,
         private readonly OneCExchangeIncidentRuleResolver $incidentResolver,
         private readonly OneCExchangeRunbookService $runbook,
+        private readonly OneCExchangeConflictService $conflicts,
     ) {
     }
 
@@ -98,6 +99,7 @@ final class OneCExchangeMonitoringService
                 $window['from'],
                 $window['to'],
             ),
+            'open_conflicts_count' => $this->conflicts->openCount($organizationId),
         ];
         $problemOperations = $this->problemOperations($baseQuery, $now);
         $incidents = $this->incidents($summary, $problemOperations, $now);

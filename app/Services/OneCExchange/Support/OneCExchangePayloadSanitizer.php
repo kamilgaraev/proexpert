@@ -149,6 +149,10 @@ final class OneCExchangePayloadSanitizer
             'server_error' => 'Учетная система временно недоступна.',
             'business_validation' => 'Учетная система отклонила документ по бизнес-правилу.',
             'validation_error' => 'Данные не прошли проверку перед обменом.',
+            'value_mismatch' => 'Значения ProHelper и 1C отличаются.',
+            'accounting_conflict' => 'Учетная система вернула конфликт значений.',
+            'source_outdated' => 'Исходные данные изменились после подготовки обмена.',
+            'duplicate_mapping' => 'Найдены неоднозначные сопоставления с учетной системой.',
             'exchange_failed' => 'Не удалось выполнить обмен с 1C.',
         ];
 

@@ -242,7 +242,9 @@
       "one_c_exchange.export",
       "one_c_exchange.history.view",
       "one_c_exchange.retry",
-      "one_c_exchange.dead_letter.manage"
+      "one_c_exchange.dead_letter.manage",
+      "one_c_exchange.conflicts.view",
+      "one_c_exchange.conflicts.resolve"
     ],
     "payments": [
       "payments.dashboard.view",
