@@ -21,6 +21,15 @@ Route::prefix('one-c-exchange')->name('one-c-exchange.')->group(function (): voi
     Route::get('/tokens', [OneCExchangeController::class, 'tokens'])
         ->middleware('authorize:one_c_exchange.manage_tokens')
         ->name('tokens');
+    Route::get('/profiles', [OneCExchangeController::class, 'profiles'])
+        ->middleware('authorize:one_c_exchange.view')
+        ->name('profiles');
+    Route::get('/profiles/{profileId}', [OneCExchangeController::class, 'showProfile'])
+        ->middleware('authorize:one_c_exchange.view')
+        ->name('profiles.show');
+    Route::post('/profiles/{profileId}/test-connection', [OneCExchangeController::class, 'testProfileConnection'])
+        ->middleware('authorize:one_c_exchange.profiles.test_connection')
+        ->name('profiles.test-connection');
     Route::post('/tokens', [OneCExchangeController::class, 'createToken'])
         ->middleware('authorize:one_c_exchange.manage_tokens')
         ->name('tokens.create');

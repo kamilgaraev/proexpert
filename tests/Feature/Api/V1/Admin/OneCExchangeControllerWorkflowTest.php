@@ -9,10 +9,14 @@ use App\Models\OneCExchangeMessage;
 use App\Models\OneCExchangeOperation;
 use App\Models\OneCExchangeRun;
 use App\Models\OneCExchangeToken;
+use App\Models\OneCBase;
+use App\Models\OneCIntegrationProfile;
+use App\Models\OneCProfileSecret;
 use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
 use Illuminate\Support\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
 
@@ -154,9 +158,81 @@ final class OneCExchangeControllerWorkflowTest extends TestCase
             ->assertForbidden()
             ->assertJsonPath('success', false);
 
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/one-c-exchange/profiles/1/test-connection')
+            ->assertForbidden()
+            ->assertJsonPath('success', false);
+
         $this->assertDatabaseMissing('one_c_exchange_tokens', [
             'organization_id' => $context->organization->id,
             'label' => 'Forbidden token',
+        ]);
+    }
+
+    public function test_connection_profile_endpoint_returns_safe_smoke_result(): void
+    {
+        $context = AdminApiTestContext::create();
+        $module = $this->createOneCModule();
+        $this->activateModule($context->organization->id, $module->id);
+
+        $base = OneCBase::query()->create([
+            'organization_id' => $context->organization->id,
+            'code' => 'main',
+            'name' => 'Main 1C',
+            'environment' => 'production',
+            'connector' => 'http',
+            'endpoint_url_encrypted' => 'https://one-c.example/exchange?api_key=hidden',
+            'metadata_path' => '/metadata',
+            'status' => 'active',
+        ]);
+        $profile = OneCIntegrationProfile::query()->create([
+            'organization_id' => $context->organization->id,
+            'one_c_base_id' => $base->id,
+            'code' => 'main-profile',
+            'name' => 'Main profile',
+            'environment' => 'production',
+            'auth_type' => 'bearer_token',
+            'status' => 'active',
+            'allowed_scopes' => ['materials'],
+        ]);
+        OneCProfileSecret::query()->create([
+            'organization_id' => $context->organization->id,
+            'one_c_integration_profile_id' => $profile->id,
+            'type' => 'bearer_token',
+            'label' => 'Main token',
+            'secret_value_encrypted' => 'plain-secret-token',
+            'fingerprint' => hash('sha256', 'plain-secret-token'),
+            'status' => 'active',
+        ]);
+
+        Http::fake(['*' => Http::response([
+            'protocol_version' => '1.0',
+            'connector_version' => '2.4.1',
+            'supported_scopes' => ['materials'],
+        ])]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/one-c-exchange/profiles/{$profile->id}/test-connection");
+
+        $response->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.code', 'ok')
+            ->assertJsonPath('data.status', 'ok')
+            ->assertJsonPath('data.profile.base.endpoint_display', 'https://one-c.example/exchange')
+            ->assertJsonPath('data.profile.last_connection_check.result_code', 'ok')
+            ->assertJsonMissing(['secret_value_encrypted' => 'plain-secret-token'])
+            ->assertJsonMissing(['api_key' => 'hidden'])
+            ->assertJsonMissing(['trace' => 'hidden']);
+
+        $this->assertDatabaseHas('one_c_integration_profiles', [
+            'id' => $profile->id,
+            'connection_status' => 'ok',
+            'last_connection_check_code' => 'ok',
+        ]);
+        $this->assertDatabaseHas('one_c_profile_audit_events', [
+            'one_c_integration_profile_id' => $profile->id,
+            'event_type' => 'connection_check_run',
+            'result_code' => 'ok',
         ]);
     }
 
@@ -488,6 +564,7 @@ final class OneCExchangeControllerWorkflowTest extends TestCase
                 'one_c_exchange.dead_letter.manage',
                 'one_c_exchange.conflicts.view',
                 'one_c_exchange.conflicts.resolve',
+                'one_c_exchange.profiles.test_connection',
             ],
         ]);
     }

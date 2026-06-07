@@ -178,7 +178,8 @@
       "one_c_exchange.retry",
       "one_c_exchange.dead_letter.manage",
       "one_c_exchange.conflicts.view",
-      "one_c_exchange.conflicts.resolve"
+      "one_c_exchange.conflicts.resolve",
+      "one_c_exchange.profiles.test_connection"
     ],
     "act-reporting": [
       "act_reports.view",

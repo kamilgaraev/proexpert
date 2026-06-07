@@ -12,4 +12,10 @@ return [
         'scheduled_limit' => (int) env('ONE_C_EXCHANGE_SCHEDULED_LIMIT', 50),
         'processing_timeout_minutes' => (int) env('ONE_C_EXCHANGE_PROCESSING_TIMEOUT_MINUTES', 15),
     ],
+    'connection_check' => [
+        'supported_protocol_versions' => array_values(array_filter(array_map(
+            static fn (string $version): string => trim($version),
+            explode(',', (string) env('ONE_C_EXCHANGE_SUPPORTED_PROTOCOL_VERSIONS', '1.0'))
+        ))),
+    ],
 ];

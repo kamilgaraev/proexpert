@@ -11,6 +11,7 @@ use App\Http\Requests\Api\V1\Admin\OneCExchange\ManualOneCExchangeRequest;
 use App\Http\Requests\Api\V1\Admin\OneCExchange\ResolveOneCConflictRequest;
 use App\Http\Requests\Api\V1\Admin\OneCExchange\StoreOneCMappingRequest;
 use App\Http\Responses\AdminResponse;
+use App\Services\OneCExchange\OneCConnectionCheckService;
 use App\Services\OneCExchange\OneCExchangeConflictService;
 use App\Services\OneCExchange\OneCExchangeJournalService;
 use App\Services\OneCExchange\OneCExchangeMonitoringService;
@@ -36,7 +37,8 @@ final class OneCExchangeController extends Controller
         private readonly OneCExchangeJournalService $journal,
         private readonly OneCExchangeMonitoringService $monitoring,
         private readonly OneCExchangeConflictService $conflicts,
-        private readonly OneCManualExchangeService $manualExchange
+        private readonly OneCManualExchangeService $manualExchange,
+        private readonly OneCConnectionCheckService $connectionChecks
     ) {
     }
 
@@ -102,6 +104,46 @@ final class OneCExchangeController extends Controller
             $this->tokens->listTokens($organizationId),
             trans_message('one_c_exchange.tokens_loaded')
         ));
+    }
+
+    public function profiles(): JsonResponse
+    {
+        return $this->guarded(fn (int $organizationId) => AdminResponse::success(
+            $this->connectionChecks->profiles($organizationId),
+            trans_message('one_c_exchange.profiles_loaded')
+        ));
+    }
+
+    public function showProfile(int $profileId): JsonResponse
+    {
+        return $this->guarded(function (int $organizationId) use ($profileId): JsonResponse {
+            $profile = $this->connectionChecks->show($organizationId, $profileId);
+
+            if ($profile === null) {
+                return AdminResponse::error(
+                    trans_message('one_c_exchange.profile_not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
+            }
+
+            return AdminResponse::success($profile, trans_message('one_c_exchange.profile_loaded'));
+        });
+    }
+
+    public function testProfileConnection(int $profileId): JsonResponse
+    {
+        return $this->guarded(function (int $organizationId) use ($profileId): JsonResponse {
+            $result = $this->connectionChecks->test($organizationId, $profileId, Auth::id());
+
+            if ($result === null) {
+                return AdminResponse::error(
+                    trans_message('one_c_exchange.profile_not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
+            }
+
+            return AdminResponse::success($result, trans_message('one_c_exchange.connection_check_completed'));
+        });
     }
 
     public function createToken(CreateOneCTokenRequest $request): JsonResponse
@@ -420,7 +462,7 @@ final class OneCExchangeController extends Controller
             Log::error('One C exchange request failed', [
                 'organization_id' => $organizationId,
                 'user_id' => Auth::id(),
-                'exception' => $exception,
+                'exception_class' => $exception::class,
             ]);
 
             return AdminResponse::error(
