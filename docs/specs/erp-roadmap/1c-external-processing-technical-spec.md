@@ -111,8 +111,10 @@ ProHelper владеет:
 | `profile_code` | да | Код integration profile из ProHelper |
 | `base_code` | да | Код базы 1С в ProHelper |
 | `supported_scopes` | да | Scopes, которые реально реализованы в этой 1С-базе |
-| `auth_mode` | да | `bearer`, `basic` или иной согласованный режим |
+| `auth_type` / `auth_mode` | да | `bearer_token`, `basic`, `none` или иной согласованный режим |
 | `token_or_key` | да, если auth не `none` | Секрет для авторизации запросов ProHelper |
+| `connector` | да | Тип подключения: `http`, `manual`, позднее `agent`, `file` или `webhook` |
+| `metadata_path` | да | Путь read-only metadata endpoint, по умолчанию `/metadata` |
 | `callback_url` | нет | URL ProHelper для асинхронных ответов 1С, если сценарий callback включен |
 | `timeouts` | да | Таймауты HTTP и внутренних операций |
 | `logging_level` | да | Уровень технического журнала без секретов и raw payload |
@@ -134,6 +136,23 @@ ProHelper поддерживает несколько организаций, ю
 | `integration_profile_id` или `profile_code` | Профиль обмена |
 | `environment` | Контур `production`, `test`, `sandbox` |
 | `scope` | Область обмена |
+
+`one_c_base_id` и `integration_profile_id` являются каноническими идентификаторами целевого обмена. `base_code` и `profile_code` допустимы как человекочитаемые или переходные алиасы, но журнал, idempotency, mappings, conflicts и monitoring должны уметь связывать запись с конкретной базой и профилем.
+
+Минимальный контекст integration profile:
+
+| Поле | Назначение |
+| --- | --- |
+| `integration_profile_id` | Основная единица маршрутизации обмена |
+| `one_c_base_id` | Конкретная база или логический контур 1С |
+| `legal_entity_id` | Юрлицо, для которого выполняется бухгалтерский обмен |
+| `allowed_scopes` | Scopes, разрешенные в профиле ProHelper |
+| `supported_scopes` | Scopes, фактически реализованные обработкой 1С и возвращаемые metadata |
+| `exchange_mode` | `disabled`, `manual`, `outbound_only`, `inbound_only`, `bidirectional` |
+| `routing_priority` | Приоритет выбора профиля при нескольких подходящих правилах |
+| `retry_policy` | Лимиты и backoff для автоматических повторов |
+| `monitoring_config` | SLA и окна мониторинга по scope/environment |
+| `manual_actions_enabled` | Разрешены ли ручной import/export, retry и requeue |
 
 Правила изоляции:
 
@@ -251,7 +270,7 @@ Endpoint должен принимать JSON и возвращать JSON. Вс
 
 ### 4.2. Envelope входящего сообщения
 
-Минимальный envelope, который 1С должна принять:
+Целевой ERP-grade envelope, который 1С должна принять:
 
 ```json
 {
@@ -291,6 +310,8 @@ Endpoint должен принимать JSON и возвращать JSON. Вс
   }
 }
 ```
+
+Текущий backend-контур ProHelper может на переходном этапе отправлять compatibility payload с меньшим набором полей: `operation_id`, `organization_id`, `operation_key`, `correlation_id`, `direction`, `scope`, `entity_type`, `entity_id`, `idempotency_key`, `safe_payload_preview`. Такая доставка нужна для legacy/manual сценариев и smoke-интеграции, но не заменяет целевой контракт выше. Для production-сценариев подрядчик 1С должен реализовать полный envelope с `protocol_version`, `source_hash` или `payload_hash`, контекстом профиля/базы и бизнес-полезным `payload`. Если обработка получает legacy payload в scope, который требует полного контракта, она должна вернуть safe error `incompatible_version` или `validation_error`, а не создавать учетный документ по неполному сообщению.
 
 Обязательные поля:
 
