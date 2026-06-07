@@ -39,6 +39,8 @@ final class OneCExchangeMonitoringService
     public function __construct(
         private readonly OneCExchangeJournalService $journal,
         private readonly OneCExchangeMonitoringFormatter $formatter,
+        private readonly OneCExchangeIncidentRuleResolver $incidentResolver,
+        private readonly OneCExchangeRunbookService $runbook,
     ) {
     }
 
@@ -65,45 +67,52 @@ final class OneCExchangeMonitoringService
             })
             ->count();
 
+        $summary = [
+            ...$this->formatter->summary(
+                configured: $this->configured($organizationId),
+                deliveryEnabled: (bool) config('one_c_exchange.delivery.enabled', false),
+                statusCounts: $statusCounts,
+                staleProcessingCount: $staleProcessingCount,
+                oldestPendingAgeMinutes: $oldestPendingAgeMinutes,
+                lastSuccessAt: $this->lastStatusAt($baseQuery, self::SUCCESS_STATUSES),
+                lastFailureAt: $this->lastStatusAt($baseQuery, self::FAILURE_STATUSES),
+                windowTotalCount: $windowTotalCount,
+                windowSuccessCount: $windowSuccessCount,
+                windowFailureCount: $windowFailureCount,
+                windowRetryCount: $windowRetryCount,
+                avgDurationMs: $latency['avg_duration_ms'],
+                p95DurationMs: $latency['p95_duration_ms'],
+            ),
+            'window_hours' => $window['window_hours'],
+            'window_from' => $this->date($window['from']),
+            'window_to' => $this->date($window['to']),
+            'delivered_completed_window_count' => $this->windowStatusCount(
+                $baseQuery,
+                ['delivered', 'completed'],
+                $window['from'],
+                $window['to'],
+            ),
+            'failed_dead_letter_window_count' => $this->windowStatusCount(
+                $baseQuery,
+                ['failed', 'dead_letter'],
+                $window['from'],
+                $window['to'],
+            ),
+        ];
+        $problemOperations = $this->problemOperations($baseQuery, $now);
+        $incidents = $this->incidents($summary, $problemOperations, $now);
+
         return [
             'generated_at' => $this->date($now),
-            'summary' => [
-                ...$this->formatter->summary(
-                    configured: $this->configured($organizationId),
-                    deliveryEnabled: (bool) config('one_c_exchange.delivery.enabled', false),
-                    statusCounts: $statusCounts,
-                    staleProcessingCount: $staleProcessingCount,
-                    oldestPendingAgeMinutes: $oldestPendingAgeMinutes,
-                    lastSuccessAt: $this->lastStatusAt($baseQuery, self::SUCCESS_STATUSES),
-                    lastFailureAt: $this->lastStatusAt($baseQuery, self::FAILURE_STATUSES),
-                    windowTotalCount: $windowTotalCount,
-                    windowSuccessCount: $windowSuccessCount,
-                    windowFailureCount: $windowFailureCount,
-                    windowRetryCount: $windowRetryCount,
-                    avgDurationMs: $latency['avg_duration_ms'],
-                    p95DurationMs: $latency['p95_duration_ms'],
-                ),
-                'window_hours' => $window['window_hours'],
-                'window_from' => $this->date($window['from']),
-                'window_to' => $this->date($window['to']),
-                'delivered_completed_window_count' => $this->windowStatusCount(
-                    $baseQuery,
-                    ['delivered', 'completed'],
-                    $window['from'],
-                    $window['to'],
-                ),
-                'failed_dead_letter_window_count' => $this->windowStatusCount(
-                    $baseQuery,
-                    ['failed', 'dead_letter'],
-                    $window['from'],
-                    $window['to'],
-                ),
-            ],
+            'summary' => $summary,
             'status_counts' => $this->countRows($statusCounts, 'status'),
             'scope_counts' => $this->groupCounts($baseQuery, 'scope'),
             'direction_counts' => $this->groupCounts($baseQuery, 'direction'),
             'failure_types' => $this->failureTypes($baseQuery, $window['from'], $window['to']),
-            'problem_operations' => $this->problemOperations($baseQuery, $now),
+            'problem_operations' => $problemOperations,
+            'incidents' => $incidents,
+            'notification_summary' => $this->incidentResolver->summary($incidents, $now),
+            'runbook' => $this->runbook->items(),
         ];
     }
 
@@ -436,10 +445,45 @@ final class OneCExchangeMonitoringService
                     ...$payload,
                     'problem_reason' => $reason,
                     'problem_label' => $this->problemLabel($reason),
+                    'incident' => $this->incidentResolver->resolveOperation($operation, $now, $reason),
                 ];
             })
             ->values()
             ->all();
+    }
+
+    private function incidents(array $summary, array $problemOperations, CarbonImmutable $now): array
+    {
+        $incidents = [];
+        $systemIncident = $this->incidentResolver->resolveSystem(
+            configured: (bool) ($summary['configured'] ?? false),
+            deliveryEnabled: (bool) ($summary['delivery_enabled'] ?? false),
+            now: $now,
+        );
+
+        if ($systemIncident !== null) {
+            $incidents[] = $systemIncident;
+        }
+
+        foreach ($problemOperations as $operation) {
+            if (is_array($operation) && is_array($operation['incident'] ?? null)) {
+                $incidents[] = $operation['incident'];
+            }
+        }
+
+        usort($incidents, static function (array $left, array $right): int {
+            $severityRank = ['critical' => 0, 'warning' => 1, 'info' => 2];
+            $leftRank = $severityRank[(string) ($left['severity'] ?? 'info')] ?? 2;
+            $rightRank = $severityRank[(string) ($right['severity'] ?? 'info')] ?? 2;
+
+            if ($leftRank !== $rightRank) {
+                return $leftRank <=> $rightRank;
+            }
+
+            return strcmp((string) ($left['response_deadline_at'] ?? ''), (string) ($right['response_deadline_at'] ?? ''));
+        });
+
+        return array_values($incidents);
     }
 
     private function problemReason(

@@ -20,7 +20,8 @@ final class OneCExchangeJournalService
 {
     public function __construct(
         private readonly OneCExchangePayloadSanitizer $sanitizer,
-        private readonly OneCExchangeRetryPolicy $retryPolicy
+        private readonly OneCExchangeRetryPolicy $retryPolicy,
+        private readonly OneCExchangeIncidentNotificationService $incidentNotifications,
     ) {
     }
 
@@ -60,7 +61,7 @@ final class OneCExchangeJournalService
 
     public function recordAttempt(OneCExchangeOperation $operation, array $data): OneCExchangeMessage
     {
-        return DB::transaction(function () use ($operation, $data): OneCExchangeMessage {
+        $message = DB::transaction(function () use ($operation, $data): OneCExchangeMessage {
             $lockedOperation = OneCExchangeOperation::query()
                 ->whereKey($operation->id)
                 ->lockForUpdate()
@@ -68,6 +69,10 @@ final class OneCExchangeJournalService
 
             return $this->recordAttemptForLockedOperation($lockedOperation, $data);
         });
+
+        $this->notifyIncident((int) $message->operation_id);
+
+        return $message;
     }
 
     public function list(int $organizationId, array $filters, int $perPage = 20): LengthAwarePaginator
@@ -201,6 +206,8 @@ final class OneCExchangeJournalService
         if ($operationId === null) {
             return null;
         }
+
+        $this->notifyIncident($operationId);
 
         return $this->show($organizationId, $operationId);
     }
@@ -395,6 +402,15 @@ final class OneCExchangeJournalService
     private function isTerminalStatus(string $status): bool
     {
         return in_array($status, ['delivered', 'completed', 'accepted', 'posted', 'rejected', 'failed', 'dead_letter', 'cancelled'], true);
+    }
+
+    private function notifyIncident(int $operationId): void
+    {
+        $operation = OneCExchangeOperation::query()->find($operationId);
+
+        if ($operation instanceof OneCExchangeOperation) {
+            $this->incidentNotifications->notifyOperation($operation);
+        }
     }
 
     private function date(mixed $value): ?string

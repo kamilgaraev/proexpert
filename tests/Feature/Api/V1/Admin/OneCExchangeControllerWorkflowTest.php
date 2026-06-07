@@ -164,10 +164,12 @@ final class OneCExchangeControllerWorkflowTest extends TestCase
     {
         Carbon::setTestNow('2026-06-07 12:00:00');
         $this->beforeApplicationDestroyed(static fn () => Carbon::setTestNow());
+        config(['one_c_exchange.delivery.enabled' => true]);
 
         $context = AdminApiTestContext::create();
         $module = $this->createOneCModule();
         $this->activateModule($context->organization->id, $module->id);
+        config(['one_c_exchange.delivery.enabled' => true]);
 
         OneCExchangeToken::query()->create([
             'organization_id' => $context->organization->id,
@@ -298,6 +300,23 @@ final class OneCExchangeControllerWorkflowTest extends TestCase
             ->assertJsonPath('data.direction_counts.import', 1)
             ->assertJsonPath('data.window.total_count', 4)
             ->assertJsonPath('data.window.retry_count', 2);
+
+        $monitoringResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/one-c-exchange/monitoring');
+
+        $monitoringResponse->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.notification_summary.total_count', 2)
+            ->assertJsonPath('data.notification_summary.critical_count', 2)
+            ->assertJsonPath('data.incidents.0.scenario', 'transport_unavailable')
+            ->assertJsonPath('data.incidents.0.severity', 'critical')
+            ->assertJsonPath('data.incidents.1.scenario', 'dead_letter')
+            ->assertJsonPath('data.incidents.1.owner.key', 'manual_review_owner')
+            ->assertJsonPath('data.incidents.1.operation.id', 3)
+            ->assertJsonPath('data.incidents.1.actions.0.type', 'open_operation')
+            ->assertJsonPath('data.problem_operations.0.incident.scenario', 'dead_letter')
+            ->assertJsonPath('data.runbook.0.key', 'transport_unavailable')
+            ->assertJsonPath('data.runbook.6.key', 'delivery_unconfigured');
     }
 
     public function test_manual_exchange_validation_errors_are_human_readable(): void

@@ -246,6 +246,14 @@ if ((bool) config('one_c_exchange.delivery.enabled', false)) {
             Log::channel('stderr')->error('Scheduled one-c-exchange:deliver command failed.');
         })
         ->appendOutputTo(storage_path('logs/schedule-one-c-exchange-deliver.log'));
+
+    Schedule::command('one-c-exchange:notify-incidents --window-hours=24')
+        ->everyTenMinutes()
+        ->withoutOverlapping(10)
+        ->onFailure(function () {
+            Log::channel('stderr')->error('Scheduled one-c-exchange:notify-incidents command failed.');
+        })
+        ->appendOutputTo(storage_path('logs/schedule-one-c-exchange-incidents.log'));
 }
 
 Artisan::command('projects:geocode-help', function () {
