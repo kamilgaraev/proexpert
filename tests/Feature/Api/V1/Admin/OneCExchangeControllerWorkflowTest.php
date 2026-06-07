@@ -5,10 +5,13 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin;
 
 use App\Models\OneCExchangeMapping;
+use App\Models\OneCExchangeMessage;
+use App\Models\OneCExchangeOperation;
 use App\Models\OneCExchangeRun;
 use App\Models\OneCExchangeToken;
 use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
+use Illuminate\Support\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
@@ -155,6 +158,146 @@ final class OneCExchangeControllerWorkflowTest extends TestCase
             'organization_id' => $context->organization->id,
             'label' => 'Forbidden token',
         ]);
+    }
+
+    public function test_monitoring_endpoints_return_health_summary_and_queue_metrics(): void
+    {
+        Carbon::setTestNow('2026-06-07 12:00:00');
+        $this->beforeApplicationDestroyed(static fn () => Carbon::setTestNow());
+
+        $context = AdminApiTestContext::create();
+        $module = $this->createOneCModule();
+        $this->activateModule($context->organization->id, $module->id);
+
+        OneCExchangeToken::query()->create([
+            'organization_id' => $context->organization->id,
+            'label' => 'Main exchange',
+            'token_hash' => hash('sha256', 'main-token'),
+        ]);
+
+        $pendingOperation = tap(OneCExchangeOperation::query()->create([
+            'organization_id' => $context->organization->id,
+            'operation_key' => 'operation-pending',
+            'correlation_id' => 'correlation-pending',
+            'direction' => 'export',
+            'scope' => 'payment_documents',
+            'status' => 'pending',
+            'retry_count' => 0,
+            'max_attempts' => 5,
+            'retryable' => false,
+        ]), function (OneCExchangeOperation $operation): void {
+            $operation->forceFill([
+                'created_at' => now()->subMinutes(45),
+                'updated_at' => now()->subMinutes(45),
+            ])->save();
+        });
+        $failedOperation = tap(OneCExchangeOperation::query()->create([
+            'organization_id' => $context->organization->id,
+            'operation_key' => 'operation-failed',
+            'correlation_id' => 'correlation-failed',
+            'direction' => 'export',
+            'scope' => 'payment_documents',
+            'status' => 'failed',
+            'failure_type' => 'timeout',
+            'safe_error_code' => 'timeout',
+            'safe_error_message' => 'Учетная система не ответила за отведенное время.',
+            'retry_count' => 1,
+            'max_attempts' => 5,
+            'retryable' => true,
+            'next_retry_at' => now()->addMinutes(15),
+        ]), function (OneCExchangeOperation $operation): void {
+            $operation->forceFill([
+                'created_at' => now()->subMinutes(30),
+                'updated_at' => now()->subMinutes(30),
+            ])->save();
+        });
+        tap(OneCExchangeOperation::query()->create([
+            'organization_id' => $context->organization->id,
+            'operation_key' => 'operation-dead-letter',
+            'correlation_id' => 'correlation-dead-letter',
+            'direction' => 'import',
+            'scope' => 'materials',
+            'status' => 'dead_letter',
+            'retry_count' => 5,
+            'max_attempts' => 5,
+            'retryable' => false,
+        ]), function (OneCExchangeOperation $operation): void {
+            $operation->forceFill([
+                'created_at' => now()->subMinutes(20),
+                'updated_at' => now()->subMinutes(20),
+            ])->save();
+        });
+        tap(OneCExchangeOperation::query()->create([
+            'organization_id' => $context->organization->id,
+            'operation_key' => 'operation-completed',
+            'correlation_id' => 'correlation-completed',
+            'direction' => 'export',
+            'scope' => 'payment_documents',
+            'status' => 'completed',
+            'retry_count' => 0,
+            'max_attempts' => 5,
+            'retryable' => false,
+            'started_at' => now()->subMinutes(15),
+            'finished_at' => now()->subMinutes(14),
+        ]), function (OneCExchangeOperation $operation): void {
+            $operation->forceFill([
+                'created_at' => now()->subMinutes(15),
+                'updated_at' => now()->subMinutes(14),
+            ])->save();
+        });
+        OneCExchangeMessage::query()->create([
+            'organization_id' => $context->organization->id,
+            'operation_id' => $failedOperation->id,
+            'attempt_number' => 1,
+            'status' => 'failed',
+            'failure_type' => 'timeout',
+            'retryable' => true,
+            'duration_ms' => 1200,
+            'sent_at' => now()->subMinutes(30),
+            'received_at' => now()->subMinutes(30),
+        ]);
+        OneCExchangeMessage::query()->create([
+            'organization_id' => $context->organization->id,
+            'operation_id' => $pendingOperation->id,
+            'attempt_number' => 1,
+            'status' => 'pending',
+            'retryable' => false,
+            'duration_ms' => 300,
+            'sent_at' => now()->subMinutes(45),
+        ]);
+
+        $healthResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/one-c-exchange/health');
+
+        $healthResponse->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.summary.health', 'critical')
+            ->assertJsonPath('data.summary.configured', true)
+            ->assertJsonPath('data.summary.pending_count', 1)
+            ->assertJsonPath('data.summary.failed_count', 1)
+            ->assertJsonPath('data.summary.dead_letter_count', 1)
+            ->assertJsonPath('data.summary.backlog_count', 1)
+            ->assertJsonPath('data.summary.oldest_pending_age_minutes', 45)
+            ->assertJsonPath('data.summary.window_total_count', 4)
+            ->assertJsonPath('data.summary.window_success_count', 1)
+            ->assertJsonPath('data.summary.window_failure_count', 2)
+            ->assertJsonPath('data.summary.window_retry_count', 2)
+            ->assertJsonPath('data.summary.avg_duration_ms', 750)
+            ->assertJsonPath('data.generated_at', '2026-06-07T12:00:00.000000Z');
+
+        $metricsResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/one-c-exchange/metrics');
+
+        $metricsResponse->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.status_counts.pending', 1)
+            ->assertJsonPath('data.status_counts.failed', 1)
+            ->assertJsonPath('data.status_counts.dead_letter', 1)
+            ->assertJsonPath('data.status_counts.completed', 1)
+            ->assertJsonPath('data.direction_counts.export', 3)
+            ->assertJsonPath('data.direction_counts.import', 1)
+            ->assertJsonPath('data.window.total_count', 4)
+            ->assertJsonPath('data.window.retry_count', 2);
     }
 
     public function test_manual_exchange_validation_errors_are_human_readable(): void

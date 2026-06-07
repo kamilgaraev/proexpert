@@ -5,6 +5,10 @@ declare(strict_types=1);
 return [
     'organization_required' => 'Не выбрана организация.',
     'status_loaded' => 'Статус обмена с 1C загружен.',
+    'monitoring_loaded' => 'Мониторинг обмена с 1C загружен.',
+    'health_loaded' => 'Состояние обмена с 1C загружено.',
+    'metrics_loaded' => 'Метрики обмена с 1C загружены.',
+    'monitoring_filters_invalid' => 'Проверьте период, раздел или направление обмена.',
     'token_created' => 'Токен для 1C создан. Скопируйте его сейчас: повторно показать токен нельзя.',
     'token_revoked' => 'Токен для 1C отозван.',
     'token_not_found' => 'Токен не найден или уже отозван.',
@@ -27,6 +31,14 @@ return [
     'unsupported_scope' => 'Выбранный раздел обмена пока не поддерживается.',
     'manual_import_accepted' => 'Данные приняты для ручного импорта.',
     'manual_export_prepared' => 'Данные подготовлены для выгрузки.',
+    'problem_labels' => [
+        'dead_letter' => 'Ручная проверка',
+        'failed' => 'Ошибка обмена',
+        'requires_mapping' => 'Нужно сопоставление',
+        'stale_processing' => 'Зависшая обработка',
+        'overdue_retry' => 'Повтор просрочен',
+        'attention_required' => 'Требует внимания',
+    ],
     'safe_errors' => [
         'duplicate_delivery' => 'Операция уже была получена ранее.',
         'mapping_missing' => 'Не найдено сопоставление для учетной системы.',

@@ -399,6 +399,18 @@ final class OneCExchangeJournalService
 
     private function date(mixed $value): ?string
     {
-        return $value ? $value->toJSON() : null;
+        if (!$value) {
+            return null;
+        }
+
+        if ($value instanceof DateTimeInterface) {
+            return CarbonImmutable::instance($value)->toJSON();
+        }
+
+        if (is_string($value)) {
+            return CarbonImmutable::parse($value)->toJSON();
+        }
+
+        return null;
     }
 }

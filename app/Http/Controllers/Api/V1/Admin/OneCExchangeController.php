@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Admin;
 
+use App\Enums\OneCExchangeScope;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Admin\OneCExchange\CreateOneCTokenRequest;
 use App\Http\Requests\Api\V1\Admin\OneCExchange\ManualOneCExchangeRequest;
 use App\Http\Requests\Api\V1\Admin\OneCExchange\StoreOneCMappingRequest;
 use App\Http\Responses\AdminResponse;
 use App\Services\OneCExchange\OneCExchangeJournalService;
+use App\Services\OneCExchange\OneCExchangeMonitoringService;
 use App\Services\OneCExchange\OneCExchangeRunService;
 use App\Services\OneCExchange\OneCManualExchangeService;
 use App\Services\OneCExchange\OneCMappingService;
@@ -18,6 +20,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\Response;
 use Throwable;
 
@@ -28,6 +32,7 @@ final class OneCExchangeController extends Controller
         private readonly OneCMappingService $mappings,
         private readonly OneCExchangeRunService $runs,
         private readonly OneCExchangeJournalService $journal,
+        private readonly OneCExchangeMonitoringService $monitoring,
         private readonly OneCManualExchangeService $manualExchange
     ) {
     }
@@ -38,6 +43,54 @@ final class OneCExchangeController extends Controller
             $this->runs->status($organizationId),
             trans_message('one_c_exchange.status_loaded')
         ));
+    }
+
+    public function monitoring(Request $request): JsonResponse
+    {
+        return $this->guarded(function (int $organizationId) use ($request): JsonResponse {
+            $filters = $this->monitoringFilters($request);
+
+            if ($filters instanceof JsonResponse) {
+                return $filters;
+            }
+
+            return AdminResponse::success(
+                $this->monitoring->monitoring($organizationId, $filters),
+                trans_message('one_c_exchange.monitoring_loaded')
+            );
+        });
+    }
+
+    public function health(Request $request): JsonResponse
+    {
+        return $this->guarded(function (int $organizationId) use ($request): JsonResponse {
+            $filters = $this->monitoringFilters($request);
+
+            if ($filters instanceof JsonResponse) {
+                return $filters;
+            }
+
+            return AdminResponse::success(
+                $this->monitoring->health($organizationId, $filters),
+                trans_message('one_c_exchange.health_loaded')
+            );
+        });
+    }
+
+    public function metrics(Request $request): JsonResponse
+    {
+        return $this->guarded(function (int $organizationId) use ($request): JsonResponse {
+            $filters = $this->monitoringFilters($request);
+
+            if ($filters instanceof JsonResponse) {
+                return $filters;
+            }
+
+            return AdminResponse::success(
+                $this->monitoring->metrics($organizationId, $filters),
+                trans_message('one_c_exchange.metrics_loaded')
+            );
+        });
     }
 
     public function tokens(): JsonResponse
@@ -237,6 +290,31 @@ final class OneCExchangeController extends Controller
             'total' => $paginator->total(),
             'last_page' => $paginator->lastPage(),
         ];
+    }
+
+    private function scopeValues(): array
+    {
+        return array_map(static fn (OneCExchangeScope $scope): string => $scope->value, OneCExchangeScope::cases());
+    }
+
+    private function monitoringFilters(Request $request): array|JsonResponse
+    {
+        $validator = Validator::make($request->query(), [
+            'scope' => ['nullable', 'string', Rule::in($this->scopeValues())],
+            'direction' => ['nullable', 'string', Rule::in(['import', 'export', 'prohelper_to_1c', '1c_to_prohelper'])],
+            'from' => ['nullable', 'date'],
+            'to' => ['nullable', 'date', 'after_or_equal:from'],
+            'window_hours' => ['nullable', 'integer', 'min:1', 'max:720'],
+        ]);
+
+        if ($validator->fails()) {
+            return AdminResponse::error(
+                trans_message('one_c_exchange.monitoring_filters_invalid'),
+                Response::HTTP_UNPROCESSABLE_ENTITY
+            );
+        }
+
+        return $validator->validated();
     }
 
     private function guarded(callable $callback): JsonResponse

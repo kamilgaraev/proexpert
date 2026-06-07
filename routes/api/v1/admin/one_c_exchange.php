@@ -9,6 +9,15 @@ Route::prefix('one-c-exchange')->name('one-c-exchange.')->group(function (): voi
     Route::get('/status', [OneCExchangeController::class, 'status'])
         ->middleware('authorize:one_c_exchange.view')
         ->name('status');
+    Route::get('/monitoring', [OneCExchangeController::class, 'monitoring'])
+        ->middleware('authorize:one_c_exchange.view')
+        ->name('monitoring');
+    Route::get('/health', [OneCExchangeController::class, 'health'])
+        ->middleware('authorize:one_c_exchange.view')
+        ->name('health');
+    Route::get('/metrics', [OneCExchangeController::class, 'metrics'])
+        ->middleware('authorize:one_c_exchange.view')
+        ->name('metrics');
     Route::get('/tokens', [OneCExchangeController::class, 'tokens'])
         ->middleware('authorize:one_c_exchange.manage_tokens')
         ->name('tokens');
