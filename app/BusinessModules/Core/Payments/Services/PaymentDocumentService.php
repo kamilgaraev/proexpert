@@ -343,6 +343,7 @@ class PaymentDocumentService
         $scheduledCarbon = $scheduledAt !== null
             ? \Illuminate\Support\Carbon::instance($scheduledAt)
             : null;
+
         $this->budgetLimitService->assertAllowed(
             $document,
             PaymentBudgetLimitService::OPERATION_SCHEDULE,
@@ -352,24 +353,26 @@ class PaymentDocumentService
             $scheduledCarbon
         );
 
-        $this->stateMachine->schedule($document, $scheduledAt);
-        $freshDocument = $document->fresh();
-        $this->budgetLimitService->syncReservation($freshDocument, $user, $overrideReason);
-        $freshDocument = $freshDocument->fresh();
+        return DB::transaction(function () use ($document, $scheduledAt, $user, $overrideReason, $oldScheduledAt): PaymentDocument {
+            $this->stateMachine->schedule($document, $scheduledAt);
+            $freshDocument = $document->fresh();
+            $this->budgetLimitService->syncReservation($freshDocument, $user, $overrideReason);
+            $freshDocument = $freshDocument->fresh();
 
-        $this->auditService->logRescheduled(
-            $freshDocument,
-            $oldScheduledAt,
-            $freshDocument->scheduled_at?->format('Y-m-d'),
-            $overrideReason
-        );
+            $this->auditService->logRescheduled(
+                $freshDocument,
+                $oldScheduledAt,
+                $freshDocument->scheduled_at?->format('Y-m-d'),
+                $overrideReason
+            );
 
-        Log::info('payment_document.scheduled', [
-            'document_id' => $document->id,
-            'scheduled_at' => $scheduledAt?->format('Y-m-d H:i:s'),
-        ]);
+            Log::info('payment_document.scheduled', [
+                'document_id' => $document->id,
+                'scheduled_at' => $scheduledAt?->format('Y-m-d H:i:s'),
+            ]);
 
-        return $freshDocument;
+            return $freshDocument;
+        });
     }
 
     /**

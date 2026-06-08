@@ -84,6 +84,45 @@ class PaymentCalendarControllerWorkflowTest extends TestCase
 
         $dueDocument->refresh();
         $this->assertSame('2026-05-20', $dueDocument->scheduled_at?->format('Y-m-d'));
+        $this->assertDatabaseHas('payment_audit_logs', [
+            'payment_document_id' => $dueDocument->id,
+            'action' => 'rescheduled',
+        ]);
+    }
+
+    public function test_calendar_rejects_too_large_period(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/payments/documents/calendar?start=2026-01-01&end=2026-12-31');
+
+        $response->assertUnprocessable();
+        $response->assertJsonPath('success', false);
+    }
+
+    public function test_calendar_reschedule_requires_business_reason(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $document = $this->createDocument($context, [
+            'document_number' => 'CAL-REASON-001',
+            'due_date' => '2026-05-10',
+            'scheduled_at' => null,
+            'status' => PaymentDocumentStatus::APPROVED,
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/payments/documents/{$document->id}/reschedule", [
+                'date' => '2026-05-20',
+            ]);
+
+        $response->assertUnprocessable();
+        $response->assertJsonPath('success', false);
+
+        $document->refresh();
+        $this->assertNull($document->scheduled_at);
     }
 
     public function test_calendar_reschedule_rejects_foreign_document(): void
@@ -113,7 +152,7 @@ class PaymentCalendarControllerWorkflowTest extends TestCase
 
     private function createDocument(AdminApiTestContext $context, array $overrides = []): PaymentDocument
     {
-        return PaymentDocument::query()->create(array_merge([
+        $attributes = array_merge([
             'organization_id' => $context->organization->id,
             'document_type' => PaymentDocumentType::INVOICE,
             'document_number' => 'CAL-' . uniqid(),
@@ -125,7 +164,13 @@ class PaymentCalendarControllerWorkflowTest extends TestCase
             'currency' => 'RUB',
             'status' => PaymentDocumentStatus::APPROVED,
             'due_date' => '2026-05-10',
-        ], $overrides));
+        ], $overrides);
+
+        if (!array_key_exists('remaining_amount', $overrides)) {
+            $attributes['remaining_amount'] = $attributes['amount'];
+        }
+
+        return PaymentDocument::query()->create($attributes);
     }
 
     private function activatePaymentsModule(int $organizationId): void

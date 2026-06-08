@@ -12,17 +12,20 @@ use App\BusinessModules\Core\Payments\Services\PaymentCalendarSourceService;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use DateTimeImmutable;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
-use Illuminate\Support\Facades\Log;
 
 use function trans_message;
 
 class PaymentCalendarController extends Controller
 {
+    private const MAX_CALENDAR_RANGE_DAYS = 92;
+
     public function __construct(
         private readonly PaymentDocumentService $paymentDocumentService,
         private readonly PaymentCalendarContractService $calendarContractService,
@@ -62,6 +65,8 @@ class PaymentCalendarController extends Controller
                     'budget_amount',
                 ])],
             ]);
+
+            $this->assertSupportedRange($validated['start'], $validated['end']);
 
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $filters = new PaymentCalendarSourceFilters(
@@ -111,8 +116,8 @@ class PaymentCalendarController extends Controller
         try {
             $validated = $request->validate([
                 'date' => ['required', 'date'],
-                'reason' => ['nullable', 'string', 'max:1000'],
-                'budget_override_reason' => ['nullable', 'string', 'max:1000'],
+                'reason' => ['nullable', 'required_without:budget_override_reason', 'string', 'max:1000'],
+                'budget_override_reason' => ['nullable', 'required_without:reason', 'string', 'max:1000'],
             ]);
 
             $organizationId = (int) $request->attributes->get('current_organization_id');
@@ -164,6 +169,17 @@ class PaymentCalendarController extends Controller
         }
 
         return trim($reason);
+    }
+
+    private function assertSupportedRange(string $start, string $end): void
+    {
+        $days = (new DateTimeImmutable($start))->diff(new DateTimeImmutable($end))->days;
+
+        if ($days > self::MAX_CALENDAR_RANGE_DAYS) {
+            throw ValidationException::withMessages([
+                'end' => [trans_message('payments.calendar.range_too_large')],
+            ]);
+        }
     }
 
     private function statusValue(mixed $status): string
