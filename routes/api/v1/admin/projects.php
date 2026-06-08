@@ -1,11 +1,11 @@
 <?php
 
-use App\Http\Controllers\Api\V1\Admin\ProjectController;
-use App\Http\Controllers\Api\V1\Admin\ProjectParticipantInvitationController;
-use App\Http\Controllers\Api\V1\Admin\ProjectOrganizationController;
-use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\ProjectChildWorksController;
- 
+use App\Http\Controllers\Api\V1\Admin\ProjectController;
+use App\Http\Controllers\Api\V1\Admin\ProjectOrganizationController;
+use App\Http\Controllers\Api\V1\Admin\ProjectParticipantInvitationController;
+use Illuminate\Support\Facades\Route;
+
 // Projects CRUD с детальными правами
 Route::get('projects', [ProjectController::class, 'index'])
     ->middleware('authorize:admin.projects.view')
@@ -63,17 +63,39 @@ Route::get('/projects/{id}/work-types', [ProjectController::class, 'getProjectWo
     ->name('projects.workTypes');
 
 // Получить организации проекта
-Route::get('/projects/{project}/organizations', [ProjectOrganizationController::class, 'index'])->name('projects.organizations.index');
-Route::post('/projects/{project}/organizations', [ProjectOrganizationController::class, 'store'])->name('projects.organizations.store');
-Route::get('/projects/{project}/organizations/{organization}', [ProjectOrganizationController::class, 'show'])->name('projects.organizations.show');
-Route::patch('/projects/{project}/organizations/{organization}/role', [ProjectOrganizationController::class, 'updateRole'])->name('projects.organizations.role');
-Route::delete('/projects/{project}/organizations/{organization}', [ProjectOrganizationController::class, 'destroy'])->name('projects.organizations.destroy');
-Route::post('/projects/{project}/organizations/{organization}/activate', [ProjectOrganizationController::class, 'activate'])->name('projects.organizations.activate');
-Route::post('/projects/{project}/organizations/{organization}/deactivate', [ProjectOrganizationController::class, 'deactivate'])->name('projects.organizations.deactivate');
-Route::get('/projects/{project}/participant-invitations', [ProjectParticipantInvitationController::class, 'index'])->name('projects.participant-invitations.index');
-Route::post('/projects/{project}/participant-invitations', [ProjectParticipantInvitationController::class, 'store'])->name('projects.participant-invitations.store');
-Route::post('/projects/{project}/participant-invitations/{invitation}/cancel', [ProjectParticipantInvitationController::class, 'cancel'])->name('projects.participant-invitations.cancel');
-Route::post('/projects/{project}/participant-invitations/{invitation}/resend', [ProjectParticipantInvitationController::class, 'resend'])->name('projects.participant-invitations.resend');
+Route::get('/projects/{project}/organizations', [ProjectOrganizationController::class, 'index'])
+    ->middleware('project.context')
+    ->name('projects.organizations.index');
+Route::post('/projects/{project}/organizations', [ProjectOrganizationController::class, 'store'])
+    ->middleware(['project.context', 'authorize:projects.organizations.manage'])
+    ->name('projects.organizations.store');
+Route::get('/projects/{project}/organizations/{organization}', [ProjectOrganizationController::class, 'show'])
+    ->middleware('project.context')
+    ->name('projects.organizations.show');
+Route::patch('/projects/{project}/organizations/{organization}/role', [ProjectOrganizationController::class, 'updateRole'])
+    ->middleware(['project.context', 'authorize:projects.organizations.manage'])
+    ->name('projects.organizations.role');
+Route::delete('/projects/{project}/organizations/{organization}', [ProjectOrganizationController::class, 'destroy'])
+    ->middleware(['project.context', 'authorize:projects.organizations.manage'])
+    ->name('projects.organizations.destroy');
+Route::post('/projects/{project}/organizations/{organization}/activate', [ProjectOrganizationController::class, 'activate'])
+    ->middleware(['project.context', 'authorize:projects.organizations.manage'])
+    ->name('projects.organizations.activate');
+Route::post('/projects/{project}/organizations/{organization}/deactivate', [ProjectOrganizationController::class, 'deactivate'])
+    ->middleware(['project.context', 'authorize:projects.organizations.manage'])
+    ->name('projects.organizations.deactivate');
+Route::get('/projects/{project}/participant-invitations', [ProjectParticipantInvitationController::class, 'index'])
+    ->middleware('project.context')
+    ->name('projects.participant-invitations.index');
+Route::post('/projects/{project}/participant-invitations', [ProjectParticipantInvitationController::class, 'store'])
+    ->middleware(['project.context', 'authorize:projects.organizations.manage'])
+    ->name('projects.participant-invitations.store');
+Route::post('/projects/{project}/participant-invitations/{invitation}/cancel', [ProjectParticipantInvitationController::class, 'cancel'])
+    ->middleware(['project.context', 'authorize:projects.organizations.manage'])
+    ->name('projects.participant-invitations.cancel');
+Route::post('/projects/{project}/participant-invitations/{invitation}/resend', [ProjectParticipantInvitationController::class, 'resend'])
+    ->middleware(['project.context', 'authorize:projects.organizations.manage'])
+    ->name('projects.participant-invitations.resend');
 
 // Получить детализированные работы дочерних организаций
 Route::get('/projects/{id}/child-works', [ProjectChildWorksController::class, 'index'])
@@ -81,8 +103,10 @@ Route::get('/projects/{id}/child-works', [ProjectChildWorksController::class, 'i
     ->name('projects.child-works.index');
 
 // Статистика (если понадобится)
-// Route::get('projects/{project}/statistics', [ProjectController::class, 'statistics'])->name('projects.statistics'); 
+// Route::get('projects/{project}/statistics', [ProjectController::class, 'statistics'])->name('projects.statistics');
 
 Route::get('/projects/{id}/full', [ProjectController::class, 'fullDetails'])->name('projects.full-details');
 
-Route::get('/projects/{project}/available-organizations', [ProjectOrganizationController::class, 'available'])->name('projects.organizations.available'); 
+Route::get('/projects/{project}/available-organizations', [ProjectOrganizationController::class, 'available'])
+    ->middleware(['project.context', 'authorize:projects.organizations.manage'])
+    ->name('projects.organizations.available');

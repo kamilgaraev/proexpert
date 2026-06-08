@@ -8,9 +8,11 @@ Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.conte
     Route::get('/schedule/daily-plans', [ScheduleController::class, 'dailyPlans'])->name('schedule.daily-plans');
     Route::patch('/schedule/daily-plan-assignments/{assignment}/fact', [ScheduleController::class, 'recordAssignmentFact'])
         ->whereNumber('assignment')
+        ->middleware('authorize:schedule.daily_plan.manage')
         ->name('schedule.daily-plan-assignments.fact');
     Route::post('/schedule/daily-plans/{dailyPlan}/submit', [ScheduleController::class, 'submitDailyPlan'])
         ->whereNumber('dailyPlan')
+        ->middleware('authorize:schedule.daily_plan.manage')
         ->name('schedule.daily-plans.submit');
     Route::post('/schedule/work-constraints/{constraint}/linked-action', [ScheduleController::class, 'createLinkedConstraintAction'])
         ->whereNumber('constraint')

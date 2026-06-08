@@ -2,15 +2,15 @@
 
 namespace App\Domain\Authorization\Http\Middleware;
 
-use App\Domain\Authorization\Services\AuthorizationService;
 use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Services\AuthorizationService;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response as ResponseAlias;
 
 /**
  * Middleware для проверки ролей пользователя
- * 
+ *
  * Использование:
  * Route::middleware('role:organization_admin')->get('/admin', ...);
  * Route::middleware('role:project_manager,organization')->get('/projects', ...);
@@ -28,37 +28,28 @@ class RoleMiddleware
     /**
      * Handle an incoming request.
      *
-     * @param Request $request
-     * @param Closure $next
-     * @param string $roles Роли (разделенные | для OR, , для AND)
-     * @param string|null $contextType Тип контекста
-     * @param string|null $contextParam Параметр роута для контекста
-     * @return ResponseAlias
+     * @param  string  $roles  Роли (разделенные | для OR, , для AND)
+     * @param  string|null  $contextType  Тип контекста
+     * @param  string|null  $contextParam  Параметр роута для контекста
      */
     public function handle(Request $request, Closure $next, string $roles, ?string $contextType = null, ?string $contextParam = null): ResponseAlias
     {
-        // Пропускаем Prometheus мониторинг без проверки ролей
-        $userAgent = $request->userAgent() ?? '';
-        if (str_contains($userAgent, 'Prometheus')) {
-            return $next($request);
-        }
-        
         $user = $request->user();
-        
-        if (!$user) {
+
+        if (! $user) {
             return \App\Http\Responses\AdminResponse::fromPayload(['error' => trans_message('errors.unauthenticated')], 401);
         }
 
         // Определяем контекст
         $contextId = $this->resolveContextId($request, $contextType, $contextParam);
-        
+
         // Проверяем роли
-        if (!$this->checkRoles($user, $roles, $contextId)) {
+        if (! $this->checkRoles($user, $roles, $contextId)) {
             return \App\Http\Responses\AdminResponse::fromPayload([
                 'error' => trans_message('errors.unauthorized'),
                 'required_roles' => $roles,
                 'context_type' => $contextType,
-                'context_id' => $contextId
+                'context_id' => $contextId,
             ], 403);
         }
 
@@ -72,16 +63,16 @@ class RoleMiddleware
     {
         // Разбираем роли по | (OR логика)
         $roleGroups = explode('|', $roles);
-        
+
         foreach ($roleGroups as $roleGroup) {
             // Разбираем роли по , (AND логика)
             $requiredRoles = array_map('trim', explode(',', $roleGroup));
-            
+
             if ($this->hasAllRoles($user, $requiredRoles, $contextId)) {
                 return true; // Одна из групп ролей подошла
             }
         }
-        
+
         return false;
     }
 
@@ -91,11 +82,11 @@ class RoleMiddleware
     protected function hasAllRoles($user, array $roles, ?int $contextId): bool
     {
         foreach ($roles as $role) {
-            if (!$this->authService->hasRole($user, trim($role), $contextId)) {
+            if (! $this->authService->hasRole($user, trim($role), $contextId)) {
                 return false;
             }
         }
-        
+
         return true;
     }
 
@@ -104,34 +95,36 @@ class RoleMiddleware
      */
     protected function resolveContextId(Request $request, ?string $contextType, ?string $contextParam): ?int
     {
-        if (!$contextType) {
+        if (! $contextType) {
             return null;
         }
 
         switch ($contextType) {
             case 'system':
                 return AuthorizationContext::getSystemContext()->id;
-                
+
             case 'organization':
                 $organizationId = $this->extractParam($request, $contextParam ?? 'organization_id');
-                if (!$organizationId && $request->user()) {
+                if (! $organizationId && $request->user()) {
                     $organizationId = $request->user()->current_organization_id;
                 }
+
                 return $organizationId ? AuthorizationContext::getOrganizationContext($organizationId)->id : null;
-                
+
             case 'project':
                 $projectId = $this->extractParam($request, $contextParam ?? 'project_id');
                 if ($projectId) {
                     // Получаем organization_id проекта
                     $project = \App\Models\Project::find($projectId);
                     $organizationId = $project ? $project->organization_id : null;
-                    
+
                     if ($organizationId) {
                         return AuthorizationContext::getProjectContext($projectId, $organizationId)->id;
                     }
                 }
+
                 return null;
-                
+
             default:
                 return null;
         }
@@ -142,8 +135,8 @@ class RoleMiddleware
      */
     protected function extractParam(Request $request, string $param): mixed
     {
-        return $request->route($param) 
-            ?? $request->get($param) 
+        return $request->route($param)
+            ?? $request->get($param)
             ?? $request->input($param);
     }
 }
