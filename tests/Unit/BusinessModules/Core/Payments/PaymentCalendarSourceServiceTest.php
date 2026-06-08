@@ -8,8 +8,10 @@ use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarItem;
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarSourceFilters;
 use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentSchedule;
+use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\BusinessModules\Core\Payments\Services\PaymentCalendarSourceService;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastContext;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastFilters;
@@ -162,6 +164,37 @@ final class PaymentCalendarSourceServiceTest extends TestCase
         $this->assertSame(1, $forecast['meta']['excluded_items']);
     }
 
+    public function test_normalize_items_keeps_higher_priority_for_same_cash_flow_key(): void
+    {
+        $document = $this->paymentDocument([
+            'id' => 100,
+            'amount' => 400,
+            'remaining_amount' => 400,
+        ]);
+        $reservation = $this->budgetLimitReservation([
+            'id' => 900,
+            'payment_document_id' => 100,
+            'amount' => 400,
+        ]);
+        $reservation->setRelation('paymentDocument', $document);
+
+        $paymentItem = $this->service->fromPaymentDocument($document, $this->date('2026-01-01'));
+        $reservationItem = $this->service->fromBudgetLimitReservation($reservation, $this->date('2026-01-01'));
+
+        $items = $this->service->normalizeItems([
+            $reservationItem,
+            $paymentItem,
+        ], new PaymentCalendarSourceFilters(
+            organizationId: 42,
+            periodStart: '2026-01-01',
+            periodEnd: '2026-01-31',
+        ));
+
+        $this->assertCount(1, $items);
+        $this->assertSame('payment_document', $items[0]->sourceType);
+        $this->assertSame('payment-document:100', $items[0]->cashFlowKey);
+    }
+
     public function test_foreign_organization_is_excluded(): void
     {
         $filters = new PaymentCalendarSourceFilters(
@@ -191,6 +224,18 @@ final class PaymentCalendarSourceServiceTest extends TestCase
 
         $this->assertInstanceOf(PaymentCalendarItem::class, $item);
         $this->assertSame(PaymentCalendarItem::BUCKET_OVERDUE, $item->bucket);
+    }
+
+    public function test_payment_transaction_preserves_original_transaction_date(): void
+    {
+        $item = $this->service->fromPaymentTransaction($this->paymentTransaction([
+            'transaction_date' => '2026-01-09',
+            'value_date' => '2026-01-10',
+        ]));
+
+        $this->assertInstanceOf(PaymentCalendarItem::class, $item);
+        $this->assertSame('2026-01-10', $item->date);
+        $this->assertSame('2026-01-09', $item->originalDate);
     }
 
     public function test_calendar_item_maps_to_cash_gap_forecast_item(): void
@@ -249,6 +294,50 @@ final class PaymentCalendarSourceServiceTest extends TestCase
         $this->assertSame('budget-plan:701:2026-01-01:RUB', $item->cashFlowKey);
     }
 
+    public function test_monthly_budget_plan_matches_period_inside_month(): void
+    {
+        $version = $this->budgetVersion();
+        $article = $this->budgetArticle(['flow_direction' => 'inflow']);
+        $line = $this->budgetLine();
+        $line->setRelation('version', $version);
+        $line->setRelation('article', $article);
+
+        $amount = $this->budgetAmount(['month' => '2026-01-01']);
+        $amount->setRelation('line', $line);
+
+        $item = $this->service->fromBudgetAmount($amount);
+
+        $items = $this->service->normalizeItems([
+            $item,
+        ], new PaymentCalendarSourceFilters(
+            organizationId: 42,
+            periodStart: '2026-01-15',
+            periodEnd: '2026-01-31',
+        ));
+
+        $this->assertCount(1, $items);
+        $this->assertSame(PaymentCalendarItem::BUCKET_BUDGET_PLAN, $items[0]->bucket);
+    }
+
+    public function test_monthly_reservation_without_document_matches_period_inside_month(): void
+    {
+        $item = $this->service->fromBudgetLimitReservation($this->budgetLimitReservation([
+            'payment_document_id' => null,
+            'period_month' => '2026-01-01',
+        ]), $this->date('2025-12-20'));
+
+        $items = $this->service->normalizeItems([
+            $item,
+        ], new PaymentCalendarSourceFilters(
+            organizationId: 42,
+            periodStart: '2026-01-15',
+            periodEnd: '2026-01-31',
+        ));
+
+        $this->assertCount(1, $items);
+        $this->assertSame(PaymentCalendarItem::BUCKET_RESERVED, $items[0]->bucket);
+    }
+
     private function paymentDocument(array $attributes = []): PaymentDocument
     {
         $document = new PaymentDocument();
@@ -288,6 +377,26 @@ final class PaymentCalendarSourceServiceTest extends TestCase
         ], $attributes), true);
 
         return $schedule;
+    }
+
+    private function paymentTransaction(array $attributes = []): PaymentTransaction
+    {
+        $transaction = new PaymentTransaction();
+        $transaction->setRawAttributes(array_merge([
+            'id' => 301,
+            'organization_id' => 42,
+            'project_id' => 14,
+            'payer_organization_id' => 42,
+            'payee_organization_id' => 7,
+            'amount' => 500,
+            'currency' => 'RUB',
+            'transaction_date' => '2026-01-10',
+            'value_date' => '2026-01-10',
+            'status' => PaymentTransactionStatus::COMPLETED->value,
+            'reference_number' => 'TRX-301',
+        ], $attributes), true);
+
+        return $transaction;
     }
 
     private function budgetLimitReservation(array $attributes = []): BudgetLimitReservation

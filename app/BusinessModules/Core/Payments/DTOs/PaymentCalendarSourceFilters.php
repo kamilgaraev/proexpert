@@ -93,11 +93,42 @@ final readonly class PaymentCalendarSourceFilters
         $start = new DateTimeImmutable($this->periodStart);
         $end = new DateTimeImmutable($this->periodEnd);
 
+        if ($this->monthlySourceMatches($item, $date, $start, $end)) {
+            return true;
+        }
+
         if ($item->bucket === PaymentCalendarItem::BUCKET_OVERDUE) {
             return $date <= $end;
         }
 
         return $date >= $start && $date <= $end;
+    }
+
+    private function monthlySourceMatches(
+        PaymentCalendarItem $item,
+        DateTimeImmutable $date,
+        DateTimeImmutable $start,
+        DateTimeImmutable $end,
+    ): bool
+    {
+        if (!$this->isMonthlySource($item)) {
+            return false;
+        }
+
+        $monthStart = $date->modify('first day of this month');
+        $monthEnd = $date->modify('last day of this month');
+
+        return $monthStart <= $end && $monthEnd >= $start;
+    }
+
+    private function isMonthlySource(PaymentCalendarItem $item): bool
+    {
+        if ($item->bucket === PaymentCalendarItem::BUCKET_BUDGET_PLAN) {
+            return true;
+        }
+
+        return $item->sourceType === 'budget_limit_reservation'
+            && ($item->drillDown['payment_document_id'] ?? null) === null;
     }
 
     private function dateString(string|DateTimeInterface $date): string

@@ -204,7 +204,9 @@ final class PaymentCalendarSourceService
             return null;
         }
 
-        $date = $this->dateString($transaction->value_date) ?? $this->dateString($transaction->transaction_date);
+        $valueDate = $this->dateString($transaction->value_date);
+        $transactionDate = $this->dateString($transaction->transaction_date);
+        $date = $valueDate ?? $transactionDate;
         $amount = $this->positive((float) $transaction->amount);
         $document = $this->loadedPaymentDocument($transaction);
         $direction = $document instanceof PaymentDocument
@@ -220,7 +222,7 @@ final class PaymentCalendarSourceService
         return new PaymentCalendarItem(
             organizationId: (int) $transaction->organization_id,
             date: $date,
-            originalDate: null,
+            originalDate: $transactionDate !== null && $transactionDate !== $date ? $transactionDate : null,
             direction: $direction,
             bucket: PaymentCalendarItem::BUCKET_FACT,
             amount: $amount,
@@ -248,7 +250,8 @@ final class PaymentCalendarSourceService
     public function fromBudgetLimitReservation(
         BudgetLimitReservation $reservation,
         ?DateTimeInterface $today = null,
-    ): ?PaymentCalendarItem {
+    ): ?PaymentCalendarItem
+    {
         if ($reservation->status !== BudgetLimitReservation::STATUS_RESERVED) {
             return null;
         }
@@ -383,7 +386,8 @@ final class PaymentCalendarSourceService
     private function collectPaymentScheduleItems(
         PaymentCalendarSourceFilters $filters,
         ?DateTimeInterface $today,
-    ): array {
+    ): array
+    {
         $schedules = PaymentSchedule::query()
             ->with('paymentDocument')
             ->where('status', 'pending')
@@ -417,7 +421,8 @@ final class PaymentCalendarSourceService
         PaymentCalendarSourceFilters $filters,
         ?DateTimeInterface $today,
         array $excludedDocumentIds,
-    ): array {
+    ): array
+    {
         $documents = PaymentDocument::query()
             ->where('organization_id', $filters->organizationId)
             ->whereIn('status', $this->activeDocumentStatuses())
@@ -426,7 +431,11 @@ final class PaymentCalendarSourceService
             })
             ->where(function (Builder $query) use ($filters): void {
                 $query
-                    ->whereBetween('scheduled_at', [$filters->periodStart, $filters->periodEnd])
+                    ->where(function (Builder $scope) use ($filters): void {
+                        $scope
+                            ->where('scheduled_at', '>=', $this->periodStartDateTime($filters))
+                            ->where('scheduled_at', '<', $this->periodEndExclusiveDateTime($filters));
+                    })
                     ->orWhereBetween('due_date', [$filters->periodStart, $filters->periodEnd])
                     ->orWhere(function (Builder $scope) use ($filters): void {
                         $scope
@@ -459,7 +468,8 @@ final class PaymentCalendarSourceService
         PaymentCalendarSourceFilters $filters,
         ?DateTimeInterface $today,
         array $excludedDocumentIds,
-    ): array {
+    ): array
+    {
         $reservations = BudgetLimitReservation::query()
             ->with('paymentDocument')
             ->where('organization_id', $filters->organizationId)
@@ -668,7 +678,8 @@ final class PaymentCalendarSourceService
         PaymentTransaction $transaction,
         ?PaymentDocument $document,
         string $direction,
-    ): ?int {
+    ): ?int
+    {
         if ($direction === PaymentCalendarItem::DIRECTION_INFLOW) {
             return $this->nullableInt(
                 $transaction->payer_contractor_id
@@ -762,6 +773,21 @@ final class PaymentCalendarSourceService
         }
 
         return null;
+    }
+
+    private function periodStartDateTime(PaymentCalendarSourceFilters $filters): string
+    {
+        return CarbonImmutable::parse($filters->periodStart)
+            ->startOfDay()
+            ->format('Y-m-d H:i:s');
+    }
+
+    private function periodEndExclusiveDateTime(PaymentCalendarSourceFilters $filters): string
+    {
+        return CarbonImmutable::parse($filters->periodEnd)
+            ->addDay()
+            ->startOfDay()
+            ->format('Y-m-d H:i:s');
     }
 
     private function currency(mixed $currency): string
