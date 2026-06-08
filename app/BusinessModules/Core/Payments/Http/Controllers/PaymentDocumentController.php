@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\Log;
 use App\BusinessModules\Core\Payments\Http\Requests\BulkActionRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\StorePaymentDocumentRequest;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -26,6 +27,7 @@ use App\Models\Contract;
 use App\Rules\ProjectAccessibleRule;
 use App\Services\Contract\ContractAccessService;
 use Closure;
+use Throwable;
 
 use function trans_message;
 
@@ -232,13 +234,11 @@ class PaymentDocumentController extends Controller
                         'payeeOrganization', 
                         'payerContractor', 
                         'payeeContractor', 
-                        'source', 
                         'approvals', 
                         'transactions',
                         'siteRequests',
                         'budgetArticle',
                         'responsibilityCenter',
-                        'invoiceable', // Загружаем связанную сущность (Contract, Act и т.д.)
                         'estimateSplits.estimateItem.measurementUnit' // Загружаем сплиты и позиции сметы с единицами измерения
                     ])
                     ->findOrFail($id);
@@ -252,7 +252,6 @@ class PaymentDocumentController extends Controller
                         'payeeOrganization',
                         'payerContractor',
                         'payeeContractor',
-                        'source',
                         'approvals',
                         'transactions',
                         'siteRequests',
@@ -268,10 +267,13 @@ class PaymentDocumentController extends Controller
                     ->findOrFail($id);
             }
 
+            $this->loadSafeMorphRelation($document, 'invoiceable', $document->invoiceable_type);
+            $this->loadSafeMorphRelation($document, 'source', $document->source_type);
+
             return AdminResponse::success($this->formatDocumentDetailed($document));
         } catch (ModelNotFoundException $e) {
             return AdminResponse::error(trans_message('payments.not_found'), 404);
-        } catch (\Exception $e) {
+        } catch (Throwable $e) {
             Log::error('payment_document.show.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
@@ -992,7 +994,11 @@ class PaymentDocumentController extends Controller
         $invoiceable = null;
         
         // Пытаемся загрузить invoiceable, если есть тип и ID
-        if ($document->invoiceable_type && $document->invoiceable_id) {
+        if (
+            $document->invoiceable_type
+            && $document->invoiceable_id
+            && $this->resolveMorphClass($document->invoiceable_type) !== null
+        ) {
             try {
                 // Проверяем, не является ли это старым классом Invoice
                 if (!str_contains($document->invoiceable_type, 'Payments\\Models\\Invoice')) {
@@ -1060,10 +1066,7 @@ class PaymentDocumentController extends Controller
             ],
             'contract_id' => $contractId, // Прямая ссылка на контракт (если есть)
             'invoiceable' => $invoiceable, // Polymorphic связь с источником (Contract, Act и т.д.)
-            'source' => $document->source ? [
-                'type' => $document->source_type,
-                'id' => $document->source_id,
-            ] : null,
+            'source' => $this->formatSourceReference($document),
             'attached_documents' => $document->attached_documents,
             'metadata' => $document->metadata,
             'notes' => $document->notes,
@@ -1107,6 +1110,47 @@ class PaymentDocumentController extends Controller
             'transactions_count' => $document->transactions?->count() ?? 0,
             'updated_at' => $document->updated_at->toDateTimeString(),
         ]);
+    }
+
+    private function loadSafeMorphRelation(PaymentDocument $document, string $relation, mixed $type): void
+    {
+        if (!is_string($type) || $this->resolveMorphClass($type) === null) {
+            return;
+        }
+
+        try {
+            $document->loadMissing($relation);
+        } catch (Throwable $e) {
+            Log::debug('payment_document.morph_load_failed', [
+                'document_id' => $document->id,
+                'relation' => $relation,
+                'type' => $type,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function resolveMorphClass(?string $type): ?string
+    {
+        if ($type === null || trim($type) === '') {
+            return null;
+        }
+
+        $class = Relation::getMorphedModel($type) ?? $type;
+
+        return is_string($class) && class_exists($class) ? $class : null;
+    }
+
+    private function formatSourceReference(PaymentDocument $document): ?array
+    {
+        if ($document->source_type === null || $document->source_type === '' || $document->source_id === null) {
+            return null;
+        }
+
+        return [
+            'type' => $document->source_type,
+            'id' => $document->source_id,
+        ];
     }
 
     private function buildProblemFlags(PaymentDocument $document): array
