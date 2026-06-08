@@ -31,7 +31,7 @@ final class BudgetImportService
     public function preview(User $user, string $versionUuid, UploadedFile $file, array $input): BudgetImportBatch
     {
         $version = $this->versionService->findVersion($user, $versionUuid);
-        $this->lineService->assertEditable($version);
+        $this->lineService->assertEditable($version, BudgetPeriodClosureService::OPERATION_BUDGET_IMPORT);
         $parsed = $this->fileReader->readUploaded($file);
         $context = $this->validationContext($version, (string) ($input['mapping_mode'] ?? 'by_code'), $parsed['rows']);
         $preview = $this->validator->validate($parsed['rows'], $context);
@@ -68,7 +68,7 @@ final class BudgetImportService
     public function commit(User $user, string $versionUuid, string $batchUuid, string $mode): BudgetImportBatch
     {
         $version = $this->versionService->findVersion($user, $versionUuid);
-        $this->lineService->assertEditable($version);
+        $this->lineService->assertEditable($version, BudgetPeriodClosureService::OPERATION_BUDGET_IMPORT);
 
         $batch = BudgetImportBatch::query()
             ->where('organization_id', $version->organization_id)
@@ -97,7 +97,12 @@ final class BudgetImportService
             ->all();
 
         DB::transaction(function () use ($version, $batch, $rows, $mode, $user): void {
-            $this->lineService->writeNormalizedRows($version, $rows, $mode);
+            $this->lineService->writeNormalizedRows(
+                $version,
+                $rows,
+                $mode,
+                BudgetPeriodClosureService::OPERATION_BUDGET_IMPORT
+            );
             $batch->status = 'committed';
             $batch->committed_at = now();
             $batch->committed_by = $user->id;

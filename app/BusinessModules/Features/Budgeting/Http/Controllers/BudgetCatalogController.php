@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Budgeting\Http\Controllers;
 
 use App\BusinessModules\Features\Budgeting\Exceptions\BudgetPeriodCloseBlockedException;
 use App\BusinessModules\Features\Budgeting\Http\Requests\BudgetArticleRequest;
+use App\BusinessModules\Features\Budgeting\Http\Requests\BudgetPeriodReopenRequest;
 use App\BusinessModules\Features\Budgeting\Http\Requests\BudgetPeriodRequest;
 use App\BusinessModules\Features\Budgeting\Http\Requests\BudgetPeriodWorkflowRequest;
 use App\BusinessModules\Features\Budgeting\Http\Requests\BudgetScenarioRequest;
@@ -128,7 +129,7 @@ final class BudgetCatalogController extends BudgetingAdminController
         }
     }
 
-    public function reopenPeriod(BudgetPeriodWorkflowRequest $request, string $periodUuid): JsonResponse
+    public function reopenPeriod(BudgetPeriodReopenRequest $request, string $periodUuid): JsonResponse
     {
         try {
             $period = $this->service->reopenPeriod($this->user($request), $periodUuid, $request->validated());

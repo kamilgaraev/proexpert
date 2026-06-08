@@ -66,6 +66,30 @@ final class PlanFactPermissionContractTest extends TestCase
         $this->assertNotContains('budgeting.periods.close', $adminViewer);
     }
 
+    public function test_period_reopen_permission_is_registered_translated_and_assigned(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $manifest = json_decode(
+            (string) file_get_contents($root . '/config/ModuleList/features/budgeting.json'),
+            true,
+            512,
+            JSON_THROW_ON_ERROR
+        );
+        $translations = require $root . '/lang/ru/permissions.php';
+        $webAdmin = $this->rolePermissions($root . '/config/RoleDefinitions/admin/web_admin.json');
+        $financeAdmin = $this->rolePermissions($root . '/config/RoleDefinitions/admin/finance_admin.json');
+        $adminViewer = $this->rolePermissions($root . '/config/RoleDefinitions/admin/admin_viewer.json');
+
+        $this->assertContains('budgeting.periods.reopen', $manifest['permissions']);
+        $this->assertSame(
+            'Открытие бюджетных периодов для корректировок',
+            $translations['values']['budgeting.periods.reopen']
+        );
+        $this->assertContains('budgeting.periods.reopen', $webAdmin);
+        $this->assertContains('budgeting.periods.reopen', $financeAdmin);
+        $this->assertNotContains('budgeting.periods.reopen', $adminViewer);
+    }
+
     private function rolePermissions(string $path): array
     {
         $role = json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);

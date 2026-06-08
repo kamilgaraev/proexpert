@@ -56,7 +56,7 @@ final class BudgetVersionService
         $period = $this->periodByUuid($organizationId, (string) $input['budget_period_id']);
         $scenario = $this->scenarioByUuid($organizationId, (string) $input['scenario_id']);
 
-        $this->periodClosureService->assertPeriodMutable($period);
+        $this->periodClosureService->assertPeriodMutable($period, BudgetPeriodClosureService::OPERATION_BUDGET_VERSIONS);
 
         $versionNumber = $this->nextVersionNumber($organizationId, (int) $period->id, (int) $scenario->id, (string) $input['budget_kind']);
 
@@ -77,7 +77,7 @@ final class BudgetVersionService
     public function update(User $user, string $uuid, array $input): BudgetVersion
     {
         $version = $this->findVersion($user, $uuid);
-        $this->periodClosureService->assertVersionPeriodMutable($version);
+        $this->periodClosureService->assertVersionPeriodMutable($version, BudgetPeriodClosureService::OPERATION_BUDGET_VERSIONS);
         if ($version->status !== 'draft') {
             throw new \DomainException(trans_message('budgeting.versions.edit_forbidden'));
         }
@@ -90,7 +90,7 @@ final class BudgetVersionService
     public function cloneVersion(User $user, string $uuid, array $input): BudgetVersion
     {
         $baseVersion = $this->findVersion($user, $uuid);
-        $this->periodClosureService->assertVersionPeriodMutable($baseVersion);
+        $this->periodClosureService->assertVersionPeriodMutable($baseVersion, BudgetPeriodClosureService::OPERATION_BUDGET_VERSIONS);
         $sourceVersion = isset($input['source_version_id'])
             ? $this->findVersion($user, (string) $input['source_version_id'])
             : $baseVersion;
@@ -125,7 +125,7 @@ final class BudgetVersionService
     public function transition(User $user, string $uuid, string $action, ?string $comment = null): BudgetVersion
     {
         $version = $this->findVersion($user, $uuid);
-        $this->periodClosureService->assertVersionPeriodMutable($version);
+        $this->periodClosureService->assertVersionPeriodMutable($version, BudgetPeriodClosureService::OPERATION_BUDGET_VERSIONS);
 
         return DB::transaction(function () use ($version, $action, $user, $comment): BudgetVersion {
             $fromStatus = (string) $version->status;

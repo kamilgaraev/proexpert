@@ -21,12 +21,16 @@ abstract class BudgetingFormRequest extends FormRequest
             'integer' => trans_message('budgeting.validation.integer'),
             'boolean' => trans_message('budgeting.validation.boolean'),
             'date' => trans_message('budgeting.validation.date'),
+            'after' => trans_message('budgeting.validation.after'),
             'numeric' => trans_message('budgeting.validation.numeric'),
             'in' => trans_message('budgeting.validation.invalid_value'),
+            'min' => trans_message('budgeting.validation.min'),
             'max' => trans_message('budgeting.validation.max'),
             'file' => trans_message('budgeting.validation.file'),
             'mimes' => trans_message('budgeting.validation.file_format'),
             'array' => trans_message('budgeting.validation.array'),
+            'required_without' => trans_message('budgeting.validation.required'),
+            'required_with' => trans_message('budgeting.validation.required'),
         ];
     }
 }

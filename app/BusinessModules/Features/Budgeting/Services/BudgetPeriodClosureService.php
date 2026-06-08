@@ -12,6 +12,8 @@ use App\BusinessModules\Features\Budgeting\Models\BudgetPeriod;
 use App\BusinessModules\Features\Budgeting\Models\BudgetPeriodClosure;
 use App\BusinessModules\Features\Budgeting\Models\BudgetVersion;
 use App\Models\User;
+use Carbon\CarbonImmutable;
+use Carbon\CarbonInterface;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -25,6 +27,12 @@ final class BudgetPeriodClosureService
     public const STATUS_REOPENED_FOR_ADJUSTMENT = 'reopened_for_adjustment';
     public const STATUS_ARCHIVED = 'archived';
 
+    public const OPERATION_BUDGET_LINES = 'budget_lines';
+    public const OPERATION_BUDGET_AMOUNTS = 'budget_amounts';
+    public const OPERATION_BUDGET_IMPORT = 'budget_import';
+    public const OPERATION_BUDGET_VERSIONS = 'budget_versions';
+    public const OPERATION_PERIOD_SETTINGS = 'period_settings';
+
     private const LOCKED_STATUSES = [
         self::STATUS_CLOSING,
         self::STATUS_CLOSED,
@@ -35,6 +43,11 @@ final class BudgetPeriodClosureService
     private const CLOSABLE_STATUSES = [
         self::STATUS_OPEN,
         self::STATUS_REOPENED_FOR_ADJUSTMENT,
+    ];
+
+    private const REOPENABLE_STATUSES = [
+        self::STATUS_CLOSED,
+        self::STATUS_SOFT_CLOSED,
     ];
 
     private const UNFINISHED_VERSION_STATUSES = [
@@ -49,11 +62,11 @@ final class BudgetPeriodClosureService
     public function lockedOperations(): array
     {
         return [
-            ['code' => 'budget_lines', 'label' => trans_message('budgeting.period_close.operations.budget_lines')],
-            ['code' => 'budget_amounts', 'label' => trans_message('budgeting.period_close.operations.budget_amounts')],
-            ['code' => 'budget_import', 'label' => trans_message('budgeting.period_close.operations.budget_import')],
-            ['code' => 'budget_versions', 'label' => trans_message('budgeting.period_close.operations.budget_versions')],
-            ['code' => 'period_settings', 'label' => trans_message('budgeting.period_close.operations.period_settings')],
+            ['code' => self::OPERATION_BUDGET_LINES, 'label' => trans_message('budgeting.period_close.operations.budget_lines')],
+            ['code' => self::OPERATION_BUDGET_AMOUNTS, 'label' => trans_message('budgeting.period_close.operations.budget_amounts')],
+            ['code' => self::OPERATION_BUDGET_IMPORT, 'label' => trans_message('budgeting.period_close.operations.budget_import')],
+            ['code' => self::OPERATION_BUDGET_VERSIONS, 'label' => trans_message('budgeting.period_close.operations.budget_versions')],
+            ['code' => self::OPERATION_PERIOD_SETTINGS, 'label' => trans_message('budgeting.period_close.operations.period_settings')],
         ];
     }
 
@@ -67,19 +80,35 @@ final class BudgetPeriodClosureService
         return in_array((string) $status, self::CLOSABLE_STATUSES, true);
     }
 
+    public function canReopenStatus(?string $status): bool
+    {
+        return in_array((string) $status, self::REOPENABLE_STATUSES, true);
+    }
+
     public function assertMutableStatus(?string $status): void
     {
-        if ($this->isLockedStatus($status)) {
+        if ($this->isLockedStatus($status) || (string) $status === self::STATUS_REOPENED_FOR_ADJUSTMENT) {
             throw new DomainException(trans_message('budgeting.period_close.errors.period_locked'));
         }
     }
 
-    public function assertPeriodMutable(BudgetPeriod $period): void
+    public function assertPeriodMutable(BudgetPeriod $period, ?string $operation = null): void
     {
-        $this->assertMutableStatus((string) $period->status);
+        $status = (string) $period->status;
+
+        if ($status === self::STATUS_OPEN) {
+            return;
+        }
+
+        if ($status === self::STATUS_REOPENED_FOR_ADJUSTMENT) {
+            $this->assertActiveReopenAllows($period, $operation);
+            return;
+        }
+
+        $this->assertMutableStatus($status);
     }
 
-    public function assertVersionPeriodMutable(BudgetVersion $version): void
+    public function assertVersionPeriodMutable(BudgetVersion $version, ?string $operation = null): void
     {
         $version->loadMissing('period');
 
@@ -87,7 +116,7 @@ final class BudgetPeriodClosureService
             throw new DomainException(trans_message('budgeting.periods.not_found'));
         }
 
-        $this->assertPeriodMutable($version->period);
+        $this->assertPeriodMutable($version->period, $operation);
     }
 
     /**
@@ -98,17 +127,44 @@ final class BudgetPeriodClosureService
         $period->loadMissing('latestClosure.closedBy');
         $blockers = $this->blockers($period);
         $isLocked = $this->isLockedStatus((string) $period->status);
+        $isReopened = (string) $period->status === self::STATUS_REOPENED_FOR_ADJUSTMENT;
+        $latestClosure = $period->latestClosure;
+        $activeOperations = $isReopened && $this->isActiveReopenClosure($latestClosure)
+            ? $this->allowedOperationsForClosure($latestClosure)
+            : [];
+        $availableActions = [];
+
+        if ($blockers === [] && $this->canCloseStatus((string) $period->status)) {
+            $availableActions[] = 'close';
+        }
+
+        if ($this->canReopenStatus((string) $period->status)) {
+            $availableActions[] = 'reopen';
+        }
+
+        foreach ($activeOperations as $operation) {
+            $availableActions[] = match ($operation) {
+                self::OPERATION_BUDGET_LINES => 'edit_budget_lines',
+                self::OPERATION_BUDGET_AMOUNTS => 'edit_budget_amounts',
+                self::OPERATION_BUDGET_IMPORT => 'import_budget',
+                self::OPERATION_BUDGET_VERSIONS => 'replace_budget_version',
+                self::OPERATION_PERIOD_SETTINGS => 'edit_period_settings',
+                default => null,
+            };
+        }
 
         return [
             ...$this->periodClosureSummary($period),
             'workflow_status' => $this->workflowStatus((string) $period->status),
             'can_close' => $blockers === [] && $this->canCloseStatus((string) $period->status),
+            'can_reopen' => $this->canReopenStatus((string) $period->status),
             'blockers' => array_map(
                 static fn (BudgetPeriodCloseBlocker $blocker): array => $blocker->toArray(),
                 $blockers
             ),
-            'available_actions' => $blockers === [] && $this->canCloseStatus((string) $period->status) ? ['close'] : [],
+            'available_actions' => array_values(array_unique(array_filter($availableActions))),
             'locked_operations' => $isLocked ? $this->lockedOperations() : [],
+            'active_reopen_operations' => $activeOperations,
         ];
     }
 
@@ -121,6 +177,12 @@ final class BudgetPeriodClosureService
         $latestClosure = $period->latestClosure;
         $closedBy = $latestClosure?->closedBy;
         $isLocked = $this->isLockedStatus((string) $period->status);
+        $isReopened = (string) $period->status === self::STATUS_REOPENED_FOR_ADJUSTMENT;
+        $reopenActive = $isReopened && $this->isActiveReopenClosure($latestClosure);
+        $metadata = is_array($latestClosure?->metadata) ? $latestClosure->metadata : [];
+        $reopenedUntil = $latestClosure instanceof BudgetPeriodClosure
+            ? $this->reopenedUntil($latestClosure)
+            : null;
 
         return [
             'period_id' => (string) $period->uuid,
@@ -136,6 +198,22 @@ final class BudgetPeriodClosureService
             ] : null,
             'closure_status' => $latestClosure?->closure_status,
             'closure_mode' => $latestClosure?->closure_mode,
+            'reopen_active' => $reopenActive,
+            'reopen_expired' => $isReopened && !$reopenActive,
+            'reopened_until' => $isReopened ? $reopenedUntil?->toIso8601String() : null,
+            'reopen_reason' => $isReopened ? $latestClosure?->reason : null,
+            'reopened_by' => $isReopened && $closedBy instanceof User ? [
+                'id' => $closedBy->id,
+                'name' => $closedBy->name,
+                'email' => $closedBy->email,
+            ] : null,
+            'adjustment_mode' => is_string($metadata['adjustment_mode'] ?? null) ? $metadata['adjustment_mode'] : null,
+            'change_scope' => is_string($metadata['change_scope'] ?? null) ? $metadata['change_scope'] : null,
+            'change_objects' => is_array($metadata['change_objects'] ?? null) ? $metadata['change_objects'] : [],
+            'allowed_operations' => $isReopened ? $this->allowedOperationsForClosure($latestClosure) : [],
+            'plan_fact_actualized_at' => is_string($metadata['plan_fact_actualized_at'] ?? null)
+                ? $metadata['plan_fact_actualized_at']
+                : null,
         ];
     }
 
@@ -245,6 +323,7 @@ final class BudgetPeriodClosureService
         return DB::transaction(function () use ($period, $user, $reason, $closureMode): BudgetPeriod {
             $lockedPeriod = BudgetPeriod::query()
                 ->whereKey($period->id)
+                ->with('latestClosure')
                 ->lockForUpdate()
                 ->first();
 
@@ -253,7 +332,9 @@ final class BudgetPeriodClosureService
             }
 
             $previousStatus = (string) $lockedPeriod->status;
+            $previousClosure = $lockedPeriod->latestClosure;
             $this->assertCanClose($lockedPeriod);
+            $actualization = $this->managementActualizationSnapshot($lockedPeriod);
 
             $lockedPeriod->status = self::STATUS_CLOSING;
             $lockedPeriod->save();
@@ -270,8 +351,14 @@ final class BudgetPeriodClosureService
                 'closed_at' => now(),
                 'metadata' => [
                     'previous_status' => $previousStatus,
+                    'previous_closure_uuid' => $previousClosure?->uuid,
+                    'previous_closure_status' => $previousClosure?->closure_status,
+                    'reclosed_after_reopen' => $previousStatus === self::STATUS_REOPENED_FOR_ADJUSTMENT,
                     'checked_at' => now()->toIso8601String(),
                     'blockers_count' => 0,
+                    'plan_fact_actualized_at' => $actualization['actualized_at'],
+                    'management_snapshot' => $actualization,
+                    'source_of_truth' => $this->managementSourceOfTruth(),
                 ],
             ]);
 
@@ -284,6 +371,7 @@ final class BudgetPeriodClosureService
         return match ($status) {
             self::STATUS_CLOSING => 'checking',
             self::STATUS_CLOSED, self::STATUS_SOFT_CLOSED, self::STATUS_ARCHIVED => 'closed',
+            self::STATUS_REOPENED_FOR_ADJUSTMENT => 'reopened',
             default => 'open',
         };
     }
@@ -308,5 +396,137 @@ final class BudgetPeriodClosureService
             count: $count,
             meta: $meta
         );
+    }
+
+    private function assertActiveReopenAllows(BudgetPeriod $period, ?string $operation): void
+    {
+        $latestClosure = $period->relationLoaded('latestClosure')
+            ? $period->latestClosure
+            : $period->latestClosure()->first();
+
+        if (!$this->isActiveReopenClosure($latestClosure)) {
+            throw new DomainException(trans_message('budgeting.period_reopen.errors.active_window_required'));
+        }
+
+        if ($operation === null || trim($operation) === '') {
+            throw new DomainException(trans_message('budgeting.period_reopen.errors.operation_required'));
+        }
+
+        if (!$this->closureAllowsOperation($latestClosure, $operation)) {
+            throw new DomainException(trans_message('budgeting.period_reopen.errors.operation_not_allowed'));
+        }
+    }
+
+    public function isActiveReopenClosure(?BudgetPeriodClosure $closure): bool
+    {
+        if (!$closure instanceof BudgetPeriodClosure) {
+            return false;
+        }
+
+        if ((string) $closure->closure_status !== self::STATUS_REOPENED_FOR_ADJUSTMENT) {
+            return false;
+        }
+
+        $reopenedUntil = $this->reopenedUntil($closure);
+
+        if (!$reopenedUntil instanceof CarbonInterface) {
+            return false;
+        }
+
+        return $reopenedUntil->greaterThan(now());
+    }
+
+    public function closureAllowsOperation(?BudgetPeriodClosure $closure, string $operation): bool
+    {
+        return in_array($operation, $this->allowedOperationsForClosure($closure), true);
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function allowedOperationsForClosure(?BudgetPeriodClosure $closure): array
+    {
+        $metadata = is_array($closure?->metadata) ? $closure->metadata : [];
+        $operations = $metadata['allowed_operations'] ?? [];
+
+        if (!is_array($operations)) {
+            return [];
+        }
+
+        $knownOperations = array_column($this->lockedOperations(), 'code');
+
+        return array_values(array_intersect(
+            array_values(array_unique(array_filter(
+                $operations,
+                static fn (mixed $operation): bool => is_string($operation) && trim($operation) !== ''
+            ))),
+            $knownOperations
+        ));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function managementActualizationSnapshot(BudgetPeriod $period): array
+    {
+        $versionIds = BudgetVersion::query()
+            ->where('budget_period_id', $period->id)
+            ->pluck('id')
+            ->map(fn (mixed $id): int => (int) $id)
+            ->all();
+
+        $activeVersionIds = BudgetVersion::query()
+            ->where('budget_period_id', $period->id)
+            ->where('status', BudgetWorkflowService::STATUS_ACTIVE)
+            ->pluck('id')
+            ->map(fn (mixed $id): int => (int) $id)
+            ->all();
+
+        $planTotal = $activeVersionIds === [] ? 0.0 : (float) BudgetAmount::query()
+            ->whereHas('line', fn (Builder $query): Builder => $query->whereIn('budget_version_id', $activeVersionIds))
+            ->sum('plan_amount');
+
+        $forecastTotal = $activeVersionIds === [] ? 0.0 : (float) BudgetAmount::query()
+            ->whereHas('line', fn (Builder $query): Builder => $query->whereIn('budget_version_id', $activeVersionIds))
+            ->sum('forecast_amount');
+
+        return [
+            'actualized_at' => now()->toIso8601String(),
+            'active_versions_count' => count($activeVersionIds),
+            'versions_count' => count($versionIds),
+            'plan_total' => round($planTotal, 2),
+            'forecast_total' => round($forecastTotal, 2),
+            'currency' => 'RUB',
+        ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function managementSourceOfTruth(): array
+    {
+        return [
+            'management_budgeting' => 'prohelper',
+            'regulated_accounting' => '1c',
+        ];
+    }
+
+    private function reopenedUntil(BudgetPeriodClosure $closure): ?CarbonInterface
+    {
+        $value = $closure->getAttributes()['reopened_until'] ?? null;
+
+        if ($value instanceof CarbonInterface) {
+            return $value;
+        }
+
+        if (!is_string($value) || trim($value) === '') {
+            return null;
+        }
+
+        try {
+            return CarbonImmutable::parse($value);
+        } catch (\Throwable) {
+            return null;
+        }
     }
 }

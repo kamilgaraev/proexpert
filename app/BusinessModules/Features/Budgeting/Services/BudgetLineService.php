@@ -49,7 +49,7 @@ final class BudgetLineService
     public function replace(User $user, string $versionUuid, array $lines): array
     {
         $version = $this->versionService->findVersion($user, $versionUuid);
-        $this->assertEditable($version);
+        $this->assertEditable($version, BudgetPeriodClosureService::OPERATION_BUDGET_LINES);
         $normalized = [];
         $seen = [];
 
@@ -84,7 +84,12 @@ final class BudgetLineService
             }
         }
 
-        $this->writeNormalizedRows($version, $normalized, 'replace_lines');
+        $this->writeNormalizedRows(
+            $version,
+            $normalized,
+            'replace_lines',
+            BudgetPeriodClosureService::OPERATION_BUDGET_LINES
+        );
 
         return $this->lines($user, $versionUuid, []);
     }
@@ -92,9 +97,14 @@ final class BudgetLineService
     /**
      * @param list<array<string, mixed>> $rows
      */
-    public function writeNormalizedRows(BudgetVersion $version, array $rows, string $mode): void
+    public function writeNormalizedRows(
+        BudgetVersion $version,
+        array $rows,
+        string $mode,
+        ?string $operation = BudgetPeriodClosureService::OPERATION_BUDGET_LINES
+    ): void
     {
-        $this->assertEditable($version);
+        $this->assertEditable($version, $operation);
 
         DB::transaction(function () use ($version, $rows, $mode): void {
             if ($mode === 'replace_lines') {
@@ -142,13 +152,16 @@ final class BudgetLineService
         });
     }
 
-    public function assertEditable(BudgetVersion $version): void
+    public function assertEditable(
+        BudgetVersion $version,
+        ?string $operation = BudgetPeriodClosureService::OPERATION_BUDGET_LINES
+    ): void
     {
         if ($version->status !== 'draft') {
             throw new \DomainException(trans_message('budgeting.versions.edit_forbidden'));
         }
 
-        $this->periodClosureService->assertVersionPeriodMutable($version);
+        $this->periodClosureService->assertVersionPeriodMutable($version, $operation);
     }
 
     private function articleByUuid(BudgetVersion $version, string $uuid): BudgetArticle

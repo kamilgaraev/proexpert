@@ -100,7 +100,12 @@ final class BudgetWorkflowService
     {
         return DB::transaction(function () use ($version, $action, $user, $comment): BudgetVersion {
             $version->loadMissing('period');
-            $this->assertCanEditPeriod((string) $version->period?->status, $action);
+            if (in_array($action, ['submit', 'approve', 'reject', 'activate', 'archive'], true)) {
+                $this->periodClosureService->assertVersionPeriodMutable(
+                    $version,
+                    BudgetPeriodClosureService::OPERATION_BUDGET_VERSIONS
+                );
+            }
 
             $from = (string) $version->status;
             $to = $this->transition($from, $action, $action !== 'submit' || $version->lines()->exists());
@@ -150,10 +155,4 @@ final class BudgetWorkflowService
         });
     }
 
-    private function assertCanEditPeriod(string $periodStatus, string $action): void
-    {
-        if (in_array($action, ['submit', 'approve', 'reject', 'activate', 'archive'], true)) {
-            $this->periodClosureService->assertMutableStatus($periodStatus);
-        }
-    }
 }

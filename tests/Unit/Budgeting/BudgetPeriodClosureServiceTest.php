@@ -117,4 +117,73 @@ final class BudgetPeriodClosureServiceTest extends TestCase
         $this->assertSame('Импорт бюджета', $labels['budget_import']);
         $this->assertArrayNotHasKey('payload', $labels);
     }
+
+    public function test_reopened_period_requires_active_window_and_allowed_operation(): void
+    {
+        $service = new BudgetPeriodClosureService();
+        $period = new BudgetPeriod();
+        $period->forceFill([
+            'uuid' => 'period-uuid',
+            'status' => BudgetPeriodClosureService::STATUS_REOPENED_FOR_ADJUSTMENT,
+        ]);
+
+        $closure = new BudgetPeriodClosure();
+        $closure->setRawAttributes([
+            'closure_status' => BudgetPeriodClosureService::STATUS_REOPENED_FOR_ADJUSTMENT,
+            'reopened_until' => now()->addHour()->toDateTimeString(),
+            'metadata' => json_encode([
+                'allowed_operations' => [BudgetPeriodClosureService::OPERATION_BUDGET_IMPORT],
+            ], JSON_THROW_ON_ERROR),
+        ], true);
+        $period->setRelation('latestClosure', $closure);
+
+        $service->assertPeriodMutable($period, BudgetPeriodClosureService::OPERATION_BUDGET_IMPORT);
+
+        $this->expectException(DomainException::class);
+        $service->assertPeriodMutable($period, BudgetPeriodClosureService::OPERATION_BUDGET_VERSIONS);
+    }
+
+    public function test_expired_reopen_window_blocks_mutations(): void
+    {
+        $service = new BudgetPeriodClosureService();
+        $period = new BudgetPeriod();
+        $period->forceFill([
+            'uuid' => 'period-uuid',
+            'status' => BudgetPeriodClosureService::STATUS_REOPENED_FOR_ADJUSTMENT,
+        ]);
+
+        $closure = new BudgetPeriodClosure();
+        $closure->setRawAttributes([
+            'closure_status' => BudgetPeriodClosureService::STATUS_REOPENED_FOR_ADJUSTMENT,
+            'reopened_until' => now()->subMinute()->toDateTimeString(),
+            'metadata' => json_encode([
+                'allowed_operations' => [BudgetPeriodClosureService::OPERATION_BUDGET_LINES],
+            ], JSON_THROW_ON_ERROR),
+        ], true);
+        $period->setRelation('latestClosure', $closure);
+
+        $this->expectException(DomainException::class);
+        $service->assertPeriodMutable($period, BudgetPeriodClosureService::OPERATION_BUDGET_LINES);
+    }
+
+    public function test_reopenable_status_contract_is_restricted_to_closed_states(): void
+    {
+        $service = new BudgetPeriodClosureService();
+
+        $this->assertTrue($service->canReopenStatus(BudgetPeriodClosureService::STATUS_CLOSED));
+        $this->assertTrue($service->canReopenStatus(BudgetPeriodClosureService::STATUS_SOFT_CLOSED));
+        $this->assertFalse($service->canReopenStatus(BudgetPeriodClosureService::STATUS_OPEN));
+        $this->assertFalse($service->canReopenStatus(BudgetPeriodClosureService::STATUS_REOPENED_FOR_ADJUSTMENT));
+        $this->assertFalse($service->canReopenStatus(BudgetPeriodClosureService::STATUS_ARCHIVED));
+        $this->assertTrue($service->canCloseStatus(BudgetPeriodClosureService::STATUS_REOPENED_FOR_ADJUSTMENT));
+    }
+
+    public function test_reopened_period_blocks_regular_mutations_without_operation_scope(): void
+    {
+        $service = new BudgetPeriodClosureService();
+
+        $this->expectException(DomainException::class);
+
+        $service->assertMutableStatus(BudgetPeriodClosureService::STATUS_REOPENED_FOR_ADJUSTMENT);
+    }
 }

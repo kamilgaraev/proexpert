@@ -7,7 +7,6 @@ namespace App\BusinessModules\Features\Budgeting\Services;
 use App\BusinessModules\Features\Budgeting\Models\BudgetArticle;
 use App\BusinessModules\Features\Budgeting\Models\BudgetArticleMapping;
 use App\BusinessModules\Features\Budgeting\Models\BudgetPeriod;
-use App\BusinessModules\Features\Budgeting\Models\BudgetPeriodClosure;
 use App\BusinessModules\Features\Budgeting\Models\BudgetScenario;
 use App\BusinessModules\Features\Budgeting\Models\ResponsibilityCenter;
 use App\Models\OneCBase;
@@ -18,8 +17,10 @@ use Illuminate\Support\Facades\DB;
 
 final class BudgetCatalogService
 {
-    public function __construct(private readonly BudgetPeriodClosureService $periodClosureService)
-    {
+    public function __construct(
+        private readonly BudgetPeriodClosureService $periodClosureService,
+        private readonly BudgetPeriodReopenService $periodReopenService
+    ) {
     }
 
     public function organizationId(User $user, array $input = []): int
@@ -122,7 +123,7 @@ final class BudgetCatalogService
     public function updatePeriod(User $user, string $uuid, array $input): BudgetPeriod
     {
         $period = $this->findPeriod($user, $uuid);
-        $this->periodClosureService->assertPeriodMutable($period);
+        $this->periodClosureService->assertPeriodMutable($period, BudgetPeriodClosureService::OPERATION_PERIOD_SETTINGS);
         $this->assertUniqueCode(BudgetPeriod::query(), (int) $period->organization_id, (string) $input['code'], (int) $period->id);
         $period->fill($input)->save();
 
@@ -213,7 +214,7 @@ final class BudgetCatalogService
     public function destroySoft(BudgetPeriod|BudgetScenario|ResponsibilityCenter|BudgetArticle $model): void
     {
         if ($model instanceof BudgetPeriod) {
-            $this->periodClosureService->assertPeriodMutable($model);
+            $this->periodClosureService->assertMutableStatus((string) $model->status);
         }
 
         if ($model instanceof BudgetArticle && $model->children()->exists()) {
@@ -252,20 +253,7 @@ final class BudgetCatalogService
     {
         $period = $this->findPeriod($user, $uuid);
 
-        return DB::transaction(function () use ($period, $user, $input): BudgetPeriod {
-            $period->status = 'reopened_for_adjustment';
-            $period->save();
-
-            BudgetPeriodClosure::create([
-                'budget_period_id' => $period->id,
-                'closure_status' => 'reopened_for_adjustment',
-                'reason' => $input['reason'] ?? null,
-                'closed_by' => $user->id,
-                'reopened_until' => $input['expires_at'] ?? null,
-            ]);
-
-            return $period->refresh();
-        });
+        return $this->periodReopenService->reopen($period, $user, $input);
     }
 
     public function storeArticleMapping(User $user, array $input): BudgetArticleMapping
@@ -352,6 +340,16 @@ final class BudgetCatalogService
             'closed_reason' => $closureSummary['closed_reason'],
             'closure_status' => $closureSummary['closure_status'],
             'closure_mode' => $closureSummary['closure_mode'],
+            'reopen_active' => $closureSummary['reopen_active'],
+            'reopen_expired' => $closureSummary['reopen_expired'],
+            'reopened_until' => $closureSummary['reopened_until'],
+            'reopen_reason' => $closureSummary['reopen_reason'],
+            'reopened_by' => $closureSummary['reopened_by'],
+            'adjustment_mode' => $closureSummary['adjustment_mode'],
+            'change_scope' => $closureSummary['change_scope'],
+            'change_objects' => $closureSummary['change_objects'],
+            'allowed_operations' => $closureSummary['allowed_operations'],
+            'plan_fact_actualized_at' => $closureSummary['plan_fact_actualized_at'],
         ];
     }
 
