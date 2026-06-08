@@ -23,7 +23,7 @@ final readonly class CashGapForecastResult
         return [
             'period' => $this->context->period(),
             'scenario' => $this->context->scenario,
-            'opening_balance' => $this->context->openingBalance,
+            'opening_balance' => $this->totals['opening_balance'],
             'inflows' => $this->totals['inflows'],
             'outflows' => $this->totals['outflows'],
             'reserved_outflows' => $this->totals['reserved_outflows'],

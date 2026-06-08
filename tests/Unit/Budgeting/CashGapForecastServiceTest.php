@@ -14,6 +14,7 @@ use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Facade;
 use Illuminate\Translation\FileLoader;
 use Illuminate\Translation\Translator;
+use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 
 final class CashGapForecastServiceTest extends TestCase
@@ -160,6 +161,93 @@ final class CashGapForecastServiceTest extends TestCase
         $this->assertSame(1, $result['meta']['excluded_items']);
     }
 
+    public function test_context_requires_organization_scope(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Выберите организацию для прогноза.');
+
+        $this->service()->forecast(
+            new CashGapForecastContext(
+                periodStart: '2026-01-01',
+                periodEnd: '2026-01-01',
+                openingBalance: 100.0,
+            ),
+            []
+        );
+    }
+
+    public function test_duplicate_cash_flow_key_prefers_scheduled_outflow_over_reservation(): void
+    {
+        $result = $this->service()->forecast(
+            $this->context(periodEnd: '2026-01-01', openingBalance: 1_000.0),
+            [
+                $this->item(
+                    '2026-01-01',
+                    CashGapForecastItem::DIRECTION_OUTFLOW,
+                    CashGapForecastItem::BUCKET_RESERVED_OUTFLOW,
+                    400.0,
+                    cashFlowKey: 'payment-document:100',
+                ),
+                $this->item(
+                    '2026-01-01',
+                    CashGapForecastItem::DIRECTION_OUTFLOW,
+                    CashGapForecastItem::BUCKET_SCHEDULED_OUTFLOW,
+                    400.0,
+                    cashFlowKey: 'payment-document:100',
+                ),
+            ]
+        )->toArray();
+
+        $this->assertSame(600.0, $result['closing_balance']);
+        $this->assertSame(400.0, $result['outflows']);
+        $this->assertSame(0.0, $result['reserved_outflows']);
+        $this->assertSame(1, $result['meta']['included_items']);
+        $this->assertSame(1, $result['meta']['excluded_items']);
+        $this->assertSame('payment-document:100', $result['daily'][0]['drivers'][0]['cash_flow_key']);
+    }
+
+    public function test_stress_scenario_driver_keeps_effective_probability_and_original_date(): void
+    {
+        $result = $this->service()->forecast(
+            $this->context(
+                periodEnd: '2026-01-10',
+                scenario: CashGapForecastContext::SCENARIO_STRESS,
+            ),
+            [
+                $this->item(
+                    '2026-01-01',
+                    CashGapForecastItem::DIRECTION_INFLOW,
+                    CashGapForecastItem::BUCKET_PLANNED_INFLOW,
+                    1_000.0,
+                    probability: 0.8,
+                ),
+            ]
+        )->toArray();
+
+        $driver = $result['daily'][7]['drivers'][0];
+
+        $this->assertSame('2026-01-08', $driver['date']);
+        $this->assertSame('2026-01-01', $driver['original_date']);
+        $this->assertSame(0.6, $driver['probability']);
+        $this->assertSame(0.8, $driver['original_probability']);
+        $this->assertSame(600.0, $driver['amount']);
+    }
+
+    public function test_overall_drivers_exclude_positive_inflows_from_risk_causes(): void
+    {
+        $result = $this->service()->forecast(
+            $this->context(periodEnd: '2026-01-01', openingBalance: 0.0),
+            [
+                $this->item('2026-01-01', CashGapForecastItem::DIRECTION_INFLOW, CashGapForecastItem::BUCKET_PLANNED_INFLOW, 100.0),
+                $this->item('2026-01-01', CashGapForecastItem::DIRECTION_OUTFLOW, CashGapForecastItem::BUCKET_APPROVED_OUTFLOW, 300.0),
+            ]
+        )->toArray();
+
+        $this->assertSame(300.0, $result['drivers'][0]['amount']);
+        $this->assertSame(CashGapForecastItem::BUCKET_APPROVED_OUTFLOW, $result['drivers'][0]['type']);
+        $this->assertCount(1, $result['drivers']);
+    }
+
     private function service(): CashGapForecastService
     {
         return new CashGapForecastService();
@@ -198,6 +286,7 @@ final class CashGapForecastServiceTest extends TestCase
         ?string $responsibilityCenterId = 'center-uuid',
         int|string|null $sourceId = null,
         ?string $originalDate = null,
+        ?string $cashFlowKey = null,
     ): CashGapForecastItem {
         return new CashGapForecastItem(
             date: $date,
@@ -214,6 +303,7 @@ final class CashGapForecastServiceTest extends TestCase
             sourceType: 'payment_document',
             sourceId: $sourceId,
             originalDate: $originalDate,
+            cashFlowKey: $cashFlowKey,
         );
     }
 

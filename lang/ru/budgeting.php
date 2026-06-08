@@ -82,6 +82,9 @@ return [
         'errors' => [
             'period_invalid' => 'Проверьте период прогноза.',
             'scenario_invalid' => 'Выберите доступный сценарий прогноза.',
+            'scenario_policy_invalid' => 'Проверьте настройки сценария прогноза.',
+            'organization_required' => 'Выберите организацию для прогноза.',
+            'item_invalid' => 'Проверьте денежное событие прогноза.',
         ],
     ],
     'workflow' => [

@@ -35,6 +35,7 @@ final readonly class CashGapForecastItem
         public int|string|null $sourceId = null,
         public ?string $description = null,
         public ?string $originalDate = null,
+        public ?string $cashFlowKey = null,
     ) {
     }
 
@@ -69,5 +70,14 @@ final readonly class CashGapForecastItem
     public function isReservedOutflow(): bool
     {
         return $this->bucket === self::BUCKET_RESERVED_OUTFLOW;
+    }
+
+    public function normalizedCashFlowKey(): ?string
+    {
+        if ($this->cashFlowKey === null || trim($this->cashFlowKey) === '') {
+            return null;
+        }
+
+        return $this->cashFlowKey;
     }
 }

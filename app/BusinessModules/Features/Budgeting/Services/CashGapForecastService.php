@@ -11,6 +11,7 @@ use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastResult;
 use DateInterval;
 use DateTimeImmutable;
 use InvalidArgumentException;
+use Throwable;
 
 use function trans_message;
 
@@ -23,6 +24,18 @@ final class CashGapForecastService
 
     private const CALCULATION_VERSION = '2026-06-08';
 
+    private const BUCKET_DIRECTIONS = [
+        CashGapForecastItem::BUCKET_ACTUAL_INFLOW => CashGapForecastItem::DIRECTION_INFLOW,
+        CashGapForecastItem::BUCKET_PLANNED_INFLOW => CashGapForecastItem::DIRECTION_INFLOW,
+        CashGapForecastItem::BUCKET_OVERDUE_INFLOW => CashGapForecastItem::DIRECTION_INFLOW,
+        CashGapForecastItem::BUCKET_ACTUAL_OUTFLOW => CashGapForecastItem::DIRECTION_OUTFLOW,
+        CashGapForecastItem::BUCKET_APPROVED_OUTFLOW => CashGapForecastItem::DIRECTION_OUTFLOW,
+        CashGapForecastItem::BUCKET_SCHEDULED_OUTFLOW => CashGapForecastItem::DIRECTION_OUTFLOW,
+        CashGapForecastItem::BUCKET_RESERVED_OUTFLOW => CashGapForecastItem::DIRECTION_OUTFLOW,
+        CashGapForecastItem::BUCKET_OVERDUE_OUTFLOW => CashGapForecastItem::DIRECTION_OUTFLOW,
+        CashGapForecastItem::BUCKET_MANUAL_ADJUSTMENT => null,
+    ];
+
     /**
      * @param list<CashGapForecastItem> $items
      */
@@ -33,11 +46,7 @@ final class CashGapForecastService
         $daily = $this->emptyDailyBuckets($context);
         $includedItems = 0;
 
-        foreach ($items as $item) {
-            if (!$context->resolvedFilters()->matches($item)) {
-                continue;
-            }
-
+        foreach ($this->forecastItems($context, $items) as $item) {
             $scheduledDate = $this->forecastDate($context, $item);
             if ($scheduledDate === null || !array_key_exists($scheduledDate, $daily)) {
                 continue;
@@ -49,7 +58,14 @@ final class CashGapForecastService
             }
 
             $includedItems++;
-            $this->applyItem($daily[$scheduledDate], $item, $amount, $scheduledDate);
+            $this->applyItem(
+                $daily[$scheduledDate],
+                $item,
+                $amount,
+                $scheduledDate,
+                $this->effectiveProbability($context, $item),
+                $this->originalDate($item, $scheduledDate),
+            );
         }
 
         $days = $this->buildDays($context, $daily);
@@ -92,6 +108,104 @@ final class CashGapForecastService
         ], true)) {
             throw new InvalidArgumentException(trans_message('budgeting.cash_gap.errors.scenario_invalid'));
         }
+
+        if ($context->resolvedFilters()->organizationId === null) {
+            throw new InvalidArgumentException(trans_message('budgeting.cash_gap.errors.organization_required'));
+        }
+
+        if (
+            $context->stressInflowDelayDays < 0
+            || $context->optimisticInflowAdvanceDays < 0
+            || $context->stressInflowProbabilityFactor < 0.0
+            || $context->stressInflowProbabilityFactor > 1.0
+            || $context->optimisticInflowProbabilityLift < 0.0
+            || $context->optimisticInflowProbabilityLift > 1.0
+        ) {
+            throw new InvalidArgumentException(trans_message('budgeting.cash_gap.errors.scenario_policy_invalid'));
+        }
+    }
+
+    /**
+     * @param list<CashGapForecastItem> $items
+     * @return list<CashGapForecastItem>
+     */
+    private function forecastItems(CashGapForecastContext $context, array $items): array
+    {
+        $filtered = [];
+
+        foreach ($items as $item) {
+            if (!$context->resolvedFilters()->matches($item)) {
+                continue;
+            }
+
+            $this->assertItem($item);
+            $filtered[] = $item;
+        }
+
+        return $this->deduplicateItems($filtered);
+    }
+
+    private function assertItem(CashGapForecastItem $item): void
+    {
+        if (
+            !in_array($item->direction, [
+                CashGapForecastItem::DIRECTION_INFLOW,
+                CashGapForecastItem::DIRECTION_OUTFLOW,
+            ], true)
+            || !array_key_exists($item->bucket, self::BUCKET_DIRECTIONS)
+        ) {
+            throw new InvalidArgumentException(trans_message('budgeting.cash_gap.errors.item_invalid'));
+        }
+
+        $bucketDirection = self::BUCKET_DIRECTIONS[$item->bucket];
+        if ($bucketDirection !== null && $bucketDirection !== $item->direction) {
+            throw new InvalidArgumentException(trans_message('budgeting.cash_gap.errors.item_invalid'));
+        }
+
+        $this->date($item->date);
+    }
+
+    /**
+     * @param list<CashGapForecastItem> $items
+     * @return list<CashGapForecastItem>
+     */
+    private function deduplicateItems(array $items): array
+    {
+        $itemsWithoutKey = [];
+        $itemsByKey = [];
+        $prioritiesByKey = [];
+
+        foreach ($items as $item) {
+            $key = $item->normalizedCashFlowKey();
+            if ($key === null) {
+                $itemsWithoutKey[] = $item;
+                continue;
+            }
+
+            $priority = $this->deduplicationPriority($item);
+            if (!array_key_exists($key, $itemsByKey) || $priority > $prioritiesByKey[$key]) {
+                $itemsByKey[$key] = $item;
+                $prioritiesByKey[$key] = $priority;
+            }
+        }
+
+        return array_values(array_merge($itemsWithoutKey, array_values($itemsByKey)));
+    }
+
+    private function deduplicationPriority(CashGapForecastItem $item): int
+    {
+        return match ($item->bucket) {
+            CashGapForecastItem::BUCKET_ACTUAL_INFLOW,
+            CashGapForecastItem::BUCKET_ACTUAL_OUTFLOW => 100,
+            CashGapForecastItem::BUCKET_OVERDUE_OUTFLOW => 90,
+            CashGapForecastItem::BUCKET_SCHEDULED_OUTFLOW,
+            CashGapForecastItem::BUCKET_APPROVED_OUTFLOW => 80,
+            CashGapForecastItem::BUCKET_PLANNED_INFLOW => 70,
+            CashGapForecastItem::BUCKET_OVERDUE_INFLOW => 60,
+            CashGapForecastItem::BUCKET_MANUAL_ADJUSTMENT => 50,
+            CashGapForecastItem::BUCKET_RESERVED_OUTFLOW => 40,
+            default => 10,
+        };
     }
 
     private function emptyDailyBuckets(CashGapForecastContext $context): array
@@ -119,7 +233,7 @@ final class CashGapForecastService
     {
         $date = $item->isOverdueInflow() || $item->isOverdueOutflow()
             ? $context->startDate()
-            : new DateTimeImmutable($item->date);
+            : $this->date($item->date);
 
         if ($item->isInflow() && !$item->isActual() && !$item->isOverdueInflow()) {
             if ($context->scenario === CashGapForecastContext::SCENARIO_STRESS) {
@@ -149,59 +263,88 @@ final class CashGapForecastService
             return $this->money($amount);
         }
 
+        return $this->money($amount * $this->effectiveProbability($context, $item));
+    }
+
+    private function effectiveProbability(CashGapForecastContext $context, CashGapForecastItem $item): float
+    {
+        if ($item->isOutflow() || $item->isActual()) {
+            return 1.0;
+        }
+
         $probability = $this->probability($item->probability);
+
+        if ($item->isOverdueInflow()) {
+            return $probability;
+        }
 
         if ($context->scenario === CashGapForecastContext::SCENARIO_OPTIMISTIC) {
             $probability = min(1.0, $probability + $context->optimisticInflowProbabilityLift);
         }
 
         if ($context->scenario === CashGapForecastContext::SCENARIO_STRESS) {
-            $probability *= max(0.0, $context->stressInflowProbabilityFactor);
+            $probability *= $context->stressInflowProbabilityFactor;
         }
 
-        return $this->money($amount * $probability);
+        return $this->probability($probability);
     }
 
-    private function applyItem(array &$bucket, CashGapForecastItem $item, float $amount, string $date): void
+    private function applyItem(
+        array &$bucket,
+        CashGapForecastItem $item,
+        float $amount,
+        string $date,
+        float $effectiveProbability,
+        ?string $originalDate,
+    ): void
     {
         if ($item->isOverdueInflow()) {
             $bucket['overdue_inflows'] += $amount;
-            $bucket['drivers'][] = $this->driver($item, $amount, 0.0, $date);
+            $bucket['drivers'][] = $this->driver($item, $amount, 0.0, $date, $effectiveProbability, $originalDate);
             return;
         }
 
         if ($item->isOverdueOutflow()) {
             $bucket['overdue_outflows'] += $amount;
-            $bucket['drivers'][] = $this->driver($item, $amount, -$amount, $date);
+            $bucket['drivers'][] = $this->driver($item, $amount, -$amount, $date, $effectiveProbability, $originalDate);
             return;
         }
 
         if ($item->isReservedOutflow()) {
             $bucket['reserved_outflows'] += $amount;
-            $bucket['drivers'][] = $this->driver($item, $amount, -$amount, $date);
+            $bucket['drivers'][] = $this->driver($item, $amount, -$amount, $date, $effectiveProbability, $originalDate);
             return;
         }
 
         if ($item->isInflow()) {
             $bucket['inflows'] += $amount;
-            $bucket['drivers'][] = $this->driver($item, $amount, $amount, $date);
+            $bucket['drivers'][] = $this->driver($item, $amount, $amount, $date, $effectiveProbability, $originalDate);
             return;
         }
 
         $bucket['outflows'] += $amount;
-        $bucket['drivers'][] = $this->driver($item, $amount, -$amount, $date);
+        $bucket['drivers'][] = $this->driver($item, $amount, -$amount, $date, $effectiveProbability, $originalDate);
     }
 
-    private function driver(CashGapForecastItem $item, float $amount, float $balanceImpact, string $date): array
+    private function driver(
+        CashGapForecastItem $item,
+        float $amount,
+        float $balanceImpact,
+        string $date,
+        float $effectiveProbability,
+        ?string $originalDate,
+    ): array
     {
         return [
             'type' => $item->bucket,
             'direction' => $item->direction,
             'date' => $date,
-            'original_date' => $item->originalDate,
+            'original_date' => $originalDate,
             'amount' => $this->money($amount),
             'balance_impact' => $this->money($balanceImpact),
-            'probability' => $this->probability($item->probability),
+            'probability' => $effectiveProbability,
+            'original_probability' => $this->probability($item->probability),
+            'cash_flow_key' => $item->normalizedCashFlowKey(),
             'source' => [
                 'type' => $item->sourceType,
                 'id' => $item->sourceId,
@@ -289,7 +432,10 @@ final class CashGapForecastService
 
         foreach ($days as $day) {
             foreach ($day->drivers as $driver) {
-                if ((float) $driver['balance_impact'] < 0.0 || $day->cashGap > 0.0) {
+                if (
+                    (float) $driver['balance_impact'] < 0.0
+                    || $driver['type'] === CashGapForecastItem::BUCKET_OVERDUE_INFLOW
+                ) {
                     $drivers[] = $driver;
                 }
             }
@@ -390,5 +536,25 @@ final class CashGapForecastService
     private function money(float $amount): float
     {
         return round($amount, 2);
+    }
+
+    private function originalDate(CashGapForecastItem $item, string $scheduledDate): ?string
+    {
+        if ($item->originalDate !== null) {
+            return $item->originalDate;
+        }
+
+        $inputDate = $this->date($item->date)->format('Y-m-d');
+
+        return $inputDate === $scheduledDate ? null : $inputDate;
+    }
+
+    private function date(string $date): DateTimeImmutable
+    {
+        try {
+            return new DateTimeImmutable($date);
+        } catch (Throwable) {
+            throw new InvalidArgumentException(trans_message('budgeting.cash_gap.errors.item_invalid'));
+        }
     }
 }
