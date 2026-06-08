@@ -37,6 +37,7 @@ return [
         'basic-warehouse' => 'package',
         'procurement' => 'package',
         'budget-estimates' => 'package',
+        'budgeting' => 'package',
         'design-management' => 'package',
         'quality-control' => 'package',
         'executive-documentation' => 'package',

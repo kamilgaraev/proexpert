@@ -1,0 +1,98 @@
+{
+  "name": "Бюджетирование",
+  "slug": "budgeting",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "finance",
+  "description": "Планирование и контроль БДР и БДДС: периоды, сценарии, статьи бюджета, ЦФО, версии бюджетов, согласование, лимиты и импорт.",
+  "class_name": "App\\BusinessModules\\Features\\Budgeting\\BudgetingModule",
+  "service_provider": "App\\BusinessModules\\Features\\Budgeting\\BudgetingServiceProvider",
+  "pricing": {
+    "base_price": 7900,
+    "currency": "RUB",
+    "included_in_plans": [
+      "profi",
+      "enterprise"
+    ],
+    "duration_days": 30
+  },
+  "permissions": [
+    "budgeting.budgets.view",
+    "budgeting.budgets.create",
+    "budgeting.budgets.edit",
+    "budgeting.budgets.submit",
+    "budgeting.budgets.approve",
+    "budgeting.budgets.activate",
+    "budgeting.budgets.edit_approved",
+    "budgeting.budgets.archive",
+    "budgeting.periods.view",
+    "budgeting.periods.manage",
+    "budgeting.periods.close",
+    "budgeting.periods.reopen",
+    "budgeting.scenarios.view",
+    "budgeting.scenarios.manage",
+    "budgeting.articles.view",
+    "budgeting.articles.manage",
+    "budgeting.articles.import",
+    "budgeting.articles.map_1c",
+    "budgeting.cfo.view",
+    "budgeting.cfo.manage",
+    "budgeting.limits.view",
+    "budgeting.limits.manage",
+    "budgeting.limits.override",
+    "budgeting.plan_fact.view",
+    "budgeting.plan_fact.export",
+    "budgeting.import.preview",
+    "budgeting.import.commit",
+    "budgeting.audit.view",
+    "budgeting.sync.view",
+    "budgeting.sync.export"
+  ],
+  "features": [
+    "Планирование БДР и БДДС",
+    "Управление бюджетными периодами и сценариями",
+    "Справочник статей бюджета и ЦФО",
+    "Версионирование бюджетов",
+    "Согласование и активация бюджетов",
+    "Контроль лимитов и отклонений",
+    "Импорт бюджетных данных",
+    "Сопоставление бюджетных статей с 1С"
+  ],
+  "dependencies": [
+    "organizations",
+    "users",
+    "project-management",
+    "contract-management",
+    "catalog-management"
+  ],
+  "optional_integrations": [
+    "payments",
+    "one-c-basic-exchange",
+    "reports",
+    "data-export"
+  ],
+  "conflicts": [],
+  "limits": {
+    "max_budget_versions": null,
+    "max_budget_lines_per_version": 50000,
+    "max_import_rows_per_batch": 20000,
+    "retention_days": 1095
+  },
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "development_status": "stable",
+  "icon": "chart-pie",
+  "display_order": 31,
+  "tags": [
+    "budgeting",
+    "finance",
+    "bdr",
+    "bdds",
+    "plan-fact"
+  ],
+  "documentation_url": "/docs/modules/budgeting"
+}
