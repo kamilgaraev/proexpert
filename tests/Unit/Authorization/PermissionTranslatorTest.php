@@ -100,6 +100,7 @@ class PermissionTranslatorTest extends TestCase
                     'budgeting.articles.import',
                     'budgeting.articles.map_1c',
                     'budgeting.limits.override',
+                    'budgeting.cash_gap.view',
                     'budgeting.plan_fact.export',
                     'budgeting.import.preview',
                     'budgeting.import.commit',
@@ -118,6 +119,7 @@ class PermissionTranslatorTest extends TestCase
         $this->assertSame('Импорт бюджетных статей', $translated['module_permissions']['budgeting']['budgeting.articles.import']);
         $this->assertSame('Сопоставление бюджетных статей с 1С', $translated['module_permissions']['budgeting']['budgeting.articles.map_1c']);
         $this->assertSame('Превышение бюджетных лимитов', $translated['module_permissions']['budgeting']['budgeting.limits.override']);
+        $this->assertSame('Просмотр прогноза кассового разрыва', $translated['module_permissions']['budgeting']['budgeting.cash_gap.view']);
         $this->assertSame('Экспорт план-факт анализа бюджета', $translated['module_permissions']['budgeting']['budgeting.plan_fact.export']);
         $this->assertSame('Предпросмотр импорта бюджета', $translated['module_permissions']['budgeting']['budgeting.import.preview']);
         $this->assertSame('Применение импорта бюджета', $translated['module_permissions']['budgeting']['budgeting.import.commit']);
@@ -125,6 +127,7 @@ class PermissionTranslatorTest extends TestCase
         $this->assertSame('Экспорт данных синхронизации бюджета', $translated['module_permissions']['budgeting']['budgeting.sync.export']);
         $this->assertStringNotContainsString('budgeting.budgets.view', $flattenedValues);
         $this->assertStringNotContainsString('budgeting.limits.override', $flattenedValues);
+        $this->assertStringNotContainsString('budgeting.cash_gap.view', $flattenedValues);
         $this->assertStringNotContainsString('budgeting.import.commit', $flattenedValues);
         $this->assertStringNotContainsString('budgeting.sync.export', $flattenedValues);
     }

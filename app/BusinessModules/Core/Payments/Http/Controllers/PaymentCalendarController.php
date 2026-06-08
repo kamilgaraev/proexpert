@@ -12,8 +12,10 @@ use App\BusinessModules\Core\Payments\Services\PaymentCalendarContractService;
 use App\BusinessModules\Core\Payments\Services\PaymentCalendarSourceService;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastContext;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use App\Models\User;
 use DateTimeImmutable;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
@@ -32,6 +34,7 @@ class PaymentCalendarController extends Controller
         private readonly PaymentDocumentService $paymentDocumentService,
         private readonly PaymentCalendarContractService $calendarContractService,
         private readonly PaymentCalendarSourceService $calendarSourceService,
+        private readonly AuthorizationService $authorizationService,
     ) {
     }
 
@@ -99,6 +102,11 @@ class PaymentCalendarController extends Controller
             $this->assertSupportedRange($validated['start'], $validated['end']);
 
             $organizationId = (int) $request->attributes->get('current_organization_id');
+
+            if ($this->usesCashGapOptions($request) && !$this->canViewCashGap($request, $organizationId)) {
+                return AdminResponse::error(trans_message('errors.unauthorized'), 403);
+            }
+
             $filters = new PaymentCalendarSourceFilters(
                 organizationId: $organizationId,
                 periodStart: $validated['start'],
@@ -133,13 +141,10 @@ class PaymentCalendarController extends Controller
                     'direction',
                     'opening_balance',
                     'cash_gap_scenario',
-                    'cash_gap_reschedules',
-                    'cash_gap_probability_overrides',
-                    'cash_gap_financing',
-                    'cash_gap_excluded_keys',
                     'bucket',
                     'source_type',
                 ]),
+                'cash_gap_assumptions' => $this->cashGapAssumptionCounts($request),
                 'error' => $e->getMessage(),
             ]);
 
@@ -257,6 +262,63 @@ class PaymentCalendarController extends Controller
         }
 
         return array_values(array_filter($value, static fn (mixed $item): bool => is_string($item) && trim($item) !== ''));
+    }
+
+    private function usesCashGapOptions(Request $request): bool
+    {
+        foreach ($this->cashGapOptionKeys() as $key) {
+            if ($request->has($key)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function canViewCashGap(Request $request, int $organizationId): bool
+    {
+        $user = $request->user();
+
+        if (!$user instanceof User) {
+            return false;
+        }
+
+        return $this->authorizationService->can($user, 'budgeting.cash_gap.view', [
+            'organization_id' => $organizationId,
+        ]);
+    }
+
+    private function cashGapOptionKeys(): array
+    {
+        return [
+            'opening_balance',
+            'cash_gap_scenario',
+            'stress_inflow_delay_days',
+            'stress_inflow_probability_factor',
+            'optimistic_inflow_probability_lift',
+            'optimistic_inflow_advance_days',
+            'cash_gap_reschedules',
+            'cash_gap_probability_overrides',
+            'cash_gap_financing',
+            'cash_gap_excluded_keys',
+        ];
+    }
+
+    private function cashGapAssumptionCounts(Request $request): array
+    {
+        return [
+            'reschedules' => $this->requestArrayCount($request, 'cash_gap_reschedules'),
+            'probability_overrides' => $this->requestArrayCount($request, 'cash_gap_probability_overrides'),
+            'financing' => $this->requestArrayCount($request, 'cash_gap_financing'),
+            'excluded_keys' => $this->requestArrayCount($request, 'cash_gap_excluded_keys'),
+        ];
+    }
+
+    private function requestArrayCount(Request $request, string $key): int
+    {
+        $value = $request->input($key);
+
+        return is_array($value) ? count($value) : 0;
     }
 
     private function assertSupportedRange(string $start, string $end): void
