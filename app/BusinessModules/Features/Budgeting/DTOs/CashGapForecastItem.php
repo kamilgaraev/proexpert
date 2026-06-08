@@ -36,6 +36,7 @@ final readonly class CashGapForecastItem
         public ?string $description = null,
         public ?string $originalDate = null,
         public ?string $cashFlowKey = null,
+        public array $drillDown = [],
     ) {
     }
 

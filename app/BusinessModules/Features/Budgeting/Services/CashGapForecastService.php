@@ -8,6 +8,7 @@ use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastContext;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastDay;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastItem;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastResult;
+use App\BusinessModules\Features\Budgeting\DTOs\CashGapScenarioAdjustment;
 use DateInterval;
 use DateTimeImmutable;
 use InvalidArgumentException;
@@ -45,8 +46,9 @@ final class CashGapForecastService
 
         $daily = $this->emptyDailyBuckets($context);
         $includedItems = 0;
+        $forecastItems = $this->forecastItems($context, $items);
 
-        foreach ($this->forecastItems($context, $items) as $item) {
+        foreach ($forecastItems as $item) {
             $scheduledDate = $this->forecastDate($context, $item);
             if ($scheduledDate === null || !array_key_exists($scheduledDate, $daily)) {
                 continue;
@@ -72,6 +74,7 @@ final class CashGapForecastService
         $totals = $this->totals($context, $days);
         $cashGap = $this->cashGap($days);
         $drivers = $this->topDrivers($days);
+        $signals = $this->signals($context, $days, $cashGap, $drivers);
 
         return new CashGapForecastResult(
             context: $context,
@@ -81,11 +84,12 @@ final class CashGapForecastService
             riskLevel: $this->overallRiskLevel($cashGap, $totals),
             explanation: $this->overallExplanation($cashGap, $totals),
             drivers: $drivers,
+            signals: $signals,
             meta: [
                 'calculation_version' => self::CALCULATION_VERSION,
                 'input_items' => count($items),
                 'included_items' => $includedItems,
-                'excluded_items' => count($items) - $includedItems,
+                'excluded_items' => max(0, count($items) - $includedItems),
                 'source_of_truth' => [
                     'management_budget' => 'prohelper',
                     'accounting' => '1c',
@@ -104,7 +108,9 @@ final class CashGapForecastService
         if (!in_array($context->scenario, [
             CashGapForecastContext::SCENARIO_OPTIMISTIC,
             CashGapForecastContext::SCENARIO_BASE,
+            CashGapForecastContext::SCENARIO_PESSIMISTIC,
             CashGapForecastContext::SCENARIO_STRESS,
+            CashGapForecastContext::SCENARIO_CUSTOM,
         ], true)) {
             throw new InvalidArgumentException(trans_message('budgeting.cash_gap.errors.scenario_invalid'));
         }
@@ -133,7 +139,7 @@ final class CashGapForecastService
     {
         $filtered = [];
 
-        foreach ($items as $item) {
+        foreach ($this->applyScenarioAdjustments($context, $items) as $item) {
             if (!$context->resolvedFilters()->matches($item)) {
                 continue;
             }
@@ -143,6 +149,197 @@ final class CashGapForecastService
         }
 
         return $this->deduplicateItems($filtered);
+    }
+
+    /**
+     * @param list<CashGapForecastItem> $items
+     * @return list<CashGapForecastItem>
+     */
+    private function applyScenarioAdjustments(CashGapForecastContext $context, array $items): array
+    {
+        $adjustments = $this->normalizedAdjustments($context);
+
+        if ($adjustments === []) {
+            return $items;
+        }
+
+        $adjustedItems = [];
+
+        foreach ($items as $item) {
+            $this->assertItem($item);
+            $adjustedItem = $this->applyAdjustmentsToItem($item, $adjustments);
+
+            if ($adjustedItem instanceof CashGapForecastItem) {
+                $adjustedItems[] = $adjustedItem;
+            }
+        }
+
+        return array_merge($adjustedItems, $this->temporaryScenarioItems($context, $adjustments));
+    }
+
+    /**
+     * @return list<CashGapScenarioAdjustment>
+     */
+    private function normalizedAdjustments(CashGapForecastContext $context): array
+    {
+        $adjustments = [];
+
+        foreach ($context->scenarioAdjustments as $adjustment) {
+            if (is_array($adjustment)) {
+                $adjustment = CashGapScenarioAdjustment::fromArray($adjustment);
+            }
+
+            if (!$adjustment instanceof CashGapScenarioAdjustment) {
+                throw new InvalidArgumentException(trans_message('budgeting.cash_gap.errors.scenario_adjustment_invalid'));
+            }
+
+            $this->assertAdjustment($adjustment);
+            $adjustments[] = $adjustment;
+        }
+
+        return $adjustments;
+    }
+
+    /**
+     * @param list<CashGapScenarioAdjustment> $adjustments
+     */
+    private function applyAdjustmentsToItem(CashGapForecastItem $item, array $adjustments): ?CashGapForecastItem
+    {
+        $adjusted = $item;
+
+        foreach ($adjustments as $adjustment) {
+            if (!$adjustment->targets($adjusted)) {
+                continue;
+            }
+
+            if ($adjustment->action === CashGapScenarioAdjustment::ACTION_EXCLUDE_PAYMENT) {
+                return null;
+            }
+
+            if ($adjustment->action === CashGapScenarioAdjustment::ACTION_RESCHEDULE_PAYMENT) {
+                $adjusted = $this->copyItem($adjusted, [
+                    'date' => (string) $adjustment->date,
+                    'originalDate' => $adjusted->originalDate ?? $adjusted->date,
+                    'drillDown' => $this->scenarioDrillDown($adjusted, $adjustment),
+                ]);
+                continue;
+            }
+
+            if (
+                $adjustment->action === CashGapScenarioAdjustment::ACTION_CHANGE_INFLOW_PROBABILITY
+                && $adjusted->isInflow()
+                && !$adjusted->isActual()
+            ) {
+                $adjusted = $this->copyItem($adjusted, [
+                    'probability' => (float) $adjustment->probability,
+                    'drillDown' => $this->scenarioDrillDown($adjusted, $adjustment),
+                ]);
+            }
+        }
+
+        return $adjusted;
+    }
+
+    /**
+     * @param list<CashGapScenarioAdjustment> $adjustments
+     * @return list<CashGapForecastItem>
+     */
+    private function temporaryScenarioItems(CashGapForecastContext $context, array $adjustments): array
+    {
+        $items = [];
+        $filters = $context->resolvedFilters();
+
+        foreach ($adjustments as $index => $adjustment) {
+            if (!in_array($adjustment->action, [
+                CashGapScenarioAdjustment::ACTION_ADD_TEMPORARY_INFLOW,
+                CashGapScenarioAdjustment::ACTION_ADD_TEMPORARY_FINANCING,
+            ], true)) {
+                continue;
+            }
+
+            $description = $adjustment->description
+                ?? trans_message('budgeting.cash_gap.scenario.temporary_financing');
+            $currency = mb_strtoupper($adjustment->currency ?? $filters->currency ?? 'RUB');
+
+            $items[] = new CashGapForecastItem(
+                date: (string) $adjustment->date,
+                direction: CashGapForecastItem::DIRECTION_INFLOW,
+                bucket: CashGapForecastItem::BUCKET_MANUAL_ADJUSTMENT,
+                amount: (float) $adjustment->amount,
+                probability: $adjustment->probability ?? 1.0,
+                organizationId: $filters->organizationId,
+                projectId: $filters->projectId,
+                counterpartyId: $filters->counterpartyId,
+                budgetArticleId: $filters->budgetArticleId,
+                responsibilityCenterId: $filters->responsibilityCenterId,
+                currency: $currency,
+                sourceType: 'cash_gap_scenario_adjustment',
+                sourceId: $index + 1,
+                description: $description,
+                cashFlowKey: 'cash-gap-scenario:' . sha1(json_encode($adjustment->toArray()) ?: (string) $index),
+                drillDown: [
+                    'type' => 'cash_gap_scenario_adjustment',
+                    'label' => $description,
+                    'reason' => $adjustment->reason,
+                ],
+            );
+        }
+
+        return $items;
+    }
+
+    private function assertAdjustment(CashGapScenarioAdjustment $adjustment): void
+    {
+        if (!in_array($adjustment->action, [
+            CashGapScenarioAdjustment::ACTION_RESCHEDULE_PAYMENT,
+            CashGapScenarioAdjustment::ACTION_CHANGE_INFLOW_PROBABILITY,
+            CashGapScenarioAdjustment::ACTION_EXCLUDE_PAYMENT,
+            CashGapScenarioAdjustment::ACTION_ADD_TEMPORARY_INFLOW,
+            CashGapScenarioAdjustment::ACTION_ADD_TEMPORARY_FINANCING,
+        ], true)) {
+            throw new InvalidArgumentException(trans_message('budgeting.cash_gap.errors.scenario_adjustment_invalid'));
+        }
+
+        $hasTarget = $adjustment->cashFlowKey !== null
+            || ($adjustment->sourceType !== null && $adjustment->sourceId !== null);
+
+        if (
+            in_array($adjustment->action, [
+                CashGapScenarioAdjustment::ACTION_RESCHEDULE_PAYMENT,
+                CashGapScenarioAdjustment::ACTION_CHANGE_INFLOW_PROBABILITY,
+                CashGapScenarioAdjustment::ACTION_EXCLUDE_PAYMENT,
+            ], true)
+            && !$hasTarget
+        ) {
+            throw new InvalidArgumentException(trans_message('budgeting.cash_gap.errors.scenario_adjustment_invalid'));
+        }
+
+        if (
+            $adjustment->action === CashGapScenarioAdjustment::ACTION_RESCHEDULE_PAYMENT
+            && $adjustment->date === null
+        ) {
+            throw new InvalidArgumentException(trans_message('budgeting.cash_gap.errors.scenario_adjustment_invalid'));
+        }
+
+        if (
+            $adjustment->action === CashGapScenarioAdjustment::ACTION_CHANGE_INFLOW_PROBABILITY
+            && ($adjustment->probability === null || $adjustment->probability < 0.0 || $adjustment->probability > 1.0)
+        ) {
+            throw new InvalidArgumentException(trans_message('budgeting.cash_gap.errors.scenario_adjustment_invalid'));
+        }
+
+        if (in_array($adjustment->action, [
+            CashGapScenarioAdjustment::ACTION_ADD_TEMPORARY_INFLOW,
+            CashGapScenarioAdjustment::ACTION_ADD_TEMPORARY_FINANCING,
+        ], true)) {
+            if ($adjustment->date === null || $adjustment->amount === null || $adjustment->amount <= 0.0) {
+                throw new InvalidArgumentException(trans_message('budgeting.cash_gap.errors.scenario_adjustment_invalid'));
+            }
+
+            if ($adjustment->probability !== null && ($adjustment->probability < 0.0 || $adjustment->probability > 1.0)) {
+                throw new InvalidArgumentException(trans_message('budgeting.cash_gap.errors.scenario_adjustment_invalid'));
+            }
+        }
     }
 
     private function assertItem(CashGapForecastItem $item): void
@@ -236,7 +433,7 @@ final class CashGapForecastService
             : $this->date($item->date);
 
         if ($item->isInflow() && !$item->isActual() && !$item->isOverdueInflow()) {
-            if ($context->scenario === CashGapForecastContext::SCENARIO_STRESS) {
+            if ($this->isPessimisticScenario($context)) {
                 $date = $date->add(new DateInterval('P' . $context->stressInflowDelayDays . 'D'));
             }
 
@@ -282,7 +479,7 @@ final class CashGapForecastService
             $probability = min(1.0, $probability + $context->optimisticInflowProbabilityLift);
         }
 
-        if ($context->scenario === CashGapForecastContext::SCENARIO_STRESS) {
+        if ($this->isPessimisticScenario($context)) {
             $probability *= $context->stressInflowProbabilityFactor;
         }
 
@@ -350,6 +547,7 @@ final class CashGapForecastService
                 'id' => $item->sourceId,
             ],
             'description' => $item->description,
+            'drill_down' => $this->driverDrillDown($item),
         ];
     }
 
@@ -415,13 +613,16 @@ final class CashGapForecastService
             ? 0.0
             : min(array_map(static fn (CashGapForecastDay $day): float => $day->closingBalance, $days));
 
+        $maxGapAmount = $gapDays === []
+            ? 0.0
+            : max(array_map(static fn (CashGapForecastDay $day): float => $day->cashGap, $gapDays));
+
         return [
             'has_gap' => $gapDays !== [],
             'first_gap_date' => $gapDays[0]->date ?? null,
             'negative_days' => count($gapDays),
-            'max_gap_amount' => $gapDays === []
-                ? 0.0
-                : max(array_map(static fn (CashGapForecastDay $day): float => $day->cashGap, $gapDays)),
+            'max_gap_amount' => $this->money($maxGapAmount),
+            'deficit_amount' => $this->money($maxGapAmount),
             'min_closing_balance' => $this->money($minClosingBalance),
         ];
     }
@@ -517,7 +718,105 @@ final class CashGapForecastService
             'stress_inflow_probability_factor' => $context->stressInflowProbabilityFactor,
             'optimistic_inflow_probability_lift' => $context->optimisticInflowProbabilityLift,
             'optimistic_inflow_advance_days' => $context->optimisticInflowAdvanceDays,
+            'scenario_adjustments_count' => count($context->scenarioAdjustments),
         ];
+    }
+
+    private function signals(CashGapForecastContext $context, array $days, array $cashGap, array $drivers): array
+    {
+        return [
+            'currency' => $context->resolvedFilters()->currency,
+            'first_gap' => [
+                'detected' => (bool) $cashGap['has_gap'],
+                'date' => $cashGap['first_gap_date'],
+                'amount' => $cashGap['deficit_amount'],
+                'severity' => $cashGap['has_gap'] === true ? self::RISK_CRITICAL : self::RISK_LOW,
+            ],
+            'minimum_balance' => [
+                'amount' => $cashGap['min_closing_balance'],
+                'severity' => $cashGap['min_closing_balance'] < 0.0 ? self::RISK_CRITICAL : self::RISK_LOW,
+            ],
+            'deficit' => [
+                'amount' => $cashGap['deficit_amount'],
+                'negative_days' => $cashGap['negative_days'],
+            ],
+            'payment_drivers' => $drivers,
+            'overdue_inflows' => $this->overdueInflows($days),
+        ];
+    }
+
+    private function overdueInflows(array $days): array
+    {
+        $overdueInflows = [];
+
+        foreach ($days as $day) {
+            foreach ($day->drivers as $driver) {
+                if (($driver['type'] ?? null) === CashGapForecastItem::BUCKET_OVERDUE_INFLOW) {
+                    $overdueInflows[] = $driver;
+                }
+            }
+        }
+
+        return $overdueInflows;
+    }
+
+    private function isPessimisticScenario(CashGapForecastContext $context): bool
+    {
+        return in_array($context->scenario, [
+            CashGapForecastContext::SCENARIO_PESSIMISTIC,
+            CashGapForecastContext::SCENARIO_STRESS,
+        ], true);
+    }
+
+    private function copyItem(CashGapForecastItem $item, array $overrides): CashGapForecastItem
+    {
+        return new CashGapForecastItem(
+            date: $overrides['date'] ?? $item->date,
+            direction: $overrides['direction'] ?? $item->direction,
+            bucket: $overrides['bucket'] ?? $item->bucket,
+            amount: $overrides['amount'] ?? $item->amount,
+            probability: $overrides['probability'] ?? $item->probability,
+            organizationId: $overrides['organizationId'] ?? $item->organizationId,
+            projectId: $overrides['projectId'] ?? $item->projectId,
+            counterpartyId: $overrides['counterpartyId'] ?? $item->counterpartyId,
+            budgetArticleId: $overrides['budgetArticleId'] ?? $item->budgetArticleId,
+            responsibilityCenterId: $overrides['responsibilityCenterId'] ?? $item->responsibilityCenterId,
+            currency: $overrides['currency'] ?? $item->currency,
+            sourceType: $overrides['sourceType'] ?? $item->sourceType,
+            sourceId: $overrides['sourceId'] ?? $item->sourceId,
+            description: $overrides['description'] ?? $item->description,
+            originalDate: $overrides['originalDate'] ?? $item->originalDate,
+            cashFlowKey: $overrides['cashFlowKey'] ?? $item->cashFlowKey,
+            drillDown: $overrides['drillDown'] ?? $item->drillDown,
+        );
+    }
+
+    private function scenarioDrillDown(
+        CashGapForecastItem $item,
+        CashGapScenarioAdjustment $adjustment,
+    ): array {
+        return array_merge($item->drillDown, [
+            'scenario_action' => $adjustment->action,
+            'scenario_reason' => $adjustment->reason,
+        ]);
+    }
+
+    private function driverDrillDown(CashGapForecastItem $item): array
+    {
+        $drillDown = [];
+
+        foreach ($item->drillDown as $key => $value) {
+            if (is_scalar($value) || $value === null) {
+                $drillDown[$key] = $value;
+            }
+        }
+
+        if ($drillDown === [] && $item->sourceType !== null) {
+            $drillDown['type'] = $item->sourceType;
+            $drillDown['id'] = $item->sourceId;
+        }
+
+        return $drillDown;
     }
 
     private function sumDays(array $days, string $property): float

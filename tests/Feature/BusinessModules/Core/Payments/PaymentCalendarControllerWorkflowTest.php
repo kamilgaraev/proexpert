@@ -90,6 +90,45 @@ class PaymentCalendarControllerWorkflowTest extends TestCase
         ]);
     }
 
+    public function test_calendar_returns_cash_gap_forecast_when_opening_balance_is_provided(): void
+    {
+        $this->travelTo('2026-05-01 09:00:00');
+
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+
+        $this->createDocument($context, [
+            'document_number' => 'CAL-GAP-IN-001',
+            'direction' => InvoiceDirection::INCOMING,
+            'amount' => 1500,
+            'due_date' => '2026-05-10',
+            'status' => PaymentDocumentStatus::APPROVED,
+        ]);
+        $this->createDocument($context, [
+            'document_number' => 'CAL-GAP-OUT-001',
+            'direction' => InvoiceDirection::OUTGOING,
+            'amount' => 2500,
+            'due_date' => '2026-05-12',
+            'status' => PaymentDocumentStatus::SCHEDULED,
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson(
+                '/api/v1/admin/payments/documents/calendar?start=2026-05-01&end=2026-05-31'
+                . '&currency=RUB&opening_balance=1000&cash_gap_scenario=base'
+            );
+
+        $response->assertOk();
+        $response->assertJsonPath('data.cash_gap.available', true);
+        $response->assertJsonPath('data.cash_gap.currency', 'RUB');
+        $response->assertJsonPath('data.cash_gap.opening_balance', 1000);
+        $response->assertJsonPath('data.cash_gap.scenario', 'base');
+        $response->assertJsonPath('data.cash_gap.forecast.cash_gap.has_gap', true);
+        $response->assertJsonPath('data.cash_gap.forecast.cash_gap.first_gap_date', '2026-05-12');
+        $response->assertJsonPath('data.cash_gap.forecast.cash_gap.max_gap_amount', 150);
+        $response->assertJsonPath('data.cash_gap.forecast.closing_balance', -150);
+    }
+
     public function test_calendar_rejects_too_large_period(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');

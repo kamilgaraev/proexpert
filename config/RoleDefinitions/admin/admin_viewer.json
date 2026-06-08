@@ -68,6 +68,7 @@
       "budgeting.articles.view",
       "budgeting.cfo.view",
       "budgeting.limits.view",
+      "budgeting.cash_gap.view",
       "budgeting.plan_fact.view",
       "budgeting.audit.view",
       "budgeting.sync.view"

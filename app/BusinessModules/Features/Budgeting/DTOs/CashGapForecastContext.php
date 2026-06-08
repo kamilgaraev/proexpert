@@ -10,7 +10,9 @@ final readonly class CashGapForecastContext
 {
     public const SCENARIO_OPTIMISTIC = 'optimistic';
     public const SCENARIO_BASE = 'base';
+    public const SCENARIO_PESSIMISTIC = 'pessimistic';
     public const SCENARIO_STRESS = 'stress';
+    public const SCENARIO_CUSTOM = 'custom';
 
     public function __construct(
         public string $periodStart,
@@ -22,6 +24,7 @@ final readonly class CashGapForecastContext
         public float $stressInflowProbabilityFactor = 0.75,
         public float $optimisticInflowProbabilityLift = 0.1,
         public int $optimisticInflowAdvanceDays = 0,
+        public array $scenarioAdjustments = [],
     ) {
     }
 

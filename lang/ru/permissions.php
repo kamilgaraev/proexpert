@@ -177,6 +177,7 @@ return [
         'budgeting.limits.view' => 'Просмотр бюджетных лимитов',
         'budgeting.limits.manage' => 'Управление бюджетными лимитами',
         'budgeting.limits.override' => 'Превышение бюджетных лимитов',
+        'budgeting.cash_gap.view' => 'Просмотр прогноза кассового разрыва',
         'budgeting.plan_fact.view' => 'Просмотр план-факт анализа бюджета',
         'budgeting.plan_fact.export' => 'Экспорт план-факт анализа бюджета',
         'budgeting.import.preview' => 'Предпросмотр импорта бюджета',

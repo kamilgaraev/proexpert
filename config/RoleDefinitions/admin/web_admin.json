@@ -470,6 +470,7 @@
       "budgeting.limits.view",
       "budgeting.limits.manage",
       "budgeting.limits.override",
+      "budgeting.cash_gap.view",
       "budgeting.plan_fact.view",
       "budgeting.plan_fact.export",
       "budgeting.import.preview",

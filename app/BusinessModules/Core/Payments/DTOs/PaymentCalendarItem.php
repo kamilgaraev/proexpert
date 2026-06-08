@@ -63,6 +63,7 @@ final readonly class PaymentCalendarItem
             description: is_string($description) ? $description : null,
             originalDate: $this->originalDate,
             cashFlowKey: $this->cashFlowKey,
+            drillDown: $this->drillDown,
         );
     }
 

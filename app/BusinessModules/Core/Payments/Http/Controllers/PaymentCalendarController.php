@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
+use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarCashGapOptions;
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarItem;
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarSourceFilters;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\PaymentCalendarContractService;
 use App\BusinessModules\Core\Payments\Services\PaymentCalendarSourceService;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
+use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastContext;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use DateTimeImmutable;
@@ -48,6 +50,34 @@ class PaymentCalendarController extends Controller
                     PaymentCalendarItem::DIRECTION_INFLOW,
                     PaymentCalendarItem::DIRECTION_OUTFLOW,
                 ])],
+                'opening_balance' => ['nullable', 'numeric'],
+                'cash_gap_scenario' => ['nullable', Rule::in([
+                    CashGapForecastContext::SCENARIO_OPTIMISTIC,
+                    CashGapForecastContext::SCENARIO_BASE,
+                    CashGapForecastContext::SCENARIO_PESSIMISTIC,
+                    CashGapForecastContext::SCENARIO_STRESS,
+                    CashGapForecastContext::SCENARIO_CUSTOM,
+                ])],
+                'stress_inflow_delay_days' => ['nullable', 'integer', 'min:0', 'max:31'],
+                'stress_inflow_probability_factor' => ['nullable', 'numeric', 'min:0', 'max:1'],
+                'optimistic_inflow_probability_lift' => ['nullable', 'numeric', 'min:0', 'max:1'],
+                'optimistic_inflow_advance_days' => ['nullable', 'integer', 'min:0', 'max:31'],
+                'cash_gap_reschedules' => ['nullable', 'array', 'max:50'],
+                'cash_gap_reschedules.*.cash_flow_key' => ['required_with:cash_gap_reschedules', 'string', 'max:255'],
+                'cash_gap_reschedules.*.date' => ['required_with:cash_gap_reschedules', 'date'],
+                'cash_gap_reschedules.*.reason' => ['nullable', 'string', 'max:500'],
+                'cash_gap_probability_overrides' => ['nullable', 'array', 'max:50'],
+                'cash_gap_probability_overrides.*.cash_flow_key' => ['required_with:cash_gap_probability_overrides', 'string', 'max:255'],
+                'cash_gap_probability_overrides.*.probability' => ['required_with:cash_gap_probability_overrides', 'numeric', 'min:0', 'max:1'],
+                'cash_gap_probability_overrides.*.reason' => ['nullable', 'string', 'max:500'],
+                'cash_gap_financing' => ['nullable', 'array', 'max:20'],
+                'cash_gap_financing.*.date' => ['required_with:cash_gap_financing', 'date'],
+                'cash_gap_financing.*.amount' => ['required_with:cash_gap_financing', 'numeric', 'min:0.01'],
+                'cash_gap_financing.*.currency' => ['nullable', 'string', 'size:3'],
+                'cash_gap_financing.*.description' => ['nullable', 'string', 'max:500'],
+                'cash_gap_financing.*.reason' => ['nullable', 'string', 'max:500'],
+                'cash_gap_excluded_keys' => ['nullable', 'array', 'max:50'],
+                'cash_gap_excluded_keys.*' => ['string', 'max:255'],
                 'bucket' => ['nullable', Rule::in([
                     PaymentCalendarItem::BUCKET_FACT,
                     PaymentCalendarItem::BUCKET_SCHEDULED,
@@ -84,7 +114,7 @@ class PaymentCalendarController extends Controller
             );
 
             return AdminResponse::success(
-                $this->calendarContractService->build($filters),
+                $this->calendarContractService->build($filters, $this->cashGapOptions($validated)),
                 trans_message('payments.calendar.loaded')
             );
         } catch (ValidationException $e) {
@@ -101,6 +131,12 @@ class PaymentCalendarController extends Controller
                     'responsibility_center_id',
                     'currency',
                     'direction',
+                    'opening_balance',
+                    'cash_gap_scenario',
+                    'cash_gap_reschedules',
+                    'cash_gap_probability_overrides',
+                    'cash_gap_financing',
+                    'cash_gap_excluded_keys',
                     'bucket',
                     'source_type',
                 ]),
@@ -169,6 +205,58 @@ class PaymentCalendarController extends Controller
         }
 
         return trim($reason);
+    }
+
+    private function cashGapOptions(array $validated): PaymentCalendarCashGapOptions
+    {
+        $openingBalance = array_key_exists('opening_balance', $validated)
+            && $validated['opening_balance'] !== null
+            && $validated['opening_balance'] !== ''
+            ? (float) $validated['opening_balance']
+            : null;
+
+        return new PaymentCalendarCashGapOptions(
+            openingBalance: $openingBalance,
+            scenario: $validated['cash_gap_scenario'] ?? CashGapForecastContext::SCENARIO_BASE,
+            stressInflowDelayDays: isset($validated['stress_inflow_delay_days'])
+                ? (int) $validated['stress_inflow_delay_days']
+                : 7,
+            stressInflowProbabilityFactor: isset($validated['stress_inflow_probability_factor'])
+                ? (float) $validated['stress_inflow_probability_factor']
+                : 0.75,
+            optimisticInflowProbabilityLift: isset($validated['optimistic_inflow_probability_lift'])
+                ? (float) $validated['optimistic_inflow_probability_lift']
+                : 0.1,
+            optimisticInflowAdvanceDays: isset($validated['optimistic_inflow_advance_days'])
+                ? (int) $validated['optimistic_inflow_advance_days']
+                : 0,
+            reschedules: $this->cashGapArray($validated, 'cash_gap_reschedules'),
+            probabilityOverrides: $this->cashGapArray($validated, 'cash_gap_probability_overrides'),
+            financingItems: $this->cashGapArray($validated, 'cash_gap_financing'),
+            excludedCashFlowKeys: $this->cashGapStringArray($validated, 'cash_gap_excluded_keys'),
+        );
+    }
+
+    private function cashGapArray(array $validated, string $key): array
+    {
+        $value = $validated[$key] ?? [];
+
+        if (!is_array($value)) {
+            return [];
+        }
+
+        return array_values(array_filter($value, static fn (mixed $item): bool => is_array($item)));
+    }
+
+    private function cashGapStringArray(array $validated, string $key): array
+    {
+        $value = $validated[$key] ?? [];
+
+        if (!is_array($value)) {
+            return [];
+        }
+
+        return array_values(array_filter($value, static fn (mixed $item): bool => is_string($item) && trim($item) !== ''));
     }
 
     private function assertSupportedRange(string $start, string $end): void

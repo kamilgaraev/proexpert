@@ -4,8 +4,12 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Payments\Services;
 
+use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarCashGapOptions;
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarItem;
 use App\BusinessModules\Core\Payments\DTOs\PaymentCalendarSourceFilters;
+use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastContext;
+use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastFilters;
+use App\BusinessModules\Features\Budgeting\Services\CashGapForecastService;
 use DateInterval;
 use DatePeriod;
 use DateTimeImmutable;
@@ -14,17 +18,28 @@ use function trans_message;
 
 final class PaymentCalendarContractService
 {
+    private CashGapForecastService $cashGapForecastService;
+
     public function __construct(
         private readonly PaymentCalendarSourceService $sourceService,
+        ?CashGapForecastService $cashGapForecastService = null,
     ) {
+        $this->cashGapForecastService = $cashGapForecastService ?? new CashGapForecastService();
     }
 
-    public function build(PaymentCalendarSourceFilters $filters): array
+    public function build(
+        PaymentCalendarSourceFilters $filters,
+        ?PaymentCalendarCashGapOptions $cashGapOptions = null,
+    ): array
     {
-        return $this->fromItems($this->sourceService->collect($filters), $filters);
+        return $this->fromItems($this->sourceService->collect($filters), $filters, $cashGapOptions);
     }
 
-    public function fromItems(array $items, PaymentCalendarSourceFilters $filters): array
+    public function fromItems(
+        array $items,
+        PaymentCalendarSourceFilters $filters,
+        ?PaymentCalendarCashGapOptions $cashGapOptions = null,
+    ): array
     {
         $calendarItems = array_values(array_filter(
             $items,
@@ -36,12 +51,121 @@ final class PaymentCalendarContractService
             'events' => array_map(fn (PaymentCalendarItem $item): array => $this->presentEvent($item), $calendarItems),
             'days' => $this->aggregateDays($calendarItems, $filters),
             'summary' => $this->aggregateSummary($calendarItems, $filters),
-            'cash_gap' => [
+            'cash_gap' => $this->cashGap($calendarItems, $filters, $cashGapOptions),
+        ];
+    }
+
+    private function cashGap(
+        array $items,
+        PaymentCalendarSourceFilters $filters,
+        ?PaymentCalendarCashGapOptions $cashGapOptions,
+    ): array
+    {
+        $options = $cashGapOptions ?? new PaymentCalendarCashGapOptions();
+        $currency = $filters->currency ?? 'RUB';
+
+        if (!$options->hasOpeningBalance()) {
+            return [
                 'available' => false,
                 'reason' => trans_message('payments.calendar.cash_gap_unavailable_opening_balance'),
+                'currency' => $currency,
                 'opening_balance' => null,
+                'scenario' => $options->scenario,
+                'scenario_has_assumptions' => false,
+                'scenario_assumptions_count' => 0,
                 'forecast' => null,
-            ],
+                'baseline_forecast' => null,
+                'comparison' => null,
+            ];
+        }
+
+        $baselineItems = array_map(
+            static fn (PaymentCalendarItem $item) => $item->toCashGapForecastItem(),
+            $items
+        );
+        $baselineContext = $this->cashGapContext(
+            $filters,
+            $options,
+            $currency,
+            CashGapForecastContext::SCENARIO_BASE,
+            []
+        );
+        $forecastContext = $this->cashGapContext(
+            $filters,
+            $options,
+            $currency,
+            $options->scenario,
+            $options->scenarioAdjustments()
+        );
+        $baselineForecast = $this->cashGapForecastService->forecast($baselineContext, $baselineItems)->toArray();
+
+        if ($options->hasScenarioAssumptions()) {
+            $forecast = $this->cashGapForecastService->forecast($forecastContext, $baselineItems)->toArray();
+        } else {
+            $forecast = $baselineForecast;
+            $baselineForecast = null;
+        }
+
+        return [
+            'available' => true,
+            'reason' => null,
+            'currency' => $currency,
+            'opening_balance' => $this->money((float) $options->openingBalance),
+            'scenario' => $options->scenario,
+            'scenario_has_assumptions' => $options->hasScenarioAssumptions(),
+            'scenario_assumptions_count' => $options->assumptionsCount(),
+            'forecast' => $forecast,
+            'baseline_forecast' => $baselineForecast,
+            'comparison' => $baselineForecast !== null
+                ? $this->cashGapComparison($baselineForecast, $forecast)
+                : null,
+        ];
+    }
+
+    private function cashGapContext(
+        PaymentCalendarSourceFilters $filters,
+        PaymentCalendarCashGapOptions $options,
+        string $currency,
+        string $scenario,
+        array $scenarioAdjustments,
+    ): CashGapForecastContext
+    {
+        return new CashGapForecastContext(
+            periodStart: $filters->periodStart,
+            periodEnd: $filters->periodEnd,
+            openingBalance: (float) $options->openingBalance,
+            scenario: $scenario,
+            filters: new CashGapForecastFilters(
+                organizationId: $filters->organizationId,
+                projectId: $filters->projectId,
+                counterpartyId: $filters->counterpartyId,
+                budgetArticleId: $this->identifierToString($filters->budgetArticleId),
+                responsibilityCenterId: $this->identifierToString($filters->responsibilityCenterId),
+                currency: $currency,
+            ),
+            stressInflowDelayDays: $options->stressInflowDelayDays,
+            stressInflowProbabilityFactor: $options->stressInflowProbabilityFactor,
+            optimisticInflowProbabilityLift: $options->optimisticInflowProbabilityLift,
+            optimisticInflowAdvanceDays: $options->optimisticInflowAdvanceDays,
+            scenarioAdjustments: $scenarioAdjustments,
+        );
+    }
+
+    private function cashGapComparison(array $baselineForecast, array $forecast): array
+    {
+        return [
+            'max_gap_amount_delta' => $this->money(
+                (float) ($forecast['cash_gap']['max_gap_amount'] ?? 0.0)
+                - (float) ($baselineForecast['cash_gap']['max_gap_amount'] ?? 0.0)
+            ),
+            'negative_days_delta' => (int) ($forecast['cash_gap']['negative_days'] ?? 0)
+                - (int) ($baselineForecast['cash_gap']['negative_days'] ?? 0),
+            'closing_balance_delta' => $this->money(
+                (float) ($forecast['closing_balance'] ?? 0.0)
+                - (float) ($baselineForecast['closing_balance'] ?? 0.0)
+            ),
+            'first_gap_date_changed' => ($forecast['cash_gap']['first_gap_date'] ?? null)
+                !== ($baselineForecast['cash_gap']['first_gap_date'] ?? null),
         ];
     }
 
@@ -63,6 +187,7 @@ final class PaymentCalendarContractService
             'source_type' => $item->sourceType,
             'source_label' => $this->sourceLabel($item->sourceType),
             'source_id' => $item->sourceId,
+            'cash_flow_key' => $item->cashFlowKey,
             'amount' => $this->money($item->amount),
             'remaining_amount' => $this->money($item->remainingAmount),
             'currency' => $item->currency,
@@ -108,6 +233,7 @@ final class PaymentCalendarContractService
                 'bucketLabel' => $presented['bucket_label'],
                 'sourceType' => $presented['source_type'],
                 'sourceLabel' => $presented['source_label'],
+                'cashFlowKey' => $presented['cash_flow_key'],
                 'status' => $presented['status'],
                 'statusLabel' => $presented['status_label'],
                 'editable' => $editable,
@@ -463,6 +589,15 @@ final class PaymentCalendarContractService
         }
 
         return is_string($value) && ctype_digit($value) && (int) $value > 0;
+    }
+
+    private function identifierToString(int|string|null $identifier): ?string
+    {
+        if ($identifier === null || $identifier === '') {
+            return null;
+        }
+
+        return (string) $identifier;
     }
 
     private function money(float|int $amount): float

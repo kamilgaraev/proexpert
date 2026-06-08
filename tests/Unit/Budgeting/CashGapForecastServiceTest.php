@@ -7,6 +7,7 @@ namespace Tests\Unit\Budgeting;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastContext;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastFilters;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastItem;
+use App\BusinessModules\Features\Budgeting\DTOs\CashGapScenarioAdjustment;
 use App\BusinessModules\Features\Budgeting\Services\CashGapForecastService;
 use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
@@ -233,6 +234,155 @@ final class CashGapForecastServiceTest extends TestCase
         $this->assertSame(600.0, $driver['amount']);
     }
 
+    public function test_custom_scenario_adjustments_do_not_change_base_items_and_are_compared_with_base(): void
+    {
+        $items = [
+            $this->item(
+                '2026-01-02',
+                CashGapForecastItem::DIRECTION_OUTFLOW,
+                CashGapForecastItem::BUCKET_APPROVED_OUTFLOW,
+                800.0,
+                sourceId: 201,
+                cashFlowKey: 'payment-document:201',
+            ),
+            $this->item(
+                '2026-01-03',
+                CashGapForecastItem::DIRECTION_INFLOW,
+                CashGapForecastItem::BUCKET_PLANNED_INFLOW,
+                500.0,
+                probability: 0.4,
+                sourceId: 202,
+                cashFlowKey: 'payment-document:202',
+            ),
+            $this->item(
+                '2026-01-02',
+                CashGapForecastItem::DIRECTION_OUTFLOW,
+                CashGapForecastItem::BUCKET_APPROVED_OUTFLOW,
+                300.0,
+                sourceId: 203,
+                cashFlowKey: 'payment-document:203',
+            ),
+        ];
+
+        $base = $this->service()->forecast(
+            $this->context(periodEnd: '2026-01-05', openingBalance: 200.0),
+            $items,
+        )->toArray();
+
+        $scenario = $this->service()->forecast(
+            new CashGapForecastContext(
+                periodStart: '2026-01-01',
+                periodEnd: '2026-01-05',
+                openingBalance: 200.0,
+                scenario: CashGapForecastContext::SCENARIO_CUSTOM,
+                filters: new CashGapForecastFilters(
+                    organizationId: 42,
+                    budgetArticleId: 'article-uuid',
+                    responsibilityCenterId: 'center-uuid',
+                    currency: 'RUB',
+                ),
+                scenarioAdjustments: [
+                    new CashGapScenarioAdjustment(
+                        action: CashGapScenarioAdjustment::ACTION_RESCHEDULE_PAYMENT,
+                        cashFlowKey: 'payment-document:201',
+                        date: '2026-01-05',
+                    ),
+                    new CashGapScenarioAdjustment(
+                        action: CashGapScenarioAdjustment::ACTION_CHANGE_INFLOW_PROBABILITY,
+                        cashFlowKey: 'payment-document:202',
+                        probability: 1.0,
+                    ),
+                    new CashGapScenarioAdjustment(
+                        action: CashGapScenarioAdjustment::ACTION_EXCLUDE_PAYMENT,
+                        cashFlowKey: 'payment-document:203',
+                    ),
+                    new CashGapScenarioAdjustment(
+                        action: CashGapScenarioAdjustment::ACTION_ADD_TEMPORARY_FINANCING,
+                        date: '2026-01-02',
+                        amount: 400.0,
+                        currency: 'RUB',
+                        description: 'Краткосрочное финансирование',
+                    ),
+                ],
+            ),
+            $items,
+        )->toArray();
+
+        $this->assertTrue($base['cash_gap']['has_gap']);
+        $this->assertFalse($scenario['cash_gap']['has_gap']);
+        $this->assertSame('2026-01-02', $base['cash_gap']['first_gap_date']);
+        $this->assertNull($scenario['cash_gap']['first_gap_date']);
+        $this->assertSame('2026-01-02', $items[0]->date);
+        $this->assertSame(1.0, $scenario['daily'][2]['drivers'][0]['probability']);
+        $this->assertSame('2026-01-02', $scenario['daily'][4]['drivers'][0]['original_date']);
+        $this->assertSame('cash_gap_scenario_adjustment', $scenario['daily'][1]['drivers'][0]['source']['type']);
+    }
+
+    public function test_cash_gap_signals_include_gap_minimum_deficit_drivers_overdue_inflows_and_drill_down(): void
+    {
+        $result = $this->service()->forecast(
+            $this->context(periodEnd: '2026-01-01', openingBalance: 100.0),
+            [
+                $this->item(
+                    '2025-12-30',
+                    CashGapForecastItem::DIRECTION_INFLOW,
+                    CashGapForecastItem::BUCKET_OVERDUE_INFLOW,
+                    1_000.0,
+                    sourceId: 300,
+                    cashFlowKey: 'payment-document:300',
+                    drillDown: ['document_href' => '/payments?tab=documents&document_id=300'],
+                ),
+                $this->item(
+                    '2026-01-01',
+                    CashGapForecastItem::DIRECTION_OUTFLOW,
+                    CashGapForecastItem::BUCKET_APPROVED_OUTFLOW,
+                    400.0,
+                    sourceId: 301,
+                    cashFlowKey: 'payment-document:301',
+                    drillDown: ['document_href' => '/payments?tab=documents&document_id=301'],
+                ),
+            ],
+        )->toArray();
+
+        $this->assertSame('2026-01-01', $result['signals']['first_gap']['date']);
+        $this->assertSame(300.0, $result['signals']['deficit']['amount']);
+        $this->assertSame(-300.0, $result['signals']['minimum_balance']['amount']);
+        $this->assertCount(2, $result['signals']['payment_drivers']);
+        $this->assertCount(1, $result['signals']['overdue_inflows']);
+        $this->assertSame(
+            '/payments?tab=documents&document_id=301',
+            $result['signals']['payment_drivers'][0]['drill_down']['document_href'],
+        );
+    }
+
+    public function test_currency_filter_prevents_mixing_amounts_between_currencies(): void
+    {
+        $result = $this->service()->forecast(
+            $this->context(periodEnd: '2026-01-01', openingBalance: 500.0),
+            [
+                $this->item(
+                    '2026-01-01',
+                    CashGapForecastItem::DIRECTION_OUTFLOW,
+                    CashGapForecastItem::BUCKET_APPROVED_OUTFLOW,
+                    100.0,
+                    currency: 'RUB',
+                ),
+                $this->item(
+                    '2026-01-01',
+                    CashGapForecastItem::DIRECTION_OUTFLOW,
+                    CashGapForecastItem::BUCKET_APPROVED_OUTFLOW,
+                    900.0,
+                    currency: 'USD',
+                ),
+            ],
+        )->toArray();
+
+        $this->assertSame(400.0, $result['closing_balance']);
+        $this->assertSame(1, $result['meta']['included_items']);
+        $this->assertSame(1, $result['meta']['excluded_items']);
+        $this->assertFalse($result['cash_gap']['has_gap']);
+    }
+
     public function test_overall_drivers_exclude_positive_inflows_from_risk_causes(): void
     {
         $result = $this->service()->forecast(
@@ -287,6 +437,8 @@ final class CashGapForecastServiceTest extends TestCase
         int|string|null $sourceId = null,
         ?string $originalDate = null,
         ?string $cashFlowKey = null,
+        string $currency = 'RUB',
+        array $drillDown = [],
     ): CashGapForecastItem {
         return new CashGapForecastItem(
             date: $date,
@@ -299,11 +451,12 @@ final class CashGapForecastServiceTest extends TestCase
             counterpartyId: $counterpartyId,
             budgetArticleId: $budgetArticleId,
             responsibilityCenterId: $responsibilityCenterId,
-            currency: 'RUB',
+            currency: $currency,
             sourceType: 'payment_document',
             sourceId: $sourceId,
             originalDate: $originalDate,
             cashFlowKey: $cashFlowKey,
+            drillDown: $drillDown,
         );
     }
 

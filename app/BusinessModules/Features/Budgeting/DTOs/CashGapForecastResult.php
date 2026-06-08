@@ -14,6 +14,7 @@ final readonly class CashGapForecastResult
         public string $riskLevel,
         public array $explanation,
         public array $drivers,
+        public array $signals,
         public array $meta,
     ) {
     }
@@ -34,6 +35,7 @@ final readonly class CashGapForecastResult
             'risk_level' => $this->riskLevel,
             'explanation' => $this->explanation,
             'drivers' => $this->drivers,
+            'signals' => $this->signals,
             'filters' => $this->context->resolvedFilters()->toArray(),
             'daily' => array_map(
                 static fn (CashGapForecastDay $day): array => $day->toArray(),

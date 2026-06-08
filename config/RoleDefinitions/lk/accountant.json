@@ -155,6 +155,7 @@
       "budgeting.articles.map_1c",
       "budgeting.cfo.view",
       "budgeting.cfo.manage",
+      "budgeting.cash_gap.view",
       "budgeting.import.preview",
       "budgeting.import.commit"
     ],

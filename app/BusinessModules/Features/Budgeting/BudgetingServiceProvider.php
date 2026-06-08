@@ -11,7 +11,9 @@ use App\BusinessModules\Features\Budgeting\Services\BudgetImportValidator;
 use App\BusinessModules\Features\Budgeting\Services\BudgetLineService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetVersionService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetWorkflowService;
+use App\BusinessModules\Features\Budgeting\Services\CashGapForecastReadService;
 use App\BusinessModules\Features\Budgeting\Services\CashGapForecastService;
+use App\BusinessModules\Features\Budgeting\Services\CashGapOpeningBalanceService;
 use Illuminate\Support\ServiceProvider;
 
 final class BudgetingServiceProvider extends ServiceProvider
@@ -26,6 +28,8 @@ final class BudgetingServiceProvider extends ServiceProvider
         $this->app->singleton(BudgetImportValidator::class);
         $this->app->singleton(BudgetImportService::class);
         $this->app->singleton(CashGapForecastService::class);
+        $this->app->singleton(CashGapOpeningBalanceService::class);
+        $this->app->singleton(CashGapForecastReadService::class);
     }
 
     public function boot(): void
