@@ -8,6 +8,7 @@ use App\BusinessModules\Features\Budgeting\Http\Controllers\BudgetLineController
 use App\BusinessModules\Features\Budgeting\Http\Controllers\BudgetMappingController;
 use App\BusinessModules\Features\Budgeting\Http\Controllers\BudgetVersionController;
 use App\BusinessModules\Features\Budgeting\Http\Controllers\CashGapForecastController;
+use App\BusinessModules\Features\Budgeting\Http\Controllers\PlanFactReportController;
 use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
 
@@ -22,6 +23,13 @@ Route::prefix('api/v1/admin/budgeting')
         Route::match(['get', 'post'], '/cash-gap/forecast', [CashGapForecastController::class, 'forecast'])
             ->middleware('authorize:budgeting.cash_gap.view')
             ->name('cash_gap.forecast');
+
+        Route::get('/plan-fact', [PlanFactReportController::class, 'index'])
+            ->middleware('authorize:budgeting.plan_fact.view')
+            ->name('plan_fact.index');
+        Route::get('/plan-fact/drill-down', [PlanFactReportController::class, 'drillDown'])
+            ->middleware('authorize:budgeting.plan_fact.view')
+            ->name('plan_fact.drill_down');
 
         Route::get('/periods', [BudgetCatalogController::class, 'periods'])
             ->middleware('authorize:budgeting.periods.view')
