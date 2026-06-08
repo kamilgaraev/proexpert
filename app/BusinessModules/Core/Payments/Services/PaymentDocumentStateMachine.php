@@ -62,7 +62,7 @@ class PaymentDocumentStateMachine
         match ($newStatus) {
             PaymentDocumentStatus::SUBMITTED => $document->submitted_at = now(),
             PaymentDocumentStatus::APPROVED => $document->approved_at = now(),
-            PaymentDocumentStatus::SCHEDULED => $document->scheduled_at = now(),
+            PaymentDocumentStatus::SCHEDULED => $document->scheduled_at = $document->scheduled_at ?? now(),
             PaymentDocumentStatus::PAID => $document->paid_at = now(),
             default => null,
         };

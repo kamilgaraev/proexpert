@@ -21,7 +21,8 @@ class PaymentAuditService
         ?array $oldValues = null,
         ?array $newValues = null,
         ?string $description = null
-    ): PaymentAuditLog {
+    ): PaymentAuditLog
+    {
         $user = Auth::user();
         $request = request();
 
@@ -161,6 +162,38 @@ class PaymentAuditService
         );
     }
 
+    public function logRescheduled(
+        PaymentDocument $document,
+        ?string $oldDate,
+        ?string $newDate,
+        ?string $reason = null
+    ): PaymentAuditLog
+    {
+        $newValues = [
+            'scheduled_at' => $newDate,
+        ];
+
+        if ($reason !== null && trim($reason) !== '') {
+            $newValues['reason'] = trim($reason);
+        }
+
+        $description = "Платеж по документу №{$document->document_number} перенесен на {$newDate}";
+
+        if ($reason !== null && trim($reason) !== '') {
+            $description .= '. Причина: ' . trim($reason);
+        }
+
+        return $this->log(
+            'rescheduled',
+            $document,
+            [
+                'scheduled_at' => $oldDate,
+            ],
+            $newValues,
+            $description
+        );
+    }
+
     /**
      * Залогировать отмену
      */
@@ -271,4 +304,3 @@ class PaymentAuditService
         return $description;
     }
 }
-

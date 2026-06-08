@@ -17,6 +17,9 @@ final readonly class PaymentCalendarSourceFilters
     public int|string|null $budgetArticleId;
     public int|string|null $responsibilityCenterId;
     public ?string $currency;
+    public ?string $direction;
+    public ?string $bucket;
+    public ?string $sourceType;
 
     public function __construct(
         int $organizationId,
@@ -27,6 +30,9 @@ final readonly class PaymentCalendarSourceFilters
         int|string|null $budgetArticleId = null,
         int|string|null $responsibilityCenterId = null,
         ?string $currency = null,
+        ?string $direction = null,
+        ?string $bucket = null,
+        ?string $sourceType = null,
     ) {
         $this->organizationId = $organizationId;
         $this->periodStart = $this->dateString($periodStart);
@@ -36,6 +42,9 @@ final readonly class PaymentCalendarSourceFilters
         $this->budgetArticleId = $budgetArticleId;
         $this->responsibilityCenterId = $responsibilityCenterId;
         $this->currency = $currency === null ? null : mb_strtoupper($currency);
+        $this->direction = $this->normalizeNullableString($direction);
+        $this->bucket = $this->normalizeNullableString($bucket);
+        $this->sourceType = $this->normalizeNullableString($sourceType);
     }
 
     public function matches(PaymentCalendarItem $item): bool
@@ -70,7 +79,19 @@ final readonly class PaymentCalendarSourceFilters
             return false;
         }
 
-        return $this->currency === null || mb_strtoupper($item->currency) === $this->currency;
+        if ($this->currency !== null && mb_strtoupper($item->currency) !== $this->currency) {
+            return false;
+        }
+
+        if ($this->direction !== null && $item->direction !== $this->direction) {
+            return false;
+        }
+
+        if ($this->bucket !== null && $item->bucket !== $this->bucket) {
+            return false;
+        }
+
+        return $this->sourceType === null || $item->sourceType === $this->sourceType;
     }
 
     public function periodStartMonth(): string
@@ -138,5 +159,14 @@ final readonly class PaymentCalendarSourceFilters
         }
 
         return (new DateTimeImmutable($date))->format('Y-m-d');
+    }
+
+    private function normalizeNullableString(?string $value): ?string
+    {
+        if ($value === null || trim($value) === '') {
+            return null;
+        }
+
+        return trim($value);
     }
 }

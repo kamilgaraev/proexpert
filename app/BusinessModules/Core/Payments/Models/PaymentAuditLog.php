@@ -99,6 +99,7 @@ class PaymentAuditLog extends Model
             'paid' => 'Оплачен',
             'partially_paid' => 'Частично оплачен',
             'cancelled' => 'Отменен',
+            'rescheduled' => 'Перенесен',
             'deleted' => 'Удален',
             default => $this->action,
         };
@@ -136,6 +137,8 @@ class PaymentAuditLog extends Model
             'paid_amount' => 'Оплачено',
             'remaining_amount' => 'Остаток',
             'due_date' => 'Срок оплаты',
+            'scheduled_at' => 'Дата платежа',
+            'reason' => 'Причина',
             'description' => 'Описание',
             'payment_purpose' => 'Назначение платежа',
             'bank_account' => 'Расчетный счет',

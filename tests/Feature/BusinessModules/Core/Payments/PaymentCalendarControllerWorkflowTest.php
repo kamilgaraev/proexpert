@@ -21,6 +21,8 @@ class PaymentCalendarControllerWorkflowTest extends TestCase
 
     public function test_calendar_lists_current_organization_events_and_reschedules_document(): void
     {
+        $this->travelTo('2026-05-01 09:00:00');
+
         $context = AdminApiTestContext::create(roleSlug: 'web_admin');
         $foreignContext = AdminApiTestContext::create(roleSlug: 'web_admin');
         $this->activatePaymentsModule($context->organization->id);
@@ -57,19 +59,23 @@ class PaymentCalendarControllerWorkflowTest extends TestCase
             ->getJson('/api/v1/admin/payments/documents/calendar?start=2026-05-01&end=2026-05-31');
 
         $response->assertOk();
-        $response->assertJsonCount(2, 'data');
-        $response->assertJsonPath('data.0.id', $dueDocument->id);
-        $response->assertJsonPath('data.0.title', 'ООО Плательщик - 1500.00');
-        $response->assertJsonPath('data.0.start', '2026-05-10');
-        $response->assertJsonPath('data.0.backgroundColor', '#F59E0B');
-        $response->assertJsonPath('data.0.extendedProps.status', 'approved');
-        $response->assertJsonPath('data.1.id', $scheduledDocument->id);
-        $response->assertJsonPath('data.1.start', '2026-05-12');
-        $response->assertJsonPath('data.1.backgroundColor', '#3B82F6');
+        $response->assertJsonCount(2, 'data.items');
+        $response->assertJsonCount(2, 'data.events');
+        $response->assertJsonPath('data.items.0.document_id', $dueDocument->id);
+        $response->assertJsonPath('data.items.0.title', 'Поступление: 1 500 RUB - CAL-DUE-001');
+        $response->assertJsonPath('data.items.0.date', '2026-05-10');
+        $response->assertJsonPath('data.items.0.bucket_label', 'Утверждено');
+        $response->assertJsonPath('data.events.0.extendedProps.status', 'approved');
+        $response->assertJsonPath('data.items.1.document_id', $scheduledDocument->id);
+        $response->assertJsonPath('data.items.1.date', '2026-05-12');
+        $response->assertJsonPath('data.items.1.bucket_label', 'По графику');
+        $response->assertJsonPath('data.summary.items_count', 2);
+        $response->assertJsonPath('data.cash_gap.available', false);
 
         $rescheduleResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/payments/documents/{$dueDocument->id}/reschedule", [
                 'date' => '2026-05-20',
+                'reason' => 'Перенос по согласованному графику оплат',
             ]);
 
         $rescheduleResponse->assertOk();

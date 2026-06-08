@@ -215,6 +215,34 @@ final class PaymentCalendarSourceServiceTest extends TestCase
         $this->assertSame(42, $items[0]->organizationId);
     }
 
+    public function test_filters_support_direction_bucket_and_source_type(): void
+    {
+        $outflowDocument = $this->service->fromPaymentDocument($this->paymentDocument(), $this->date('2026-01-01'));
+        $transaction = $this->paymentTransaction([
+            'id' => 302,
+            'payer_organization_id' => 7,
+            'payee_organization_id' => 42,
+        ]);
+        $inflowFact = $this->service->fromPaymentTransaction($transaction);
+
+        $items = $this->service->normalizeItems([
+            $outflowDocument,
+            $inflowFact,
+        ], new PaymentCalendarSourceFilters(
+            organizationId: 42,
+            periodStart: '2026-01-01',
+            periodEnd: '2026-01-31',
+            direction: PaymentCalendarItem::DIRECTION_INFLOW,
+            bucket: PaymentCalendarItem::BUCKET_FACT,
+            sourceType: 'payment_transaction',
+        ));
+
+        $this->assertCount(1, $items);
+        $this->assertSame(PaymentCalendarItem::DIRECTION_INFLOW, $items[0]->direction);
+        $this->assertSame(PaymentCalendarItem::BUCKET_FACT, $items[0]->bucket);
+        $this->assertSame('payment_transaction', $items[0]->sourceType);
+    }
+
     public function test_overdue_item_gets_overdue_bucket(): void
     {
         $item = $this->service->fromPaymentDocument($this->paymentDocument([

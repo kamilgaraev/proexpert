@@ -29,7 +29,8 @@ class PaymentDocumentService
         private readonly PaymentDocumentStateMachine $stateMachine,
         private readonly ApprovalWorkflowService $approvalWorkflow,
         private readonly PaymentValidationService $validator,
-        private readonly PaymentBudgetLimitService $budgetLimitService
+        private readonly PaymentBudgetLimitService $budgetLimitService,
+        private readonly PaymentAuditService $auditService
     ) {}
 
     /**
@@ -329,6 +330,8 @@ class PaymentDocumentService
         ?string $overrideReason = null
     ): PaymentDocument
     {
+        $oldScheduledAt = $document->scheduled_at?->format('Y-m-d');
+
         if (!in_array($document->status, [
             PaymentDocumentStatus::APPROVED,
             PaymentDocumentStatus::SCHEDULED,
@@ -350,14 +353,23 @@ class PaymentDocumentService
         );
 
         $this->stateMachine->schedule($document, $scheduledAt);
-        $this->budgetLimitService->syncReservation($document->fresh(), $user, $overrideReason);
+        $freshDocument = $document->fresh();
+        $this->budgetLimitService->syncReservation($freshDocument, $user, $overrideReason);
+        $freshDocument = $freshDocument->fresh();
+
+        $this->auditService->logRescheduled(
+            $freshDocument,
+            $oldScheduledAt,
+            $freshDocument->scheduled_at?->format('Y-m-d'),
+            $overrideReason
+        );
 
         Log::info('payment_document.scheduled', [
             'document_id' => $document->id,
             'scheduled_at' => $scheduledAt?->format('Y-m-d H:i:s'),
         ]);
 
-        return $document->fresh();
+        return $freshDocument;
     }
 
     /**
