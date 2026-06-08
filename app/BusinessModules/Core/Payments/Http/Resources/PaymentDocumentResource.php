@@ -4,6 +4,7 @@ namespace App\BusinessModules\Core\Payments\Http\Resources;
 
 use App\BusinessModules\Core\Payments\Enums\InvoiceType;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Core\Payments\Services\PaymentBudgetLimitService;
 use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\Http\Resources\ModelJsonResource;
 use Illuminate\Http\Request;
@@ -36,6 +37,10 @@ class PaymentDocumentResource extends ModelJsonResource
             'id' => $this->id,
             'organization_id' => $this->organization_id,
             'project_id' => $this->project_id,
+            'budget_article_id' => $document->budgetArticle?->uuid,
+            'budget_article_name' => $document->budgetArticle?->name,
+            'responsibility_center_id' => $document->responsibilityCenter?->uuid,
+            'responsibility_center_name' => $document->responsibilityCenter?->name,
             'document_type' => $this->document_type->value,
             'document_type_label' => $this->document_type->label(),
             'document_number' => $this->document_number,
@@ -67,6 +72,7 @@ class PaymentDocumentResource extends ModelJsonResource
             'can_be_cancelled' => $canBeCancelled,
             'can_be_edited' => $document->canBeEdited(),
             'requires_approval' => $document->requiresApproval(),
+            'budget_limit_check' => app(PaymentBudgetLimitService::class)->check($document, $user),
             'site_requests' => $this->whenLoaded('siteRequests', fn() => $this->siteRequests->map(fn($request) => [
                 'id' => $request->id,
                 'title' => $request->title,

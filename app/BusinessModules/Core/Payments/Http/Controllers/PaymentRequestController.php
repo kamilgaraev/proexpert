@@ -6,6 +6,7 @@ namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Core\Payments\Services\PaymentBudgetLimitService;
 use App\BusinessModules\Core\Payments\Services\PaymentRequestService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -22,7 +23,8 @@ use function trans_message;
 class PaymentRequestController extends Controller
 {
     public function __construct(
-        private readonly PaymentRequestService $requestService
+        private readonly PaymentRequestService $requestService,
+        private readonly PaymentBudgetLimitService $budgetLimitService
     ) {}
 
     public function incoming(Request $request): JsonResponse
@@ -85,6 +87,9 @@ class PaymentRequestController extends Controller
                     'integer',
                     Rule::exists('contracts', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
                 ],
+                'budget_article_id' => ['nullable'],
+                'responsibility_center_id' => ['nullable'],
+                'budget_override_reason' => ['nullable', 'string', 'max:1000'],
                 'amount' => ['required', 'numeric', 'min:0.01'],
                 'currency' => ['nullable', 'string', 'size:3'],
                 'vat_rate' => ['nullable', 'numeric', 'min:0', 'max:100'],
@@ -103,7 +108,7 @@ class PaymentRequestController extends Controller
             $validated['organization_id'] = $organizationId;
             $validated['created_by_user_id'] = (int) $request->user()->id;
             $document = $this->requestService->createFromContractor($validated);
-            $document->loadMissing(['payeeContractor', 'project']);
+            $document->loadMissing(['payeeContractor', 'project', 'budgetArticle', 'responsibilityCenter']);
 
             return AdminResponse::success(
                 $this->formatRequest($document),
@@ -129,6 +134,7 @@ class PaymentRequestController extends Controller
         try {
             $validated = $request->validate([
                 'scheduled_at' => ['nullable', 'date'],
+                'budget_override_reason' => ['nullable', 'string', 'max:1000'],
             ]);
 
             $organizationId = (int) $request->attributes->get('current_organization_id');
@@ -137,7 +143,7 @@ class PaymentRequestController extends Controller
                 ->findOrFail((int) $id);
 
             $paymentOrder = $this->requestService->acceptRequest($document, $validated);
-            $document->loadMissing(['payeeContractor', 'project']);
+            $document->loadMissing(['payeeContractor', 'project', 'budgetArticle', 'responsibilityCenter']);
 
             return AdminResponse::success([
                 'request' => $this->formatRequest($document),
@@ -180,7 +186,7 @@ class PaymentRequestController extends Controller
                 ->findOrFail((int) $id);
 
             $rejectedDocument = $this->requestService->rejectRequest($document, $validated['reason'], $request->user());
-            $rejectedDocument->loadMissing(['payeeContractor', 'project']);
+            $rejectedDocument->loadMissing(['payeeContractor', 'project', 'budgetArticle', 'responsibilityCenter']);
 
             return AdminResponse::success(
                 $this->formatRequest($rejectedDocument),
@@ -323,6 +329,11 @@ class PaymentRequestController extends Controller
             'notes' => $document->notes,
             'project_id' => $document->project_id,
             'contract_id' => $contractId,
+            'budget_article_id' => $document->budgetArticle?->uuid,
+            'budget_article_name' => $document->budgetArticle?->name,
+            'responsibility_center_id' => $document->responsibilityCenter?->uuid,
+            'responsibility_center_name' => $document->responsibilityCenter?->name,
+            'budget_limit_check' => $this->budgetLimitService->check($document, request()->user()),
             'source_type' => $document->source_type,
             'source_id' => $document->source_id,
             'created_at' => $document->created_at?->toISOString(),

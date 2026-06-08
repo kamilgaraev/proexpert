@@ -6,6 +6,7 @@ namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\ApprovalWorkflowService;
+use App\BusinessModules\Core\Payments\Services\PaymentBudgetLimitService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
@@ -17,7 +18,8 @@ use function trans_message;
 class PaymentApprovalController extends Controller
 {
     public function __construct(
-        private readonly ApprovalWorkflowService $approvalService
+        private readonly ApprovalWorkflowService $approvalService,
+        private readonly PaymentBudgetLimitService $budgetLimitService
     ) {}
 
     public function myApprovals(Request $request): JsonResponse
@@ -46,6 +48,7 @@ class PaymentApprovalController extends Controller
                         'payee_name' => $approval->paymentDocument->getPayeeName(),
                         'description' => $approval->paymentDocument->description,
                         'document_date' => $approval->paymentDocument->document_date?->toDateString(),
+                        'budget_limit_check' => $this->budgetLimitService->check($approval->paymentDocument, $request->user()),
                     ],
                     'status' => $approval->status,
                     'approval_role' => $approval->approval_role,
@@ -96,6 +99,7 @@ class PaymentApprovalController extends Controller
             $validated = $request->validate([
                 'comment' => ['nullable', 'string'],
                 'notes' => ['nullable', 'string'],
+                'budget_override_reason' => ['nullable', 'string', 'max:1000'],
             ]);
 
             $organizationId = (int) $request->attributes->get('current_organization_id');
@@ -104,7 +108,12 @@ class PaymentApprovalController extends Controller
                 ->forOrganization($organizationId)
                 ->findOrFail($resolvedDocumentId);
 
-            $this->approvalService->approveByUser($document, $userId, $validated['comment'] ?? $validated['notes'] ?? null);
+            $this->approvalService->approveByUser(
+                $document,
+                $userId,
+                $validated['comment'] ?? $validated['notes'] ?? null,
+                $validated['budget_override_reason'] ?? null
+            );
 
             return AdminResponse::success([
                 'approval_status' => $this->approvalService->getApprovalStatus($document),

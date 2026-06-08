@@ -13,6 +13,7 @@ use App\BusinessModules\Core\Payments\Events\PaymentRequestReceived;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Models\Project;
+use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
@@ -27,7 +28,8 @@ class PaymentDocumentService
     public function __construct(
         private readonly PaymentDocumentStateMachine $stateMachine,
         private readonly ApprovalWorkflowService $approvalWorkflow,
-        private readonly PaymentValidationService $validator
+        private readonly PaymentValidationService $validator,
+        private readonly PaymentBudgetLimitService $budgetLimitService
     ) {}
 
     /**
@@ -36,6 +38,13 @@ class PaymentDocumentService
     public function create(array $data): PaymentDocument
     {
         $data = $this->normalizeDocumentData($data);
+        $budgetOverrideReason = $data['budget_override_reason'] ?? null;
+        unset($data['budget_override_reason']);
+
+        if (isset($data['organization_id'])) {
+            $data = $this->budgetLimitService->normalizeDocumentData($data, (int) $data['organization_id']);
+        }
+
         $attempts = 0;
         $maxAttempts = 3;
         $wasNumberProvided = isset($data['document_number']);
@@ -68,6 +77,18 @@ class PaymentDocumentService
 
                 // Автоматически определяем и кэшируем получателя-организацию
                 $this->detectAndSetRecipientOrganization($document);
+
+                $createdBy = isset($data['created_by_user_id'])
+                    ? User::find((int) $data['created_by_user_id'])
+                    : null;
+                $this->budgetLimitService->assertAllowed(
+                    $document,
+                    PaymentBudgetLimitService::OPERATION_CREATE,
+                    (float) $document->amount,
+                    $createdBy,
+                    is_string($budgetOverrideReason) ? $budgetOverrideReason : null
+                );
+                $this->budgetLimitService->syncReservation($document->fresh(), $createdBy);
 
                 Log::info('payment_document.created', [
                     'document_id' => $document->id,
@@ -145,6 +166,10 @@ class PaymentDocumentService
             throw new \DomainException(trans_message('payments.validation.document_edit_forbidden'));
         }
 
+        $budgetOverrideReason = $data['budget_override_reason'] ?? null;
+        unset($data['budget_override_reason']);
+        $data = $this->budgetLimitService->normalizeDocumentData($data, (int) $document->organization_id);
+
         DB::beginTransaction();
 
         try {
@@ -157,6 +182,17 @@ class PaymentDocumentService
             }
 
             $document->update($data);
+            $document->refresh();
+
+            $user = auth()->user();
+            $this->budgetLimitService->assertAllowed(
+                $document,
+                PaymentBudgetLimitService::OPERATION_UPDATE,
+                (float) $document->amount,
+                $user instanceof User ? $user : null,
+                is_string($budgetOverrideReason) ? $budgetOverrideReason : null
+            );
+            $this->budgetLimitService->syncReservation($document, $user instanceof User ? $user : null);
 
             Log::info('payment_document.updated', [
                 'document_id' => $document->id,
@@ -182,19 +218,27 @@ class PaymentDocumentService
     /**
      * Отправить документ на утверждение
      */
-    public function submit(PaymentDocument $document): PaymentDocument
+    public function submit(PaymentDocument $document, ?User $user = null, ?string $overrideReason = null): PaymentDocument
     {
         DB::beginTransaction();
 
         try {
             // Финальная валидация перед отправкой
             $this->validator->validateBeforeSubmission($document);
+            $this->budgetLimitService->assertAllowed(
+                $document,
+                PaymentBudgetLimitService::OPERATION_SUBMIT,
+                (float) $document->amount,
+                $user,
+                $overrideReason
+            );
 
             // Шаг 1: Переводим в статус "submitted" (отправлен на рассмотрение)
             $this->stateMachine->submit($document);
 
             // Шаг 2: Инициируем процесс утверждения (submitted → pending_approval)
             $this->approvalWorkflow->initiateApproval($document);
+            $this->budgetLimitService->syncReservation($document->fresh(), $user);
 
             Log::info('payment_document.submitted', [
                 'document_id' => $document->id,
@@ -225,7 +269,18 @@ class PaymentDocumentService
 
         try {
             // Утверждаем документ через state machine
+            $this->budgetLimitService->assertAllowed(
+                $document,
+                PaymentBudgetLimitService::OPERATION_APPROVAL,
+                (float) $document->amount,
+                $approvedByUserId ? User::find($approvedByUserId) : null
+            );
+
             $this->stateMachine->approve($document, $approvedByUserId);
+            $this->budgetLimitService->syncReservation(
+                $document->fresh(),
+                $approvedByUserId ? User::find($approvedByUserId) : null
+            );
 
             Log::info('payment_document.approved', [
                 'document_id' => $document->id,
@@ -251,13 +306,35 @@ class PaymentDocumentService
     /**
      * Запланировать платеж
      */
-    public function schedule(PaymentDocument $document, ?\DateTime $scheduledAt = null): PaymentDocument
+    public function schedule(
+        PaymentDocument $document,
+        ?\DateTime $scheduledAt = null,
+        ?User $user = null,
+        ?string $overrideReason = null
+    ): PaymentDocument
     {
-        if ($document->status !== PaymentDocumentStatus::APPROVED) {
+        if (!in_array($document->status, [
+            PaymentDocumentStatus::APPROVED,
+            PaymentDocumentStatus::SCHEDULED,
+            PaymentDocumentStatus::PARTIALLY_PAID,
+        ], true)) {
             throw new \DomainException(trans_message('payments.validation.schedule_only_approved'));
         }
 
+        $scheduledCarbon = $scheduledAt !== null
+            ? \Illuminate\Support\Carbon::instance($scheduledAt)
+            : null;
+        $this->budgetLimitService->assertAllowed(
+            $document,
+            PaymentBudgetLimitService::OPERATION_SCHEDULE,
+            (float) $document->remaining_amount,
+            $user,
+            $overrideReason,
+            $scheduledCarbon
+        );
+
         $this->stateMachine->schedule($document, $scheduledAt);
+        $this->budgetLimitService->syncReservation($document->fresh(), $user);
 
         Log::info('payment_document.scheduled', [
             'document_id' => $document->id,
@@ -303,6 +380,14 @@ class PaymentDocumentService
                 ]);
                 throw new \DomainException(trans_message('payments.validation.payment_amount_exceeds_remaining'));
             }
+
+            $this->budgetLimitService->assertAllowed(
+                $document,
+                PaymentBudgetLimitService::OPERATION_PAYMENT_REGISTER,
+                $amount,
+                isset($paymentData['created_by_user_id']) ? User::find((int) $paymentData['created_by_user_id']) : null,
+                $paymentData['budget_override_reason'] ?? null
+            );
 
             Log::info('payment_document.register_payment.preparing_data', [
                 'document_id' => $document->id,
@@ -415,6 +500,7 @@ class PaymentDocumentService
                 $this->stateMachine->markPartiallyPaid($document, $amount, $transaction);
             }
 
+            $this->budgetLimitService->convertAfterPayment($document->fresh(), $transactionModel);
             $this->synchronizeEstimateItemsPaymentProgress($document);
 
             Log::info('payment_document.payment_registered', [
@@ -467,6 +553,7 @@ class PaymentDocumentService
         }
 
         $this->stateMachine->cancel($document, $reason);
+        $this->budgetLimitService->release($document, $reason);
 
         Log::info('payment_document.cancelled', [
             'document_id' => $document->id,
@@ -494,6 +581,7 @@ class PaymentDocumentService
         }
 
         $documentNumber = $document->document_number;
+        $this->budgetLimitService->release($document, trans_message('payments.documents.deleted'));
         $document->delete();
 
         Log::info('payment_document.deleted', [
@@ -510,7 +598,15 @@ class PaymentDocumentService
     public function getForOrganization(int $organizationId, array $filters = []): Collection
     {
         $query = PaymentDocument::forOrganization($organizationId)
-            ->with(['project', 'payerOrganization', 'payeeOrganization', 'payerContractor', 'payeeContractor']);
+            ->with([
+                'project',
+                'payerOrganization',
+                'payeeOrganization',
+                'payerContractor',
+                'payeeContractor',
+                'budgetArticle',
+                'responsibilityCenter',
+            ]);
 
         if (Schema::hasTable('site_requests') && Schema::hasTable('payment_document_site_requests')) {
             $query->withCount('siteRequests');

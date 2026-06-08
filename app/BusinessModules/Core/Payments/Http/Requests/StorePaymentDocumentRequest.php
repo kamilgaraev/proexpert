@@ -90,6 +90,9 @@ class StorePaymentDocumentRequest extends FormRequest
                 'integer',
                 Rule::exists('estimates', 'id')->where('organization_id', $organizationId),
             ],
+            'budget_article_id' => ['nullable'],
+            'responsibility_center_id' => ['nullable'],
+            'budget_override_reason' => ['nullable', 'string', 'max:1000'],
             'estimate_splits' => 'nullable|array',
             'estimate_splits.*.estimate_item_id' => [
                 'required_with:estimate_splits',

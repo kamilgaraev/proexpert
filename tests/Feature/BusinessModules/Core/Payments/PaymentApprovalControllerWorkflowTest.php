@@ -9,6 +9,13 @@ use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Models\PaymentApproval;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Features\Budgeting\Models\BudgetAmount;
+use App\BusinessModules\Features\Budgeting\Models\BudgetArticle;
+use App\BusinessModules\Features\Budgeting\Models\BudgetLine;
+use App\BusinessModules\Features\Budgeting\Models\BudgetPeriod;
+use App\BusinessModules\Features\Budgeting\Models\BudgetScenario;
+use App\BusinessModules\Features\Budgeting\Models\BudgetVersion;
+use App\BusinessModules\Features\Budgeting\Models\ResponsibilityCenter;
 use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -94,6 +101,67 @@ class PaymentApprovalControllerWorkflowTest extends TestCase
         $this->assertSame($document->document_number, $approval['payment_document']['document_number']);
     }
 
+    public function test_final_approval_is_blocked_when_budget_limit_requires_exception_without_reason(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $this->activateBudgetingModule($context->organization->id);
+        $document = $this->createPendingApprovalDocument($context);
+        $budget = $this->createBudgetLine($context->organization->id, 500.0);
+        $document->forceFill([
+            'budget_article_id' => $budget['article']->id,
+            'responsibility_center_id' => $budget['center']->id,
+        ])->save();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/payments/approvals/documents/{$document->id}/approve", [
+                'notes' => 'Проверено',
+            ]);
+
+        $response->assertStatus(422);
+
+        $this->assertDatabaseHas('payment_documents', [
+            'id' => $document->id,
+            'status' => PaymentDocumentStatus::PENDING_APPROVAL->value,
+        ]);
+    }
+
+    public function test_final_approval_allows_budget_limit_exception_with_override_reason(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'web_admin');
+        $this->activatePaymentsModule($context->organization->id);
+        $this->activateBudgetingModule($context->organization->id);
+        $document = $this->createPendingApprovalDocument($context);
+        $budget = $this->createBudgetLine($context->organization->id, 500.0);
+        $document->forceFill([
+            'budget_article_id' => $budget['article']->id,
+            'responsibility_center_id' => $budget['center']->id,
+        ])->save();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/payments/approvals/documents/{$document->id}/approve", [
+                'notes' => 'Проверено',
+                'budget_override_reason' => 'Срочная оплата по договору',
+            ]);
+
+        $response->assertOk();
+
+        $document->refresh();
+        $this->assertSame(PaymentDocumentStatus::APPROVED, $document->status);
+        $this->assertSame('requires_exception', $document->budget_limit_status);
+        $this->assertDatabaseHas('budget_limit_checks', [
+            'payment_document_id' => $document->id,
+            'status' => 'requires_exception',
+            'decision' => 'require_exception',
+            'accepted' => true,
+            'override_reason' => 'Срочная оплата по договору',
+        ]);
+        $this->assertDatabaseHas('payment_audit_logs', [
+            'payment_document_id' => $document->id,
+            'action' => 'budget_limit_override',
+        ]);
+    }
+
     private function createPendingApprovalDocument(AdminApiTestContext $context): PaymentDocument
     {
         $document = PaymentDocument::query()->create([
@@ -136,6 +204,7 @@ class PaymentApprovalControllerWorkflowTest extends TestCase
                     'payments.transaction.approve',
                     'payments.transaction.reject',
                     'payments.transaction.view',
+                    'budgeting.limits.override',
                 ],
                 'is_active' => true,
                 'is_system_module' => false,
@@ -148,5 +217,105 @@ class PaymentApprovalControllerWorkflowTest extends TestCase
             'status' => 'active',
             'activated_at' => now(),
         ]);
+    }
+
+    private function activateBudgetingModule(int $organizationId): void
+    {
+        $module = Module::query()->firstOrCreate(
+            ['slug' => 'budgeting'],
+            [
+                'name' => 'Budgeting',
+                'version' => '1.0.0',
+                'type' => 'feature',
+                'billing_model' => 'free',
+                'category' => 'finance',
+                'permissions' => ['budgeting.limits.override'],
+                'is_active' => true,
+                'is_system_module' => false,
+            ]
+        );
+
+        OrganizationModuleActivation::query()->create([
+            'organization_id' => $organizationId,
+            'module_id' => $module->id,
+            'status' => 'active',
+            'activated_at' => now(),
+        ]);
+    }
+
+    /**
+     * @return array{article: BudgetArticle, center: ResponsibilityCenter, line: BudgetLine}
+     */
+    private function createBudgetLine(int $organizationId, float $planAmount): array
+    {
+        $period = BudgetPeriod::query()->create([
+            'organization_id' => $organizationId,
+            'code' => 'PER-' . uniqid(),
+            'name' => 'Текущий месяц',
+            'period_type' => 'month',
+            'starts_at' => now()->startOfMonth()->toDateString(),
+            'ends_at' => now()->endOfMonth()->toDateString(),
+            'status' => 'open',
+        ]);
+
+        $scenario = BudgetScenario::query()->create([
+            'organization_id' => $organizationId,
+            'code' => 'BASE-' . uniqid(),
+            'name' => 'Базовый',
+            'scenario_type' => 'base',
+            'is_default' => true,
+            'is_active' => true,
+        ]);
+
+        $article = BudgetArticle::query()->create([
+            'organization_id' => $organizationId,
+            'code' => 'PAY-' . uniqid(),
+            'name' => 'Платежи подрядчикам',
+            'budget_kind' => 'bdds',
+            'flow_direction' => 'outflow',
+            'is_leaf' => true,
+            'is_active' => true,
+        ]);
+
+        $center = ResponsibilityCenter::query()->create([
+            'organization_id' => $organizationId,
+            'center_type' => 'project',
+            'code' => 'CFO-' . uniqid(),
+            'name' => 'ЦФО проекта',
+            'is_active' => true,
+        ]);
+
+        $version = BudgetVersion::query()->create([
+            'organization_id' => $organizationId,
+            'budget_period_id' => $period->id,
+            'scenario_id' => $scenario->id,
+            'budget_kind' => 'bdds',
+            'version_number' => 1,
+            'name' => 'Активный бюджет',
+            'status' => 'active',
+            'approved_at' => now(),
+            'activated_at' => now(),
+        ]);
+
+        $line = BudgetLine::query()->create([
+            'budget_version_id' => $version->id,
+            'budget_article_id' => $article->id,
+            'responsibility_center_id' => $center->id,
+            'currency' => 'RUB',
+        ]);
+
+        BudgetAmount::query()->create([
+            'budget_line_id' => $line->id,
+            'month' => now()->startOfMonth()->toDateString(),
+            'plan_amount' => $planAmount,
+            'forecast_amount' => $planAmount,
+            'currency' => 'RUB',
+        ]);
+
+        return [
+            'article' => $article,
+            'center' => $center,
+            'line' => $line,
+        ];
     }
 }

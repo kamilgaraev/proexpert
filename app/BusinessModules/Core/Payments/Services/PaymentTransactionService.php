@@ -15,6 +15,7 @@ class PaymentTransactionService
 {
     public function __construct(
         private readonly PaymentDocumentService $paymentDocumentService,
+        private readonly PaymentBudgetLimitService $budgetLimitService,
     ) {}
 
     /**
@@ -31,6 +32,14 @@ class PaymentTransactionService
             throw new \DomainException(trans_message('payments.validation.payment_amount_exceeds_document_remaining'));
         }
 
+        $this->budgetLimitService->assertAllowed(
+            $document,
+            PaymentBudgetLimitService::OPERATION_PAYMENT_REGISTER,
+            (float) $data['amount'],
+            auth()->user(),
+            $data['budget_override_reason'] ?? null
+        );
+
         return DB::transaction(function () use ($document, $data) {
             // Создать транзакцию
             $transaction = PaymentTransaction::create(array_merge($data, [
@@ -43,6 +52,7 @@ class PaymentTransactionService
 
             // Обновить документ
             $this->updateDocumentFromTransaction($document, $transaction);
+            $this->budgetLimitService->convertAfterPayment($document->fresh(), $transaction);
 
             \Log::info('payments.transaction.registered', [
                 'transaction_id' => $transaction->id,
@@ -74,6 +84,7 @@ class PaymentTransactionService
         ]);
 
         $this->updateDocumentFromTransaction($transaction->paymentDocument, $transaction);
+        $this->budgetLimitService->convertAfterPayment($transaction->paymentDocument->fresh(), $transaction);
 
         return true;
     }

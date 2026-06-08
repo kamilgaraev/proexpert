@@ -44,6 +44,7 @@ class BulkActionRequest extends FormRequest
             'action' => 'required|string|in:submit,approve,pay,cancel,schedule',
             'reason' => 'required_if:action,cancel,reject|string|min:3',
             'scheduled_at' => 'required_if:action,schedule|date',
+            'budget_override_reason' => 'nullable|string|max:1000',
         ];
     }
 }

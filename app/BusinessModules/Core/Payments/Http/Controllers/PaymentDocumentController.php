@@ -8,8 +8,8 @@ use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
-use App\BusinessModules\Core\Payments\Services\Integrations\BudgetControlService;
 use App\BusinessModules\Core\Payments\Services\Export\PaymentOrderPdfService;
+use App\BusinessModules\Core\Payments\Services\PaymentBudgetLimitService;
 use App\BusinessModules\Core\Payments\Services\PaymentPurposeGenerator;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
@@ -33,9 +33,9 @@ class PaymentDocumentController extends Controller
 {
     public function __construct(
         private readonly PaymentDocumentService $service,
-        private readonly BudgetControlService $budgetControl,
         private readonly PaymentOrderPdfService $pdfExport,
-        private readonly PaymentPurposeGenerator $purposeGenerator
+        private readonly PaymentPurposeGenerator $purposeGenerator,
+        private readonly PaymentBudgetLimitService $budgetLimitService
     ) {}
 
     /**
@@ -65,7 +65,7 @@ class PaymentDocumentController extends Controller
                     try {
                         switch ($action) {
                             case 'submit':
-                                $this->service->submit($document);
+                                $this->service->submit($document, $request->user(), $request->validated('budget_override_reason'));
                                 break;
                             case 'approve':
                                 // Для апрува может потребоваться проверка прав
@@ -76,13 +76,19 @@ class PaymentDocumentController extends Controller
                                 break;
                             case 'schedule':
                                 $scheduledAt = new \DateTime($request->validated('scheduled_at'));
-                                $this->service->schedule($document, $scheduledAt);
+                                $this->service->schedule(
+                                    $document,
+                                    $scheduledAt,
+                                    $request->user(),
+                                    $request->validated('budget_override_reason')
+                                );
                                 break;
                             case 'pay':
                                 // Для оплаты берем полную сумму остатка
                                 $this->service->registerPayment($document, (float) $document->remaining_amount, [
                                     'notes' => 'Mass payment action',
-                                    'created_by_user_id' => $request->user()->id
+                                    'created_by_user_id' => $request->user()->id,
+                                    'budget_override_reason' => $request->validated('budget_override_reason'),
                                 ]);
                                 break;
                         }
@@ -226,6 +232,8 @@ class PaymentDocumentController extends Controller
                         'approvals', 
                         'transactions',
                         'siteRequests',
+                        'budgetArticle',
+                        'responsibilityCenter',
                         'invoiceable', // Загружаем связанную сущность (Contract, Act и т.д.)
                         'estimateSplits.estimateItem.measurementUnit' // Загружаем сплиты и позиции сметы с единицами измерения
                     ])
@@ -234,7 +242,20 @@ class PaymentDocumentController extends Controller
                 // Если ошибка при загрузке invoiceable (класс Invoice не найден)
                 // Загружаем документ без eager loading invoiceable
                 $document = PaymentDocument::forOrganization($organizationId)
-                    ->with(['project', 'payerOrganization', 'payeeOrganization', 'payerContractor', 'payeeContractor', 'source', 'approvals', 'transactions', 'siteRequests', 'estimateSplits.estimateItem'])
+                    ->with([
+                        'project',
+                        'payerOrganization',
+                        'payeeOrganization',
+                        'payerContractor',
+                        'payeeContractor',
+                        'source',
+                        'approvals',
+                        'transactions',
+                        'siteRequests',
+                        'budgetArticle',
+                        'responsibilityCenter',
+                        'estimateSplits.estimateItem',
+                    ])
                     ->where(function($query) {
                         $query->whereNull('invoiceable_type')
                               ->orWhere('invoiceable_type', '!=', 'App\\BusinessModules\\Core\\Payments\\Models\\Invoice')
@@ -480,6 +501,9 @@ class PaymentDocumentController extends Controller
                     'integer',
                     Rule::exists('projects', 'id')->where(fn ($query) => $query->where('organization_id', $organizationId)),
                 ],
+                'budget_article_id' => ['sometimes', 'nullable'],
+                'responsibility_center_id' => ['sometimes', 'nullable'],
+                'budget_override_reason' => ['sometimes', 'nullable', 'string', 'max:1000'],
                 'amount' => 'sometimes|numeric|min:0.01',
                 'vat_rate' => 'sometimes|numeric|min:0|max:100',
                 'description' => 'sometimes|nullable|string',
@@ -524,9 +548,11 @@ class PaymentDocumentController extends Controller
             $document = PaymentDocument::forOrganization($organizationId)->findOrFail($id);
 
             // Бюджетный контроль перед отправкой
-            $this->budgetControl->validateForApproval($document);
+            $validated = $request->validate([
+                'budget_override_reason' => ['nullable', 'string', 'max:1000'],
+            ]);
 
-            $submitted = $this->service->submit($document);
+            $submitted = $this->service->submit($document, $request->user(), $validated['budget_override_reason'] ?? null);
 
             return AdminResponse::success(
                 $this->formatDocumentDetailed($submitted),
@@ -613,6 +639,7 @@ class PaymentDocumentController extends Controller
         try {
             $validated = $request->validate([
                 'scheduled_at' => 'nullable|date',
+                'budget_override_reason' => 'nullable|string|max:1000',
             ]);
 
             $organizationId = $request->attributes->get('current_organization_id');
@@ -622,7 +649,12 @@ class PaymentDocumentController extends Controller
                 ? new \DateTime($validated['scheduled_at']) 
                 : null;
 
-            $scheduled = $this->service->schedule($document, $scheduledAt);
+            $scheduled = $this->service->schedule(
+                $document,
+                $scheduledAt,
+                $request->user(),
+                $validated['budget_override_reason'] ?? null
+            );
 
             return AdminResponse::success(
                 $this->formatDocumentDetailed($scheduled),
@@ -659,6 +691,7 @@ class PaymentDocumentController extends Controller
                 'payment_date' => 'nullable|date',
                 'notes' => 'nullable|string',
                 'metadata' => 'nullable|array',
+                'budget_override_reason' => 'nullable|string|max:1000',
             ]);
 
             $organizationId = $request->attributes->get('current_organization_id');
@@ -870,12 +903,17 @@ class PaymentDocumentController extends Controller
                 'id' => $document->project->id,
                 'name' => $document->project->name,
             ] : null,
+            'budget_article_id' => $document->budgetArticle?->uuid,
+            'budget_article_name' => $document->budgetArticle?->name,
+            'responsibility_center_id' => $document->responsibilityCenter?->uuid,
+            'responsibility_center_name' => $document->responsibilityCenter?->name,
             'is_overdue' => $document->isOverdue(),
             'days_until_due' => $document->getDaysUntilDue(),
             'payment_percentage' => $document->getPaymentPercentage(),
             'site_requests_count' => (int) ($document->site_requests_count ?? 0),
             'problem_flags' => $this->buildProblemFlags($document),
             'workflow_summary' => $this->buildWorkflowSummary($document, $this->buildProblemFlags($document), []),
+            'budget_limit_check' => $this->budgetLimitService->check($document, request()->user()),
             'can_be_cancelled' => $canBeCancelled,
             'created_at' => $document->created_at->toDateTimeString(),
         ];

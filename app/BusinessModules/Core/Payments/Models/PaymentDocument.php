@@ -6,6 +6,10 @@ use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\InvoiceType;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
+use App\BusinessModules\Features\Budgeting\Models\BudgetArticle;
+use App\BusinessModules\Features\Budgeting\Models\BudgetLimitCheck;
+use App\BusinessModules\Features\Budgeting\Models\BudgetLimitReservation;
+use App\BusinessModules\Features\Budgeting\Models\ResponsibilityCenter;
 use App\Models\Contractor;
 use App\Models\Organization;
 use App\Models\Project;
@@ -49,6 +53,8 @@ class PaymentDocument extends Model
         'organization_id',
         'project_id',
         'estimate_id',
+        'budget_article_id',
+        'responsibility_center_id',
         'document_type',
         'document_number',
         'document_date',
@@ -71,6 +77,12 @@ class PaymentDocument extends Model
         'remaining_amount',
         'status',
         'workflow_stage',
+        'budget_limit_status',
+        'budget_limit_decision',
+        'budget_limit_message',
+        'budget_limit_checked_at',
+        'budget_limit_override_reason',
+        'budget_limit_overridden_by_user_id',
         'source_type',
         'source_id',
         'due_date',
@@ -122,6 +134,7 @@ class PaymentDocument extends Model
         'scheduled_at' => 'datetime',
         'paid_at' => 'datetime',
         'overdue_since' => 'datetime',
+        'budget_limit_checked_at' => 'datetime',
         'recipient_notified_at' => 'datetime',
         'recipient_viewed_at' => 'datetime',
         'recipient_confirmed_at' => 'datetime',
@@ -151,6 +164,16 @@ class PaymentDocument extends Model
     public function estimate(): BelongsTo
     {
         return $this->belongsTo(\App\Models\Estimate::class);
+    }
+
+    public function budgetArticle(): BelongsTo
+    {
+        return $this->belongsTo(BudgetArticle::class, 'budget_article_id');
+    }
+
+    public function responsibilityCenter(): BelongsTo
+    {
+        return $this->belongsTo(ResponsibilityCenter::class, 'responsibility_center_id');
     }
 
     public function payerOrganization(): BelongsTo
@@ -239,6 +262,22 @@ class PaymentDocument extends Model
     public function transactions(): HasMany
     {
         return $this->hasMany(PaymentTransaction::class, 'payment_document_id');
+    }
+
+    public function budgetLimitChecks(): HasMany
+    {
+        return $this->hasMany(BudgetLimitCheck::class, 'payment_document_id');
+    }
+
+    public function budgetLimitReservations(): HasMany
+    {
+        return $this->hasMany(BudgetLimitReservation::class, 'payment_document_id');
+    }
+
+    public function activeBudgetLimitReservations(): HasMany
+    {
+        return $this->budgetLimitReservations()
+            ->where('status', BudgetLimitReservation::STATUS_RESERVED);
     }
 
     /**
@@ -585,4 +624,3 @@ class PaymentDocument extends Model
         return $this->siteRequests()->count();
     }
 }
-

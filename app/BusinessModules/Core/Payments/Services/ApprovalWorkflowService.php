@@ -16,7 +16,8 @@ use function trans_message;
 class ApprovalWorkflowService
 {
     public function __construct(
-        private readonly PaymentDocumentStateMachine $stateMachine
+        private readonly PaymentDocumentStateMachine $stateMachine,
+        private readonly PaymentBudgetLimitService $budgetLimitService
     ) {}
 
     /**
@@ -40,7 +41,13 @@ class ApprovalWorkflowService
             ]);
 
             // Автоматически утверждаем
+            $this->budgetLimitService->assertAllowed(
+                $document,
+                PaymentBudgetLimitService::OPERATION_APPROVAL,
+                (float) $document->amount
+            );
             $this->stateMachine->approve($document);
+            $this->budgetLimitService->syncReservation($document->fresh());
             
             return collect();
         }
@@ -50,6 +57,7 @@ class ApprovalWorkflowService
 
         // Меняем статус документа на "ожидает утверждения"
         $this->stateMachine->sendForApproval($document);
+        $this->budgetLimitService->syncReservation($document->fresh());
 
         // Уведомляем первый уровень утверждающих
         $this->notifyPendingApprovers($document, 1);
@@ -174,8 +182,12 @@ class ApprovalWorkflowService
     /**
      * Утвердить документ пользователем
      */
-    public function approveByUser(PaymentDocument $document, int $userId, ?string $comment = null): bool
-    {
+    public function approveByUser(
+        PaymentDocument $document,
+        int $userId,
+        ?string $comment = null,
+        ?string $budgetOverrideReason = null
+    ): bool {
         DB::beginTransaction();
 
         try {
@@ -304,7 +316,15 @@ class ApprovalWorkflowService
                             'decided_at' => now(),
                         ]);
                         
+                        $this->budgetLimitService->assertAllowed(
+                            $document,
+                            PaymentBudgetLimitService::OPERATION_APPROVAL,
+                            (float) $document->amount,
+                            $user,
+                            $budgetOverrideReason
+                        );
                         $this->stateMachine->approve($document, $userId);
+                        $this->budgetLimitService->syncReservation($document->fresh(), $user);
                         DB::commit();
                         return true;
                     } else {
@@ -360,7 +380,15 @@ class ApprovalWorkflowService
 
             // Проверить, все ли утверждения завершены
             if ($this->isFullyApproved($document)) {
+                $this->budgetLimitService->assertAllowed(
+                    $document,
+                    PaymentBudgetLimitService::OPERATION_APPROVAL,
+                    (float) $document->amount,
+                    $user,
+                    $budgetOverrideReason
+                );
                 $this->stateMachine->approve($document, $userId);
+                $this->budgetLimitService->syncReservation($document->fresh(), $user);
                 
                 Log::info('payment_approval.fully_approved', [
                     'document_id' => $document->id,
@@ -421,6 +449,7 @@ class ApprovalWorkflowService
 
             // Изменить статус документа
             $this->stateMachine->reject($document, $reason);
+            $this->budgetLimitService->release($document, $reason);
 
             Log::info('payment_approval.rejected', [
                 'document_id' => $document->id,
@@ -829,7 +858,13 @@ class ApprovalWorkflowService
         // Проверить, может быть уже все утверждено
         $document = $approval->paymentDocument;
         if ($this->isFullyApproved($document)) {
+            $this->budgetLimitService->assertAllowed(
+                $document,
+                PaymentBudgetLimitService::OPERATION_APPROVAL,
+                (float) $document->amount
+            );
             $this->stateMachine->approve($document);
+            $this->budgetLimitService->syncReservation($document->fresh());
         }
 
         return true;

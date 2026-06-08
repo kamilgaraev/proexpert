@@ -22,7 +22,8 @@ class PaymentRequestService
     public function __construct(
         private readonly PaymentDocumentService $documentService,
         private readonly ApprovalWorkflowService $approvalWorkflow,
-        private readonly PaymentDocumentStateMachine $stateMachine
+        private readonly PaymentDocumentStateMachine $stateMachine,
+        private readonly PaymentBudgetLimitService $budgetLimitService
     ) {}
 
     /**
@@ -48,6 +49,8 @@ class PaymentRequestService
             $documentData = [
                 'organization_id' => $data['organization_id'], // организация-заказчик
                 'project_id' => $data['project_id'] ?? $contract?->project_id,
+                'budget_article_id' => $data['budget_article_id'] ?? null,
+                'responsibility_center_id' => $data['responsibility_center_id'] ?? null,
                 'document_type' => PaymentDocumentType::PAYMENT_REQUEST->value,
                 'document_date' => $data['document_date'] ?? now(),
                 'due_date' => $data['due_date'] ?? now()->addDays($contract?->payment_terms_days ?? 14),
@@ -89,6 +92,7 @@ class PaymentRequestService
                 ]),
                 
                 'created_by_user_id' => $data['created_by_user_id'] ?? null,
+                'budget_override_reason' => $data['budget_override_reason'] ?? null,
             ];
 
             // Создаем документ
@@ -179,6 +183,7 @@ class PaymentRequestService
             }
 
             // Создаем платежное поручение на основе требования
+            $this->budgetLimitService->release($document, trans_message('budgeting.limits.request_accepted'));
             $paymentOrder = $this->createPaymentOrderFromRequest($document, $data);
 
             Log::info('payment_request.accepted', [
@@ -210,7 +215,10 @@ class PaymentRequestService
             throw new \DomainException(trans_message('payments.validation.request_reject_only_payment_requests'));
         }
 
-        return $this->stateMachine->reject($document, $reason)->fresh();
+        $document = $this->stateMachine->reject($document, $reason)->fresh();
+        $this->budgetLimitService->release($document, $reason);
+
+        return $document;
     }
 
     /**
@@ -300,6 +308,8 @@ class PaymentRequestService
         $orderData = [
             'organization_id' => $request->organization_id,
             'project_id' => $request->project_id,
+            'budget_article_id' => $request->budgetArticle?->uuid,
+            'responsibility_center_id' => $request->responsibilityCenter?->uuid,
             'document_type' => PaymentDocumentType::PAYMENT_ORDER->value,
             'document_date' => $additionalData['document_date'] ?? now(),
             'due_date' => $additionalData['due_date'] ?? $request->due_date,

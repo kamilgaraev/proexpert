@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
@@ -15,6 +16,11 @@ use function trans_message;
 
 class PaymentCalendarController extends Controller
 {
+    public function __construct(
+        private readonly PaymentDocumentService $paymentDocumentService
+    ) {
+    }
+
     public function index(Request $request): JsonResponse
     {
         try {
@@ -66,6 +72,7 @@ class PaymentCalendarController extends Controller
         try {
             $validated = $request->validate([
                 'date' => ['required', 'date'],
+                'budget_override_reason' => ['nullable', 'string', 'max:1000'],
             ]);
 
             $organizationId = (int) $request->attributes->get('current_organization_id');
@@ -73,8 +80,12 @@ class PaymentCalendarController extends Controller
                 ->forOrganization($organizationId)
                 ->findOrFail((int) $id);
 
-            $document->scheduled_at = new \DateTimeImmutable($validated['date']);
-            $document->save();
+            $document = $this->paymentDocumentService->schedule(
+                $document,
+                new \DateTime($validated['date']),
+                $request->user(),
+                $validated['budget_override_reason'] ?? null
+            );
 
             return AdminResponse::success([
                 'id' => $document->id,
