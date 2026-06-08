@@ -171,6 +171,18 @@
       "schedule.approve",
       "schedule.notifications"
     ],
+    "budgeting": [
+      "budgeting.budgets.view",
+      "budgeting.budgets.create",
+      "budgeting.budgets.edit",
+      "budgeting.budgets.submit",
+      "budgeting.periods.view",
+      "budgeting.scenarios.view",
+      "budgeting.articles.view",
+      "budgeting.cfo.view",
+      "budgeting.import.preview",
+      "budgeting.import.commit"
+    ],
     "budget-estimates": [
       "budget-estimates.view",
       "budget-estimates.create",

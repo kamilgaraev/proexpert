@@ -89,6 +89,46 @@ class PermissionTranslatorTest extends TestCase
         $this->assertStringNotContainsString('unknown.permission', $flattenedValues);
     }
 
+    public function test_budgeting_permissions_are_translated_for_frontend(): void
+    {
+        $translated = PermissionTranslator::translatePermissionsData([
+            'module_permissions' => [
+                'budgeting' => [
+                    'budgeting.budgets.view',
+                    'budgeting.budgets.submit',
+                    'budgeting.budgets.edit_approved',
+                    'budgeting.articles.import',
+                    'budgeting.articles.map_1c',
+                    'budgeting.limits.override',
+                    'budgeting.plan_fact.export',
+                    'budgeting.import.preview',
+                    'budgeting.import.commit',
+                    'budgeting.audit.view',
+                    'budgeting.sync.export',
+                ],
+            ],
+        ]);
+
+        $flattenedValues = json_encode($this->valuesOnly($translated), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+
+        $this->assertSame('Бюджетирование', $translated['module_groups']['budgeting']);
+        $this->assertSame('Просмотр бюджетов', $translated['module_permissions']['budgeting']['budgeting.budgets.view']);
+        $this->assertSame('Отправка бюджетов на согласование', $translated['module_permissions']['budgeting']['budgeting.budgets.submit']);
+        $this->assertSame('Корректировка согласованных бюджетов', $translated['module_permissions']['budgeting']['budgeting.budgets.edit_approved']);
+        $this->assertSame('Импорт бюджетных статей', $translated['module_permissions']['budgeting']['budgeting.articles.import']);
+        $this->assertSame('Сопоставление бюджетных статей с 1С', $translated['module_permissions']['budgeting']['budgeting.articles.map_1c']);
+        $this->assertSame('Превышение бюджетных лимитов', $translated['module_permissions']['budgeting']['budgeting.limits.override']);
+        $this->assertSame('Экспорт план-факт анализа бюджета', $translated['module_permissions']['budgeting']['budgeting.plan_fact.export']);
+        $this->assertSame('Предпросмотр импорта бюджета', $translated['module_permissions']['budgeting']['budgeting.import.preview']);
+        $this->assertSame('Применение импорта бюджета', $translated['module_permissions']['budgeting']['budgeting.import.commit']);
+        $this->assertSame('Просмотр истории изменений бюджета', $translated['module_permissions']['budgeting']['budgeting.audit.view']);
+        $this->assertSame('Экспорт данных синхронизации бюджета', $translated['module_permissions']['budgeting']['budgeting.sync.export']);
+        $this->assertStringNotContainsString('budgeting.budgets.view', $flattenedValues);
+        $this->assertStringNotContainsString('budgeting.limits.override', $flattenedValues);
+        $this->assertStringNotContainsString('budgeting.import.commit', $flattenedValues);
+        $this->assertStringNotContainsString('budgeting.sync.export', $flattenedValues);
+    }
+
     public function test_design_management_permissions_are_translated_for_frontend(): void
     {
         $translated = PermissionTranslator::translatePermissionsData([

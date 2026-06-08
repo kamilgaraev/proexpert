@@ -61,6 +61,17 @@
       "payments.invoice.view",
       "payments.transaction.view"
     ],
+    "budgeting": [
+      "budgeting.budgets.view",
+      "budgeting.periods.view",
+      "budgeting.scenarios.view",
+      "budgeting.articles.view",
+      "budgeting.cfo.view",
+      "budgeting.limits.view",
+      "budgeting.plan_fact.view",
+      "budgeting.audit.view",
+      "budgeting.sync.view"
+    ],
     "brigades": [
       "brigades.view",
       "brigades.catalog.view",

@@ -11,6 +11,7 @@ return [
     App\BusinessModules\Features\ContractManagement\ContractManagementServiceProvider::class,
     App\BusinessModules\Features\AdvancedDashboard\AdvancedDashboardServiceProvider::class,
     App\BusinessModules\Features\BudgetEstimates\BudgetEstimatesServiceProvider::class,
+    App\BusinessModules\Features\Budgeting\BudgetingServiceProvider::class,
     App\BusinessModules\Features\NormativeReferences\NormativeReferencesServiceProvider::class,
     App\BusinessModules\Features\Notifications\NotificationServiceProvider::class,
     App\BusinessModules\Features\Procurement\ProcurementServiceProvider::class,

@@ -140,6 +140,24 @@
       "schedule.view",
       "schedule.export"
     ],
+    "budgeting": [
+      "budgeting.budgets.view",
+      "budgeting.budgets.create",
+      "budgeting.budgets.edit",
+      "budgeting.budgets.submit",
+      "budgeting.budgets.approve",
+      "budgeting.budgets.activate",
+      "budgeting.periods.view",
+      "budgeting.scenarios.view",
+      "budgeting.scenarios.manage",
+      "budgeting.articles.view",
+      "budgeting.articles.manage",
+      "budgeting.articles.map_1c",
+      "budgeting.cfo.view",
+      "budgeting.cfo.manage",
+      "budgeting.import.preview",
+      "budgeting.import.commit"
+    ],
     "budget-estimates": [
       "budget-estimates.view",
       "budget-estimates.view_all",

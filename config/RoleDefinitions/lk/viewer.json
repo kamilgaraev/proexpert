@@ -95,6 +95,13 @@
     "schedule-management": [
       "schedule.view"
     ],
+    "budgeting": [
+      "budgeting.budgets.view",
+      "budgeting.periods.view",
+      "budgeting.scenarios.view",
+      "budgeting.articles.view",
+      "budgeting.cfo.view"
+    ],
     "budget-estimates": [
       "budget-estimates.view"
     ],

@@ -110,6 +110,9 @@
     "basic-warehouse": [
       "*"
     ],
+    "budgeting": [
+      "*"
+    ],
     "budget-estimates": [
       "*"
     ],
