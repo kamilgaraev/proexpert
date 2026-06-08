@@ -336,6 +336,7 @@
       "budgeting.budgets.archive",
       "budgeting.periods.view",
       "budgeting.periods.manage",
+      "budgeting.periods.close_status.view",
       "budgeting.periods.close",
       "budgeting.periods.reopen",
       "budgeting.scenarios.view",

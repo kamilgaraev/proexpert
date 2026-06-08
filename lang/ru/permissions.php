@@ -164,6 +164,7 @@ return [
         'budgeting.budgets.archive' => 'Архивация бюджетов',
         'budgeting.periods.view' => 'Просмотр бюджетных периодов',
         'budgeting.periods.manage' => 'Управление бюджетными периодами',
+        'budgeting.periods.close_status.view' => 'Просмотр статуса закрытия бюджетных периодов',
         'budgeting.periods.close' => 'Закрытие бюджетных периодов',
         'budgeting.periods.reopen' => 'Открытие бюджетных периодов для корректировок',
         'budgeting.scenarios.view' => 'Просмотр бюджетных сценариев',

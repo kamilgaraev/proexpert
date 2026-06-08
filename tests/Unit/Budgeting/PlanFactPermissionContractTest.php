@@ -41,6 +41,31 @@ final class PlanFactPermissionContractTest extends TestCase
         $this->assertNotContains('budgeting.plan_fact.export', $adminViewer);
     }
 
+    public function test_period_close_status_permission_is_registered_translated_and_assigned(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $manifest = json_decode(
+            (string) file_get_contents($root . '/config/ModuleList/features/budgeting.json'),
+            true,
+            512,
+            JSON_THROW_ON_ERROR
+        );
+        $translations = require $root . '/lang/ru/permissions.php';
+        $webAdmin = $this->rolePermissions($root . '/config/RoleDefinitions/admin/web_admin.json');
+        $financeAdmin = $this->rolePermissions($root . '/config/RoleDefinitions/admin/finance_admin.json');
+        $adminViewer = $this->rolePermissions($root . '/config/RoleDefinitions/admin/admin_viewer.json');
+
+        $this->assertContains('budgeting.periods.close_status.view', $manifest['permissions']);
+        $this->assertSame(
+            'Просмотр статуса закрытия бюджетных периодов',
+            $translations['values']['budgeting.periods.close_status.view']
+        );
+        $this->assertContains('budgeting.periods.close_status.view', $webAdmin);
+        $this->assertContains('budgeting.periods.close_status.view', $financeAdmin);
+        $this->assertContains('budgeting.periods.close_status.view', $adminViewer);
+        $this->assertNotContains('budgeting.periods.close', $adminViewer);
+    }
+
     private function rolePermissions(string $path): array
     {
         $role = json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);

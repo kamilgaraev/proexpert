@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Budgeting\Http\Controllers;
 
+use App\BusinessModules\Features\Budgeting\Exceptions\BudgetPeriodCloseBlockedException;
 use App\BusinessModules\Features\Budgeting\Http\Requests\BudgetArticleRequest;
 use App\BusinessModules\Features\Budgeting\Http\Requests\BudgetPeriodRequest;
 use App\BusinessModules\Features\Budgeting\Http\Requests\BudgetPeriodWorkflowRequest;
@@ -96,6 +97,30 @@ final class BudgetCatalogController extends BudgetingAdminController
             $period = $this->service->closePeriod($this->user($request), $periodUuid, $request->validated());
 
             return AdminResponse::success($this->service->periodToArray($period), trans_message('budgeting.periods.closed'));
+        } catch (BudgetPeriodCloseBlockedException $exception) {
+            return AdminResponse::error(
+                $exception->getMessage(),
+                422,
+                ['blockers' => $exception->blockers()],
+                ['data' => [
+                    'can_close' => false,
+                    'blockers' => $exception->blockers(),
+                ]]
+            );
+        } catch (DomainException $exception) {
+            return $this->domainError($exception);
+        } catch (Throwable $exception) {
+            return $this->unexpectedError($exception, $request);
+        }
+    }
+
+    public function periodClosureStatus(Request $request, string $periodUuid): JsonResponse
+    {
+        try {
+            return AdminResponse::success(
+                $this->service->periodClosureStatus($this->user($request), $periodUuid),
+                trans_message('budgeting.period_close.status_loaded')
+            );
         } catch (DomainException $exception) {
             return $this->domainError($exception);
         } catch (Throwable $exception) {

@@ -177,6 +177,7 @@
       "budgeting.budgets.edit",
       "budgeting.budgets.submit",
       "budgeting.periods.view",
+      "budgeting.periods.close_status.view",
       "budgeting.scenarios.view",
       "budgeting.articles.view",
       "budgeting.cfo.view",

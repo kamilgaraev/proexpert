@@ -43,6 +43,9 @@ Route::prefix('api/v1/admin/budgeting')
         Route::delete('/periods/{periodUuid}', [BudgetCatalogController::class, 'destroyPeriod'])
             ->middleware('authorize:budgeting.periods.manage')
             ->name('periods.destroy');
+        Route::get('/periods/{periodUuid}/closure-status', [BudgetCatalogController::class, 'periodClosureStatus'])
+            ->middleware('authorize:budgeting.periods.close_status.view')
+            ->name('periods.closure_status');
         Route::post('/periods/{periodUuid}/close', [BudgetCatalogController::class, 'closePeriod'])
             ->middleware('authorize:budgeting.periods.close')
             ->name('periods.close');

@@ -148,6 +148,7 @@
       "budgeting.budgets.approve",
       "budgeting.budgets.activate",
       "budgeting.periods.view",
+      "budgeting.periods.close_status.view",
       "budgeting.scenarios.view",
       "budgeting.scenarios.manage",
       "budgeting.articles.view",

@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 final class BudgetPeriod extends Model
@@ -41,6 +42,16 @@ final class BudgetPeriod extends Model
     public function versions(): HasMany
     {
         return $this->hasMany(BudgetVersion::class, 'budget_period_id');
+    }
+
+    public function closures(): HasMany
+    {
+        return $this->hasMany(BudgetPeriodClosure::class, 'budget_period_id');
+    }
+
+    public function latestClosure(): HasOne
+    {
+        return $this->hasOne(BudgetPeriodClosure::class, 'budget_period_id')->latestOfMany();
     }
 
     public function scopeForOrganization(Builder $query, int $organizationId): Builder

@@ -7,6 +7,7 @@ namespace Tests\Unit\Budgeting;
 use App\BusinessModules\Features\Budgeting\DTOs\BudgetImportValidationContext;
 use App\BusinessModules\Features\Budgeting\Services\BudgetImportFileReader;
 use App\BusinessModules\Features\Budgeting\Services\BudgetImportValidator;
+use App\BusinessModules\Features\Budgeting\Services\BudgetPeriodClosureService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetWorkflowService;
 use Carbon\CarbonImmutable;
 use DomainException;
@@ -173,7 +174,7 @@ final class BudgetingImportWorkflowTest extends TestCase
 
     public function test_workflow_transitions_are_validated(): void
     {
-        $workflow = new BudgetWorkflowService();
+        $workflow = new BudgetWorkflowService(new BudgetPeriodClosureService());
 
         $this->assertSame(BudgetWorkflowService::STATUS_ON_APPROVAL, $workflow->transition('draft', 'submit', true));
         $this->assertSame(BudgetWorkflowService::STATUS_APPROVED, $workflow->transition('on_approval', 'approve'));

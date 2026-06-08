@@ -18,7 +18,8 @@ final class BudgetVersionService
 {
     public function __construct(
         private readonly BudgetCatalogService $catalogService,
-        private readonly BudgetWorkflowService $workflowService
+        private readonly BudgetWorkflowService $workflowService,
+        private readonly BudgetPeriodClosureService $periodClosureService
     ) {
     }
 
@@ -55,9 +56,7 @@ final class BudgetVersionService
         $period = $this->periodByUuid($organizationId, (string) $input['budget_period_id']);
         $scenario = $this->scenarioByUuid($organizationId, (string) $input['scenario_id']);
 
-        if ($period->status === 'closed') {
-            throw new \DomainException(trans_message('budgeting.periods.closed'));
-        }
+        $this->periodClosureService->assertPeriodMutable($period);
 
         $versionNumber = $this->nextVersionNumber($organizationId, (int) $period->id, (int) $scenario->id, (string) $input['budget_kind']);
 
@@ -78,6 +77,7 @@ final class BudgetVersionService
     public function update(User $user, string $uuid, array $input): BudgetVersion
     {
         $version = $this->findVersion($user, $uuid);
+        $this->periodClosureService->assertVersionPeriodMutable($version);
         if ($version->status !== 'draft') {
             throw new \DomainException(trans_message('budgeting.versions.edit_forbidden'));
         }
@@ -90,6 +90,7 @@ final class BudgetVersionService
     public function cloneVersion(User $user, string $uuid, array $input): BudgetVersion
     {
         $baseVersion = $this->findVersion($user, $uuid);
+        $this->periodClosureService->assertVersionPeriodMutable($baseVersion);
         $sourceVersion = isset($input['source_version_id'])
             ? $this->findVersion($user, (string) $input['source_version_id'])
             : $baseVersion;
@@ -124,13 +125,10 @@ final class BudgetVersionService
     public function transition(User $user, string $uuid, string $action, ?string $comment = null): BudgetVersion
     {
         $version = $this->findVersion($user, $uuid);
+        $this->periodClosureService->assertVersionPeriodMutable($version);
 
         return DB::transaction(function () use ($version, $action, $user, $comment): BudgetVersion {
             $fromStatus = (string) $version->status;
-            if (in_array($action, ['submit', 'approve', 'activate'], true) && in_array((string) $version->period?->status, ['closed', 'archived'], true)) {
-                throw new \DomainException(trans_message('budgeting.errors.period_closed'));
-            }
-
             $toStatus = $this->workflowService->transition($fromStatus, $action, $version->lines()->exists());
 
             if ($action === 'activate') {

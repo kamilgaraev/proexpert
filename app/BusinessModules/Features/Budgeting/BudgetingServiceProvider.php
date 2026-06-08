@@ -9,6 +9,7 @@ use App\BusinessModules\Features\Budgeting\Services\BudgetImportFileReader;
 use App\BusinessModules\Features\Budgeting\Services\BudgetImportService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetImportValidator;
 use App\BusinessModules\Features\Budgeting\Services\BudgetLineService;
+use App\BusinessModules\Features\Budgeting\Services\BudgetPeriodClosureService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetVersionService;
 use App\BusinessModules\Features\Budgeting\Services\BudgetWorkflowService;
 use App\BusinessModules\Features\Budgeting\Services\CashGapForecastReadService;
@@ -23,6 +24,7 @@ final class BudgetingServiceProvider extends ServiceProvider
         $this->app->singleton(BudgetCatalogService::class);
         $this->app->singleton(BudgetVersionService::class);
         $this->app->singleton(BudgetLineService::class);
+        $this->app->singleton(BudgetPeriodClosureService::class);
         $this->app->singleton(BudgetWorkflowService::class);
         $this->app->singleton(BudgetImportFileReader::class);
         $this->app->singleton(BudgetImportValidator::class);

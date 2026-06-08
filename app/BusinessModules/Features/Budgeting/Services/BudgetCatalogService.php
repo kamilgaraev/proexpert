@@ -18,6 +18,10 @@ use Illuminate\Support\Facades\DB;
 
 final class BudgetCatalogService
 {
+    public function __construct(private readonly BudgetPeriodClosureService $periodClosureService)
+    {
+    }
+
     public function organizationId(User $user, array $input = []): int
     {
         $organizationId = (int) ($user->current_organization_id ?: ($input['organization_id'] ?? 0));
@@ -47,6 +51,7 @@ final class BudgetCatalogService
     {
         return BudgetPeriod::query()
             ->where('organization_id', $organizationId)
+            ->with('latestClosure.closedBy')
             ->when($filters['status'] ?? null, fn (Builder $query, string $status) => $query->where('status', $status))
             ->when($filters['year'] ?? null, fn (Builder $query, int|string $year) => $query->whereYear('starts_at', '<=', (int) $year)->whereYear('ends_at', '>=', (int) $year))
             ->orderByDesc('starts_at')
@@ -117,6 +122,7 @@ final class BudgetCatalogService
     public function updatePeriod(User $user, string $uuid, array $input): BudgetPeriod
     {
         $period = $this->findPeriod($user, $uuid);
+        $this->periodClosureService->assertPeriodMutable($period);
         $this->assertUniqueCode(BudgetPeriod::query(), (int) $period->organization_id, (string) $input['code'], (int) $period->id);
         $period->fill($input)->save();
 
@@ -206,6 +212,10 @@ final class BudgetCatalogService
 
     public function destroySoft(BudgetPeriod|BudgetScenario|ResponsibilityCenter|BudgetArticle $model): void
     {
+        if ($model instanceof BudgetPeriod) {
+            $this->periodClosureService->assertPeriodMutable($model);
+        }
+
         if ($model instanceof BudgetArticle && $model->children()->exists()) {
             $model->is_active = false;
             $model->save();
@@ -225,21 +235,17 @@ final class BudgetCatalogService
     {
         $period = $this->findPeriod($user, $uuid);
 
-        return DB::transaction(function () use ($period, $user, $input): BudgetPeriod {
-            $period->status = ($input['closure_mode'] ?? 'soft') === 'hard' ? 'closed' : 'soft_closed';
-            $period->save();
+        return $this->periodClosureService->close(
+            $period,
+            $user,
+            (string) ($input['reason'] ?? ''),
+            isset($input['closure_mode']) ? (string) $input['closure_mode'] : null
+        );
+    }
 
-            BudgetPeriodClosure::create([
-                'budget_period_id' => $period->id,
-                'closure_status' => $period->status,
-                'closure_mode' => $input['closure_mode'] ?? 'soft',
-                'reason' => $input['reason'] ?? null,
-                'closed_by' => $user->id,
-                'closed_at' => now(),
-            ]);
-
-            return $period->refresh();
-        });
+    public function periodClosureStatus(User $user, string $uuid): array
+    {
+        return $this->periodClosureService->statusPayload($this->findPeriod($user, $uuid));
     }
 
     public function reopenPeriod(User $user, string $uuid, array $input): BudgetPeriod
@@ -328,6 +334,8 @@ final class BudgetCatalogService
 
     public function periodToArray(BudgetPeriod $period): array
     {
+        $closureSummary = $this->periodClosureService->periodClosureSummary($period);
+
         return [
             'id' => $period->uuid,
             'organization_id' => $period->organization_id,
@@ -338,6 +346,12 @@ final class BudgetCatalogService
             'ends_at' => $period->ends_at?->toDateString(),
             'status' => $period->status,
             'status_label' => trans_message("budgeting.statuses.periods.{$period->status}"),
+            'is_closed' => $closureSummary['is_closed'],
+            'closed_at' => $closureSummary['closed_at'],
+            'closed_by' => $closureSummary['closed_by'],
+            'closed_reason' => $closureSummary['closed_reason'],
+            'closure_status' => $closureSummary['closure_status'],
+            'closure_mode' => $closureSummary['closure_mode'],
         ];
     }
 

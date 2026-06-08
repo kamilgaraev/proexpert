@@ -20,7 +20,8 @@ use Illuminate\Support\Facades\DB;
 final class BudgetLineService
 {
     public function __construct(
-        private readonly BudgetVersionService $versionService
+        private readonly BudgetVersionService $versionService,
+        private readonly BudgetPeriodClosureService $periodClosureService
     ) {
     }
 
@@ -93,6 +94,8 @@ final class BudgetLineService
      */
     public function writeNormalizedRows(BudgetVersion $version, array $rows, string $mode): void
     {
+        $this->assertEditable($version);
+
         DB::transaction(function () use ($version, $rows, $mode): void {
             if ($mode === 'replace_lines') {
                 BudgetLine::query()->where('budget_version_id', $version->id)->delete();
@@ -145,9 +148,7 @@ final class BudgetLineService
             throw new \DomainException(trans_message('budgeting.versions.edit_forbidden'));
         }
 
-        if (in_array($version->period?->status, ['closed', 'archived'], true)) {
-            throw new \DomainException(trans_message('budgeting.periods.closed'));
-        }
+        $this->periodClosureService->assertVersionPeriodMutable($version);
     }
 
     private function articleByUuid(BudgetVersion $version, string $uuid): BudgetArticle

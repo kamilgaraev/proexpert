@@ -20,6 +20,10 @@ final class BudgetWorkflowService
     public const STATUS_REPLACED = 'replaced';
     public const STATUS_ARCHIVED = 'archived';
 
+    public function __construct(private readonly BudgetPeriodClosureService $periodClosureService)
+    {
+    }
+
     /**
      * @return list<string>
      */
@@ -40,9 +44,7 @@ final class BudgetWorkflowService
             throw new DomainException(trans_message('budgeting.errors.version_not_editable'));
         }
 
-        if (in_array($periodStatus, ['closed', 'archived'], true)) {
-            throw new DomainException(trans_message('budgeting.errors.period_closed'));
-        }
+        $this->periodClosureService->assertMutableStatus($periodStatus);
     }
 
     public function transition(string $currentStatus, string $action, bool $hasLines = true): string
@@ -150,8 +152,8 @@ final class BudgetWorkflowService
 
     private function assertCanEditPeriod(string $periodStatus, string $action): void
     {
-        if (in_array($action, ['submit', 'approve', 'activate'], true) && in_array($periodStatus, ['closed', 'archived'], true)) {
-            throw new DomainException(trans_message('budgeting.errors.period_closed'));
+        if (in_array($action, ['submit', 'approve', 'reject', 'activate', 'archive'], true)) {
+            $this->periodClosureService->assertMutableStatus($periodStatus);
         }
     }
 }
