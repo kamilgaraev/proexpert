@@ -324,7 +324,7 @@ class ApprovalWorkflowService
                             $budgetOverrideReason
                         );
                         $this->stateMachine->approve($document, $userId);
-                        $this->budgetLimitService->syncReservation($document->fresh(), $user);
+                        $this->budgetLimitService->syncReservation($document->fresh(), $user, $budgetOverrideReason);
                         DB::commit();
                         return true;
                     } else {
@@ -388,7 +388,7 @@ class ApprovalWorkflowService
                     $budgetOverrideReason
                 );
                 $this->stateMachine->approve($document, $userId);
-                $this->budgetLimitService->syncReservation($document->fresh(), $user);
+                $this->budgetLimitService->syncReservation($document->fresh(), $user, $budgetOverrideReason);
                 
                 Log::info('payment_approval.fully_approved', [
                     'document_id' => $document->id,

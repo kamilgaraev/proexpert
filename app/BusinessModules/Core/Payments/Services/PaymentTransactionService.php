@@ -7,6 +7,7 @@ use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 use function trans_message;
@@ -32,15 +33,17 @@ class PaymentTransactionService
             throw new \DomainException(trans_message('payments.validation.payment_amount_exceeds_document_remaining'));
         }
 
-        $this->budgetLimitService->assertAllowed(
-            $document,
-            PaymentBudgetLimitService::OPERATION_PAYMENT_REGISTER,
-            (float) $data['amount'],
-            auth()->user(),
-            $data['budget_override_reason'] ?? null
-        );
-
         return DB::transaction(function () use ($document, $data) {
+            $this->budgetLimitService->assertAllowed(
+                $document,
+                PaymentBudgetLimitService::OPERATION_PAYMENT_REGISTER,
+                (float) $data['amount'],
+                auth()->user(),
+                $data['budget_override_reason'] ?? null,
+                $this->paymentOperationDate($data),
+                true
+            );
+
             // Создать транзакцию
             $transaction = PaymentTransaction::create(array_merge($data, [
                 'payment_document_id' => $document->id,
@@ -186,6 +189,17 @@ class PaymentTransactionService
         }
 
         $document->save();
+    }
+
+    private function paymentOperationDate(array $data): Carbon
+    {
+        $date = $data['transaction_date'] ?? $data['payment_date'] ?? now();
+
+        if ($date instanceof \DateTimeInterface) {
+            return Carbon::instance($date);
+        }
+
+        return Carbon::parse($date);
     }
 }
 

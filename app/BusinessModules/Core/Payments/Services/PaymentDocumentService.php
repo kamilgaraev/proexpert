@@ -88,7 +88,11 @@ class PaymentDocumentService
                     $createdBy,
                     is_string($budgetOverrideReason) ? $budgetOverrideReason : null
                 );
-                $this->budgetLimitService->syncReservation($document->fresh(), $createdBy);
+                $this->budgetLimitService->syncReservation(
+                    $document->fresh(),
+                    $createdBy,
+                    is_string($budgetOverrideReason) ? $budgetOverrideReason : null
+                );
 
                 Log::info('payment_document.created', [
                     'document_id' => $document->id,
@@ -192,7 +196,11 @@ class PaymentDocumentService
                 $user instanceof User ? $user : null,
                 is_string($budgetOverrideReason) ? $budgetOverrideReason : null
             );
-            $this->budgetLimitService->syncReservation($document, $user instanceof User ? $user : null);
+            $this->budgetLimitService->syncReservation(
+                $document,
+                $user instanceof User ? $user : null,
+                is_string($budgetOverrideReason) ? $budgetOverrideReason : null
+            );
 
             Log::info('payment_document.updated', [
                 'document_id' => $document->id,
@@ -238,7 +246,7 @@ class PaymentDocumentService
 
             // Шаг 2: Инициируем процесс утверждения (submitted → pending_approval)
             $this->approvalWorkflow->initiateApproval($document);
-            $this->budgetLimitService->syncReservation($document->fresh(), $user);
+            $this->budgetLimitService->syncReservation($document->fresh(), $user, $overrideReason);
 
             Log::info('payment_document.submitted', [
                 'document_id' => $document->id,
@@ -263,23 +271,31 @@ class PaymentDocumentService
     /**
      * Утвердить документ
      */
-    public function approve(PaymentDocument $document, ?int $approvedByUserId = null): PaymentDocument
+    public function approve(
+        PaymentDocument $document,
+        ?int $approvedByUserId = null,
+        ?string $budgetOverrideReason = null
+    ): PaymentDocument
     {
         DB::beginTransaction();
 
         try {
             // Утверждаем документ через state machine
+            $approvedBy = $approvedByUserId ? User::find($approvedByUserId) : null;
+
             $this->budgetLimitService->assertAllowed(
                 $document,
                 PaymentBudgetLimitService::OPERATION_APPROVAL,
                 (float) $document->amount,
-                $approvedByUserId ? User::find($approvedByUserId) : null
+                $approvedBy,
+                $budgetOverrideReason
             );
 
             $this->stateMachine->approve($document, $approvedByUserId);
             $this->budgetLimitService->syncReservation(
                 $document->fresh(),
-                $approvedByUserId ? User::find($approvedByUserId) : null
+                $approvedBy,
+                $budgetOverrideReason
             );
 
             Log::info('payment_document.approved', [
@@ -334,7 +350,7 @@ class PaymentDocumentService
         );
 
         $this->stateMachine->schedule($document, $scheduledAt);
-        $this->budgetLimitService->syncReservation($document->fresh(), $user);
+        $this->budgetLimitService->syncReservation($document->fresh(), $user, $overrideReason);
 
         Log::info('payment_document.scheduled', [
             'document_id' => $document->id,
@@ -381,12 +397,15 @@ class PaymentDocumentService
                 throw new \DomainException(trans_message('payments.validation.payment_amount_exceeds_remaining'));
             }
 
+            $operationDate = $this->paymentOperationDate($paymentData);
             $this->budgetLimitService->assertAllowed(
                 $document,
                 PaymentBudgetLimitService::OPERATION_PAYMENT_REGISTER,
                 $amount,
                 isset($paymentData['created_by_user_id']) ? User::find((int) $paymentData['created_by_user_id']) : null,
-                $paymentData['budget_override_reason'] ?? null
+                $paymentData['budget_override_reason'] ?? null,
+                $operationDate,
+                true
             );
 
             Log::info('payment_document.register_payment.preparing_data', [
@@ -1004,6 +1023,17 @@ class PaymentDocumentService
         }
 
         return $data;
+    }
+
+    private function paymentOperationDate(array $paymentData): \Illuminate\Support\Carbon
+    {
+        $date = $paymentData['transaction_date'] ?? $paymentData['payment_date'] ?? now();
+
+        if ($date instanceof \DateTimeInterface) {
+            return \Illuminate\Support\Carbon::instance($date);
+        }
+
+        return \Illuminate\Support\Carbon::parse($date);
     }
 
     /**

@@ -107,9 +107,36 @@ final class PaymentBudgetLimitService
         ?User $user = null,
         ?string $overrideReason = null,
         ?Carbon $operationDate = null,
+        bool $lockBudgetLine = false,
     ): ?BudgetLimitCheckResult {
-        $calculation = $this->calculate($document, $operationType, $requestedAmount, $operationDate);
+        $calculation = $this->calculate(
+            $document,
+            $operationType,
+            $requestedAmount,
+            $operationDate,
+            $lockBudgetLine
+        );
 
+        return $this->assertCalculationAllowed($document, $calculation, $user, $overrideReason);
+    }
+
+    public function syncReservation(
+        PaymentDocument $document,
+        ?User $user = null,
+        ?string $overrideReason = null
+    ): void
+    {
+        DB::transaction(function () use ($document, $user, $overrideReason): void {
+            $this->syncReservationInTransaction($document, $user, $overrideReason);
+        });
+    }
+
+    private function assertCalculationAllowed(
+        PaymentDocument $document,
+        array $calculation,
+        ?User $user,
+        ?string $overrideReason,
+    ): ?BudgetLimitCheckResult {
         if (!$calculation['controlled']) {
             return null;
         }
@@ -148,7 +175,7 @@ final class PaymentBudgetLimitService
         return $result;
     }
 
-    public function syncReservation(PaymentDocument $document, ?User $user = null): void
+    private function syncReservationInTransaction(PaymentDocument $document, ?User $user, ?string $overrideReason): void
     {
         if (!$this->isReservable($document)) {
             $this->release($document, trans_message('budgeting.limits.reserve_not_required'));
@@ -158,7 +185,9 @@ final class PaymentBudgetLimitService
         $calculation = $this->calculate(
             $document,
             self::OPERATION_SUBMIT,
-            $this->reservationAmount($document)
+            $this->reservationAmount($document),
+            null,
+            true
         );
 
         if (!$calculation['controlled'] || !$calculation['line'] instanceof BudgetLine) {
@@ -176,6 +205,17 @@ final class PaymentBudgetLimitService
             $this->release($document, trans_message('budgeting.limits.reserve_not_required'));
             return;
         }
+
+        $storedOverrideReason = is_string($document->budget_limit_override_reason ?? null)
+            ? $document->budget_limit_override_reason
+            : null;
+
+        $this->assertCalculationAllowed(
+            $document,
+            $calculation,
+            $user,
+            $overrideReason ?? $storedOverrideReason
+        );
 
         $reservation = BudgetLimitReservation::query()
             ->where('payment_document_id', $document->id)
@@ -270,6 +310,7 @@ final class PaymentBudgetLimitService
         string $operationType,
         ?float $requestedAmount = null,
         ?Carbon $operationDate = null,
+        bool $lockBudgetLine = false,
     ): array {
         if (!$this->isBudgetingActive((int) $document->organization_id)) {
             return [
@@ -304,7 +345,7 @@ final class PaymentBudgetLimitService
             ];
         }
 
-        $line = $this->resolveBudgetLine($document, $month, $budgetArticle, $responsibilityCenter);
+        $line = $this->resolveBudgetLine($document, $month, $budgetArticle, $responsibilityCenter, $lockBudgetLine);
         $context = $this->buildContext($document, $operationType, $month, $line, $budgetArticle, $responsibilityCenter);
         $amounts = $this->buildAmounts($document, $month, $line, $requested);
 
@@ -625,6 +666,7 @@ final class PaymentBudgetLimitService
         Carbon $month,
         BudgetArticle $budgetArticle,
         ResponsibilityCenter $responsibilityCenter,
+        bool $lockBudgetLine = false,
     ): ?BudgetLine {
         $contractId = $this->contractId($document);
         $counterpartyId = $this->counterpartyId($document);
@@ -670,6 +712,7 @@ final class PaymentBudgetLimitService
             ->orderByRaw('CASE WHEN project_id IS NULL THEN 0 ELSE 1 END DESC')
             ->orderByRaw('CASE WHEN contract_id IS NULL THEN 0 ELSE 1 END DESC')
             ->orderByRaw('CASE WHEN counterparty_id IS NULL THEN 0 ELSE 1 END DESC')
+            ->when($lockBudgetLine, fn (Builder $query) => $query->lockForUpdate())
             ->orderByDesc('id')
             ->first();
     }

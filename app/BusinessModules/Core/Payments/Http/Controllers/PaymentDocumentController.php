@@ -69,7 +69,11 @@ class PaymentDocumentController extends Controller
                                 break;
                             case 'approve':
                                 // Для апрува может потребоваться проверка прав
-                                $this->service->approve($document, $request->user()->id);
+                                $this->service->approve(
+                                    $document,
+                                    $request->user()->id,
+                                    $request->validated('budget_override_reason')
+                                );
                                 break;
                             case 'cancel':
                                 $this->service->cancel($document, $request->validated('reason'), $request->user());
