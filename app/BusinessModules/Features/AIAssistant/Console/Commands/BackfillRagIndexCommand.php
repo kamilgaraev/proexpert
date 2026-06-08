@@ -72,15 +72,17 @@ class BackfillRagIndexCommand extends Command
                 return $this->syncAll($coordinator, $projectId, $sourceType, $staleOnly, $staleAfterHours);
             }
 
-            $result = $coordinator->queueAllActiveOrganizations(
-                (bool) $this->option('include-inactive'),
-                $this->nullableIntOption('limit'),
-                $projectId,
-                $sourceType,
-                RagIndexRun::MODE_SCHEDULED,
-                $staleOnly,
-                $staleAfterHours
-            );
+            $result = $sourceType === null
+                ? $this->queueAllSourceTypes($coordinator, $sourceRegistry, $projectId, $staleOnly, $staleAfterHours)
+                : $coordinator->queueAllActiveOrganizations(
+                    (bool) $this->option('include-inactive'),
+                    $this->nullableIntOption('limit'),
+                    $projectId,
+                    $sourceType,
+                    RagIndexRun::MODE_SCHEDULED,
+                    $staleOnly,
+                    $staleAfterHours
+                );
 
             $this->info("Queued RAG indexing jobs: {$result['queued']}");
 
@@ -188,5 +190,34 @@ class BackfillRagIndexCommand extends Command
         $this->info("Synchronously indexed organizations: {$result['processed']}");
 
         return self::SUCCESS;
+    }
+
+    /**
+     * @return array{queued: int}
+     */
+    private function queueAllSourceTypes(
+        RagIndexingCoordinator $coordinator,
+        RagSourceRegistry $sourceRegistry,
+        ?int $projectId,
+        bool $staleOnly,
+        int $staleAfterHours
+    ): array {
+        $queued = 0;
+
+        foreach ($sourceRegistry->enabledSourceTypes() as $enabledSourceType) {
+            $result = $coordinator->queueAllActiveOrganizations(
+                (bool) $this->option('include-inactive'),
+                $this->nullableIntOption('limit'),
+                $projectId,
+                $enabledSourceType,
+                RagIndexRun::MODE_SCHEDULED,
+                $staleOnly,
+                $staleAfterHours
+            );
+
+            $queued += $result['queued'];
+        }
+
+        return ['queued' => $queued];
     }
 }

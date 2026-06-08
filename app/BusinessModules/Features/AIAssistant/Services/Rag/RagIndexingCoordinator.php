@@ -291,7 +291,12 @@ class RagIndexingCoordinator
         $runTable = (new RagIndexRun())->getTable();
 
         $query
-            ->whereNotExists(function (QueryBuilder $subQuery) use ($organizationTable, $runTable): void {
+            ->whereNotExists(function (QueryBuilder $subQuery) use (
+                $organizationTable,
+                $projectId,
+                $runTable,
+                $sourceType
+            ): void {
                 $subQuery
                     ->selectRaw('1')
                     ->from($runTable)
@@ -300,6 +305,8 @@ class RagIndexingCoordinator
                         RagIndexRun::STATUS_QUEUED,
                         RagIndexRun::STATUS_RUNNING,
                     ]);
+
+                $this->applyActiveRunScope($subQuery, $runTable, $projectId, $sourceType);
             })
             ->whereNotExists(
                 function (QueryBuilder $subQuery) use (
@@ -337,6 +344,33 @@ class RagIndexingCoordinator
             $query->whereNull("{$runTable}.source_type");
         } else {
             $query->where("{$runTable}.source_type", $sourceType);
+        }
+    }
+
+    private function applyActiveRunScope(
+        QueryBuilder $query,
+        string $runTable,
+        ?int $projectId,
+        ?string $sourceType
+    ): void {
+        if ($projectId === null) {
+            $query->whereNull("{$runTable}.project_id");
+        } else {
+            $query->where(function (QueryBuilder $scopeQuery) use ($projectId, $runTable): void {
+                $scopeQuery
+                    ->where("{$runTable}.project_id", $projectId)
+                    ->orWhereNull("{$runTable}.project_id");
+            });
+        }
+
+        if ($sourceType === null) {
+            $query->whereNull("{$runTable}.source_type");
+        } else {
+            $query->where(function (QueryBuilder $scopeQuery) use ($runTable, $sourceType): void {
+                $scopeQuery
+                    ->where("{$runTable}.source_type", $sourceType)
+                    ->orWhereNull("{$runTable}.source_type");
+            });
         }
     }
 
