@@ -1,0 +1,230 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Unit\Budgeting;
+
+use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastContext;
+use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastFilters;
+use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastItem;
+use App\BusinessModules\Features\Budgeting\Services\CashGapForecastService;
+use Illuminate\Config\Repository;
+use Illuminate\Container\Container;
+use Illuminate\Filesystem\Filesystem;
+use Illuminate\Support\Facades\Facade;
+use Illuminate\Translation\FileLoader;
+use Illuminate\Translation\Translator;
+use PHPUnit\Framework\TestCase;
+
+final class CashGapForecastServiceTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $container = new Container();
+        $loader = new FileLoader(new Filesystem(), dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'lang');
+        $translator = new Translator($loader, 'ru');
+
+        $container->instance('translator', $translator);
+        $container->instance('config', new Repository([
+            'app' => [
+                'locale' => 'ru',
+                'fallback_locale' => 'ru',
+            ],
+        ]));
+        $container->instance('app', new class {
+            public function getLocale(): string
+            {
+                return 'ru';
+            }
+        });
+
+        Facade::setFacadeApplication($container);
+    }
+
+    protected function tearDown(): void
+    {
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication(null);
+
+        parent::tearDown();
+    }
+
+    public function test_empty_input_returns_valid_forecast_range(): void
+    {
+        $result = $this->service()->forecast(
+            new CashGapForecastContext(
+                periodStart: '2026-01-01',
+                periodEnd: '2026-01-03',
+                openingBalance: 1_000.0,
+                filters: new CashGapForecastFilters(organizationId: 42),
+            ),
+            []
+        )->toArray();
+
+        $this->assertSame(['from' => '2026-01-01', 'to' => '2026-01-03'], $result['period']);
+        $this->assertCount(3, $result['daily']);
+        $this->assertSame(1_000.0, $result['closing_balance']);
+        $this->assertFalse($result['cash_gap']['has_gap']);
+        $this->assertSame(CashGapForecastService::RISK_LOW, $result['risk_level']);
+        $this->assertSame(0, $result['meta']['included_items']);
+    }
+
+    public function test_multiple_payments_partial_remaining_and_reschedule_are_calculated_by_day(): void
+    {
+        $result = $this->service()->forecast(
+            $this->context(openingBalance: 500.0, periodEnd: '2026-01-03'),
+            [
+                $this->item('2026-01-02', CashGapForecastItem::DIRECTION_INFLOW, CashGapForecastItem::BUCKET_PLANNED_INFLOW, 1_000.0),
+                $this->item('2026-01-02', CashGapForecastItem::DIRECTION_OUTFLOW, CashGapForecastItem::BUCKET_SCHEDULED_OUTFLOW, 400.0, sourceId: 118),
+                $this->item('2026-01-02', CashGapForecastItem::DIRECTION_OUTFLOW, CashGapForecastItem::BUCKET_RESERVED_OUTFLOW, 300.0, sourceId: 119),
+                $this->item(
+                    '2026-01-03',
+                    CashGapForecastItem::DIRECTION_OUTFLOW,
+                    CashGapForecastItem::BUCKET_APPROVED_OUTFLOW,
+                    200.0,
+                    sourceId: 120,
+                    originalDate: '2026-01-01',
+                ),
+            ]
+        )->toArray();
+
+        $this->assertSame(800.0, $result['daily'][1]['closing_balance']);
+        $this->assertSame(600.0, $result['closing_balance']);
+        $this->assertSame(1_000.0, $result['inflows']);
+        $this->assertSame(600.0, $result['outflows']);
+        $this->assertSame(300.0, $result['reserved_outflows']);
+        $this->assertSame('2026-01-01', $result['daily'][2]['drivers'][0]['original_date']);
+    }
+
+    public function test_overdue_inflows_are_risk_only_and_overdue_outflows_reduce_start_day_balance(): void
+    {
+        $result = $this->service()->forecast(
+            $this->context(periodStart: '2026-01-05', periodEnd: '2026-01-05', openingBalance: 500.0),
+            [
+                $this->item('2026-01-01', CashGapForecastItem::DIRECTION_INFLOW, CashGapForecastItem::BUCKET_OVERDUE_INFLOW, 1_000.0),
+                $this->item('2026-01-02', CashGapForecastItem::DIRECTION_OUTFLOW, CashGapForecastItem::BUCKET_OVERDUE_OUTFLOW, 700.0),
+            ]
+        )->toArray();
+
+        $this->assertSame(0.0, $result['daily'][0]['inflows']);
+        $this->assertSame(1_000.0, $result['daily'][0]['overdue_inflows']);
+        $this->assertSame(700.0, $result['daily'][0]['overdue_outflows']);
+        $this->assertSame(-200.0, $result['daily'][0]['closing_balance']);
+        $this->assertSame(200.0, $result['cash_gap']['max_gap_amount']);
+        $this->assertSame(CashGapForecastService::RISK_CRITICAL, $result['risk_level']);
+    }
+
+    public function test_stress_scenario_delays_probable_inflow_and_changes_gap_date(): void
+    {
+        $base = $this->service()->forecast(
+            $this->context(periodEnd: '2026-01-10', openingBalance: 0.0),
+            $this->scenarioItems()
+        )->toArray();
+
+        $stress = $this->service()->forecast(
+            $this->context(
+                periodEnd: '2026-01-10',
+                openingBalance: 0.0,
+                scenario: CashGapForecastContext::SCENARIO_STRESS,
+            ),
+            $this->scenarioItems()
+        )->toArray();
+
+        $this->assertFalse($base['cash_gap']['has_gap']);
+        $this->assertTrue($stress['cash_gap']['has_gap']);
+        $this->assertSame('2026-01-02', $stress['cash_gap']['first_gap_date']);
+        $this->assertSame(750.0, $stress['inflows']);
+        $this->assertSame(-50.0, $stress['closing_balance']);
+    }
+
+    public function test_organization_filter_excludes_foreign_items(): void
+    {
+        $result = $this->service()->forecast(
+            $this->context(periodEnd: '2026-01-01', openingBalance: 100.0),
+            [
+                $this->item('2026-01-01', CashGapForecastItem::DIRECTION_OUTFLOW, CashGapForecastItem::BUCKET_APPROVED_OUTFLOW, 30.0),
+                $this->item(
+                    '2026-01-01',
+                    CashGapForecastItem::DIRECTION_OUTFLOW,
+                    CashGapForecastItem::BUCKET_APPROVED_OUTFLOW,
+                    500.0,
+                    organizationId: 7,
+                ),
+            ]
+        )->toArray();
+
+        $this->assertSame(70.0, $result['closing_balance']);
+        $this->assertSame(1, $result['meta']['included_items']);
+        $this->assertSame(1, $result['meta']['excluded_items']);
+    }
+
+    private function service(): CashGapForecastService
+    {
+        return new CashGapForecastService();
+    }
+
+    private function context(
+        string $periodStart = '2026-01-01',
+        string $periodEnd = '2026-01-02',
+        float $openingBalance = 1_000.0,
+        string $scenario = CashGapForecastContext::SCENARIO_BASE,
+    ): CashGapForecastContext {
+        return new CashGapForecastContext(
+            periodStart: $periodStart,
+            periodEnd: $periodEnd,
+            openingBalance: $openingBalance,
+            scenario: $scenario,
+            filters: new CashGapForecastFilters(
+                organizationId: 42,
+                budgetArticleId: 'article-uuid',
+                responsibilityCenterId: 'center-uuid',
+                currency: 'RUB',
+            ),
+        );
+    }
+
+    private function item(
+        string $date,
+        string $direction,
+        string $bucket,
+        float $amount,
+        float $probability = 1.0,
+        ?int $organizationId = 42,
+        ?int $projectId = null,
+        ?int $counterpartyId = null,
+        ?string $budgetArticleId = 'article-uuid',
+        ?string $responsibilityCenterId = 'center-uuid',
+        int|string|null $sourceId = null,
+        ?string $originalDate = null,
+    ): CashGapForecastItem {
+        return new CashGapForecastItem(
+            date: $date,
+            direction: $direction,
+            bucket: $bucket,
+            amount: $amount,
+            probability: $probability,
+            organizationId: $organizationId,
+            projectId: $projectId,
+            counterpartyId: $counterpartyId,
+            budgetArticleId: $budgetArticleId,
+            responsibilityCenterId: $responsibilityCenterId,
+            currency: 'RUB',
+            sourceType: 'payment_document',
+            sourceId: $sourceId,
+            originalDate: $originalDate,
+        );
+    }
+
+    /**
+     * @return list<CashGapForecastItem>
+     */
+    private function scenarioItems(): array
+    {
+        return [
+            $this->item('2026-01-01', CashGapForecastItem::DIRECTION_INFLOW, CashGapForecastItem::BUCKET_PLANNED_INFLOW, 1_000.0),
+            $this->item('2026-01-02', CashGapForecastItem::DIRECTION_OUTFLOW, CashGapForecastItem::BUCKET_APPROVED_OUTFLOW, 800.0),
+        ];
+    }
+}
