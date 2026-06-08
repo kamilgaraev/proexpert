@@ -1,10 +1,10 @@
 # API-контракт бюджетирования БДР/БДДС
 
-Задача: PHERP-80.
+Задачи: PHERP-80, PHERP-82.
 
 Дата проектирования: 2026-06-08.
 
-Статус: спецификация будущего backend-контракта. Код и маршруты в рамках этой задачи не менялись.
+Статус: базовый бюджетный API реализован в PHERP-81; раздел лимитного контроля платежей уточнен в PHERP-82 и подготовлен для внедрения runtime endpoint в PHERP-83.
 
 ## Принципы
 
@@ -602,9 +602,99 @@ Response `data`:
 
 ## Лимиты
 
+Задача PHERP-82 уточняет production-ready контракт лимитного контроля платежей. Лимит в ProHelper является управленческим ограничением cash-flow/БДДС и не создает бухгалтерскую проводку, налоговый регистр, бухгалтерское закрытие периода, регламентированную отчетность или юридически значимый payroll. 1С остается source of truth для бухгалтерского и налогового учета; ProHelper остается source of truth для управленческого бюджета, заявок, платежного календаря, согласований, причин исключений и audit trail.
+
+### Модель расчета доступного лимита
+
+Расчет выполняется на момент бизнес-операции и должен быть объяснимым для любой заявки на платеж:
+
+```text
+total_limit_amount =
+  approved_budget_amount
+  + carryover_amount
+  + adjustment_amount
+  + exception_amount
+
+committed_amount =
+  actual_payments_amount
+  + pending_approval_amount
+  + reserved_amount
+
+projected_amount = committed_amount + requested_amount
+available_before_request = total_limit_amount - committed_amount
+available_after_request = total_limit_amount - projected_amount
+excess_amount = max(0, projected_amount - total_limit_amount)
+usage_ratio = projected_amount / total_limit_amount
+```
+
+Где:
+
+| Источник | Что включает | Правило учета |
+| --- | --- | --- |
+| `approved_budget_amount` | сумма активной approved/active версии бюджета по БДДС-статье и периоду | только утвержденный управленческий бюджет |
+| `actual_payments_amount` | завершенные платежные транзакции и сверенные банковские операции | факт денежных выплат, не бухгалтерские проводки |
+| `pending_approval_amount` | платежные документы в `submitted` и `pending_approval` | резервирует лимит на время согласования |
+| `reserved_amount` | явные резервы по платежному календарю, закупочным обязательствам или договорным графикам | уменьшает доступный лимит до оплаты |
+| `carryover_amount` | согласованный перенос неиспользованного лимита между периодами | увеличивает или уменьшает лимит нового периода |
+| `adjustment_amount` | согласованные корректировки активной версии бюджета | учитываются только после approval/apply |
+| `exception_amount` | утвержденные исключения по праву `budgeting.limits.override` | действует только в указанном разрезе и периоде |
+| `requested_amount` | сумма текущей заявки или действия | добавляется поверх уже учтенных обязательств |
+
+Разрез расчета обязателен:
+
+| Разрез | Обязательность | Назначение |
+| --- | --- | --- |
+| `organization_id` | обязательно | владелец управленческого бюджета |
+| `budget_period_id` и `period` | обязательно | год/месяц или иной закрываемый период |
+| `budget_article_id` | обязательно | БДДС-статья расхода или нейтрального движения |
+| `responsibility_center_id` | обязательно | ЦФО, отвечающий за лимит |
+| `project_id` | опционально | проектный лимит и доступ пользователя |
+| `contract_id` | опционально | договорной лимит и график оплат |
+| `counterparty_id` | опционально | контроль концентрации по поставщику/подрядчику |
+
+Если часть разреза отсутствует в платежном документе, сервис не должен подбирать ее молча из произвольного источника. Допустим только утвержденный mapping из договора, заявки, сметной строки или правила ЦФО; иначе результат проверки должен быть `blocked` с пользовательским сообщением о необходимости заполнить бюджетную аналитику.
+
+### Статусы и решения
+
+| `status` | `decision` | Когда применяется | Влияние |
+| --- | --- | --- | --- |
+| `available` | `allow` | `available_after_request >= 0` и запас выше warning threshold | действие можно продолжить |
+| `warning` | `warn` | лимит не превышен, но `usage_ratio` достиг предупреждающего порога | действие можно продолжить, в UI показывается предупреждение |
+| `exceeded` | `warn` | лимит превышен, но режим контроля `inform` | действие можно продолжить, audit фиксирует превышение |
+| `requires_exception` | `require_exception` | лимит превышен в режиме `soft_block` | нужна причина и право `budgeting.limits.override` |
+| `blocked` | `block` | нет утвержденного бюджета, не заполнена аналитика или режим `hard_block` | действие запрещено до корректировки бюджета или данных |
+
+Режимы контроля задаются на уровне лимита или политики организации:
+
+- `inform`: предупреждение без остановки операции;
+- `soft_block`: требуется исключение по праву и причина;
+- `hard_block`: требуется корректировка бюджета, перенос или изменение заявки.
+
+Warning threshold по умолчанию `0.9`. Для критичных статей допустимы более низкие пороги, например `0.75`, если это утверждено финансовой политикой организации.
+
+### Влияние на платежный flow
+
+| Точка платежного контура | Что проверяется | Ожидаемое поведение |
+| --- | --- | --- |
+| Создание черновика платежа | полнота аналитики, наличие активного периода, предварительный остаток | черновик можно сохранить, но в `problem_flags` возвращается бюджетный индикатор |
+| Отправка на согласование | лимит с учетом `pending_approval_amount` и `reserved_amount` | `available`/`warning` отправляет дальше, `requires_exception` требует причину, `blocked` останавливает |
+| Согласование платежа | пересчет в транзакции с блокировкой документа и лимитного среза | исключает гонку между несколькими заявками |
+| Постановка в календарь | дата платежа попадает в правильный `period` | перенос даты может изменить период и обязан пересчитать лимит |
+| Регистрация оплаты | факт не должен превысить уже согласованный документ без новой проверки | частичная оплата уменьшает обязательство и увеличивает факт |
+| Отмена или отклонение | снимает pending/reserve | освобождает лимит после фиксации audit-события |
+
+Платежный календарь должен показывать по каждому событию `limit_status`, `available_after_request`, `excess_amount`, `required_permission`, `requires_reason` и человекочитаемое `message`. Календарь не должен трактовать `payment_documents.paid_amount` как единственный источник БДДС-факта: факт берется из завершенных платежных транзакций и сверенных банковских операций.
+
 ### `POST /limits/check`
 
-Проверяет limit перед бизнес-операцией.
+Проверяет лимит перед бизнес-операцией. Endpoint работает как idempotent read-check: сам по себе он не меняет бюджет, платеж, резерв или audit. Сохранение результата проверки выполняет операция, которая принимает решение по заявке.
+
+Права:
+
+- `budgeting.limits.view` для проверки и просмотра результата;
+- `budgeting.limits.override` для подтверждения исключения;
+- `payments.transaction.approve` или соответствующее платежное право для операции согласования;
+- доступ к организации, проекту, ЦФО, договору и исходному платежному документу проверяется дополнительно.
 
 Request:
 
@@ -616,38 +706,111 @@ Request:
   "budget_period_id": "uuid",
   "budget_article_id": "uuid",
   "responsibility_center_id": "uuid",
+  "period": "2026-01",
   "project_id": 1001,
-  "amount": 450000,
-  "currency": "RUB"
+  "contract_id": 501,
+  "counterparty_id": 44,
+  "amount": 450000.00,
+  "currency": "RUB",
+  "payment_date": "2026-01-25",
+  "enforcement_mode": "soft_block",
+  "override": {
+    "requested": false,
+    "reason": null
+  }
 }
 ```
+
+Валидация:
+
+- `organization_id`, `budget_period_id`, `budget_article_id`, `responsibility_center_id`, `period`, `amount`, `currency` обязательны;
+- `amount` должен быть больше `0`;
+- `period` должен попадать в budget period и не быть закрытым для операции без корректировки;
+- `budget_article_id` должен быть листовой активной статьей БДДС или `both` с направлением расхода/выбытия;
+- `responsibility_center_id`, `project_id`, `contract_id`, `counterparty_id` должны принадлежать организации и быть доступны пользователю;
+- `override.reason` обязателен при `requires_exception` и должен быть бизнес-причиной, а не технической пометкой.
 
 Response `data`:
 
 ```json
 {
-  "decision": "soft_block",
-  "message": "Сумма превышает доступный лимит по статье на 120 000 ₽",
+  "status": "requires_exception",
+  "decision": "require_exception",
+  "message": "Для проведения нужна причина превышения лимита.",
+  "required_permission": "budgeting.limits.override",
+  "dimensions": {
+    "organization_id": 42,
+    "budget_period_id": "uuid",
+    "budget_article_id": "uuid",
+    "responsibility_center_id": "uuid",
+    "period": "2026-01",
+    "project_id": 1001,
+    "contract_id": 501,
+    "counterparty_id": 44
+  },
+  "operation": {
+    "operation_type": "payment_document_approval",
+    "operation_id": 118
+  },
   "limit": {
     "id": "uuid",
-    "planned_amount": 1000000,
-    "used_amount": 1120000,
-    "available_amount": -120000,
-    "enforcement_mode": "soft_block"
+    "currency": "RUB",
+    "enforcement_mode": "soft_block",
+    "warning_threshold_ratio": 0.9,
+    "has_approved_budget": true
   },
-  "required_permission": "budgeting.limits.override"
+  "sources": {
+    "approved_budget": 1000000.00,
+    "actual_payments": 620000.00,
+    "pending_approvals": 280000.00,
+    "reserves": 100000.00,
+    "carryovers": 0.00,
+    "adjustments": 0.00,
+    "exceptions": 0.00
+  },
+  "summary": {
+    "requested_amount": 450000.00,
+    "total_limit_amount": 1000000.00,
+    "committed_amount": 1000000.00,
+    "projected_amount": 1450000.00,
+    "available_before_request": 0.00,
+    "available_after_request": -450000.00,
+    "excess_amount": 450000.00,
+    "usage_ratio": 1.45
+  },
+  "audit_trail": {
+    "event_type": "budget_limit_checked",
+    "requires_reason": true,
+    "override_permission": "budgeting.limits.override"
+  }
 }
 ```
 
-Права:
+Response `meta`:
 
-- чтение лимитов: `budgeting.limits.view`;
-- управление лимитами: `budgeting.limits.manage`;
-- override: `budgeting.limits.override`.
+```json
+{
+  "calculation_version": "2026-06-08",
+  "source_snapshot_at": "2026-06-08T12:30:00+03:00",
+  "source_of_truth": {
+    "management_budget": "prohelper",
+    "accounting": "1c"
+  },
+  "warnings": [
+    "После этой заявки запас бюджета станет небольшим."
+  ]
+}
+```
 
 ### `POST /limits/decisions`
 
-Фиксирует ручное решение по превышению лимита.
+Фиксирует ручное решение по превышению лимита. Endpoint должен быть частью той же бизнес-транзакции, что и согласование платежа или перевод в календарь, чтобы исключение не существовало отдельно от действия.
+
+Права:
+
+- `budgeting.limits.override`;
+- доступ к платежному документу и всем бюджетным разрезам;
+- для hard block право override не должно обходить запрет, если политика лимита требует корректировку бюджета.
 
 Request:
 
@@ -655,9 +818,52 @@ Request:
 {
   "limit_check_id": "uuid",
   "decision": "override",
-  "reason": "Аварийная поставка материалов для критического этапа"
+  "reason": "Аварийная поставка материалов для критического этапа",
+  "operation_type": "payment_document_approval",
+  "operation_id": 118
 }
 ```
+
+Response `data`:
+
+```json
+{
+  "id": "uuid",
+  "limit_check_id": "uuid",
+  "decision": "override",
+  "reason": "Аварийная поставка материалов для критического этапа",
+  "decided_by": {
+    "id": 77,
+    "name": "Иван Петров"
+  },
+  "decided_at": "2026-01-24T15:20:00+03:00",
+  "applies_to": {
+    "operation_type": "payment_document_approval",
+    "operation_id": 118,
+    "amount": 450000.00,
+    "currency": "RUB"
+  }
+}
+```
+
+Audit trail должен сохранять:
+
+- пользователя, дату и время;
+- исходный результат проверки и все source amounts;
+- причину исключения;
+- платежный документ, проект, ЦФО, статью, период, договор и контрагента;
+- право, по которому разрешено исключение;
+- новое состояние платежной заявки или календарного события.
+
+Ошибки:
+
+| HTTP | Когда | Пользовательское сообщение |
+| --- | --- | --- |
+| `400` | несовместимые параметры операции и лимита | "Проверьте параметры бюджетного лимита." |
+| `403` | нет права на просмотр или override | "Недостаточно прав для выполнения действия." |
+| `404` | лимит, бюджетная аналитика или платежный документ недоступны | "Данные для проверки лимита не найдены." |
+| `409` | лимит изменился после проверки или период закрыт | "Лимит изменился. Повторите проверку." |
+| `422` | не заполнена аналитика, сумма или причина исключения | "Заполните данные для проверки лимита." |
 
 ## Корректировки
 
