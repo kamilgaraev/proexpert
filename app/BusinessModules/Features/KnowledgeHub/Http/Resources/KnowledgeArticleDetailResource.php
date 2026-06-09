@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\KnowledgeHub\Http\Resources;
 
+use App\BusinessModules\Features\KnowledgeHub\Services\KnowledgeHubContentSanitizer;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Support\Collection;
@@ -25,10 +26,13 @@ class KnowledgeArticleDetailResource extends JsonResource
     public function toArray(Request $request): array
     {
         $base = (new KnowledgeArticleListResource($this->resource))->toArray($request);
+        $content = $this->content !== null
+            ? KnowledgeHubContentSanitizer::clean((string) $this->content)
+            : null;
 
         return array_merge($base, [
-            'content' => $this->content,
-            'table_of_contents' => $this->tableOfContents((string) $this->content),
+            'content' => $content,
+            'table_of_contents' => $this->tableOfContents((string) $content),
             'related' => KnowledgeArticleListResource::collection($this->related ?? collect())->resolve($request),
         ]);
     }
