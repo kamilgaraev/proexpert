@@ -25,7 +25,7 @@ final class CfoCommandCenterController extends BudgetingAdminController
     {
         try {
             return AdminResponse::success(
-                $this->service->dashboard($this->inputWithContext($request)),
+                $this->service->dashboard($this->inputWithContext($request), $request->user()),
                 trans_message('budgeting.cfo_command_center.loaded'),
             );
         } catch (DomainException|InvalidArgumentException $exception) {

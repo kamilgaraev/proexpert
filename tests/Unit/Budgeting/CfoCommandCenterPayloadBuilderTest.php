@@ -150,6 +150,88 @@ final class CfoCommandCenterPayloadBuilderTest extends TestCase
         $this->assertSame('warning', $payload['summary']['health']);
     }
 
+    public function test_project_portfolio_contract_surfaces_project_kpis_and_top_problem_projects(): void
+    {
+        $aggregates = $this->emptyAggregates();
+        $aggregates['project_portfolio'] = [
+            'available' => true,
+            'summary' => [
+                'projects_count' => 3,
+                'active_projects_count' => 2,
+                'problem_projects_count' => 1,
+                'risk_projects_count' => 2,
+                'cash_gap_projects_count' => 1,
+                'budget_deviation_projects_count' => 1,
+                'top_problem_projects_count' => 1,
+                'freshness_status' => 'attention',
+                'by_currency' => [
+                    'RUB' => [
+                        'revenue' => 150000.0,
+                        'cost' => 110000.0,
+                        'gross_margin' => 40000.0,
+                        'wip_total' => 12000.0,
+                        'ftc' => 30000.0,
+                        'eac' => 140000.0,
+                        'ctc' => 45000.0,
+                        'cash_gap_signal' => -20000.0,
+                    ],
+                ],
+                'problem_flags' => ['budget_overrun'],
+                'risk_flags' => ['cash_gap_risk'],
+            ],
+        ];
+
+        $payload = $this->builder()->build(
+            filters: $this->filters(),
+            aggregates: $aggregates,
+            items: [
+                'upcoming_payments' => [],
+                'expected_inflows' => [],
+                'overdue' => [],
+                'limit_overruns' => [],
+                'plan_fact_deviations' => [],
+                'approval_blockers' => [],
+                'one_c_exchange_issues' => [],
+                'top_problem_projects' => [[
+                    'project' => ['id' => 7, 'name' => 'Business Center', 'status' => 'active'],
+                    'currency' => 'RUB',
+                    'score' => 17,
+                    'metrics' => [
+                        'revenue' => 150000.0,
+                        'cost' => 110000.0,
+                        'gross_margin' => 40000.0,
+                        'wip_total' => 12000.0,
+                        'ftc' => 30000.0,
+                        'cash_gap_signal' => -20000.0,
+                    ],
+                    'problem_flags' => ['budget_overrun'],
+                    'risk_flags' => ['cash_gap_risk'],
+                ]],
+            ],
+            sourceOfTruth: [
+                ...$this->sourceOfTruth(),
+                'project_portfolio' => ['primary' => 'project_margin_and_wip_reports'],
+            ],
+            freshness: [
+                ...$this->freshness(),
+                'project_portfolio' => ['generated_at' => '2026-06-09T10:00:00+03:00'],
+            ],
+            generatedAt: '2026-06-09T10:00:00+03:00',
+            itemLimit: 10,
+        );
+
+        $this->assertSame(3, $payload['summary']['project_portfolio']['projects_count']);
+        $this->assertSame(40000.0, $payload['summary']['project_portfolio']['by_currency']['RUB']['gross_margin']);
+        $this->assertSame(12000.0, $payload['summary']['project_portfolio']['by_currency']['RUB']['wip_total']);
+        $this->assertSame(1, $payload['summary']['project_portfolio']['cash_gap_projects_count']);
+        $this->assertContains('project_portfolio_attention', array_column($payload['problem_flags'], 'code'));
+        $this->assertContains('project_cash_gap_risk', array_column($payload['risk_flags'], 'code'));
+        $this->assertContains('review_problem_projects', array_column($payload['actions'], 'code'));
+        $this->assertSame(10, $payload['meta']['item_limits']['top_problem_projects']);
+        $this->assertSame(7, $payload['items']['top_problem_projects'][0]['project']['id']);
+        $this->assertSame('project_margin_and_wip_reports', $payload['meta']['source_of_truth']['project_portfolio']['primary']);
+    }
+
     private function builder(): CfoCommandCenterPayloadBuilder
     {
         return new CfoCommandCenterPayloadBuilder();

@@ -10,6 +10,7 @@ use App\BusinessModules\Features\Budgeting\Http\Controllers\BudgetVersionControl
 use App\BusinessModules\Features\Budgeting\Http\Controllers\CashGapForecastController;
 use App\BusinessModules\Features\Budgeting\Http\Controllers\CfoCommandCenterController;
 use App\BusinessModules\Features\Budgeting\Http\Controllers\PlanFactReportController;
+use App\BusinessModules\Features\Budgeting\Http\Controllers\ProjectPortfolioDashboardController;
 use App\BusinessModules\Features\Budgeting\Http\Controllers\ProjectMarginReportController;
 use App\BusinessModules\Features\Budgeting\Http\Controllers\WipForecastController;
 use App\Support\Routing\AdminRouteStack;
@@ -30,6 +31,10 @@ Route::prefix('api/v1/admin/budgeting')
         Route::get('/cfo-command-center', [CfoCommandCenterController::class, 'show'])
             ->middleware('authorize:budgeting.cfo.view')
             ->name('cfo_command_center.show');
+
+        Route::get('/project-portfolio-dashboard', [ProjectPortfolioDashboardController::class, 'show'])
+            ->middleware('authorize:budgeting.portfolio_dashboard.view')
+            ->name('project_portfolio_dashboard.show');
 
         Route::get('/plan-fact', [PlanFactReportController::class, 'index'])
             ->middleware('authorize:budgeting.plan_fact.view')

@@ -43,6 +43,7 @@
     "budgeting.limits.manage",
     "budgeting.limits.override",
     "budgeting.cash_gap.view",
+    "budgeting.portfolio_dashboard.view",
     "budgeting.plan_fact.view",
     "budgeting.plan_fact.export",
     "budgeting.project_margin.view",

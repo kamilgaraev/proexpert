@@ -45,6 +45,7 @@ final class CfoCommandCenterPayloadBuilder
                     'plan_fact_deviations' => $itemLimit,
                     'approval_blockers' => $itemLimit,
                     'one_c_exchange_issues' => $itemLimit,
+                    'top_problem_projects' => $itemLimit,
                 ],
                 'source_of_truth' => $sourceOfTruth,
                 'freshness' => $freshness,
@@ -65,6 +66,7 @@ final class CfoCommandCenterPayloadBuilder
         $planFact = $aggregates['plan_fact']['summary'] ?? [];
         $approvals = $aggregates['approvals']['summary'] ?? [];
         $oneCExchange = $aggregates['one_c_exchange']['summary'] ?? [];
+        $projectPortfolio = $aggregates['project_portfolio']['summary'] ?? [];
 
         return [
             'health' => $this->overallHealth($problemFlags, $riskFlags),
@@ -118,6 +120,20 @@ final class CfoCommandCenterPayloadBuilder
                 'problem_count' => (int) ($oneCExchange['problem_count'] ?? 0),
                 'open_conflicts_count' => (int) ($oneCExchange['open_conflicts_count'] ?? 0),
             ],
+            'project_portfolio' => [
+                'available' => (bool) ($aggregates['project_portfolio']['available'] ?? false),
+                'projects_count' => (int) ($projectPortfolio['projects_count'] ?? 0),
+                'active_projects_count' => (int) ($projectPortfolio['active_projects_count'] ?? 0),
+                'problem_projects_count' => (int) ($projectPortfolio['problem_projects_count'] ?? 0),
+                'risk_projects_count' => (int) ($projectPortfolio['risk_projects_count'] ?? 0),
+                'cash_gap_projects_count' => (int) ($projectPortfolio['cash_gap_projects_count'] ?? 0),
+                'budget_deviation_projects_count' => (int) ($projectPortfolio['budget_deviation_projects_count'] ?? 0),
+                'top_problem_projects_count' => (int) ($projectPortfolio['top_problem_projects_count'] ?? 0),
+                'freshness_status' => $projectPortfolio['freshness_status'] ?? 'unknown',
+                'by_currency' => $projectPortfolio['by_currency'] ?? [],
+                'problem_flags' => $projectPortfolio['problem_flags'] ?? [],
+                'risk_flags' => $projectPortfolio['risk_flags'] ?? [],
+            ],
             'problem_flags_count' => count($problemFlags),
             'risk_flags_count' => count($riskFlags),
             'actions_count' => count($actions),
@@ -132,6 +148,7 @@ final class CfoCommandCenterPayloadBuilder
         $planFact = $aggregates['plan_fact'] ?? [];
         $approvals = $aggregates['approvals']['summary'] ?? [];
         $oneCExchange = $aggregates['one_c_exchange']['summary'] ?? [];
+        $projectPortfolio = $aggregates['project_portfolio']['summary'] ?? [];
 
         if (($cashGap['available'] ?? false) === false || ($cashGap['unavailable_currencies'] ?? []) !== []) {
             $flags[] = $this->flag(
@@ -162,6 +179,28 @@ final class CfoCommandCenterPayloadBuilder
                 [
                     'requires_exception_count' => (int) ($limits['requires_exception_count'] ?? 0),
                     'exceeded_count' => (int) ($limits['exceeded_count'] ?? 0),
+                ],
+            );
+        }
+
+        if (($aggregates['project_portfolio']['available'] ?? true) === false) {
+            $flags[] = $this->flag(
+                'project_portfolio_unavailable',
+                'warning',
+                'budgeting.cfo_command_center.flags.project_portfolio_unavailable',
+                'project_portfolio',
+            );
+        }
+
+        if ((int) ($projectPortfolio['problem_projects_count'] ?? 0) > 0) {
+            $flags[] = $this->flag(
+                'project_portfolio_attention',
+                'high',
+                'budgeting.cfo_command_center.flags.project_portfolio_attention',
+                'project_portfolio',
+                [
+                    'problem_projects_count' => (int) ($projectPortfolio['problem_projects_count'] ?? 0),
+                    'problem_flags' => $projectPortfolio['problem_flags'] ?? [],
                 ],
             );
         }
@@ -207,6 +246,7 @@ final class CfoCommandCenterPayloadBuilder
         $cashGap = $aggregates['cash_gap'] ?? [];
         $calendar = $aggregates['payment_calendar']['summary'] ?? [];
         $planFact = $aggregates['plan_fact']['summary'] ?? [];
+        $projectPortfolio = $aggregates['project_portfolio']['summary'] ?? [];
 
         if ((bool) ($cashGap['has_gap'] ?? false)) {
             $flags[] = $this->flag(
@@ -217,6 +257,31 @@ final class CfoCommandCenterPayloadBuilder
                 [
                     'first_gap_date' => $cashGap['first_gap_date'] ?? null,
                     'max_gap_amount' => $cashGap['max_gap_amount'] ?? 0.0,
+                ],
+            );
+        }
+
+        if ((int) ($projectPortfolio['cash_gap_projects_count'] ?? 0) > 0) {
+            $flags[] = $this->flag(
+                'project_cash_gap_risk',
+                'high',
+                'budgeting.cfo_command_center.flags.project_cash_gap_risk',
+                'project_portfolio',
+                [
+                    'cash_gap_projects_count' => (int) ($projectPortfolio['cash_gap_projects_count'] ?? 0),
+                ],
+            );
+        }
+
+        if ((int) ($projectPortfolio['risk_projects_count'] ?? 0) > 0) {
+            $flags[] = $this->flag(
+                'project_portfolio_risk',
+                'high',
+                'budgeting.cfo_command_center.flags.project_portfolio_risk',
+                'project_portfolio',
+                [
+                    'risk_projects_count' => (int) ($projectPortfolio['risk_projects_count'] ?? 0),
+                    'risk_flags' => $projectPortfolio['risk_flags'] ?? [],
                 ],
             );
         }
@@ -260,6 +325,7 @@ final class CfoCommandCenterPayloadBuilder
         $planFact = $aggregates['plan_fact']['summary'] ?? [];
         $approvals = $aggregates['approvals']['summary'] ?? [];
         $oneCExchange = $aggregates['one_c_exchange']['summary'] ?? [];
+        $projectPortfolio = $aggregates['project_portfolio']['summary'] ?? [];
 
         if ((bool) ($cashGap['has_gap'] ?? false)) {
             $actions[] = $this->action(
@@ -293,6 +359,26 @@ final class CfoCommandCenterPayloadBuilder
                 '/payments?tab=approvals',
                 null,
                 (int) $approvals['pending_count'],
+            );
+        }
+
+        if (
+            (int) ($projectPortfolio['top_problem_projects_count'] ?? 0) > 0
+            || (int) ($projectPortfolio['problem_projects_count'] ?? 0) > 0
+            || (int) ($projectPortfolio['risk_projects_count'] ?? 0) > 0
+        ) {
+            $actions[] = $this->action(
+                'review_problem_projects',
+                'high',
+                'budgeting.cfo_command_center.actions.review_problem_projects',
+                'project_portfolio',
+                '/budgeting/cfo-command-center?focus=problem_projects',
+                null,
+                max(
+                    (int) ($projectPortfolio['top_problem_projects_count'] ?? 0),
+                    (int) ($projectPortfolio['problem_projects_count'] ?? 0),
+                    (int) ($projectPortfolio['risk_projects_count'] ?? 0),
+                ),
             );
         }
 

@@ -6,6 +6,7 @@ namespace Tests\Unit\Budgeting;
 
 use App\BusinessModules\Features\Budgeting\DTOs\CfoCommandCenterFilters;
 use App\BusinessModules\Features\Budgeting\DTOs\PlanFactReportFilters;
+use App\BusinessModules\Features\Budgeting\Http\Requests\CfoCommandCenterRequest;
 use PHPUnit\Framework\TestCase;
 
 final class CfoCommandCenterFiltersTest extends TestCase
@@ -50,5 +51,28 @@ final class CfoCommandCenterFiltersTest extends TestCase
         $this->assertSame('scenario-uuid', $planFact['scenario_uuid']);
         $this->assertSame(PlanFactReportFilters::DEFAULT_GROUP_BY, $planFact['group_by']);
         $this->assertSame('center-uuid', $filters->toArray()['responsibility_center_id']);
+    }
+
+    public function test_cfo_command_center_accepts_project_portfolio_filters(): void
+    {
+        $rules = (new CfoCommandCenterRequest())->rules();
+        $filters = new CfoCommandCenterFilters(
+            organizationId: 42,
+            periodStart: '2026-06-01',
+            periodEnd: '2026-06-30',
+            projectManagerUserId: 31,
+            projectStatus: 'active',
+            projectType: 'commercial',
+            costCategoryId: 9,
+        );
+
+        $this->assertArrayHasKey('project_manager_user_id', $rules);
+        $this->assertArrayHasKey('project_status', $rules);
+        $this->assertArrayHasKey('project_type', $rules);
+        $this->assertArrayHasKey('cost_category_id', $rules);
+        $this->assertSame(31, $filters->toArray()['project_manager_user_id']);
+        $this->assertSame('active', $filters->toArray()['project_status']);
+        $this->assertSame('commercial', $filters->toArray()['project_type']);
+        $this->assertSame(9, $filters->toArray()['cost_category_id']);
     }
 }

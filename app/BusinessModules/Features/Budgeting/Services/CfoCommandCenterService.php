@@ -10,6 +10,8 @@ use App\BusinessModules\Core\Payments\Models\PaymentApproval;
 use App\BusinessModules\Core\Payments\Services\PaymentCalendarSourceService;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastContext;
 use App\BusinessModules\Features\Budgeting\DTOs\CfoCommandCenterFilters;
+use App\BusinessModules\Features\Budgeting\DTOs\ProjectMarginReportFilters;
+use App\BusinessModules\Features\Budgeting\DTOs\WipForecastReportFilters;
 use App\BusinessModules\Features\Budgeting\Models\BudgetArticle;
 use App\BusinessModules\Features\Budgeting\Models\BudgetLimitCheck;
 use App\BusinessModules\Features\Budgeting\Models\BudgetLimitReservation;
@@ -19,6 +21,7 @@ use App\Models\Contractor;
 use App\Models\OneCExchangeConflict;
 use App\Models\OneCExchangeOperation;
 use App\Models\Project;
+use App\Models\User;
 use Carbon\CarbonImmutable;
 use DateTimeInterface;
 use DomainException;
@@ -46,11 +49,14 @@ final class CfoCommandCenterService
         private readonly CashGapOpeningBalanceService $openingBalanceService,
         private readonly CashGapForecastService $cashGapForecastService,
         private readonly PlanFactReportService $planFactReportService,
+        private readonly ProjectMarginReportService $projectMarginReportService,
+        private readonly WipForecastReportService $wipForecastReportService,
+        private readonly CfoProjectPortfolioAggregator $projectPortfolioAggregator,
         private readonly CfoCommandCenterPayloadBuilder $payloadBuilder,
     ) {
     }
 
-    public function dashboard(array $input): array
+    public function dashboard(array $input, ?User $user = null): array
     {
         $filters = $this->resolveFilters($input);
         $generatedAt = now()->toIso8601String();
@@ -62,6 +68,13 @@ final class CfoCommandCenterService
         $planFact = $this->planFactSection($filters);
         $approvals = $this->approvalsSection($filters);
         $oneCExchange = $this->oneCExchangeSection($filters);
+        $projectPortfolio = $this->projectPortfolioSection(
+            filters: $filters,
+            calendarItems: $calendarItems,
+            planFactItems: is_array($planFact['items'] ?? null) ? $planFact['items'] : [],
+            user: $user,
+            generatedAt: $generatedAt,
+        );
 
         $items = [
             'upcoming_payments' => $this->calendarItems(
@@ -83,9 +96,10 @@ final class CfoCommandCenterService
             'plan_fact_deviations' => $planFact['items'],
             'approval_blockers' => $approvals['items'],
             'one_c_exchange_issues' => $oneCExchange['items'],
+            'top_problem_projects' => $projectPortfolio['items'],
         ];
 
-        unset($limits['items'], $planFact['items'], $approvals['items'], $oneCExchange['items']);
+        unset($limits['items'], $planFact['items'], $approvals['items'], $oneCExchange['items'], $projectPortfolio['items']);
 
         return $this->payloadBuilder->build(
             filters: $filters->toArray(),
@@ -96,10 +110,11 @@ final class CfoCommandCenterService
                 'plan_fact' => $planFact,
                 'approvals' => $approvals,
                 'one_c_exchange' => $oneCExchange,
+                'project_portfolio' => $projectPortfolio,
             ],
             items: $items,
             sourceOfTruth: $this->sourceOfTruth(),
-            freshness: $this->freshness($generatedAt, $calendar, $cashGap, $limits, $planFact, $approvals, $oneCExchange),
+            freshness: $this->freshness($generatedAt, $calendar, $cashGap, $limits, $planFact, $approvals, $oneCExchange, $projectPortfolio),
             generatedAt: $generatedAt,
             itemLimit: $filters->itemLimit,
         );
@@ -143,6 +158,10 @@ final class CfoCommandCenterService
             periodStart: $periodStart,
             periodEnd: $periodEnd,
             projectId: $projectId,
+            projectManagerUserId: $this->nullablePositiveInt($input['project_manager_user_id'] ?? null),
+            projectStatus: $this->nullableString($input['project_status'] ?? null),
+            projectType: $this->nullableString($input['project_type'] ?? null),
+            costCategoryId: $this->nullablePositiveInt($input['cost_category_id'] ?? null),
             responsibilityCenterId: $responsibilityCenterId,
             responsibilityCenterUuid: $responsibilityCenterUuid,
             budgetArticleId: $budgetArticleId,
@@ -468,6 +487,138 @@ final class CfoCommandCenterService
 
             return $this->unavailablePlanFact(trans_message('budgeting.plan_fact.load_error'));
         }
+    }
+
+    private function projectPortfolioSection(
+        CfoCommandCenterFilters $filters,
+        array $calendarItems,
+        array $planFactItems,
+        ?User $user,
+        string $generatedAt,
+    ): array {
+        try {
+            $projects = $this->portfolioProjects($filters);
+            $marginReport = $this->projectMarginReportService->report($this->projectPortfolioMarginInput($filters), $user);
+            $wipReport = $this->wipForecastReportService->report($this->projectPortfolioWipInput($filters), $user);
+            $portfolio = $this->projectPortfolioAggregator->build(
+                filters: $filters,
+                projects: $projects,
+                marginReport: $marginReport,
+                wipReport: $wipReport,
+                planFactItems: $planFactItems,
+                calendarItems: $calendarItems,
+                generatedAt: $generatedAt,
+                itemLimit: $filters->itemLimit,
+            );
+
+            return [
+                'available' => (bool) ($portfolio['available'] ?? true),
+                'summary' => $portfolio['summary'] ?? [],
+                'filters' => [
+                    'project_manager_user_id' => $filters->projectManagerUserId,
+                    'project_status' => $filters->projectStatus,
+                    'project_type' => $filters->projectType,
+                    'cost_category_id' => $filters->costCategoryId,
+                ],
+                'meta' => $portfolio['meta'] ?? [],
+                'items' => $portfolio['items'] ?? [],
+            ];
+        } catch (DomainException|InvalidArgumentException $exception) {
+            return $this->unavailableProjectPortfolio($exception->getMessage());
+        } catch (Throwable $exception) {
+            Log::error('budgeting.cfo_command_center.project_portfolio_failed', [
+                'organization_id' => $filters->organizationId,
+                'exception_class' => $exception::class,
+            ]);
+
+            return $this->unavailableProjectPortfolio(trans_message('budgeting.cfo_command_center.project_portfolio.unavailable'));
+        }
+    }
+
+    private function portfolioProjects(CfoCommandCenterFilters $filters): array
+    {
+        return Project::query()
+            ->accessibleByOrganization($filters->organizationId)
+            ->when($filters->projectId !== null, fn (Builder $query): Builder => $query->whereKey($filters->projectId))
+            ->when($filters->projectStatus !== null, fn (Builder $query): Builder => $query->where('status', $filters->projectStatus))
+            ->when($filters->projectType !== null, fn (Builder $query): Builder => $query->where('additional_info->project_type', $filters->projectType))
+            ->when($filters->costCategoryId !== null, fn (Builder $query): Builder => $query->where('cost_category_id', $filters->costCategoryId))
+            ->when($filters->projectManagerUserId !== null, function (Builder $query) use ($filters): void {
+                $query->whereHas('users', function (Builder $userQuery) use ($filters): void {
+                    $userQuery
+                        ->whereKey($filters->projectManagerUserId)
+                        ->where('project_user.role', 'project_manager')
+                        ->where('project_user.is_active', true);
+                });
+            })
+            ->with(['users' => function ($query): void {
+                $query
+                    ->wherePivot('role', 'project_manager')
+                    ->wherePivot('is_active', true)
+                    ->select('users.id', 'users.name', 'users.email');
+            }])
+            ->orderBy('name')
+            ->get(['id', 'name', 'status', 'cost_category_id', 'additional_info'])
+            ->mapWithKeys(fn (Project $project): array => [
+                (int) $project->id => $this->portfolioProject($project),
+            ])
+            ->all();
+    }
+
+    private function portfolioProject(Project $project): array
+    {
+        $manager = $project->users->first();
+        $additionalInfo = is_array($project->additional_info) ? $project->additional_info : [];
+
+        return [
+            'id' => (int) $project->id,
+            'name' => (string) $project->name,
+            'status' => $project->status,
+            'project_type' => $this->nullableString($additionalInfo['project_type'] ?? null),
+            'cost_category_id' => $project->cost_category_id === null ? null : (int) $project->cost_category_id,
+            'project_manager' => $manager instanceof User ? [
+                'id' => (int) $manager->id,
+                'name' => (string) ($manager->name ?? $manager->email ?? ''),
+            ] : null,
+        ];
+    }
+
+    private function projectPortfolioMarginInput(CfoCommandCenterFilters $filters): array
+    {
+        return $this->filledInput([
+            'organization_id' => $filters->organizationId,
+            'period_start' => $filters->periodStart,
+            'period_end' => $filters->periodEnd,
+            'project_id' => $filters->projectId,
+            'responsibility_center_id' => $filters->responsibilityCenterUuid ?? $filters->responsibilityCenterId,
+            'budget_article_id' => $filters->budgetArticleUuid ?? $filters->budgetArticleId,
+            'counterparty_id' => $filters->counterpartyId,
+            'currency' => $filters->currency,
+            'budget_version_uuid' => $filters->budgetVersionUuid,
+            'scenario_uuid' => $filters->scenarioUuid,
+            'group_by' => [
+                ProjectMarginReportFilters::GROUP_PROJECT,
+                ProjectMarginReportFilters::GROUP_CURRENCY,
+            ],
+        ]);
+    }
+
+    private function projectPortfolioWipInput(CfoCommandCenterFilters $filters): array
+    {
+        return $this->filledInput([
+            'organization_id' => $filters->organizationId,
+            'period_start' => $filters->periodStart,
+            'period_end' => $filters->periodEnd,
+            'as_of_date' => $filters->periodEnd,
+            'project_id' => $filters->projectId,
+            'currency' => $filters->currency,
+            'budget_version_uuid' => $filters->budgetVersionUuid,
+            'scenario_uuid' => $filters->scenarioUuid,
+            'group_by' => [
+                WipForecastReportFilters::GROUP_PROJECT,
+                WipForecastReportFilters::GROUP_CURRENCY,
+            ],
+        ]);
     }
 
     private function approvalsSection(CfoCommandCenterFilters $filters): array
@@ -980,6 +1131,30 @@ final class CfoCommandCenterService
         ];
     }
 
+    private function unavailableProjectPortfolio(string $reason): array
+    {
+        return [
+            'available' => false,
+            'summary' => [
+                'projects_count' => 0,
+                'active_projects_count' => 0,
+                'problem_projects_count' => 0,
+                'risk_projects_count' => 0,
+                'cash_gap_projects_count' => 0,
+                'budget_deviation_projects_count' => 0,
+                'top_problem_projects_count' => 0,
+                'freshness_status' => 'unavailable',
+                'by_currency' => [],
+                'problem_flags' => ['project_portfolio_unavailable'],
+                'risk_flags' => [],
+                'unavailable_reason' => $reason,
+            ],
+            'warnings' => [$reason],
+            'meta' => [],
+            'items' => [],
+        ];
+    }
+
     private function sourceOfTruth(): array
     {
         return [
@@ -1005,6 +1180,12 @@ final class CfoCommandCenterService
                 'primary' => 'prohelper_1c_exchange_monitoring',
                 'scope' => 'integration_health_only',
             ],
+            'project_portfolio' => [
+                'primary' => 'project_margin_and_wip_reports',
+                'cash_gap_signal' => 'payment_calendar_project_cash_flow',
+                'budget_deviation' => 'plan_fact_report',
+                'accounting' => 'management_only',
+            ],
         ];
     }
 
@@ -1016,6 +1197,7 @@ final class CfoCommandCenterService
         array $planFact,
         array $approvals,
         array $oneCExchange,
+        array $projectPortfolio,
     ): array {
         return [
             'payment_calendar' => [
@@ -1046,6 +1228,14 @@ final class CfoCommandCenterService
                 'last_success_at' => $oneCExchange['summary']['last_success_at'] ?? null,
                 'last_failure_at' => $oneCExchange['summary']['last_failure_at'] ?? null,
                 'filter_scope' => 'organization',
+            ],
+            'project_portfolio' => [
+                'generated_at' => $projectPortfolio['summary']['generated_at']
+                    ?? $projectPortfolio['meta']['generated_at']
+                    ?? $generatedAt,
+                'available' => (bool) ($projectPortfolio['available'] ?? false),
+                'freshness_status' => $projectPortfolio['summary']['freshness_status'] ?? 'unknown',
+                'top_problem_projects_count' => (int) ($projectPortfolio['summary']['top_problem_projects_count'] ?? 0),
             ],
         ];
     }
@@ -1268,6 +1458,25 @@ final class CfoCommandCenterService
         }
 
         return trim((string) $value) === '' ? null : trim((string) $value);
+    }
+
+    private function nullablePositiveInt(mixed $value): ?int
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        $value = (int) $value;
+
+        return $value > 0 ? $value : null;
+    }
+
+    private function filledInput(array $input): array
+    {
+        return array_filter(
+            $input,
+            static fn (mixed $value): bool => $value !== null && $value !== '',
+        );
     }
 
     private function minDate(string $left, string $right): string

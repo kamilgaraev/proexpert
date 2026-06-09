@@ -70,6 +70,7 @@
       "budgeting.cfo.view",
       "budgeting.limits.view",
       "budgeting.cash_gap.view",
+      "budgeting.portfolio_dashboard.view",
       "budgeting.plan_fact.view",
       "budgeting.project_margin.view",
       "budgeting.wip_forecast.view",
