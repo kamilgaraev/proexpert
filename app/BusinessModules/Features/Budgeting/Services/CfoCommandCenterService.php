@@ -483,7 +483,8 @@ final class CfoCommandCenterService
         $this->applyPaymentDocumentFilters($base, $filters);
 
         $roleCounts = (clone $base)
-            ->selectRaw('payment_approvals.approval_role AS approval_role, COUNT(*) AS count')
+            ->select('payment_approvals.approval_role')
+            ->selectRaw('COUNT(*) AS count')
             ->groupBy('payment_approvals.approval_role')
             ->pluck('count', 'approval_role')
             ->map(static fn (mixed $count): int => (int) $count)
