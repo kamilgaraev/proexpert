@@ -13,6 +13,7 @@ return [
     App\BusinessModules\Features\BudgetEstimates\BudgetEstimatesServiceProvider::class,
     App\BusinessModules\Features\Budgeting\BudgetingServiceProvider::class,
     App\BusinessModules\Features\NormativeReferences\NormativeReferencesServiceProvider::class,
+    App\BusinessModules\Features\KnowledgeHub\KnowledgeHubServiceProvider::class,
     App\BusinessModules\Features\Notifications\NotificationServiceProvider::class,
     App\BusinessModules\Features\Procurement\ProcurementServiceProvider::class,
     App\BusinessModules\Features\ExecutiveDocumentation\ExecutiveDocumentationServiceProvider::class,

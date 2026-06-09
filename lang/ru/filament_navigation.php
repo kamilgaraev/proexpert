@@ -10,6 +10,7 @@ return [
         'billing' => 'Биллинг',
         'users' => 'Пользователи',
         'blog' => 'Блог CMS',
+        'knowledge_hub' => 'База знаний',
         'support' => 'Поддержка',
         'notifications' => 'Уведомления',
         'audit' => 'Аудит',

@@ -133,6 +133,8 @@ Route::prefix('landing')->name('landing.')->group(function () {
             require __DIR__ . '/api/v1/landing/organization-profile.php';
 
             require __DIR__ . '/api/v1/landing/support.php';
+
+            require __DIR__ . '/api/v1/landing/knowledge_hub.php';
             
             // Подключение маршрутов приглашений подрядчиков для лендинга/ЛК
             Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context'])

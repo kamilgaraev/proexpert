@@ -70,6 +70,12 @@ final class FilamentPermission
     public const BLOG_REVISIONS_RESTORE = 'system_admin.blog.revisions.restore';
     public const BLOG_PREVIEW_VIEW = 'system_admin.blog.preview.view';
 
+    public const KNOWLEDGE_HUB_ARTICLES_VIEW = 'system_admin.knowledge_hub.articles.view';
+    public const KNOWLEDGE_HUB_ARTICLES_CREATE = 'system_admin.knowledge_hub.articles.create';
+    public const KNOWLEDGE_HUB_ARTICLES_UPDATE = 'system_admin.knowledge_hub.articles.update';
+    public const KNOWLEDGE_HUB_ARTICLES_DELETE = 'system_admin.knowledge_hub.articles.delete';
+    public const KNOWLEDGE_HUB_CATEGORIES_MANAGE = 'system_admin.knowledge_hub.categories.manage';
+
     public const NOTIFICATIONS_TEMPLATES_VIEW = 'system_admin.notifications.templates.view';
     public const NOTIFICATIONS_TEMPLATES_CREATE = 'system_admin.notifications.templates.create';
     public const NOTIFICATIONS_TEMPLATES_UPDATE = 'system_admin.notifications.templates.update';

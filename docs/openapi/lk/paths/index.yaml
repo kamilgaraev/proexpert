@@ -96,6 +96,16 @@
   $ref: './modules.yaml#/~1modules~1billing'
 /modules/billing/history:
   $ref: './modules.yaml#/~1modules~1billing~1history'
+/knowledge-hub/overview:
+  $ref: './knowledge_hub.yaml#/~1knowledge-hub~1overview'
+/knowledge-hub/articles:
+  $ref: './knowledge_hub.yaml#/~1knowledge-hub~1articles'
+/knowledge-hub/articles/{slug}:
+  $ref: './knowledge_hub.yaml#/~1knowledge-hub~1articles~1{slug}'
+/knowledge-hub/changelog:
+  $ref: './knowledge_hub.yaml#/~1knowledge-hub~1changelog'
+/knowledge-hub/changelog/{slug}:
+  $ref: './knowledge_hub.yaml#/~1knowledge-hub~1changelog~1{slug}'
 /multi-organization/check-availability:
   $ref: './multi_organization.yaml#/~1multi-organization~1check-availability'
 /multi-organization/hierarchy:
