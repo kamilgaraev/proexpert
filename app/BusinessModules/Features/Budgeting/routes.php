@@ -8,6 +8,7 @@ use App\BusinessModules\Features\Budgeting\Http\Controllers\BudgetLineController
 use App\BusinessModules\Features\Budgeting\Http\Controllers\BudgetMappingController;
 use App\BusinessModules\Features\Budgeting\Http\Controllers\BudgetVersionController;
 use App\BusinessModules\Features\Budgeting\Http\Controllers\CashGapForecastController;
+use App\BusinessModules\Features\Budgeting\Http\Controllers\CfoCommandCenterController;
 use App\BusinessModules\Features\Budgeting\Http\Controllers\PlanFactReportController;
 use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
@@ -23,6 +24,10 @@ Route::prefix('api/v1/admin/budgeting')
         Route::match(['get', 'post'], '/cash-gap/forecast', [CashGapForecastController::class, 'forecast'])
             ->middleware('authorize:budgeting.cash_gap.view')
             ->name('cash_gap.forecast');
+
+        Route::get('/cfo-command-center', [CfoCommandCenterController::class, 'show'])
+            ->middleware('authorize:budgeting.cfo.view')
+            ->name('cfo_command_center.show');
 
         Route::get('/plan-fact', [PlanFactReportController::class, 'index'])
             ->middleware('authorize:budgeting.plan_fact.view')

@@ -90,6 +90,39 @@ final class PlanFactPermissionContractTest extends TestCase
         $this->assertNotContains('budgeting.periods.reopen', $adminViewer);
     }
 
+    public function test_cfo_command_center_reuses_translated_cfo_view_permission(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $routes = (string) file_get_contents($root . '/app/BusinessModules/Features/Budgeting/routes.php');
+        $manifest = json_decode(
+            (string) file_get_contents($root . '/config/ModuleList/features/budgeting.json'),
+            true,
+            512,
+            JSON_THROW_ON_ERROR
+        );
+        $translations = require $root . '/lang/ru/permissions.php';
+        $financeAdmin = $this->rolePermissions($root . '/config/RoleDefinitions/admin/finance_admin.json');
+        $adminViewer = $this->rolePermissions($root . '/config/RoleDefinitions/admin/admin_viewer.json');
+
+        $this->assertStringContainsString('/cfo-command-center', $routes);
+        $this->assertStringContainsString('authorize:budgeting.cfo.view', $routes);
+        $this->assertContains('budgeting.cfo.view', $manifest['permissions']);
+        $this->assertSame('Просмотр ЦФО', $translations['values']['budgeting.cfo.view']);
+        $this->assertContains('budgeting.cfo.view', $financeAdmin);
+        $this->assertContains('budgeting.cfo.view', $adminViewer);
+    }
+
+    public function test_cfo_command_center_approval_role_labels_are_readable(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $translations = require $root . '/lang/ru/budgeting.php';
+        $roles = $translations['cfo_command_center']['approval_roles'] ?? [];
+
+        $this->assertSame('Финансовый директор', $roles['financial_director'] ?? null);
+        $this->assertSame('Главный бухгалтер', $roles['chief_accountant'] ?? null);
+        $this->assertSame('Участник согласования', $roles['unknown'] ?? null);
+    }
+
     private function rolePermissions(string $path): array
     {
         $role = json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);

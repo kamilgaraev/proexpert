@@ -16,6 +16,8 @@ use App\BusinessModules\Features\Budgeting\Services\BudgetWorkflowService;
 use App\BusinessModules\Features\Budgeting\Services\CashGapForecastReadService;
 use App\BusinessModules\Features\Budgeting\Services\CashGapForecastService;
 use App\BusinessModules\Features\Budgeting\Services\CashGapOpeningBalanceService;
+use App\BusinessModules\Features\Budgeting\Services\CfoCommandCenterPayloadBuilder;
+use App\BusinessModules\Features\Budgeting\Services\CfoCommandCenterService;
 use Illuminate\Support\ServiceProvider;
 
 final class BudgetingServiceProvider extends ServiceProvider
@@ -34,6 +36,8 @@ final class BudgetingServiceProvider extends ServiceProvider
         $this->app->singleton(CashGapForecastService::class);
         $this->app->singleton(CashGapOpeningBalanceService::class);
         $this->app->singleton(CashGapForecastReadService::class);
+        $this->app->singleton(CfoCommandCenterPayloadBuilder::class);
+        $this->app->singleton(CfoCommandCenterService::class);
     }
 
     public function boot(): void
