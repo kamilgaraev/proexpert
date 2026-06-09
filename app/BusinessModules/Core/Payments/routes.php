@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\BusinessModules\Core\Payments\Http\Controllers\CounterpartyAccountController;
 use App\BusinessModules\Core\Payments\Http\Controllers\BankStatementImportController;
+use App\BusinessModules\Core\Payments\Http\Controllers\CfoDashboardController;
 use App\BusinessModules\Core\Payments\Http\Controllers\DashboardController;
 use App\BusinessModules\Core\Payments\Http\Controllers\ExportController;
 use App\BusinessModules\Core\Payments\Http\Controllers\OffsetController;
@@ -29,6 +30,10 @@ Route::prefix('api/v1/admin/payments')
         Route::get('/dashboard', [DashboardController::class, 'index'])
             ->middleware('authorize:payments.dashboard.view')
             ->name('dashboard');
+
+        Route::get('/cfo-dashboard', [CfoDashboardController::class, 'index'])
+            ->middleware('authorize:payments.dashboard.view')
+            ->name('cfo-dashboard');
 
         Route::get('/templates', [PaymentTemplatesController::class, 'index'])
             ->middleware('authorize:payments.invoice.view')
