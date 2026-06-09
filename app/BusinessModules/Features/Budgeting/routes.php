@@ -11,6 +11,7 @@ use App\BusinessModules\Features\Budgeting\Http\Controllers\CashGapForecastContr
 use App\BusinessModules\Features\Budgeting\Http\Controllers\CfoCommandCenterController;
 use App\BusinessModules\Features\Budgeting\Http\Controllers\PlanFactReportController;
 use App\BusinessModules\Features\Budgeting\Http\Controllers\ProjectMarginReportController;
+use App\BusinessModules\Features\Budgeting\Http\Controllers\WipForecastController;
 use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
 
@@ -43,6 +44,40 @@ Route::prefix('api/v1/admin/budgeting')
         Route::get('/project-margin/drill-down', [ProjectMarginReportController::class, 'drillDown'])
             ->middleware('authorize:budgeting.project_margin.view')
             ->name('project_margin.drill_down');
+
+        Route::get('/wip-forecast', [WipForecastController::class, 'index'])
+            ->middleware('authorize:budgeting.wip_forecast.view')
+            ->name('wip_forecast.index');
+        Route::get('/wip-forecast/drill-down', [WipForecastController::class, 'drillDown'])
+            ->middleware('authorize:budgeting.wip_forecast.view')
+            ->name('wip_forecast.drill_down');
+        Route::get('/wip-forecast/versions', [WipForecastController::class, 'versions'])
+            ->middleware('authorize:budgeting.wip_forecast.view')
+            ->name('wip_forecast.versions.index');
+        Route::post('/wip-forecast/versions', [WipForecastController::class, 'storeVersion'])
+            ->middleware('authorize:budgeting.wip_forecast.create_version')
+            ->name('wip_forecast.versions.store');
+        Route::get('/wip-forecast/versions/{versionUuid}', [WipForecastController::class, 'showVersion'])
+            ->middleware('authorize:budgeting.wip_forecast.view')
+            ->name('wip_forecast.versions.show');
+        Route::patch('/wip-forecast/versions/{versionUuid}', [WipForecastController::class, 'updateVersion'])
+            ->middleware('authorize:budgeting.wip_forecast.update_version')
+            ->name('wip_forecast.versions.update');
+        Route::post('/wip-forecast/versions/{versionUuid}/submit', [WipForecastController::class, 'submit'])
+            ->middleware('authorize:budgeting.wip_forecast.submit_version')
+            ->name('wip_forecast.versions.submit');
+        Route::post('/wip-forecast/versions/{versionUuid}/approve', [WipForecastController::class, 'approve'])
+            ->middleware('authorize:budgeting.wip_forecast.approve_version')
+            ->name('wip_forecast.versions.approve');
+        Route::post('/wip-forecast/versions/{versionUuid}/activate', [WipForecastController::class, 'activate'])
+            ->middleware('authorize:budgeting.wip_forecast.activate_version')
+            ->name('wip_forecast.versions.activate');
+        Route::post('/wip-forecast/versions/{versionUuid}/adjustments', [WipForecastController::class, 'storeAdjustment'])
+            ->middleware('authorize:budgeting.wip_forecast.manage_adjustments')
+            ->name('wip_forecast.adjustments.store');
+        Route::get('/wip-forecast/versions/{versionUuid}/audit', [WipForecastController::class, 'audit'])
+            ->middleware('authorize:budgeting.wip_forecast.view_audit')
+            ->name('wip_forecast.audit.index');
 
         Route::get('/periods', [BudgetCatalogController::class, 'periods'])
             ->middleware('authorize:budgeting.periods.view')
