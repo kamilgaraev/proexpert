@@ -71,6 +71,7 @@
       "budgeting.limits.view",
       "budgeting.cash_gap.view",
       "budgeting.plan_fact.view",
+      "budgeting.project_margin.view",
       "budgeting.audit.view",
       "budgeting.sync.view"
     ],

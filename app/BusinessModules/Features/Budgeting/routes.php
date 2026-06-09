@@ -10,6 +10,7 @@ use App\BusinessModules\Features\Budgeting\Http\Controllers\BudgetVersionControl
 use App\BusinessModules\Features\Budgeting\Http\Controllers\CashGapForecastController;
 use App\BusinessModules\Features\Budgeting\Http\Controllers\CfoCommandCenterController;
 use App\BusinessModules\Features\Budgeting\Http\Controllers\PlanFactReportController;
+use App\BusinessModules\Features\Budgeting\Http\Controllers\ProjectMarginReportController;
 use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
 
@@ -35,6 +36,13 @@ Route::prefix('api/v1/admin/budgeting')
         Route::get('/plan-fact/drill-down', [PlanFactReportController::class, 'drillDown'])
             ->middleware('authorize:budgeting.plan_fact.view')
             ->name('plan_fact.drill_down');
+
+        Route::get('/project-margin', [ProjectMarginReportController::class, 'index'])
+            ->middleware('authorize:budgeting.project_margin.view')
+            ->name('project_margin.index');
+        Route::get('/project-margin/drill-down', [ProjectMarginReportController::class, 'drillDown'])
+            ->middleware('authorize:budgeting.project_margin.view')
+            ->name('project_margin.drill_down');
 
         Route::get('/periods', [BudgetCatalogController::class, 'periods'])
             ->middleware('authorize:budgeting.periods.view')

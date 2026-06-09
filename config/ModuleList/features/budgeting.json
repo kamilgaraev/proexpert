@@ -45,6 +45,8 @@
     "budgeting.cash_gap.view",
     "budgeting.plan_fact.view",
     "budgeting.plan_fact.export",
+    "budgeting.project_margin.view",
+    "budgeting.project_margin.export",
     "budgeting.import.preview",
     "budgeting.import.commit",
     "budgeting.audit.view",
