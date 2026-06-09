@@ -46,8 +46,18 @@ class RagIndexingCoordinator
         );
         $runIds = [];
         $organizationIds = [];
+        $failedCutoff = $staleOnly
+            ? now()->subHours(max(1, (int) config('ai-assistant.rag.failed_retry_after_hours', 12)))
+            : null;
 
         foreach ($organizations as $organization) {
+            if (
+                $failedCutoff instanceof Carbon
+                && $this->hasRecentFailedRun($organization->id, $projectId, $sourceType, $failedCutoff)
+            ) {
+                continue;
+            }
+
             $run = $this->queueOrganization($organization->id, $projectId, $sourceType, $mode);
             $runIds[] = $run->id;
             $organizationIds[] = $organization->id;
@@ -270,7 +280,9 @@ class RagIndexingCoordinator
         if ($staleOnly) {
             $freshnessWindow = max(1, $staleAfterHours ?? (int) config('ai-assistant.rag.stale_after_hours', 24));
             $cutoff = now()->subHours($freshnessWindow);
-            $this->applyStaleOnlyConstraint($query, $cutoff, $projectId, $sourceType);
+            $failedRetryAfterHours = max(1, (int) config('ai-assistant.rag.failed_retry_after_hours', 12));
+            $failedCutoff = now()->subHours($failedRetryAfterHours);
+            $this->applyStaleOnlyConstraint($query, $cutoff, $failedCutoff, $projectId, $sourceType);
             $this->orderByOldestRagAttempt($query);
         } else {
             $query->orderBy('id');
@@ -284,6 +296,7 @@ class RagIndexingCoordinator
     private function applyStaleOnlyConstraint(
         Builder $query,
         Carbon $cutoff,
+        Carbon $failedCutoff,
         ?int $projectId,
         ?string $sourceType
     ): void {
@@ -308,6 +321,24 @@ class RagIndexingCoordinator
 
                 $this->applyActiveRunScope($subQuery, $runTable, $projectId, $sourceType);
             })
+            ->whereNotExists(
+                function (QueryBuilder $subQuery) use (
+                    $failedCutoff,
+                    $organizationTable,
+                    $projectId,
+                    $runTable,
+                    $sourceType
+                ): void {
+                    $subQuery
+                        ->selectRaw('1')
+                        ->from($runTable)
+                        ->whereColumn("{$runTable}.organization_id", "{$organizationTable}.id")
+                        ->where("{$runTable}.status", RagIndexRun::STATUS_FAILED)
+                        ->where("{$runTable}.queued_at", '>', $failedCutoff->toDateTimeString());
+
+                    $this->applyRunScope($subQuery, $runTable, $projectId, $sourceType);
+                }
+            )
             ->whereNotExists(
                 function (QueryBuilder $subQuery) use (
                     $cutoff,
@@ -345,6 +376,29 @@ class RagIndexingCoordinator
         } else {
             $query->where("{$runTable}.source_type", $sourceType);
         }
+    }
+
+    private function hasRecentFailedRun(
+        int $organizationId,
+        ?int $projectId,
+        ?string $sourceType,
+        Carbon $failedCutoff
+    ): bool {
+        return RagIndexRun::query()
+            ->where('organization_id', $organizationId)
+            ->where('status', RagIndexRun::STATUS_FAILED)
+            ->where('queued_at', '>', $failedCutoff->toDateTimeString())
+            ->when(
+                $projectId === null,
+                static fn (Builder $query): Builder => $query->whereNull('project_id'),
+                static fn (Builder $query): Builder => $query->where('project_id', $projectId)
+            )
+            ->when(
+                $sourceType === null,
+                static fn (Builder $query): Builder => $query->whereNull('source_type'),
+                static fn (Builder $query): Builder => $query->where('source_type', $sourceType)
+            )
+            ->exists();
     }
 
     private function applyActiveRunScope(
