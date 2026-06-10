@@ -7,6 +7,7 @@ namespace Tests\Unit\Budgeting;
 use App\BusinessModules\Features\Budgeting\DTOs\ProjectPortfolioDashboardFilters;
 use App\BusinessModules\Features\Budgeting\Http\Requests\ProjectPortfolioDashboardRequest;
 use App\BusinessModules\Features\Budgeting\Services\ProjectPortfolioDashboardPayloadBuilder;
+use App\BusinessModules\Features\Budgeting\Services\ProjectPortfolioDashboardService;
 use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
 use Illuminate\Filesystem\Filesystem;
@@ -68,6 +69,26 @@ final class ProjectPortfolioDashboardApiContractTest extends TestCase
         ] as $filter) {
             $this->assertArrayHasKey($filter, $rules);
         }
+    }
+
+    public function test_project_manager_filter_is_resolved_without_prevalidating_user_membership(): void
+    {
+        $service = (new \ReflectionClass(ProjectPortfolioDashboardService::class))->newInstanceWithoutConstructor();
+        $method = new \ReflectionMethod(ProjectPortfolioDashboardService::class, 'resolveFilters');
+        $method->setAccessible(true);
+
+        $filters = $method->invoke($service, [
+            'organization_id' => 42,
+            'period_start' => '2026-05-31',
+            'period_end' => '2026-06-29',
+            'as_of_date' => '2026-06-29',
+            'project_manager_id' => 143,
+            'limit' => 25,
+            'top_n' => 10,
+        ]);
+
+        $this->assertInstanceOf(ProjectPortfolioDashboardFilters::class, $filters);
+        $this->assertSame(143, $filters->projectManagerId);
     }
 
     public function test_payload_contract_contains_portfolio_dashboard_shape(): void

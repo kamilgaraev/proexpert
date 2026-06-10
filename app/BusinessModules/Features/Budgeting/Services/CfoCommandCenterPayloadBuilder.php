@@ -157,6 +157,8 @@ final class CfoCommandCenterPayloadBuilder
                 'budgeting.cfo_command_center.flags.cash_gap_unavailable',
                 'cash_gap',
                 ['unavailable_currencies' => $cashGap['unavailable_currencies'] ?? []],
+                'budgeting.cfo_command_center.flag_actions.cash_gap_unavailable',
+                '/payments?tab=calendar',
             );
         }
 
@@ -167,6 +169,8 @@ final class CfoCommandCenterPayloadBuilder
                 'budgeting.cfo_command_center.flags.budget_limit_blocked',
                 'limits',
                 ['count' => (int) $limits['blocked_count']],
+                'budgeting.cfo_command_center.flag_actions.budget_limit_blocked',
+                '/payments?tab=documents',
             );
         }
 
@@ -180,6 +184,8 @@ final class CfoCommandCenterPayloadBuilder
                     'requires_exception_count' => (int) ($limits['requires_exception_count'] ?? 0),
                     'exceeded_count' => (int) ($limits['exceeded_count'] ?? 0),
                 ],
+                'budgeting.cfo_command_center.flag_actions.budget_limit_attention',
+                '/payments?tab=documents',
             );
         }
 
@@ -189,6 +195,9 @@ final class CfoCommandCenterPayloadBuilder
                 'warning',
                 'budgeting.cfo_command_center.flags.project_portfolio_unavailable',
                 'project_portfolio',
+                [],
+                'budgeting.cfo_command_center.flag_actions.project_portfolio_unavailable',
+                '/budgeting?tab=project_portfolio',
             );
         }
 
@@ -202,6 +211,8 @@ final class CfoCommandCenterPayloadBuilder
                     'problem_projects_count' => (int) ($projectPortfolio['problem_projects_count'] ?? 0),
                     'problem_flags' => $projectPortfolio['problem_flags'] ?? [],
                 ],
+                'budgeting.cfo_command_center.flag_actions.project_portfolio_attention',
+                '/budgeting?tab=project_portfolio',
             );
         }
 
@@ -211,6 +222,9 @@ final class CfoCommandCenterPayloadBuilder
                 'warning',
                 'budgeting.cfo_command_center.flags.plan_fact_unavailable',
                 'plan_fact',
+                [],
+                'budgeting.cfo_command_center.flag_actions.plan_fact_unavailable',
+                '/budgeting?tab=plan_fact',
             );
         }
 
@@ -221,6 +235,8 @@ final class CfoCommandCenterPayloadBuilder
                 'budgeting.cfo_command_center.flags.payment_approvals_pending',
                 'approvals',
                 ['count' => (int) $approvals['pending_count']],
+                'budgeting.cfo_command_center.flag_actions.payment_approvals_pending',
+                '/payments?tab=approvals',
             );
         }
 
@@ -234,6 +250,8 @@ final class CfoCommandCenterPayloadBuilder
                     'problem_count' => (int) ($oneCExchange['problem_count'] ?? 0),
                     'open_conflicts_count' => (int) ($oneCExchange['open_conflicts_count'] ?? 0),
                 ],
+                'budgeting.cfo_command_center.flag_actions.one_c_exchange_attention',
+                '/integrations/1c',
             );
         }
 
@@ -258,6 +276,8 @@ final class CfoCommandCenterPayloadBuilder
                     'first_gap_date' => $cashGap['first_gap_date'] ?? null,
                     'max_gap_amount' => $cashGap['max_gap_amount'] ?? 0.0,
                 ],
+                'budgeting.cfo_command_center.flag_actions.cash_gap_risk',
+                '/payments?tab=calendar&cash_gap=1',
             );
         }
 
@@ -270,6 +290,8 @@ final class CfoCommandCenterPayloadBuilder
                 [
                     'cash_gap_projects_count' => (int) ($projectPortfolio['cash_gap_projects_count'] ?? 0),
                 ],
+                'budgeting.cfo_command_center.flag_actions.project_cash_gap_risk',
+                '/budgeting?tab=project_portfolio',
             );
         }
 
@@ -283,6 +305,8 @@ final class CfoCommandCenterPayloadBuilder
                     'risk_projects_count' => (int) ($projectPortfolio['risk_projects_count'] ?? 0),
                     'risk_flags' => $projectPortfolio['risk_flags'] ?? [],
                 ],
+                'budgeting.cfo_command_center.flag_actions.project_portfolio_risk',
+                '/budgeting?tab=project_portfolio',
             );
         }
 
@@ -297,6 +321,8 @@ final class CfoCommandCenterPayloadBuilder
                     'overdue_outflow_amount' => $this->money($calendar['overdue_outflow_amount'] ?? 0.0),
                     'overdue_inflow_amount' => $this->money($calendar['overdue_inflow_amount'] ?? 0.0),
                 ],
+                'budgeting.cfo_command_center.flag_actions.overdue_cash_flows',
+                '/payments?tab=documents&filter=overdue',
             );
         }
 
@@ -310,6 +336,8 @@ final class CfoCommandCenterPayloadBuilder
                     'critical_rows_count' => (int) ($planFact['critical_rows_count'] ?? 0),
                     'high_rows_count' => (int) ($planFact['high_rows_count'] ?? 0),
                 ],
+                'budgeting.cfo_command_center.flag_actions.plan_fact_deviation',
+                '/budgeting?tab=plan_fact',
             );
         }
 
@@ -427,7 +455,15 @@ final class CfoCommandCenterPayloadBuilder
         return array_values($actions);
     }
 
-    private function flag(string $code, string $severity, string $messageKey, string $source, array $details = []): array
+    private function flag(
+        string $code,
+        string $severity,
+        string $messageKey,
+        string $source,
+        array $details = [],
+        ?string $actionKey = null,
+        ?string $routeHint = null,
+    ): array
     {
         return [
             'code' => $code,
@@ -435,6 +471,8 @@ final class CfoCommandCenterPayloadBuilder
             'message' => trans_message($messageKey),
             'source' => $source,
             'details' => $details,
+            'action_hint' => $actionKey !== null ? trans_message($actionKey) : null,
+            'route_hint' => $routeHint,
         ];
     }
 

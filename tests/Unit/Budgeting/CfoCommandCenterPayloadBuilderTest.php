@@ -83,6 +83,18 @@ final class CfoCommandCenterPayloadBuilderTest extends TestCase
         $this->assertSame('warning', $payload['summary']['one_c_exchange']['health']);
         $this->assertContains('cash_gap_risk', array_column($payload['risk_flags'], 'code'));
         $this->assertContains('budget_limit_blocked', array_column($payload['problem_flags'], 'code'));
+        $problemFlags = array_column($payload['problem_flags'], null, 'code');
+        $riskFlags = array_column($payload['risk_flags'], null, 'code');
+        $this->assertSame(
+            'Откройте платежные документы, проверьте заблокированные заявки и согласуйте решение по лимиту.',
+            $problemFlags['budget_limit_blocked']['action_hint'],
+        );
+        $this->assertSame('/payments?tab=documents', $problemFlags['budget_limit_blocked']['route_hint']);
+        $this->assertSame(
+            'Откройте платежный календарь, проверьте ближайшие выплаты и ожидаемые поступления до даты разрыва.',
+            $riskFlags['cash_gap_risk']['action_hint'],
+        );
+        $this->assertSame('/payments?tab=calendar&cash_gap=1', $riskFlags['cash_gap_risk']['route_hint']);
         $this->assertContains('cover_cash_gap', array_column($payload['actions'], 'code'));
         $this->assertSame('prohelper_management_forecast', $payload['meta']['source_of_truth']['cash_gap']['primary']);
         $this->assertSame(10, $payload['meta']['item_limits']['upcoming_payments']);
@@ -147,6 +159,11 @@ final class CfoCommandCenterPayloadBuilderTest extends TestCase
 
         $this->assertContains('cash_gap_unavailable', array_column($payload['problem_flags'], 'code'));
         $this->assertSame(['USD'], $payload['problem_flags'][0]['details']['unavailable_currencies']);
+        $this->assertSame(
+            'Откройте платежный календарь и проверьте начальные остатки по валютам, которые не попали в прогноз.',
+            $payload['problem_flags'][0]['action_hint'],
+        );
+        $this->assertSame('/payments?tab=calendar', $payload['problem_flags'][0]['route_hint']);
         $this->assertSame('warning', $payload['summary']['health']);
     }
 
@@ -226,6 +243,12 @@ final class CfoCommandCenterPayloadBuilderTest extends TestCase
         $this->assertSame(1, $payload['summary']['project_portfolio']['cash_gap_projects_count']);
         $this->assertContains('project_portfolio_attention', array_column($payload['problem_flags'], 'code'));
         $this->assertContains('project_cash_gap_risk', array_column($payload['risk_flags'], 'code'));
+        $problemFlags = array_column($payload['problem_flags'], null, 'code');
+        $this->assertSame(
+            'Откройте портфель проектов и начните с проектов с высоким риском в верхней части таблицы.',
+            $problemFlags['project_portfolio_attention']['action_hint'],
+        );
+        $this->assertSame('/budgeting?tab=project_portfolio', $problemFlags['project_portfolio_attention']['route_hint']);
         $this->assertContains('review_problem_projects', array_column($payload['actions'], 'code'));
         $this->assertSame(10, $payload['meta']['item_limits']['top_problem_projects']);
         $this->assertSame(7, $payload['items']['top_problem_projects'][0]['project']['id']);

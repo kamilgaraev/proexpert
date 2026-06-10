@@ -22,7 +22,6 @@ use App\Models\User;
 use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use InvalidArgumentException;
@@ -78,9 +77,6 @@ final class ProjectPortfolioDashboardService
 
         $asOfDate = CarbonImmutable::parse((string) ($input['as_of_date'] ?? $periodEnd))->toDateString();
         $projectManagerId = $this->nullableInt($input['project_manager_id'] ?? null);
-        if ($projectManagerId !== null) {
-            $this->assertProjectManagerBelongsToOrganization($organizationId, $projectManagerId);
-        }
 
         [$responsibilityCenterId, $responsibilityCenterUuid] = $this->resolveResponsibilityCenter($organizationId, $input['responsibility_center_id'] ?? null);
         $limit = max(1, min(100, (int) ($input['limit'] ?? $input['top_n'] ?? self::DEFAULT_LIMIT)));
@@ -544,33 +540,6 @@ final class ProjectPortfolioDashboardService
         }
 
         return [(int) $center->id, (string) $center->uuid];
-    }
-
-    private function assertProjectManagerBelongsToOrganization(int $organizationId, int $projectManagerId): void
-    {
-        $exists = DB::table('project_user')
-            ->join('projects', 'projects.id', '=', 'project_user.project_id')
-            ->where('project_user.user_id', $projectManagerId)
-            ->where('project_user.role', 'project_manager')
-            ->where('project_user.is_active', true)
-            ->whereNull('projects.deleted_at')
-            ->where(function ($query) use ($organizationId): void {
-                $query
-                    ->where('projects.organization_id', $organizationId)
-                    ->orWhereExists(function ($exists) use ($organizationId): void {
-                        $exists
-                            ->selectRaw('1')
-                            ->from('project_organization')
-                            ->whereColumn('project_organization.project_id', 'projects.id')
-                            ->where('project_organization.organization_id', $organizationId)
-                            ->where('project_organization.is_active', true);
-                    });
-            })
-            ->exists();
-
-        if (!$exists) {
-            throw new DomainException(trans_message('budgeting.project_portfolio_dashboard.errors.project_manager_not_found'));
-        }
     }
 
     private function openOneCConflictsCount(int $organizationId): int
