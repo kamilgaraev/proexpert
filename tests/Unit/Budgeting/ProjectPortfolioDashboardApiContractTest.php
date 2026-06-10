@@ -225,6 +225,39 @@ final class ProjectPortfolioDashboardApiContractTest extends TestCase
         $this->assertSame(0.0, $payload['projects'][0]['metrics']['revenue']);
     }
 
+    public function test_data_quality_flags_are_translated_in_top_level_payload(): void
+    {
+        $components = $this->emptyComponents();
+        $components['project_margin']['report']['rows'] = [[
+            'project' => ['id' => 7, 'name' => 'Business Center'],
+            'currency' => 'RUB',
+            'actual' => ['revenue' => 0.0, 'cost' => 0.0, 'gross_margin' => 0.0, 'margin_percent' => null],
+            'forecast' => ['revenue' => 0.0, 'cost' => 0.0, 'gross_margin' => 0.0, 'margin_percent' => null],
+            'problem_flags' => ['missing_budget_article', 'missing_counterparty', 'missing_responsibility_center'],
+            'risk_flags' => ['accrual_without_payment'],
+            'quality_status' => 'attention',
+        ]];
+
+        $payload = $this->builder()->build(
+            filters: $this->filters(),
+            projects: $this->projects(),
+            components: $components,
+            generatedAt: '2026-06-09T10:00:00+03:00',
+        );
+
+        $messages = array_column([...$payload['problem_flags'], ...$payload['risk_flags']], 'message', 'code');
+
+        $this->assertSame('В части источников не заполнена статья бюджета.', $messages['missing_budget_article']);
+        $this->assertSame('В части источников не заполнен контрагент.', $messages['missing_counterparty']);
+        $this->assertSame('В части источников не заполнен ЦФО.', $messages['missing_responsibility_center']);
+        $this->assertSame('Начисление ожидает оплату.', $messages['accrual_without_payment']);
+
+        foreach ($messages as $message) {
+            $this->assertIsString($message);
+            $this->assertStringNotContainsString('budgeting.', $message);
+        }
+    }
+
     public function test_projects_are_sorted_by_highest_risk_before_limit(): void
     {
         $components = $this->emptyComponents();
