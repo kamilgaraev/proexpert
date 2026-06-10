@@ -116,6 +116,7 @@ final class EpmDataMartHealthServiceTest extends TestCase
         $this->assertSame(2, $payload['staleness']['slow_scopes_count']);
         $this->assertSame(1, $payload['staleness']['stuck_scopes_count']);
         $this->assertSame('ProHelper', $payload['source_of_truth']['primary']['label']);
+        $this->assertSame('1С', $payload['source_of_truth']['external_confirmation']['1c']['label']);
         $this->assertFalse($payload['source_of_truth']['external_confirmation']['1c']['stores_accounting_duplicate']);
         $this->assertStringNotContainsString('epm_data_mart.', $payload['freshness']['message']);
     }

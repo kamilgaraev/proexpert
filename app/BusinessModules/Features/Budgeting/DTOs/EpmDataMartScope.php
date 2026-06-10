@@ -128,6 +128,7 @@ final readonly class EpmDataMartScope
         $ignored = [
             'current_organization_id',
             'organization_id',
+            'report_scope',
             'current_project_id',
             'project_context',
             'period_start',

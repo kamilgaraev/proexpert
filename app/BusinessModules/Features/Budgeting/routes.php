@@ -36,6 +36,9 @@ Route::prefix('api/v1/admin/budgeting')
         Route::get('/epm-data-mart/health', [EpmDataMartHealthController::class, 'show'])
             ->middleware('authorize:budgeting.cfo.view')
             ->name('epm_data_mart.health');
+        Route::post('/epm-data-mart/recalculate', [EpmDataMartHealthController::class, 'recalculate'])
+            ->middleware('authorize:budgeting.cfo.manage')
+            ->name('epm_data_mart.recalculate');
 
         Route::get('/project-portfolio-dashboard', [ProjectPortfolioDashboardController::class, 'show'])
             ->middleware('authorize:budgeting.portfolio_dashboard.view')

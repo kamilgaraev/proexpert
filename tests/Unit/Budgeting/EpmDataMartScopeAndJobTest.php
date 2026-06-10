@@ -62,6 +62,7 @@ final class EpmDataMartScopeAndJobTest extends TestCase
         $left = EpmDataMartScope::fromInput(EpmDataMartScope::PROJECT_MARGIN, [
             'current_organization_id' => 7,
             'organization_id' => 7,
+            'report_scope' => 'project_margin',
             'current_project_id' => 999,
             '_skip_data_mart_meta' => true,
             'period_start' => '2026-06-01',
