@@ -11,8 +11,12 @@ class PrometheusService
     public function __construct()
     {
         $this->storageDir = storage_path('prometheus');
-        if (!is_dir($this->storageDir)) {
-            mkdir($this->storageDir, 0775, true);
+        if (
+            !is_dir($this->storageDir)
+            && !@mkdir($this->storageDir, 0775, true)
+            && !is_dir($this->storageDir)
+        ) {
+            return;
         }
     }
 
@@ -224,4 +228,4 @@ class PrometheusService
             return;
         }
     }
-} 
+}
