@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Payments\Services\PaymentCalendarSourceService;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastContext;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastFilters;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapOpeningBalanceSnapshot;
+use App\BusinessModules\Features\Budgeting\DTOs\EpmDataMartScope;
 use Carbon\CarbonImmutable;
 
 use function trans_message;
@@ -20,6 +21,7 @@ final class CashGapForecastReadService
         private readonly PaymentCalendarSourceService $sourceService,
         private readonly CashGapForecastService $forecastService,
         private readonly CashGapOpeningBalanceService $openingBalanceService,
+        private readonly ?EpmDataMartFreshnessService $dataMartFreshness = null,
     ) {
     }
 
@@ -68,7 +70,7 @@ final class CashGapForecastReadService
             $forecasts[$forecastCurrency] = $forecast;
         }
 
-        return [
+        $payload = [
             'available' => $forecasts !== [],
             'partial_unavailable' => $forecasts !== [] && $unavailable !== [],
             'period' => [
@@ -100,6 +102,20 @@ final class CashGapForecastReadService
                 ],
             ],
         ];
+
+        if (($request['_skip_data_mart_meta'] ?? false) === true) {
+            return $payload;
+        }
+
+        return $this->dataMartFreshness()->decoratePayload(
+            $payload,
+            EpmDataMartScope::fromInput(EpmDataMartScope::CASH_GAP, $request),
+        );
+    }
+
+    private function dataMartFreshness(): EpmDataMartFreshnessService
+    {
+        return $this->dataMartFreshness ?? app(EpmDataMartFreshnessService::class);
     }
 
     private function buildCurrencyForecast(

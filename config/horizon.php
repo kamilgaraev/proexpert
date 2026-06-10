@@ -19,6 +19,7 @@ return [
         'redis:notifications-low' => 300,
         'redis:ai-rag' => 600,
         'redis_ai_rag:ai-rag' => 600,
+        'redis:'.env('EPM_DATA_MART_QUEUE', 'epm-data-mart') => 600,
     ],
     
     'trim' => [
@@ -128,6 +129,18 @@ return [
                 'memory' => 512,
                 'nice' => 5,
             ],
+            'supervisor-epm-data-mart' => [
+                'connection' => 'redis',
+                'queue' => [env('EPM_DATA_MART_QUEUE', 'epm-data-mart')],
+                'balance' => 'auto',
+                'autoScalingStrategy' => 'time',
+                'minProcesses' => 1,
+                'maxProcesses' => 2,
+                'tries' => 3,
+                'timeout' => 1800,
+                'memory' => 512,
+                'nice' => 5,
+            ],
         ],
 
         'local' => [
@@ -147,6 +160,15 @@ return [
                 'processes' => 1,
                 'tries' => 3,
                 'timeout' => (int) env('AI_RAG_JOB_TIMEOUT', 1800),
+                'memory' => 512,
+            ],
+            'supervisor-epm-data-mart' => [
+                'connection' => 'redis',
+                'queue' => [env('EPM_DATA_MART_QUEUE', 'epm-data-mart')],
+                'balance' => 'simple',
+                'processes' => 1,
+                'tries' => 3,
+                'timeout' => 1800,
                 'memory' => 512,
             ],
             'supervisor-1' => [

@@ -43,12 +43,12 @@ final class CashGapForecastServiceTest extends TestCase
         });
 
         Facade::setFacadeApplication($container);
+        Container::setInstance($container);
     }
 
     protected function tearDown(): void
     {
         Facade::clearResolvedInstances();
-        Facade::setFacadeApplication(null);
 
         parent::tearDown();
     }

@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Budgeting\Services;
 
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
+use App\BusinessModules\Features\Budgeting\DTOs\EpmDataMartScope;
 use App\BusinessModules\Features\Budgeting\DTOs\PlanFactDimensions;
 use App\BusinessModules\Features\Budgeting\DTOs\PlanFactDrillDownItem;
 use App\BusinessModules\Features\Budgeting\DTOs\PlanFactDrillDownKey;
@@ -40,6 +41,7 @@ final class PlanFactReportService
 
     public function __construct(
         private readonly PlanFactCalculator $calculator,
+        private readonly ?EpmDataMartFreshnessService $dataMartFreshness = null,
     ) {
     }
 
@@ -68,7 +70,7 @@ final class PlanFactReportService
             $documentAggregates,
         );
 
-        return $this->calculator->calculate(
+        $payload = $this->calculator->calculate(
             filters: $filters,
             aggregates: $aggregates,
             dimensions: $dimensions,
@@ -81,6 +83,24 @@ final class PlanFactReportService
                 'drill_down_endpoint' => '/api/v1/admin/budgeting/plan-fact/drill-down',
             ],
         )->toArray();
+
+        if (($input['_skip_data_mart_meta'] ?? false) === true) {
+            return $payload;
+        }
+
+        return $this->dataMartFreshness()->decoratePayload(
+            $payload,
+            EpmDataMartScope::fromInput(EpmDataMartScope::PLAN_FACT, [
+                ...$filters->toArray(),
+                'period_start' => $filters->periodStart,
+                'period_end' => $filters->periodEnd,
+            ]),
+        );
+    }
+
+    private function dataMartFreshness(): EpmDataMartFreshnessService
+    {
+        return $this->dataMartFreshness ?? app(EpmDataMartFreshnessService::class);
     }
 
     public function drillDown(array $input): array

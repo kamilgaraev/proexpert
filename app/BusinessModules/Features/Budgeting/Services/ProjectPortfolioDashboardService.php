@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Payments\Models\PaymentApproval;
 use App\BusinessModules\Core\Payments\Services\PaymentCalendarSourceService;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastContext;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastFilters;
+use App\BusinessModules\Features\Budgeting\DTOs\EpmDataMartScope;
 use App\BusinessModules\Features\Budgeting\DTOs\ProjectPortfolioDashboardFilters;
 use App\BusinessModules\Features\Budgeting\Models\BudgetLimitCheck;
 use App\BusinessModules\Features\Budgeting\Models\BudgetLimitReservation;
@@ -40,25 +41,41 @@ final class ProjectPortfolioDashboardService
         private readonly PaymentCalendarSourceService $calendarSourceService,
         private readonly CashGapForecastService $cashGapForecastService,
         private readonly ProjectPortfolioDashboardPayloadBuilder $payloadBuilder,
+        private readonly ?EpmDataMartFreshnessService $dataMartFreshness = null,
     ) {
     }
 
-    public function dashboard(array $input, User $user): array
+    public function dashboard(array $input, ?User $user = null): array
     {
         $filters = $this->resolveFilters($input);
         $projects = $this->projectRegistry($filters);
         $generatedAt = now()->toIso8601String();
+        $skipDataMartMeta = ($input['_skip_data_mart_meta'] ?? false) === true;
         $components = [
-            'project_margin' => $this->projectMarginComponent($filters, $user),
-            'plan_fact' => $this->planFactComponent($filters),
-            'wip_forecast' => $this->wipForecastComponent($filters, $user),
+            'project_margin' => $this->projectMarginComponent($filters, $user, $skipDataMartMeta),
+            'plan_fact' => $this->planFactComponent($filters, $skipDataMartMeta),
+            'wip_forecast' => $this->wipForecastComponent($filters, $user, $skipDataMartMeta),
             'cash_gap' => $this->cashGapComponent($filters, $projects),
             'limit_risk' => $this->limitRiskComponent($filters),
             'approvals' => $this->approvalsComponent($filters),
             'one_c_exchange' => $this->oneCExchangeComponent($filters),
         ];
 
-        return $this->payloadBuilder->build($filters, $projects, $components, $generatedAt);
+        $payload = $this->payloadBuilder->build($filters, $projects, $components, $generatedAt);
+
+        if ($skipDataMartMeta) {
+            return $payload;
+        }
+
+        return $this->dataMartFreshness()->decoratePayload(
+            $payload,
+            EpmDataMartScope::fromInput(EpmDataMartScope::PROJECT_PORTFOLIO_DASHBOARD, $filters->toArray()),
+        );
+    }
+
+    private function dataMartFreshness(): EpmDataMartFreshnessService
+    {
+        return $this->dataMartFreshness ?? app(EpmDataMartFreshnessService::class);
     }
 
     private function resolveFilters(array $input): ProjectPortfolioDashboardFilters
@@ -148,11 +165,14 @@ final class ProjectPortfolioDashboardService
         ];
     }
 
-    private function projectMarginComponent(ProjectPortfolioDashboardFilters $filters, User $user): array
+    private function projectMarginComponent(ProjectPortfolioDashboardFilters $filters, ?User $user, bool $skipDataMartMeta): array
     {
         return $this->reportComponent(
             'project_margin',
-            fn (): array => $this->projectMarginReportService->report($filters->marginInput(), $user),
+            fn (): array => $this->projectMarginReportService->report(
+                $this->withDataMartSkip($filters->marginInput(), $skipDataMartMeta),
+                $user,
+            ),
             static fn (array $report): array => [
                 'status' => (string) ($report['meta']['freshness']['status'] ?? 'actual'),
                 'generated_at' => $report['meta']['generated_at'] ?? null,
@@ -161,11 +181,13 @@ final class ProjectPortfolioDashboardService
         );
     }
 
-    private function planFactComponent(ProjectPortfolioDashboardFilters $filters): array
+    private function planFactComponent(ProjectPortfolioDashboardFilters $filters, bool $skipDataMartMeta): array
     {
         return $this->reportComponent(
             'plan_fact',
-            fn (): array => $this->planFactReportService->report($filters->planFactInput()),
+            fn (): array => $this->planFactReportService->report(
+                $this->withDataMartSkip($filters->planFactInput(), $skipDataMartMeta),
+            ),
             static fn (array $report): array => [
                 'status' => 'actual',
                 'generated_at' => $report['meta']['generated_at'] ?? null,
@@ -174,7 +196,7 @@ final class ProjectPortfolioDashboardService
         );
     }
 
-    private function wipForecastComponent(ProjectPortfolioDashboardFilters $filters, User $user): array
+    private function wipForecastComponent(ProjectPortfolioDashboardFilters $filters, ?User $user, bool $skipDataMartMeta): array
     {
         if ($filters->responsibilityCenterId !== null) {
             return [
@@ -193,11 +215,25 @@ final class ProjectPortfolioDashboardService
 
         return $this->reportComponent(
             'wip_forecast',
-            fn (): array => $this->wipForecastReportService->report($filters->wipForecastInput(), $user),
+            fn (): array => $this->wipForecastReportService->report(
+                $this->withDataMartSkip($filters->wipForecastInput(), $skipDataMartMeta),
+                $user,
+            ),
             static fn (array $report): array => is_array($report['freshness'] ?? null)
                 ? $report['freshness']
                 : ['status' => 'actual', 'generated_at' => $report['meta']['generated_at'] ?? null],
         );
+    }
+
+    private function withDataMartSkip(array $input, bool $skipDataMartMeta): array
+    {
+        if (!$skipDataMartMeta) {
+            return $input;
+        }
+
+        $input['_skip_data_mart_meta'] = true;
+
+        return $input;
     }
 
     private function reportComponent(string $component, callable $callback, callable $freshness): array

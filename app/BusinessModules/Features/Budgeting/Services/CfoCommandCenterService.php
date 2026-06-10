@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Payments\Models\PaymentApproval;
 use App\BusinessModules\Core\Payments\Services\PaymentCalendarSourceService;
 use App\BusinessModules\Features\Budgeting\DTOs\CashGapForecastContext;
 use App\BusinessModules\Features\Budgeting\DTOs\CfoCommandCenterFilters;
+use App\BusinessModules\Features\Budgeting\DTOs\EpmDataMartScope;
 use App\BusinessModules\Features\Budgeting\DTOs\ProjectMarginReportFilters;
 use App\BusinessModules\Features\Budgeting\DTOs\WipForecastReportFilters;
 use App\BusinessModules\Features\Budgeting\Models\BudgetArticle;
@@ -53,6 +54,7 @@ final class CfoCommandCenterService
         private readonly WipForecastReportService $wipForecastReportService,
         private readonly CfoProjectPortfolioAggregator $projectPortfolioAggregator,
         private readonly CfoCommandCenterPayloadBuilder $payloadBuilder,
+        private readonly ?EpmDataMartFreshnessService $dataMartFreshness = null,
     ) {
     }
 
@@ -60,12 +62,13 @@ final class CfoCommandCenterService
     {
         $filters = $this->resolveFilters($input);
         $generatedAt = now()->toIso8601String();
+        $skipDataMartMeta = ($input['_skip_data_mart_meta'] ?? false) === true;
         $today = CarbonImmutable::today();
         $calendarItems = $this->calendarSourceService->collect($filters->calendarFilters(), $today);
         $calendar = $this->calendarSection($filters, $calendarItems, $today);
         $cashGap = $this->cashGapSection($filters, $calendarItems);
         $limits = $this->limitsSection($filters);
-        $planFact = $this->planFactSection($filters);
+        $planFact = $this->planFactSection($filters, $skipDataMartMeta);
         $approvals = $this->approvalsSection($filters);
         $oneCExchange = $this->oneCExchangeSection($filters);
         $projectPortfolio = $this->projectPortfolioSection(
@@ -74,6 +77,7 @@ final class CfoCommandCenterService
             planFactItems: is_array($planFact['items'] ?? null) ? $planFact['items'] : [],
             user: $user,
             generatedAt: $generatedAt,
+            skipDataMartMeta: $skipDataMartMeta,
         );
 
         $items = [
@@ -101,7 +105,7 @@ final class CfoCommandCenterService
 
         unset($limits['items'], $planFact['items'], $approvals['items'], $oneCExchange['items'], $projectPortfolio['items']);
 
-        return $this->payloadBuilder->build(
+        $payload = $this->payloadBuilder->build(
             filters: $filters->toArray(),
             aggregates: [
                 'cash_gap' => $cashGap,
@@ -118,6 +122,20 @@ final class CfoCommandCenterService
             generatedAt: $generatedAt,
             itemLimit: $filters->itemLimit,
         );
+
+        if ($skipDataMartMeta) {
+            return $payload;
+        }
+
+        return $this->dataMartFreshness()->decoratePayload(
+            $payload,
+            EpmDataMartScope::fromInput(EpmDataMartScope::CFO_COMMAND_CENTER, $filters->toArray()),
+        );
+    }
+
+    private function dataMartFreshness(): EpmDataMartFreshnessService
+    {
+        return $this->dataMartFreshness ?? app(EpmDataMartFreshnessService::class);
     }
 
     private function resolveFilters(array $input): CfoCommandCenterFilters
@@ -455,10 +473,12 @@ final class CfoCommandCenterService
         ];
     }
 
-    private function planFactSection(CfoCommandCenterFilters $filters): array
+    private function planFactSection(CfoCommandCenterFilters $filters, bool $skipDataMartMeta): array
     {
         try {
-            $report = $this->planFactReportService->report($filters->planFactInput());
+            $report = $this->planFactReportService->report(
+                $this->withDataMartSkip($filters->planFactInput(), $skipDataMartMeta),
+            );
             $rows = is_array($report['rows'] ?? null) ? $report['rows'] : [];
             $criticalRowsCount = $this->riskRowsCount($rows, 'critical');
             $highRowsCount = $this->riskRowsCount($rows, 'high');
@@ -495,11 +515,18 @@ final class CfoCommandCenterService
         array $planFactItems,
         ?User $user,
         string $generatedAt,
+        bool $skipDataMartMeta,
     ): array {
         try {
             $projects = $this->portfolioProjects($filters);
-            $marginReport = $this->projectMarginReportService->report($this->projectPortfolioMarginInput($filters), $user);
-            $wipReport = $this->wipForecastReportService->report($this->projectPortfolioWipInput($filters), $user);
+            $marginReport = $this->projectMarginReportService->report(
+                $this->withDataMartSkip($this->projectPortfolioMarginInput($filters), $skipDataMartMeta),
+                $user,
+            );
+            $wipReport = $this->wipForecastReportService->report(
+                $this->withDataMartSkip($this->projectPortfolioWipInput($filters), $skipDataMartMeta),
+                $user,
+            );
             $portfolio = $this->projectPortfolioAggregator->build(
                 filters: $filters,
                 projects: $projects,
@@ -619,6 +646,17 @@ final class CfoCommandCenterService
                 WipForecastReportFilters::GROUP_CURRENCY,
             ],
         ]);
+    }
+
+    private function withDataMartSkip(array $input, bool $skipDataMartMeta): array
+    {
+        if (!$skipDataMartMeta) {
+            return $input;
+        }
+
+        $input['_skip_data_mart_meta'] = true;
+
+        return $input;
     }
 
     private function approvalsSection(CfoCommandCenterFilters $filters): array

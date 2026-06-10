@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Budgeting\Services;
 
 use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Features\Budgeting\DTOs\EpmDataMartScope;
 use App\BusinessModules\Features\Budgeting\DTOs\ProjectMarginDimensions;
 use App\BusinessModules\Features\Budgeting\DTOs\ProjectMarginDrillDownKey;
 use App\BusinessModules\Features\Budgeting\DTOs\ProjectMarginReportFilters;
@@ -38,6 +39,7 @@ final class ProjectMarginReportService
     public function __construct(
         private readonly ProjectMarginCalculator $calculator,
         private readonly AuthorizationService $authorization,
+        private readonly ?EpmDataMartFreshnessService $dataMartFreshness = null,
     ) {
     }
 
@@ -53,7 +55,7 @@ final class ProjectMarginReportService
         $dimensions = $this->dimensionsForAggregates($filters, $aggregates);
         [$coverage, $warnings] = $this->sourcesCoverage($filters);
 
-        return $this->calculator->calculate(
+        $payload = $this->calculator->calculate(
             filters: $filters,
             aggregates: $aggregates,
             dimensions: $dimensions,
@@ -67,6 +69,24 @@ final class ProjectMarginReportService
                 'permissions' => $this->detailPermissions($user, $filters->organizationId),
             ],
         );
+
+        if (($input['_skip_data_mart_meta'] ?? false) === true) {
+            return $payload;
+        }
+
+        return $this->dataMartFreshness()->decoratePayload(
+            $payload,
+            EpmDataMartScope::fromInput(EpmDataMartScope::PROJECT_MARGIN, [
+                ...$filters->toArray(),
+                'period_start' => $filters->periodStart,
+                'period_end' => $filters->periodEnd,
+            ]),
+        );
+    }
+
+    private function dataMartFreshness(): EpmDataMartFreshnessService
+    {
+        return $this->dataMartFreshness ?? app(EpmDataMartFreshnessService::class);
     }
 
     public function drillDown(array $input, ?User $user = null): array

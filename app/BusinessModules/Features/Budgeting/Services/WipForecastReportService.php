@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Budgeting\Services;
 
 use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Features\Budgeting\DTOs\EpmDataMartScope;
 use App\BusinessModules\Features\Budgeting\DTOs\WipForecastDimensions;
 use App\BusinessModules\Features\Budgeting\DTOs\WipForecastDrillDownKey;
 use App\BusinessModules\Features\Budgeting\DTOs\WipForecastManualAdjustment;
@@ -36,6 +37,7 @@ final class WipForecastReportService
     public function __construct(
         private readonly WipForecastCalculator $calculator,
         private readonly AuthorizationService $authorization,
+        private readonly ?EpmDataMartFreshnessService $dataMartFreshness = null,
     ) {
     }
 
@@ -45,7 +47,7 @@ final class WipForecastReportService
         /** @var WipForecastReportFilters $filters */
         $filters = $context['filters'];
 
-        return $this->calculator->calculate(
+        $payload = $this->calculator->calculate(
             filters: $filters,
             aggregates: $context['aggregates'],
             dimensions: $context['dimensions'],
@@ -65,6 +67,20 @@ final class WipForecastReportService
                 'comparison' => $context['comparison'],
             ],
         );
+
+        if (($input['_skip_data_mart_meta'] ?? false) === true) {
+            return $payload;
+        }
+
+        return $this->dataMartFreshness()->decoratePayload(
+            $payload,
+            EpmDataMartScope::fromInput(EpmDataMartScope::WIP_FORECAST, $filters->toArray()),
+        );
+    }
+
+    private function dataMartFreshness(): EpmDataMartFreshnessService
+    {
+        return $this->dataMartFreshness ?? app(EpmDataMartFreshnessService::class);
     }
 
     public function drillDown(array $input, ?User $user = null): array
