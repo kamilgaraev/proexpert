@@ -24,6 +24,7 @@ use App\Models\User;
 use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -713,16 +714,33 @@ final class WipForecastReportService
 
     private function storedLines(WipForecastVersion $version, WipForecastReportFilters $filters): Collection
     {
+        return $this->storedLinesQuery($version, $filters)->get();
+    }
+
+    private function storedLinesQuery(WipForecastVersion $version, WipForecastReportFilters $filters): HasMany
+    {
+        [$periodStart, $periodEnd] = $this->storedLinePeriodBounds($filters);
+
         return $version->lines()
             ->where('organization_id', $filters->organizationId)
-            ->whereDate('period', '>=', $filters->periodStartMonth())
-            ->whereDate('period', '<=', $filters->periodEndMonth())
+            ->where('period', '>=', $periodStart)
+            ->where('period', '<=', $periodEnd)
             ->when($filters->projectId, fn (Builder $query, int $projectId): Builder => $query->where('project_id', $projectId))
             ->when($filters->stageId, fn (Builder $query, int $stageId): Builder => $query->where('stage_id', $stageId))
             ->when($filters->contractId, fn (Builder $query, int $contractId): Builder => $query->where('contract_id', $contractId))
             ->when($filters->estimateItemId, fn (Builder $query, int $itemId): Builder => $query->where('estimate_item_id', $itemId))
-            ->when($filters->currency, fn (Builder $query, string $currency): Builder => $query->where('currency', mb_strtoupper($currency)))
-            ->get();
+            ->when($filters->currency, fn (Builder $query, string $currency): Builder => $query->where('currency', mb_strtoupper($currency)));
+    }
+
+    /**
+     * @return array{0: string, 1: string}
+     */
+    private function storedLinePeriodBounds(WipForecastReportFilters $filters): array
+    {
+        return [
+            CarbonImmutable::parse($filters->periodStartMonth())->format('Y-m'),
+            CarbonImmutable::parse($filters->periodEndMonth())->format('Y-m'),
+        ];
     }
 
     private function dimensionsForLines(Collection $lines): WipForecastDimensions
