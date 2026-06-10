@@ -20,6 +20,7 @@ use App\BusinessModules\Features\Budgeting\Services\CashGapOpeningBalanceService
 use App\BusinessModules\Features\Budgeting\Services\CfoCommandCenterPayloadBuilder;
 use App\BusinessModules\Features\Budgeting\Services\CfoCommandCenterService;
 use App\BusinessModules\Features\Budgeting\Services\CfoProjectPortfolioAggregator;
+use App\BusinessModules\Features\Budgeting\Services\EpmDataMartHealthService;
 use App\BusinessModules\Features\Budgeting\Services\EpmDataMartFreshnessService;
 use App\BusinessModules\Features\Budgeting\Services\EpmDataMartPayloadProjector;
 use App\BusinessModules\Features\Budgeting\Services\EpmDataMartRecalculationCoordinator;
@@ -48,6 +49,7 @@ final class BudgetingServiceProvider extends ServiceProvider
         $this->app->singleton(CfoProjectPortfolioAggregator::class);
         $this->app->singleton(EpmDataMartPayloadProjector::class);
         $this->app->singleton(EpmDataMartFreshnessService::class);
+        $this->app->singleton(EpmDataMartHealthService::class);
         $this->app->singleton(EpmDataMartRecalculationCoordinator::class);
         $this->app->singleton(EpmDataMartRecalculationService::class);
         $this->app->singleton(CfoCommandCenterService::class);

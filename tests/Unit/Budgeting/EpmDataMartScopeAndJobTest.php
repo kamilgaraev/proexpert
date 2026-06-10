@@ -51,6 +51,8 @@ final class EpmDataMartScopeAndJobTest extends TestCase
     protected function tearDown(): void
     {
         Facade::clearResolvedInstances();
+        Facade::setFacadeApplication(null);
+        Container::setInstance(null);
 
         parent::tearDown();
     }

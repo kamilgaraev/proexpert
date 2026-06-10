@@ -13,6 +13,7 @@ final class EpmDataMartStatus
     public const STALE = 'stale';
     public const PARTIAL = 'partial';
     public const ONLINE = 'online';
+    public const UNAVAILABLE = 'unavailable';
 
     public static function normalize(mixed $status): string
     {
@@ -41,6 +42,7 @@ final class EpmDataMartStatus
             self::STALE,
             self::PARTIAL,
             self::ONLINE,
+            self::UNAVAILABLE,
         ];
     }
 }

@@ -9,6 +9,7 @@ use App\BusinessModules\Features\Budgeting\Http\Controllers\BudgetMappingControl
 use App\BusinessModules\Features\Budgeting\Http\Controllers\BudgetVersionController;
 use App\BusinessModules\Features\Budgeting\Http\Controllers\CashGapForecastController;
 use App\BusinessModules\Features\Budgeting\Http\Controllers\CfoCommandCenterController;
+use App\BusinessModules\Features\Budgeting\Http\Controllers\EpmDataMartHealthController;
 use App\BusinessModules\Features\Budgeting\Http\Controllers\PlanFactReportController;
 use App\BusinessModules\Features\Budgeting\Http\Controllers\ProjectPortfolioDashboardController;
 use App\BusinessModules\Features\Budgeting\Http\Controllers\ProjectMarginReportController;
@@ -31,6 +32,10 @@ Route::prefix('api/v1/admin/budgeting')
         Route::get('/cfo-command-center', [CfoCommandCenterController::class, 'show'])
             ->middleware('authorize:budgeting.cfo.view')
             ->name('cfo_command_center.show');
+
+        Route::get('/epm-data-mart/health', [EpmDataMartHealthController::class, 'show'])
+            ->middleware('authorize:budgeting.cfo.view')
+            ->name('epm_data_mart.health');
 
         Route::get('/project-portfolio-dashboard', [ProjectPortfolioDashboardController::class, 'show'])
             ->middleware('authorize:budgeting.portfolio_dashboard.view')

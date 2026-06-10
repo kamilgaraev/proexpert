@@ -49,6 +49,8 @@ final class CashGapForecastServiceTest extends TestCase
     protected function tearDown(): void
     {
         Facade::clearResolvedInstances();
+        Facade::setFacadeApplication(null);
+        Container::setInstance(null);
 
         parent::tearDown();
     }
