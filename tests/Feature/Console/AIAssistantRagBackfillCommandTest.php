@@ -260,6 +260,41 @@ class AIAssistantRagBackfillCommandTest extends TestCase
         );
     }
 
+    public function test_stale_all_backfill_skips_recently_failed_source_scope(): void
+    {
+        Queue::fake();
+        config(['ai-assistant.rag.failed_retry_after_hours' => 12]);
+
+        $organization = Organization::factory()->create();
+        $sourceTypes = $this->enabledSourceTypes();
+
+        foreach (array_diff($sourceTypes, ['estimate']) as $sourceType) {
+            $this->createIndexRun($organization, RagIndexRun::STATUS_SUCCEEDED, now()->subHours(2), $sourceType);
+        }
+
+        $this->createIndexRun($organization, RagIndexRun::STATUS_FAILED, now()->subMinutes(30), 'estimate');
+
+        $this->assertDatabaseHas('ai_rag_index_runs', [
+            'organization_id' => $organization->id,
+            'source_type' => 'estimate',
+            'status' => RagIndexRun::STATUS_FAILED,
+        ]);
+
+        $result = app(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator::class)
+            ->queueAllActiveOrganizations(
+                sourceType: 'estimate',
+                mode: RagIndexRun::MODE_SCHEDULED,
+                staleOnly: true
+            );
+
+        $this->assertNotContains($organization->id, $result['organization_ids']);
+        Queue::assertNotPushed(
+            IndexRagSourceJob::class,
+            static fn (IndexRagSourceJob $job): bool => $job->organizationId === $organization->id
+                && $job->sourceType === 'estimate'
+        );
+    }
+
     public function test_stale_all_backfill_uses_custom_freshness_window(): void
     {
         Queue::fake();
