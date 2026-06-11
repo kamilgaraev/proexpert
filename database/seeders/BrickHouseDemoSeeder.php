@@ -17,6 +17,7 @@ use App\Models\Material;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
@@ -56,6 +57,10 @@ class BrickHouseDemoSeeder extends Seeder
         'supplier_proposals' => 0,
         'purchase_orders' => 0,
         'purchase_receipts' => 0,
+        'budget_periods' => 0,
+        'budget_versions' => 0,
+        'budget_lines' => 0,
+        'budget_amounts' => 0,
     ];
 
     public function run(): void
@@ -294,6 +299,14 @@ class BrickHouseDemoSeeder extends Seeder
                 ]
             );
 
+            $budgeting = $this->seedBudgetingDemo(
+                projectId: $projectId,
+                general: $general,
+                contractor: $contractor,
+                contracts: $contracts,
+                contractors: $contractors
+            );
+
             $payments = $this->seedPaymentDocuments(
                 projectId: $projectId,
                 general: $general,
@@ -309,7 +322,8 @@ class BrickHouseDemoSeeder extends Seeder
                     'general' => $generalRequests,
                     'contractor' => $contractorRequests,
                 ],
-                procurement: $procurement
+                procurement: $procurement,
+                budgeting: $budgeting
             );
 
             $this->seedActivityEvents(
@@ -415,6 +429,13 @@ class BrickHouseDemoSeeder extends Seeder
             'activity_events',
             'subscription_plans',
             'organization_subscriptions',
+            'budget_periods',
+            'budget_scenarios',
+            'responsibility_centers',
+            'budget_articles',
+            'budget_versions',
+            'budget_lines',
+            'budget_amounts',
         ];
 
         $missingTables = array_values(array_filter(
@@ -426,6 +447,28 @@ class BrickHouseDemoSeeder extends Seeder
             throw new RuntimeException(
                 'BrickHouseDemoSeeder требует подготовленную базу проекта. Не найдены таблицы: '
                 . implode(', ', $missingTables)
+            );
+        }
+
+        $requiredColumns = [
+            'payment_documents' => [
+                'budget_article_id',
+                'responsibility_center_id',
+            ],
+        ];
+        $missingColumns = [];
+        foreach ($requiredColumns as $table => $columns) {
+            foreach ($columns as $column) {
+                if (!Schema::hasColumn($table, $column)) {
+                    $missingColumns[] = "{$table}.{$column}";
+                }
+            }
+        }
+
+        if ($missingColumns !== []) {
+            throw new RuntimeException(
+                'BrickHouseDemoSeeder требует актуальные миграции бюджетирования. Не найдены колонки: '
+                . implode(', ', $missingColumns)
             );
         }
     }
@@ -1162,6 +1205,7 @@ class BrickHouseDemoSeeder extends Seeder
             ['slug' => 'project-management', 'name' => 'Управление проектами', 'type' => 'feature', 'category' => 'core'],
             ['slug' => 'contract-management', 'name' => 'Договоры', 'type' => 'feature', 'category' => 'contracts'],
             ['slug' => 'budget-estimates', 'name' => 'Сметы', 'type' => 'feature', 'category' => 'estimates'],
+            ['slug' => 'budgeting', 'name' => 'Бюджетирование', 'type' => 'feature', 'category' => 'finance'],
             ['slug' => 'schedule-management', 'name' => 'Календарные графики', 'type' => 'feature', 'category' => 'planning'],
             ['slug' => 'basic-warehouse', 'name' => 'Складской учет', 'type' => 'feature', 'category' => 'warehouse'],
             ['slug' => 'site-requests', 'name' => 'Заявки с объекта', 'type' => 'feature', 'category' => 'field'],
@@ -4310,6 +4354,550 @@ class BrickHouseDemoSeeder extends Seeder
     /**
      * @param array<string, mixed> $general
      * @param array<string, mixed> $contractor
+     * @param array<string, int> $contracts
+     * @param array<string, int> $contractors
+     * @return array{
+     *     general: array{period_id: int, scenario_id: int, centers: array<string, int>, articles: array<string, int>, versions: array<string, int>},
+     *     contractor: array{period_id: int, scenario_id: int, centers: array<string, int>, articles: array<string, int>, versions: array<string, int>},
+     *     payment_links: array<string, array{budget_article_id: int, responsibility_center_id: int}>
+     * }
+     */
+    private function seedBudgetingDemo(
+        int $projectId,
+        array $general,
+        array $contractor,
+        array $contracts,
+        array $contractors
+    ): array {
+        $generalBudgeting = $this->seedOrganizationBudgeting(
+            organizationId: (int) $general['organization_id'],
+            projectId: $projectId,
+            ownerUserId: $this->actorId($general, 'project_manager'),
+            approverUserId: $this->actorId($general, 'accountant'),
+            contractId: $contracts['general_contract_id'],
+            counterpartyId: $contractors['contractor_in_general_id'],
+            scope: 'GP'
+        );
+
+        $contractorBudgeting = $this->seedOrganizationBudgeting(
+            organizationId: (int) $contractor['organization_id'],
+            projectId: $projectId,
+            ownerUserId: $this->actorId($contractor, 'work_manager'),
+            approverUserId: $this->actorId($contractor, 'accountant'),
+            contractId: $contracts['contractor_contract_id'],
+            counterpartyId: $contractors['general_in_contractor_id'],
+            scope: 'SUB'
+        );
+
+        return [
+            'general' => $generalBudgeting,
+            'contractor' => $contractorBudgeting,
+            'payment_links' => [
+                'gp_advance' => [
+                    'budget_article_id' => $generalBudgeting['articles']['bdds_subcontract'],
+                    'responsibility_center_id' => $generalBudgeting['centers']['contracts'],
+                ],
+                'gp_act_payment' => [
+                    'budget_article_id' => $generalBudgeting['articles']['bdds_subcontract'],
+                    'responsibility_center_id' => $generalBudgeting['centers']['contracts'],
+                ],
+                'gp_materials' => [
+                    'budget_article_id' => $generalBudgeting['articles']['bdds_materials'],
+                    'responsibility_center_id' => $generalBudgeting['centers']['supply'],
+                ],
+                'gp_rebar_topup' => [
+                    'budget_article_id' => $generalBudgeting['articles']['bdds_materials'],
+                    'responsibility_center_id' => $generalBudgeting['centers']['supply'],
+                ],
+                'gp_slab_supplier_invoice' => [
+                    'budget_article_id' => $generalBudgeting['articles']['bdds_materials'],
+                    'responsibility_center_id' => $generalBudgeting['centers']['supply'],
+                ],
+                'gp_roofing_preorder' => [
+                    'budget_article_id' => $generalBudgeting['articles']['bdds_materials'],
+                    'responsibility_center_id' => $generalBudgeting['centers']['supply'],
+                ],
+                'sub_advance_income' => [
+                    'budget_article_id' => $contractorBudgeting['articles']['bdds_income'],
+                    'responsibility_center_id' => $contractorBudgeting['centers']['works'],
+                ],
+                'sub_act_invoice' => [
+                    'budget_article_id' => $contractorBudgeting['articles']['bdds_income'],
+                    'responsibility_center_id' => $contractorBudgeting['centers']['works'],
+                ],
+                'sub_mesh_restock' => [
+                    'budget_article_id' => $contractorBudgeting['articles']['bdds_materials'],
+                    'responsibility_center_id' => $contractorBudgeting['centers']['supply'],
+                ],
+                'sub_mortar_today' => [
+                    'budget_article_id' => $contractorBudgeting['articles']['bdds_materials'],
+                    'responsibility_center_id' => $contractorBudgeting['centers']['supply'],
+                ],
+                'sub_rebar_topup' => [
+                    'budget_article_id' => $contractorBudgeting['articles']['bdds_materials'],
+                    'responsibility_center_id' => $contractorBudgeting['centers']['supply'],
+                ],
+            ],
+        ];
+    }
+
+    /**
+     * @return array{period_id: int, scenario_id: int, centers: array<string, int>, articles: array<string, int>, versions: array<string, int>}
+     */
+    private function seedOrganizationBudgeting(
+        int $organizationId,
+        int $projectId,
+        int $ownerUserId,
+        int $approverUserId,
+        int $contractId,
+        int $counterpartyId,
+        string $scope
+    ): array {
+        $start = $this->now->copy()->subMonths(5)->startOfMonth();
+        $end = $this->now->copy()->addMonths(7)->endOfMonth();
+        $periodId = $this->upsert('budget_periods', [
+            'organization_id' => $organizationId,
+            'code' => "BH-{$scope}-2026",
+        ], [
+            'name' => 'Бюджет проекта "Лесной двор" 2026',
+            'period_type' => 'project',
+            'starts_at' => $start->toDateString(),
+            'ends_at' => $end->toDateString(),
+            'status' => 'open',
+            'created_by' => $ownerUserId,
+            'updated_by' => $approverUserId,
+        ]);
+        $this->totals['budget_periods']++;
+
+        $scenarioId = $this->upsert('budget_scenarios', [
+            'organization_id' => $organizationId,
+            'code' => "BH-{$scope}-BASE",
+        ], [
+            'name' => 'Базовый сценарий "Лесной двор"',
+            'scenario_type' => 'base',
+            'is_default' => true,
+            'is_active' => true,
+            'created_by' => $ownerUserId,
+            'updated_by' => $approverUserId,
+        ]);
+
+        $centers = $this->seedBudgetCenters($organizationId, $projectId, $ownerUserId, $approverUserId, $scope);
+        $articles = $this->seedBudgetArticles($organizationId, $ownerUserId, $approverUserId, $scope);
+        $versions = [
+            'bdr' => $this->seedBudgetVersion(
+                organizationId: $organizationId,
+                periodId: $periodId,
+                scenarioId: $scenarioId,
+                userId: $approverUserId,
+                kind: 'bdr',
+                name: $scope === 'GP'
+                    ? 'БДР генподряда по кирпичному дому'
+                    : 'БДР подрядчика по кладочным работам'
+            ),
+            'bdds' => $this->seedBudgetVersion(
+                organizationId: $organizationId,
+                periodId: $periodId,
+                scenarioId: $scenarioId,
+                userId: $approverUserId,
+                kind: 'bdds',
+                name: $scope === 'GP'
+                    ? 'БДДС генподряда по кирпичному дому'
+                    : 'БДДС подрядчика по кладочным работам'
+            ),
+        ];
+
+        if ($scope === 'GP') {
+            $this->seedGeneralContractorBudgetLines($versions, $articles, $centers, $projectId, $contractId, $counterpartyId, $ownerUserId);
+        } else {
+            $this->seedContractorBudgetLines($versions, $articles, $centers, $projectId, $contractId, $counterpartyId, $ownerUserId);
+        }
+
+        return [
+            'period_id' => $periodId,
+            'scenario_id' => $scenarioId,
+            'centers' => $centers,
+            'articles' => $articles,
+            'versions' => $versions,
+        ];
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    private function seedBudgetCenters(int $organizationId, int $projectId, int $ownerUserId, int $approverUserId, string $scope): array
+    {
+        $definitions = $scope === 'GP'
+            ? [
+                'project' => ['code' => 'BH-GP-CFO-PROJECT', 'name' => 'Проект "Лесной двор"', 'type' => 'project', 'owner' => $ownerUserId],
+                'contracts' => ['code' => 'BH-GP-CFO-CONTRACTS', 'name' => 'Договоры и расчеты с подрядчиком', 'type' => 'contract', 'owner' => $approverUserId],
+                'supply' => ['code' => 'BH-GP-CFO-SUPPLY', 'name' => 'Снабжение и склад объекта', 'type' => 'supply', 'owner' => $approverUserId],
+                'site' => ['code' => 'BH-GP-CFO-SITE', 'name' => 'Производственный участок генподряда', 'type' => 'site', 'owner' => $ownerUserId],
+            ]
+            : [
+                'works' => ['code' => 'BH-SUB-CFO-WORKS', 'name' => 'Кладочные работы "Лесной двор"', 'type' => 'project', 'owner' => $ownerUserId],
+                'supply' => ['code' => 'BH-SUB-CFO-SUPPLY', 'name' => 'Материалы подрядчика на объекте', 'type' => 'supply', 'owner' => $approverUserId],
+                'site' => ['code' => 'BH-SUB-CFO-SITE', 'name' => 'Бригада кладки и ПТО', 'type' => 'site', 'owner' => $ownerUserId],
+            ];
+
+        $centers = [];
+        foreach ($definitions as $key => $definition) {
+            $centers[$key] = $this->upsert('responsibility_centers', [
+                'organization_id' => $organizationId,
+                'code' => $definition['code'],
+            ], [
+                'center_type' => $definition['type'],
+                'name' => $definition['name'],
+                'owner_user_id' => $definition['owner'],
+                'approver_user_id' => $approverUserId,
+                'linked_entity_type' => 'project',
+                'linked_entity_id' => $projectId,
+                'active_from' => $this->now->copy()->subMonths(5)->startOfMonth()->toDateString(),
+                'active_to' => null,
+                'is_active' => true,
+                'created_by' => $ownerUserId,
+                'updated_by' => $approverUserId,
+            ]);
+        }
+
+        return $centers;
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    private function seedBudgetArticles(int $organizationId, int $ownerUserId, int $approverUserId, string $scope): array
+    {
+        $definitions = [
+            'bdr_revenue' => ['code' => "BH-{$scope}-BDR-REV-CONTRACT", 'name' => 'Выручка по проекту "Лесной двор"', 'kind' => 'bdr', 'direction' => 'income'],
+            'bdr_subcontract' => ['code' => "BH-{$scope}-BDR-COST-SUBCONTRACT", 'name' => 'Субподрядные работы', 'kind' => 'bdr', 'direction' => 'expense'],
+            'bdr_materials' => ['code' => "BH-{$scope}-BDR-COST-MATERIALS", 'name' => 'Материалы и поставки', 'kind' => 'bdr', 'direction' => 'expense'],
+            'bdr_labor' => ['code' => "BH-{$scope}-BDR-COST-LABOR", 'name' => 'Оплата труда и бригады', 'kind' => 'bdr', 'direction' => 'expense'],
+            'bdr_equipment' => ['code' => "BH-{$scope}-BDR-COST-EQUIPMENT", 'name' => 'Механизация и техника', 'kind' => 'bdr', 'direction' => 'expense'],
+            'bdr_overhead' => ['code' => "BH-{$scope}-BDR-COST-OVERHEAD", 'name' => 'Управление проектом и ПТО', 'kind' => 'bdr', 'direction' => 'expense'],
+            'bdds_income' => ['code' => "BH-{$scope}-BDDS-IN-CONTRACT", 'name' => 'Поступления по договору', 'kind' => 'bdds', 'direction' => 'inflow'],
+            'bdds_subcontract' => ['code' => "BH-{$scope}-BDDS-OUT-SUBCONTRACT", 'name' => 'Оплата подрядных работ', 'kind' => 'bdds', 'direction' => 'outflow'],
+            'bdds_materials' => ['code' => "BH-{$scope}-BDDS-OUT-MATERIALS", 'name' => 'Оплата материалов', 'kind' => 'bdds', 'direction' => 'outflow'],
+            'bdds_labor' => ['code' => "BH-{$scope}-BDDS-OUT-LABOR", 'name' => 'Выплаты бригадам', 'kind' => 'bdds', 'direction' => 'outflow'],
+            'bdds_overhead' => ['code' => "BH-{$scope}-BDDS-OUT-OVERHEAD", 'name' => 'Административные платежи проекта', 'kind' => 'bdds', 'direction' => 'outflow'],
+        ];
+
+        $articles = [];
+        foreach ($definitions as $key => $definition) {
+            $articles[$key] = $this->upsert('budget_articles', [
+                'organization_id' => $organizationId,
+                'code' => $definition['code'],
+            ], [
+                'name' => $definition['name'],
+                'budget_kind' => $definition['kind'],
+                'flow_direction' => $definition['direction'],
+                'is_leaf' => true,
+                'is_active' => true,
+                'created_by' => $ownerUserId,
+                'updated_by' => $approverUserId,
+            ]);
+        }
+
+        return $articles;
+    }
+
+    private function seedBudgetVersion(
+        int $organizationId,
+        int $periodId,
+        int $scenarioId,
+        int $userId,
+        string $kind,
+        string $name
+    ): int {
+        $versionId = $this->upsert('budget_versions', [
+            'organization_id' => $organizationId,
+            'budget_period_id' => $periodId,
+            'scenario_id' => $scenarioId,
+            'budget_kind' => $kind,
+            'version_number' => 1,
+        ], [
+            'name' => $name,
+            'description' => 'Активная версия бюджета для демонстрационного проекта "Кирпичный дом Лесной двор"',
+            'status' => 'active',
+            'submitted_at' => $this->now->copy()->subMonths(4)->subDays(20),
+            'submitted_by' => $userId,
+            'approved_at' => $this->now->copy()->subMonths(4)->subDays(18),
+            'approved_by' => $userId,
+            'activated_at' => $this->now->copy()->subMonths(4)->subDays(17),
+            'activated_by' => $userId,
+            'created_by' => $userId,
+            'updated_by' => $userId,
+            'workflow_history' => $this->json([
+                ['action' => 'submit', 'from_status' => 'draft', 'to_status' => 'on_approval', 'user_id' => $userId],
+                ['action' => 'approve', 'from_status' => 'on_approval', 'to_status' => 'approved', 'user_id' => $userId],
+                ['action' => 'activate', 'from_status' => 'approved', 'to_status' => 'active', 'user_id' => $userId],
+            ]),
+        ]);
+        $this->totals['budget_versions']++;
+
+        return $versionId;
+    }
+
+    /**
+     * @param array<string, int> $versions
+     * @param array<string, int> $articles
+     * @param array<string, int> $centers
+     */
+    private function seedGeneralContractorBudgetLines(
+        array $versions,
+        array $articles,
+        array $centers,
+        int $projectId,
+        int $contractId,
+        int $counterpartyId,
+        int $userId
+    ): void {
+        $this->seedBudgetLineWithAmounts($versions['bdr'], $articles['bdr_revenue'], $centers['project'], $projectId, null, null, 'Доходы по договору с заказчиком', $this->monthlyAmounts([
+            -5 => 12_630_000.00,
+            -3 => 16_840_000.00,
+            0 => 21_050_000.00,
+            2 => 16_840_000.00,
+            5 => 16_840_000.00,
+        ], 1.01), $userId, ['scope' => 'GP', 'role' => 'revenue']);
+        $this->seedBudgetLineWithAmounts($versions['bdr'], $articles['bdr_subcontract'], $centers['contracts'], $projectId, $contractId, $counterpartyId, 'Субподряд на кладку и армопояса', $this->monthlyAmounts([
+            -4 => 7_456_000.00,
+            -1 => 8_620_000.00,
+            1 => 9_584_000.00,
+            3 => 7_072_000.00,
+            5 => 4_548_000.00,
+        ], 1.00), $userId, ['scope' => 'GP', 'role' => 'subcontract']);
+        $this->seedBudgetLineWithAmounts($versions['bdr'], $articles['bdr_materials'], $centers['supply'], $projectId, null, null, 'Кирпич, бетон, арматура, плиты и кровля', $this->monthlyAmounts([
+            -5 => 2_400_000.00,
+            -4 => 3_200_000.00,
+            -2 => 3_100_000.00,
+            0 => 3_400_000.00,
+            2 => 2_600_000.00,
+            4 => 2_100_000.00,
+            6 => 1_800_000.00,
+        ], 1.03), $userId, ['scope' => 'GP', 'role' => 'materials']);
+        $this->seedBudgetLineWithAmounts($versions['bdr'], $articles['bdr_equipment'], $centers['site'], $projectId, null, null, 'Экскаватор, автокран и погрузка', $this->monthlyAmounts([
+            -5 => 900_000.00,
+            -3 => 800_000.00,
+            0 => 1_400_000.00,
+            1 => 1_100_000.00,
+            3 => 1_000_000.00,
+        ], 1.02), $userId, ['scope' => 'GP', 'role' => 'equipment']);
+        $this->seedBudgetLineWithAmounts($versions['bdr'], $articles['bdr_overhead'], $centers['project'], $projectId, null, null, 'ПТО, управление проектом и контроль качества', $this->spreadMonthlyAmounts(8_100_000.00, -5, 7, 1.00), $userId, ['scope' => 'GP', 'role' => 'overhead']);
+
+        $this->seedBudgetLineWithAmounts($versions['bdds'], $articles['bdds_income'], $centers['project'], $projectId, null, null, 'Поступления от заказчика по этапам строительства', $this->monthlyAmounts([
+            -5 => 12_630_000.00,
+            -3 => 16_840_000.00,
+            0 => 21_050_000.00,
+            3 => 16_840_000.00,
+            6 => 16_840_000.00,
+        ], 1.00), $userId, ['scope' => 'GP', 'cash_flow' => 'income']);
+        $this->seedBudgetLineWithAmounts($versions['bdds'], $articles['bdds_subcontract'], $centers['contracts'], $projectId, $contractId, $counterpartyId, 'Платежи подрядчику по договору ГП-ПДР-ЛД-02/2026', $this->monthlyAmounts([
+            -4 => 7_456_000.00,
+            0 => 8_620_000.00,
+            2 => 9_584_000.00,
+            4 => 7_072_000.00,
+            6 => 4_548_000.00,
+        ], 1.00), $userId, ['scope' => 'GP', 'cash_flow' => 'subcontract']);
+        $this->seedBudgetLineWithAmounts($versions['bdds'], $articles['bdds_materials'], $centers['supply'], $projectId, null, null, 'Закупка материалов по заявкам с объекта', $this->monthlyAmounts([
+            -5 => 2_400_000.00,
+            -4 => 3_200_000.00,
+            -2 => 3_100_000.00,
+            0 => 3_400_000.00,
+            2 => 2_600_000.00,
+            4 => 2_100_000.00,
+            6 => 1_800_000.00,
+        ], 1.02), $userId, ['scope' => 'GP', 'cash_flow' => 'materials']);
+        $this->seedBudgetLineWithAmounts($versions['bdds'], $articles['bdds_overhead'], $centers['project'], $projectId, null, null, 'Административные платежи проекта', $this->spreadMonthlyAmounts(8_100_000.00, -5, 7, 1.00), $userId, ['scope' => 'GP', 'cash_flow' => 'overhead']);
+    }
+
+    /**
+     * @param array<string, int> $versions
+     * @param array<string, int> $articles
+     * @param array<string, int> $centers
+     */
+    private function seedContractorBudgetLines(
+        array $versions,
+        array $articles,
+        array $centers,
+        int $projectId,
+        int $contractId,
+        int $counterpartyId,
+        int $userId
+    ): void {
+        $this->seedBudgetLineWithAmounts($versions['bdr'], $articles['bdr_revenue'], $centers['works'], $projectId, $contractId, $counterpartyId, 'Выручка по кладочным работам', $this->monthlyAmounts([
+            -4 => 7_456_000.00,
+            0 => 8_620_000.00,
+            2 => 9_584_000.00,
+            4 => 7_072_000.00,
+            6 => 4_548_000.00,
+        ], 1.00), $userId, ['scope' => 'SUB', 'role' => 'revenue']);
+        $this->seedBudgetLineWithAmounts($versions['bdr'], $articles['bdr_labor'], $centers['site'], $projectId, null, null, 'Бригады каменщиков и мастера участка', $this->monthlyAmounts([
+            -3 => 3_000_000.00,
+            -2 => 2_400_000.00,
+            -1 => 2_600_000.00,
+            0 => 2_500_000.00,
+            1 => 2_200_000.00,
+            2 => 1_500_000.00,
+            3 => 1_000_000.00,
+        ], 1.01), $userId, ['scope' => 'SUB', 'role' => 'labor']);
+        $this->seedBudgetLineWithAmounts($versions['bdr'], $articles['bdr_materials'], $centers['supply'], $projectId, null, null, 'Раствор, сетка, арматура и расходные материалы', $this->monthlyAmounts([
+            -3 => 1_400_000.00,
+            -1 => 1_700_000.00,
+            0 => 1_500_000.00,
+            1 => 1_400_000.00,
+            2 => 1_200_000.00,
+            3 => 1_200_000.00,
+        ], 1.03), $userId, ['scope' => 'SUB', 'role' => 'materials']);
+        $this->seedBudgetLineWithAmounts($versions['bdr'], $articles['bdr_equipment'], $centers['site'], $projectId, null, null, 'Автокран, вибраторы и малая механизация', $this->monthlyAmounts([
+            -2 => 200_000.00,
+            0 => 350_000.00,
+            1 => 450_000.00,
+            2 => 250_000.00,
+            3 => 150_000.00,
+        ], 1.00), $userId, ['scope' => 'SUB', 'role' => 'equipment']);
+        $this->seedBudgetLineWithAmounts($versions['bdr'], $articles['bdr_overhead'], $centers['works'], $projectId, null, null, 'ПТО, управление и исполнительная документация', $this->spreadMonthlyAmounts(3_200_000.00, -4, 4, 1.00), $userId, ['scope' => 'SUB', 'role' => 'overhead']);
+
+        $this->seedBudgetLineWithAmounts($versions['bdds'], $articles['bdds_income'], $centers['works'], $projectId, $contractId, $counterpartyId, 'Поступления от генподрядчика по договору', $this->monthlyAmounts([
+            -4 => 7_456_000.00,
+            0 => 8_620_000.00,
+            2 => 9_584_000.00,
+            4 => 7_072_000.00,
+            6 => 4_548_000.00,
+        ], 1.00), $userId, ['scope' => 'SUB', 'cash_flow' => 'income']);
+        $this->seedBudgetLineWithAmounts($versions['bdds'], $articles['bdds_labor'], $centers['site'], $projectId, null, null, 'Выплаты бригадам по графику кладки', $this->monthlyAmounts([
+            -3 => 3_000_000.00,
+            -2 => 2_400_000.00,
+            -1 => 2_600_000.00,
+            0 => 2_500_000.00,
+            1 => 2_200_000.00,
+            2 => 1_500_000.00,
+            3 => 1_000_000.00,
+        ], 1.00), $userId, ['scope' => 'SUB', 'cash_flow' => 'labor']);
+        $this->seedBudgetLineWithAmounts($versions['bdds'], $articles['bdds_materials'], $centers['supply'], $projectId, null, null, 'Оплата раствора, сетки и арматуры', $this->monthlyAmounts([
+            -3 => 1_400_000.00,
+            -1 => 1_700_000.00,
+            0 => 1_500_000.00,
+            1 => 1_400_000.00,
+            2 => 1_200_000.00,
+            3 => 1_200_000.00,
+        ], 1.02), $userId, ['scope' => 'SUB', 'cash_flow' => 'materials']);
+        $this->seedBudgetLineWithAmounts($versions['bdds'], $articles['bdds_overhead'], $centers['works'], $projectId, null, null, 'ПТО и административные платежи подрядчика', $this->spreadMonthlyAmounts(3_200_000.00, -4, 4, 1.00), $userId, ['scope' => 'SUB', 'cash_flow' => 'overhead']);
+    }
+
+    /**
+     * @param list<array{month: string, plan: float, forecast: float}> $amounts
+     * @param array<string, mixed> $metadata
+     */
+    private function seedBudgetLineWithAmounts(
+        int $versionId,
+        int $articleId,
+        int $centerId,
+        int $projectId,
+        ?int $contractId,
+        ?int $counterpartyId,
+        string $description,
+        array $amounts,
+        int $userId,
+        array $metadata
+    ): void {
+        $lineId = $this->upsert('budget_lines', [
+            'budget_version_id' => $versionId,
+            'budget_article_id' => $articleId,
+            'responsibility_center_id' => $centerId,
+            'project_id' => $projectId,
+            'contract_id' => $contractId,
+            'counterparty_id' => $counterpartyId,
+            'currency' => 'RUB',
+            'description' => $description,
+        ], [
+            'metadata' => $this->json($metadata + ['scenario' => 'brick_house']),
+            'created_by' => $userId,
+            'updated_by' => $userId,
+        ]);
+        $this->totals['budget_lines']++;
+
+        foreach ($amounts as $amount) {
+            $this->upsert('budget_amounts', [
+                'budget_line_id' => $lineId,
+                'month' => $amount['month'],
+            ], [
+                'plan_amount' => $amount['plan'],
+                'forecast_amount' => $amount['forecast'],
+                'currency' => 'RUB',
+            ]);
+            $this->totals['budget_amounts']++;
+        }
+    }
+
+    /**
+     * @param array<int, float> $amountsByOffset
+     * @return list<array{month: string, plan: float, forecast: float}>
+     */
+    private function monthlyAmounts(array $amountsByOffset, float $forecastFactor = 1.0): array
+    {
+        $amounts = [];
+        foreach ($amountsByOffset as $offset => $planAmount) {
+            $amounts[] = [
+                'month' => $this->budgetMonth((int) $offset),
+                'plan' => round((float) $planAmount, 2),
+                'forecast' => round((float) $planAmount * $forecastFactor, 2),
+            ];
+        }
+
+        return $amounts;
+    }
+
+    /**
+     * @return list<array{month: string, plan: float, forecast: float}>
+     */
+    private function spreadMonthlyAmounts(float $totalAmount, int $startOffset, int $endOffset, float $forecastFactor = 1.0): array
+    {
+        $offsets = range($startOffset, $endOffset);
+        $monthlyAmount = round($totalAmount / count($offsets), 2);
+        $remaining = $totalAmount;
+        $amounts = [];
+
+        foreach ($offsets as $index => $offset) {
+            $plan = $index === array_key_last($offsets)
+                ? round($remaining, 2)
+                : $monthlyAmount;
+            $remaining = round($remaining - $plan, 2);
+            $amounts[] = [
+                'month' => $this->budgetMonth((int) $offset),
+                'plan' => $plan,
+                'forecast' => round($plan * $forecastFactor, 2),
+            ];
+        }
+
+        return $amounts;
+    }
+
+    private function budgetMonth(int $offset): string
+    {
+        return $this->now->copy()->addMonthsNoOverflow($offset)->startOfMonth()->toDateString();
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $documents
+     * @param array{payment_links?: array<string, array{budget_article_id: int, responsibility_center_id: int}>} $budgeting
+     * @return array<string, array<string, mixed>>
+     */
+    private function applyBudgetingToPayments(array $documents, array $budgeting): array
+    {
+        foreach (($budgeting['payment_links'] ?? []) as $documentKey => $link) {
+            if (!isset($documents[$documentKey])) {
+                continue;
+            }
+
+            $documents[$documentKey]['budget_article_id'] = $link['budget_article_id'];
+            $documents[$documentKey]['responsibility_center_id'] = $link['responsibility_center_id'];
+        }
+
+        return $documents;
+    }
+
+    /**
+     * @param array<string, mixed> $general
+     * @param array<string, mixed> $contractor
      * @param array{general: array<string, int>, contractor: array<string, int>} $materials
      * @param array{general: array<string, int>, contractor: array<string, int>} $warehouses
      * @param array{general: array<string, int>, contractor: array<string, int>} $siteRequests
@@ -5327,6 +5915,7 @@ class BrickHouseDemoSeeder extends Seeder
      * @param array<string, int> $acts
      * @param array<string, array<string, int>> $siteRequests
      * @param array{site_request_links?: array<int, array{purchase_request_id: int, purchase_order_id: int}>} $procurement
+     * @param array{payment_links?: array<string, array{budget_article_id: int, responsibility_center_id: int}>} $budgeting
      * @return array<string, int>
      */
     private function seedPaymentDocuments(
@@ -5338,7 +5927,8 @@ class BrickHouseDemoSeeder extends Seeder
         array $estimates,
         array $acts,
         array $siteRequests,
-        array $procurement = []
+        array $procurement = [],
+        array $budgeting = []
     ): array {
         if (!Schema::hasTable('payment_documents')) {
             return [];
@@ -5640,6 +6230,7 @@ class BrickHouseDemoSeeder extends Seeder
             ],
         ];
 
+        $documents = $this->applyBudgetingToPayments($documents, $budgeting);
         $ids = [];
 
         foreach ($documents as $key => $document) {
@@ -5667,6 +6258,8 @@ class BrickHouseDemoSeeder extends Seeder
                 'organization_id' => $document['organization_id'],
                 'project_id' => $document['project_id'],
                 'estimate_id' => $document['estimate_id'],
+                'budget_article_id' => $document['budget_article_id'] ?? null,
+                'responsibility_center_id' => $document['responsibility_center_id'] ?? null,
                 'document_type' => $document['document_type'],
                 'document_date' => $document['document_date'],
                 'direction' => $document['direction'],
@@ -5688,6 +6281,14 @@ class BrickHouseDemoSeeder extends Seeder
                 'remaining_amount' => $remainingAmount,
                 'status' => $document['status'],
                 'workflow_stage' => $document['status'] === 'paid' ? 'completed' : 'payment',
+                'budget_limit_status' => ($document['budget_article_id'] ?? null) !== null && $document['direction'] === 'outgoing' ? 'available' : null,
+                'budget_limit_decision' => ($document['budget_article_id'] ?? null) !== null && $document['direction'] === 'outgoing' ? 'allow' : null,
+                'budget_limit_message' => ($document['budget_article_id'] ?? null) !== null && $document['direction'] === 'outgoing'
+                    ? 'Платеж находится в пределах бюджета демо-проекта'
+                    : null,
+                'budget_limit_checked_at' => ($document['budget_article_id'] ?? null) !== null && $document['direction'] === 'outgoing'
+                    ? $this->now->copy()->subHours(2)
+                    : null,
                 'source_type' => $document['source_type'],
                 'source_id' => $document['source_id'],
                 'due_date' => $this->now->copy()->addDays($document['due_offset'])->toDateString(),
@@ -6341,6 +6942,15 @@ class BrickHouseDemoSeeder extends Seeder
         }
 
         $exists = DB::table($table)->where($keys)->exists();
+        if (
+            !$exists
+            && Schema::hasColumn($table, 'uuid')
+            && !array_key_exists('uuid', $keys)
+            && !array_key_exists('uuid', $values)
+        ) {
+            $values['uuid'] = (string) Str::uuid();
+        }
+
         $values = $this->withTimestamps($table, $values, $exists);
 
         DB::table($table)->updateOrInsert($keys, $values);
