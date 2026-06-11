@@ -5,12 +5,10 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Crm\Models;
 
 use App\Models\Contract;
-use App\Models\File;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 final class CrmDeal extends CrmModel
@@ -104,8 +102,4 @@ final class CrmDeal extends CrmModel
         return $this->hasMany(CrmActivity::class, 'deal_id');
     }
 
-    public function files(): MorphMany
-    {
-        return $this->morphMany(File::class, 'fileable');
-    }
 }

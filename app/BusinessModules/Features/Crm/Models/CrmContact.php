@@ -4,11 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Crm\Models;
 
-use App\Models\File;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 final class CrmContact extends CrmModel
@@ -74,8 +72,4 @@ final class CrmContact extends CrmModel
         return $this->hasMany(CrmContactIdentity::class, 'contact_id');
     }
 
-    public function files(): MorphMany
-    {
-        return $this->morphMany(File::class, 'fileable');
-    }
 }

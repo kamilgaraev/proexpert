@@ -17,6 +17,7 @@ use Closure;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use ReflectionMethod;
 use Tests\TestCase;
 
 final class CrmRegistryServiceScopedValidationTest extends TestCase
@@ -147,6 +148,19 @@ final class CrmRegistryServiceScopedValidationTest extends TestCase
         $this->assertNull($updated->contact_id);
         $this->assertNull($updated->lead_id);
         $this->assertNull($updated->deal_id);
+    }
+
+    public function test_deal_query_does_not_eager_load_files_for_uuid_deals(): void
+    {
+        $method = new ReflectionMethod(CrmRegistryService::class, 'dealQuery');
+        $method->setAccessible(true);
+
+        $query = $method->invoke($this->service, 1, true);
+        $eagerLoads = $query->getEagerLoads();
+
+        $this->assertArrayHasKey('company', $eagerLoads);
+        $this->assertArrayHasKey('activities', $eagerLoads);
+        $this->assertArrayNotHasKey('files', $eagerLoads);
     }
 
     /**

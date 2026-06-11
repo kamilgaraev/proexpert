@@ -573,7 +573,7 @@ final class CrmRegistryService
     {
         $query = CrmDeal::query()
             ->forOrganization($organizationId)
-            ->with(['company', 'primaryContact', 'owner', 'lead', 'project', 'contract', 'pipeline', 'stage', 'source', 'activities', 'files']);
+            ->with(['company', 'primaryContact', 'owner', 'lead', 'project', 'contract', 'pipeline', 'stage', 'source', 'activities']);
 
         return $withTrashed ? $query->withTrashed() : $query;
     }

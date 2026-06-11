@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Crm\Http\Resources;
 
 use App\BusinessModules\Features\Crm\Http\Resources\Concerns\ResolvesCrmResourceState;
-use App\Http\Resources\File\FileResource;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -75,7 +74,6 @@ final class CrmDealResource extends JsonResource
             'custom_fields' => $this->custom_fields ?? [],
             'is_archived' => $this->deleted_at !== null,
             'activities' => CrmActivityResource::collection($this->whenLoaded('activities')),
-            'files' => FileResource::collection($this->whenLoaded('files')),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
             'deleted_at' => $this->deleted_at,
