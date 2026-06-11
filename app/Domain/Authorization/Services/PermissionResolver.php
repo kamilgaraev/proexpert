@@ -239,6 +239,7 @@ class PermissionResolver
 
         $adminModulePrefixes = [
             'ai_assistant',
+            'projects',
         ];
 
         foreach ($adminModulePrefixes as $modulePrefix) {

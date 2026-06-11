@@ -118,4 +118,29 @@ class PermissionResolverModuleAliasTest extends TestCase
         $this->assertSame('project_pulse.view', $action);
         $this->assertContains('ai-assistant', $resolver->variants($module));
     }
+
+    public function test_admin_projects_permission_uses_project_management_module_alias(): void
+    {
+        $resolver = new class extends PermissionResolver {
+            public function __construct()
+            {
+            }
+
+            public function normalize(string $module, string $action): array
+            {
+                return $this->normalizeAdminModulePermissionParts($module, $action);
+            }
+
+            public function variants(string $module): array
+            {
+                return $this->expandModuleVariants($module);
+            }
+        };
+
+        [$module, $action] = $resolver->normalize('admin', 'projects.view');
+
+        $this->assertSame('projects', $module);
+        $this->assertSame('view', $action);
+        $this->assertContains('project-management', $resolver->variants($module));
+    }
 }
