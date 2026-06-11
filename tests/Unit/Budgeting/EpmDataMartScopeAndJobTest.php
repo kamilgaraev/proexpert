@@ -111,4 +111,16 @@ final class EpmDataMartScopeAndJobTest extends TestCase
         $this->assertIsString($source);
         $this->assertStringContainsString('recalculateRun($this->runId, false)', $source);
     }
+
+    public function test_job_marks_expected_domain_failures_without_queue_failure(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 3)
+            . '/app/BusinessModules/Features/Budgeting/Jobs/RecalculateEpmDataMartSnapshotJob.php');
+
+        $this->assertIsString($source);
+        $this->assertStringContainsString('catch (DomainException $exception)', $source);
+        $this->assertStringContainsString('$this->markFailed($exception);', $source);
+        $this->assertStringContainsString('public function failed(Throwable $throwable): void', $source);
+        $this->assertStringContainsString('$this->markFailed($throwable);', $source);
+    }
 }
