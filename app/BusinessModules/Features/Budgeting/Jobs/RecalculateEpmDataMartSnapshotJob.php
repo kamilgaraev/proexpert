@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Budgeting\Jobs;
 
 use App\BusinessModules\Features\Budgeting\Services\EpmDataMartRecalculationCoordinator;
 use App\BusinessModules\Features\Budgeting\Services\EpmDataMartRecalculationService;
+use DomainException;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -30,10 +31,19 @@ final class RecalculateEpmDataMartSnapshotJob implements ShouldQueue, ShouldBeUn
 
     public function handle(EpmDataMartRecalculationService $service): void
     {
-        $service->recalculateRun($this->runId, false);
+        try {
+            $service->recalculateRun($this->runId, false);
+        } catch (DomainException $exception) {
+            $this->markFailed($exception);
+        }
     }
 
     public function failed(Throwable $throwable): void
+    {
+        $this->markFailed($throwable);
+    }
+
+    private function markFailed(Throwable $throwable): void
     {
         try {
             app(EpmDataMartRecalculationCoordinator::class)->markFailedById($this->runId, $throwable);
