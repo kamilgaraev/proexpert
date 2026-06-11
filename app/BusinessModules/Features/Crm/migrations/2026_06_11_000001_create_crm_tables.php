@@ -92,7 +92,6 @@ return new class extends Migration
             $table->softDeletes();
 
             $table->foreign('source_id')->references('id')->on('crm_sources')->nullOnDelete();
-            $table->foreign('merged_into_id')->references('id')->on('crm_companies')->nullOnDelete();
             $table->index(['organization_id', 'status']);
             $table->index(['organization_id', 'owner_user_id']);
             $table->index(['organization_id', 'linked_contractor_id']);
@@ -103,6 +102,10 @@ return new class extends Migration
         DB::statement(
             'CREATE UNIQUE INDEX crm_companies_org_inn_unique ON crm_companies (organization_id, inn) WHERE inn IS NOT NULL AND deleted_at IS NULL'
         );
+
+        Schema::table('crm_companies', function (Blueprint $table): void {
+            $table->foreign('merged_into_id')->references('id')->on('crm_companies')->nullOnDelete();
+        });
 
         Schema::create('crm_contacts', function (Blueprint $table): void {
             $table->uuid('id')->primary();
@@ -130,7 +133,6 @@ return new class extends Migration
 
             $table->foreign('company_id')->references('id')->on('crm_companies')->nullOnDelete();
             $table->foreign('source_id')->references('id')->on('crm_sources')->nullOnDelete();
-            $table->foreign('merged_into_id')->references('id')->on('crm_contacts')->nullOnDelete();
             $table->index(['organization_id', 'status']);
             $table->index(['organization_id', 'company_id']);
             $table->index(['organization_id', 'owner_user_id']);
@@ -140,6 +142,10 @@ return new class extends Migration
         DB::statement(
             'CREATE UNIQUE INDEX crm_contacts_primary_unique ON crm_contacts (organization_id, company_id) WHERE is_primary = true AND company_id IS NOT NULL AND deleted_at IS NULL'
         );
+
+        Schema::table('crm_contacts', function (Blueprint $table): void {
+            $table->foreign('merged_into_id')->references('id')->on('crm_contacts')->nullOnDelete();
+        });
 
         Schema::create('crm_contact_points', function (Blueprint $table): void {
             $table->uuid('id')->primary();
