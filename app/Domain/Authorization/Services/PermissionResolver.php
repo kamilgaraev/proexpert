@@ -142,10 +142,13 @@ class PermissionResolver
     public function hasSystemPermission(UserRoleAssignment $assignment, string $permission): bool
     {
         $systemPermissions = $this->getSystemPermissions($assignment);
+        $permissionVariants = $this->expandSystemPermissionVariants($permission);
         
         // Проверяем точное совпадение
-        if (in_array($permission, $systemPermissions)) {
-            return true;
+        foreach ($permissionVariants as $permissionVariant) {
+            if (in_array($permissionVariant, $systemPermissions, true)) {
+                return true;
+            }
         }
 
         // Проверяем wildcard права
@@ -155,8 +158,10 @@ class PermissionResolver
 
         // Проверяем права с точками (например: users.* для users.view)
         foreach ($systemPermissions as $rolePermission) {
-            if ($this->matchesWildcard($permission, $rolePermission)) {
-                return true;
+            foreach ($permissionVariants as $permissionVariant) {
+                if ($this->matchesWildcard($permissionVariant, $rolePermission)) {
+                    return true;
+                }
             }
         }
 
@@ -237,18 +242,47 @@ class PermissionResolver
             return [$module, $action];
         }
 
-        $adminModulePrefixes = [
+        $actionParts = explode('.', $action, 2);
+        if (count($actionParts) !== 2) {
+            return [$module, $action];
+        }
+
+        [$modulePrefix, $moduleAction] = $actionParts;
+
+        $legacyAdminModulePrefixes = [
             'ai_assistant',
+            'contracts',
+            'materials',
             'projects',
+            'reports',
+            'time_tracking',
+            'users',
         ];
 
-        foreach ($adminModulePrefixes as $modulePrefix) {
-            if (str_starts_with($action, $modulePrefix . '.')) {
-                return [$modulePrefix, substr($action, strlen($modulePrefix) + 1)];
-            }
+        if (in_array($modulePrefix, $legacyAdminModulePrefixes, true)) {
+            return [$modulePrefix, $moduleAction];
         }
 
         return [$module, $action];
+    }
+
+    protected function expandSystemPermissionVariants(string $permission): array
+    {
+        $variants = [$permission];
+
+        $legacyAdminSystemAliases = [
+            'admin.dashboard.view' => ['dashboard.view'],
+            'admin.users.view' => ['users.view', 'users.manage', 'users.manage_admin'],
+            'admin.users.create' => ['users.create', 'users.manage', 'users.manage_admin'],
+            'admin.users.edit' => ['users.edit', 'users.manage', 'users.manage_admin'],
+            'admin.users.block' => ['users.block', 'users.edit', 'users.manage', 'users.manage_admin'],
+        ];
+
+        foreach ($legacyAdminSystemAliases[$permission] ?? [] as $alias) {
+            $variants[] = $alias;
+        }
+
+        return array_values(array_unique($variants));
     }
 
     public function getSystemPermissions(UserRoleAssignment $assignment): array
@@ -545,6 +579,7 @@ class PermissionResolver
             'time_tracking' => 'time-tracking',
             'report_templates' => 'report-templates',
             'warehouse' => 'basic-warehouse',
+            'contracts' => 'contract-management',
             'mdm' => 'catalog-management',
             'materials' => 'catalog-management',
             'suppliers' => 'catalog-management',
@@ -575,6 +610,7 @@ class PermissionResolver
             'time-tracking' => 'time_tracking',
             'report-templates' => 'report_templates',
             'basic-warehouse' => 'warehouse',
+            'contract-management' => 'contracts',
             'catalog-management' => 'mdm',
             'workflow-management' => 'completed_works',
             'workforce-management' => 'workforce',

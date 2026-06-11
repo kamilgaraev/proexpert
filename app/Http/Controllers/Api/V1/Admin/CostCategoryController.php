@@ -23,7 +23,11 @@ class CostCategoryController extends Controller
     public function __construct(CostCategoryService $costCategoryService)
     {
         $this->costCategoryService = $costCategoryService;
-        $this->middleware('can:admin.catalogs.manage');
+        $this->middleware('authorize:cost_categories.view')->only(['index', 'show']);
+        $this->middleware('authorize:cost_categories.create')->only(['store']);
+        $this->middleware('authorize:cost_categories.edit')->only(['update']);
+        $this->middleware('authorize:cost_categories.delete')->only(['destroy']);
+        $this->middleware('authorize:cost_categories.import')->only(['import']);
     }
 
     /**

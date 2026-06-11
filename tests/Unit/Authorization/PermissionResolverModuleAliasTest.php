@@ -143,4 +143,102 @@ class PermissionResolverModuleAliasTest extends TestCase
         $this->assertSame('view', $action);
         $this->assertContains('project-management', $resolver->variants($module));
     }
+
+    public function test_legacy_admin_catalog_permissions_use_catalog_management_aliases(): void
+    {
+        $resolver = new class extends PermissionResolver {
+            public function __construct()
+            {
+            }
+
+            public function normalize(string $module, string $action): array
+            {
+                return $this->normalizeAdminModulePermissionParts($module, $action);
+            }
+
+            public function variants(string $module): array
+            {
+                return $this->expandModuleVariants($module);
+            }
+        };
+
+        [$module, $action] = $resolver->normalize('admin', 'materials.import');
+
+        $this->assertSame('materials', $module);
+        $this->assertSame('import', $action);
+        $this->assertContains('catalog-management', $resolver->variants($module));
+    }
+
+    public function test_legacy_admin_contract_and_report_permissions_use_module_aliases(): void
+    {
+        $resolver = new class extends PermissionResolver {
+            public function __construct()
+            {
+            }
+
+            public function normalize(string $module, string $action): array
+            {
+                return $this->normalizeAdminModulePermissionParts($module, $action);
+            }
+
+            public function variants(string $module): array
+            {
+                return $this->expandModuleVariants($module);
+            }
+        };
+
+        [$contractModule, $contractAction] = $resolver->normalize('admin', 'contracts.view');
+        [$reportModule, $reportAction] = $resolver->normalize('admin', 'reports.export');
+
+        $this->assertSame('contracts', $contractModule);
+        $this->assertSame('view', $contractAction);
+        $this->assertContains('contract-management', $resolver->variants($contractModule));
+
+        $this->assertSame('reports', $reportModule);
+        $this->assertSame('export', $reportAction);
+        $this->assertContains('reports', $resolver->variants($reportModule));
+    }
+
+    public function test_legacy_admin_users_permissions_use_users_module_alias(): void
+    {
+        $resolver = new class extends PermissionResolver {
+            public function __construct()
+            {
+            }
+
+            public function normalize(string $module, string $action): array
+            {
+                return $this->normalizeAdminModulePermissionParts($module, $action);
+            }
+
+            public function variants(string $module): array
+            {
+                return $this->expandModuleVariants($module);
+            }
+        };
+
+        [$module, $action] = $resolver->normalize('admin', 'users.view');
+
+        $this->assertSame('users', $module);
+        $this->assertSame('view', $action);
+        $this->assertContains('users', $resolver->variants($module));
+    }
+
+    public function test_legacy_admin_users_system_permission_uses_manage_alias(): void
+    {
+        $resolver = new class extends PermissionResolver {
+            public function __construct()
+            {
+            }
+
+            public function systemVariants(string $permission): array
+            {
+                return $this->expandSystemPermissionVariants($permission);
+            }
+        };
+
+        $this->assertContains('users.view', $resolver->systemVariants('admin.users.view'));
+        $this->assertContains('users.manage', $resolver->systemVariants('admin.users.edit'));
+        $this->assertContains('users.manage_admin', $resolver->systemVariants('admin.users.block'));
+    }
 }

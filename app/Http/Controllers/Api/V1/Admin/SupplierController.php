@@ -25,7 +25,10 @@ class SupplierController extends Controller
 
     public function __construct(private readonly SupplierService $supplierService)
     {
-        $this->middleware('can:admin.catalogs.manage');
+        $this->middleware('authorize:suppliers.view')->only(['index', 'show']);
+        $this->middleware('authorize:suppliers.create')->only(['store']);
+        $this->middleware('authorize:suppliers.edit')->only(['update']);
+        $this->middleware('authorize:suppliers.delete')->only(['destroy']);
     }
 
     public function index(Request $request): JsonResponse
