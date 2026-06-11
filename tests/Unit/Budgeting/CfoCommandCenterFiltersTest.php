@@ -7,7 +7,9 @@ namespace Tests\Unit\Budgeting;
 use App\BusinessModules\Features\Budgeting\DTOs\CfoCommandCenterFilters;
 use App\BusinessModules\Features\Budgeting\DTOs\PlanFactReportFilters;
 use App\BusinessModules\Features\Budgeting\Http\Requests\CfoCommandCenterRequest;
+use App\BusinessModules\Features\Budgeting\Services\CfoCommandCenterService;
 use PHPUnit\Framework\TestCase;
+use ReflectionClass;
 
 final class CfoCommandCenterFiltersTest extends TestCase
 {
@@ -74,5 +76,28 @@ final class CfoCommandCenterFiltersTest extends TestCase
         $this->assertSame('active', $filters->toArray()['project_status']);
         $this->assertSame('commercial', $filters->toArray()['project_type']);
         $this->assertSame(9, $filters->toArray()['cost_category_id']);
+    }
+
+    public function test_cfo_command_center_accepts_full_budget_version_period(): void
+    {
+        $reflection = new ReflectionClass(CfoCommandCenterService::class);
+        $method = $reflection->getMethod('resolveFilters');
+        $filters = $method->invoke($reflection->newInstanceWithoutConstructor(), [
+            'current_organization_id' => 42,
+            'period_start' => '2026-01-01',
+            'period_end' => '2027-01-31',
+            'budget_version_uuid' => 'cac5f4d0-003c-457c-b6b8-c1de3a71e055',
+            'scenario_uuid' => '489f9829-9a3f-4e39-813c-36cedc8c5b5e',
+            'item_limit' => 10,
+        ]);
+
+        if (!$filters instanceof CfoCommandCenterFilters) {
+            self::fail('CFO command center filters were not resolved.');
+        }
+
+        $this->assertSame('2026-01-01', $filters->periodStart);
+        $this->assertSame('2027-01-31', $filters->periodEnd);
+        $this->assertSame('cac5f4d0-003c-457c-b6b8-c1de3a71e055', $filters->budgetVersionUuid);
+        $this->assertSame('489f9829-9a3f-4e39-813c-36cedc8c5b5e', $filters->scenarioUuid);
     }
 }

@@ -34,7 +34,6 @@ use Throwable;
 
 final class CfoCommandCenterService
 {
-    private const MAX_RANGE_DAYS = 180;
     private const DEFAULT_ITEM_LIMIT = 10;
     private const UPCOMING_WINDOW_DAYS = 14;
 
@@ -148,10 +147,6 @@ final class CfoCommandCenterService
 
         if ($end->lt($start)) {
             throw new InvalidArgumentException(trans_message('budgeting.cfo_command_center.errors.period_invalid'));
-        }
-
-        if ($start->diffInDays($end) > self::MAX_RANGE_DAYS) {
-            throw new InvalidArgumentException(trans_message('budgeting.cfo_command_center.errors.range_too_large'));
         }
 
         $projectId = $this->resolveScopedProject($organizationId, $input['project_id'] ?? null, $input['current_project_id'] ?? null);
