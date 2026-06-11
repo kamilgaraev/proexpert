@@ -38,6 +38,7 @@ return [
         'procurement' => 'package',
         'budget-estimates' => 'package',
         'budgeting' => 'package',
+        'crm' => 'package',
         'design-management' => 'package',
         'quality-control' => 'package',
         'executive-documentation' => 'package',

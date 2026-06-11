@@ -12,6 +12,7 @@ return [
     App\BusinessModules\Features\AdvancedDashboard\AdvancedDashboardServiceProvider::class,
     App\BusinessModules\Features\BudgetEstimates\BudgetEstimatesServiceProvider::class,
     App\BusinessModules\Features\Budgeting\BudgetingServiceProvider::class,
+    App\BusinessModules\Features\Crm\CrmServiceProvider::class,
     App\BusinessModules\Features\NormativeReferences\NormativeReferencesServiceProvider::class,
     App\BusinessModules\Features\KnowledgeHub\KnowledgeHubServiceProvider::class,
     App\BusinessModules\Features\Notifications\NotificationServiceProvider::class,

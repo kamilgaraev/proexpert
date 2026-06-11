@@ -24,7 +24,7 @@ class PackageCatalogValidatorTest extends TestCase
     {
         $packages = $this->catalog()->allPackages();
 
-        $this->assertCount(11, $packages);
+        $this->assertCount(12, $packages);
 
         foreach ($packages as $package) {
             $this->assertSame(2, $package['schema_version']);
