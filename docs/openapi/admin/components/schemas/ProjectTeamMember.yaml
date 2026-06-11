@@ -1,9 +1,66 @@
 type: object
-required: [id, name, role]
+description: Сотрудник, доступный для добавления в команду проекта.
+required: [id, name, email, is_active]
 properties:
   id:
     type: integer
+    example: 15
   name:
     type: string
-  role:
-    type: string 
+    example: "Иван Петров"
+  email:
+    type: string
+    format: email
+    example: "employee@prohelper.com"
+  phone:
+    type: string
+    nullable: true
+  position:
+    type: string
+    nullable: true
+  avatar_path:
+    type: string
+    nullable: true
+  avatar_url:
+    type: string
+    format: uri
+    nullable: true
+  is_active:
+    type: boolean
+    example: true
+  roles:
+    type: array
+    items:
+      type: string
+  primary_role:
+    type: string
+    nullable: true
+    example: "supplier"
+  project_role:
+    type: string
+    nullable: true
+    example: "member"
+  project_access_mode:
+    type: string
+    nullable: true
+    enum: [all_projects, assigned_projects]
+  project_ids:
+    type: array
+    items:
+      type: integer
+  project_access:
+    type: array
+    items:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+  createdAt:
+    type: string
+    format: date-time
+  updatedAt:
+    type: string
+    format: date-time

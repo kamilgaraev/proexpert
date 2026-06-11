@@ -38,8 +38,30 @@ Route::delete('projects/{project}', [ProjectController::class, 'destroy'])
     ->name('projects.destroy');
 
 // Дополнительные маршруты для проекта
-Route::post('/projects/{projectId}/foremen/{userId}', [ProjectController::class, 'assignForeman'])->name('projects.foremen.assign');
-Route::delete('/projects/{projectId}/foremen/{userId}', [ProjectController::class, 'detachForeman'])->name('projects.foremen.detach');
+Route::get('/projects/{project}/team-members', [ProjectController::class, 'teamMembers'])
+    ->middleware('authorize:admin.projects.edit')
+    ->whereNumber('project')
+    ->name('projects.team-members.index');
+Route::post('/projects/{project}/team-members/{user}', [ProjectController::class, 'assignTeamMember'])
+    ->middleware('authorize:admin.projects.edit')
+    ->whereNumber('project')
+    ->whereNumber('user')
+    ->name('projects.team-members.assign');
+Route::delete('/projects/{project}/team-members/{user}', [ProjectController::class, 'detachTeamMember'])
+    ->middleware('authorize:admin.projects.edit')
+    ->whereNumber('project')
+    ->whereNumber('user')
+    ->name('projects.team-members.detach');
+Route::post('/projects/{projectId}/foremen/{userId}', [ProjectController::class, 'assignForeman'])
+    ->middleware('authorize:admin.projects.edit')
+    ->whereNumber('projectId')
+    ->whereNumber('userId')
+    ->name('projects.foremen.assign');
+Route::delete('/projects/{projectId}/foremen/{userId}', [ProjectController::class, 'detachForeman'])
+    ->middleware('authorize:admin.projects.edit')
+    ->whereNumber('projectId')
+    ->whereNumber('userId')
+    ->name('projects.foremen.detach');
 
 // Получить статистику по проекту
 Route::get('/projects/{id}/dashboard', [ProjectController::class, 'dashboard'])

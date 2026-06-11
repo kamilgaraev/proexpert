@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Resources\Api\V1\Admin\Project;
 
-use App\Http\Resources\Api\V1\Admin\User\ForemanUserResource;
+use App\Http\Resources\Api\V1\Admin\User\ProjectTeamMemberResource;
 use App\Models\Project;
 use App\Services\Project\ProjectCustomerResolverService;
 use Illuminate\Http\Request;
@@ -50,7 +50,7 @@ class ProjectResource extends JsonResource
             ],
             'created_at' => $this->resource->created_at,
             'updated_at' => $this->resource->updated_at,
-            'assigned_users' => ForemanUserResource::collection($this->whenLoaded('users')),
+            'assigned_users' => ProjectTeamMemberResource::collection($this->whenLoaded('users')),
             'assigned_users_count' => $this->whenCounted('users', $this->resource->users_count),
         ];
     }

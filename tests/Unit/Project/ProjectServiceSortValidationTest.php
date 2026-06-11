@@ -14,6 +14,7 @@ use App\Services\Organization\OrganizationProfileService;
 use App\Services\Project\ProjectContextService;
 use App\Services\Project\ProjectParticipantService;
 use App\Services\Project\ProjectService;
+use App\Services\Project\ProjectTeamService;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Mockery;
@@ -53,7 +54,8 @@ class ProjectServiceSortValidationTest extends TestCase
             Mockery::mock(OrganizationProfileService::class),
             Mockery::mock(ProjectContextService::class),
             Mockery::mock(OrganizationScopeInterface::class),
-            Mockery::mock(ProjectParticipantService::class)
+            Mockery::mock(ProjectParticipantService::class),
+            Mockery::mock(ProjectTeamService::class)
         );
 
         $this->assertSame($paginator, $service->getProjectsForCurrentOrg($request, 20));

@@ -51,6 +51,7 @@ class ProjectService
     protected ProjectContextService $projectContextService;
     protected OrganizationScopeInterface $orgScope;
     protected ProjectParticipantService $projectParticipantService;
+    protected ProjectTeamService $projectTeamService;
 
     public function __construct(
         ProjectRepositoryInterface $projectRepository,
@@ -61,7 +62,8 @@ class ProjectService
         OrganizationProfileService $organizationProfileService,
         ProjectContextService $projectContextService,
         OrganizationScopeInterface $orgScope,
-        ProjectParticipantService $projectParticipantService
+        ProjectParticipantService $projectParticipantService,
+        ProjectTeamService $projectTeamService
     ) {
         $this->projectRepository = $projectRepository;
         $this->userRepository = $userRepository;
@@ -72,6 +74,7 @@ class ProjectService
         $this->projectContextService = $projectContextService;
         $this->orgScope = $orgScope;
         $this->projectParticipantService = $projectParticipantService;
+        $this->projectTeamService = $projectTeamService;
     }
 
     private function resolveProjectRoleFromValues(?string $roleNew, ?string $roleLegacy): ?ProjectOrganizationRole
@@ -347,30 +350,32 @@ class ProjectService
 
         $user = $this->userRepository->find($userId);
         
-        // Получаем ID контекста авторизации для организации
-        $authContext = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
-        $contextId = $authContext ? $authContext->id : null;
-        
         if (!$user 
             || !$user->is_active 
-            || !app(\App\Domain\Authorization\Services\AuthorizationService::class)->hasRole($user, 'foreman', $contextId) 
-            || !$user->organizations()->where('organization_user.organization_id', $organizationId)->exists()
+            || !$user->organizations()
+                ->where('organization_user.organization_id', $organizationId)
+                ->where('organization_user.is_active', true)
+                ->exists()
            ) { 
-            throw new BusinessLogicException(trans_message('project.foreman_not_found'), 404);
+            throw new BusinessLogicException(trans_message('project.team_member_not_found'), 404);
         }
 
         try {
-            // Добавляем роль foreman в pivot. Если запись уже есть — обновляем.
-            $project->users()->syncWithoutDetaching([$userId => ['role' => 'foreman']]);
-            Log::info('Foreman assigned to project', ['project_id' => $projectId, 'user_id' => $userId, 'admin_id' => $request->user()->id]);
+            $actor = $request->user();
+            if (!$actor) {
+                throw new BusinessLogicException(trans_message('project.unauthorized'), 401);
+            }
+
+            $this->projectTeamService->assignMember($project, $user, $actor, $organizationId);
+
             return true;
         } catch (\Illuminate\Database\QueryException $e) {
             if ($e->getCode() == 23505) {
-                Log::warning('Attempted to assign already assigned foreman to project', ['project_id' => $projectId, 'user_id' => $userId]);
+                Log::warning('Attempted to assign already assigned project team member', ['project_id' => $projectId, 'user_id' => $userId]);
                 return true; 
             }
-            Log::error('Database error assigning foreman to project', ['project_id' => $projectId, 'user_id' => $userId, 'exception' => $e]);
-            throw new BusinessLogicException(trans_message('project.foreman_assign_database_error'), 500, $e);
+            Log::error('Database error assigning project team member', ['project_id' => $projectId, 'user_id' => $userId, 'exception' => $e]);
+            throw new BusinessLogicException(trans_message('project.team_member_assign_error'), 500, $e);
         }
     }
 
@@ -383,15 +388,13 @@ class ProjectService
             throw new BusinessLogicException(trans_message('project.not_found_in_organization'), 404);
         }
 
-        $detachedCount = $project->users()->detach($userId);
+        $user = $this->userRepository->find($userId);
 
-        if ($detachedCount > 0) {
-             Log::info('Foreman detached from project', ['project_id' => $projectId, 'user_id' => $userId, 'admin_id' => $request->user()->id]);
-            return true;
-        } else {
-            Log::warning('Attempted to detach foreman not assigned to project', ['project_id' => $projectId, 'user_id' => $userId]);
-            return false;
+        if (!$user) {
+            throw new BusinessLogicException(trans_message('project.team_member_not_found'), 404);
         }
+
+        return $this->projectTeamService->detachMember($project, $user, $organizationId);
     }
 
     /**

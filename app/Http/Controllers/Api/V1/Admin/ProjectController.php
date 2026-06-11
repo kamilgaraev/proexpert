@@ -8,9 +8,11 @@ use App\Models\User;
 use App\Models\CostCategory;
 use App\Services\DaDataService;
 use App\Services\Project\ProjectService;
+use App\Services\Project\ProjectTeamService;
 use App\Http\Requests\Api\V1\Admin\Project\StoreProjectRequest;
 use App\Http\Requests\Api\V1\Admin\Project\UpdateProjectRequest;
 use App\Http\Resources\Api\V1\Admin\Project\ProjectResource;
+use App\Http\Resources\Api\V1\Admin\User\ProjectTeamMemberResource;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -25,11 +27,17 @@ class ProjectController extends Controller
 {
     protected ProjectService $projectService;
     protected DaDataService $daDataService;
+    protected ProjectTeamService $projectTeamService;
 
-    public function __construct(ProjectService $projectService, DaDataService $daDataService)
+    public function __construct(
+        ProjectService $projectService,
+        DaDataService $daDataService,
+        ProjectTeamService $projectTeamService
+    )
     {
         $this->projectService = $projectService;
         $this->daDataService = $daDataService;
+        $this->projectTeamService = $projectTeamService;
         // Авторизация настроена на уровне роутов через middleware стек
         $this->middleware('subscription.limit:max_projects')->only('store');
     }
@@ -83,7 +91,10 @@ class ProjectController extends Controller
             if (!$project) {
                 return AdminResponse::error(trans_message('project.not_found'), 404);
             }
-            return AdminResponse::success(new ProjectResource($project->load(['users', 'costCategory'])));
+            return AdminResponse::success(new ProjectResource($project->load([
+                'users' => fn ($query) => $query->wherePivot('is_active', true),
+                'costCategory',
+            ])));
         } catch (BusinessLogicException $e) {
             return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
@@ -142,8 +153,21 @@ class ProjectController extends Controller
     public function assignForeman(Request $request, string $projectId, string $userId): JsonResponse
     {
         try {
-            $this->projectService->assignForemanToProject((int)$projectId, (int)$userId, $request);
-            return AdminResponse::success(null, trans_message('project.foreman_assigned'));
+            $project = $this->projectService->findProjectByIdForCurrentOrg((int) $projectId, $request);
+            $user = User::query()->find((int) $userId);
+
+            if (!$project || !$user || !$request->user()) {
+                return AdminResponse::error(trans_message('project.team_member_not_found'), 404);
+            }
+
+            $this->projectTeamService->assignMember(
+                $project,
+                $user,
+                $request->user(),
+                $this->resolveOrganizationId($request)
+            );
+
+            return AdminResponse::success(null, trans_message('project.team_member_assigned'));
         } catch (BusinessLogicException $e) {
             return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
@@ -160,8 +184,16 @@ class ProjectController extends Controller
     public function detachForeman(Request $request, string $projectId, string $userId): JsonResponse
     {
         try {
-            $this->projectService->detachForemanFromProject((int)$projectId, (int)$userId, $request);
-            return AdminResponse::success(null, trans_message('project.foreman_detached'));
+            $project = $this->projectService->findProjectByIdForCurrentOrg((int) $projectId, $request);
+            $user = User::query()->find((int) $userId);
+
+            if (!$project || !$user) {
+                return AdminResponse::error(trans_message('project.team_member_not_found'), 404);
+            }
+
+            $this->projectTeamService->detachMember($project, $user, $this->resolveOrganizationId($request));
+
+            return AdminResponse::success(null, trans_message('project.team_member_detached'));
         } catch (BusinessLogicException $e) {
             return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
@@ -170,6 +202,102 @@ class ProjectController extends Controller
             ]);
             return AdminResponse::error(trans_message('project.foreman_detach_error'), 500);
         }
+    }
+
+    public function teamMembers(Request $request, Project $project): JsonResponse
+    {
+        try {
+            $members = $this->projectTeamService->paginateAvailableMembers(
+                $project,
+                $this->resolveOrganizationId($request),
+                [
+                    'search' => $request->query('search'),
+                    'name' => $request->query('name'),
+                    'email' => $request->query('email'),
+                ],
+                (int) $request->query('per_page', 50)
+            );
+
+            return AdminResponse::success(
+                ProjectTeamMemberResource::collection($members),
+                trans_message('project.team_members_loaded')
+            );
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('Error in ProjectController@teamMembers', [
+                'project_id' => $project->id,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return AdminResponse::error(trans_message('project.team_members_load_error'), 500);
+        }
+    }
+
+    public function assignTeamMember(Request $request, Project $project, User $user): JsonResponse
+    {
+        try {
+            $actor = $request->user();
+
+            if (!$actor) {
+                return AdminResponse::error(trans_message('project.unauthorized'), 401);
+            }
+
+            $this->projectTeamService->assignMember(
+                $project,
+                $user,
+                $actor,
+                $this->resolveOrganizationId($request)
+            );
+
+            return AdminResponse::success(null, trans_message('project.team_member_assigned'));
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('Error in ProjectController@assignTeamMember', [
+                'project_id' => $project->id,
+                'user_id' => $user->id,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return AdminResponse::error(trans_message('project.team_member_assign_error'), 500);
+        }
+    }
+
+    public function detachTeamMember(Request $request, Project $project, User $user): JsonResponse
+    {
+        try {
+            $this->projectTeamService->detachMember(
+                $project,
+                $user,
+                $this->resolveOrganizationId($request)
+            );
+
+            return AdminResponse::success(null, trans_message('project.team_member_detached'));
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('Error in ProjectController@detachTeamMember', [
+                'project_id' => $project->id,
+                'user_id' => $user->id,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return AdminResponse::error(trans_message('project.team_member_detach_error'), 500);
+        }
+    }
+
+    private function resolveOrganizationId(Request $request): int
+    {
+        return (int) ($request->attributes->get('current_organization_id')
+            ?? $request->user()?->current_organization_id
+            ?? 0);
     }
 
     public function statistics(int $id): JsonResponse

@@ -382,10 +382,49 @@
                       items:
                         $ref: '../components/schemas/WorkType.yaml'
 
-/projects/{projectId}/foremen/{userId}:
+/projects/{projectId}/team-members:
+  get:
+    tags: [Projects]
+    summary: Получить сотрудников для команды проекта
+    parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: integer
+      - in: query
+        name: search
+        required: false
+        schema:
+          type: string
+        description: Поиск по имени или email сотрудника.
+      - in: query
+        name: per_page
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 50
+    responses:
+      "200":
+        description: Список сотрудников, доступных для добавления в команду проекта
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/ProjectTeamMember.yaml'
+
+/projects/{projectId}/team-members/{userId}:
   post:
     tags: [Projects]
-    summary: Назначить прораба на проект
+    summary: Добавить сотрудника в команду проекта
     parameters:
       - in: path
         name: projectId
@@ -399,14 +438,14 @@
           type: integer
     responses:
       "200":
-        description: Прораб назначен
+        description: Сотрудник добавлен в команду проекта
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ApiResponse.yaml'
   delete:
     tags: [Projects]
-    summary: Открепить прораба от проекта
+    summary: Снять сотрудника с проекта
     parameters:
       - in: path
         name: projectId
@@ -420,7 +459,51 @@
           type: integer
     responses:
       "200":
-        description: Прораб откреплён
+        description: Сотрудник снят с проекта
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/projects/{projectId}/foremen/{userId}:
+  post:
+    tags: [Projects]
+    summary: Добавить сотрудника в команду проекта (совместимый маршрут)
+    parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: integer
+      - in: path
+        name: userId
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Сотрудник добавлен в команду проекта
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+  delete:
+    tags: [Projects]
+    summary: Снять сотрудника с проекта (совместимый маршрут)
+    parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: integer
+      - in: path
+        name: userId
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Сотрудник снят с проекта
         content:
           application/json:
             schema:
@@ -512,4 +595,4 @@
                     data:
                       type: array
                       items:
-                        $ref: '../components/schemas/OrganizationSimple.yaml' 
+                        $ref: '../components/schemas/OrganizationSimple.yaml'

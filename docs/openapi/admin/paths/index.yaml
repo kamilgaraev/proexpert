@@ -46,6 +46,10 @@
   $ref: './projects.yaml#/~1projects~1{id}~1materials'
 /projects/{id}/work-types:
   $ref: './projects.yaml#/~1projects~1{id}~1work-types'
+/projects/{projectId}/team-members:
+  $ref: './projects.yaml#/~1projects~1{projectId}~1team-members'
+/projects/{projectId}/team-members/{userId}:
+  $ref: './projects.yaml#/~1projects~1{projectId}~1team-members~1{userId}'
 /projects/{projectId}/foremen/{userId}:
   $ref: './projects.yaml#/~1projects~1{projectId}~1foremen~1{userId}'
 /projects/{id}/organizations:
