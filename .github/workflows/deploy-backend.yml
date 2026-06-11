@@ -147,6 +147,8 @@ jobs:
 
             echo "Refreshing Laravel caches..."
             docker compose exec -T api php artisan optimize:clear
+            docker compose exec -T api php artisan clear-compiled
+            docker compose exec -T api php artisan package:discover --ansi
 
             echo "Running production-safe migrations..."
             docker compose exec -T api php artisan migrate:safe --force

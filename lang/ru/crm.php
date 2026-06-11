@@ -18,6 +18,7 @@ return [
     ],
     'errors' => [
         'not_found' => 'Запись CRM не найдена.',
+        'schema_not_ready' => 'Раздел CRM настраивается. Попробуйте позже.',
     ],
     'validation' => [
         'company_required' => 'Выберите компанию для сделки.',

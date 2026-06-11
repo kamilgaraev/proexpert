@@ -14,6 +14,12 @@ final class CrmListRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        $this->normalizeBooleanQuery('archived');
+        $this->normalizeBooleanQuery('merged');
+    }
+
     public function rules(): array
     {
         return [
@@ -43,5 +49,25 @@ final class CrmListRequest extends FormRequest
             ])],
             'sort_dir' => ['nullable', 'string', Rule::in(['asc', 'desc'])],
         ];
+    }
+
+    private function normalizeBooleanQuery(string $field): void
+    {
+        if (! $this->has($field)) {
+            return;
+        }
+
+        $value = $this->input($field);
+
+        if ($value === '') {
+            $this->merge([$field => null]);
+            return;
+        }
+
+        $normalized = filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+
+        if ($normalized !== null) {
+            $this->merge([$field => $normalized]);
+        }
     }
 }

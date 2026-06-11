@@ -58,7 +58,8 @@ RUN npm ci --omit=dev --ignore-scripts
 # Копируем исходный код приложения после установки зависимостей.
 COPY . ${APP_DIR}
 
-RUN composer dump-autoload --optimize --no-dev \
+RUN rm -f bootstrap/cache/*.php \
+    && composer dump-autoload --optimize --no-dev \
     && php artisan package:discover --ansi \
     && php artisan filament:upgrade
 

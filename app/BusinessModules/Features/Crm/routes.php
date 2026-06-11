@@ -3,12 +3,13 @@
 declare(strict_types=1);
 
 use App\BusinessModules\Features\Crm\Http\Controllers\CrmController;
+use App\BusinessModules\Features\Crm\Http\Middleware\EnsureCrmSchemaReady;
 use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('api/v1/admin/crm')
     ->name('admin.crm.')
-    ->middleware(AdminRouteStack::middleware(['module.access:crm']))
+    ->middleware(AdminRouteStack::middleware(['module.access:crm', EnsureCrmSchemaReady::class]))
     ->group(function (): void {
         Route::get('/summary', [CrmController::class, 'summary'])
             ->middleware('authorize:crm.analytics.view')
