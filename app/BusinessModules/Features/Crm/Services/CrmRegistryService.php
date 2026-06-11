@@ -33,8 +33,21 @@ final class CrmRegistryService
     ) {
     }
 
-    public function summary(int $organizationId): array
+    public function summary(int $organizationId, bool $canViewAmounts = false): array
     {
+        $openDealsQuery = CrmDeal::query()
+            ->forOrganization($organizationId)
+            ->where('status', 'open');
+        $pipelineAmount = null;
+        $weightedForecast = null;
+
+        if ($canViewAmounts) {
+            $pipelineAmount = (clone $openDealsQuery)->sum('amount');
+            $weightedForecast = (clone $openDealsQuery)
+                ->selectRaw('COALESCE(SUM(amount * COALESCE(probability, 0) / 100.0), 0) as weighted_forecast')
+                ->value('weighted_forecast');
+        }
+
         return [
             'companies' => [
                 'total' => CrmCompany::query()->forOrganization($organizationId)->count(),
@@ -50,6 +63,10 @@ final class CrmRegistryService
                 'open' => CrmDeal::query()->forOrganization($organizationId)->where('status', 'open')->count(),
                 'won' => CrmDeal::query()->forOrganization($organizationId)->where('status', 'won')->count(),
                 'lost' => CrmDeal::query()->forOrganization($organizationId)->where('status', 'lost')->count(),
+                'total' => CrmDeal::query()->forOrganization($organizationId)->count(),
+                'pipeline_amount' => $pipelineAmount,
+                'weighted_forecast' => $weightedForecast,
+                'amount_visible' => $canViewAmounts,
             ],
             'activities' => [
                 'planned' => CrmActivity::query()->forOrganization($organizationId)->where('status', 'planned')->count(),
@@ -482,7 +499,7 @@ final class CrmRegistryService
     {
         $query = CrmDeal::query()
             ->forOrganization($organizationId)
-            ->with(['company', 'primaryContact', 'owner', 'pipeline', 'stage', 'source', 'activities']);
+            ->with(['company', 'primaryContact', 'owner', 'lead', 'project', 'contract', 'pipeline', 'stage', 'source', 'activities', 'files']);
 
         return $withTrashed ? $query->withTrashed() : $query;
     }

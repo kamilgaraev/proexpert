@@ -59,7 +59,7 @@ final class CrmController extends Controller
     public function summary(Request $request): JsonResponse
     {
         try {
-            return AdminResponse::success($this->registry->summary($this->organizationId($request)));
+            return AdminResponse::success($this->registry->summary($this->organizationId($request), $this->canViewAmounts($request)));
         } catch (Throwable $e) {
             return $this->failure($e, 'crm.summary.error');
         }
@@ -609,6 +609,19 @@ final class CrmController extends Controller
     private function actorId(Request $request): ?int
     {
         return $request->user()?->id;
+    }
+
+    private function canViewAmounts(Request $request): bool
+    {
+        $user = $request->user();
+
+        if ($user === null) {
+            return false;
+        }
+
+        return $user->can('crm.amounts.view', [
+            'organization_id' => $this->organizationId($request),
+        ]);
     }
 
     private function perPage(Request $request): int
