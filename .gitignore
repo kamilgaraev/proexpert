@@ -45,6 +45,7 @@ app/Console/Commands/Authorization/AssignOwnerRolesCommand.php
 !README.md
 !CHANGELOG.md
 !pherp-98-wip-forecast-to-complete-model.md
+!pherp-104-crm-domain-model.md
 !/.agent/rules/*.md
 !/.agent/workflows/*.md
 !@docs/specs/mobile-roadmap-spec.md
