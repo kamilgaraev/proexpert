@@ -362,6 +362,7 @@
       "crm.deals.link",
       "crm.deals.archive",
       "crm.deals.restore",
+      "crm.pipelines.manage",
       "crm.activities.view",
       "crm.activities.create",
       "crm.activities.update",

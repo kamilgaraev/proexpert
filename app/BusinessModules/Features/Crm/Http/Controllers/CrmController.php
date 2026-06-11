@@ -15,6 +15,7 @@ use App\BusinessModules\Features\Crm\Http\Requests\CrmLeadConvertRequest;
 use App\BusinessModules\Features\Crm\Http\Requests\CrmLeadRequest;
 use App\BusinessModules\Features\Crm\Http\Requests\CrmListRequest;
 use App\BusinessModules\Features\Crm\Http\Requests\CrmMergeRequest;
+use App\BusinessModules\Features\Crm\Http\Requests\CrmPipelineStageRequest;
 use App\BusinessModules\Features\Crm\Http\Resources\CrmActivityResource;
 use App\BusinessModules\Features\Crm\Http\Resources\CrmCompanyResource;
 use App\BusinessModules\Features\Crm\Http\Resources\CrmContactResource;
@@ -71,6 +72,43 @@ final class CrmController extends Controller
             return AdminResponse::success($this->registry->references($this->organizationId($request)));
         } catch (Throwable $e) {
             return $this->failure($e, 'crm.references.error');
+        }
+    }
+
+    public function storePipelineStage(CrmPipelineStageRequest $request): JsonResponse
+    {
+        try {
+            return AdminResponse::success(
+                $this->registry->createPipelineStage($this->organizationId($request), $request->validated()),
+                trans_message('crm.pipeline_stages.created'),
+                201
+            );
+        } catch (Throwable $e) {
+            return $this->failure($e, 'crm.pipeline_stages.store_error');
+        }
+    }
+
+    public function updatePipelineStage(CrmPipelineStageRequest $request, string $stageId): JsonResponse
+    {
+        try {
+            return AdminResponse::success(
+                $this->registry->updatePipelineStage($this->organizationId($request), $stageId, $request->validated()),
+                trans_message('crm.pipeline_stages.updated')
+            );
+        } catch (Throwable $e) {
+            return $this->failure($e, 'crm.pipeline_stages.update_error');
+        }
+    }
+
+    public function deletePipelineStage(Request $request, string $stageId): JsonResponse
+    {
+        try {
+            return AdminResponse::success(
+                $this->registry->deletePipelineStage($this->organizationId($request), $stageId),
+                trans_message('crm.pipeline_stages.deleted')
+            );
+        } catch (Throwable $e) {
+            return $this->failure($e, 'crm.pipeline_stages.delete_error');
         }
     }
 

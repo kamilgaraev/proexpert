@@ -18,6 +18,12 @@ Route::prefix('api/v1/admin/crm')
             ->middleware('authorize:crm.view')
             ->name('references');
 
+        Route::prefix('pipeline-stages')->name('pipeline-stages.')->middleware('authorize:crm.pipelines.manage')->group(function (): void {
+            Route::post('/', [CrmController::class, 'storePipelineStage'])->name('store');
+            Route::patch('/{stageId}', [CrmController::class, 'updatePipelineStage'])->name('update');
+            Route::delete('/{stageId}', [CrmController::class, 'deletePipelineStage'])->name('delete');
+        });
+
         Route::get('/duplicates/{entityType}', [CrmController::class, 'duplicateCandidates'])
             ->middleware('authorize:crm.merge.view')
             ->name('duplicates.index');

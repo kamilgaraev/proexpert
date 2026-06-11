@@ -21,6 +21,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 use function trans_message;
@@ -95,6 +96,7 @@ final class CrmRegistryService
             })
             ->where('is_active', true)
             ->with(['stages' => fn ($query) => $query->orderBy('sort_order')])
+            ->orderByRaw('CASE WHEN organization_id = ? THEN 0 ELSE 1 END', [$organizationId])
             ->orderByDesc('is_default')
             ->orderBy('label')
             ->get();
@@ -137,6 +139,78 @@ final class CrmRegistryService
                 ],
             ],
         ];
+    }
+
+    public function createPipelineStage(int $organizationId, array $data): array
+    {
+        DB::transaction(function () use ($organizationId, $data): void {
+            $pipeline = $this->resolveEditableDealPipeline($organizationId, $data['pipeline_id'] ?? null);
+            $label = trim((string) $data['label']);
+            $this->ensurePipelineStageLabelIsFilled($label);
+            $code = $this->resolveNewStageCode($pipeline->id, $data['code'] ?? null, $label);
+            $sortOrder = array_key_exists('sort_order', $data)
+                ? (int) $data['sort_order']
+                : ((int) CrmPipelineStage::query()->where('pipeline_id', $pipeline->id)->max('sort_order') + 10);
+            $category = (string) ($data['category'] ?? 'open');
+
+            CrmPipelineStage::query()->create([
+                'pipeline_id' => $pipeline->id,
+                'code' => $code,
+                'label' => $label,
+                'category' => $category,
+                'sort_order' => $sortOrder,
+                'probability_percent' => $data['probability_percent'] ?? null,
+                'required_fields' => [],
+                'required_links' => [],
+                'is_terminal' => in_array($category, ['won', 'lost'], true),
+            ]);
+        });
+
+        return $this->references($organizationId);
+    }
+
+    public function updatePipelineStage(int $organizationId, string $stageId, array $data): array
+    {
+        DB::transaction(function () use ($organizationId, $stageId, $data): void {
+            $stage = $this->resolveEditablePipelineStage($organizationId, $stageId);
+            $attributes = [];
+
+            if (array_key_exists('label', $data)) {
+                $label = trim((string) $data['label']);
+                $this->ensurePipelineStageLabelIsFilled($label);
+                $attributes['label'] = $label;
+            }
+
+            if (array_key_exists('category', $data)) {
+                $attributes['category'] = (string) $data['category'];
+                $attributes['is_terminal'] = in_array((string) $data['category'], ['won', 'lost'], true);
+            }
+
+            if (array_key_exists('sort_order', $data)) {
+                $attributes['sort_order'] = (int) $data['sort_order'];
+            }
+
+            if (array_key_exists('probability_percent', $data)) {
+                $attributes['probability_percent'] = $data['probability_percent'];
+            }
+
+            if ($attributes !== []) {
+                $stage->update($attributes);
+            }
+        });
+
+        return $this->references($organizationId);
+    }
+
+    public function deletePipelineStage(int $organizationId, string $stageId): array
+    {
+        DB::transaction(function () use ($organizationId, $stageId): void {
+            $stage = $this->resolveEditablePipelineStage($organizationId, $stageId);
+            $this->ensurePipelineStageIsEmpty($organizationId, $stage);
+            $stage->delete();
+        });
+
+        return $this->references($organizationId);
     }
 
     public function paginateCompanies(int $organizationId, array $filters, int $perPage): LengthAwarePaginator
@@ -1100,6 +1174,184 @@ final class CrmRegistryService
 
         if (! $exists) {
             $this->throwReferenceValidation('pipeline_id', 'crm.validation.pipeline_invalid');
+        }
+    }
+
+    private function resolveEditableDealPipeline(int $organizationId, mixed $pipelineId = null): CrmPipeline
+    {
+        if ($this->isEmptyReference($pipelineId)) {
+            return $this->ensureOrganizationDealPipeline($organizationId);
+        }
+
+        $pipeline = CrmPipeline::query()
+            ->whereKey($pipelineId)
+            ->with(['stages' => fn ($query) => $query->orderBy('sort_order')])
+            ->first();
+
+        if ($pipeline === null) {
+            $this->throwReferenceValidation('pipeline_id', 'crm.validation.pipeline_invalid');
+        }
+
+        if ((int) $pipeline->organization_id === $organizationId) {
+            return $pipeline;
+        }
+
+        if ($pipeline->organization_id === null) {
+            return $this->ensureOrganizationDealPipeline($organizationId, $pipeline);
+        }
+
+        $this->throwReferenceValidation('pipeline_id', 'crm.validation.pipeline_invalid');
+    }
+
+    private function resolveEditablePipelineStage(int $organizationId, string $stageId): CrmPipelineStage
+    {
+        $stage = CrmPipelineStage::query()
+            ->whereKey($stageId)
+            ->with('pipeline')
+            ->first();
+
+        if ($stage === null || $stage->pipeline === null) {
+            $this->throwReferenceValidation('stage_id', 'crm.validation.stage_invalid');
+        }
+
+        if ((int) $stage->pipeline->organization_id === $organizationId) {
+            return $stage;
+        }
+
+        if ($stage->pipeline->organization_id === null) {
+            $pipeline = $this->ensureOrganizationDealPipeline($organizationId, $stage->pipeline);
+            $editableStage = CrmPipelineStage::query()
+                ->where('pipeline_id', $pipeline->id)
+                ->where('code', $stage->code)
+                ->first();
+
+            if ($editableStage !== null) {
+                return $editableStage;
+            }
+        }
+
+        $this->throwReferenceValidation('stage_id', 'crm.validation.stage_invalid');
+    }
+
+    private function ensureOrganizationDealPipeline(int $organizationId, ?CrmPipeline $sourcePipeline = null): CrmPipeline
+    {
+        $pipeline = CrmPipeline::query()
+            ->where('organization_id', $organizationId)
+            ->where('entity_type', 'deal')
+            ->where('is_default', true)
+            ->with(['stages' => fn ($query) => $query->orderBy('sort_order')])
+            ->first();
+
+        if ($pipeline !== null) {
+            return $pipeline;
+        }
+
+        $pipeline = CrmPipeline::query()->create([
+            'organization_id' => $organizationId,
+            'code' => 'default',
+            'label' => trans_message('crm.references.default_pipeline'),
+            'entity_type' => 'deal',
+            'is_default' => true,
+            'is_active' => true,
+        ]);
+
+        $sourceStages = $sourcePipeline?->stages;
+        $stagePayloads = $sourceStages !== null && $sourceStages->isNotEmpty()
+            ? $sourceStages->map(fn (CrmPipelineStage $stage): array => [
+                'code' => $stage->code,
+                'label' => $stage->label,
+                'category' => $stage->category,
+                'sort_order' => (int) $stage->sort_order,
+                'probability_percent' => $stage->probability_percent,
+                'is_terminal' => (bool) $stage->is_terminal,
+            ])->values()->all()
+            : $this->defaultDealStagePayloads();
+
+        foreach ($stagePayloads as $stagePayload) {
+            CrmPipelineStage::query()->create([
+                'pipeline_id' => $pipeline->id,
+                'code' => $stagePayload['code'],
+                'label' => $stagePayload['label'],
+                'category' => $stagePayload['category'],
+                'sort_order' => $stagePayload['sort_order'],
+                'probability_percent' => $stagePayload['probability_percent'],
+                'required_fields' => [],
+                'required_links' => [],
+                'is_terminal' => $stagePayload['is_terminal'] ?? in_array($stagePayload['category'], ['won', 'lost'], true),
+            ]);
+        }
+
+        return $pipeline->load(['stages' => fn ($query) => $query->orderBy('sort_order')]);
+    }
+
+    private function defaultDealStagePayloads(): array
+    {
+        return [
+            ['code' => 'new', 'label' => trans_message('crm.references.stage_new'), 'category' => 'open', 'sort_order' => 10, 'probability_percent' => 10],
+            ['code' => 'qualification', 'label' => trans_message('crm.references.stage_qualification'), 'category' => 'open', 'sort_order' => 20, 'probability_percent' => 30],
+            ['code' => 'proposal', 'label' => trans_message('crm.references.stage_proposal'), 'category' => 'open', 'sort_order' => 30, 'probability_percent' => 60],
+            ['code' => 'contract', 'label' => trans_message('crm.references.stage_contract'), 'category' => 'open', 'sort_order' => 40, 'probability_percent' => 80],
+            ['code' => 'won', 'label' => trans_message('crm.references.stage_won'), 'category' => 'won', 'sort_order' => 50, 'probability_percent' => 100, 'is_terminal' => true],
+            ['code' => 'lost', 'label' => trans_message('crm.references.stage_lost'), 'category' => 'lost', 'sort_order' => 60, 'probability_percent' => 0, 'is_terminal' => true],
+        ];
+    }
+
+    private function resolveNewStageCode(string $pipelineId, ?string $code, string $label): string
+    {
+        if ($code !== null && $code !== '') {
+            $exists = CrmPipelineStage::query()
+                ->where('pipeline_id', $pipelineId)
+                ->where('code', $code)
+                ->exists();
+
+            if ($exists) {
+                $this->throwReferenceValidation('code', 'crm.validation.stage_code_exists');
+            }
+
+            return $code;
+        }
+
+        $baseCode = trim((string) Str::of(Str::ascii($label))->lower()->replaceMatches('/[^a-z0-9]+/', '_'), '_') ?: 'stage';
+        $candidate = Str::limit($baseCode, 56, '');
+        $suffix = 1;
+
+        while (CrmPipelineStage::query()->where('pipeline_id', $pipelineId)->where('code', $candidate)->exists()) {
+            $suffix++;
+            $candidate = Str::limit($baseCode, 50, '') . '_' . $suffix;
+        }
+
+        return $candidate;
+    }
+
+    private function ensurePipelineStageLabelIsFilled(string $label): void
+    {
+        if ($label === '') {
+            $this->throwReferenceValidation('label', 'crm.validation.stage_label_required');
+        }
+    }
+
+    private function ensurePipelineStageIsEmpty(int $organizationId, CrmPipelineStage $stage): void
+    {
+        $pipelineCode = $stage->pipeline?->code;
+        $hasDeals = CrmDeal::query()
+            ->forOrganization($organizationId)
+            ->where(function (Builder $query) use ($stage, $pipelineCode): void {
+                $query->where('stage_id', $stage->id)
+                    ->orWhere(function (Builder $nested) use ($stage, $pipelineCode): void {
+                        $nested->where('stage_code', $stage->code)
+                            ->where(function (Builder $pipelineQuery) use ($stage, $pipelineCode): void {
+                                $pipelineQuery->where('pipeline_id', $stage->pipeline_id);
+
+                                if ($pipelineCode !== null) {
+                                    $pipelineQuery->orWhere('pipeline_code', $pipelineCode);
+                                }
+                            });
+                    });
+            })
+            ->exists();
+
+        if ($hasDeals) {
+            $this->throwReferenceValidation('stage_id', 'crm.validation.stage_not_empty');
         }
     }
 
