@@ -22,8 +22,18 @@ return [
     'admin_panel_create_error' => 'Не удалось создать пользователя админ-панели.',
     'admin_panel_update_error' => 'Не удалось обновить пользователя админ-панели.',
     'admin_panel_delete_error' => 'Не удалось удалить пользователя админ-панели.',
+    'admin_panel_email_exists' => 'Пользователь с таким email уже существует. Используйте приглашение или укажите другой email.',
+    'admin_panel_context_missing' => 'Организация не определена. Обновите страницу и попробуйте снова.',
 
     'email_already_verified' => 'Email уже подтвержден.',
     'verification_email_sent' => 'Письмо с подтверждением email отправлено повторно.',
     'verification_email_error' => 'Не удалось отправить письмо с подтверждением email.',
+    'validation' => [
+        'email_required' => 'Укажите email.',
+        'email_invalid' => 'Укажите корректный email.',
+        'password_min' => 'Пароль должен содержать не менее 8 символов.',
+        'password_confirmed' => 'Пароли не совпадают.',
+        'role_required' => 'Выберите роль пользователя.',
+        'role_invalid' => 'Выберите доступную роль пользователя.',
+    ],
 ];

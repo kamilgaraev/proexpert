@@ -1,6 +1,10 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\DTOs\Auth;
+
+use Illuminate\Support\Str;
 
 class LoginDTO
 {
@@ -9,7 +13,7 @@ class LoginDTO
 
     public function __construct(string $email, string $password)
     {
-        $this->email = $email;
+        $this->email = Str::lower(trim($email));
         $this->password = $password;
     }
 
@@ -62,4 +66,4 @@ class LoginDTO
             $data['password']
         );
     }
-} 
+}

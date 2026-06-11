@@ -193,7 +193,11 @@ class AdminPanelUserController extends Controller
             'organization_id' => $request->attributes->get('current_organization_id'),
         ]);
 
-        return LandingResponse::error(trans_message($messageKey), $status);
+        $message = $exception->getMessage() !== ''
+            ? $exception->getMessage()
+            : trans_message($messageKey);
+
+        return LandingResponse::error($message, $status);
     }
 
     private function serverError(Throwable $exception, string $messageKey, Request $request): JsonResponse

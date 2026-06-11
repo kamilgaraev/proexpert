@@ -4,6 +4,7 @@ namespace App\Services\Auth;
 
 use App\DTOs\Auth\LoginDTO;
 use App\DTOs\Auth\RegisterDTO;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\User;
 use App\Models\Organization;
 use App\Notifications\LandingResetPasswordNotification;
@@ -178,13 +179,22 @@ class JwtAuthService
                         }
                     }
 
-                    // Определяем ID организации (пока просто первая)
-                    $userOrganizations = $user->organizations()->pluck('organizations.id')->toArray(); // <-- Указываем таблицу organizations.id
-                    Log::info('[JwtAuthService] User organizations IDs.', ['user_id' => $user->id, 'organization_ids' => $userOrganizations]); // Логируем все организации
-                    
-                    // Явно выбираем ID организации перед first()
-                    $organizationId = $user->organizations()->select('organizations.id')->first()?->id; // <-- Указываем таблицу и выбираем organisations.id
-                    Log::info('[JwtAuthService] Organization ID determined for token (using first).', ['user_id' => $user->id, 'selected_org_id' => $organizationId]); // Логируем выбранную
+                    $userOrganizations = $user->organizations()
+                        ->wherePivot('is_active', true)
+                        ->pluck('organizations.id')
+                        ->map(fn ($id): int => (int) $id)
+                        ->toArray();
+                    Log::info('[JwtAuthService] User active organization IDs.', [
+                        'user_id' => $user->id,
+                        'organization_ids' => $userOrganizations,
+                    ]);
+
+                    $organizationId = $this->resolveLoginOrganizationId($user, $guard);
+                    Log::info('[JwtAuthService] Organization ID determined for token.', [
+                        'user_id' => $user->id,
+                        'selected_org_id' => $organizationId,
+                        'guard' => $guard,
+                    ]);
 
                     // Устанавливаем current_organization_id для объекта User, который вернется в контроллер
                     // Это важно для корректной работы Gate в контроллере
@@ -946,6 +956,86 @@ class JwtAuthService
                 'message' => trans_message('auth.registration_error', ['message' => $e->getMessage()]),
                 'status_code' => 500
             ];
+        }
+    }
+
+    private function resolveLoginOrganizationId(User $user, string $guard): ?int
+    {
+        $activeOrganizationIds = $user->organizations()
+            ->wherePivot('is_active', true)
+            ->orderByDesc('organization_user.is_owner')
+            ->orderBy('organizations.id')
+            ->pluck('organizations.id')
+            ->map(fn ($id): int => (int) $id)
+            ->values()
+            ->all();
+
+        if ($activeOrganizationIds === []) {
+            return null;
+        }
+
+        $currentOrganizationId = $user->current_organization_id
+            ? (int) $user->current_organization_id
+            : null;
+        $currentOrganizationIsActive = $currentOrganizationId !== null
+            && in_array($currentOrganizationId, $activeOrganizationIds, true);
+
+        if ($guard !== 'api_admin') {
+            return $currentOrganizationIsActive ? $currentOrganizationId : $activeOrganizationIds[0];
+        }
+
+        $hasSystemAdminAccess = $this->userCanAccessAdminSystem($user);
+
+        if (
+            $currentOrganizationIsActive
+            && (
+                $hasSystemAdminAccess
+                || $this->userCanAccessAdminOrganization($user, $currentOrganizationId)
+            )
+        ) {
+            return $currentOrganizationId;
+        }
+
+        foreach ($activeOrganizationIds as $organizationId) {
+            if ($this->userCanAccessAdminOrganization($user, $organizationId)) {
+                return $organizationId;
+            }
+        }
+
+        return $currentOrganizationIsActive ? $currentOrganizationId : $activeOrganizationIds[0];
+    }
+
+    private function userCanAccessAdminSystem(User $user): bool
+    {
+        try {
+            return app(AuthorizationService::class)->can($user, 'admin.access', [
+                'context_type' => 'system',
+            ]);
+        } catch (\Throwable $exception) {
+            Log::warning('[JwtAuthService] Failed to check system admin access for login organization selection', [
+                'user_id' => $user->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return false;
+        }
+    }
+
+    private function userCanAccessAdminOrganization(User $user, int $organizationId): bool
+    {
+        try {
+            return app(AuthorizationService::class)->can($user, 'admin.access', [
+                'context_type' => 'organization',
+                'organization_id' => $organizationId,
+            ]);
+        } catch (\Throwable $exception) {
+            Log::warning('[JwtAuthService] Failed to check organization admin access for login organization selection', [
+                'user_id' => $user->id,
+                'organization_id' => $organizationId,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return false;
         }
     }
 

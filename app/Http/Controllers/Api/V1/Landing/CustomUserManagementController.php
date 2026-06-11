@@ -15,10 +15,13 @@ use App\Http\Responses\LandingResponse;
 use App\Models\User;
 use App\Repositories\UserRepository;
 use App\Services\Billing\SubscriptionLimitsService;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 use function trans_message;
@@ -37,9 +40,26 @@ class CustomUserManagementController extends Controller
 
     public function createUserWithCustomRoles(Request $request): JsonResponse
     {
+        if ($request->has('email')) {
+            $request->merge([
+                'email' => Str::lower(trim((string) $request->input('email'))),
+            ]);
+        }
+
         $data = $request->validate([
             'name' => 'required|string|max:255',
-            'email' => 'required|email|unique:users,email',
+            'email' => [
+                'bail',
+                'required',
+                'email',
+                function (string $attribute, mixed $value, \Closure $fail): void {
+                    $email = Str::lower(trim((string) $value));
+
+                    if (DB::table('users')->whereRaw('LOWER(email) = ?', [$email])->exists()) {
+                        $fail(trans_message('landing_users.admin_panel_email_exists'));
+                    }
+                },
+            ],
             'password' => 'required|string|min:8|confirmed',
             'custom_role_ids' => 'nullable|array',
             'custom_role_ids.*' => 'integer|exists:organization_custom_roles,id',
@@ -54,31 +74,37 @@ class CustomUserManagementController extends Controller
             return $this->organizationContextMissingResponse();
         }
 
+        $organizationId = (int) $organizationId;
+
         try {
             $data['password'] = Hash::make($data['password']);
             $data['current_organization_id'] = $organizationId;
 
-            $user = $this->userRepository->create($data);
-            $this->userRepository->attachToOrganization($user->id, $organizationId, false, true);
+            $user = DB::transaction(function () use ($data, $organizationId): User {
+                $user = $this->userRepository->create($data);
+                $this->userRepository->attachToOrganization($user->id, $organizationId, false, true);
 
-            $authContext = AuthorizationContext::getOrganizationContext($organizationId);
+                $authContext = AuthorizationContext::getOrganizationContext($organizationId);
 
-            if (!empty($data['custom_role_ids'])) {
-                foreach ($data['custom_role_ids'] as $roleId) {
-                    $role = OrganizationCustomRole::findOrFail($roleId);
-                    $this->customRoleService->assignRoleToUser($role, $user, $authContext);
-                }
-            }
-
-            if (!empty($data['roles'])) {
-                foreach ($data['roles'] as $roleSlug) {
-                    try {
-                        $this->authService->assignRole($user, $roleSlug, $authContext);
-                    } catch (\InvalidArgumentException $e) {
-                        Log::warning("Skipping invalid system role: {$roleSlug}", ['error' => $e->getMessage()]);
+                if (!empty($data['custom_role_ids'])) {
+                    foreach ($data['custom_role_ids'] as $roleId) {
+                        $role = OrganizationCustomRole::findOrFail($roleId);
+                        $this->customRoleService->assignRoleToUser($role, $user, $authContext);
                     }
                 }
-            }
+
+                if (!empty($data['roles'])) {
+                    foreach ($data['roles'] as $roleSlug) {
+                        try {
+                            $this->authService->assignRole($user, $roleSlug, $authContext);
+                        } catch (\InvalidArgumentException $e) {
+                            Log::warning("Skipping invalid system role: {$roleSlug}", ['error' => $e->getMessage()]);
+                        }
+                    }
+                }
+
+                return $user->refresh();
+            });
 
             if (!$user->hasVerifiedEmail()) {
                 try {
@@ -108,6 +134,16 @@ class CustomUserManagementController extends Controller
                     'created_at' => $user->created_at,
                 ],
             ], trans_message('landing.custom_users.created'), 201);
+        } catch (QueryException $e) {
+            if ($this->isEmailUniqueViolation($e)) {
+                return LandingResponse::error(trans_message('landing_users.admin_panel_email_exists'), 409);
+            }
+
+            Log::error('Database error creating user with custom roles', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return LandingResponse::error(trans_message('landing.custom_users.create_error'), 500);
         } catch (ValidationException $e) {
             return LandingResponse::error(
                 trans_message('landing.validation_error'),
@@ -122,6 +158,19 @@ class CustomUserManagementController extends Controller
 
             return LandingResponse::error(trans_message('landing.custom_users.create_error'), 500);
         }
+    }
+
+    private function isEmailUniqueViolation(QueryException $exception): bool
+    {
+        $sqlState = (string) ($exception->errorInfo[0] ?? '');
+        $message = $exception->getMessage();
+
+        return in_array($sqlState, ['23505', '23000'], true)
+            && (
+                str_contains($message, 'users_email_unique')
+                || str_contains($message, 'users_email_lower_unique')
+                || str_contains($message, 'users.email')
+            );
     }
 
     public function getAvailableRoles(Request $request): JsonResponse

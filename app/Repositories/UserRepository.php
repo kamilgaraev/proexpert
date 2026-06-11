@@ -12,6 +12,7 @@ use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Pagination\LengthAwarePaginator as PaginationLengthAwarePaginator;
+use Illuminate\Support\Str;
 use App\Models\Models\Log\MaterialUsageLog;
 use App\Models\CompletedWork;
 
@@ -55,7 +56,9 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
 
     public function findByEmail(string $email): ?User
     {
-        return $this->model->where('email', $email)->first();
+        return $this->model
+            ->whereRaw('LOWER(email) = ?', [Str::lower(trim($email))])
+            ->first();
     }
 
     public function findWithRoles(int $id): ?User

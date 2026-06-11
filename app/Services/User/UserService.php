@@ -18,12 +18,16 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Http\Request;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use App\Exceptions\BusinessLogicException;
 use App\Services\BaseService;
 use Illuminate\Support\Facades\Log;
 use App\Services\Organization\OrganizationContext;
+use Illuminate\Support\Str;
+
+use function trans_message;
 
 /**
  * @property UserRepositoryInterface $userRepository
@@ -991,56 +995,68 @@ class UserService
         $this->ensureUserIsAdmin($request);
         $organizationId = $request->attributes->get('current_organization_id');
         if (!$organizationId) {
-            throw new BusinessLogicException('Контекст организации не определен.', 500);
+            throw new BusinessLogicException(trans_message('landing_users.admin_panel_context_missing'), 500);
         }
         $intOrganizationId = (int) $organizationId;
 
         // Проверяем существование роли (системной или кастомной в организации)
         $this->validateRoleExists($roleSlug, $intOrganizationId);
 
+        $userData['email'] = Str::lower(trim((string) $userData['email']));
+
+        if ($this->userRepository->findByEmail($userData['email'])) {
+            throw new BusinessLogicException(trans_message('landing_users.admin_panel_email_exists'), 409);
+        }
 
         $userData['password'] = Hash::make($userData['password']);
-        // user_type колонка удалена в новой системе авторизации - роли управляются через UserRoleAssignment
+        $userData['current_organization_id'] = $intOrganizationId;
 
-        // Проверяем, существует ли пользователь с таким email
-        $existingUser = $this->userRepository->findByEmail($userData['email']);
+        try {
+            $newUser = DB::transaction(function () use ($userData, $intOrganizationId, $roleSlug): User {
+                $newUser = $this->userRepository->create($userData);
+                $this->userRepository->attachToOrganization($newUser->id, $intOrganizationId, false, true);
+                $this->ensureOrganizationMembershipProjectAccessMode($newUser, $intOrganizationId, $roleSlug);
+                $this->userRepository->assignRoleToUser($newUser->id, $roleSlug, $intOrganizationId);
 
-        if ($existingUser) {
-            // Пользователь существует. Проверяем, есть ли у него уже ЭТА роль В ЭТОЙ организации.
-            if ($this->authorizationService->hasRole($existingUser, $roleSlug, $intOrganizationId)) {
-                 throw new BusinessLogicException("Пользователь с таким email уже имеет роль '{$roleSlug}' в этой организации.", 409);
+                return $newUser->refresh();
+            });
+        } catch (QueryException $exception) {
+            if ($this->isEmailUniqueViolation($exception)) {
+                throw new BusinessLogicException(trans_message('landing_users.admin_panel_email_exists'), 409);
             }
-            // Пользователь существует, но роли нет. Привязываем к организации и назначаем роль.
-            $this->userRepository->attachToOrganization($existingUser->id, $intOrganizationId, false, true); // Не владелец, активный
-            $this->ensureOrganizationMembershipProjectAccessMode($existingUser, $intOrganizationId, $roleSlug);
-            $this->userRepository->assignRoleToUser($existingUser->id, $roleSlug, $intOrganizationId);
-            // Обновляем имя, если оно изменилось
-            $this->userRepository->update($existingUser->id, ['name' => $userData['name']]);
-            return $this->userRepository->find($existingUser->id);
-        } else {
-            $userData['current_organization_id'] = $intOrganizationId;
-            $newUser = $this->userRepository->create($userData);
-            $this->userRepository->attachToOrganization($newUser->id, $intOrganizationId, false, true);
-            $this->ensureOrganizationMembershipProjectAccessMode($newUser, $intOrganizationId, $roleSlug);
-            $this->userRepository->assignRoleToUser($newUser->id, $roleSlug, $intOrganizationId);
-            
-            if (!$newUser->hasVerifiedEmail()) {
-                try {
-                    $newUser->sendEmailVerificationNotification();
-                    Log::info('[UserService] Email verification sent to new admin panel user', [
-                        'user_id' => $newUser->id,
-                        'email' => $newUser->email
-                    ]);
-                } catch (\Exception $e) {
-                    Log::error('[UserService] Failed to send email verification', [
-                        'user_id' => $newUser->id,
-                        'error' => $e->getMessage()
-                    ]);
-                }
-            }
-            
-            return $newUser;
+
+            throw $exception;
         }
+
+        if (!$newUser->hasVerifiedEmail()) {
+            try {
+                $newUser->sendEmailVerificationNotification();
+                Log::info('[UserService] Email verification sent to new admin panel user', [
+                    'user_id' => $newUser->id,
+                    'email' => $newUser->email
+                ]);
+            } catch (\Exception $e) {
+                Log::error('[UserService] Failed to send email verification', [
+                    'user_id' => $newUser->id,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+
+        return $newUser;
+    }
+
+    private function isEmailUniqueViolation(QueryException $exception): bool
+    {
+        $sqlState = (string) ($exception->errorInfo[0] ?? '');
+        $message = $exception->getMessage();
+
+        return in_array($sqlState, ['23505', '23000'], true)
+            && (
+                str_contains($message, 'users_email_unique')
+                || str_contains($message, 'users_email_lower_unique')
+                || str_contains($message, 'users.email')
+            );
     }
 
     // --- Admin Panel User Management (for Landing/LK API) ---
