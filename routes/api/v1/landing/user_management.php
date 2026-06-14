@@ -92,6 +92,7 @@ Route::prefix('organization-users')->group(function () {
         Route::get('/{userId}/roles', [OrganizationUserController::class, 'getRoles']);
         // Обновить роли пользователя (принимает массив custom_role_ids)
         Route::post('/{userId}/roles', [CustomUserManagementController::class, 'updateUserCustomRoles']);
+        Route::post('/{userId}/grant-owner', [CustomUserManagementController::class, 'grantOrganizationOwner']);
         // Назначить кастомную роль пользователю
         Route::post('/{userId}/assign-role/{roleId}', [CustomUserManagementController::class, 'assignCustomRole']);
         // Отозвать кастомную роль у пользователя

@@ -107,7 +107,7 @@ class UserService
         $contextId = $organizationId ? $this->getOrganizationContextId($organizationId) : null;
 
         if (!$user || !$organizationId || !$this->authorizationService->hasRole($user, 'organization_owner', $contextId)) {
-            throw new BusinessLogicException('Действие доступно только владельцу организации.', 403);
+            throw new BusinessLogicException(trans_message('landing_users.owner_only'), 403);
         }
     }
     
@@ -173,6 +173,65 @@ class UserService
                 'project_access_mode' => $this->defaultProjectAccessModeForRole($roleSlug),
                 'updated_at' => now(),
             ]);
+    }
+
+    public function grantOrganizationOwner(int $targetUserId, Request $request): User
+    {
+        $this->ensureUserIsOwner($request);
+
+        $organizationId = $request->attributes->get('current_organization_id');
+        if (!$organizationId) {
+            throw new BusinessLogicException(trans_message('landing.organization_context_missing'), 400);
+        }
+
+        $intOrganizationId = (int) $organizationId;
+        $targetUser = $this->userRepository->find($targetUserId);
+
+        if (!$targetUser) {
+            throw new BusinessLogicException(trans_message('landing_users.owner_target_not_found'), 404);
+        }
+
+        $membership = DB::table('organization_user')
+            ->where('user_id', $targetUser->id)
+            ->where('organization_id', $intOrganizationId)
+            ->first();
+
+        if (!$membership) {
+            throw new BusinessLogicException(trans_message('landing_users.owner_target_not_in_organization'), 404);
+        }
+
+        if (! (bool) ($membership->is_active ?? false)) {
+            throw new BusinessLogicException(trans_message('landing_users.owner_target_inactive'), 422);
+        }
+
+        DB::transaction(function () use ($targetUser, $intOrganizationId, $request): void {
+            DB::table('organization_user')
+                ->where('user_id', $targetUser->id)
+                ->where('organization_id', $intOrganizationId)
+                ->update([
+                    'is_owner' => true,
+                    'project_access_mode' => UserProjectAccessMode::ALL_PROJECTS->value,
+                    'updated_at' => now(),
+                ]);
+
+            $this->userRepository->assignRoleToUser($targetUser->id, 'organization_owner', $intOrganizationId);
+
+            $this->logging->audit('user.organization_owner.granted', [
+                'target_user_id' => $targetUser->id,
+                'target_email' => $targetUser->email,
+                'organization_id' => $intOrganizationId,
+                'granted_by' => $request->user()?->id,
+            ]);
+
+            $this->logging->security('user.organization_owner.granted', [
+                'target_user_id' => $targetUser->id,
+                'target_email' => $targetUser->email,
+                'organization_id' => $intOrganizationId,
+                'granted_by' => $request->user()?->id,
+            ], 'info');
+        });
+
+        return $this->findOrganizationUserById($targetUser->id, $request) ?? $targetUser->refresh();
     }
 
 
@@ -808,6 +867,11 @@ class UserService
         if(!$organizationId) {
             throw new BusinessLogicException('Контекст организации не определен.', 500);
         }
+
+        if ($roleSlug === 'organization_owner') {
+            throw new BusinessLogicException(trans_message('landing_users.owner_generic_assignment_forbidden'), 422);
+        }
+
         $this->validateRoleExists($roleSlug, (int) $organizationId);
 
         $data['password'] = Hash::make($data['password']);
@@ -998,6 +1062,10 @@ class UserService
             throw new BusinessLogicException(trans_message('landing_users.admin_panel_context_missing'), 500);
         }
         $intOrganizationId = (int) $organizationId;
+
+        if ($roleSlug === 'organization_owner') {
+            throw new BusinessLogicException(trans_message('landing_users.owner_generic_assignment_forbidden'), 422);
+        }
 
         // Проверяем существование роли (системной или кастомной в организации)
         $this->validateRoleExists($roleSlug, $intOrganizationId);

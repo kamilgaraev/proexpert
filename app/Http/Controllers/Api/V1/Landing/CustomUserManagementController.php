@@ -10,11 +10,13 @@ use App\Domain\Authorization\Services\AuthorizationService;
 use App\Domain\Authorization\Services\CustomRoleService;
 use App\Domain\Authorization\Services\RolePayloadFormatter;
 use App\Domain\Authorization\Services\RoleScanner;
+use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\LandingResponse;
 use App\Models\User;
 use App\Repositories\UserRepository;
 use App\Services\Billing\SubscriptionLimitsService;
+use App\Services\User\UserService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -34,7 +36,8 @@ class CustomUserManagementController extends Controller
         protected RoleScanner $roleScanner,
         protected RolePayloadFormatter $rolePayloadFormatter,
         protected UserRepository $userRepository,
-        protected SubscriptionLimitsService $subscriptionLimitsService
+        protected SubscriptionLimitsService $subscriptionLimitsService,
+        protected UserService $userService
     ) {
     }
 
@@ -75,6 +78,10 @@ class CustomUserManagementController extends Controller
         }
 
         $organizationId = (int) $organizationId;
+
+        if (in_array('organization_owner', $data['roles'] ?? [], true)) {
+            return LandingResponse::error(trans_message('landing_users.owner_generic_assignment_forbidden'), 422);
+        }
 
         try {
             $data['password'] = Hash::make($data['password']);
@@ -183,6 +190,7 @@ class CustomUserManagementController extends Controller
 
         try {
             $systemRoles = $this->roleScanner->getAllRoles()
+                ->reject(fn (array $role, string $slug): bool => $slug === 'organization_owner')
                 ->filter(fn (array $role): bool => $this->rolePayloadFormatter->isAssignableSystemRole($role))
                 ->map(fn (array $role, string $slug): array => $this->rolePayloadFormatter->formatSystemRole($slug, $role))
                 ->sortBy('name', SORT_NATURAL)
@@ -257,6 +265,33 @@ class CustomUserManagementController extends Controller
             ]);
 
             return LandingResponse::error(trans_message('landing.custom_users.roles_update_error'), 500);
+        }
+    }
+
+    public function grantOrganizationOwner(Request $request, int $userId): JsonResponse
+    {
+        try {
+            $user = $this->userService->grantOrganizationOwner($userId, $request);
+
+            return LandingResponse::success([
+                'user' => [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                ],
+                'role_slug' => 'organization_owner',
+            ], trans_message('landing_users.owner_granted'));
+        } catch (BusinessLogicException $e) {
+            return LandingResponse::error($e->getMessage(), $e->getCode() > 0 ? $e->getCode() : 400);
+        } catch (\Throwable $e) {
+            Log::error('Error granting organization owner role', [
+                'user_id' => $userId,
+                'organization_id' => $request->attributes->get('current_organization_id'),
+                'requested_by' => $request->user()?->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return LandingResponse::error(trans_message('landing_users.owner_grant_error'), 500);
         }
     }
 

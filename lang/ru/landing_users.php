@@ -28,6 +28,13 @@ return [
     'email_already_verified' => 'Email уже подтвержден.',
     'verification_email_sent' => 'Письмо с подтверждением email отправлено повторно.',
     'verification_email_error' => 'Не удалось отправить письмо с подтверждением email.',
+    'owner_only' => 'Действие доступно только владельцу организации.',
+    'owner_granted' => 'Пользователь назначен владельцем организации.',
+    'owner_grant_error' => 'Не удалось назначить владельца организации.',
+    'owner_generic_assignment_forbidden' => 'Роль владельца назначается только через отдельное подтверждение.',
+    'owner_target_not_found' => 'Пользователь не найден.',
+    'owner_target_not_in_organization' => 'Пользователь не найден в этой организации.',
+    'owner_target_inactive' => 'Сначала активируйте пользователя в организации.',
     'validation' => [
         'email_required' => 'Укажите email.',
         'email_invalid' => 'Укажите корректный email.',
