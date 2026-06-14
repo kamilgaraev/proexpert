@@ -8,7 +8,7 @@ return [
     'use' => 'default',
     'prefix' => env('HORIZON_PREFIX', Str::slug(env('APP_NAME', 'laravel'), '_').'_horizon:'),
     
-    'middleware' => ['web', 'auth:api', 'authorize:notifications.view_analytics'],
+    'middleware' => ['web'],
     
     'waits' => [
         'redis_estimate_generation:estimate-generation' => 120,
