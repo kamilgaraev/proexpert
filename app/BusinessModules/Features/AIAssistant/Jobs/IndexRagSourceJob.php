@@ -15,6 +15,8 @@ class IndexRagSourceJob implements ShouldQueue
 {
     use Queueable;
 
+    private const MIN_TIMEOUT_SECONDS = 7200;
+
     public int $tries;
 
     public int $timeout;
@@ -30,7 +32,10 @@ class IndexRagSourceJob implements ShouldQueue
         $this->onConnection($this->connectionName());
         $this->onQueue($this->queueName());
         $this->tries = $this->configInt('ai-assistant.rag.job_tries', 3);
-        $this->timeout = $this->configInt('ai-assistant.rag.job_timeout', 1800);
+        $this->timeout = max(
+            self::MIN_TIMEOUT_SECONDS,
+            $this->configInt('ai-assistant.rag.job_timeout', self::MIN_TIMEOUT_SECONDS)
+        );
     }
 
     public function handle(RagIndexer $indexer, ?RagIndexingCoordinator $coordinator = null): void

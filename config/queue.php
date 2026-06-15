@@ -76,7 +76,10 @@ return [
             'driver' => 'redis',
             'connection' => env('AI_RAG_REDIS_QUEUE_CONNECTION', env('REDIS_QUEUE_CONNECTION', 'default')),
             'queue' => env('AI_RAG_QUEUE', 'ai-rag'),
-            'retry_after' => (int) env('AI_RAG_QUEUE_RETRY_AFTER', ((int) env('AI_RAG_JOB_TIMEOUT', 1800)) + 300),
+            'retry_after' => (int) env(
+                'AI_RAG_QUEUE_RETRY_AFTER',
+                max(7200, (int) env('AI_RAG_JOB_TIMEOUT', 7200)) + 300
+            ),
             'block_for' => null,
             'after_commit' => false,
         ],

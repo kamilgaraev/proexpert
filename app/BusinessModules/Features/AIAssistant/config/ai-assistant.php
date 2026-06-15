@@ -76,7 +76,7 @@ return [
         'queue_connection' => $configEnv('AI_RAG_QUEUE_CONNECTION', 'redis_ai_rag'),
         'queue' => $configEnv('AI_RAG_QUEUE', 'ai-rag'),
         'job_tries' => $configEnv('AI_RAG_JOB_TRIES', 3),
-        'job_timeout' => $configEnv('AI_RAG_JOB_TIMEOUT', 1800),
+        'job_timeout' => max(7200, (int) $configEnv('AI_RAG_JOB_TIMEOUT', 7200)),
         'scheduled_limit' => $configEnv('AI_RAG_SCHEDULED_LIMIT', 50),
         'stale_after_hours' => $configEnv('AI_RAG_STALE_AFTER_HOURS', 24),
         'failed_retry_after_hours' => $configEnv('AI_RAG_FAILED_RETRY_AFTER_HOURS', 12),
