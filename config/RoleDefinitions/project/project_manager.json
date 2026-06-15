@@ -290,6 +290,21 @@
     ],
     "design-management": [
       "*"
+    ],
+    "commercial-proposals": [
+      "commercial_proposals.view",
+      "commercial_proposals.create",
+      "commercial_proposals.update",
+      "commercial_proposals.archive",
+      "commercial_proposals.versions.create",
+      "commercial_proposals.approval.request",
+      "commercial_proposals.approval.decide",
+      "commercial_proposals.send",
+      "commercial_proposals.result",
+      "commercial_proposals.amounts.view",
+      "commercial_proposals.export",
+      "commercial_proposals.files.upload",
+      "commercial_proposals.files.delete"
     ]
   },
   "interface_access": [

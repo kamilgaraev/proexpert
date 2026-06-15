@@ -113,6 +113,9 @@
     "procurement": [
       "procurement.view",
       "procurement.chain.view"
+    ],
+    "commercial-proposals": [
+      "commercial_proposals.view"
     ]
   },
   "interface_access": [
