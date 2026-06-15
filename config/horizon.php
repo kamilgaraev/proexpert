@@ -125,7 +125,7 @@ return [
                 'minProcesses' => 1,
                 'maxProcesses' => (int) env('AI_RAG_HORIZON_MAX_PROCESSES', 2),
                 'tries' => 3,
-                'timeout' => (int) env('AI_RAG_JOB_TIMEOUT', 1800),
+                'timeout' => max(7200, (int) env('AI_RAG_JOB_TIMEOUT', 7200)),
                 'memory' => 512,
                 'nice' => 5,
             ],
@@ -159,7 +159,7 @@ return [
                 'balance' => 'simple',
                 'processes' => 1,
                 'tries' => 3,
-                'timeout' => (int) env('AI_RAG_JOB_TIMEOUT', 1800),
+                'timeout' => max(7200, (int) env('AI_RAG_JOB_TIMEOUT', 7200)),
                 'memory' => 512,
             ],
             'supervisor-epm-data-mart' => [
