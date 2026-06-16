@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\BusinessModules\Features\Crm\Http\Controllers\CrmController;
+use App\BusinessModules\Features\Crm\Http\Controllers\DealConversionWizardController;
 use App\BusinessModules\Features\Crm\Http\Middleware\EnsureCrmSchemaReady;
 use App\Support\Routing\AdminRouteStack;
 use Illuminate\Support\Facades\Route;
@@ -87,6 +88,9 @@ Route::prefix('api/v1/admin/crm')
             Route::patch('/{id}', [CrmController::class, 'updateDeal'])->middleware('authorize:crm.deals.update')->name('update');
             Route::post('/{id}/stage', [CrmController::class, 'transitionDeal'])->middleware('authorize:crm.deals.stage')->name('stage');
             Route::post('/{id}/links', [CrmController::class, 'linkDeal'])->middleware('authorize:crm.deals.link')->name('links');
+            Route::post('/{id}/conversion/preview', [DealConversionWizardController::class, 'preview'])->middleware('authorize:crm.deals.view')->name('conversion.preview');
+            Route::post('/{id}/conversion/validate', [DealConversionWizardController::class, 'validateConversion'])->middleware('authorize:crm.deals.link')->name('conversion.validate');
+            Route::post('/{id}/conversion/convert', [DealConversionWizardController::class, 'convert'])->middleware('authorize:crm.deals.link')->name('conversion.convert');
             Route::delete('/{id}', [CrmController::class, 'archiveDeal'])->middleware('authorize:crm.deals.archive')->name('archive');
             Route::post('/{id}/restore', [CrmController::class, 'restoreDeal'])->middleware('authorize:crm.deals.restore')->name('restore');
         });

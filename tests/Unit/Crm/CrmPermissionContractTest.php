@@ -58,8 +58,8 @@ final class CrmPermissionContractTest extends TestCase
     {
         parent::setUp();
 
-        $container = new Container();
-        $loader = new FileLoader(new Filesystem(), dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'lang');
+        $container = new Container;
+        $loader = new FileLoader(new Filesystem, dirname(__DIR__, 3).DIRECTORY_SEPARATOR.'lang');
         $translator = new Translator($loader, 'ru');
         $container->instance('translator', $translator);
 
@@ -88,6 +88,7 @@ final class CrmPermissionContractTest extends TestCase
         $this->assertSame('Просмотр CRM', $translated['module_permissions']['crm']['crm.view']);
         $this->assertSame('Просмотр сумм в CRM', $translated['module_permissions']['crm']['crm.amounts.view']);
         $this->assertSame('Конвертация лидов CRM', $translated['module_permissions']['crm']['crm.leads.convert']);
+        $this->assertSame('Привязка сделки CRM к проекту или договору', $translated['module_permissions']['crm']['crm.deals.link']);
         $this->assertSame('Объединение дублей CRM', $translated['module_permissions']['crm']['crm.merge.execute']);
 
         foreach (self::CRM_PERMISSIONS as $permission) {
@@ -97,11 +98,11 @@ final class CrmPermissionContractTest extends TestCase
 
     public function test_crm_permissions_are_available_in_expected_system_roles(): void
     {
-        $roleRoot = dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'config' . DIRECTORY_SEPARATOR . 'RoleDefinitions';
-        $webAdmin = $this->readRole($roleRoot . DIRECTORY_SEPARATOR . 'admin' . DIRECTORY_SEPARATOR . 'web_admin.json');
-        $viewer = $this->readRole($roleRoot . DIRECTORY_SEPARATOR . 'admin' . DIRECTORY_SEPARATOR . 'admin_viewer.json');
-        $owner = $this->readRole($roleRoot . DIRECTORY_SEPARATOR . 'lk' . DIRECTORY_SEPARATOR . 'organization_owner.json');
-        $organizationAdmin = $this->readRole($roleRoot . DIRECTORY_SEPARATOR . 'lk' . DIRECTORY_SEPARATOR . 'organization_admin.json');
+        $roleRoot = dirname(__DIR__, 3).DIRECTORY_SEPARATOR.'config'.DIRECTORY_SEPARATOR.'RoleDefinitions';
+        $webAdmin = $this->readRole($roleRoot.DIRECTORY_SEPARATOR.'admin'.DIRECTORY_SEPARATOR.'web_admin.json');
+        $viewer = $this->readRole($roleRoot.DIRECTORY_SEPARATOR.'admin'.DIRECTORY_SEPARATOR.'admin_viewer.json');
+        $owner = $this->readRole($roleRoot.DIRECTORY_SEPARATOR.'lk'.DIRECTORY_SEPARATOR.'organization_owner.json');
+        $organizationAdmin = $this->readRole($roleRoot.DIRECTORY_SEPARATOR.'lk'.DIRECTORY_SEPARATOR.'organization_admin.json');
 
         $this->assertContains('crm.leads.convert', $webAdmin['module_permissions']['crm']);
         $this->assertContains('crm.import.confirm', $organizationAdmin['module_permissions']['crm']);
