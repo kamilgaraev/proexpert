@@ -19,6 +19,13 @@ use Tests\TestCase;
 
 class AIAssistantRagBackfillCommandTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config(['ai-assistant.rag.scheduled_project_scoped_source_types' => []]);
+    }
+
     public function test_sync_backfill_calls_indexer_with_requested_scope(): void
     {
         $organization = Organization::factory()->create(['id' => 10]);
@@ -138,6 +145,49 @@ class AIAssistantRagBackfillCommandTest extends TestCase
         Queue::assertNotPushed(
             IndexRagSourceJob::class,
             static fn (IndexRagSourceJob $job): bool => $job->sourceType === null
+        );
+        $this->assertDatabaseCount('ai_rag_index_runs', $expectedJobs);
+    }
+
+    public function test_all_backfill_can_queue_configured_source_types_by_project(): void
+    {
+        Queue::fake();
+        config(['ai-assistant.rag.scheduled_project_scoped_source_types' => ['estimate']]);
+
+        $first = Organization::factory()->create();
+        $second = Organization::factory()->create();
+        $firstProject = Project::factory()->create(['organization_id' => $first->id]);
+        $secondProject = Project::factory()->create(['organization_id' => $second->id]);
+        Project::factory()->create(['organization_id' => $second->id]);
+        $sourceTypes = $this->enabledSourceTypes();
+
+        $this->assertContains('estimate', $sourceTypes);
+
+        $expectedJobs = ((count($sourceTypes) - 1) * 2) + 3;
+
+        $this->artisan('ai-assistant:rag-backfill', [
+            '--all' => true,
+        ])
+            ->expectsOutput("Queued RAG indexing jobs: {$expectedJobs}")
+            ->assertExitCode(0);
+
+        Queue::assertPushed(IndexRagSourceJob::class, $expectedJobs);
+        Queue::assertPushed(
+            IndexRagSourceJob::class,
+            static fn (IndexRagSourceJob $job): bool => $job->organizationId === $first->id
+                && $job->projectId === $firstProject->id
+                && $job->sourceType === 'estimate'
+        );
+        Queue::assertPushed(
+            IndexRagSourceJob::class,
+            static fn (IndexRagSourceJob $job): bool => $job->organizationId === $second->id
+                && $job->projectId === $secondProject->id
+                && $job->sourceType === 'estimate'
+        );
+        Queue::assertNotPushed(
+            IndexRagSourceJob::class,
+            static fn (IndexRagSourceJob $job): bool => $job->sourceType === 'estimate'
+                && $job->projectId === null
         );
         $this->assertDatabaseCount('ai_rag_index_runs', $expectedJobs);
     }

@@ -205,19 +205,42 @@ class BackfillRagIndexCommand extends Command
         $queued = 0;
 
         foreach ($sourceRegistry->enabledSourceTypes() as $enabledSourceType) {
-            $result = $coordinator->queueAllActiveOrganizations(
-                (bool) $this->option('include-inactive'),
-                $this->nullableIntOption('limit'),
-                $projectId,
-                $enabledSourceType,
-                RagIndexRun::MODE_SCHEDULED,
-                $staleOnly,
-                $staleAfterHours
-            );
+            $result = $this->shouldQueueByProject($enabledSourceType, $projectId)
+                ? $coordinator->queueAllActiveOrganizationProjects(
+                    (bool) $this->option('include-inactive'),
+                    $this->nullableIntOption('limit'),
+                    $enabledSourceType,
+                    RagIndexRun::MODE_SCHEDULED,
+                    $staleOnly,
+                    $staleAfterHours
+                )
+                : $coordinator->queueAllActiveOrganizations(
+                    (bool) $this->option('include-inactive'),
+                    $this->nullableIntOption('limit'),
+                    $projectId,
+                    $enabledSourceType,
+                    RagIndexRun::MODE_SCHEDULED,
+                    $staleOnly,
+                    $staleAfterHours
+                );
 
             $queued += $result['queued'];
         }
 
         return ['queued' => $queued];
+    }
+
+    private function shouldQueueByProject(string $sourceType, ?int $projectId): bool
+    {
+        if ($projectId !== null) {
+            return false;
+        }
+
+        $sourceTypes = config('ai-assistant.rag.scheduled_project_scoped_source_types', ['estimate']);
+        if (! is_array($sourceTypes)) {
+            return false;
+        }
+
+        return in_array($sourceType, $sourceTypes, true);
     }
 }

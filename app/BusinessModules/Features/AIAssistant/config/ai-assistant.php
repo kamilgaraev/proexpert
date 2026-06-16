@@ -78,6 +78,10 @@ return [
         'job_tries' => $configEnv('AI_RAG_JOB_TRIES', 3),
         'job_timeout' => max(7200, (int) $configEnv('AI_RAG_JOB_TIMEOUT', 7200)),
         'scheduled_limit' => $configEnv('AI_RAG_SCHEDULED_LIMIT', 50),
+        'scheduled_project_scoped_source_types' => array_values(array_filter(array_map(
+            static fn (string $sourceType): string => trim($sourceType),
+            explode(',', (string) $configEnv('AI_RAG_SCHEDULED_PROJECT_SCOPED_SOURCE_TYPES', 'estimate'))
+        ))),
         'stale_after_hours' => $configEnv('AI_RAG_STALE_AFTER_HOURS', 24),
         'failed_retry_after_hours' => $configEnv('AI_RAG_FAILED_RETRY_AFTER_HOURS', 12),
         'max_chunks' => $configEnv('AI_RAG_MAX_CHUNKS', 8),
