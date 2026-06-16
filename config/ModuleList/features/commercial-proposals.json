@@ -1,0 +1,61 @@
+{
+  "name": "Коммерческие предложения",
+  "slug": "commercial-proposals",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "sales",
+  "description": "Подготовка клиентских коммерческих предложений, версии, внутреннее согласование, отправка клиенту, результат и export.",
+  "class_name": "App\\BusinessModules\\Features\\CommercialProposals\\CommercialProposalsModule",
+  "service_provider": "App\\BusinessModules\\Features\\CommercialProposals\\CommercialProposalsServiceProvider",
+  "pricing": {
+    "base_price": 2900,
+    "currency": "RUB",
+    "included_in_plans": ["business", "profi", "enterprise"],
+    "duration_days": 30,
+    "trial_days": 7
+  },
+  "permissions": [
+    "commercial_proposals.view",
+    "commercial_proposals.create",
+    "commercial_proposals.update",
+    "commercial_proposals.archive",
+    "commercial_proposals.versions.create",
+    "commercial_proposals.approval.request",
+    "commercial_proposals.approval.decide",
+    "commercial_proposals.send",
+    "commercial_proposals.result",
+    "commercial_proposals.amounts.view",
+    "commercial_proposals.templates.manage",
+    "commercial_proposals.export",
+    "commercial_proposals.files.upload",
+    "commercial_proposals.files.delete"
+  ],
+  "features": [
+    "Реестр клиентских КП",
+    "Версии КП и draft-only редактирование",
+    "Внутреннее согласование",
+    "Отправка клиенту и фиксация результата",
+    "PDF/HTML export конкретной версии",
+    "Приложения и история событий",
+    "Связи с CRM, тендером, пресейл-сметой, проектом и договором"
+  ],
+  "dependencies": ["organizations", "users", "crm"],
+  "optional_integrations": ["project-management", "contract-management", "budget-estimates", "data-export"],
+  "conflicts": [],
+  "limits": {
+    "max_proposals_per_month": null,
+    "max_versions_per_proposal": null,
+    "retention_days": 1095
+  },
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "development_status": "stable",
+  "icon": "description",
+  "display_order": 25,
+  "tags": ["commercial-proposals", "sales", "crm", "pdf"],
+  "documentation_url": "/docs/modules/commercial-proposals"
+}

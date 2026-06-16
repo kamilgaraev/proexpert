@@ -137,6 +137,9 @@
     "tenders": [
       "*"
     ],
+    "commercial-proposals": [
+      "*"
+    ],
     "brigades": [
       "*"
     ],

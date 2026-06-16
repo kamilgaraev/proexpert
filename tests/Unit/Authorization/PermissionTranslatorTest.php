@@ -213,6 +213,30 @@ class PermissionTranslatorTest extends TestCase
         $this->assertStringNotContainsString('one_c_exchange.profiles.test_connection', $flattenedValues);
     }
 
+    public function test_commercial_proposal_permissions_are_translated_for_frontend(): void
+    {
+        $translated = PermissionTranslator::translatePermissionsData([
+            'module_permissions' => [
+                'commercial-proposals' => [
+                    'commercial_proposals.view',
+                    'commercial_proposals.create',
+                    'commercial_proposals.amounts.view',
+                    'commercial_proposals.approval.request',
+                    'commercial_proposals.files.upload',
+                ],
+            ],
+        ]);
+
+        $flattenedValues = json_encode($this->valuesOnly($translated), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+
+        $this->assertSame('Коммерческие предложения', $translated['module_groups']['commercial-proposals']);
+        $this->assertSame('Просмотр коммерческих предложений', $translated['module_permissions']['commercial-proposals']['commercial_proposals.view']);
+        $this->assertSame('Создание коммерческих предложений', $translated['module_permissions']['commercial-proposals']['commercial_proposals.create']);
+        $this->assertSame('Просмотр сумм коммерческих предложений', $translated['module_permissions']['commercial-proposals']['commercial_proposals.amounts.view']);
+        $this->assertStringNotContainsString('commercial_proposals.view', $flattenedValues);
+        $this->assertStringNotContainsString('commercial_proposals.amounts.view', $flattenedValues);
+    }
+
     private function valuesOnly(array $value): array
     {
         $values = [];

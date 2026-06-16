@@ -116,6 +116,9 @@
     ],
     "tenders": [
       "tenders.view"
+    ],
+    "commercial-proposals": [
+      "commercial_proposals.view"
     ]
   },
   "interface_access": [

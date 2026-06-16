@@ -371,6 +371,43 @@ class FileService
         }
     }
 
+    public function putContent(
+        string $content,
+        string $directory,
+        string $filename,
+        string $visibility = 'private',
+        ?Organization $organization = null
+    ): string|false {
+        $org = $this->getOrganization($organization);
+        $orgPrefix = $org ? "org-{$org->id}" : 'shared';
+        $safeDirectory = trim($directory, '/');
+        $safeFilename = trim($filename, '/');
+        $fullPath = "{$orgPrefix}/{$safeDirectory}/{$safeFilename}";
+
+        try {
+            $stored = $this->disk($organization)->put($fullPath, $content, $visibility);
+
+            if ($stored !== true) {
+                Log::error('[FileService] putContent(): put returned false', [
+                    'path' => $fullPath,
+                    'organization_id' => $org?->id,
+                ]);
+
+                return false;
+            }
+
+            return $fullPath;
+        } catch (\Throwable $e) {
+            Log::error('[FileService] putContent(): failed', [
+                'path' => $fullPath,
+                'organization_id' => $org?->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return false;
+        }
+    }
+
     public function url(?string $path, ?Organization $organization = null): ?string
     {
         if (!$path) return null;
