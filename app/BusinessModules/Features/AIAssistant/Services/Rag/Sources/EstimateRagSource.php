@@ -30,12 +30,12 @@ final class EstimateRagSource implements RagSourceCollectorInterface
     public function collectForOrganization(int $organizationId, ?int $projectId = null): iterable
     {
         $query = Estimate::query()
-            ->with($this->estimateRelations())
             ->where('organization_id', $organizationId)
-            ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
-            ->orderBy('id');
+            ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId));
 
-        foreach ($query->lazy(100) as $estimate) {
+        foreach ($query->lazyById(50) as $estimate) {
+            $estimate->load($this->estimateRelations());
+
             foreach ($this->chunksForEstimate($estimate) as $chunk) {
                 yield $chunk;
             }

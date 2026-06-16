@@ -115,6 +115,8 @@ use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Models\User;
 use App\Models\WorkType;
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class RagSourceCollectorsTest extends TestCase
@@ -224,6 +226,38 @@ class RagSourceCollectorsTest extends TestCase
         $this->assertSame(2, $sectionChunk->metadata['items_count']);
         $this->assertSame(120000.0, $sectionChunk->metadata['section_total_amount']);
         $this->assertNotSame($projectB->id, $sectionChunk->projectId);
+    }
+
+    public function test_estimate_collector_loads_items_per_estimate_to_bound_memory(): void
+    {
+        [$organization] = $this->seedExpandedRagDomainRecords();
+        $estimateIds = Estimate::query()
+            ->where('organization_id', $organization->id)
+            ->orderBy('id')
+            ->pluck('id')
+            ->map(static fn ($id): int => (int) $id)
+            ->all();
+        $estimateItemQueries = [];
+
+        DB::listen(static function (QueryExecuted $query) use (&$estimateItemQueries): void {
+            if (str_contains($query->sql, 'from "estimate_items"')) {
+                $estimateItemQueries[] = $query;
+            }
+        });
+
+        $chunks = iterator_to_array((new EstimateRagSource)->collectForOrganization($organization->id));
+
+        $this->assertNotEmpty($chunks);
+        $this->assertNotEmpty($estimateItemQueries);
+
+        foreach ($estimateItemQueries as $query) {
+            $boundEstimateIds = array_values(array_intersect(
+                array_map(static fn ($binding): int => (int) $binding, $query->bindings),
+                $estimateIds
+            ));
+
+            $this->assertLessThanOrEqual(1, count(array_unique($boundEstimateIds)));
+        }
     }
 
     public function test_estimate_collector_collects_single_section_entity(): void
