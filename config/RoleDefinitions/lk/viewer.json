@@ -113,6 +113,9 @@
     "procurement": [
       "procurement.view",
       "procurement.chain.view"
+    ],
+    "tenders": [
+      "tenders.view"
     ]
   },
   "interface_access": [

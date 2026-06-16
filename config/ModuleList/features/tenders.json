@@ -1,0 +1,84 @@
+{
+  "name": "Тендеры",
+  "slug": "tenders",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "sales",
+  "description": "Реестр тендеров и преддоговорных сделок: сроки, решение об участии, документы, риски, конкуренты и связи с CRM.",
+  "class_name": "App\\BusinessModules\\Features\\Tenders\\TendersModule",
+  "service_provider": "App\\BusinessModules\\Features\\Tenders\\TendersServiceProvider",
+  "pricing": {
+    "base_price": 4900,
+    "currency": "RUB",
+    "included_in_plans": [
+      "business",
+      "profi",
+      "enterprise"
+    ],
+    "duration_days": 30,
+    "trial_days": 7
+  },
+  "permissions": [
+    "tenders.view",
+    "tenders.create",
+    "tenders.update",
+    "tenders.archive",
+    "tenders.workflow.analyze",
+    "tenders.go_no_go.decide",
+    "tenders.workflow.submit",
+    "tenders.workflow.result",
+    "tenders.workflow.cancel",
+    "tenders.amounts.view",
+    "tenders.files.upload",
+    "tenders.files.delete",
+    "tenders.deadlines.manage",
+    "tenders.risks.manage",
+    "tenders.competitors.manage",
+    "tenders.convert.deal",
+    "tenders.convert.commercial_proposal",
+    "tenders.convert.project"
+  ],
+  "features": [
+    "Реестр тендеров с фильтрами и summary",
+    "Процесс участия от входящего тендера до результата",
+    "Дедлайны и напоминания по срокам",
+    "Документы тендера в S3-хранилище организации",
+    "Риски, требования, конкуренты и история",
+    "Связи с CRM deal, КП, проектом и договором"
+  ],
+  "dependencies": [
+    "organizations",
+    "users",
+    "crm",
+    "project-management",
+    "contract-management",
+    "file-management"
+  ],
+  "optional_integrations": [
+    "notifications",
+    "ai-assistant",
+    "reports"
+  ],
+  "conflicts": [],
+  "limits": {
+    "max_tenders_per_month": null,
+    "max_files_per_tender": null,
+    "retention_days": 1095
+  },
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "development_status": "stable",
+  "icon": "assignment",
+  "display_order": 25,
+  "tags": [
+    "tenders",
+    "sales",
+    "преддоговорные сделки",
+    "deadlines"
+  ],
+  "documentation_url": "/docs/modules/tenders"
+}

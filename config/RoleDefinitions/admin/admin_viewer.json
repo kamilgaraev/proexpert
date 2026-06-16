@@ -5,7 +5,7 @@
   "context": "organization",
   "interface": "admin",
   "description": "Только просмотр данных в админ-панели без права редактирования",
-  
+
   "system_permissions": [
     "admin.access",
     "admin.dashboard.view",
@@ -17,7 +17,7 @@
     "admin.time_tracking.view",
     "profile.view"
   ],
-  
+
   "module_permissions": {
     "projects": ["projects.view"],
     "materials": ["materials.view"],
@@ -50,6 +50,9 @@
       "crm.activities.view",
       "crm.merge.view",
       "crm.timeline.view"
+    ],
+    "tenders": [
+      "tenders.view"
     ],
     "contractor-portal": ["contractor_invitations.view"],
     "file-management": ["personal_files.view"],
@@ -109,14 +112,14 @@
       "site_requests.calendar.view"
     ]
   },
-  
+
   "interface_access": ["admin"],
-  
+
   "hierarchy": {
     "can_manage_roles": [],
     "cannot_manage": ["*"]
   },
-  
+
   "conditions": {
     "time": {
       "working_hours": null,
