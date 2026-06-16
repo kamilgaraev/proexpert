@@ -9,6 +9,7 @@ use App\BusinessModules\Features\AIAssistant\Models\RagChunk;
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\Models\Organization;
+use App\Models\Project;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Carbon;
@@ -67,6 +68,69 @@ class RagIndexingCoordinator
             'queued' => count($runIds),
             'run_ids' => $runIds,
             'organization_ids' => $organizationIds,
+        ];
+    }
+
+    /**
+     * @return array{queued: int, run_ids: array<int, int>, organization_ids: array<int, int>, project_ids: array<int, int>}
+     */
+    public function queueAllActiveOrganizationProjects(
+        bool $includeInactive = false,
+        ?int $limit = null,
+        string $sourceType = 'estimate',
+        string $mode = RagIndexRun::MODE_SCHEDULED,
+        bool $staleOnly = false,
+        ?int $staleAfterHours = null
+    ): array {
+        $organizations = $this->organizationsForBulkIndex(
+            $includeInactive,
+            $limit,
+            false,
+            null,
+            null,
+            $sourceType
+        );
+        $runIds = [];
+        $organizationIds = [];
+        $projectIds = [];
+        $freshCutoff = $staleOnly
+            ? now()->subHours(max(1, $staleAfterHours ?? (int) config('ai-assistant.rag.stale_after_hours', 24)))
+            : null;
+        $failedCutoff = $staleOnly
+            ? now()->subHours(max(1, (int) config('ai-assistant.rag.failed_retry_after_hours', 12)))
+            : null;
+
+        foreach ($organizations as $organization) {
+            foreach ($this->projectIdsForOrganization($organization->id) as $projectId) {
+                if (
+                    $staleOnly
+                    && (
+                        $this->hasActiveRun($organization->id, $projectId, $sourceType)
+                        || (
+                            $freshCutoff instanceof Carbon
+                            && $this->hasFreshSucceededRun($organization->id, $projectId, $sourceType, $freshCutoff)
+                        )
+                        || (
+                            $failedCutoff instanceof Carbon
+                            && $this->hasRecentFailedRun($organization->id, $projectId, $sourceType, $failedCutoff)
+                        )
+                    )
+                ) {
+                    continue;
+                }
+
+                $run = $this->queueOrganization($organization->id, $projectId, $sourceType, $mode);
+                $runIds[] = $run->id;
+                $organizationIds[] = $organization->id;
+                $projectIds[] = $projectId;
+            }
+        }
+
+        return [
+            'queued' => count($runIds),
+            'run_ids' => $runIds,
+            'organization_ids' => $organizationIds,
+            'project_ids' => $projectIds,
         ];
     }
 
@@ -401,6 +465,49 @@ class RagIndexingCoordinator
             ->exists();
     }
 
+    private function hasActiveRun(int $organizationId, ?int $projectId, ?string $sourceType): bool
+    {
+        $query = RagIndexRun::query()
+            ->where('organization_id', $organizationId)
+            ->whereIn('status', [
+                RagIndexRun::STATUS_QUEUED,
+                RagIndexRun::STATUS_RUNNING,
+            ]);
+
+        $this->applyActiveEloquentRunScope($query, $projectId, $sourceType);
+
+        return $query->exists();
+    }
+
+    private function hasFreshSucceededRun(
+        int $organizationId,
+        ?int $projectId,
+        ?string $sourceType,
+        Carbon $freshCutoff
+    ): bool {
+        $query = RagIndexRun::query()
+            ->where('organization_id', $organizationId)
+            ->where('status', RagIndexRun::STATUS_SUCCEEDED)
+            ->where('finished_at', '>', $freshCutoff->toDateTimeString());
+
+        $this->applyActiveEloquentRunScope($query, $projectId, $sourceType);
+
+        return $query->exists();
+    }
+
+    /**
+     * @return array<int, int>
+     */
+    private function projectIdsForOrganization(int $organizationId): array
+    {
+        return Project::query()
+            ->where('organization_id', $organizationId)
+            ->orderBy('id')
+            ->pluck('id')
+            ->map(static fn (int|string $projectId): int => (int) $projectId)
+            ->all();
+    }
+
     private function applyActiveRunScope(
         QueryBuilder $query,
         string $runTable,
@@ -424,6 +531,29 @@ class RagIndexingCoordinator
                 $scopeQuery
                     ->where("{$runTable}.source_type", $sourceType)
                     ->orWhereNull("{$runTable}.source_type");
+            });
+        }
+    }
+
+    private function applyActiveEloquentRunScope(Builder $query, ?int $projectId, ?string $sourceType): void
+    {
+        if ($projectId === null) {
+            $query->whereNull('project_id');
+        } else {
+            $query->where(static function (Builder $scopeQuery) use ($projectId): void {
+                $scopeQuery
+                    ->where('project_id', $projectId)
+                    ->orWhereNull('project_id');
+            });
+        }
+
+        if ($sourceType === null) {
+            $query->whereNull('source_type');
+        } else {
+            $query->where(static function (Builder $scopeQuery) use ($sourceType): void {
+                $scopeQuery
+                    ->where('source_type', $sourceType)
+                    ->orWhereNull('source_type');
             });
         }
     }
