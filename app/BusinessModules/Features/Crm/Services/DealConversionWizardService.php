@@ -24,6 +24,7 @@ use App\Models\Supplier;
 use App\Models\User;
 use App\Services\Contract\ContractService;
 use App\Services\Logging\LoggingService;
+use App\Services\Project\ProjectBudgetAmountService;
 use App\Services\Project\ProjectService;
 use BackedEnum;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -54,7 +55,8 @@ final class DealConversionWizardService
         private readonly TenderTimelineService $tenderTimeline,
         private readonly AuthorizationService $authorization,
         private readonly ContractorSharingInterface $contractorSharing,
-        private readonly LoggingService $logging
+        private readonly LoggingService $logging,
+        private readonly ProjectBudgetAmountService $projectBudgetAmountService
     ) {}
 
     public function preview(int $organizationId, string $dealId, array $data, User $user): array
@@ -508,7 +510,6 @@ final class DealConversionWizardService
             'start_date' => $inputFields['start_date'] ?? null,
             'end_date' => $inputFields['end_date'] ?? null,
             'status' => $inputFields['status'] ?? 'draft',
-            'budget_amount' => $inputFields['budget_amount'] ?? ($amount['amount_visible'] ? $amount['value'] : null),
             'contract_number' => $inputFields['contract_number'] ?? $proposal?->number ?? $tender?->number,
             'cost_category_id' => $inputFields['cost_category_id'] ?? null,
             'additional_info' => [
@@ -518,6 +519,11 @@ final class DealConversionWizardService
                 'commercial_proposal_id' => $proposal?->id,
             ],
         ];
+        $fields = $this->projectBudgetAmountService->applyProjectPlannedCost(
+            $fields,
+            $inputFields['budget_amount'] ?? ($amount['amount_visible'] ? $amount['value'] : null),
+            'crm_conversion'
+        );
         $missing = [];
 
         if ($mode === 'reuse' && ! $existing) {
@@ -536,6 +542,11 @@ final class DealConversionWizardService
             'mode' => $mode,
             'existing' => $existing,
             'fields' => $fields,
+            'budget_amount_context' => [
+                'contour' => 'project_planned_cost',
+                'label' => trans_message('crm.conversion.project_budget_amount.label'),
+                'description' => trans_message('crm.conversion.project_budget_amount.description'),
+            ],
             'required_fields' => $mode === 'create' ? ['name', 'status'] : ['project_id'],
             'missing_fields' => $missing,
         ];
@@ -612,6 +623,11 @@ final class DealConversionWizardService
             'mode' => $mode,
             'existing' => $existing,
             'fields' => $fields,
+            'amount_context' => [
+                'contour' => 'contract_amount',
+                'label' => trans_message('crm.conversion.contract_amount.label'),
+                'description' => trans_message('crm.conversion.contract_amount.description'),
+            ],
             'counterparty' => $counterparty,
             'required_fields' => $required,
             'missing_fields' => array_values(array_unique($missing)),
@@ -986,6 +1002,8 @@ final class DealConversionWizardService
             'amount_visible' => $amount['amount_visible'],
             'source' => $amount['source'],
             'amount' => $amount['amount_visible'] ? $amount['value'] : null,
+            'kind' => 'deferred_budget_seed',
+            'creates_budget_lines' => false,
             'items' => [],
             'note' => trans_message('crm.conversion.budget_seed.note'),
             'source_id' => $proposal?->id ?? $tender?->id,

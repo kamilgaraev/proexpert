@@ -11,6 +11,7 @@ use App\Repositories\Interfaces\UserRepositoryInterface;
 use App\Repositories\Interfaces\WorkTypeRepositoryInterface;
 use App\Services\Logging\LoggingService;
 use App\Services\Organization\OrganizationProfileService;
+use App\Services\Project\ProjectBudgetAmountService;
 use App\Services\Project\ProjectContextService;
 use App\Services\Project\ProjectParticipantService;
 use App\Services\Project\ProjectService;
@@ -25,9 +26,7 @@ class ProjectServiceSortValidationTest extends TestCase
 {
     use MockeryPHPUnitIntegration;
 
-    protected function refreshTestDatabase(): void
-    {
-    }
+    protected function refreshTestDatabase(): void {}
 
     public function test_projects_for_current_org_fall_back_to_safe_sorting(): void
     {
@@ -55,7 +54,8 @@ class ProjectServiceSortValidationTest extends TestCase
             Mockery::mock(ProjectContextService::class),
             Mockery::mock(OrganizationScopeInterface::class),
             Mockery::mock(ProjectParticipantService::class),
-            Mockery::mock(ProjectTeamService::class)
+            Mockery::mock(ProjectTeamService::class),
+            new ProjectBudgetAmountService
         );
 
         $this->assertSame($paginator, $service->getProjectsForCurrentOrg($request, 20));

@@ -42,6 +42,11 @@ final class CrmDealConversionWorkflowTest extends TestCase
         $previewResponse->assertJsonPath('data.ready_to_convert', true);
         $previewResponse->assertJsonPath('data.amount.amount_visible', true);
         $previewResponse->assertJsonPath('data.project.mode', 'create');
+        $previewResponse->assertJsonPath('data.project.budget_amount_context.contour', 'project_planned_cost');
+        $previewResponse->assertJsonPath('data.project.budget_amount_context.label', 'Плановая стоимость проекта');
+        $previewResponse->assertJsonPath('data.contract.amount_context.contour', 'contract_amount');
+        $previewResponse->assertJsonPath('data.budget_seed.kind', 'deferred_budget_seed');
+        $previewResponse->assertJsonPath('data.budget_seed.creates_budget_lines', false);
         $previewResponse->assertJsonPath('data.contract.fields.contractor_id', $source['contractor_id']);
 
         $validationPayload = $this->conversionPayload($previewResponse->json('data.preview_hash'), $source['contractor_id']);
@@ -65,6 +70,11 @@ final class CrmDealConversionWorkflowTest extends TestCase
 
         $projectId = (int) $convertResponse->json('data.project.id');
         $contractId = (int) $convertResponse->json('data.contract.id');
+        $project = Project::query()->findOrFail($projectId);
+
+        $this->assertSame('project_planned_cost', $project->additional_info['budget_amount_context']['contour'] ?? null);
+        $this->assertSame('crm_conversion', $project->additional_info['budget_amount_context']['source'] ?? null);
+        $this->assertFalse($project->additional_info['budget_amount_context']['creates_budget_lines'] ?? true);
 
         $this->assertDatabaseHas('projects', [
             'id' => $projectId,

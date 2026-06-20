@@ -135,6 +135,9 @@ class ProjectCoreExperienceControllerTest extends TestCase
         $this->assertSame('2026-08-31', $project->end_date?->toDateString());
         $this->assertSame('active', $project->status);
         $this->assertSame('1234567.89', (string) $project->budget_amount);
+        $this->assertSame('project_planned_cost', $project->additional_info['budget_amount_context']['contour'] ?? null);
+        $this->assertSame('manual', $project->additional_info['budget_amount_context']['source'] ?? null);
+        $this->assertFalse($project->additional_info['budget_amount_context']['creates_budget_lines'] ?? true);
         $this->assertSame('987.65', (string) $project->site_area_m2);
         $this->assertSame('CNT-001', $project->contract_number);
         $this->assertTrue((bool) $project->use_in_accounting_reports);
@@ -165,6 +168,9 @@ class ProjectCoreExperienceControllerTest extends TestCase
         $this->assertSame('2026-09-15', $project->end_date?->toDateString());
         $this->assertSame('paused', $project->status);
         $this->assertSame('2222222.22', (string) $project->budget_amount);
+        $this->assertSame('project_planned_cost', $project->additional_info['budget_amount_context']['contour'] ?? null);
+        $this->assertSame('manual', $project->additional_info['budget_amount_context']['source'] ?? null);
+        $this->assertFalse($project->additional_info['budget_amount_context']['creates_budget_lines'] ?? true);
         $this->assertSame('111.11', (string) $project->site_area_m2);
         $this->assertSame('CNT-002', $project->contract_number);
     }

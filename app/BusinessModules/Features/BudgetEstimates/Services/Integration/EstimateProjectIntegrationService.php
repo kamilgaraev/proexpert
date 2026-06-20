@@ -1,52 +1,60 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Integration;
 
 use App\Models\Estimate;
 use App\Models\Project;
 use App\Repositories\EstimateRepository;
+use App\Services\Project\ProjectBudgetAmountService;
 use Illuminate\Support\Collection;
 
 class EstimateProjectIntegrationService
 {
     public function __construct(
-        protected EstimateRepository $estimateRepository
+        protected EstimateRepository $estimateRepository,
+        protected ProjectBudgetAmountService $projectBudgetAmountService
     ) {}
 
     public function syncWithProjectBudget(Estimate $estimate): void
     {
-        if (!$estimate->project_id) {
+        if (! $this->projectBudgetAmountService->allowsApprovedEstimateAutoOverwrite()) {
             return;
         }
-        
+
+        if (! $estimate->project_id) {
+            return;
+        }
+
         $project = $estimate->project;
-        if (!$project) {
+        if (! $project) {
             return;
         }
-        
+
         $project->update([
-            'budget_amount' => $estimate->total_amount_with_vat
+            'budget_amount' => $estimate->total_amount_with_vat,
         ]);
     }
 
     public function compareWithActual(Estimate $estimate): array
     {
-        if (!$estimate->project_id) {
+        if (! $estimate->project_id) {
             return [
-                'error' => 'Смета не привязана к проекту'
+                'error' => 'Смета не привязана к проекту',
             ];
         }
-        
+
         $project = $estimate->project;
-        
+
         $actualCosts = $project->completedWorks()->sum('total_amount');
-        
+
         $plannedAmount = $estimate->total_amount;
         $difference = $actualCosts - $plannedAmount;
-        $percentageDeviation = $plannedAmount > 0 
-            ? round(($difference / $plannedAmount) * 100, 2) 
+        $percentageDeviation = $plannedAmount > 0
+            ? round(($difference / $plannedAmount) * 100, 2)
             : 0;
-        
+
         return [
             'planned_amount' => (float) $plannedAmount,
             'actual_costs' => (float) $actualCosts,
@@ -58,19 +66,19 @@ class EstimateProjectIntegrationService
 
     public function updateProjectStatus(Estimate $estimate): void
     {
-        if (!$estimate->project_id) {
+        if (! $estimate->project_id) {
             return;
         }
-        
+
         $comparison = $this->compareWithActual($estimate);
-        
-        if (!isset($comparison['error'])) {
+
+        if (! isset($comparison['error'])) {
             $metadata = $estimate->project->additional_info ?? [];
             $metadata['budget_comparison'] = $comparison;
             $metadata['last_synced_at'] = now()->toISOString();
-            
+
             $estimate->project->update([
-                'additional_info' => $metadata
+                'additional_info' => $metadata,
             ]);
         }
     }
@@ -87,4 +95,3 @@ class EstimateProjectIntegrationService
             ->sum('total_amount_with_vat');
     }
 }
-

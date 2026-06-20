@@ -52,6 +52,7 @@ class ProjectService
     protected OrganizationScopeInterface $orgScope;
     protected ProjectParticipantService $projectParticipantService;
     protected ProjectTeamService $projectTeamService;
+    protected ProjectBudgetAmountService $projectBudgetAmountService;
 
     public function __construct(
         ProjectRepositoryInterface $projectRepository,
@@ -63,7 +64,8 @@ class ProjectService
         ProjectContextService $projectContextService,
         OrganizationScopeInterface $orgScope,
         ProjectParticipantService $projectParticipantService,
-        ProjectTeamService $projectTeamService
+        ProjectTeamService $projectTeamService,
+        ProjectBudgetAmountService $projectBudgetAmountService
     ) {
         $this->projectRepository = $projectRepository;
         $this->userRepository = $userRepository;
@@ -75,6 +77,7 @@ class ProjectService
         $this->orgScope = $orgScope;
         $this->projectParticipantService = $projectParticipantService;
         $this->projectTeamService = $projectTeamService;
+        $this->projectBudgetAmountService = $projectBudgetAmountService;
     }
 
     private function resolveProjectRoleFromValues(?string $roleNew, ?string $roleLegacy): ?ProjectOrganizationRole
@@ -194,6 +197,11 @@ class ProjectService
         ]);
         
         $dataToCreate = $this->withGeocodingState($projectDTO->toArray());
+        $dataToCreate = $this->projectBudgetAmountService->applyProjectPlannedCost(
+            $dataToCreate,
+            $projectDTO->budget_amount,
+            $this->resolveProjectBudgetAmountSource($dataToCreate)
+        );
         $dataToCreate['organization_id'] = $organizationId;
         $dataToCreate['is_head'] = true;
         
@@ -263,8 +271,35 @@ class ProjectService
             throw new BusinessLogicException(trans_message('project.not_found_or_access_denied'), 404);
         }
 
-        $updated = $this->projectRepository->update($id, $this->withGeocodingState($projectDTO->toArray()));
+        $dataToUpdate = $this->withGeocodingState($projectDTO->toArray());
+
+        if ($this->projectBudgetAmountService->amountsDiffer($project->budget_amount, $projectDTO->budget_amount)) {
+            $dataToUpdate = $this->projectBudgetAmountService->applyProjectPlannedCost(
+                $dataToUpdate,
+                $projectDTO->budget_amount,
+                'manual'
+            );
+        } else {
+            $dataToUpdate = $this->projectBudgetAmountService->preserveProjectPlannedCostContext(
+                $dataToUpdate,
+                $project->additional_info,
+                'manual'
+            );
+        }
+
+        $updated = $this->projectRepository->update($id, $dataToUpdate);
         return $updated ? $this->projectRepository->find($id) : null;
+    }
+
+    private function resolveProjectBudgetAmountSource(array $payload): string
+    {
+        $additionalInfo = $payload['additional_info'] ?? [];
+
+        if (is_array($additionalInfo) && ($additionalInfo['source'] ?? null) === 'crm_conversion') {
+            return 'crm_conversion';
+        }
+
+        return 'manual';
     }
 
     private function withGeocodingState(array $data): array

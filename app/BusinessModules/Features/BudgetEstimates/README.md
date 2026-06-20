@@ -42,7 +42,8 @@
 
 #### Events & Listeners
 - 4 события (Created, Approved, VersionCreated, Imported)
-- 3 слушателя (UpdateProjectBudget, SyncContractAmount, Notify)
+- Канонический listener для EstimateApproved: CreateEstimateApprovalSnapshot
+- Утверждение сметы не перезаписывает плановую стоимость проекта автоматически
 
 #### Инфраструктура
 - BudgetEstimatesModule класс
