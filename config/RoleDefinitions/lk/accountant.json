@@ -160,6 +160,14 @@
       "budgeting.import.preview",
       "budgeting.import.commit"
     ],
+    "presale-estimates": [
+      "presale_estimates.view",
+      "presale_estimates.amounts.view",
+      "presale_estimates.transfer.preview",
+      "presale_estimates.transfer.validate",
+      "presale_estimates.transfer.convert",
+      "presale_estimates.transfer.mapping.edit"
+    ],
     "budget-estimates": [
       "budget-estimates.view",
       "budget-estimates.view_all",

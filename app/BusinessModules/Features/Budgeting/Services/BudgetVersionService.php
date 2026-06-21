@@ -20,8 +20,7 @@ final class BudgetVersionService
         private readonly BudgetCatalogService $catalogService,
         private readonly BudgetWorkflowService $workflowService,
         private readonly BudgetPeriodClosureService $periodClosureService
-    ) {
-    }
+    ) {}
 
     /**
      * @return array{paginator:LengthAwarePaginator, summary:array<string, mixed>}
@@ -194,7 +193,7 @@ final class BudgetVersionService
             ->with(['period', 'scenario'])
             ->first();
 
-        if (!$version instanceof BudgetVersion) {
+        if (! $version instanceof BudgetVersion) {
             throw new \DomainException(trans_message('budgeting.versions.not_found'));
         }
 
@@ -261,6 +260,7 @@ final class BudgetVersionService
             'counterparty_id' => $line->counterparty_id,
             'currency' => $line->currency,
             'description' => $line->description,
+            'metadata' => $line->metadata,
             'amounts' => $line->amounts->sortBy('month')->map(fn (BudgetAmount $amount): array => [
                 'month' => $amount->month?->format('Y-m'),
                 'plan' => (float) $amount->plan_amount,
@@ -272,7 +272,7 @@ final class BudgetVersionService
     private function periodByUuid(int $organizationId, string $uuid): BudgetPeriod
     {
         $period = BudgetPeriod::query()->where('organization_id', $organizationId)->where('uuid', $uuid)->first();
-        if (!$period instanceof BudgetPeriod) {
+        if (! $period instanceof BudgetPeriod) {
             throw new \DomainException(trans_message('budgeting.periods.not_found'));
         }
 
@@ -282,7 +282,7 @@ final class BudgetVersionService
     private function scenarioByUuid(int $organizationId, string $uuid): BudgetScenario
     {
         $scenario = BudgetScenario::query()->where('organization_id', $organizationId)->where('uuid', $uuid)->first();
-        if (!$scenario instanceof BudgetScenario) {
+        if (! $scenario instanceof BudgetScenario) {
             throw new \DomainException(trans_message('budgeting.scenarios.not_found'));
         }
 

@@ -18,8 +18,8 @@ class PermissionTranslatorTest extends TestCase
     {
         parent::setUp();
 
-        $container = new Container();
-        $loader = new FileLoader(new Filesystem(), dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'lang');
+        $container = new Container;
+        $loader = new FileLoader(new Filesystem, dirname(__DIR__, 3).DIRECTORY_SEPARATOR.'lang');
         $translator = new Translator($loader, 'ru');
         $container->instance('translator', $translator);
 
@@ -237,6 +237,31 @@ class PermissionTranslatorTest extends TestCase
         $this->assertStringNotContainsString('commercial_proposals.amounts.view', $flattenedValues);
     }
 
+    public function test_presale_estimate_budget_transfer_permissions_are_translated_for_frontend(): void
+    {
+        $translated = PermissionTranslator::translatePermissionsData([
+            'module_permissions' => [
+                'presale-estimates' => [
+                    'presale_estimates.view',
+                    'presale_estimates.amounts.view',
+                    'presale_estimates.transfer.preview',
+                    'presale_estimates.transfer.convert',
+                    'presale_estimates.transfer.mapping.edit',
+                ],
+            ],
+        ]);
+
+        $flattenedValues = json_encode($this->valuesOnly($translated), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+
+        $this->assertSame('Presale-сметы', $translated['module_groups']['presale-estimates']);
+        $this->assertSame('Просмотр presale-смет', $translated['module_permissions']['presale-estimates']['presale_estimates.view']);
+        $this->assertSame('Просмотр сумм presale-смет', $translated['module_permissions']['presale-estimates']['presale_estimates.amounts.view']);
+        $this->assertSame('Предпросмотр переноса presale-смет в бюджет', $translated['module_permissions']['presale-estimates']['presale_estimates.transfer.preview']);
+        $this->assertSame('Создание бюджета из presale-смет', $translated['module_permissions']['presale-estimates']['presale_estimates.transfer.convert']);
+        $this->assertStringNotContainsString('presale_estimates.transfer.convert', $flattenedValues);
+        $this->assertStringNotContainsString('presale_estimates.transfer.mapping.edit', $flattenedValues);
+    }
+
     private function valuesOnly(array $value): array
     {
         $values = [];
@@ -244,6 +269,7 @@ class PermissionTranslatorTest extends TestCase
         foreach ($value as $item) {
             if (is_array($item)) {
                 $values[] = $this->valuesOnly($item);
+
                 continue;
             }
 

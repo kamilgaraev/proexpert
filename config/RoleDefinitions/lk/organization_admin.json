@@ -569,6 +569,14 @@
       "commercial_proposals.files.upload",
       "commercial_proposals.files.delete"
     ],
+    "presale-estimates": [
+      "presale_estimates.view",
+      "presale_estimates.amounts.view",
+      "presale_estimates.transfer.preview",
+      "presale_estimates.transfer.validate",
+      "presale_estimates.transfer.convert",
+      "presale_estimates.transfer.mapping.edit"
+    ],
     "brigades": [
       "brigades.view",
       "brigades.catalog.view",

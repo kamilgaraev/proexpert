@@ -22,8 +22,7 @@ final class BudgetLineService
     public function __construct(
         private readonly BudgetVersionService $versionService,
         private readonly BudgetPeriodClosureService $periodClosureService
-    ) {
-    }
+    ) {}
 
     public function lines(User $user, string $versionUuid, array $filters): array
     {
@@ -95,15 +94,14 @@ final class BudgetLineService
     }
 
     /**
-     * @param list<array<string, mixed>> $rows
+     * @param  list<array<string, mixed>>  $rows
      */
     public function writeNormalizedRows(
         BudgetVersion $version,
         array $rows,
         string $mode,
         ?string $operation = BudgetPeriodClosureService::OPERATION_BUDGET_LINES
-    ): void
-    {
+    ): void {
         $this->assertEditable($version, $operation);
 
         DB::transaction(function () use ($version, $rows, $mode): void {
@@ -137,6 +135,7 @@ final class BudgetLineService
                     'counterparty_id' => $lineData['counterparty_id'] ?? null,
                     'currency' => $lineData['currency'] ?? 'RUB',
                     'description' => $lineData['description'] ?? null,
+                    'metadata' => $lineData['metadata'] ?? null,
                 ]);
 
                 foreach ($group['amounts'] as $amount) {
@@ -155,8 +154,7 @@ final class BudgetLineService
     public function assertEditable(
         BudgetVersion $version,
         ?string $operation = BudgetPeriodClosureService::OPERATION_BUDGET_LINES
-    ): void
-    {
+    ): void {
         if ($version->status !== 'draft') {
             throw new \DomainException(trans_message('budgeting.versions.edit_forbidden'));
         }
@@ -172,15 +170,15 @@ final class BudgetLineService
             ->where('is_active', true)
             ->first();
 
-        if (!$article instanceof BudgetArticle) {
+        if (! $article instanceof BudgetArticle) {
             throw new \DomainException(trans_message('budgeting.articles.not_found'));
         }
 
-        if (!$article->is_leaf) {
+        if (! $article->is_leaf) {
             throw new \DomainException(trans_message('budgeting.articles.not_leaf'));
         }
 
-        if (!in_array($article->budget_kind, [$version->budget_kind, 'both'], true)) {
+        if (! in_array($article->budget_kind, [$version->budget_kind, 'both'], true)) {
             throw new \DomainException(trans_message('budgeting.articles.kind_mismatch'));
         }
 
@@ -195,7 +193,7 @@ final class BudgetLineService
             ->where('is_active', true)
             ->first();
 
-        if (!$center instanceof ResponsibilityCenter) {
+        if (! $center instanceof ResponsibilityCenter) {
             throw new \DomainException(trans_message('budgeting.cfo.not_found'));
         }
 
@@ -209,7 +207,7 @@ final class BudgetLineService
         }
 
         $exists = Project::query()->where('id', (int) $projectId)->accessibleByOrganization((int) $version->organization_id)->exists();
-        if (!$exists) {
+        if (! $exists) {
             throw new \DomainException(trans_message('budgeting.lines.project_not_found'));
         }
 
@@ -223,7 +221,7 @@ final class BudgetLineService
         }
 
         $exists = Contract::query()->where('organization_id', $version->organization_id)->where('id', (int) $contractId)->exists();
-        if (!$exists) {
+        if (! $exists) {
             throw new \DomainException(trans_message('budgeting.lines.contract_not_found'));
         }
 
@@ -237,7 +235,7 @@ final class BudgetLineService
         }
 
         $exists = Contractor::query()->where('organization_id', $version->organization_id)->where('id', (int) $counterpartyId)->exists();
-        if (!$exists) {
+        if (! $exists) {
             throw new \DomainException(trans_message('budgeting.lines.counterparty_not_found'));
         }
 
@@ -246,7 +244,7 @@ final class BudgetLineService
 
     private function monthInsideVersion(BudgetVersion $version, string $month): string
     {
-        $normalized = preg_match('/^\d{4}-\d{2}$/', $month) === 1 ? "{$month}-01" : substr($month, 0, 7) . '-01';
+        $normalized = preg_match('/^\d{4}-\d{2}$/', $month) === 1 ? "{$month}-01" : substr($month, 0, 7).'-01';
         $date = CarbonImmutable::parse($normalized)->startOfMonth();
         $startsAt = CarbonImmutable::parse((string) $version->period->starts_at)->startOfMonth();
         $endsAt = CarbonImmutable::parse((string) $version->period->ends_at)->startOfMonth();

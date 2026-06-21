@@ -15,6 +15,7 @@ return [
     App\BusinessModules\Features\Crm\CrmServiceProvider::class,
     App\BusinessModules\Features\Tenders\TendersServiceProvider::class,
     App\BusinessModules\Features\CommercialProposals\CommercialProposalsServiceProvider::class,
+    App\BusinessModules\Features\PresaleEstimates\PresaleEstimatesServiceProvider::class,
     App\BusinessModules\Features\NormativeReferences\NormativeReferencesServiceProvider::class,
     App\BusinessModules\Features\KnowledgeHub\KnowledgeHubServiceProvider::class,
     App\BusinessModules\Features\Notifications\NotificationServiceProvider::class,
