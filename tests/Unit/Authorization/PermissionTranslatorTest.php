@@ -213,6 +213,36 @@ class PermissionTranslatorTest extends TestCase
         $this->assertStringNotContainsString('one_c_exchange.profiles.test_connection', $flattenedValues);
     }
 
+    public function test_mdm_change_request_permissions_are_translated_for_frontend(): void
+    {
+        $translated = PermissionTranslator::translatePermissionsData([
+            'module_permissions' => [
+                'catalog-management' => [
+                    'mdm.change_requests.view',
+                    'mdm.change_requests.create',
+                    'mdm.change_requests.submit',
+                    'mdm.change_requests.review',
+                    'mdm.change_requests.approve',
+                    'mdm.change_requests.reject',
+                    'mdm.change_requests.apply',
+                    'mdm.change_requests.cancel',
+                    'mdm.impact.view',
+                    'mdm.one_c.override',
+                ],
+            ],
+        ]);
+
+        $flattenedValues = json_encode($this->valuesOnly($translated), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+
+        $this->assertSame('Справочники', $translated['module_groups']['catalog-management']);
+        $this->assertSame('Просмотр заявок на изменение мастер-данных', $translated['module_permissions']['catalog-management']['mdm.change_requests.view']);
+        $this->assertSame('Применение согласованных изменений мастер-данных', $translated['module_permissions']['catalog-management']['mdm.change_requests.apply']);
+        $this->assertSame('Просмотр анализа влияния мастер-данных', $translated['module_permissions']['catalog-management']['mdm.impact.view']);
+        $this->assertStringNotContainsString('mdm.change_requests.view', $flattenedValues);
+        $this->assertStringNotContainsString('mdm.change_requests.apply', $flattenedValues);
+        $this->assertStringNotContainsString('mdm.one_c.override', $flattenedValues);
+    }
+
     public function test_commercial_proposal_permissions_are_translated_for_frontend(): void
     {
         $translated = PermissionTranslator::translatePermissionsData([

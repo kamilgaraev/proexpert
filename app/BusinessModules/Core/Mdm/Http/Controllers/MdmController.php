@@ -10,11 +10,12 @@ use App\BusinessModules\Core\Mdm\Models\MdmDuplicateGroup;
 use App\BusinessModules\Core\Mdm\Models\MdmImportBatch;
 use App\BusinessModules\Core\Mdm\Models\MdmRecord;
 use App\BusinessModules\Core\Mdm\Models\MdmRelationship;
-use App\BusinessModules\Core\Mdm\Services\MdmDuplicateDetectionService;
 use App\BusinessModules\Core\Mdm\Services\MdmChangeRequestService;
+use App\BusinessModules\Core\Mdm\Services\MdmDuplicateDetectionService;
+use App\BusinessModules\Core\Mdm\Services\MdmEntityGovernanceRegistry;
 use App\BusinessModules\Core\Mdm\Services\MdmEntityRegistry;
-use App\BusinessModules\Core\Mdm\Services\MdmImportService;
 use App\BusinessModules\Core\Mdm\Services\MdmFileImportParser;
+use App\BusinessModules\Core\Mdm\Services\MdmImportService;
 use App\BusinessModules\Core\Mdm\Services\MdmMergeService;
 use App\BusinessModules\Core\Mdm\Services\MdmQualityPolicyService;
 use App\BusinessModules\Core\Mdm\Services\MdmRecordService;
@@ -40,14 +41,14 @@ class MdmController extends Controller
         private readonly MdmChangeRequestService $changeRequestService,
         private readonly MdmMergeService $mergeService,
         private readonly MdmQualityPolicyService $qualityPolicyService,
-        private readonly MdmFileImportParser $fileImportParser
-    ) {
-    }
+        private readonly MdmFileImportParser $fileImportParser,
+        private readonly MdmEntityGovernanceRegistry $governanceRegistry
+    ) {}
 
     public function entities(): JsonResponse
     {
         try {
-            return AdminResponse::success($this->registry->all());
+            return AdminResponse::success($this->registry->publicDefinitions($this->governanceRegistry));
         } catch (Throwable $e) {
             if ($e instanceof ValidationException) {
                 return $this->validationError($e);
@@ -105,7 +106,7 @@ class MdmController extends Controller
             }
 
             if ($request->filled('q')) {
-                $query->where('display_name', 'like', '%' . $request->query('q') . '%');
+                $query->where('display_name', 'like', '%'.$request->query('q').'%');
             }
 
             $perPage = min(max((int) $request->query('per_page', 25), 1), 100);
@@ -424,19 +425,15 @@ class MdmController extends Controller
     {
         try {
             $organizationId = $this->organizationId($request);
-            $requests = MdmChangeRequest::query()
-                ->where('organization_id', $organizationId)
-                ->when($request->filled('entity_type'), static fn ($query) => $query->where('entity_type', $request->query('entity_type')))
-                ->when($request->filled('status'), static fn ($query) => $query->where('status', $request->query('status')))
-                ->orderByDesc('created_at')
-                ->paginate(min(max((int) $request->query('per_page', 25), 1), 100));
+            $summary = $this->changeRequestsSummary($organizationId);
+            $requests = $this->changeRequestService->list($organizationId, $request->query());
 
             return AdminResponse::paginated($requests->items(), [
                 'current_page' => $requests->currentPage(),
                 'per_page' => $requests->perPage(),
                 'total' => $requests->total(),
                 'last_page' => $requests->lastPage(),
-            ]);
+            ], null, 200, $summary);
         } catch (Throwable $e) {
             if ($e instanceof ValidationException) {
                 return $this->validationError($e);
@@ -448,26 +445,55 @@ class MdmController extends Controller
         }
     }
 
+    public function changeRequest(Request $request, MdmChangeRequest $changeRequest): JsonResponse
+    {
+        try {
+            if ((int) $changeRequest->organization_id !== $this->organizationId($request)) {
+                return AdminResponse::error(trans_message('mdm.errors.not_found'), 404);
+            }
+
+            return AdminResponse::success($this->changeRequestService->detail($changeRequest));
+        } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
+            Log::error('MDM change request show failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
+
+            return AdminResponse::error(trans_message('mdm.errors.change_requests_failed'), 500);
+        }
+    }
+
+    public function previewChangeRequest(Request $request): JsonResponse
+    {
+        try {
+            $validated = $this->validateChangeRequestPayload($request);
+            $preview = $this->changeRequestService->preview($this->organizationId($request), $validated);
+
+            return AdminResponse::success($preview);
+        } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
+            Log::error('MDM change request preview failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
+
+            return AdminResponse::error(trans_message('mdm.errors.change_request_preview_failed'), 500);
+        }
+    }
+
     public function submitChangeRequest(Request $request): JsonResponse
     {
         try {
-            $validated = $request->validate([
-                'entity_type' => ['required', 'string', Rule::in(array_keys($this->registry->all()))],
-                'entity_id' => ['nullable', 'integer'],
-                'action' => ['required', 'string', Rule::in(['create', 'update'])],
-                'proposed_values' => ['required', 'array'],
-            ]);
+            $validated = $this->validateChangeRequestPayload($request);
 
-            $changeRequest = $this->changeRequestService->submit(
+            $changeRequest = $this->changeRequestService->createDraft(
                 $this->organizationId($request),
-                $validated['entity_type'],
-                $validated['action'],
-                $validated['proposed_values'],
-                $validated['entity_id'] ?? null,
+                $validated,
                 $request->user()?->id
             );
 
-            return AdminResponse::success($changeRequest, trans_message('mdm.messages.change_request_submitted'), 201);
+            return AdminResponse::success($changeRequest, trans_message('mdm.messages.change_request_created'), 201);
         } catch (Throwable $e) {
             if ($e instanceof ValidationException) {
                 return $this->validationError($e);
@@ -476,6 +502,76 @@ class MdmController extends Controller
             Log::error('MDM change request submit failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.change_request_submit_failed'), 500);
+        }
+    }
+
+    public function updateChangeRequest(Request $request, MdmChangeRequest $changeRequest): JsonResponse
+    {
+        try {
+            if ((int) $changeRequest->organization_id !== $this->organizationId($request)) {
+                return AdminResponse::error(trans_message('mdm.errors.not_found'), 404);
+            }
+
+            $validated = $this->validateChangeRequestPayload($request, false);
+            $updated = $this->changeRequestService->updateDraft($changeRequest, $validated, $request->user()?->id);
+
+            return AdminResponse::success($updated, trans_message('mdm.messages.change_request_saved'));
+        } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
+            Log::error('MDM change request update failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
+
+            return AdminResponse::error(trans_message('mdm.errors.change_request_save_failed'), 500);
+        }
+    }
+
+    public function submitDraftChangeRequest(Request $request, MdmChangeRequest $changeRequest): JsonResponse
+    {
+        try {
+            if ((int) $changeRequest->organization_id !== $this->organizationId($request)) {
+                return AdminResponse::error(trans_message('mdm.errors.not_found'), 404);
+            }
+
+            $validated = $request->validate([
+                'comment' => ['nullable', 'string', 'max:1000'],
+            ]);
+            $submitted = $this->changeRequestService->submitDraft($changeRequest, $request->user()?->id, $validated['comment'] ?? null);
+
+            return AdminResponse::success($submitted, trans_message('mdm.messages.change_request_submitted'));
+        } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
+            Log::error('MDM change request submit action failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
+
+            return AdminResponse::error(trans_message('mdm.errors.change_request_submit_failed'), 500);
+        }
+    }
+
+    public function startReviewChangeRequest(Request $request, MdmChangeRequest $changeRequest): JsonResponse
+    {
+        try {
+            if ((int) $changeRequest->organization_id !== $this->organizationId($request)) {
+                return AdminResponse::error(trans_message('mdm.errors.not_found'), 404);
+            }
+
+            $validated = $request->validate([
+                'comment' => ['nullable', 'string', 'max:1000'],
+            ]);
+            $review = $this->changeRequestService->startReview($changeRequest, $request->user()?->id, $validated['comment'] ?? null);
+
+            return AdminResponse::success($review, trans_message('mdm.messages.change_request_review_started'));
+        } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
+            Log::error('MDM change request review start failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
+
+            return AdminResponse::error(trans_message('mdm.errors.change_request_review_failed'), 500);
         }
     }
 
@@ -504,6 +600,140 @@ class MdmController extends Controller
             Log::error('MDM change request review failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
 
             return AdminResponse::error(trans_message('mdm.errors.change_request_review_failed'), 500);
+        }
+    }
+
+    public function approveChangeRequest(Request $request, MdmChangeRequest $changeRequest): JsonResponse
+    {
+        try {
+            if ((int) $changeRequest->organization_id !== $this->organizationId($request)) {
+                return AdminResponse::error(trans_message('mdm.errors.not_found'), 404);
+            }
+
+            $validated = $request->validate([
+                'note' => ['nullable', 'string', 'max:1000'],
+            ]);
+            $approved = $this->changeRequestService->approve($changeRequest, $request->user()?->id, $validated['note'] ?? null);
+
+            return AdminResponse::success($approved, trans_message('mdm.messages.change_request_approved'));
+        } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
+            Log::error('MDM change request approve failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
+
+            return AdminResponse::error(trans_message('mdm.errors.change_request_review_failed'), 500);
+        }
+    }
+
+    public function rejectChangeRequest(Request $request, MdmChangeRequest $changeRequest): JsonResponse
+    {
+        try {
+            if ((int) $changeRequest->organization_id !== $this->organizationId($request)) {
+                return AdminResponse::error(trans_message('mdm.errors.not_found'), 404);
+            }
+
+            $validated = $request->validate([
+                'note' => ['nullable', 'string', 'max:1000'],
+            ]);
+            $rejected = $this->changeRequestService->reject($changeRequest, $request->user()?->id, $validated['note'] ?? null);
+
+            return AdminResponse::success($rejected, trans_message('mdm.messages.change_request_rejected'));
+        } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
+            Log::error('MDM change request reject failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
+
+            return AdminResponse::error(trans_message('mdm.errors.change_request_review_failed'), 500);
+        }
+    }
+
+    public function applyChangeRequest(Request $request, MdmChangeRequest $changeRequest): JsonResponse
+    {
+        try {
+            if ((int) $changeRequest->organization_id !== $this->organizationId($request)) {
+                return AdminResponse::error(trans_message('mdm.errors.not_found'), 404);
+            }
+
+            $validated = $request->validate([
+                'note' => ['nullable', 'string', 'max:1000'],
+            ]);
+            $applied = $this->changeRequestService->applyApproved($changeRequest, $request->user()?->id, $validated['note'] ?? null);
+
+            return AdminResponse::success($applied, trans_message('mdm.messages.change_request_applied'));
+        } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
+            Log::error('MDM change request apply failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
+
+            return AdminResponse::error(trans_message('mdm.errors.change_request_apply_failed'), 500);
+        }
+    }
+
+    public function cancelChangeRequest(Request $request, MdmChangeRequest $changeRequest): JsonResponse
+    {
+        try {
+            if ((int) $changeRequest->organization_id !== $this->organizationId($request)) {
+                return AdminResponse::error(trans_message('mdm.errors.not_found'), 404);
+            }
+
+            $validated = $request->validate([
+                'reason' => ['nullable', 'string', 'max:1000'],
+            ]);
+            $cancelled = $this->changeRequestService->cancel($changeRequest, $request->user()?->id, $validated['reason'] ?? null);
+
+            return AdminResponse::success($cancelled, trans_message('mdm.messages.change_request_cancelled'));
+        } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
+            Log::error('MDM change request cancel failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
+
+            return AdminResponse::error(trans_message('mdm.errors.change_request_cancel_failed'), 500);
+        }
+    }
+
+    public function changeRequestTimeline(Request $request, MdmChangeRequest $changeRequest): JsonResponse
+    {
+        try {
+            if ((int) $changeRequest->organization_id !== $this->organizationId($request)) {
+                return AdminResponse::error(trans_message('mdm.errors.not_found'), 404);
+            }
+
+            return AdminResponse::success($changeRequest->events()->with('actor:id,name,email')->get());
+        } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
+            Log::error('MDM change request timeline failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
+
+            return AdminResponse::error(trans_message('mdm.errors.change_request_timeline_failed'), 500);
+        }
+    }
+
+    public function changeRequestImpact(Request $request, MdmChangeRequest $changeRequest): JsonResponse
+    {
+        try {
+            if ((int) $changeRequest->organization_id !== $this->organizationId($request)) {
+                return AdminResponse::error(trans_message('mdm.errors.not_found'), 404);
+            }
+
+            return AdminResponse::success($this->changeRequestService->refreshImpact($changeRequest));
+        } catch (Throwable $e) {
+            if ($e instanceof ValidationException) {
+                return $this->validationError($e);
+            }
+
+            Log::error('MDM change request impact failed', ['error' => $e->getMessage(), 'user_id' => $request->user()?->id]);
+
+            return AdminResponse::error(trans_message('mdm.errors.change_request_impact_failed'), 500);
         }
     }
 
@@ -712,5 +942,53 @@ class MdmController extends Controller
             Response::HTTP_UNPROCESSABLE_ENTITY,
             $errors
         );
+    }
+
+    private function validateChangeRequestPayload(Request $request, bool $requireEntityShape = true): array
+    {
+        return $request->validate([
+            'entity_type' => [$requireEntityShape ? 'required' : 'sometimes', 'string', Rule::in(array_keys($this->registry->all()))],
+            'entity_id' => ['nullable', 'integer'],
+            'action' => [$requireEntityShape ? 'required' : 'sometimes', 'string', Rule::in(['create', 'update'])],
+            'priority' => ['nullable', 'string', Rule::in(['low', 'normal', 'high', 'urgent'])],
+            'reason' => ['nullable', 'string', 'max:1000'],
+            'business_justification' => ['nullable', 'string', 'max:4000'],
+            'idempotency_key' => ['nullable', 'string', 'max:160'],
+            'proposed_values' => ['required', 'array'],
+        ]);
+    }
+
+    private function changeRequestsSummary(int $organizationId): array
+    {
+        $statusCounts = MdmChangeRequest::query()
+            ->where('organization_id', $organizationId)
+            ->selectRaw('status, count(*) as total')
+            ->groupBy('status')
+            ->pluck('total', 'status')
+            ->map(static fn (mixed $count): int => (int) $count)
+            ->all();
+
+        $entityCounts = MdmChangeRequest::query()
+            ->where('organization_id', $organizationId)
+            ->selectRaw('entity_type, count(*) as total')
+            ->groupBy('entity_type')
+            ->pluck('total', 'entity_type')
+            ->map(static fn (mixed $count): int => (int) $count)
+            ->all();
+
+        return [
+            'statuses' => [
+                MdmChangeRequest::STATUS_DRAFT => $statusCounts[MdmChangeRequest::STATUS_DRAFT] ?? 0,
+                MdmChangeRequest::STATUS_SUBMITTED => $statusCounts[MdmChangeRequest::STATUS_SUBMITTED] ?? 0,
+                MdmChangeRequest::STATUS_UNDER_REVIEW => $statusCounts[MdmChangeRequest::STATUS_UNDER_REVIEW] ?? 0,
+                MdmChangeRequest::STATUS_APPROVED => $statusCounts[MdmChangeRequest::STATUS_APPROVED] ?? 0,
+                MdmChangeRequest::STATUS_REJECTED => $statusCounts[MdmChangeRequest::STATUS_REJECTED] ?? 0,
+                MdmChangeRequest::STATUS_APPLIED => $statusCounts[MdmChangeRequest::STATUS_APPLIED] ?? 0,
+                MdmChangeRequest::STATUS_FAILED => $statusCounts[MdmChangeRequest::STATUS_FAILED] ?? 0,
+                MdmChangeRequest::STATUS_CANCELLED => $statusCounts[MdmChangeRequest::STATUS_CANCELLED] ?? 0,
+            ],
+            'entity_types' => $entityCounts,
+            'total' => array_sum($statusCounts),
+        ];
     }
 }

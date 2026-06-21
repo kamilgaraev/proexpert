@@ -2,12 +2,12 @@
 
 namespace App\BusinessModules\Features\CatalogManagement;
 
-use App\Modules\Contracts\ModuleInterface;
-use App\Modules\Contracts\ConfigurableInterface;
-use App\Enums\ModuleType;
 use App\Enums\BillingModel;
+use App\Enums\ModuleType;
+use App\Modules\Contracts\ConfigurableInterface;
+use App\Modules\Contracts\ModuleInterface;
 
-class CatalogManagementModule implements ModuleInterface, ConfigurableInterface
+class CatalogManagementModule implements ConfigurableInterface, ModuleInterface
 {
     public function getName(): string
     {
@@ -64,6 +64,7 @@ class CatalogManagementModule implements ModuleInterface, ConfigurableInterface
     {
         // Проверяем что базовые модули активированы
         $accessController = app(\App\Modules\Core\AccessController::class);
+
         return $accessController->hasModuleAccess($organizationId, 'organizations') &&
                $accessController->hasModuleAccess($organizationId, 'users');
     }
@@ -91,12 +92,12 @@ class CatalogManagementModule implements ModuleInterface, ConfigurableInterface
             'materials.consumption_rates.view',
             'materials.consumption_rates.edit',
             'suppliers.view',
-            'suppliers.create', 
+            'suppliers.create',
             'suppliers.edit',
             'suppliers.delete',
             'contractors.view',
             'contractors.create',
-            'contractors.edit', 
+            'contractors.edit',
             'contractors.delete',
             'work_types.view',
             'work_types.create',
@@ -117,10 +118,19 @@ class CatalogManagementModule implements ModuleInterface, ConfigurableInterface
             'mdm.duplicates.resolve',
             'mdm.import.preview',
             'mdm.import.apply',
+            'mdm.change_requests.view',
+            'mdm.change_requests.create',
+            'mdm.change_requests.submit',
             'mdm.change_requests.review',
+            'mdm.change_requests.approve',
+            'mdm.change_requests.reject',
+            'mdm.change_requests.apply',
+            'mdm.change_requests.cancel',
+            'mdm.impact.view',
+            'mdm.one_c.override',
             'mdm.archive',
             'mdm.owners.assign',
-            'mdm.merge.apply'
+            'mdm.merge.apply',
         ];
     }
 
@@ -132,13 +142,13 @@ class CatalogManagementModule implements ModuleInterface, ConfigurableInterface
             'Балансы материалов',
             'Нормы списания материалов',
             'Управление поставщиками',
-            'Управление подрядчиками', 
+            'Управление подрядчиками',
             'Управление видами работ',
             'Связь материалов с видами работ',
             'Единицы измерения',
             'Категории затрат',
             'Поиск по справочникам',
-            'Валидация для бухгалтерских систем'
+            'Валидация для бухгалтерских систем',
         ];
     }
 
@@ -149,7 +159,7 @@ class CatalogManagementModule implements ModuleInterface, ConfigurableInterface
             'max_suppliers' => null,
             'max_contractors' => null,
             'max_work_types' => null,
-            'max_mdm_records' => null
+            'max_mdm_records' => null,
         ];
     }
 
@@ -162,51 +172,51 @@ class CatalogManagementModule implements ModuleInterface, ConfigurableInterface
                 'track_expiry_dates' => true,
                 'enable_batch_tracking' => false,
                 'alert_on_low_stock' => true,
-                'stock_alert_threshold' => 10
+                'stock_alert_threshold' => 10,
             ],
             'supplier_settings' => [
                 'require_inn' => true,
                 'validate_contact_info' => true,
                 'track_payment_terms' => true,
-                'enable_rating_system' => false
+                'enable_rating_system' => false,
             ],
             'contractor_settings' => [
                 'require_license' => false,
                 'track_certifications' => true,
                 'enable_performance_tracking' => true,
-                'require_insurance_info' => false
+                'require_insurance_info' => false,
             ],
             'work_type_settings' => [
                 'auto_link_materials' => true,
                 'suggest_similar_materials' => true,
                 'track_consumption_norms' => true,
-                'validate_material_compatibility' => true
+                'validate_material_compatibility' => true,
             ],
             'import_settings' => [
                 'validate_data_before_import' => true,
                 'create_missing_suppliers' => false,
                 'update_existing_records' => true,
-                'backup_before_import' => true
+                'backup_before_import' => true,
             ],
             'integration_settings' => [
                 'enable_accounting_sync' => false,
                 'validate_for_1c' => false,
                 'validate_for_sbis' => false,
-                'sync_frequency_hours' => 24
-            ]
+                'sync_frequency_hours' => 24,
+            ],
         ];
     }
 
     public function validateSettings(array $settings): bool
     {
-        if (isset($settings['material_settings']['stock_alert_threshold']) && 
-            (!is_numeric($settings['material_settings']['stock_alert_threshold']) || 
+        if (isset($settings['material_settings']['stock_alert_threshold']) &&
+            (! is_numeric($settings['material_settings']['stock_alert_threshold']) ||
              $settings['material_settings']['stock_alert_threshold'] < 0)) {
             return false;
         }
 
-        if (isset($settings['integration_settings']['sync_frequency_hours']) && 
-            (!is_int($settings['integration_settings']['sync_frequency_hours']) || 
+        if (isset($settings['integration_settings']['sync_frequency_hours']) &&
+            (! is_int($settings['integration_settings']['sync_frequency_hours']) ||
              $settings['integration_settings']['sync_frequency_hours'] < 1)) {
             return false;
         }
@@ -216,7 +226,7 @@ class CatalogManagementModule implements ModuleInterface, ConfigurableInterface
 
     public function applySettings(int $organizationId, array $settings): void
     {
-        if (!$this->validateSettings($settings)) {
+        if (! $this->validateSettings($settings)) {
             throw new \InvalidArgumentException('Некорректные настройки модуля управления справочниками');
         }
 
@@ -229,7 +239,7 @@ class CatalogManagementModule implements ModuleInterface, ConfigurableInterface
         if ($activation) {
             $currentSettings = $activation->module_settings ?? [];
             $activation->update([
-                'module_settings' => array_merge($currentSettings, $settings)
+                'module_settings' => array_merge($currentSettings, $settings),
             ]);
         }
     }
@@ -242,7 +252,7 @@ class CatalogManagementModule implements ModuleInterface, ConfigurableInterface
             })
             ->first();
 
-        if (!$activation) {
+        if (! $activation) {
             return $this->getDefaultSettings();
         }
 

@@ -19,6 +19,10 @@ class MdmQualityPolicyService
             'cost_category' => ['required_fields' => ['name'], 'field_weights' => ['name' => 25, 'normalized_key' => 15], 'min_acceptable_score' => 70],
             'estimate_position' => ['required_fields' => ['name', 'code', 'measurement_unit_id'], 'field_weights' => ['name' => 25, 'code' => 20, 'measurement_unit_id' => 25, 'normalized_key' => 15], 'min_acceptable_score' => 70],
             'estimate_position_category' => ['required_fields' => ['name'], 'field_weights' => ['name' => 25, 'normalized_key' => 15], 'min_acceptable_score' => 70],
+            'budget_article' => ['required_fields' => ['name', 'code', 'budget_kind', 'flow_direction'], 'field_weights' => ['name' => 25, 'code' => 25, 'budget_kind' => 10, 'flow_direction' => 10, 'normalized_key' => 15], 'min_acceptable_score' => 70],
+            'responsibility_center' => ['required_fields' => ['name', 'code', 'center_type'], 'field_weights' => ['name' => 25, 'code' => 25, 'center_type' => 15, 'normalized_key' => 15], 'min_acceptable_score' => 70],
+            'project' => ['required_fields' => ['name'], 'field_weights' => ['name' => 25, 'external_code' => 15, 'normalized_key' => 15], 'min_acceptable_score' => 70],
+            'contract' => ['required_fields' => ['number'], 'field_weights' => ['number' => 25, 'date' => 15, 'normalized_key' => 15], 'min_acceptable_score' => 70],
         ];
     }
 

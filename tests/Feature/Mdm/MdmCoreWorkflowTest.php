@@ -10,6 +10,7 @@ use App\BusinessModules\Core\Mdm\Models\MdmRelationship;
 use App\BusinessModules\Core\Mdm\Services\MdmDuplicateDetectionService;
 use App\BusinessModules\Core\Mdm\Services\MdmRecordService;
 use App\BusinessModules\Core\Mdm\Services\MdmRelationshipService;
+use App\BusinessModules\Features\Budgeting\Models\BudgetArticle;
 use App\Models\Contractor;
 use App\Models\Material;
 use App\Models\MeasurementUnit;
@@ -247,8 +248,15 @@ final class MdmCoreWorkflowTest extends TestCase
 
         $submitResponse->assertCreated();
         $submitResponse->assertJsonPath('success', true);
+        $submitResponse->assertJsonPath('data.status', 'draft');
 
         $changeRequestId = $submitResponse->json('data.id');
+        $submitActionResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/mdm/change-requests/{$changeRequestId}/submit");
+
+        $submitActionResponse->assertOk();
+        $submitActionResponse->assertJsonPath('data.status', 'submitted');
+
         $reviewResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/mdm/change-requests/{$changeRequestId}/review", [
                 'decision' => 'approved',
@@ -257,13 +265,26 @@ final class MdmCoreWorkflowTest extends TestCase
 
         $reviewResponse->assertOk();
         $reviewResponse->assertJsonPath('success', true);
+        $reviewResponse->assertJsonPath('data.status', 'approved');
+        $this->assertDatabaseHas('contractors', [
+            'id' => $contractor->id,
+            'name' => 'ООО Запад',
+        ]);
+
+        $applyChangeResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/mdm/change-requests/{$changeRequestId}/apply", [
+                'note' => 'Применено',
+            ]);
+
+        $applyChangeResponse->assertOk();
+        $applyChangeResponse->assertJsonPath('data.status', 'applied');
         $this->assertDatabaseHas('contractors', [
             'id' => $contractor->id,
             'name' => 'ООО Запад Обновленный',
         ]);
         $this->assertDatabaseHas('mdm_change_requests', [
             'id' => $changeRequestId,
-            'status' => 'approved',
+            'status' => 'applied',
         ]);
 
         $applyResponse = $this->withHeaders($context->authHeaders())
@@ -285,6 +306,83 @@ final class MdmCoreWorkflowTest extends TestCase
             'name' => 'ООО Импорт Применен',
             'inn' => '7701000008',
         ]);
+    }
+
+    public function test_change_requests_use_supported_fields_and_update_budget_articles(): void
+    {
+        $context = AdminApiTestContext::create();
+
+        $article = BudgetArticle::create([
+            'organization_id' => $context->organization->id,
+            'code' => 'BDDS-MAT',
+            'name' => 'Материалы',
+            'budget_kind' => 'bdds',
+            'flow_direction' => 'outflow',
+            'is_leaf' => true,
+            'is_active' => true,
+        ]);
+
+        app(MdmRecordService::class)->syncModel($article, 'budget_article');
+
+        $submitResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/mdm/change-requests', [
+                'entity_type' => 'budget_article',
+                'entity_id' => $article->id,
+                'action' => 'update',
+                'proposed_values' => [
+                    'name' => 'Материалы и оборудование',
+                    'code' => 'BDDS-MAT',
+                    'budget_kind' => 'bdds',
+                    'flow_direction' => 'outflow',
+                    'is_leaf' => true,
+                    'is_active' => true,
+                ],
+            ]);
+
+        $submitResponse->assertCreated();
+
+        $reviewResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/mdm/change-requests/{$submitResponse->json('data.id')}/review", [
+                'decision' => 'approved',
+            ]);
+
+        $reviewResponse->assertOk();
+        $this->assertDatabaseHas('budget_articles', [
+            'id' => $article->id,
+            'name' => 'Материалы и оборудование',
+        ]);
+
+        $unsafeResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/mdm/change-requests', [
+                'entity_type' => 'budget_article',
+                'entity_id' => $article->id,
+                'action' => 'update',
+                'proposed_values' => [
+                    'organization_id' => $context->organization->id + 1000,
+                ],
+            ]);
+
+        $unsafeResponse->assertUnprocessable()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'Эти поля нельзя менять через согласование: Организация.');
+    }
+
+    public function test_project_creation_is_not_available_through_mdm_change_requests(): void
+    {
+        $context = AdminApiTestContext::create();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/mdm/change-requests', [
+                'entity_type' => 'project',
+                'action' => 'create',
+                'proposed_values' => [
+                    'name' => 'Новый объект',
+                ],
+            ]);
+
+        $response->assertUnprocessable()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'Создание записей этого справочника через согласование пока недоступно.');
     }
 
     public function test_import_validation_errors_are_not_masked_as_server_errors(): void

@@ -9,8 +9,7 @@ class MdmQualityService
     public function __construct(
         private readonly MdmNormalizationService $normalizationService,
         private readonly MdmQualityPolicyService $policyService
-    ) {
-    }
+    ) {}
 
     public function evaluate(string $entityType, array $attributes, ?int $organizationId = null): array
     {
@@ -22,22 +21,22 @@ class MdmQualityService
 
         foreach ($requiredFields as $field) {
             if (($attributes[$field] ?? null) === null || trim((string) $attributes[$field]) === '') {
-                $issues[] = $this->issue($field . '_required', $field, (int) ($weights[$field] ?? 25));
+                $issues[] = $this->issue($field.'_required', $field, (int) ($weights[$field] ?? 25));
             }
         }
 
-        if (!empty($attributes['inn'] ?? $attributes['tax_number'] ?? null)) {
+        if (! empty($attributes['inn'] ?? $attributes['tax_number'] ?? null)) {
             $inn = $normalized['inn'] ?? $normalized['tax_number'] ?? '';
-            if (!in_array(strlen($inn), [10, 12], true)) {
+            if (! in_array(strlen($inn), [10, 12], true)) {
                 $issues[] = $this->issue('inn_invalid', 'inn', (int) ($weights['inn'] ?? 20));
             }
         }
 
-        if (!empty($attributes['kpp'] ?? null) && strlen($normalized['kpp'] ?? '') !== 9) {
+        if (! empty($attributes['kpp'] ?? null) && strlen($normalized['kpp'] ?? '') !== 9) {
             $issues[] = $this->issue('kpp_invalid', 'kpp', (int) ($weights['kpp'] ?? 10));
         }
 
-        if (!empty($attributes['email'] ?? null) && !filter_var($normalized['email'] ?? '', FILTER_VALIDATE_EMAIL)) {
+        if (! empty($attributes['email'] ?? null) && ! filter_var($normalized['email'] ?? '', FILTER_VALIDATE_EMAIL)) {
             $issues[] = $this->issue('email_invalid', 'email', (int) ($weights['email'] ?? 10));
         }
 
@@ -64,6 +63,9 @@ class MdmQualityService
             'material', 'work_type' => ['name', 'measurement_unit_id'],
             'measurement_unit' => ['name', 'short_name', 'type'],
             'estimate_position' => ['name', 'code', 'measurement_unit_id'],
+            'budget_article' => ['name', 'code', 'budget_kind', 'flow_direction'],
+            'responsibility_center' => ['name', 'code', 'center_type'],
+            'contract' => ['number'],
             default => ['name'],
         };
     }

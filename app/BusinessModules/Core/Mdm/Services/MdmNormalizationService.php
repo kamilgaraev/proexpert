@@ -20,13 +20,18 @@ class MdmNormalizationService
             'phone' => $this->normalizePhone($attributes['phone'] ?? null),
             'short_name' => $this->normalizeText($attributes['short_name'] ?? null),
             'type' => $this->normalizeCode($attributes['type'] ?? null),
+            'number' => $this->normalizeCode($attributes['number'] ?? null),
+            'contract_number' => $this->normalizeCode($attributes['contract_number'] ?? null),
+            'budget_kind' => $this->normalizeCode($attributes['budget_kind'] ?? null),
+            'flow_direction' => $this->normalizeCode($attributes['flow_direction'] ?? null),
+            'center_type' => $this->normalizeCode($attributes['center_type'] ?? null),
             'measurement_unit_id' => $this->normalizeInteger($attributes['measurement_unit_id'] ?? null),
             'work_type_id' => $this->normalizeInteger($attributes['work_type_id'] ?? null),
             'parent_id' => $this->normalizeInteger($attributes['parent_id'] ?? null),
         ];
 
         $normalized['normalized_key'] = $this->buildKey($entityType, $normalized);
-        $normalized['fingerprint'] = hash('sha256', $entityType . '|' . ($normalized['normalized_key'] ?? ''));
+        $normalized['fingerprint'] = hash('sha256', $entityType.'|'.($normalized['normalized_key'] ?? ''));
 
         return array_filter($normalized, static fn (mixed $value): bool => $value !== null && $value !== '');
     }
@@ -83,11 +88,11 @@ class MdmNormalizationService
         }
 
         if (strlen($phone) === 10) {
-            return '7' . $phone;
+            return '7'.$phone;
         }
 
         if (strlen($phone) === 11 && str_starts_with($phone, '8')) {
-            return '7' . substr($phone, 1);
+            return '7'.substr($phone, 1);
         }
 
         return $phone;
@@ -105,31 +110,53 @@ class MdmNormalizationService
     private function buildKey(string $entityType, array $normalized): ?string
     {
         if (in_array($entityType, ['contractor', 'supplier'], true)) {
-            if (!empty($normalized['inn'])) {
-                return $entityType . ':' . $normalized['inn'] . ':' . ($normalized['kpp'] ?? '');
+            if (! empty($normalized['inn'])) {
+                return $entityType.':'.$normalized['inn'].':'.($normalized['kpp'] ?? '');
             }
 
-            if (!empty($normalized['email'])) {
-                return $entityType . ':email:' . $normalized['email'];
+            if (! empty($normalized['email'])) {
+                return $entityType.':email:'.$normalized['email'];
             }
         }
 
         if (in_array($entityType, ['material', 'work_type', 'estimate_position'], true)) {
-            if (!empty($normalized['code'])) {
-                return $entityType . ':' . $normalized['code'] . ':' . ($normalized['measurement_unit_id'] ?? '');
+            if (! empty($normalized['code'])) {
+                return $entityType.':'.$normalized['code'].':'.($normalized['measurement_unit_id'] ?? '');
             }
         }
 
-        if ($entityType === 'measurement_unit' && !empty($normalized['short_name'])) {
-            return $entityType . ':' . $normalized['short_name'] . ':' . ($normalized['type'] ?? '');
+        if ($entityType === 'measurement_unit' && ! empty($normalized['short_name'])) {
+            return $entityType.':'.$normalized['short_name'].':'.($normalized['type'] ?? '');
         }
 
-        if ($entityType === 'cost_category' && !empty($normalized['code'])) {
-            return $entityType . ':' . $normalized['code'] . ':' . ($normalized['parent_id'] ?? '');
+        if ($entityType === 'cost_category' && ! empty($normalized['code'])) {
+            return $entityType.':'.$normalized['code'].':'.($normalized['parent_id'] ?? '');
         }
 
-        if (!empty($normalized['name'])) {
-            return $entityType . ':name:' . $normalized['name'] . ':' . ($normalized['parent_id'] ?? '');
+        if ($entityType === 'budget_article' && ! empty($normalized['code'])) {
+            return $entityType.':'.$normalized['budget_kind'].':'.$normalized['flow_direction'].':'.$normalized['code'];
+        }
+
+        if ($entityType === 'responsibility_center' && ! empty($normalized['code'])) {
+            return $entityType.':'.$normalized['center_type'].':'.$normalized['code'];
+        }
+
+        if ($entityType === 'project') {
+            if (! empty($normalized['external_code'])) {
+                return $entityType.':external:'.$normalized['external_code'];
+            }
+
+            if (! empty($normalized['contract_number'])) {
+                return $entityType.':contract:'.$normalized['contract_number'];
+            }
+        }
+
+        if ($entityType === 'contract' && ! empty($normalized['number'])) {
+            return $entityType.':'.$normalized['number'];
+        }
+
+        if (! empty($normalized['name'])) {
+            return $entityType.':name:'.$normalized['name'].':'.($normalized['parent_id'] ?? '');
         }
 
         return null;

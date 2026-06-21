@@ -14,8 +14,7 @@ class MdmImportService
         private readonly MdmQualityService $qualityService,
         private readonly MdmEntityRegistry $registry,
         private readonly MdmRecordService $recordService
-    ) {
-    }
+    ) {}
 
     public function preview(int $organizationId, string $entityType, array $rows, ?int $userId = null, string $source = 'manual'): MdmImportBatch
     {
@@ -23,10 +22,28 @@ class MdmImportService
         $accepted = 0;
 
         foreach ($rows as $index => $row) {
-            $quality = $this->qualityService->evaluate($entityType, is_array($row) ? $row : [], $organizationId);
+            $data = is_array($row) ? $this->registry->sanitizeValues($entityType, $row) : [];
+            $quality = $this->qualityService->evaluate($entityType, $data, $organizationId);
 
             if ($quality['score'] >= 70) {
+                if (! $this->registry->supportsCreate($entityType) && $this->findRecordByQuality($organizationId, $entityType, $quality) === null) {
+                    $issues[] = [
+                        'row' => $index + 1,
+                        'score' => $quality['score'],
+                        'issues' => [
+                            [
+                                'code' => 'existing_record_required',
+                                'field' => 'normalized_key',
+                                'message' => trans_message('mdm.validation.import_update_only'),
+                            ],
+                        ],
+                    ];
+
+                    continue;
+                }
+
                 $accepted++;
+
                 continue;
             }
 
@@ -60,31 +77,40 @@ class MdmImportService
             $modelClass = $this->registry->get($entityType)['model'];
 
             foreach ($rows as $index => $row) {
-                $data = is_array($row) ? $row : [];
+                $data = is_array($row) ? $this->registry->sanitizeValues($entityType, $row) : [];
                 $quality = $this->qualityService->evaluate($entityType, $data, $organizationId);
 
                 if ($quality['score'] < 70) {
                     $rejected++;
+
                     continue;
                 }
 
                 $data['organization_id'] = $organizationId;
-                $record = null;
-                $normalizedKey = $quality['normalized_values']['normalized_key'] ?? null;
-
-                if ($normalizedKey !== null) {
-                    $record = MdmRecord::query()
-                        ->where('organization_id', $organizationId)
-                        ->where('entity_type', $entityType)
-                        ->where('normalized_key', $normalizedKey)
-                        ->first();
-                }
+                $record = $this->findRecordByQuality($organizationId, $entityType, $quality);
 
                 $model = $record
                     ? $this->registry->query($entityType, $organizationId)->find($record->entity_id)
                     : null;
 
                 if ($model === null) {
+                    if (! $this->registry->supportsCreate($entityType)) {
+                        $rejected++;
+                        $issues[] = [
+                            'row' => $index + 1,
+                            'score' => $quality['score'],
+                            'issues' => [
+                                [
+                                    'code' => 'existing_record_required',
+                                    'field' => 'normalized_key',
+                                    'message' => trans_message('mdm.validation.import_update_only'),
+                                ],
+                            ],
+                        ];
+
+                        continue;
+                    }
+
                     $model = $modelClass::query()->create($data);
                 } else {
                     $model->fill($data);
@@ -104,5 +130,20 @@ class MdmImportService
 
             return $batch->refresh();
         });
+    }
+
+    private function findRecordByQuality(int $organizationId, string $entityType, array $quality): ?MdmRecord
+    {
+        $normalizedKey = $quality['normalized_values']['normalized_key'] ?? null;
+
+        if ($normalizedKey === null) {
+            return null;
+        }
+
+        return MdmRecord::query()
+            ->where('organization_id', $organizationId)
+            ->where('entity_type', $entityType)
+            ->where('normalized_key', $normalizedKey)
+            ->first();
     }
 }
