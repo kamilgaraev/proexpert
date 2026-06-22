@@ -365,6 +365,8 @@ Evidence должен отвечать на вопрос: "почему этот
 
 Для первого релиза PHERP-136 использовать существующий immutable audit domain `rbac`, потому что текущий check constraint уже допускает `rbac`.
 
+Значения `Result` ниже относятся к целевому audit result-контракту PHERP-134 (`success`, `denied`, `failed`, `exception_used`, `scheduled`) и не являются статусами campaign/item. При production-реализации PHERP-137/PHERP-136 эти значения нужно явно поддержать в API/UI-лейблах audit viewer, если они используются в событиях recertification.
+
 Целевые event types:
 
 | Event type | Когда пишется | Result |
