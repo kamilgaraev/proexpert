@@ -16,6 +16,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
+use Tymon\JWTAuth\Facades\JWTAuth;
 
 class BrigadeManagementControllerWorkflowTest extends TestCase
 {
@@ -196,6 +197,41 @@ class BrigadeManagementControllerWorkflowTest extends TestCase
         $updateResponse->assertJsonPath('data.notes', 'Вышли на объект');
     }
 
+    public function test_brigade_request_detail_only_exposes_open_requests(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $brigade = $this->createBrigade('installation-brigade');
+
+        $openRequest = BrigadeRequest::query()->create([
+            'contractor_organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'title' => 'Window installation',
+            'description' => 'Open request for brigade response',
+            'status' => BrigadeStatuses::REQUEST_OPEN,
+            'published_at' => now(),
+        ]);
+        $closedRequest = BrigadeRequest::query()->create([
+            'contractor_organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'title' => 'Closed request',
+            'description' => 'Closed request must not be exposed to brigade cabinet',
+            'status' => BrigadeStatuses::REQUEST_CLOSED,
+            'published_at' => now(),
+        ]);
+
+        $headers = $this->brigadeAuthHeaders($brigade);
+
+        $this->withHeaders($headers)
+            ->getJson("/api/v1/brigades/requests/{$openRequest->id}")
+            ->assertOk()
+            ->assertJsonPath('data.id', $openRequest->id);
+
+        $this->withHeaders($headers)
+            ->getJson("/api/v1/brigades/requests/{$closedRequest->id}")
+            ->assertNotFound();
+    }
+
     private function createBrigade(string $name): BrigadeProfile
     {
         $owner = User::factory()->create();
@@ -213,5 +249,13 @@ class BrigadeManagementControllerWorkflowTest extends TestCase
             'availability_status' => BrigadeStatuses::AVAILABILITY_AVAILABLE,
             'verification_status' => BrigadeStatuses::PROFILE_APPROVED,
         ]);
+    }
+
+    private function brigadeAuthHeaders(BrigadeProfile $brigade): array
+    {
+        return [
+            'Authorization' => 'Bearer ' . JWTAuth::claims(['brigade_id' => $brigade->id])->fromUser($brigade->owner),
+            'Accept' => 'application/json',
+        ];
     }
 }

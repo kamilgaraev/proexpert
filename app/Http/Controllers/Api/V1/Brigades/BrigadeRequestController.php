@@ -31,6 +31,7 @@ class BrigadeRequestController extends Controller
         $requestModel = BrigadeRequest::query()
             ->with(['project', 'contractorOrganization'])
             ->withCount('responses')
+            ->where('status', BrigadeStatuses::REQUEST_OPEN)
             ->findOrFail($requestId);
 
         return AdminResponse::success(new BrigadeRequestResource($requestModel));
