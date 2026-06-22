@@ -63,6 +63,12 @@
       "immutable_audit.events.view_sensitive",
       "immutable_audit.integrity.verify"
     ],
+    "access_recertification": [
+      "access_recertification.campaigns.view",
+      "access_recertification.reviews.view",
+      "access_recertification.reports.view",
+      "access_recertification.reports.export"
+    ],
     "blog": [
       "system_admin.blog.articles.view",
       "system_admin.blog.revisions.view",

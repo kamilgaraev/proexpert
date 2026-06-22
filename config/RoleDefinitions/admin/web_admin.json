@@ -437,6 +437,18 @@
       "immutable_audit.events.export",
       "immutable_audit.integrity.verify"
     ],
+    "access_recertification": [
+      "access_recertification.campaigns.view",
+      "access_recertification.campaigns.manage",
+      "access_recertification.campaigns.launch",
+      "access_recertification.campaigns.complete",
+      "access_recertification.reviews.view",
+      "access_recertification.reviews.decide",
+      "access_recertification.revocations.execute",
+      "access_recertification.exceptions.approve",
+      "access_recertification.reports.view",
+      "access_recertification.reports.export"
+    ],
     "rate-management": [
       "rate_coefficients.view",
       "rate_coefficients.create",

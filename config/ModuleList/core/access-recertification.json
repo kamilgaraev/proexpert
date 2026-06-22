@@ -1,0 +1,44 @@
+{
+  "name": "Пересмотр доступов",
+  "slug": "access_recertification",
+  "version": "1.0.0",
+  "type": "core",
+  "billing_model": "free",
+  "category": "governance",
+  "description": "Кампании регулярного пересмотра пользовательских ролей, решений владельцев и evidence для аудита",
+  "class_name": "App\\BusinessModules\\Core\\AccessRecertification\\AccessRecertificationModule",
+  "permissions": [
+    "access_recertification.campaigns.view",
+    "access_recertification.campaigns.manage",
+    "access_recertification.campaigns.launch",
+    "access_recertification.campaigns.complete",
+    "access_recertification.reviews.view",
+    "access_recertification.reviews.decide",
+    "access_recertification.revocations.execute",
+    "access_recertification.exceptions.approve",
+    "access_recertification.reports.view",
+    "access_recertification.reports.export"
+  ],
+  "features": [
+    "Кампании пересмотра доступов по ролям и пользователям",
+    "Назначение ответственных проверяющих",
+    "Решения: подтвердить, отозвать или оформить исключение",
+    "Задачи на отзыв доступа",
+    "Evidence export для аудита"
+  ],
+  "dependencies": [
+    "organizations",
+    "users"
+  ],
+  "conflicts": [],
+  "limits": {
+    "max_campaign_items": 50000,
+    "max_export_rows": 50000
+  },
+  "auto_activate": true,
+  "is_system_module": true,
+  "can_deactivate": false,
+  "development_status": "stable",
+  "icon": "verified-user",
+  "display_order": 8
+}

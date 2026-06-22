@@ -167,6 +167,9 @@
     "change-management": [
       "*"
     ],
+    "access_recertification": [
+      "*"
+    ],
     "handover-acceptance": [
       "*"
     ]

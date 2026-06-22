@@ -166,6 +166,13 @@
       "budgeting.import.commit",
       "budgeting.audit.view",
       "budgeting.sync.view"
+    ],
+    "access_recertification": [
+      "access_recertification.campaigns.view",
+      "access_recertification.reviews.view",
+      "access_recertification.reviews.decide",
+      "access_recertification.reports.view",
+      "access_recertification.reports.export"
     ]
   },
   "interface_access": [
