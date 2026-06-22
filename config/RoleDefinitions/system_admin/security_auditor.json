@@ -57,6 +57,12 @@
     "security": [
       "system_admin.audit_logs.view"
     ],
+    "immutable_audit": [
+      "immutable_audit.events.view",
+      "immutable_audit.events.export",
+      "immutable_audit.events.view_sensitive",
+      "immutable_audit.integrity.verify"
+    ],
     "blog": [
       "system_admin.blog.articles.view",
       "system_admin.blog.revisions.view",

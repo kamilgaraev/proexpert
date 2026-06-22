@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\OneCExchange;
 
+use App\BusinessModules\Core\ImmutableAudit\SourceAdapters\OneCExchangeAuditAdapter;
 use App\Models\OneCExchangeMessage;
 use App\Models\OneCExchangeOperation;
 use App\Services\OneCExchange\Support\OneCExchangePayloadSanitizer;
@@ -23,6 +24,7 @@ final class OneCExchangeJournalService
         private readonly OneCExchangeRetryPolicy $retryPolicy,
         private readonly OneCExchangeIncidentNotificationService $incidentNotifications,
         private readonly OneCExchangeConflictService $conflicts,
+        private readonly OneCExchangeAuditAdapter $immutableAudit,
     ) {
     }
 
@@ -31,33 +33,39 @@ final class OneCExchangeJournalService
         $payload = $data['payload'] ?? [];
         $safePayload = is_array($payload) ? $this->sanitizer->preview($payload) : null;
 
-        $operation = OneCExchangeOperation::query()->create([
-            'organization_id' => $organizationId,
-            'run_id' => $data['run_id'] ?? null,
-            'created_by' => $data['created_by'] ?? null,
-            'mapping_id' => $data['mapping_id'] ?? null,
-            'operation_key' => $data['operation_key'] ?? (string) Str::orderedUuid(),
-            'correlation_id' => $data['correlation_id'] ?? (string) Str::orderedUuid(),
-            'idempotency_key' => $data['idempotency_key'] ?? null,
-            'direction' => $data['direction'],
-            'scope' => $data['scope'],
-            'entity_type' => $data['entity_type'] ?? null,
-            'entity_id' => isset($data['entity_id']) ? (string) $data['entity_id'] : null,
-            'external_id' => $data['external_id'] ?? null,
-            'status' => $data['status'] ?? 'pending',
-            'accounting_status' => $data['accounting_status'] ?? null,
-            'failure_type' => $data['failure_type'] ?? null,
-            'retry_count' => (int) ($data['retry_count'] ?? 0),
-            'max_attempts' => (int) ($data['max_attempts'] ?? 5),
-            'retryable' => (bool) ($data['retryable'] ?? false),
-            'next_retry_at' => $data['next_retry_at'] ?? null,
-            'source_hash' => $data['source_hash'] ?? null,
-            'payload_hash' => $data['payload_hash'] ?? $this->hashPayload($payload),
-            'safe_payload_preview' => $safePayload,
-            'summary' => $data['summary'] ?? null,
-            'started_at' => $data['started_at'] ?? now(),
-            'finished_at' => $data['finished_at'] ?? null,
-        ]);
+        $operation = DB::transaction(function () use ($organizationId, $data, $payload, $safePayload): OneCExchangeOperation {
+            $operation = OneCExchangeOperation::query()->create([
+                'organization_id' => $organizationId,
+                'run_id' => $data['run_id'] ?? null,
+                'created_by' => $data['created_by'] ?? null,
+                'mapping_id' => $data['mapping_id'] ?? null,
+                'operation_key' => $data['operation_key'] ?? (string) Str::orderedUuid(),
+                'correlation_id' => $data['correlation_id'] ?? (string) Str::orderedUuid(),
+                'idempotency_key' => $data['idempotency_key'] ?? null,
+                'direction' => $data['direction'],
+                'scope' => $data['scope'],
+                'entity_type' => $data['entity_type'] ?? null,
+                'entity_id' => isset($data['entity_id']) ? (string) $data['entity_id'] : null,
+                'external_id' => $data['external_id'] ?? null,
+                'status' => $data['status'] ?? 'pending',
+                'accounting_status' => $data['accounting_status'] ?? null,
+                'failure_type' => $data['failure_type'] ?? null,
+                'retry_count' => (int) ($data['retry_count'] ?? 0),
+                'max_attempts' => (int) ($data['max_attempts'] ?? 5),
+                'retryable' => (bool) ($data['retryable'] ?? false),
+                'next_retry_at' => $data['next_retry_at'] ?? null,
+                'source_hash' => $data['source_hash'] ?? null,
+                'payload_hash' => $data['payload_hash'] ?? $this->hashPayload($payload),
+                'safe_payload_preview' => $safePayload,
+                'summary' => $data['summary'] ?? null,
+                'started_at' => $data['started_at'] ?? now(),
+                'finished_at' => $data['finished_at'] ?? null,
+            ]);
+
+            $this->immutableAudit->recordOperationCreated($operation);
+
+            return $operation;
+        });
 
         $this->conflicts->syncOperationConflict($operation);
 
@@ -311,14 +319,16 @@ final class OneCExchangeJournalService
             'finished_at' => $this->isTerminalStatus($status) ? now() : null,
         ]);
 
+        $this->immutableAudit->recordMessage($operation, $message, 'attempt_recorded');
+
         return $message;
     }
 
-    private function recordManualRequeueForLockedOperation(OneCExchangeOperation $operation, ?int $userId): void
+    private function recordManualRequeueForLockedOperation(OneCExchangeOperation $operation, ?int $userId): OneCExchangeMessage
     {
         $attemptNumber = ((int) $operation->messages()->max('attempt_number')) + 1;
 
-        OneCExchangeMessage::query()->create([
+        $message = OneCExchangeMessage::query()->create([
             'organization_id' => $operation->organization_id,
             'operation_id' => $operation->id,
             'attempt_number' => $attemptNumber,
@@ -342,6 +352,10 @@ final class OneCExchangeJournalService
             'finished_at' => null,
             'last_attempt_at' => now(),
         ]);
+
+        $this->immutableAudit->recordMessage($operation, $message, 'manual_retry_queued', $userId);
+
+        return $message;
     }
 
     private function messagePayload(OneCExchangeMessage $message): array

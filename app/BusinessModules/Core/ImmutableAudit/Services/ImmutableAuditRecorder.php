@@ -1,0 +1,200 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Core\ImmutableAudit\Services;
+
+use App\BusinessModules\Core\ImmutableAudit\DTO\ImmutableAuditEventData;
+use App\BusinessModules\Core\ImmutableAudit\Models\ImmutableAuditEvent;
+use DateTimeInterface;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+
+final class ImmutableAuditRecorder
+{
+    public function __construct(
+        private readonly ImmutableAuditRedactor $redactor,
+        private readonly ImmutableAuditIntegrityService $integrity,
+    ) {}
+
+    public function record(ImmutableAuditEventData $data): ImmutableAuditEvent
+    {
+        if ($data->sourceEventId !== null) {
+            $existing = $this->findExisting($data);
+
+            if ($existing !== null) {
+                return $existing;
+            }
+        }
+
+        try {
+            return DB::transaction(function () use ($data): ImmutableAuditEvent {
+                if (DB::getDriverName() === 'pgsql') {
+                    DB::statement('LOCK TABLE immutable_audit_events IN SHARE ROW EXCLUSIVE MODE');
+                }
+
+                if ($data->sourceEventId !== null) {
+                    $existing = $this->findExisting($data);
+
+                    if ($existing !== null) {
+                        return $existing;
+                    }
+                }
+
+                $attributes = $this->buildAttributes($data);
+
+                return ImmutableAuditEvent::query()->create($attributes);
+            }, 3);
+        } catch (QueryException $e) {
+            if ($data->sourceEventId !== null) {
+                $existing = $this->findExisting($data);
+
+                if ($existing !== null) {
+                    return $existing;
+                }
+            }
+
+            throw $e;
+        }
+    }
+
+    private function buildAttributes(ImmutableAuditEventData $data): array
+    {
+        $now = now()->setMicrosecond(0);
+        $occurredAt = ($data->occurredAt ?? $now->copy())->copy()->setMicrosecond(0);
+        $chainScope = $data->chainScope ?? 'organization:'.$data->organizationId;
+        $previousHash = $this->previousHash($chainScope);
+        $sequenceId = $this->nextSequenceId();
+        $redacted = $this->redactPayloads($data);
+
+        $attributes = [
+            'sequence_id' => $sequenceId,
+            'organization_id' => $data->organizationId,
+            'project_id' => $data->projectId,
+            'domain' => $data->domain,
+            'event_type' => $data->eventType,
+            'action' => $data->action,
+            'result' => $data->result,
+            'severity' => $data->severity,
+            'occurred_at' => $occurredAt,
+            'recorded_at' => $now,
+            'actor_type' => $data->actorType,
+            'actor_user_id' => $data->actorUserId,
+            'actor_snapshot' => $redacted['actor_snapshot'],
+            'impersonator_user_id' => $data->impersonatorUserId,
+            'source' => $data->source,
+            'source_route' => $data->sourceRoute,
+            'source_model' => $data->sourceModel,
+            'source_table' => $data->sourceTable,
+            'source_event_id' => $data->sourceEventId,
+            'correlation_id' => $data->correlationId,
+            'idempotency_key' => $data->idempotencyKey,
+            'subject_type' => $data->subjectType,
+            'subject_id' => $data->subjectId === null ? null : (string) $data->subjectId,
+            'subject_label' => $data->subjectLabel,
+            'related_subjects' => $redacted['related_subjects'],
+            'reason' => $data->reason,
+            'before_state' => $redacted['before_state'],
+            'after_state' => $redacted['after_state'],
+            'diff' => $redacted['diff'],
+            'domain_context' => $redacted['domain_context'],
+            'sensitive_fields' => $redacted['sensitive_fields'],
+            'redaction_policy_version' => ImmutableAuditRedactor::POLICY_VERSION,
+            'previous_hash' => $previousHash,
+            'chain_scope' => $chainScope,
+            'chain_version' => $data->chainVersion,
+            'sealed_at' => null,
+            'seal_id' => null,
+            'integrity_status' => 'pending',
+            'retention_until' => $this->retentionUntil($data->domain, $occurredAt),
+            'created_at' => $now,
+        ];
+
+        $payloadHash = $this->integrity->payloadHash($attributes);
+        $attributes['payload_hash'] = $payloadHash;
+        $attributes['record_hash'] = $this->integrity->recordHash($attributes, $payloadHash, $previousHash);
+
+        return $attributes;
+    }
+
+    private function redactPayloads(ImmutableAuditEventData $data): array
+    {
+        $sensitiveFields = [];
+        $payloads = [
+            'actor_snapshot' => $data->actorSnapshot,
+            'related_subjects' => $data->relatedSubjects,
+            'before_state' => $data->beforeState,
+            'after_state' => $data->afterState,
+            'diff' => $data->diff,
+            'domain_context' => $data->domainContext,
+        ];
+
+        foreach ($payloads as $key => $payload) {
+            $result = $this->redactor->redactWithPaths($payload, $key);
+            $payloads[$key] = $this->normalizeJsonPayload($result['payload']);
+            $sensitiveFields = array_merge($sensitiveFields, $result['sensitive_fields']);
+        }
+
+        $payloads['sensitive_fields'] = array_values(array_unique($sensitiveFields));
+
+        return $payloads;
+    }
+
+    private function normalizeJsonPayload(mixed $value): mixed
+    {
+        if ($value instanceof DateTimeInterface) {
+            return Carbon::instance($value)->utc()->format(DateTimeInterface::ATOM);
+        }
+
+        if ($value instanceof \BackedEnum) {
+            return $value->value;
+        }
+
+        if ($value instanceof \UnitEnum) {
+            return $value->name;
+        }
+
+        if (! is_array($value)) {
+            return $value;
+        }
+
+        $normalized = [];
+
+        foreach ($value as $key => $item) {
+            $normalized[$key] = $this->normalizeJsonPayload($item);
+        }
+
+        return $normalized;
+    }
+
+    private function findExisting(ImmutableAuditEventData $data): ?ImmutableAuditEvent
+    {
+        return ImmutableAuditEvent::query()
+            ->forOrganization($data->organizationId)
+            ->where('domain', $data->domain)
+            ->where('source', $data->source)
+            ->where('source_event_id', $data->sourceEventId)
+            ->first();
+    }
+
+    private function nextSequenceId(): int
+    {
+        return ((int) ImmutableAuditEvent::query()->max('sequence_id')) + 1;
+    }
+
+    private function previousHash(string $chainScope): ?string
+    {
+        return ImmutableAuditEvent::query()
+            ->where('chain_scope', $chainScope)
+            ->orderByDesc('sequence_id')
+            ->value('record_hash');
+    }
+
+    private function retentionUntil(string $domain, Carbon $occurredAt): Carbon
+    {
+        $years = in_array($domain, ['warehouse', 'crm', 'procurement'], true) ? 5 : 7;
+
+        return $occurredAt->copy()->addYearsNoOverflow($years);
+    }
+}

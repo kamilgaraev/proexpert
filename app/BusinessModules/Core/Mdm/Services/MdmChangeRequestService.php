@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Core\Mdm\Services;
 
+use App\BusinessModules\Core\ImmutableAudit\SourceAdapters\MdmChangeRequestAuditAdapter;
 use App\BusinessModules\Core\Mdm\Models\MdmChangeRequest;
 use App\BusinessModules\Core\Mdm\Models\MdmChangeRequestEvent;
 use App\BusinessModules\Core\Mdm\Models\MdmRecord;
@@ -31,7 +32,8 @@ class MdmChangeRequestService
         private readonly MdmDiffService $diffService,
         private readonly MdmImpactAnalysisService $impactAnalysisService,
         private readonly MdmOneCLockService $oneCLockService,
-        private readonly MdmDomainChangeApplier $domainChangeApplier
+        private readonly MdmDomainChangeApplier $domainChangeApplier,
+        private readonly MdmChangeRequestAuditAdapter $immutableAudit
     ) {}
 
     public function preview(int $organizationId, array $payload): array
@@ -499,7 +501,7 @@ class MdmChangeRequestService
         ?string $comment = null,
         ?array $metadata = null
     ): void {
-        MdmChangeRequestEvent::query()->create([
+        $event = MdmChangeRequestEvent::query()->create([
             'organization_id' => $changeRequest->organization_id,
             'change_request_id' => $changeRequest->id,
             'event_type' => $eventType,
@@ -509,6 +511,8 @@ class MdmChangeRequestService
             'comment' => $comment,
             'metadata' => $metadata,
         ]);
+
+        $this->immutableAudit->record($changeRequest, $event);
     }
 
     private function assertStatus(MdmChangeRequest $changeRequest, array $allowed): void

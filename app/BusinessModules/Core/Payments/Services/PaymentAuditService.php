@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Core\Payments\Services;
 
+use App\BusinessModules\Core\ImmutableAudit\SourceAdapters\PaymentAuditSourceAdapter;
 use App\BusinessModules\Core\Payments\Models\PaymentAuditLog;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use Illuminate\Database\Eloquent\Model;
@@ -12,6 +13,10 @@ use Illuminate\Support\Facades\Auth;
  */
 class PaymentAuditService
 {
+    public function __construct(
+        private readonly PaymentAuditSourceAdapter $immutableAudit,
+    ) {}
+
     /**
      * Залогировать действие
      */
@@ -36,7 +41,7 @@ class PaymentAuditService
             $organizationId = $entity->organization_id;
         }
 
-        return PaymentAuditLog::create([
+        $auditLog = PaymentAuditLog::create([
             'payment_document_id' => $documentId,
             'organization_id' => $organizationId,
             'action' => $action,
@@ -56,6 +61,10 @@ class PaymentAuditService
                 'request_url' => $request?->fullUrl(),
             ],
         ]);
+
+        $this->immutableAudit->record($auditLog, $entity);
+
+        return $auditLog;
     }
 
     /**

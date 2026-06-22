@@ -432,6 +432,11 @@
       "activity-events.view",
       "activity-events.export"
     ],
+    "immutable_audit": [
+      "immutable_audit.events.view",
+      "immutable_audit.events.export",
+      "immutable_audit.integrity.verify"
+    ],
     "rate-management": [
       "rate_coefficients.view",
       "rate_coefficients.create",

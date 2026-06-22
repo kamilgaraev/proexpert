@@ -79,6 +79,13 @@
       "activity-events.view_security",
       "activity-events.view_technical_context"
     ],
+    "immutable_audit": [
+      "immutable_audit.events.view",
+      "immutable_audit.events.export",
+      "immutable_audit.events.view_sensitive",
+      "immutable_audit.integrity.verify",
+      "immutable_audit.retention.manage"
+    ],
     "rate-management": [
       "rate_coefficients.*"
     ],
