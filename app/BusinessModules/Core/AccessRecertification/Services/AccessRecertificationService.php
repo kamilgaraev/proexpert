@@ -209,6 +209,10 @@ final class AccessRecertificationService
     {
         $this->assertCampaignOrganization($campaign, $organizationId);
 
+        if ($campaign->status !== 'active') {
+            throw new InvalidArgumentException('campaign_cannot_complete');
+        }
+
         $openItems = $campaign->items()
             ->whereIn('status', ['pending', 'escalated', 'revoke_requested', 'exception_requested'])
             ->count();
@@ -438,6 +442,10 @@ final class AccessRecertificationService
             return $revocation->load(['campaign', 'item', 'subject', 'executor']);
         }
 
+        if ($revocation->status !== 'pending') {
+            throw new InvalidArgumentException('revocation_cannot_complete');
+        }
+
         return DB::transaction(function () use ($revocation, $organizationId, $actor, $data): AccessRecertificationRevocation {
             $subject = User::query()->findOrFail($revocation->subject_user_id);
             $context = $revocation->role_context_id
@@ -656,15 +664,27 @@ final class AccessRecertificationService
         $assignments = UserRoleAssignment::query()
             ->active()
             ->with(['user:id,name,email', 'context.parentContext'])
-            ->whereHas('context', function (Builder $query) use ($organizationId): void {
-                $query->where(function (Builder $inner) use ($organizationId): void {
-                    $inner->where('type', AuthorizationContext::TYPE_ORGANIZATION)
-                        ->where('resource_id', $organizationId);
-                })->orWhere(function (Builder $inner) use ($organizationId): void {
-                    $inner->where('type', AuthorizationContext::TYPE_PROJECT)
-                        ->whereHas('parentContext', function (Builder $parent) use ($organizationId): void {
-                            $parent->where('type', AuthorizationContext::TYPE_ORGANIZATION)
-                                ->where('resource_id', $organizationId);
+            ->where(function (Builder $query) use ($organizationId): void {
+                $query->whereHas('context', function (Builder $contextQuery) use ($organizationId): void {
+                    $contextQuery->where(function (Builder $inner) use ($organizationId): void {
+                        $inner->where('type', AuthorizationContext::TYPE_ORGANIZATION)
+                            ->where('resource_id', $organizationId);
+                    })->orWhere(function (Builder $inner) use ($organizationId): void {
+                        $inner->where('type', AuthorizationContext::TYPE_PROJECT)
+                            ->whereHas('parentContext', function (Builder $parent) use ($organizationId): void {
+                                $parent->where('type', AuthorizationContext::TYPE_ORGANIZATION)
+                                    ->where('resource_id', $organizationId);
+                            });
+                    });
+                })->orWhere(function (Builder $systemQuery) use ($organizationId): void {
+                    $systemQuery->where('role_type', UserRoleAssignment::TYPE_SYSTEM)
+                        ->whereHas('context', function (Builder $contextQuery): void {
+                            $contextQuery->where('type', AuthorizationContext::TYPE_SYSTEM);
+                        })
+                        ->whereHas('user.organizations', function (Builder $organizationQuery) use ($organizationId): void {
+                            $organizationQuery
+                                ->where('organizations.id', $organizationId)
+                                ->where('organization_user.is_active', true);
                         });
                 });
             })
@@ -678,7 +698,7 @@ final class AccessRecertificationService
             $role = $this->roles->findBySlug((string) $assignment->role_slug, $organizationId) ?? [];
             $risk = $this->riskScanner->scan((string) $assignment->role_slug, $permissions);
 
-            if (!$this->scopeAllowsRisk($scope, $risk['level'])) {
+            if (!$this->campaignAllowsRisk($campaign, $risk['level'])) {
                 continue;
             }
 
@@ -923,11 +943,24 @@ final class AccessRecertificationService
         ];
     }
 
-    private function scopeAllowsRisk(array $scope, string $riskLevel): bool
+    private function campaignAllowsRisk(AccessRecertificationCampaign $campaign, string $riskLevel): bool
     {
+        if ($campaign->risk_mode === 'all') {
+            return true;
+        }
+
+        if ($campaign->risk_mode === 'high_risk_only') {
+            return in_array($riskLevel, ['high', 'critical'], true);
+        }
+
+        $scope = $campaign->scope ?? [];
         $levels = $scope['risk_levels'] ?? null;
 
-        return !is_array($levels) || $levels === [] || in_array($riskLevel, $levels, true);
+        if (!is_array($levels) || $levels === []) {
+            $levels = ['medium', 'high', 'critical'];
+        }
+
+        return in_array($riskLevel, $levels, true);
     }
 
     private function contextLabel(?AuthorizationContext $context): ?string
