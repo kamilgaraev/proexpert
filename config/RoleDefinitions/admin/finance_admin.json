@@ -16,7 +16,12 @@
     "admin.advance_accounts.manage",
     "admin.time_tracking.view",
     "profile.view",
-    "profile.edit"
+    "profile.edit",
+    "legal_archive.view",
+    "legal_archive.create",
+    "legal_archive.update",
+    "legal_archive.files.upload",
+    "legal_archive.versions.create"
   ],
   "module_permissions": {
     "contracts": [
@@ -122,6 +127,13 @@
       "payments.reports.export",
       "payments.reports.financial_analytics",
       "payments.settings.view"
+    ],
+    "legal-archive": [
+      "legal_archive.view",
+      "legal_archive.create",
+      "legal_archive.update",
+      "legal_archive.files.upload",
+      "legal_archive.versions.create"
     ],
     "budgeting": [
       "budgeting.budgets.view",

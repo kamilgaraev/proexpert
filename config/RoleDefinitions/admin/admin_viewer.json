@@ -15,7 +15,8 @@
     "admin.contracts.view",
     "admin.reports.view",
     "admin.time_tracking.view",
-    "profile.view"
+    "profile.view",
+    "legal_archive.view"
   ],
 
   "module_permissions": {
@@ -56,6 +57,7 @@
     ],
     "contractor-portal": ["contractor_invitations.view"],
     "file-management": ["personal_files.view"],
+    "legal-archive": ["legal_archive.view"],
     "system-logs": ["logs.view"],
     "rate-management": ["rate_coefficients.view"],
     "report-templates": ["report_templates.view"],

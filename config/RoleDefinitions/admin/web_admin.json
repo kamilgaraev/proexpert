@@ -43,7 +43,13 @@
     "admin.time_tracking.view",
     "admin.time_tracking.manage",
     "profile.view",
-    "profile.edit"
+    "profile.edit",
+    "legal_archive.view",
+    "legal_archive.create",
+    "legal_archive.update",
+    "legal_archive.files.upload",
+    "legal_archive.versions.create",
+    "legal_archive.retention.manage"
   ],
   "module_permissions": {
     "projects": [
@@ -436,6 +442,14 @@
       "immutable_audit.events.view",
       "immutable_audit.events.export",
       "immutable_audit.integrity.verify"
+    ],
+    "legal-archive": [
+      "legal_archive.view",
+      "legal_archive.create",
+      "legal_archive.update",
+      "legal_archive.files.upload",
+      "legal_archive.versions.create",
+      "legal_archive.retention.manage"
     ],
     "access_recertification": [
       "access_recertification.campaigns.view",
