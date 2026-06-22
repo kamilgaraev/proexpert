@@ -752,3 +752,19 @@ PHERP-136 считается готовой как проектная специ
 - `RoleDefinitions` и `lang/ru/permissions.php` не менялись.
 - Context7 не использовался, потому что задача является локальной проектной спецификацией и не опирается на актуальный синтаксис внешних библиотек, SDK, CLI или сторонних API.
 - Markdown в `docs/specs` игнорируется `.gitignore`, поэтому файл нужно добавлять в git через `git add -f docs/specs/PHERP-136-access-recertification-campaigns.md`.
+
+## 17. Повторная проверка 2026-06-22
+
+Статус PHERP-136 в YouTrack на момент повторной проверки: `Done`. Спецификация остается spec-only результатом: runtime-код, миграции, API, admin UI, роли и переводы не менялись.
+
+Проверенные факты текущего `main`:
+
+- спецификация `docs/specs/PHERP-136-access-recertification-campaigns.md` уже находится в git;
+- PHERP-132/133 остаются проектными спецификациями, runtime-модуль `app/BusinessModules/Core/Sod` не найден;
+- runtime permissions `sod.*` и `access_recertification.*` не найдены в `config/RoleDefinitions` и `lang/ru/permissions.php`;
+- реальные contexts `RoleDefinitions`: `admin`, `customer`, `lk`, `mobile`, `project`, `system`, `system_admin`;
+- immutable audit из PHERP-135 реализован в `app/BusinessModules/Core/ImmutableAudit`, admin API `routes/api/v1/admin/immutable_audit.php` и admin UI `/logs/immutable-audit`;
+- существующие permissions `immutable_audit.*` переведены и назначены в `RoleDefinitions`;
+- домен immutable audit `access_recertification` отсутствует, поэтому первый production-релиз recertification должен использовать существующий домен `rbac` с `event_type=access_recertification.*` или отдельно менять check constraint.
+
+Вывод повторной проверки: критерии PHERP-136 как проектной спецификации покрыты. Следующая задача должна быть отдельной production-реализацией с миграциями, русскими подписями прав, покрытием `PermissionTranslator`, API/admin UI и проверками без `RefreshDatabase`, если проектное правило не изменится.
