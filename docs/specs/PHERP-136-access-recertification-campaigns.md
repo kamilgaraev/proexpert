@@ -668,6 +668,7 @@ Current gaps that PHERP-136 implementation must handle explicitly:
 - no runtime `sod_*` tables yet;
 - no `access_recertification.*` permissions yet;
 - no dedicated immutable audit domain `access_recertification` yet;
+- `immutable_audit.events.view_sensitive` существует в ролях и переводах, но текущий detail-route immutable audit и admin detail UI отдельно не используют это право для показа `before_state`, `after_state`, `diff`, `domain_context`, actor snapshot и idempotency key; production-реализация recertification не должна показывать sensitive evidence без отдельного guard/redaction решения;
 - no universal `last_used_at` for permissions/roles;
 - no unified HR source for employee exit/inactive status in this spec;
 - no automatic mapping from customer users to reviewer hierarchy beyond RoleDefinitions/customer roles;
@@ -765,6 +766,7 @@ PHERP-136 считается готовой как проектная специ
 - реальные contexts `RoleDefinitions`: `admin`, `customer`, `lk`, `mobile`, `project`, `system`, `system_admin`;
 - immutable audit из PHERP-135 реализован в `app/BusinessModules/Core/ImmutableAudit`, admin API `routes/api/v1/admin/immutable_audit.php` и admin UI `/logs/immutable-audit`;
 - существующие permissions `immutable_audit.*` переведены и назначены в `RoleDefinitions`;
+- `immutable_audit.events.view_sensitive` переведен и назначен, но текущий PHERP-135 detail-route `GET /immutable-audit/events/{event}` защищен только `immutable_audit.events.view`, а admin detail UI не проверяет `VIEW_SENSITIVE`; PHERP-137 должен либо добавить отдельное применение этого права, либо не выводить sensitive evidence без redaction;
 - домен immutable audit `access_recertification` отсутствует, поэтому первый production-релиз recertification должен использовать существующий домен `rbac` с `event_type=access_recertification.*` или отдельно менять check constraint.
 
 Вывод повторной проверки: критерии PHERP-136 как проектной спецификации покрыты. Следующая задача должна быть отдельной production-реализацией с миграциями, русскими подписями прав, покрытием `PermissionTranslator`, API/admin UI и проверками без `RefreshDatabase`, если проектное правило не изменится.
