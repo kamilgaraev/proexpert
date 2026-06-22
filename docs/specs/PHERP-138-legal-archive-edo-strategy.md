@@ -4,7 +4,7 @@
 
 Спецификация описывает целевую архитектуру юридического архива для ERP-контура ProHelper. Это spec-only задача: production-код, миграции, API, UI, роли и переводы не меняются.
 
-Основание: задача YouTrack `PHERP-138` в статусе `Open` с критерием результата: должно быть понятно, какие документы можно хранить в ProHelper, какие должны идти через ЭДО/1С и как пользователь находит актуальную версию.
+Основание: задача YouTrack `PHERP-138` с критерием результата: должно быть понятно, какие документы можно хранить в ProHelper, какие должны идти через ЭДО/1С и как пользователь находит актуальную версию. На момент повторной проверки 2026-06-22 задача находится в статусе `Done`.
 
 Контекст изучения:
 
@@ -494,3 +494,20 @@ Spec-only критерии PHERP-138 считаются закрытыми, ес
 - mojibake scan;
 - `git diff --check`;
 - `git diff --cached --check`.
+
+## 17. Повторная проверка от 2026-06-22
+
+Проверка выполнена после закрытия PHERP-138 в YouTrack и push коммита `247b31d5`.
+
+Фактическое состояние проекта:
+
+- runtime-модуля `legal_archive`, маршрутов `/api/v1/admin/legal-archive/*`, моделей `LegalArchive*` и прав `legal_archive.*` в `RoleDefinitions` и `lang/ru/permissions.php` нет;
+- все `legal_archive.*` slug-и, статусы и таблицы в этой спецификации помечены как новые или целевые для будущей реализации;
+- существующие права, перечисленные в разделе 8, сверены с `config/RoleDefinitions/**` и `lang/ru/permissions.php`;
+- ссылки на `FileService`, `OrganizationStoragePath`, `AuthorizationService`, `AdminResponse`, `ImmutableAuditEvent`, `ImmutableAuditRecorder`, `ImmutableAuditIntegrityService`, `OneCExchangeOperation`, `OneCExchangeMapping`, `OneCExchangeMessage`, `OneCExchangeConflict`, `MdmChangeRequest`, договоры, акты, платежные документы, закупки и коммерческие предложения соответствуют текущему коду;
+- ЭДО-часть остается provider-neutral: Context7-проверка Diadoc API подтвердила общие понятия ящика организации, идентификаторов участников ЭДО, сообщений, документов, событий, подписей и формализованных типов документов, но не фиксирует выбор конкретного оператора.
+
+Ограничения проверки:
+
+- production-код, миграции, API, UI, роли и переводы не менялись;
+- миграции, локальные DB-команды, `tinker`, сидеры, rollback/reset/delete/verify/dry-run команды, dev-серверы, сборки и feature-тесты с `RefreshDatabase` не запускались.
