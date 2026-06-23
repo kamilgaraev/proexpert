@@ -50,7 +50,7 @@ Route::middleware(['authorize:roles.view_custom,organization'])
         });
         
         // Назначение ролей пользователям
-        Route::middleware(['authorize:users.manage_roles,organization'])->group(function () {
+        Route::middleware(['authorize:users.assign_roles,organization'])->group(function () {
             // Назначить роль пользователю
             Route::post('/{role}/assign', [CustomRoleController::class, 'assignToUser'])
                 ->name('custom-roles.assign');
@@ -87,7 +87,7 @@ Route::prefix('organization-users')->group(function () {
     });
     
     // Управление ролями пользователей (новая система)
-    Route::middleware(['authorize:users.manage_roles,organization'])->group(function () {
+    Route::middleware(['authorize:users.assign_roles,organization'])->group(function () {
         // Получить роли пользователя
         Route::get('/{userId}/roles', [OrganizationUserController::class, 'getRoles']);
         // Обновить роли пользователя (принимает массив custom_role_ids)
