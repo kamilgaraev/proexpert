@@ -145,6 +145,22 @@ final class WipForecastCalculatorTest extends TestCase
         $this->assertSame('/api/v1/admin/budgeting/wip-forecast/drill-down', $result['drill_down']['endpoint']);
         $this->assertArrayHasKey('source_of_truth', $result['meta']);
         $this->assertSame('confirmation_only', $result['meta']['source_of_truth']['bank_1c_edo']);
+        $this->assertContains(
+            [
+                'key' => 'wip_total',
+                'label' => 'Незакрытый выполненный объем',
+                'expression' => 'максимум(освоенный объем - утвержденные акты заказчика, 0)',
+            ],
+            $result['formulas'],
+        );
+        $this->assertContains(
+            [
+                'key' => 'forecast_gross_margin',
+                'label' => 'Прогноз маржи',
+                'expression' => 'Прогнозная выручка - оценка затрат при завершении',
+            ],
+            $result['formulas'],
+        );
     }
 
     private function filters(): WipForecastReportFilters

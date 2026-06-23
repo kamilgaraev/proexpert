@@ -455,17 +455,17 @@ final class WipForecastCalculator
     private function formulas(): array
     {
         return [
-            ['key' => 'bac', 'label' => 'BAC', 'expression' => 'Утвержденная базовая стоимость работ'],
-            ['key' => 'percent_complete', 'label' => '% Complete', 'expression' => 'EV / BAC'],
-            ['key' => 'ev', 'label' => 'EV', 'expression' => 'BAC * % Complete'],
-            ['key' => 'pv', 'label' => 'PV', 'expression' => 'Плановая стоимость к дате прогноза'],
-            ['key' => 'ac', 'label' => 'AC', 'expression' => 'Управленческие начисленные затраты без денежных платежей без начисления'],
-            ['key' => 'wip', 'label' => 'WIP', 'expression' => 'max(EV - утвержденные акты заказчика, 0)'],
-            ['key' => 'ctc', 'label' => 'CTC', 'expression' => 'max(BAC - EV, 0)'],
-            ['key' => 'etc', 'label' => 'ETC', 'expression' => 'Bottom-up ETC или CTC / CPI'],
-            ['key' => 'ftc', 'label' => 'FTC', 'expression' => 'ETC + согласованные ручные корректировки'],
-            ['key' => 'eac', 'label' => 'EAC', 'expression' => 'AC + FTC'],
-            ['key' => 'forecast_margin', 'label' => 'Forecast Margin', 'expression' => 'Прогнозная выручка - EAC'],
+            ['key' => 'bac', 'label' => 'Базовая стоимость', 'expression' => 'Утвержденная базовая стоимость работ'],
+            ['key' => 'percent_complete', 'label' => 'Готовность', 'expression' => 'Освоенный объем / базовая стоимость'],
+            ['key' => 'ev', 'label' => 'Освоенный объем', 'expression' => 'Базовая стоимость * готовность'],
+            ['key' => 'pv', 'label' => 'Плановый объем', 'expression' => 'Плановая стоимость к дате прогноза'],
+            ['key' => 'ac', 'label' => 'Фактические начисленные затраты', 'expression' => 'Управленческие начисленные затраты без денежных платежей, не подтвержденных начислениями'],
+            ['key' => 'wip_total', 'label' => 'Незакрытый выполненный объем', 'expression' => 'максимум(освоенный объем - утвержденные акты заказчика, 0)'],
+            ['key' => 'ctc', 'label' => 'Остаток базовой стоимости', 'expression' => 'максимум(базовая стоимость - освоенный объем, 0)'],
+            ['key' => 'etc', 'label' => 'Системная оценка остатка', 'expression' => 'Детальная оценка остатка по строкам или остаток базовой стоимости / индекс выполнения бюджета'],
+            ['key' => 'ftc', 'label' => 'Затраты до завершения', 'expression' => 'Системная оценка остатка + согласованные ручные корректировки'],
+            ['key' => 'eac', 'label' => 'Оценка затрат при завершении', 'expression' => 'Фактические начисленные затраты + затраты до завершения'],
+            ['key' => 'forecast_gross_margin', 'label' => 'Прогноз маржи', 'expression' => 'Прогнозная выручка - оценка затрат при завершении'],
         ];
     }
 
