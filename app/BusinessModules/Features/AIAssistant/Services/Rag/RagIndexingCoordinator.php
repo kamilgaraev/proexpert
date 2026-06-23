@@ -189,6 +189,43 @@ class RagIndexingCoordinator
         return $run;
     }
 
+    public function shouldSplitOrganizationSourceByProjects(string $sourceType): bool
+    {
+        $sourceTypes = config('ai-assistant.rag.scheduled_project_scoped_source_types', ['estimate']);
+        if (! is_array($sourceTypes)) {
+            return false;
+        }
+
+        return in_array($sourceType, $sourceTypes, true);
+    }
+
+    public function splitOrganizationSourceRunByProjects(
+        int $runId,
+        int $organizationId,
+        string $sourceType
+    ): int {
+        $queued = 0;
+        $freshCutoff = now()->subHours(max(1, (int) config('ai-assistant.rag.stale_after_hours', 24)));
+        $failedCutoff = now()->subHours(max(1, (int) config('ai-assistant.rag.failed_retry_after_hours', 12)));
+
+        foreach ($this->projectIdsForOrganization($organizationId) as $projectId) {
+            if (
+                $this->hasExactActiveRun($organizationId, $projectId, $sourceType)
+                || $this->hasFreshSucceededRun($organizationId, $projectId, $sourceType, $freshCutoff)
+                || $this->hasRecentFailedRun($organizationId, $projectId, $sourceType, $failedCutoff)
+            ) {
+                continue;
+            }
+
+            $this->queueOrganization($organizationId, $projectId, $sourceType, RagIndexRun::MODE_SCHEDULED);
+            $queued++;
+        }
+
+        $this->markSucceeded($runId, 0);
+
+        return $queued;
+    }
+
     public function indexOrganizationSync(
         int $organizationId,
         ?int $projectId = null,
@@ -493,6 +530,27 @@ class RagIndexingCoordinator
         $this->applyActiveEloquentRunScope($query, $projectId, $sourceType);
 
         return $query->exists();
+    }
+
+    private function hasExactActiveRun(int $organizationId, ?int $projectId, ?string $sourceType): bool
+    {
+        return RagIndexRun::query()
+            ->where('organization_id', $organizationId)
+            ->whereIn('status', [
+                RagIndexRun::STATUS_QUEUED,
+                RagIndexRun::STATUS_RUNNING,
+            ])
+            ->when(
+                $projectId === null,
+                static fn (Builder $query): Builder => $query->whereNull('project_id'),
+                static fn (Builder $query): Builder => $query->where('project_id', $projectId)
+            )
+            ->when(
+                $sourceType === null,
+                static fn (Builder $query): Builder => $query->whereNull('source_type'),
+                static fn (Builder $query): Builder => $query->where('source_type', $sourceType)
+            )
+            ->exists();
     }
 
     /**

@@ -192,6 +192,156 @@ class AIAssistantRagBackfillCommandTest extends TestCase
         $this->assertDatabaseCount('ai_rag_index_runs', $expectedJobs);
     }
 
+    public function test_legacy_org_wide_project_scoped_job_is_requeued_by_project(): void
+    {
+        Queue::fake();
+        config(['ai-assistant.rag.scheduled_project_scoped_source_types' => ['estimate']]);
+
+        $organization = Organization::factory()->create();
+        $firstProject = Project::factory()->create(['organization_id' => $organization->id]);
+        $secondProject = Project::factory()->create(['organization_id' => $organization->id]);
+        $indexer = new BackfillCommandRecordingRagIndexer(7);
+        $this->app->instance(RagIndexer::class, $indexer);
+
+        $run = RagIndexRun::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => null,
+            'source_type' => 'estimate',
+            'status' => RagIndexRun::STATUS_QUEUED,
+            'mode' => RagIndexRun::MODE_SCHEDULED,
+            'queued_at' => now()->subMinutes(5),
+        ]);
+
+        (new IndexRagSourceJob($organization->id, null, 'estimate', $run->id))->handle(
+            $indexer,
+            app(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator::class)
+        );
+
+        $this->assertSame([], $indexer->calls);
+        Queue::assertPushed(IndexRagSourceJob::class, 2);
+        Queue::assertPushed(
+            IndexRagSourceJob::class,
+            static fn (IndexRagSourceJob $job): bool => $job->organizationId === $organization->id
+                && $job->projectId === $firstProject->id
+                && $job->sourceType === 'estimate'
+        );
+        Queue::assertPushed(
+            IndexRagSourceJob::class,
+            static fn (IndexRagSourceJob $job): bool => $job->organizationId === $organization->id
+                && $job->projectId === $secondProject->id
+                && $job->sourceType === 'estimate'
+        );
+        $this->assertDatabaseHas('ai_rag_index_runs', [
+            'id' => $run->id,
+            'status' => RagIndexRun::STATUS_SUCCEEDED,
+            'indexed_chunks' => 0,
+        ]);
+    }
+
+    public function test_legacy_org_wide_project_scoped_job_skips_fresh_and_recently_failed_projects(): void
+    {
+        Queue::fake();
+        config([
+            'ai-assistant.rag.scheduled_project_scoped_source_types' => ['estimate'],
+            'ai-assistant.rag.stale_after_hours' => 24,
+            'ai-assistant.rag.failed_retry_after_hours' => 12,
+        ]);
+
+        $organization = Organization::factory()->create();
+        $freshProject = Project::factory()->create(['organization_id' => $organization->id]);
+        $failedProject = Project::factory()->create(['organization_id' => $organization->id]);
+        $queuedProject = Project::factory()->create(['organization_id' => $organization->id]);
+        $indexer = new BackfillCommandRecordingRagIndexer(7);
+        $this->app->instance(RagIndexer::class, $indexer);
+
+        RagIndexRun::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $freshProject->id,
+            'source_type' => 'estimate',
+            'status' => RagIndexRun::STATUS_SUCCEEDED,
+            'mode' => RagIndexRun::MODE_SCHEDULED,
+            'queued_at' => now()->subHours(2),
+            'started_at' => now()->subHours(2),
+            'finished_at' => now()->subHour(),
+            'indexed_chunks' => 1,
+        ]);
+
+        RagIndexRun::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $failedProject->id,
+            'source_type' => 'estimate',
+            'status' => RagIndexRun::STATUS_FAILED,
+            'mode' => RagIndexRun::MODE_SCHEDULED,
+            'queued_at' => now()->subMinutes(30),
+            'started_at' => now()->subMinutes(29),
+            'finished_at' => now()->subMinutes(28),
+            'indexed_chunks' => 0,
+        ]);
+
+        $run = RagIndexRun::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => null,
+            'source_type' => 'estimate',
+            'status' => RagIndexRun::STATUS_QUEUED,
+            'mode' => RagIndexRun::MODE_SCHEDULED,
+            'queued_at' => now()->subMinutes(5),
+        ]);
+
+        (new IndexRagSourceJob($organization->id, null, 'estimate', $run->id))->handle(
+            $indexer,
+            app(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator::class)
+        );
+
+        $this->assertSame([], $indexer->calls);
+        Queue::assertPushed(IndexRagSourceJob::class, 1);
+        Queue::assertPushed(
+            IndexRagSourceJob::class,
+            static fn (IndexRagSourceJob $job): bool => $job->organizationId === $organization->id
+                && $job->projectId === $queuedProject->id
+                && $job->sourceType === 'estimate'
+        );
+        Queue::assertNotPushed(
+            IndexRagSourceJob::class,
+            static fn (IndexRagSourceJob $job): bool => $job->organizationId === $organization->id
+                && in_array($job->projectId, [$freshProject->id, $failedProject->id], true)
+                && $job->sourceType === 'estimate'
+        );
+    }
+
+    public function test_manual_org_wide_project_scoped_job_is_indexed_without_split(): void
+    {
+        Queue::fake();
+        config(['ai-assistant.rag.scheduled_project_scoped_source_types' => ['estimate']]);
+
+        $organization = Organization::factory()->create();
+        Project::factory()->count(2)->create(['organization_id' => $organization->id]);
+        $indexer = new BackfillCommandRecordingRagIndexer(7);
+        $this->app->instance(RagIndexer::class, $indexer);
+
+        $run = RagIndexRun::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => null,
+            'source_type' => 'estimate',
+            'status' => RagIndexRun::STATUS_QUEUED,
+            'mode' => RagIndexRun::MODE_MANUAL,
+            'queued_at' => now()->subMinutes(5),
+        ]);
+
+        (new IndexRagSourceJob($organization->id, null, 'estimate', $run->id))->handle(
+            $indexer,
+            app(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator::class)
+        );
+
+        Queue::assertNothingPushed();
+        $this->assertSame([[$organization->id, null, 'estimate']], $indexer->calls);
+        $this->assertDatabaseHas('ai_rag_index_runs', [
+            'id' => $run->id,
+            'status' => RagIndexRun::STATUS_SUCCEEDED,
+            'indexed_chunks' => 7,
+            'mode' => RagIndexRun::MODE_MANUAL,
+        ]);
+    }
+
     public function test_all_backfill_can_include_inactive_organizations(): void
     {
         Queue::fake();
