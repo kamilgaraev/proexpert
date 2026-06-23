@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Jobs;
 
+use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -40,15 +41,19 @@ class IndexRagSourceJob implements ShouldQueue
 
     public function handle(RagIndexer $indexer, ?RagIndexingCoordinator $coordinator = null): void
     {
+        $run = null;
+
         if ($this->runId !== null) {
             $coordinator ??= app(RagIndexingCoordinator::class);
-            if ($coordinator->markRunning($this->runId) === null) {
+            $run = $coordinator->markRunning($this->runId);
+            if (! $run instanceof RagIndexRun) {
                 return;
             }
         }
 
         if (
-            $this->runId !== null
+            $run instanceof RagIndexRun
+            && $run->mode === RagIndexRun::MODE_SCHEDULED
             && $this->projectId === null
             && $this->sourceType !== null
             && ($coordinator ??= app(RagIndexingCoordinator::class))->shouldSplitOrganizationSourceByProjects($this->sourceType)

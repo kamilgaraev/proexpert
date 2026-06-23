@@ -205,9 +205,15 @@ class RagIndexingCoordinator
         string $sourceType
     ): int {
         $queued = 0;
+        $freshCutoff = now()->subHours(max(1, (int) config('ai-assistant.rag.stale_after_hours', 24)));
+        $failedCutoff = now()->subHours(max(1, (int) config('ai-assistant.rag.failed_retry_after_hours', 12)));
 
         foreach ($this->projectIdsForOrganization($organizationId) as $projectId) {
-            if ($this->hasExactActiveRun($organizationId, $projectId, $sourceType)) {
+            if (
+                $this->hasExactActiveRun($organizationId, $projectId, $sourceType)
+                || $this->hasFreshSucceededRun($organizationId, $projectId, $sourceType, $freshCutoff)
+                || $this->hasRecentFailedRun($organizationId, $projectId, $sourceType, $failedCutoff)
+            ) {
                 continue;
             }
 

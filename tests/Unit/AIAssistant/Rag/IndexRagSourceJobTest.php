@@ -35,16 +35,12 @@ class IndexRagSourceJobTest extends TestCase
     {
         $job = new IndexRagSourceJob(10, 20, 'project', 30);
         $indexer = new RecordingRagIndexer();
-        $coordinator = $this->createMock(RagIndexingCoordinator::class);
-
-        $coordinator
-            ->expects($this->once())
-            ->method('markRunning')
-            ->with(30)
-            ->willReturn(null);
+        $coordinator = new TestRagIndexingCoordinator();
+        $coordinator->markRunningResult = null;
 
         $job->handle($indexer, $coordinator);
 
+        $this->assertSame([30], $coordinator->markRunningCalls);
         $this->assertSame([], $indexer->calls);
     }
 
@@ -52,29 +48,36 @@ class IndexRagSourceJobTest extends TestCase
     {
         $job = new IndexRagSourceJob(10, null, 'estimate', 30);
         $indexer = new RecordingRagIndexer();
-        $coordinator = $this->createMock(RagIndexingCoordinator::class);
-
-        $coordinator
-            ->expects($this->once())
-            ->method('markRunning')
-            ->with(30)
-            ->willReturn(new RagIndexRun());
-
-        $coordinator
-            ->expects($this->once())
-            ->method('shouldSplitOrganizationSourceByProjects')
-            ->with('estimate')
-            ->willReturn(true);
-
-        $coordinator
-            ->expects($this->once())
-            ->method('splitOrganizationSourceRunByProjects')
-            ->with(30, 10, 'estimate')
-            ->willReturn(2);
+        $coordinator = new TestRagIndexingCoordinator();
+        $run = new RagIndexRun();
+        $run->mode = RagIndexRun::MODE_SCHEDULED;
+        $coordinator->markRunningResult = $run;
+        $coordinator->shouldSplit = true;
 
         $job->handle($indexer, $coordinator);
 
+        $this->assertSame([30], $coordinator->markRunningCalls);
+        $this->assertSame(['estimate'], $coordinator->shouldSplitCalls);
+        $this->assertSame([[30, 10, 'estimate']], $coordinator->splitCalls);
         $this->assertSame([], $indexer->calls);
+    }
+
+    public function test_job_keeps_org_wide_manual_run_on_direct_indexing_path(): void
+    {
+        $job = new IndexRagSourceJob(10, null, 'estimate', 30);
+        $indexer = new RecordingRagIndexer();
+        $coordinator = new TestRagIndexingCoordinator();
+        $run = new RagIndexRun();
+        $run->mode = RagIndexRun::MODE_MANUAL;
+        $coordinator->markRunningResult = $run;
+        $coordinator->shouldSplit = true;
+
+        $job->handle($indexer, $coordinator);
+
+        $this->assertSame([30], $coordinator->markRunningCalls);
+        $this->assertSame([], $coordinator->splitCalls);
+        $this->assertSame([[30, 1]], $coordinator->markSucceededCalls);
+        $this->assertSame([[10, null, 'estimate']], $indexer->calls);
     }
 }
 
@@ -94,5 +97,60 @@ final class RecordingRagIndexer extends RagIndexer
         $this->calls[] = [$organizationId, $projectId, $sourceType];
 
         return 1;
+    }
+}
+
+final class TestRagIndexingCoordinator extends RagIndexingCoordinator
+{
+    public ?RagIndexRun $markRunningResult = null;
+
+    public bool $shouldSplit = false;
+
+    /** @var array<int, int> */
+    public array $markRunningCalls = [];
+
+    /** @var array<int, string> */
+    public array $shouldSplitCalls = [];
+
+    /** @var array<int, array{0: int, 1: int, 2: string}> */
+    public array $splitCalls = [];
+
+    /** @var array<int, array{0: int, 1: int}> */
+    public array $markSucceededCalls = [];
+
+    public function __construct()
+    {
+        parent::__construct(new RecordingRagIndexer());
+    }
+
+    public function markRunning(int $runId): ?RagIndexRun
+    {
+        $this->markRunningCalls[] = $runId;
+
+        return $this->markRunningResult;
+    }
+
+    public function shouldSplitOrganizationSourceByProjects(string $sourceType): bool
+    {
+        $this->shouldSplitCalls[] = $sourceType;
+
+        return $this->shouldSplit;
+    }
+
+    public function splitOrganizationSourceRunByProjects(
+        int $runId,
+        int $organizationId,
+        string $sourceType
+    ): int {
+        $this->splitCalls[] = [$runId, $organizationId, $sourceType];
+
+        return 1;
+    }
+
+    public function markSucceeded(int $runId, int $indexedChunks): ?RagIndexRun
+    {
+        $this->markSucceededCalls[] = [$runId, $indexedChunks];
+
+        return new RagIndexRun();
     }
 }
