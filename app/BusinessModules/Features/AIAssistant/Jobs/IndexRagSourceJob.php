@@ -47,6 +47,17 @@ class IndexRagSourceJob implements ShouldQueue
             }
         }
 
+        if (
+            $this->runId !== null
+            && $this->projectId === null
+            && $this->sourceType !== null
+            && ($coordinator ??= app(RagIndexingCoordinator::class))->shouldSplitOrganizationSourceByProjects($this->sourceType)
+        ) {
+            $coordinator->splitOrganizationSourceRunByProjects($this->runId, $this->organizationId, $this->sourceType);
+
+            return;
+        }
+
         $indexed = $indexer->indexOrganization($this->organizationId, $this->projectId, $this->sourceType);
 
         if ($this->runId !== null) {

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\AIAssistant\Rag;
 
 use App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob;
+use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use PHPUnit\Framework\TestCase;
@@ -41,6 +42,35 @@ class IndexRagSourceJobTest extends TestCase
             ->method('markRunning')
             ->with(30)
             ->willReturn(null);
+
+        $job->handle($indexer, $coordinator);
+
+        $this->assertSame([], $indexer->calls);
+    }
+
+    public function test_legacy_org_wide_project_scoped_job_is_split_before_indexing(): void
+    {
+        $job = new IndexRagSourceJob(10, null, 'estimate', 30);
+        $indexer = new RecordingRagIndexer();
+        $coordinator = $this->createMock(RagIndexingCoordinator::class);
+
+        $coordinator
+            ->expects($this->once())
+            ->method('markRunning')
+            ->with(30)
+            ->willReturn(new RagIndexRun());
+
+        $coordinator
+            ->expects($this->once())
+            ->method('shouldSplitOrganizationSourceByProjects')
+            ->with('estimate')
+            ->willReturn(true);
+
+        $coordinator
+            ->expects($this->once())
+            ->method('splitOrganizationSourceRunByProjects')
+            ->with(30, 10, 'estimate')
+            ->willReturn(2);
 
         $job->handle($indexer, $coordinator);
 
