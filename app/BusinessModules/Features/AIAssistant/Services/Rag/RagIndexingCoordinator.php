@@ -22,8 +22,7 @@ class RagIndexingCoordinator
 {
     public function __construct(
         private readonly RagIndexer $indexer
-    ) {
-    }
+    ) {}
 
     /**
      * @return array{queued: int, run_ids: array<int, int>, organization_ids: array<int, int>}
@@ -226,6 +225,27 @@ class RagIndexingCoordinator
         return $queued;
     }
 
+    public function splitScheduledOrganizationSourceRunByProjectsIfNeeded(int $runId): bool
+    {
+        $run = $this->findRun($runId);
+        if (! $run instanceof RagIndexRun) {
+            return false;
+        }
+
+        if (
+            $run->mode !== RagIndexRun::MODE_SCHEDULED
+            || $run->project_id !== null
+            || ! is_string($run->source_type)
+            || ! $this->shouldSplitOrganizationSourceByProjects($run->source_type)
+        ) {
+            return false;
+        }
+
+        $this->splitOrganizationSourceRunByProjects($run->id, $run->organization_id, $run->source_type);
+
+        return true;
+    }
+
     public function indexOrganizationSync(
         int $organizationId,
         ?int $projectId = null,
@@ -372,8 +392,7 @@ class RagIndexingCoordinator
         ?int $staleAfterHours = null,
         ?int $projectId = null,
         ?string $sourceType = null
-    ): Collection
-    {
+    ): Collection {
         $query = Organization::query()
             ->select(['id'])
             ->when(! $includeInactive, static fn (Builder $query): Builder => $query->where('is_active', true));
@@ -401,8 +420,8 @@ class RagIndexingCoordinator
         ?int $projectId,
         ?string $sourceType
     ): void {
-        $organizationTable = (new Organization())->getTable();
-        $runTable = (new RagIndexRun())->getTable();
+        $organizationTable = (new Organization)->getTable();
+        $runTable = (new RagIndexRun)->getTable();
 
         $query
             ->whereNotExists(function (QueryBuilder $subQuery) use (
@@ -618,8 +637,8 @@ class RagIndexingCoordinator
 
     private function orderByOldestRagAttempt(Builder $query): void
     {
-        $organizationTable = (new Organization())->getTable();
-        $runTable = (new RagIndexRun())->getTable();
+        $organizationTable = (new Organization)->getTable();
+        $runTable = (new RagIndexRun)->getTable();
         $latestAttemptSql = sprintf(
             '(select max(%s.created_at) from %s where %s.organization_id = %s.id)',
             $runTable,

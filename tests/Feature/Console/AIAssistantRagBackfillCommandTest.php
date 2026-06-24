@@ -13,6 +13,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
 use App\Models\Organization;
 use App\Models\Project;
+use Illuminate\Queue\MaxAttemptsExceededException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
@@ -306,6 +307,47 @@ class AIAssistantRagBackfillCommandTest extends TestCase
                 && in_array($job->projectId, [$freshProject->id, $failedProject->id], true)
                 && $job->sourceType === 'estimate'
         );
+    }
+
+    public function test_legacy_org_wide_project_scoped_job_is_requeued_when_attempts_are_exceeded_before_handle(): void
+    {
+        Queue::fake();
+        config(['ai-assistant.rag.scheduled_project_scoped_source_types' => ['estimate']]);
+
+        $organization = Organization::factory()->create();
+        $firstProject = Project::factory()->create(['organization_id' => $organization->id]);
+        $secondProject = Project::factory()->create(['organization_id' => $organization->id]);
+
+        $run = RagIndexRun::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => null,
+            'source_type' => 'estimate',
+            'status' => RagIndexRun::STATUS_QUEUED,
+            'mode' => RagIndexRun::MODE_SCHEDULED,
+            'queued_at' => now()->subHours(2),
+        ]);
+
+        (new IndexRagSourceJob($organization->id, null, 'estimate', $run->id))
+            ->failed(new MaxAttemptsExceededException('RAG job exceeded attempts.'));
+
+        Queue::assertPushed(IndexRagSourceJob::class, 2);
+        Queue::assertPushed(
+            IndexRagSourceJob::class,
+            static fn (IndexRagSourceJob $job): bool => $job->organizationId === $organization->id
+                && $job->projectId === $firstProject->id
+                && $job->sourceType === 'estimate'
+        );
+        Queue::assertPushed(
+            IndexRagSourceJob::class,
+            static fn (IndexRagSourceJob $job): bool => $job->organizationId === $organization->id
+                && $job->projectId === $secondProject->id
+                && $job->sourceType === 'estimate'
+        );
+        $this->assertDatabaseHas('ai_rag_index_runs', [
+            'id' => $run->id,
+            'status' => RagIndexRun::STATUS_SUCCEEDED,
+            'indexed_chunks' => 0,
+        ]);
     }
 
     public function test_manual_org_wide_project_scoped_job_is_indexed_without_split(): void
@@ -643,8 +685,7 @@ class AIAssistantRagBackfillCommandTest extends TestCase
         string $status,
         ?Carbon $finishedAt = null,
         ?string $sourceType = null
-    ): RagIndexRun
-    {
+    ): RagIndexRun {
         $startedAt = $finishedAt instanceof Carbon
             ? $finishedAt->copy()->subMinute()
             : now()->subMinute();
@@ -685,8 +726,7 @@ final class BackfillCommandRecordingRagIndexer extends RagIndexer
     public function __construct(
         private readonly int $indexedCount,
         private readonly mixed $afterIndex = null
-    ) {
-    }
+    ) {}
 
     public function indexOrganization(int $organizationId, ?int $projectId = null, ?string $sourceType = null): int
     {
