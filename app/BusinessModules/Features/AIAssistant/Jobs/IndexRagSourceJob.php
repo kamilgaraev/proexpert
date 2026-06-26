@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Jobs;
 
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
-use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Log;
@@ -75,7 +75,21 @@ class IndexRagSourceJob implements ShouldQueue
     {
         if ($this->runId !== null) {
             try {
-                app(RagIndexingCoordinator::class)->markFailed($this->runId, $throwable);
+                $coordinator = app(RagIndexingCoordinator::class);
+
+                if ($coordinator->splitScheduledOrganizationSourceRunByProjectsIfNeeded($this->runId)) {
+                    Log::warning('ai_assistant.rag.index_job_split_after_max_attempts', [
+                        'organization_id' => $this->organizationId,
+                        'project_id' => $this->projectId,
+                        'source_type' => $this->sourceType,
+                        'run_id' => $this->runId,
+                        'exception_class' => $throwable::class,
+                    ]);
+
+                    return;
+                }
+
+                $coordinator->markFailed($this->runId, $throwable);
             } catch (Throwable $statusThrowable) {
                 Log::warning('ai_assistant.rag.index_run_status_failed', [
                     'run_id' => $this->runId,
