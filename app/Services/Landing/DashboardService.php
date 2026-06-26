@@ -2,8 +2,11 @@
 
 namespace App\Services\Landing;
 
+use App\Helpers\TranslationHelper;
 use App\Repositories\Landing\OrganizationDashboardRepositoryInterface;
 use App\Services\Logging\LoggingService;
+
+use function trans_message;
 
 class DashboardService
 {
@@ -118,6 +121,11 @@ class DashboardService
             }
         }
         
+        $charts['status_labels'] = [
+            'projects' => $this->statusLabels($charts['projects_status'] ?? [], 'projects'),
+            'contracts' => $this->statusLabels($charts['contracts_status'] ?? [], 'contracts'),
+        ];
+
         $data['charts'] = $charts;
         
         $totalDuration = (microtime(true) - $startTime) * 1000;
@@ -138,4 +146,19 @@ class DashboardService
         
         return $data;
     }
-} 
+
+    private function statusLabels(array $distribution, string $entity): array
+    {
+        $labels = [];
+
+        foreach (array_keys($distribution) as $status) {
+            $statusKey = (string) $status;
+            $translationKey = "landing.statuses.{$entity}.{$statusKey}";
+            $labels[$statusKey] = TranslationHelper::has($translationKey)
+                ? trans_message($translationKey)
+                : trans_message('landing.statuses.other');
+        }
+
+        return $labels;
+    }
+}
