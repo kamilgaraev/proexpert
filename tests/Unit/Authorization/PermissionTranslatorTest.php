@@ -243,6 +243,37 @@ class PermissionTranslatorTest extends TestCase
         $this->assertStringNotContainsString('mdm.one_c.override', $flattenedValues);
     }
 
+    public function test_erp_control_permissions_are_translated_for_frontend(): void
+    {
+        $translated = PermissionTranslator::translatePermissionsData([
+            'system_permissions' => [
+                'erp_controls.view',
+                'erp_controls.audit.view',
+                'erp_controls.policies.manage',
+                'erp_controls.override',
+                'erp_controls.override.approve',
+                'erp_controls.sod_conflicts.view',
+                'erp_controls.sod_conflicts.resolve',
+            ],
+        ]);
+
+        $flattenedValues = json_encode($this->valuesOnly($translated), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+
+        foreach ([
+            'erp_controls.view',
+            'erp_controls.audit.view',
+            'erp_controls.policies.manage',
+            'erp_controls.override',
+            'erp_controls.override.approve',
+            'erp_controls.sod_conflicts.view',
+            'erp_controls.sod_conflicts.resolve',
+        ] as $permission) {
+            $this->assertArrayHasKey($permission, $translated['system_permissions']);
+            $this->assertNotSame($permission, $translated['system_permissions'][$permission]);
+            $this->assertStringNotContainsString($permission, $flattenedValues);
+        }
+    }
+
     public function test_commercial_proposal_permissions_are_translated_for_frontend(): void
     {
         $translated = PermissionTranslator::translatePermissionsData([

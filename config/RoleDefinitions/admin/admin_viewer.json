@@ -16,6 +16,8 @@
     "admin.reports.view",
     "admin.time_tracking.view",
     "profile.view",
+    "erp_controls.view",
+    "erp_controls.sod_conflicts.view",
     "legal_archive.view"
   ],
 

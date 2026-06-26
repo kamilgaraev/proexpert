@@ -42,7 +42,10 @@
     "mdm.one_c.override",
     "mdm.archive",
     "mdm.owners.assign",
-    "mdm.merge.apply"
+    "mdm.merge.apply",
+    "erp_controls.view",
+    "erp_controls.audit.view",
+    "erp_controls.sod_conflicts.view"
   ],
   "module_permissions": {
     "projects": [

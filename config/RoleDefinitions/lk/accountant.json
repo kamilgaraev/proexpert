@@ -13,7 +13,10 @@
     "billing.view",
     "modules.billing",
     "profile.view",
-    "profile.edit"
+    "profile.edit",
+    "erp_controls.view",
+    "erp_controls.audit.view",
+    "erp_controls.sod_conflicts.view"
   ],
   "module_permissions": {
     "projects": [

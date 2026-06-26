@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Mdm;
 
 use App\BusinessModules\Core\Mdm\Models\MdmRecord;
+use App\BusinessModules\Core\ImmutableAudit\Models\ImmutableAuditEvent;
 use App\BusinessModules\Core\Mdm\Services\MdmRecordService;
 use App\Models\Contractor;
 use App\Models\OneCExchangeConflict;
@@ -152,5 +153,60 @@ final class MdmChangeRequestWorkflowTest extends TestCase
             'id' => $contractor->id,
             'contact_person' => null,
         ]);
+    }
+
+    public function test_critical_change_request_cannot_be_applied_by_creator(): void
+    {
+        $context = AdminApiTestContext::create();
+        $contractor = Contractor::create([
+            'organization_id' => $context->organization->id,
+            'name' => 'ООО Контроль',
+            'inn' => '7701000199',
+        ]);
+        app(MdmRecordService::class)->syncModel($contractor, 'contractor');
+
+        $create = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/mdm/change-requests', [
+                'entity_type' => 'contractor',
+                'entity_id' => $contractor->id,
+                'action' => 'update',
+                'proposed_values' => [
+                    'name' => 'ООО Контроль Новое',
+                ],
+            ]);
+
+        $create->assertCreated();
+        $changeRequestId = $create->json('data.id');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/mdm/change-requests/{$changeRequestId}/submit")
+            ->assertOk();
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/mdm/change-requests/{$changeRequestId}/approve")
+            ->assertOk();
+
+        $apply = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/mdm/change-requests/{$changeRequestId}/apply");
+
+        $apply->assertUnprocessable();
+        $apply->assertJsonPath('success', false);
+        $this->assertDatabaseHas('immutable_audit_events', [
+            'organization_id' => $context->organization->id,
+            'domain' => 'sod',
+            'source' => 'erp_controls',
+            'event_type' => 'erp_control.decision.blocked',
+            'action' => 'mdm.change_requests.apply',
+            'result' => 'blocked',
+            'subject_type' => 'mdm_change_request',
+            'subject_id' => (string) $changeRequestId,
+        ]);
+
+        $event = ImmutableAuditEvent::query()
+            ->where('organization_id', $context->organization->id)
+            ->where('domain', 'sod')
+            ->where('source', 'erp_controls')
+            ->firstOrFail();
+
+        $this->assertSame('same_actor_mdm_create_apply', $event->domain_context['blockers'][0]['code']);
     }
 }

@@ -8,6 +8,7 @@ use App\BusinessModules\Core\ImmutableAudit\SourceAdapters\MdmChangeRequestAudit
 use App\BusinessModules\Core\Mdm\Models\MdmChangeRequest;
 use App\BusinessModules\Core\Mdm\Models\MdmChangeRequestEvent;
 use App\BusinessModules\Core\Mdm\Models\MdmRecord;
+use App\Services\ErpControls\ErpControlDecisionService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\QueryException;
@@ -33,7 +34,8 @@ class MdmChangeRequestService
         private readonly MdmImpactAnalysisService $impactAnalysisService,
         private readonly MdmOneCLockService $oneCLockService,
         private readonly MdmDomainChangeApplier $domainChangeApplier,
-        private readonly MdmChangeRequestAuditAdapter $immutableAudit
+        private readonly MdmChangeRequestAuditAdapter $immutableAudit,
+        private readonly ErpControlDecisionService $erpControlDecisionService
     ) {}
 
     public function preview(int $organizationId, array $payload): array
@@ -199,6 +201,18 @@ class MdmChangeRequestService
         }
 
         $this->assertStatus($changeRequest, [MdmChangeRequest::STATUS_APPROVED]);
+        $this->erpControlDecisionService->assertAllowed(
+            organizationId: (int) $changeRequest->organization_id,
+            actorUserId: $userId,
+            operationCode: 'mdm.change_requests.apply',
+            entityType: 'mdm_change_request',
+            entityId: (int) $changeRequest->getKey(),
+            scope: [
+                'organization_id' => (int) $changeRequest->organization_id,
+                'mdm_record_id' => $changeRequest->mdm_record_id === null ? null : (int) $changeRequest->mdm_record_id,
+            ],
+            reason: $note
+        );
 
         return DB::transaction(function () use ($changeRequest, $userId, $note): MdmChangeRequest {
             $changeRequest = MdmChangeRequest::query()

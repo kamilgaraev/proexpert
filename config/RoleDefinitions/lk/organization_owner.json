@@ -23,6 +23,13 @@
     "roles.manage_custom",
     "profile.view",
     "profile.edit",
+    "erp_controls.view",
+    "erp_controls.audit.view",
+    "erp_controls.policies.manage",
+    "erp_controls.override",
+    "erp_controls.override.approve",
+    "erp_controls.sod_conflicts.view",
+    "erp_controls.sod_conflicts.resolve",
     "admin.*"
   ],
   "module_permissions": {

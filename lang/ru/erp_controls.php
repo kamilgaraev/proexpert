@@ -1,0 +1,53 @@
+<?php
+
+declare(strict_types=1);
+
+return [
+    'operations' => [
+        'payments_invoice_create' => 'Создание счета или заявки на оплату',
+        'payments_transaction_approve' => 'Согласование платежной операции',
+        'procurement_purchase_requests_approve' => 'Согласование заявки на закупку',
+        'procurement_purchase_orders_receive' => 'Приемка поставки по заказу',
+        'warehouse_inventory_approve' => 'Утверждение складской инвентаризации',
+        'budgeting_budgets_approve' => 'Согласование бюджета',
+        'budgeting_budgets_activate' => 'Активация бюджетной версии',
+        'budgeting_periods_close' => 'Закрытие бюджетного периода',
+        'mdm_change_requests_create' => 'Создание заявки на изменение мастер-данных',
+        'mdm_change_requests_apply' => 'Применение изменения мастер-данных',
+        'one_c_exchange_conflicts_resolve' => 'Разрешение конфликта обмена с 1C',
+    ],
+    'policies' => [
+        'payment_create_and_approve' => 'Создание и согласование платежа',
+        'payment_counterparty_change_and_pay' => 'Изменение реквизитов и согласование платежа',
+        'procurement_create_select_receive' => 'Согласование закупки и приемка поставки',
+        'warehouse_receipt_and_inventory_approve' => 'Поступление на склад и утверждение инвентаризации',
+        'budget_submit_approve_activate' => 'Согласование и активация бюджета',
+        'mdm_submit_and_apply' => 'Создание и применение изменения мастер-данных',
+        'one_c_token_and_conflict_resolve' => 'Управление обменом 1C и разрешение конфликтов',
+    ],
+    'messages' => [
+        'policies_loaded' => 'Матрица контролей загружена.',
+        'policies_load_error' => 'Не удалось загрузить матрицу контролей.',
+        'check_completed' => 'Проверка операции выполнена.',
+        'check_error' => 'Не удалось выполнить проверку операции.',
+        'conflicts_loaded' => 'Конфликты разделения обязанностей загружены.',
+        'conflicts_load_error' => 'Не удалось загрузить конфликты разделения обязанностей.',
+        'conflict_not_found' => 'Конфликт разделения обязанностей не найден.',
+        'conflict_resolved' => 'Решение по конфликту сохранено.',
+        'conflict_resolve_error' => 'Не удалось сохранить решение по конфликту.',
+        'conflict_already_resolved' => 'По этому конфликту уже сохранено решение.',
+        'audit_loaded' => 'Журнал контрольных решений загружен.',
+        'audit_load_error' => 'Не удалось загрузить журнал контрольных решений.',
+        'validation_error' => 'Данные контрольной проверки не прошли валидацию.',
+        'operation_not_supported' => 'Операция пока не включена в матрицу контролей.',
+        'entity_not_found' => 'Проверяемый объект не найден в текущей организации.',
+        'operation_allowed' => 'Операция может быть выполнена.',
+        'operation_allowed_with_warnings' => 'Операция может быть выполнена, но требует внимания.',
+        'operation_blocked' => 'Операция требует независимой проверки.',
+        'same_actor_mdm_create_apply' => 'Нельзя применить критичное изменение мастер-данных, созданное этим же пользователем.',
+        'same_actor_mdm_approve_apply' => 'Нельзя применить критичное изменение мастер-данных, согласованное этим же пользователем.',
+        'non_critical_mdm_change' => 'Изменение не затрагивает критичные поля мастер-данных.',
+        'second_approver_required' => 'Для принятия критичного риска нужен другой согласующий.',
+        'second_approver_not_allowed' => 'Выбранный согласующий не может принимать критичный риск.',
+    ],
+];
