@@ -25,5 +25,7 @@ final class LegalArchiveSearchQueryTest extends TestCase
         $this->assertStringContainsString('document_number', $expression);
         $this->assertStringContainsString('counterparty_name', $expression);
         $this->assertStringContainsString('description', $expression);
+        $this->assertStringNotContainsString('concat_ws', $expression);
+        $this->assertStringContainsString(" || ' ' || ", $expression);
     }
 }

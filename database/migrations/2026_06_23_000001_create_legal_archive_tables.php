@@ -95,8 +95,8 @@ return new class extends Migration
         if (Schema::getConnection()->getDriverName() === 'pgsql') {
             DB::statement(
                 "CREATE INDEX legal_archive_documents_search_idx ON legal_archive_documents USING gin " .
-                "(to_tsvector('russian', concat_ws(' ', coalesce(title, ''), coalesce(document_number, ''), " .
-                "coalesce(counterparty_name, ''), coalesce(description, ''))))"
+                "(to_tsvector('russian', coalesce(title, '') || ' ' || coalesce(document_number, '') || " .
+                "' ' || coalesce(counterparty_name, '') || ' ' || coalesce(description, '')))"
             );
 
             DB::statement(

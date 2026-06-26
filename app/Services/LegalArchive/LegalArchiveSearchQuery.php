@@ -30,8 +30,13 @@ final class LegalArchiveSearchQuery
 
     public static function postgresExpression(): string
     {
-        return "to_tsvector('russian', concat_ws(' ', coalesce(title, ''), coalesce(document_number, ''), " .
-            "coalesce(counterparty_name, ''), coalesce(description, ''))) @@ plainto_tsquery('russian', ?)";
+        return self::searchVectorExpression() . " @@ plainto_tsquery('russian', ?)";
+    }
+
+    public static function searchVectorExpression(): string
+    {
+        return "to_tsvector('russian', coalesce(title, '') || ' ' || coalesce(document_number, '') || " .
+            "' ' || coalesce(counterparty_name, '') || ' ' || coalesce(description, ''))";
     }
 
     public static function columns(): array
