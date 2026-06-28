@@ -29,6 +29,17 @@ final class NormativeSearchProfileCatalogTest extends TestCase
         $this->assertContains('pipe_layout', $profile->allowedAnalogActions);
     }
 
+    public function test_heating_equipment_profile_does_not_require_pipe_terms(): void
+    {
+        $profile = (new NormativeSearchProfileCatalog())->forIntent('engineering', 'heating_equipment', 'heating');
+
+        $this->assertContains('18', $profile->allowedSectionPrefixes);
+        $this->assertContains('20', $profile->allowedSectionPrefixes);
+        $this->assertNotContains('16', $profile->allowedSectionPrefixes);
+        $this->assertNotContains('труб', $profile->requiredTerms);
+        $this->assertContains('оборуд', $profile->requiredTerms);
+    }
+
     public function test_wall_masonry_profile_blocks_cross_domain_sections(): void
     {
         $profile = (new NormativeSearchProfileCatalog())->forIntent('walls', 'masonry', null);

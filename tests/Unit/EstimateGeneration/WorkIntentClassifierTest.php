@@ -49,6 +49,25 @@ final class WorkIntentClassifierTest extends TestCase
         $this->assertLessThan(0.6, $intent->confidence);
     }
 
+    public function test_classifies_heating_unit_as_equipment_not_pipe_layout(): void
+    {
+        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog()))->classify([
+            'name' => 'Тепловой узел',
+            'unit' => 'компл',
+        ], [
+            'scope_type' => 'engineering',
+            'section_title' => 'Отопление',
+        ]);
+
+        $this->assertSame('engineering', $intent->scope);
+        $this->assertSame('heating', $intent->system);
+        $this->assertSame('heating_equipment', $intent->action);
+        $this->assertContains('set', $intent->expectedDimensions);
+        $this->assertContains('18', $intent->preferredSectionPrefixes);
+        $this->assertContains('20', $intent->preferredSectionPrefixes);
+        $this->assertNotContains('16', $intent->preferredSectionPrefixes);
+    }
+
     public static function workIntentProvider(): array
     {
         return [

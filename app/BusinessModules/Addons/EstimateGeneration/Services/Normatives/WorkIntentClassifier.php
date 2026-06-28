@@ -138,7 +138,7 @@ final class WorkIntentClassifier
             'plastering' => ['штукатур'],
             'cable_installation' => ['кабел'],
             'pipe_layout' => ['разводк труб', 'прокладк труб', 'труб отоплен'],
-            'heating_equipment' => ['завес', 'радиатор', 'котел', 'конвектор', 'теплогенератор'],
+            'heating_equipment' => ['тепловой узел', 'теплового узла', 'теплопункт', 'завес', 'радиатор', 'котел', 'конвектор', 'теплогенератор'],
             'window_installation' => ['установк окон', 'монтаж окон', 'окн', 'двер', 'ворот'],
             'masonry' => ['кладк', 'кирпич', 'блок'],
             'ventilation_installation' => ['монтаж вентиляц', 'вентиляц', 'воздуховод'],
@@ -196,7 +196,7 @@ final class WorkIntentClassifier
             return 'opening';
         }
 
-        if ($this->containsAny($text, ['завес', 'радиатор', 'котел'])) {
+        if ($this->containsAny($text, ['тепловой узел', 'теплового узла', 'теплопункт', 'завес', 'радиатор', 'котел'])) {
             return 'heating_equipment';
         }
 

@@ -34,9 +34,7 @@ final class NormativeWorkItemPlannerService
             }
         }
 
-        $items = $this->uniquePricedItems($items);
-
-        return $this->withOperationRows($items, $localEstimate, $section);
+        return $this->uniquePricedItems($items);
     }
 
     /**
@@ -200,87 +198,6 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<int, array<string, mixed>> $items
-     * @param array<string, mixed> $localEstimate
-     * @param array<string, mixed> $section
-     * @return array<int, array<string, mixed>>
-     */
-    private function withOperationRows(array $items, array $localEstimate, array $section): array
-    {
-        $targetMin = max((int) ($localEstimate['target_items_min'] ?? 0), count($items));
-        $targetMax = max((int) ($localEstimate['target_items_max'] ?? 0), $targetMin);
-        $expanded = [];
-
-        foreach ($items as $item) {
-            $expanded[] = $item;
-            $operations = $item['work_composition'] ?? $this->operationBank((string) ($item['work_category'] ?? 'custom'));
-
-            foreach ($operations as $operationIndex => $operationName) {
-                if (count($expanded) >= $targetMin && count($expanded) >= $targetMax) {
-                    break;
-                }
-
-                $expanded[] = $this->operationRow($item, (string) $operationName, $operationIndex);
-
-                if (count($expanded) >= $targetMin) {
-                    break;
-                }
-            }
-        }
-
-        $cycle = 0;
-        while ($items !== [] && count($expanded) < $targetMin) {
-            $item = $items[$cycle % count($items)];
-            $operations = $this->operationBank((string) ($item['work_category'] ?? $section['construction_part'] ?? 'custom'));
-            $operationName = $operations[$cycle % count($operations)] ?? 'Проверка состава работ';
-            $expanded[] = $this->operationRow($item, $operationName, $cycle + 100);
-            $cycle++;
-        }
-
-        return $expanded;
-    }
-
-    /**
-     * @param array<string, mixed> $parent
-     * @return array<string, mixed>
-     */
-    private function operationRow(array $parent, string $name, int $index): array
-    {
-        return [
-            'key' => (string) $parent['key'] . '-op-' . ($index + 1),
-            'parent_key' => $parent['key'],
-            'level' => 1,
-            'item_type' => 'operation',
-            'name' => $name,
-            'description' => $name,
-            'work_category' => $parent['work_category'] ?? 'custom',
-            'unit' => '',
-            'quantity' => 0,
-            'quantity_formula' => 'work_composition',
-            'quantity_basis' => 'Состав работ по сметной норме.',
-            'work_cost' => 0,
-            'materials_cost' => 0,
-            'machinery_cost' => 0,
-            'labor_cost' => 0,
-            'total_cost' => 0,
-            'materials' => [],
-            'labor' => [],
-            'machinery' => [],
-            'other_resources' => [],
-            'work_composition' => [],
-            'source_refs' => $parent['source_refs'] ?? [],
-            'confidence' => $parent['confidence'] ?? 0.7,
-            'validation_flags' => [],
-            'price_source' => null,
-            'metadata' => [
-                'generation_source' => 'normative_work_composition',
-                'parent_normative_search_key' => $parent['normative_search_key'] ?? null,
-                'display_role' => 'operation',
-            ],
-        ];
-    }
-
-    /**
      * @param array<string, mixed> $localEstimate
      * @param array<string, mixed> $section
      * @param array<string, mixed> $analysis
@@ -386,11 +303,17 @@ final class NormativeWorkItemPlannerService
                 $this->definition('Монтаж СКС', 'electrical', 'монтаж структурированной кабельной сети', 'office.network_points'),
                 $this->definition('Серверная и связь', 'electrical', 'монтаж оборудования серверной', 'server.room'),
             ],
-            'plumbing', 'water_sewerage', 'sanitary_rooms' => [
+            'plumbing', 'water_supply', 'water_sewerage', 'sanitary_rooms' => [
                 $this->definition('Прокладка труб водоснабжения', 'plumbing', 'прокладка трубопроводов водоснабжения', 'plumbing.pipe'),
                 $this->definition('Сантехнические точки', 'plumbing', 'подключение сантехнических приборов', 'sanitary.points'),
                 $this->definition('Прокладка труб канализации', 'sewerage', 'прокладка трубопроводов канализации', 'sewerage.pipe'),
                 $this->definition('Гидроизоляция и плитка мокрых зон', 'finishing', 'отделка мокрых зон плиткой', 'sanitary.tile'),
+            ],
+            'sewerage' => [
+                $this->definition('Прокладка труб канализации', 'sewerage', 'прокладка трубопроводов канализации', 'sewerage.pipe'),
+                $this->definition('Монтаж канализационных выпусков', 'sewerage', 'монтаж выпусков внутренней канализации', 'sewerage.outlets'),
+                $this->definition('Монтаж канализационных стояков', 'sewerage', 'монтаж стояков внутренней канализации', 'sewerage.risers'),
+                $this->definition('Монтаж ревизий канализации', 'sewerage', 'монтаж ревизий и прочисток канализации', 'sewerage.revisions'),
             ],
             'heating' => [
                 $this->definition('Тепловой узел', 'heating', 'монтаж теплового узла', 'heating.unit'),
@@ -430,7 +353,8 @@ final class NormativeWorkItemPlannerService
         return match ($scopeType) {
             'foundation' => $this->packageDefinitions('foundation', $scopeType, []),
             'electrical', 'engineering' => $this->packageDefinitions('electrical', $scopeType, []),
-            'plumbing' => $this->packageDefinitions('plumbing', $scopeType, []),
+            'plumbing', 'water_supply' => $this->packageDefinitions('plumbing', $scopeType, []),
+            'sewerage' => $this->packageDefinitions('sewerage', $scopeType, []),
             'heating' => $this->packageDefinitions('heating', $scopeType, []),
             'ventilation' => $this->packageDefinitions('ventilation', $scopeType, []),
             'roof' => $this->packageDefinitions('roof', $scopeType, ['features' => ['roof_type' => 'pitched']]),
@@ -804,6 +728,12 @@ final class NormativeWorkItemPlannerService
             'door_count' => 'openings.doors',
             'window_count' => 'openings.windows',
             'opening_count' => 'openings.doors',
+            'plumbing_route_length' => 'plumbing.pipe',
+            'water_supply_route_length' => 'plumbing.pipe',
+            'sewerage_route_length' => 'sewerage.pipe',
+            'heating_route_length' => 'heating.pipe',
+            'radiator_count' => 'heating.radiators',
+            'heating_unit_count' => 'heating.unit',
             'engineering_route_length' => 'plumbing.pipe',
             default => '',
         };

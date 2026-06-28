@@ -11,7 +11,7 @@ use PHPUnit\Framework\TestCase;
 
 class NormativeWorkItemPlannerDensityTest extends TestCase
 {
-    public function test_planner_creates_normative_priced_items_and_composition_rows_from_project_scope(): void
+    public function test_planner_keeps_work_composition_inside_priced_items_without_operation_rows(): void
     {
         $localEstimate = $this->localEstimate('preconstruction', 'Подготовительные работы', 'site', 12);
         $items = $this->planner()->build($localEstimate, $localEstimate['sections'][0], [
@@ -23,15 +23,16 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         ]);
         $pricedItems = $this->pricedItems($items);
 
-        self::assertGreaterThanOrEqual(12, count($items));
         self::assertNotEmpty($pricedItems);
-        self::assertContains('operation', array_column($items, 'item_type'));
+        self::assertSame(count($pricedItems), count($items));
+        self::assertNotContains('operation', array_column($items, 'item_type'));
         self::assertSame(count($pricedItems), count(array_unique(array_column($pricedItems, 'normative_search_key'))));
 
         foreach ($pricedItems as $item) {
             self::assertSame([], $item['materials']);
             self::assertSame([], $item['labor']);
             self::assertSame([], $item['machinery']);
+            self::assertNotEmpty($item['work_composition']);
             self::assertContains('normative_required', $item['validation_flags']);
             self::assertNull($item['price_source']);
         }
@@ -69,6 +70,26 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             array_column($electrical, 'normative_search_key'),
             array_column($plumbing, 'normative_search_key')
         );
+    }
+
+    public function test_sewerage_package_uses_specific_normative_intents_instead_of_generic_complex_work(): void
+    {
+        $localEstimate = $this->localEstimate('sewerage', 'Канализация', 'engineering', 12);
+
+        $pricedItems = $this->pricedItems($this->planner()->build($localEstimate, $localEstimate['sections'][0], [
+            'document_context' => [
+                'facts_summary' => [
+                    'total_area_m2' => 214,
+                ],
+            ],
+        ]));
+        $names = array_column($pricedItems, 'name');
+
+        self::assertContains('Прокладка труб канализации', $names);
+        self::assertContains('Монтаж канализационных выпусков', $names);
+        self::assertNotContains('Комплекс строительных работ', $names);
+        self::assertNotContains('Прокладка магистральных кабелей', $names);
+        self::assertNotContains('site.setup', array_column($pricedItems, 'quantity_formula'));
     }
 
     public function test_mixed_office_warehouse_uses_document_scope_and_flat_roof_quantities(): void
@@ -167,6 +188,39 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertContains('quantity_review_required', $wallItem['validation_flags']);
     }
 
+    public function test_engineering_takeoff_scope_maps_to_matching_heating_quantity_key(): void
+    {
+        $localEstimate = $this->localEstimate('heating', 'Отопление', 'engineering', 12);
+
+        $items = $this->pricedItems($this->planner()->build(
+            $localEstimate,
+            $localEstimate['sections'][0],
+            [
+                'document_context' => [
+                    'quantity_takeoffs' => [[
+                        'scope_key' => 'heating_route_length',
+                        'name' => 'Длина трасс отопления по планировке',
+                        'unit' => 'м',
+                        'quantity' => 38.2,
+                        'source_refs' => [[
+                            'type' => 'drawing',
+                            'filename' => 'heating-plan.pdf',
+                            'page_number' => 1,
+                        ]],
+                    ]],
+                ],
+            ]
+        ));
+        $pipeItem = array_values(array_filter(
+            $items,
+            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'heating.pipe'
+        ))[0] ?? null;
+
+        self::assertIsArray($pipeItem);
+        self::assertSame(38.2, (float) $pipeItem['quantity']);
+        self::assertSame('м', $pipeItem['unit']);
+    }
+
     public function test_optional_site_package_without_document_quantity_is_not_expanded_from_catalog_fallback(): void
     {
         $localEstimate = $this->localEstimate('external_networks', 'External networks', 'site', 12);
@@ -208,7 +262,8 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertSame('networks.external', $pricedItems[0]['quantity_formula']);
         self::assertSame(42.5, (float) $pricedItems[0]['quantity']);
         self::assertNotContains('quantity_review_required', $pricedItems[0]['validation_flags']);
-        self::assertContains('operation', array_column($items, 'item_type'));
+        self::assertSame($pricedItems, $items);
+        self::assertNotContains('operation', array_column($items, 'item_type'));
     }
 
     /**
