@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
-use Tests\TestCase;
+use PHPUnit\Framework\TestCase;
 
 class ConstructionSemanticParserTest extends TestCase
 {
@@ -164,6 +164,51 @@ class ConstructionSemanticParserTest extends TestCase
         $this->assertNotContains('Промышленный пол', $scopeTitles);
         $this->assertNotContains('Металлокаркас', $scopeTitles);
         $this->assertNotContains('structural', $scopeTypes);
+    }
+
+    public function test_parser_uses_aggregate_floor_plan_area_instead_of_first_room(): void
+    {
+        $parser = new ConstructionSemanticParser();
+
+        $analysis = $parser->parse([
+            'description' => '',
+        ], [[
+            'id' => 80,
+            'filename' => 'flat-plan.png',
+            'status' => 'ready',
+            'quality' => ['level' => 'good', 'score' => 0.91, 'flags' => []],
+            'extracted_text' => "Планировка квартиры\nГостиная 46,52 м²\nКухня 9,99 м2",
+            'facts_summary' => [
+                'drawing_understanding' => [
+                    'room_area_total_m2' => 56.51,
+                ],
+                'zones' => [],
+                'engineering_systems' => [],
+                'conflicts' => [],
+            ],
+            'facts' => [],
+            'quantity_takeoffs' => [
+                [
+                    'scope_key' => 'room_area',
+                    'quantity' => 46.52,
+                    'unit' => 'м2',
+                ],
+                [
+                    'scope_key' => 'room_area',
+                    'quantity' => 9.99,
+                    'unit' => 'м2',
+                ],
+                [
+                    'scope_key' => 'floor_finish_area',
+                    'quantity' => 56.51,
+                    'unit' => 'м2',
+                    'normalized_payload' => ['quantity_key' => 'finish.floor'],
+                ],
+            ],
+        ]]);
+
+        $this->assertSame(56.51, $analysis['object']['area']);
+        $this->assertSame(56.51, $analysis['document_context']['facts_summary']['total_area_m2']);
     }
 
     public function test_parser_does_not_trust_low_quality_ocr_for_object_defaults(): void

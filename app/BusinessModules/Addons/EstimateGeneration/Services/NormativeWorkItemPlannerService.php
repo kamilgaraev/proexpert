@@ -484,7 +484,7 @@ final class NormativeWorkItemPlannerService
                 'source_refs' => is_array($quantities[$quantityKey]['source_refs'] ?? null)
                     ? $this->normalizeSourceRefs($quantities[$quantityKey]['source_refs'])
                     : $this->sourceRefsForQuantityKey($analysis, $quantityKey),
-                'review_required' => false,
+                'review_required' => (bool) ($quantities[$quantityKey]['review_required'] ?? false),
             ];
         }
 
@@ -560,7 +560,8 @@ final class NormativeWorkItemPlannerService
                 unit: (string) ($takeoff['unit'] ?? $payload['unit'] ?? 'ед'),
                 basis: (string) ($takeoff['name'] ?? $takeoff['label'] ?? $takeoff['formula'] ?? 'Количество извлечено из проектной документации.'),
                 confidence: (float) ($takeoff['confidence'] ?? 0.76),
-                sourceRefs: is_array($takeoff['source_refs'] ?? null) ? $takeoff['source_refs'] : []
+                sourceRefs: is_array($takeoff['source_refs'] ?? null) ? $takeoff['source_refs'] : [],
+                reviewRequired: (bool) ($payload['review_required'] ?? $takeoff['review_required'] ?? false)
             );
         }
 
@@ -637,16 +638,23 @@ final class NormativeWorkItemPlannerService
 
     /**
      * @param array<int, mixed> $sourceRefs
-     * @return array{value: float, unit: string, basis: string, confidence: float, source_refs: array<int, array<string, mixed>>}
+     * @return array{value: float, unit: string, basis: string, confidence: float, source_refs: array<int, array<string, mixed>>, review_required: bool}
      */
-    private function modelQuantity(float $value, string $unit, string $basis, float $confidence, array $sourceRefs): array
-    {
+    private function modelQuantity(
+        float $value,
+        string $unit,
+        string $basis,
+        float $confidence,
+        array $sourceRefs,
+        bool $reviewRequired = false
+    ): array {
         return [
             'value' => round($value, 4),
             'unit' => $unit,
             'basis' => $basis,
             'confidence' => round(max(min($confidence, 0.98), 0.35), 4),
             'source_refs' => $this->normalizeSourceRefs($sourceRefs),
+            'review_required' => $reviewRequired,
         ];
     }
 
@@ -760,6 +768,13 @@ final class NormativeWorkItemPlannerService
     {
         return match ($scopeKey) {
             'room_area' => 'finish.floor',
+            'floor_finish_area' => 'finish.floor',
+            'rough_floor_area' => 'rough.floor',
+            'ceiling_finish_area' => 'office.ceiling',
+            'wall_finish_area' => 'rough.walls',
+            'paint_area' => 'finish.paint',
+            'door_count' => 'openings.doors',
+            'window_count' => 'openings.windows',
             'opening_count' => 'openings.doors',
             'engineering_route_length' => 'plumbing.pipe',
             default => '',

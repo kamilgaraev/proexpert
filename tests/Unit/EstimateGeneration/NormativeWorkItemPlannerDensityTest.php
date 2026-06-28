@@ -129,6 +129,44 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertNotContains('roof.area', array_column($roof, 'quantity_formula'));
     }
 
+    public function test_drawing_takeoff_review_flag_is_preserved_for_normative_item_quantity(): void
+    {
+        $localEstimate = $this->localEstimate('rough_finishing', 'Черновая отделка', 'finishing', 6);
+        $items = $this->pricedItems($this->planner()->build(
+            $localEstimate,
+            $localEstimate['sections'][0],
+            [
+                'document_context' => [
+                    'quantity_takeoffs' => [[
+                        'scope_key' => 'wall_finish_area',
+                        'name' => 'Расчетная площадь стен по планировке',
+                        'unit' => 'м2',
+                        'quantity' => 220.5,
+                        'confidence' => 0.68,
+                        'source_refs' => [[
+                            'type' => 'drawing',
+                            'document_id' => 10,
+                            'filename' => 'flat-plan.png',
+                            'page_number' => 1,
+                        ]],
+                        'normalized_payload' => [
+                            'quantity_key' => 'rough.walls',
+                            'review_required' => true,
+                        ],
+                    ]],
+                ],
+            ]
+        ));
+        $wallItem = array_values(array_filter(
+            $items,
+            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'rough.walls'
+        ))[0] ?? null;
+
+        self::assertIsArray($wallItem);
+        self::assertSame(220.5, (float) $wallItem['quantity']);
+        self::assertContains('quantity_review_required', $wallItem['validation_flags']);
+    }
+
     /**
      * @return array<string, mixed>
      */

@@ -120,6 +120,9 @@ class ConstructionSemanticParser
         $drawingElements = [];
         $quantityTakeoffs = [];
         $scopeInferences = [];
+        $roomAreaTotal = 0.0;
+        $hasRoomAreaTotal = false;
+        $aggregateAreaCandidate = null;
 
         foreach ($documentsPayload as $document) {
             if (!$this->isDocumentTrusted($document)) {
@@ -174,6 +177,15 @@ class ConstructionSemanticParser
                 $summary['floor_count'] = $factsSummary['floor_count'];
             }
 
+            $drawingUnderstanding = is_array($factsSummary['drawing_understanding'] ?? null)
+                ? $factsSummary['drawing_understanding']
+                : [];
+            $drawingArea = $this->numericValue($drawingUnderstanding['room_area_total_m2'] ?? null);
+
+            if ($aggregateAreaCandidate === null && $drawingArea !== null && $drawingArea > 0) {
+                $aggregateAreaCandidate = $drawingArea;
+            }
+
             foreach ($factsSummary['zones'] ?? [] as $zone) {
                 if (is_array($zone)) {
                     $summary['zones'][] = $zone;
@@ -202,13 +214,24 @@ class ConstructionSemanticParser
             foreach ($document['quantity_takeoffs'] ?? [] as $takeoff) {
                 if (is_array($takeoff)) {
                     $quantityTakeoffs[] = $takeoff;
+                    $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
+                    $scopeKey = (string) ($takeoff['scope_key'] ?? '');
+                    $quantityKey = (string) ($payload['quantity_key'] ?? $takeoff['quantity_key'] ?? '');
+                    $quantity = $this->numericValue($takeoff['quantity'] ?? null);
+
+                    if ($quantity !== null && $quantity > 0 && $scopeKey === 'room_area') {
+                        $roomAreaTotal += $quantity;
+                        $hasRoomAreaTotal = true;
+                    }
 
                     if (
-                        ($summary['total_area_m2'] ?? null) === null
-                        && ($takeoff['scope_key'] ?? null) === 'room_area'
-                        && isset($takeoff['quantity'])
+                        $quantity !== null
+                        && $quantity > 0
+                        && $aggregateAreaCandidate === null
+                        && in_array($scopeKey, ['floor_finish_area', 'rough_floor_area', 'ceiling_finish_area'], true)
+                        && in_array($quantityKey, ['finish.floor', 'rough.floor', 'office.ceiling'], true)
                     ) {
-                        $summary['total_area_m2'] = (float) $takeoff['quantity'];
+                        $aggregateAreaCandidate = $quantity;
                     }
                 }
             }
@@ -223,6 +246,14 @@ class ConstructionSemanticParser
 
             if ($text !== '') {
                 $contextLines[] = $text;
+            }
+        }
+
+        if (($summary['total_area_m2'] ?? null) === null) {
+            if ($aggregateAreaCandidate !== null && $aggregateAreaCandidate > 0) {
+                $summary['total_area_m2'] = round($aggregateAreaCandidate, 4);
+            } elseif ($hasRoomAreaTotal) {
+                $summary['total_area_m2'] = round($roomAreaTotal, 4);
             }
         }
 
@@ -849,5 +880,18 @@ class ConstructionSemanticParser
         $line = trim($line, "* \t\n\r\0\x0B");
 
         return (string) preg_replace('/^\s*[-*•]+\s*/u', '', $line);
+    }
+
+    private function numericValue(mixed $value): ?float
+    {
+        if (is_int($value) || is_float($value)) {
+            return (float) $value;
+        }
+
+        if (is_string($value) && is_numeric(str_replace(',', '.', $value))) {
+            return (float) str_replace(',', '.', $value);
+        }
+
+        return null;
     }
 }
