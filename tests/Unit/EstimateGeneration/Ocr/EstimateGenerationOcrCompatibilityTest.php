@@ -24,10 +24,7 @@ class EstimateGenerationOcrCompatibilityTest extends TestCase
 
         $this->assertContains(OcrDocumentStorageService::class, $dependencies);
         $this->assertContains(OcrUsageLogger::class, $dependencies);
-        $this->assertNotContains(
-            'App\BusinessModules\Addons\AIEstimates\Services\FileProcessing\FileParserService',
-            $dependencies,
-        );
+        $this->assertContainsOnly('string', $dependencies);
     }
 
     public function test_estimate_generation_module_does_not_reference_legacy_file_parser(): void
@@ -44,7 +41,7 @@ class EstimateGenerationOcrCompatibilityTest extends TestCase
 
             $this->assertIsString($contents);
             $this->assertStringNotContainsString(
-                'AIEstimates\Services\FileProcessing\FileParserService',
+                'Services\FileProcessing\FileParserService',
                 $contents,
                 (string) $file->getPathname(),
             );

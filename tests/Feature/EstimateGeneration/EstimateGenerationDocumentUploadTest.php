@@ -228,7 +228,7 @@ class EstimateGenerationDocumentUploadTest extends TestCase
         $this->assertEquals(151.76, $document->facts_summary['total_area_m2']);
     }
 
-    public function test_document_processor_fails_multi_page_pdf_without_text_layer_before_calling_ocr_provider(): void
+    public function test_document_processor_sends_multi_page_pdf_without_text_layer_to_ocr_provider(): void
     {
         Storage::fake('s3');
 
@@ -259,17 +259,37 @@ class EstimateGenerationDocumentUploadTest extends TestCase
         $this->app->instance(OcrClientInterface::class, new class implements OcrClientInterface {
             public function recognize(OcrDocumentInput $input): OcrRecognitionResult
             {
-                throw new \RuntimeException('OCR provider must not be called for multi-page PDF without text layer.');
+                return new OcrRecognitionResult(
+                    provider: 'test',
+                    model: 'page',
+                    pages: [
+                        new \App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult(
+                            pageNumber: 1,
+                            text: 'План первого этажа Масштаб 1:100',
+                            confidence: 0.9
+                        ),
+                        new \App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult(
+                            pageNumber: 2,
+                            text: 'План второго этажа',
+                            confidence: 0.9
+                        ),
+                    ],
+                    metadata: [
+                        'page_count' => $input->pageCount,
+                    ],
+                );
             }
         });
 
         app(OcrDocumentProcessor::class)->process($document);
         $document->refresh();
 
-        $this->assertSame('failed', $document->status);
-        $this->assertSame('pdf_text_layer_missing', $document->error_code);
-        $this->assertSame('estimate_generation.ocr_pdf_text_layer_missing', $document->error_message_key);
+        $this->assertSame('ready', $document->status);
+        $this->assertNull($document->error_code);
+        $this->assertNull($document->error_message_key);
         $this->assertSame(2, $document->page_count);
+        $this->assertSame(2, $document->processed_page_count);
+        $this->assertSame('test', $document->ocr_provider);
     }
 
     /**

@@ -528,7 +528,6 @@ class YandexCloudOcrClient implements OcrClientInterface
             || strtolower((string) pathinfo((string) $input->filename, PATHINFO_EXTENSION)) === 'pdf';
 
         return $isPdf
-            && $input->pageCount === 1
             && (bool) config('estimate-generation.ocr.yandex.async_pdf_enabled', false);
     }
 

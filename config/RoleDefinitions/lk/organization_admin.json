@@ -484,12 +484,13 @@
       "admin.ai_assistant.project_pulse.delete"
     ],
     "ai-estimates": [
+      "ai_estimates.create_session",
+      "ai_estimates.view_sessions",
+      "ai_estimates.upload_documents",
       "ai_estimates.generate",
-      "ai_estimates.view_history",
-      "ai_estimates.view_generation",
-      "ai_estimates.provide_feedback",
+      "ai_estimates.review",
+      "ai_estimates.apply",
       "ai_estimates.export",
-      "ai_estimates.clear_cache",
       "ai_estimates.configure"
     ],
     "procurement": [

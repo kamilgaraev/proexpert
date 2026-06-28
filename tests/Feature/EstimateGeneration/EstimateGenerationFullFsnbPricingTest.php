@@ -8,10 +8,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
+use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeSearchProfileCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Services\PackagePlannerService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\WorkItemGenerationService;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\NormativeSearchProfileData;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\WorkIntentData;
 use App\Models\Organization;
@@ -63,9 +63,10 @@ final class EstimateGenerationFullFsnbPricingTest extends TestCase
         $draft = $session->draft_payload;
         $quality = $draft['quality_summary'];
         $normativeItems = $quality['normative_items'];
+        $pricedDenominator = $quality['total_work_items'] - ($quality['operation_work_items'] ?? 0);
 
         self::assertSame(
-            $quality['total_work_items'],
+            $pricedDenominator,
             $quality['priced_work_items'],
             json_encode($this->unpricedItems($draft), JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)
         );
@@ -73,7 +74,7 @@ final class EstimateGenerationFullFsnbPricingTest extends TestCase
         self::assertSame(0, $quality['not_calculated_work_items']);
         self::assertSame(0, $quality['market_estimate_work_items']);
         self::assertSame(
-            $quality['total_work_items'],
+            $pricedDenominator,
             $normativeItems['accepted'] + $normativeItems['review_priced']
         );
         self::assertSame(0, $normativeItems['requires_review']);
@@ -108,7 +109,11 @@ final class EstimateGenerationFullFsnbPricingTest extends TestCase
                     'regional_context' => $analysis['regional_context'] ?? [],
                 ];
 
-                foreach (app(WorkItemGenerationService::class)->build($localEstimate, $analysis) as $item) {
+                foreach (app(NormativeWorkItemPlannerService::class)->build($localEstimate, $section, $analysis) as $item) {
+                    if (($item['item_type'] ?? null) !== 'priced_work') {
+                        continue;
+                    }
+
                     $workItems[] = [
                         'item' => $item,
                         'context' => $context,
@@ -131,6 +136,10 @@ final class EstimateGenerationFullFsnbPricingTest extends TestCase
         foreach ($draft['local_estimates'] ?? [] as $localEstimate) {
             foreach ($localEstimate['sections'] ?? [] as $section) {
                 foreach ($section['work_items'] ?? [] as $workItem) {
+                    if (($workItem['item_type'] ?? null) !== 'priced_work') {
+                        continue;
+                    }
+
                     if ((float) ($workItem['total_cost'] ?? 0) > 0) {
                         continue;
                     }

@@ -76,6 +76,24 @@ class EstimateGenerationSession extends Model
         return $this->hasMany(EstimateGenerationAuditEvent::class, 'session_id');
     }
 
+    public function drawingElements(): HasMany
+    {
+        return $this->hasMany(EstimateGenerationDrawingElement::class, 'session_id')
+            ->orderBy('id');
+    }
+
+    public function quantityTakeoffs(): HasMany
+    {
+        return $this->hasMany(EstimateGenerationQuantityTakeoff::class, 'session_id')
+            ->orderBy('id');
+    }
+
+    public function scopeInferences(): HasMany
+    {
+        return $this->hasMany(EstimateGenerationScopeInference::class, 'session_id')
+            ->orderBy('id');
+    }
+
     public function appliedEstimate(): BelongsTo
     {
         return $this->belongsTo(Estimate::class, 'applied_estimate_id');

@@ -25,6 +25,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationReg
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSelectionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorReadinessService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
@@ -48,6 +49,7 @@ class EstimateGenerationController extends Controller
         protected EstimateGenerationPackagePresenter $packagePresenter,
         protected NormativeCandidateSelectionService $candidateSelectionService,
         protected DocumentGenerationReadinessService $documentReadinessService,
+        protected EstimatorReadinessService $estimatorReadinessService,
         protected EstimateGenerationLearningRecorder $learningRecorder,
     ) {}
 
@@ -58,7 +60,11 @@ class EstimateGenerationController extends Controller
         $sessions = EstimateGenerationSession::query()
             ->where('organization_id', $user->current_organization_id)
             ->where('project_id', $project->id)
-            ->with('documents')
+            ->with([
+                'documents' => static fn ($query) => $query
+                    ->withCount(['pages', 'facts', 'drawingElements', 'quantityTakeoffs', 'scopeInferences'])
+                    ->orderBy('id'),
+            ])
             ->orderByDesc('id')
             ->paginate((int) $request->input('per_page', 10));
 
@@ -250,7 +256,7 @@ class EstimateGenerationController extends Controller
     public function status(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
     {
         $this->guardSession($request, $project, $session);
-        $session->load('documents');
+        $this->loadSessionDocumentsForReadiness($session);
         $packages = $session->packages()->get();
         $documentsSummary = $this->documentReadinessService->evaluate($session)['summary'];
 
@@ -262,6 +268,7 @@ class EstimateGenerationController extends Controller
             'progress' => EstimateGenerationSessionResource::progressPayload($session),
             'packages_summary' => $this->packagePresenter->collection($packages)['summary'],
             'documents_summary' => $documentsSummary,
+            'estimator_readiness' => $this->estimatorReadinessService->evaluate($session),
             'problem_flags_count' => count($session->problem_flags ?? []),
             'last_error' => $session->last_error,
             'updated_at' => $session->updated_at?->toISOString(),
@@ -369,6 +376,16 @@ class EstimateGenerationController extends Controller
 
             if ($session->status === 'blocked') {
                 return AdminResponse::error(trans_message('estimate_generation.apply_blocked'), 422);
+            }
+
+            $this->loadSessionDocumentsForReadiness($session);
+            $readiness = $this->estimatorReadinessService->evaluate($session);
+            if (($readiness['can_apply'] ?? false) !== true) {
+                return AdminResponse::error(
+                    trans_message('estimate_generation.apply_readiness_blocked'),
+                    422,
+                    ['estimator_readiness' => $readiness]
+                );
             }
 
             $estimate = $this->draftPersistenceService->apply($session, $request->validated(), $request->user());
@@ -481,11 +498,20 @@ class EstimateGenerationController extends Controller
      */
     private function sessionPayload(EstimateGenerationSession $session): array
     {
-        $session->loadMissing('documents');
+        $this->loadSessionDocumentsForReadiness($session);
         $payload = (new EstimateGenerationSessionResource($session))->resolve();
         $payload['documents_summary'] = $this->documentReadinessService->evaluate($session)['summary'];
 
         return $payload;
+    }
+
+    private function loadSessionDocumentsForReadiness(EstimateGenerationSession $session): void
+    {
+        $session->load([
+            'documents' => static fn ($query) => $query
+                ->withCount(['pages', 'facts', 'drawingElements', 'quantityTakeoffs', 'scopeInferences'])
+                ->orderBy('id'),
+        ]);
     }
 
     /**

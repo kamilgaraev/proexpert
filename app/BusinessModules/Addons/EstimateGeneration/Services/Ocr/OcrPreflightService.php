@@ -29,9 +29,11 @@ class OcrPreflightService
             );
         }
 
-        $maxBytes = $this->isSpreadsheet($document)
-            ? (int) config('estimate-generation.ocr.max_spreadsheet_file_bytes', 50 * 1024 * 1024)
-            : (int) config('estimate-generation.ocr.max_sync_file_bytes', 10 * 1024 * 1024);
+        $maxBytes = match (true) {
+            $this->isSpreadsheet($document) => (int) config('estimate-generation.ocr.max_spreadsheet_file_bytes', 50 * 1024 * 1024),
+            $this->isPdf($document) => (int) config('estimate-generation.ocr.max_pdf_file_bytes', 200 * 1024 * 1024),
+            default => (int) config('estimate-generation.ocr.max_sync_file_bytes', 10 * 1024 * 1024),
+        };
 
         if ((int) ($document->file_size_bytes ?? 0) > $maxBytes) {
             throw new OcrProviderException(

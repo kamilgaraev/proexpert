@@ -7,8 +7,8 @@ namespace Tests\Unit\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSelectionService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\WorkItemGenerationService;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -18,23 +18,32 @@ use Tests\TestCase;
 
 class StrictNormativeGenerationTest extends TestCase
 {
-    public function test_work_item_generation_does_not_create_market_resources(): void
+    public function test_normative_work_item_planner_does_not_create_market_resources(): void
     {
-        $items = app(WorkItemGenerationService::class)->build([
+        $localEstimate = [
             'key' => 'foundation',
             'title' => 'Фундамент',
             'scope_type' => 'foundation',
             'target_items_min' => 12,
-        ], [
+            'sections' => [[
+                'key' => 'foundation-section',
+                'title' => 'Р¤СѓРЅРґР°РјРµРЅС‚',
+                'construction_part' => 'foundation',
+                'source_refs' => [],
+            ]],
+        ];
+        $items = app(NormativeWorkItemPlannerService::class)->build($localEstimate, $localEstimate['sections'][0], [
             'object' => [
                 'area' => 150,
                 'building_type' => 'Жилой',
             ],
         ]);
 
-        self::assertNotEmpty($items);
+        $pricedItems = array_values(array_filter($items, static fn (array $item): bool => ($item['item_type'] ?? null) === 'priced_work'));
 
-        foreach ($items as $item) {
+        self::assertNotEmpty($pricedItems);
+
+        foreach ($pricedItems as $item) {
             self::assertSame([], $item['materials']);
             self::assertSame([], $item['labor']);
             self::assertSame([], $item['machinery']);

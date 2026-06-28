@@ -13,7 +13,7 @@ class EstimateGenerationOrchestrator
     public function __construct(
         protected ConstructionSemanticParser $semanticParser,
         protected EstimateDecompositionService $decompositionService,
-        protected WorkItemGenerationService $workItemGenerationService,
+        protected NormativeWorkItemPlannerService $workItemPlannerService,
         protected ResourceAssemblyService $resourceAssemblyService,
         protected EstimatePricingService $pricingService,
         protected EstimateValidationService $validationService,
@@ -26,7 +26,7 @@ class EstimateGenerationOrchestrator
     public function analyze(EstimateGenerationSession $session): EstimateGenerationSession
     {
         $documents = $session->documents()
-            ->with('facts')
+            ->with(['facts', 'drawingElements', 'quantityTakeoffs', 'scopeInferences'])
             ->get()
             ->map(static fn ($document): array => [
                 'id' => $document->id,
@@ -41,6 +41,9 @@ class EstimateGenerationOrchestrator
                     'flags' => $document->quality_flags ?? [],
                 ],
                 'facts' => $document->facts->map(static fn ($fact): array => $fact->toArray())->all(),
+                'drawing_elements' => $document->drawingElements->map(static fn ($element): array => $element->toArray())->all(),
+                'quantity_takeoffs' => $document->quantityTakeoffs->map(static fn ($takeoff): array => $takeoff->toArray())->all(),
+                'scope_inferences' => $document->scopeInferences->map(static fn ($inference): array => $inference->toArray())->all(),
             ])
             ->all();
 
@@ -77,7 +80,7 @@ class EstimateGenerationOrchestrator
             $this->updateGenerationProgress($session, 'work_generation', $packageProgressStart);
 
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
-                $workItems = $this->workItemGenerationService->build($localEstimate, $analysis);
+                $workItems = $this->workItemPlannerService->build($localEstimate, $section, $analysis);
                 $this->updateGenerationProgress($session, 'normative_matching', min($packageProgressStart + 3, $packageProgressEnd));
                 $progressCallback = function (int $processed, int $total) use ($session, $packageProgressStart, $packageProgressEnd): void {
                     $range = max($packageProgressEnd - $packageProgressStart, 1);

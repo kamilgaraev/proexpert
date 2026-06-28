@@ -8,6 +8,7 @@ use App\Models\Organization;
 use App\Models\Project;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class EstimateGenerationDocumentPage extends Model
 {
@@ -60,5 +61,23 @@ class EstimateGenerationDocumentPage extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    public function drawingElements(): HasMany
+    {
+        return $this->hasMany(EstimateGenerationDrawingElement::class, 'page_id')
+            ->orderBy('id');
+    }
+
+    public function quantityTakeoffs(): HasMany
+    {
+        return $this->hasMany(EstimateGenerationQuantityTakeoff::class, 'page_id')
+            ->orderBy('id');
+    }
+
+    public function scopeInferences(): HasMany
+    {
+        return $this->hasMany(EstimateGenerationScopeInference::class, 'page_id')
+            ->orderBy('id');
     }
 }

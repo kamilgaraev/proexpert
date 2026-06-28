@@ -11,6 +11,8 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\Middleware\RateLimited;
+use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 
@@ -46,6 +48,31 @@ class GenerateEstimateDraftJob implements ShouldQueue
     ) {
         $this->onConnection(self::CONNECTION);
         $this->onQueue(self::QUEUE);
+    }
+
+    public function middleware(): array
+    {
+        return [
+            (new WithoutOverlapping('estimate-generation:draft:session:' . $this->sessionId))
+                ->releaseAfter(60)
+                ->expireAfter($this->timeout + 300),
+            (new WithoutOverlapping('estimate-generation:draft:' . $this->rateLimitKey()))
+                ->shared()
+                ->releaseAfter(120)
+                ->expireAfter($this->timeout + 300),
+            new RateLimited('estimate-generation-drafts'),
+        ];
+    }
+
+    public function rateLimitKey(): string
+    {
+        $organizationId = EstimateGenerationSession::query()
+            ->whereKey($this->sessionId)
+            ->value('organization_id');
+
+        return $organizationId !== null
+            ? 'organization:' . (int) $organizationId
+            : 'session:' . $this->sessionId;
     }
 
     public function handle(

@@ -26,6 +26,9 @@ class ConstructionSemanticParser
                 'text' => $text,
                 'facts' => $facts,
                 'facts_summary' => $factsSummary,
+                'drawing_elements' => is_array($document['drawing_elements'] ?? null) ? $document['drawing_elements'] : [],
+                'quantity_takeoffs' => is_array($document['quantity_takeoffs'] ?? null) ? $document['quantity_takeoffs'] : [],
+                'scope_inferences' => is_array($document['scope_inferences'] ?? null) ? $document['scope_inferences'] : ($factsSummary['scope_inferences'] ?? []),
                 'quality' => is_array($document['quality'] ?? null) ? $document['quality'] : [],
                 'source_refs' => $this->extractSourceRefs($text),
                 'scopes' => $this->extractScopes($text, false),
@@ -114,6 +117,9 @@ class ConstructionSemanticParser
         $trustedDocumentIds = [];
         $reviewRequiredDocuments = [];
         $problemFlags = [];
+        $drawingElements = [];
+        $quantityTakeoffs = [];
+        $scopeInferences = [];
 
         foreach ($documentsPayload as $document) {
             if (!$this->isDocumentTrusted($document)) {
@@ -187,6 +193,32 @@ class ConstructionSemanticParser
                 }
             }
 
+            foreach ($document['drawing_elements'] ?? [] as $element) {
+                if (is_array($element)) {
+                    $drawingElements[] = $element;
+                }
+            }
+
+            foreach ($document['quantity_takeoffs'] ?? [] as $takeoff) {
+                if (is_array($takeoff)) {
+                    $quantityTakeoffs[] = $takeoff;
+
+                    if (
+                        ($summary['total_area_m2'] ?? null) === null
+                        && ($takeoff['scope_key'] ?? null) === 'room_area'
+                        && isset($takeoff['quantity'])
+                    ) {
+                        $summary['total_area_m2'] = (float) $takeoff['quantity'];
+                    }
+                }
+            }
+
+            foreach ($document['scope_inferences'] ?? [] as $inference) {
+                if (is_array($inference)) {
+                    $scopeInferences[] = $inference;
+                }
+            }
+
             $text = trim((string) ($document['text'] ?? ''));
 
             if ($text !== '') {
@@ -199,6 +231,9 @@ class ConstructionSemanticParser
             'facts_summary' => $summary,
             'context_text' => trim(implode("\n", $contextLines)),
             'source_refs' => $this->uniqueSourceRefs($sourceRefs),
+            'drawing_elements' => $drawingElements,
+            'quantity_takeoffs' => $quantityTakeoffs,
+            'scope_inferences' => $scopeInferences,
             'trusted_document_ids' => array_values(array_unique($trustedDocumentIds)),
             'review_required_documents' => $reviewRequiredDocuments,
             'problem_flags' => array_values(array_unique($problemFlags)),

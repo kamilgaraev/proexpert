@@ -11,6 +11,8 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\Middleware\RateLimited;
+use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 
@@ -38,6 +40,31 @@ class ProcessEstimateGenerationDocumentJob implements ShouldQueue
     ) {
         $this->onConnection(self::CONNECTION);
         $this->onQueue(self::QUEUE);
+    }
+
+    public function middleware(): array
+    {
+        $context = $this->documentContext();
+
+        return [
+            (new WithoutOverlapping('estimate-generation:ocr:document:' . $this->documentId))
+                ->releaseAfter(60)
+                ->expireAfter($this->timeout + 300),
+            (new WithoutOverlapping('estimate-generation:ocr:session:' . ($context['session_id'] ?? 'document-' . $this->documentId)))
+                ->shared()
+                ->releaseAfter(60)
+                ->expireAfter($this->timeout + 300),
+            new RateLimited('estimate-generation-ocr-documents'),
+        ];
+    }
+
+    public function rateLimitKey(): string
+    {
+        $context = $this->documentContext();
+
+        return isset($context['organization_id'])
+            ? 'organization:' . (int) $context['organization_id']
+            : 'document:' . $this->documentId;
     }
 
     public function handle(OcrDocumentProcessor $processor): void
@@ -73,5 +100,31 @@ class ProcessEstimateGenerationDocumentJob implements ShouldQueue
             'document_id' => $this->documentId,
             'error' => $exception->getMessage(),
         ]);
+    }
+
+    /**
+     * @return array{organization_id?: int, session_id?: int}
+     */
+    private function documentContext(): array
+    {
+        $document = EstimateGenerationDocument::query()
+            ->whereKey($this->documentId)
+            ->first(['organization_id', 'session_id']);
+
+        if (!$document instanceof EstimateGenerationDocument) {
+            return [];
+        }
+
+        $context = [];
+
+        if ($document->organization_id !== null) {
+            $context['organization_id'] = (int) $document->organization_id;
+        }
+
+        if ($document->session_id !== null) {
+            $context['session_id'] = (int) $document->session_id;
+        }
+
+        return $context;
     }
 }

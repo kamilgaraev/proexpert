@@ -18,6 +18,7 @@ class EstimateValidationService
         $totalCost = 0.0;
         $workItemsCount = 0;
         $pricedWorkItemsCount = 0;
+        $operationWorkItemsCount = 0;
         $zeroPriceWorkItemsCount = 0;
         $normativeMatchedWorkItemsCount = 0;
         $normativeReviewPricedWorkItemsCount = 0;
@@ -52,6 +53,10 @@ class EstimateValidationService
                     $hasResources = ($workItem['materials'] ?? []) !== []
                         || ($workItem['labor'] ?? []) !== []
                         || ($workItem['machinery'] ?? []) !== [];
+
+                    if (!$isPricedItem) {
+                        $operationWorkItemsCount++;
+                    }
 
                     if (($workItem['quantity_basis'] ?? null) === null || $workItem['quantity_basis'] === '') {
                         $flags[] = 'missing_quantity_basis';
@@ -165,6 +170,7 @@ class EstimateValidationService
         $draft['quality_summary'] = $this->qualitySummary(
             $workItemsCount,
             $pricedWorkItemsCount,
+            $operationWorkItemsCount,
             $zeroPriceWorkItemsCount,
             $normativeMatchedWorkItemsCount,
             $normativeReviewPricedWorkItemsCount,
@@ -207,6 +213,7 @@ class EstimateValidationService
     private function qualitySummary(
         int $totalWorkItems,
         int $pricedWorkItems,
+        int $operationWorkItems,
         int $zeroPriceWorkItems,
         int $normativeMatchedWorkItems,
         int $normativeReviewPricedWorkItems,
@@ -222,6 +229,7 @@ class EstimateValidationService
         array $projectFlags
     ): array {
         $requiresNormativeReview = $normativeCandidateWorkItems + $normativeRejectedWorkItems + $normativeNotFoundWorkItems;
+        $pricedDenominator = max($totalWorkItems - $operationWorkItems, 0);
         $criticalFlags = array_values(array_intersect($projectFlags, ['missing_price', 'missing_resources', 'regional_context_missing']));
         $reviewFlags = array_values(array_intersect($projectFlags, [
             'requires_normative_review',
@@ -232,7 +240,7 @@ class EstimateValidationService
         $warningFlags = array_values(array_diff($projectFlags, $criticalFlags));
         $status = 'ready';
 
-        if ($totalWorkItems === 0 || $zeroPriceWorkItems === $totalWorkItems || $pricedWorkItems === 0) {
+        if ($pricedDenominator === 0 || $zeroPriceWorkItems === $pricedDenominator || $pricedWorkItems === 0) {
             $status = 'critical';
         } elseif ($zeroPriceWorkItems > 0 || $marketEstimateWorkItems > 0 || $criticalFlags !== [] || $requiresNormativeReview > 0 || $reviewFlags !== []) {
             $status = 'review_required';
@@ -242,6 +250,7 @@ class EstimateValidationService
             'status' => $status,
             'total_work_items' => $totalWorkItems,
             'priced_work_items' => $pricedWorkItems,
+            'operation_work_items' => $operationWorkItems,
             'zero_price_work_items' => $zeroPriceWorkItems,
             'not_calculated_work_items' => $notCalculatedWorkItems,
             'safe_norm_required_work_items' => $safeNormRequiredWorkItems,

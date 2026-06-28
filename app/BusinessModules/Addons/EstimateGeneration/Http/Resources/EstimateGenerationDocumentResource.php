@@ -35,6 +35,13 @@ class EstimateGenerationDocumentResource extends JsonResource
                 'flags' => $document->quality_flags ?? [],
             ],
             'facts_summary' => $document->facts_summary ?? [],
+            'understanding_summary' => [
+                'pages' => $this->countRelationOrAttribute($document, 'pages_count', 'pages'),
+                'facts' => $this->countRelationOrAttribute($document, 'facts_count', 'facts'),
+                'drawing_elements' => $this->countRelationOrAttribute($document, 'drawing_elements_count', 'drawingElements'),
+                'quantity_takeoffs' => $this->countRelationOrAttribute($document, 'quantity_takeoffs_count', 'quantityTakeoffs'),
+                'scope_inferences' => $this->countRelationOrAttribute($document, 'scope_inferences_count', 'scopeInferences'),
+            ],
             'error' => $this->errorPayload($document),
             'meta' => $document->meta ?? [],
             'created_at' => $document->created_at?->toISOString(),
@@ -58,5 +65,16 @@ class EstimateGenerationDocumentResource extends JsonResource
                 ? trans_message($document->error_message_key)
                 : null,
         ];
+    }
+
+    protected function countRelationOrAttribute(EstimateGenerationDocument $document, string $attribute, string $relation): int
+    {
+        if ($document->relationLoaded($relation)) {
+            return $document->{$relation}->count();
+        }
+
+        $value = $document->getAttribute($attribute);
+
+        return is_numeric($value) ? (int) $value : 0;
     }
 }

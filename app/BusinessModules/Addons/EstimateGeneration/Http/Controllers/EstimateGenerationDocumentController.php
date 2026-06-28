@@ -35,6 +35,7 @@ class EstimateGenerationDocumentController extends Controller
     {
         $this->guardSession($request, $project, $session);
         $documents = $session->documents()
+            ->withCount(['pages', 'facts', 'drawingElements', 'quantityTakeoffs', 'scopeInferences'])
             ->orderBy('id')
             ->get();
 
@@ -53,7 +54,13 @@ class EstimateGenerationDocumentController extends Controller
         $this->guardDocument($request, $project, $session, $document);
 
         return AdminResponse::success(
-            (new EstimateGenerationDocumentDetailResource($document->load(['pages', 'facts'])))->resolve()
+            (new EstimateGenerationDocumentDetailResource($document->load([
+                'pages',
+                'facts',
+                'drawingElements',
+                'quantityTakeoffs',
+                'scopeInferences',
+            ])))->resolve()
         );
     }
 

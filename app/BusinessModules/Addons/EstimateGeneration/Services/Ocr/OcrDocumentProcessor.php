@@ -10,6 +10,8 @@ use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentFact;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DrawingUnderstandingService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrProviderException;
 use App\Services\Storage\FileService;
@@ -29,6 +31,8 @@ class OcrDocumentProcessor
         private readonly DocumentFactMerger $factMerger,
         private readonly SpreadsheetDocumentExtractor $spreadsheetExtractor,
         private readonly PdfTextLayerExtractor $pdfTextLayerExtractor,
+        private readonly DrawingUnderstandingService $drawingUnderstandingService,
+        private readonly EstimatorScopeInferenceService $scopeInferenceService,
         private readonly OcrUsageLogger $usageLogger,
     ) {}
 
@@ -135,14 +139,6 @@ class OcrDocumentProcessor
                 );
             }
 
-            if ($pageCount > 1) {
-                throw new OcrProviderException(
-                    'estimate_generation.ocr_pdf_text_layer_missing',
-                    providerCode: 'pdf_text_layer_missing',
-                    context: ['page_count' => $pageCount],
-                );
-            }
-
             $this->statusService->markProcessing($document, 'ocr_request', 45);
         }
 
@@ -192,6 +188,9 @@ class OcrDocumentProcessor
     {
         DB::transaction(function () use ($document, $recognition, $facts, $factsSummary): void {
             $document->facts()->delete();
+            $document->drawingElements()->delete();
+            $document->quantityTakeoffs()->delete();
+            $document->scopeInferences()->delete();
             $document->pages()->delete();
             $pageIds = [];
 
@@ -218,6 +217,9 @@ class OcrDocumentProcessor
                 $pageIds[$page->pageNumber] = $pageModel->id;
             }
 
+            $drawingAnalysis = $this->drawingUnderstandingService->analyzeAndPersist($document, $recognition, $pageIds);
+            $scopeInferences = $this->scopeInferenceService->persistForDocument($document, $factsSummary, $drawingAnalysis);
+
             foreach ($facts as $fact) {
                 $pageNumber = (int) ($fact->sourceRef['page_number'] ?? 0);
 
@@ -242,7 +244,11 @@ class OcrDocumentProcessor
             $document->forceFill([
                 'extracted_text' => $recognition->text(),
                 'structured_payload' => $recognition->toArray(),
-                'facts_summary' => $factsSummary,
+                'facts_summary' => [
+                    ...$factsSummary,
+                    'drawing_understanding' => $drawingAnalysis->summary,
+                    'scope_inferences' => $scopeInferences,
+                ],
                 'page_count' => count($recognition->pages),
                 'processed_page_count' => count($recognition->pages),
                 'ocr_provider' => $recognition->provider,

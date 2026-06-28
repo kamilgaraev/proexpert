@@ -78,4 +78,22 @@ class EstimateGenerationDocument extends Model
         return $this->hasMany(EstimateGenerationDocumentFact::class, 'document_id')
             ->orderBy('id');
     }
+
+    public function drawingElements(): HasMany
+    {
+        return $this->hasMany(EstimateGenerationDrawingElement::class, 'document_id')
+            ->orderBy('id');
+    }
+
+    public function quantityTakeoffs(): HasMany
+    {
+        return $this->hasMany(EstimateGenerationQuantityTakeoff::class, 'document_id')
+            ->orderBy('id');
+    }
+
+    public function scopeInferences(): HasMany
+    {
+        return $this->hasMany(EstimateGenerationScopeInference::class, 'document_id')
+            ->orderBy('id');
+    }
 }

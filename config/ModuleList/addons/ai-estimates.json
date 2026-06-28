@@ -1,17 +1,17 @@
 {
   "name": "AI Генерация Смет",
   "slug": "ai-estimates",
-  "description": "Автоматическая генерация строительных смет с помощью искусственного интеллекта YandexGPT",
-  "version": "1.0.0",
+  "description": "AI-сметчик для составления смет по проектной документации, чертежам и сметно-нормативной базе",
+  "version": "2.0.0",
   "type": "addon",
   "billing_model": "subscription",
   "category": "estimates",
-  "class_name": "App\\BusinessModules\\Addons\\AIEstimates\\AIEstimatesModule",
+  "class_name": "App\\BusinessModules\\Addons\\EstimateGeneration\\EstimateGenerationModule",
   "price": 5000,
   "currency": "RUB",
   "duration_days": 30,
   "icon": "sparkles",
-  "color": "#7C3AED",
+  "color": "#2563EB",
   "can_deactivate": true,
   "is_active": true,
   "development_status": "beta",
@@ -22,55 +22,57 @@
   ],
   "conflicts": [],
   "features": [
-    "Автоматическая генерация смет на основе описания проекта",
-    "Умный подбор позиций из каталога EstimatePositionCatalog",
-    "Анализ похожих проектов организации для точности расчетов",
-    "Обработка загруженных файлов (чертежи, спецификации) с помощью OCR",
-    "Распознавание текста через Yandex Vision API",
-    "Автоматический расчет объемов и стоимости работ",
-    "Кеширование результатов для оптимизации",
-    "История всех генераций с возможностью повторного использования",
-    "Система обратной связи для обучения AI",
-    "Экспорт сгенерированных смет в PDF, Excel",
-    "Контроль лимитов использования",
-    "Интеграция с YandexGPT 5 Pro"
+    "Классификация проектных документов, чертежей, спецификаций и ведомостей",
+    "Распознавание текста, таблиц, штампов, размеров, помещений и инженерных обозначений",
+    "Расчет объемов работ по чертежам и проектным данным",
+    "Формирование состава работ как сметчиком по технологии строительства и нормативной базе",
+    "Подбор ФСНБ, ФЕР, ГЭСН, ФСБЦ и ресурсных позиций по кодам и смыслу работ",
+    "Расчет только по нормам, ресурсам и ценам из сметно-нормативной базы",
+    "Трассировка каждой расчетной строки до документа, страницы, нормы, ресурса и цены",
+    "Выделение спорных позиций и сметных допущений в проверку",
+    "Группировка результата в структуру локальных смет и разделов",
+    "Экспорт расчетного черновика в Excel"
   ],
   "permissions": [
     {
+      "name": "ai_estimates.create_session",
+      "description": "Создание сессии AI-сметчика"
+    },
+    {
+      "name": "ai_estimates.view_sessions",
+      "description": "Просмотр сессий AI-сметчика"
+    },
+    {
+      "name": "ai_estimates.upload_documents",
+      "description": "Загрузка проектных документов для AI-сметчика"
+    },
+    {
       "name": "ai_estimates.generate",
-      "description": "Генерировать сметы с помощью AI"
+      "description": "Формирование расчетного черновика сметы"
     },
     {
-      "name": "ai_estimates.view_history",
-      "description": "Просмотр истории генераций"
+      "name": "ai_estimates.review",
+      "description": "Проверка норм, объемов и сметных допущений"
     },
     {
-      "name": "ai_estimates.view_generation",
-      "description": "Просмотр конкретной генерации"
-    },
-    {
-      "name": "ai_estimates.provide_feedback",
-      "description": "Предоставление обратной связи"
+      "name": "ai_estimates.apply",
+      "description": "Применение рассчитанной сметы"
     },
     {
       "name": "ai_estimates.export",
-      "description": "Экспорт сгенерированных смет"
-    },
-    {
-      "name": "ai_estimates.clear_cache",
-      "description": "Очистка кеша"
+      "description": "Экспорт расчетного черновика"
     },
     {
       "name": "ai_estimates.configure",
-      "description": "Настройка модуля"
+      "description": "Настройка AI-сметчика"
     }
   ],
   "limits": {
-    "max_generations_per_month": 10,
-    "max_file_size_mb": 50,
-    "max_files_per_request": 10,
-    "concurrent_generations": 1,
-    "cache_ttl_hours": 24
+    "max_files_per_session": 25,
+    "max_pdf_pages_per_document": 200,
+    "max_file_size_mb": 200,
+    "max_parallel_document_jobs": 4,
+    "max_parallel_generation_jobs_per_organization": 2
   },
   "pricing": {
     "base_price": 5000,
@@ -78,52 +80,51 @@
     "currency": "RUB",
     "trial_days": 14,
     "features_included": [
-      "10 генераций смет в месяц",
-      "Обработка до 10 файлов за запрос",
-      "Доступ к истории генераций",
-      "Экспорт в PDF и Excel",
-      "Техническая поддержка"
+      "AI-сметчик по документации и чертежам",
+      "Нормо-центричный расчет без ориентировочных цен",
+      "Проверяемая трассировка до источников",
+      "Экспорт расчетного черновика"
     ]
   },
   "settings_schema": {
-    "ai_settings": {
-      "model": {
-        "type": "string",
-        "default": "yandexgpt-5-pro",
-        "description": "Модель YandexGPT"
-      },
-      "temperature": {
-        "type": "float",
-        "default": 0.3,
-        "min": 0,
-        "max": 1,
-        "description": "Температура генерации (креативность)"
-      },
-      "confidence_threshold": {
-        "type": "float",
-        "default": 0.75,
-        "min": 0,
-        "max": 1,
-        "description": "Порог уверенности для принятия позиций"
-      },
-      "use_project_history": {
+    "estimator": {
+      "require_normative_price": {
         "type": "boolean",
         "default": true,
-        "description": "Использовать историю проектов для улучшения точности"
+        "description": "Разрешать расчет только при наличии нормативной цены"
+      },
+      "require_source_traceability": {
+        "type": "boolean",
+        "default": true,
+        "description": "Требовать источник для каждой расчетной строки"
+      },
+      "allow_review_only_inferences": {
+        "type": "boolean",
+        "default": true,
+        "description": "Показывать спорные сметные выводы отдельно от рассчитанных строк"
       }
     },
-    "cache_settings": {
-      "enabled": {
-        "type": "boolean",
-        "default": true,
-        "description": "Включить кеширование результатов"
-      },
-      "ttl": {
+    "generation": {
+      "max_files_per_session": {
         "type": "integer",
-        "default": 3600,
-        "min": 60,
-        "max": 86400,
-        "description": "Время жизни кеша (секунды)"
+        "default": 25,
+        "min": 1,
+        "max": 100,
+        "description": "Максимальное количество файлов в сессии"
+      },
+      "max_parallel_document_jobs": {
+        "type": "integer",
+        "default": 4,
+        "min": 1,
+        "max": 16,
+        "description": "Максимальное количество параллельных задач обработки документов"
+      },
+      "max_parallel_generation_jobs_per_organization": {
+        "type": "integer",
+        "default": 2,
+        "min": 1,
+        "max": 8,
+        "description": "Максимальное количество параллельных задач генерации на организацию"
       }
     }
   }

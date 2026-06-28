@@ -13,6 +13,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\Qu
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\RollbackRegionalPricePeriodCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\SyncFgiscsBuildingResourcePricesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\SyncFgiscsRegionalPricesCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsClient;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsBuildingResourcePriceUpdateService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsRegionalCatalogService;
@@ -27,8 +29,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\Est
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\FgiscsBuildingResourcePriceSpreadsheetParser;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
+use App\BusinessModules\Addons\EstimateGeneration\Contracts\DrawingAnalysisProviderInterface;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\ConstructionDocumentClassifierService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DrawingUnderstandingService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\RuleBasedDrawingAnalysisProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationAuditService;
@@ -36,8 +42,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationExc
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningBootstrapService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningEvidenceService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSearchService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeScopeRuleCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\LLMNormativeCandidateReranker;
@@ -56,10 +64,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrPreflightServi
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrQualityAnalyzer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrUsageLogger;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\SpreadsheetDocumentExtractor;
+use App\BusinessModules\Addons\EstimateGeneration\Services\ProjectDocumentNormativeReferenceExtractor;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorReadinessService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\WorkItemGenerationService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\ExcelEstimateBuilder;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 
 class EstimateGenerationServiceProvider extends ServiceProvider
@@ -79,10 +90,17 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(OcrQualityAnalyzer::class);
         $this->app->singleton(ConstructionDocumentFactExtractor::class);
         $this->app->singleton(DocumentFactMerger::class);
+        $this->app->singleton(ConstructionDocumentClassifierService::class);
+        $this->app->singleton(RuleBasedDrawingAnalysisProvider::class);
+        $this->app->singleton(DrawingAnalysisProviderInterface::class, RuleBasedDrawingAnalysisProvider::class);
+        $this->app->singleton(DrawingUnderstandingService::class);
+        $this->app->singleton(EstimatorScopeInferenceService::class);
         $this->app->singleton(OcrDocumentProcessor::class);
         $this->app->singleton(ConstructionSemanticParser::class);
         $this->app->singleton(EstimateDecompositionService::class);
-        $this->app->singleton(WorkItemGenerationService::class);
+        $this->app->singleton(ProjectDocumentNormativeReferenceExtractor::class);
+        $this->app->singleton(EstimatorReadinessService::class);
+        $this->app->singleton(NormativeWorkItemPlannerService::class);
         $this->app->singleton(ResourceAssemblyService::class);
         $this->app->singleton(EstimatePricingService::class);
         $this->app->singleton(EstimateValidationService::class);
@@ -129,6 +147,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->loadMigrationsFrom(__DIR__ . '/migrations');
+        $this->registerQueueRateLimiters();
 
         $routesPath = __DIR__ . '/routes.php';
         if (file_exists($routesPath)) {
@@ -148,5 +167,22 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 RollbackRegionalPricePeriodCommand::class,
             ]);
         }
+    }
+
+    private function registerQueueRateLimiters(): void
+    {
+        RateLimiter::for('estimate-generation-drafts', static function (object $job): Limit {
+            $key = $job instanceof GenerateEstimateDraftJob ? $job->rateLimitKey() : 'global';
+
+            return Limit::perMinute(max(1, (int) config('estimate-generation.generation.max_draft_jobs_per_minute', 3)))
+                ->by($key);
+        });
+
+        RateLimiter::for('estimate-generation-ocr-documents', static function (object $job): Limit {
+            $key = $job instanceof ProcessEstimateGenerationDocumentJob ? $job->rateLimitKey() : 'global';
+
+            return Limit::perMinute(max(1, (int) config('estimate-generation.ocr.max_document_jobs_per_minute', 6)))
+                ->by($key);
+        });
     }
 }

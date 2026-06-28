@@ -12,11 +12,13 @@ return [
         'retry_attempts' => (int) env('ESTIMATE_GENERATION_OCR_RETRY_ATTEMPTS', 3),
         'retry_delay_ms' => (int) env('ESTIMATE_GENERATION_OCR_RETRY_DELAY_MS', 250),
         'max_sync_file_bytes' => 10 * 1024 * 1024,
+        'max_pdf_file_bytes' => (int) env('ESTIMATE_GENERATION_OCR_MAX_PDF_FILE_BYTES', 200 * 1024 * 1024),
         'max_spreadsheet_file_bytes' => 50 * 1024 * 1024,
         'max_spreadsheet_rows' => 2_000,
         'max_spreadsheet_columns' => 80,
         'max_image_pixels' => 20_000_000,
         'max_pdf_pages' => 200,
+        'max_document_jobs_per_minute' => (int) env('ESTIMATE_GENERATION_OCR_MAX_DOCUMENT_JOBS_PER_MINUTE', 6),
         'pdf_text_layer_min_chars' => (int) env('ESTIMATE_GENERATION_OCR_PDF_TEXT_LAYER_MIN_CHARS', 20),
         'pdf_parser_memory_limit' => env('ESTIMATE_GENERATION_OCR_PDF_PARSER_MEMORY_LIMIT', '512M'),
         'min_usable_quality_score' => 0.60,
@@ -48,5 +50,8 @@ return [
             'max_candidates' => (int) env('ESTIMATE_GENERATION_NORM_RERANKER_MAX_CANDIDATES', 8),
             'timeout_seconds' => (int) env('ESTIMATE_GENERATION_NORM_RERANKER_TIMEOUT', 15),
         ],
+    ],
+    'generation' => [
+        'max_draft_jobs_per_minute' => (int) env('ESTIMATE_GENERATION_MAX_DRAFT_JOBS_PER_MINUTE', 3),
     ],
 ];

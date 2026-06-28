@@ -1,7 +1,6 @@
 <?php
 
 return [
-    App\BusinessModules\Addons\AIEstimates\AIEstimatesServiceProvider::class,
     App\BusinessModules\Addons\EstimateGeneration\EstimateGenerationServiceProvider::class,
     App\BusinessModules\Core\Mdm\MdmServiceProvider::class,
     App\BusinessModules\Core\Payments\PaymentsServiceProvider::class,

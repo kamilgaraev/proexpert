@@ -30,17 +30,20 @@ class EstimateGenerationQualityGateService
         $totalCost = (float) ($totals['total_cost'] ?? $totals['base_total_cost'] ?? 0);
         $itemsCount = (int) ($totals['work_items_count'] ?? $this->countItems($draft));
         $pricedWorkItemsRaw = data_get($draft, 'quality_summary.priced_work_items');
+        $operationWorkItemsRaw = data_get($draft, 'quality_summary.operation_work_items');
         $notCalculatedWorkItemsRaw = data_get($draft, 'quality_summary.not_calculated_work_items');
         $safeNormRequiredWorkItemsRaw = data_get($draft, 'quality_summary.safe_norm_required_work_items');
         $hasPricingCoverageSummary = $pricedWorkItemsRaw !== null
             || $notCalculatedWorkItemsRaw !== null
             || $safeNormRequiredWorkItemsRaw !== null;
         $pricedWorkItems = (int) ($pricedWorkItemsRaw ?? 0);
+        $operationWorkItems = (int) ($operationWorkItemsRaw ?? 0);
+        $pricedDenominator = max($itemsCount - $operationWorkItems, 0);
         $notCalculatedWorkItems = (int) ($notCalculatedWorkItemsRaw ?? 0);
         $safeNormRequiredWorkItems = (int) ($safeNormRequiredWorkItemsRaw ?? 0);
         $pricingCoverageIncomplete = $hasPricingCoverageSummary
-            && $itemsCount > 0
-            && ($pricedWorkItems < $itemsCount || $notCalculatedWorkItems > 0 || $safeNormRequiredWorkItems > 0);
+            && $pricedDenominator > 0
+            && ($pricedWorkItems < $pricedDenominator || $notCalculatedWorkItems > 0 || $safeNormRequiredWorkItems > 0);
         $lineAnomalies = $this->lineAnomalies($draft, $totalCost, $area);
         $criticalFlags = [];
         $warningFlags = [];
@@ -123,7 +126,7 @@ class EstimateGenerationQualityGateService
                 'max_line_total' => $lineAnomalies !== [] ? max(array_column($lineAnomalies, 'total_cost')) : 0,
                 'max_line_share' => $lineAnomalies !== [] ? max(array_column($lineAnomalies, 'share')) : 0,
                 'anomalous_line_keys' => array_values(array_column($lineAnomalies, 'key')),
-                'pricing_coverage' => $itemsCount > 0 ? round($pricedWorkItems / $itemsCount, 4) : 0.0,
+                'pricing_coverage' => $pricedDenominator > 0 ? round($pricedWorkItems / $pricedDenominator, 4) : 0.0,
             ],
         );
     }

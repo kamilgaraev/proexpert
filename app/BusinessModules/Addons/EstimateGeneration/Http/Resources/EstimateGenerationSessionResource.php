@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Resources;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorReadinessService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -32,6 +33,7 @@ class EstimateGenerationSessionResource extends JsonResource
             'input' => $input,
             'analysis' => $analysis,
             'regional_context' => $regionalContext,
+            'estimator_readiness' => app(EstimatorReadinessService::class)->evaluate($session),
             'problem_flags' => $session->problem_flags ?? [],
             'applied_estimate_id' => $session->applied_estimate_id,
             'last_error' => $session->last_error,
