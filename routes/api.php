@@ -251,6 +251,7 @@ Route::prefix('v1/admin')->middleware('admin.response')->name('admin.')->group(f
         
         // Сюда можно будет добавлять require для новых файлов маршрутов админки
         require __DIR__ . '/api/v1/admin/dashboard.php';
+        require __DIR__ . '/api/v1/admin/knowledge_hub.php';
         require __DIR__ . '/api/v1/admin/profile.php';
         require __DIR__ . '/api/v1/admin/security.php';
         require __DIR__ . '/api/v1/admin/onboarding.php';

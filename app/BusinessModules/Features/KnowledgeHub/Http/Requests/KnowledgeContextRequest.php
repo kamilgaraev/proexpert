@@ -4,12 +4,11 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\KnowledgeHub\Http\Requests;
 
-use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeArticleKind;
 use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
-class KnowledgeArticleIndexRequest extends FormRequest
+class KnowledgeContextRequest extends FormRequest
 {
     public function authorize(): bool
     {
@@ -22,24 +21,12 @@ class KnowledgeArticleIndexRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'q' => ['nullable', 'string', 'max:120'],
-            'category' => ['nullable', 'string', 'max:120'],
-            'tag' => ['nullable', 'string', 'max:80'],
             'surface' => ['nullable', 'string', Rule::in(KnowledgeSurface::values())],
             'module' => ['nullable', 'string', 'max:120'],
             'module_slug' => ['nullable', 'string', 'max:120'],
             'permission_key' => ['nullable', 'string', 'max:160'],
             'context_key' => ['nullable', 'string', 'max:180'],
-            'kind' => [
-                'nullable',
-                'string',
-                Rule::in(array_map(
-                    static fn (KnowledgeArticleKind $kind): string => $kind->value,
-                    KnowledgeArticleKind::cases(),
-                )),
-            ],
-            'page' => ['nullable', 'integer', 'min:1'],
-            'per_page' => ['nullable', 'integer', 'min:1', 'max:30'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:8'],
         ];
     }
 }

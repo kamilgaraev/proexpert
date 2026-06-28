@@ -208,6 +208,7 @@ class RouteServiceProvider extends ServiceProvider
                     require base_path('routes/api/v1/mobile/dashboard.php');
                     require base_path('routes/api/v1/mobile/modules.php');
                     require base_path('routes/api/v1/mobile/companions.php');
+                    require base_path('routes/api/v1/mobile/knowledge_hub.php');
                     // require base_path('routes/api/v1/mobile/log.php'); // Removed
                     require base_path('routes/api/v1/mobile/projects.php');
                     require base_path('routes/api/v1/mobile/warehouse.php');

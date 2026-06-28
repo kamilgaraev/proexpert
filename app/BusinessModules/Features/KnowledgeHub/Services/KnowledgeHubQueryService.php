@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\KnowledgeHub\Services;
 
+use App\BusinessModules\Features\KnowledgeHub\DTOs\KnowledgeAccessContext;
 use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeArticleKind;
 use App\BusinessModules\Features\KnowledgeHub\Models\KnowledgeArticle;
 use App\BusinessModules\Features\KnowledgeHub\Models\KnowledgeCategory;
@@ -16,6 +17,12 @@ class KnowledgeHubQueryService
     private const DEFAULT_PER_PAGE = 12;
     private const MAX_PER_PAGE = 30;
 
+    public function __construct(
+        private readonly KnowledgeAccessFilter $accessFilter,
+        private readonly KnowledgeFullTextSearchService $fullTextSearch,
+    ) {
+    }
+
     /**
      * @return array{
      *     categories: Collection<int, KnowledgeCategory>,
@@ -24,21 +31,35 @@ class KnowledgeHubQueryService
      *     summary: array<string, int>
      * }
      */
-    public function overview(): array
+    public function overview(?KnowledgeAccessContext $context = null): array
     {
         $categories = KnowledgeCategory::query()
             ->active()
             ->ordered()
             ->withCount([
-                'articles as articles_count' => fn (Builder $query): Builder => $query->published()->knowledge(),
+                'articles as articles_count' => function (Builder $query) use ($context): Builder {
+                    $query->published()->knowledge();
+
+                    if ($context !== null) {
+                        $this->accessFilter->apply($query, $context);
+                    }
+
+                    return $query;
+                },
             ])
             ->get();
 
-        $featuredArticles = KnowledgeArticle::query()
+        $featuredArticlesQuery = KnowledgeArticle::query()
             ->published()
             ->knowledge()
             ->featured()
-            ->with('category')
+            ->with(['category', 'parent']);
+
+        if ($context !== null) {
+            $this->accessFilter->apply($featuredArticlesQuery, $context);
+        }
+
+        $featuredArticles = $featuredArticlesQuery
             ->orderBy('sort_order')
             ->orderByDesc('published_at')
             ->limit(6)
@@ -58,7 +79,7 @@ class KnowledgeHubQueryService
             'latest_changelog' => $latestChangelog,
             'summary' => [
                 'categories_count' => $categories->count(),
-                'articles_count' => KnowledgeArticle::query()->published()->knowledge()->count(),
+                'articles_count' => $this->accessibleArticleQuery($context)->count(),
                 'changelog_count' => KnowledgeArticle::query()->published()->changelog()->count(),
             ],
         ];
@@ -67,12 +88,10 @@ class KnowledgeHubQueryService
     /**
      * @param array<string, mixed> $filters
      */
-    public function articles(array $filters): LengthAwarePaginator
+    public function articles(array $filters, ?KnowledgeAccessContext $context = null): LengthAwarePaginator
     {
-        $query = KnowledgeArticle::query()
-            ->published()
-            ->knowledge()
-            ->with('category');
+        $query = $this->accessibleArticleQuery($context)
+            ->with(['category', 'parent']);
 
         $this->applyCommonFilters($query, $filters, includeChangelog: false);
 
@@ -111,13 +130,19 @@ class KnowledgeHubQueryService
             );
     }
 
-    public function findArticleBySlug(string $slug): ?KnowledgeArticle
+    public function findArticleBySlug(string $slug, ?KnowledgeAccessContext $context = null): ?KnowledgeArticle
     {
-        return KnowledgeArticle::query()
-            ->published()
-            ->knowledge()
-            ->with('category')
+        return $this->accessibleArticleQuery($context)
+            ->with(['category', 'parent', 'children'])
             ->where('slug', $slug)
+            ->first();
+    }
+
+    public function findArticleById(int $id, ?KnowledgeAccessContext $context = null): ?KnowledgeArticle
+    {
+        return $this->accessibleArticleQuery($context)
+            ->with(['category', 'parent'])
+            ->whereKey($id)
             ->first();
     }
 
@@ -134,16 +159,14 @@ class KnowledgeHubQueryService
     /**
      * @return Collection<int, KnowledgeArticle>
      */
-    public function related(KnowledgeArticle $article): Collection
+    public function related(KnowledgeArticle $article, ?KnowledgeAccessContext $context = null): Collection
     {
         if ($article->category_id === null) {
             return collect();
         }
 
-        return KnowledgeArticle::query()
-            ->published()
-            ->knowledge()
-            ->with('category')
+        return $this->accessibleArticleQuery($context)
+            ->with(['category', 'parent'])
             ->where('id', '!=', $article->id)
             ->where('category_id', $article->category_id)
             ->orderByDesc('is_featured')
@@ -159,7 +182,7 @@ class KnowledgeHubQueryService
     {
         $search = trim((string) ($filters['q'] ?? ''));
         if ($search !== '') {
-            $query->search($search);
+            $this->fullTextSearch->apply($query, $search);
         }
 
         $category = trim((string) ($filters['category'] ?? ''));
@@ -184,6 +207,19 @@ class KnowledgeHubQueryService
         if (KnowledgeArticleKind::tryFrom($kind) !== null) {
             $query->where('kind', $kind);
         }
+    }
+
+    private function accessibleArticleQuery(?KnowledgeAccessContext $context): Builder
+    {
+        $query = KnowledgeArticle::query()
+            ->published()
+            ->knowledge();
+
+        if ($context !== null) {
+            $this->accessFilter->apply($query, $context);
+        }
+
+        return $query;
     }
 
     /**

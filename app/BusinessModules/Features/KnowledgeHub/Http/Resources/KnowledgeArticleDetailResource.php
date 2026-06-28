@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\KnowledgeHub\Http\Resources;
 
+use App\BusinessModules\Features\KnowledgeHub\Models\KnowledgeArticle;
 use App\BusinessModules\Features\KnowledgeHub\Services\KnowledgeHubContentSanitizer;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -32,7 +33,11 @@ class KnowledgeArticleDetailResource extends JsonResource
 
         return array_merge($base, [
             'content' => $content,
+            'plain_text' => $this->plainText((string) $content),
             'table_of_contents' => $this->tableOfContents((string) $content),
+            'children' => $this->resource instanceof KnowledgeArticle && $this->resource->relationLoaded('children')
+                ? KnowledgeArticleListResource::collection($this->children)->resolve($request)
+                : [],
             'related' => KnowledgeArticleListResource::collection($this->related ?? collect())->resolve($request),
         ]);
     }
@@ -62,5 +67,16 @@ class KnowledgeArticleDetailResource extends JsonResource
             ->filter(fn (array $item): bool => $item['title'] !== '')
             ->values()
             ->all();
+    }
+
+    private function plainText(string $content): string
+    {
+        $plainText = trim((string) ($this->content_plain_text ?? ''));
+
+        if ($plainText !== '') {
+            return $plainText;
+        }
+
+        return trim((string) preg_replace('/\s+/u', ' ', html_entity_decode(strip_tags($content))));
     }
 }

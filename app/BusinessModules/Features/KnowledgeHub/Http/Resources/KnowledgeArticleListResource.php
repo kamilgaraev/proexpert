@@ -29,10 +29,26 @@ class KnowledgeArticleListResource extends JsonResource
             'title' => $this->title,
             'slug' => $this->slug,
             'excerpt' => $this->excerpt,
+            'parent_id' => $this->parent_id,
+            'depth' => (int) ($this->depth ?? 0),
+            'audiences' => $this->audiences ?? [],
+            'surfaces' => $this->surfaces ?? [],
+            'module_slugs' => $this->module_slugs ?? [],
+            'context_keys' => $this->context_keys ?? [],
             'category' => $this->whenLoaded(
                 'category',
                 fn (): ?KnowledgeCategoryResource => $this->category !== null
                     ? new KnowledgeCategoryResource($this->category)
+                    : null,
+            ),
+            'parent' => $this->whenLoaded(
+                'parent',
+                fn (): ?array => $this->parent !== null
+                    ? [
+                        'id' => $this->parent->id,
+                        'title' => $this->parent->title,
+                        'slug' => $this->parent->slug,
+                    ]
                     : null,
             ),
             'tags' => $this->tags ?? [],
@@ -41,6 +57,7 @@ class KnowledgeArticleListResource extends JsonResource
             'published_at' => $this->published_at?->toIso8601String(),
             'reading_time' => (int) ($this->reading_time ?? 1),
             'is_featured' => (bool) $this->is_featured,
+            'is_pinned' => (bool) ($this->is_pinned ?? false),
         ];
     }
 }

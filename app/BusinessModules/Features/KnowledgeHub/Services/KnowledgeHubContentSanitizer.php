@@ -29,6 +29,7 @@ class KnowledgeHubContentSanitizer
         'h3',
         'i',
         'li',
+        'mark',
         'ol',
         'p',
         'pre',

@@ -6,6 +6,8 @@ namespace App\Filament\Resources;
 
 use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeArticleKind;
 use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeArticleStatus;
+use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeAudience;
+use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
 use App\BusinessModules\Features\KnowledgeHub\Models\KnowledgeArticle;
 use App\BusinessModules\Features\KnowledgeHub\Models\KnowledgeCategory;
 use App\Filament\Resources\KnowledgeArticleResource\Pages;
@@ -60,7 +62,7 @@ class KnowledgeArticleResource extends Resource
     public static function form(Schema $schema): Schema
     {
         return $schema->components([
-            Section::make(trans_message('knowledge_hub.filament.article_label'))
+            Section::make(trans_message('knowledge_hub.filament.section_publication'))
                 ->schema([
                     Forms\Components\TextInput::make('title')
                         ->label(trans_message('knowledge_hub.filament.field_title'))
@@ -90,42 +92,100 @@ class KnowledgeArticleResource extends Resource
                             ->all())
                         ->searchable()
                         ->preload(),
+                    Forms\Components\Select::make('parent_id')
+                        ->label(trans_message('knowledge_hub.filament.field_parent'))
+                        ->options(function (?KnowledgeArticle $record): array {
+                            $query = KnowledgeArticle::query();
+
+                            if ($record !== null && $record->exists) {
+                                $pathPrefix = $record->path !== null && $record->path !== ''
+                                    ? $record->path
+                                    : (string) $record->id;
+
+                                $query
+                                    ->whereKeyNot($record->id)
+                                    ->where(function (Builder $builder) use ($pathPrefix): void {
+                                        $builder->whereNull('path')
+                                            ->orWhere('path', 'not like', $pathPrefix.'.%');
+                                    });
+                            }
+
+                            return $query
+                                ->orderBy('title')
+                                ->pluck('title', 'id')
+                                ->all();
+                        })
+                        ->searchable()
+                        ->preload(),
                     Forms\Components\TextInput::make('sort_order')
                         ->label(trans_message('knowledge_hub.filament.field_sort_order'))
                         ->numeric()
                         ->default(0),
                     Forms\Components\Toggle::make('is_featured')
                         ->label(trans_message('knowledge_hub.filament.field_is_featured')),
+                    Forms\Components\Toggle::make('is_pinned')
+                        ->label(trans_message('knowledge_hub.filament.field_is_pinned')),
+                    Forms\Components\TextInput::make('help_priority')
+                        ->label(trans_message('knowledge_hub.filament.field_help_priority'))
+                        ->numeric()
+                        ->minValue(1)
+                        ->default(100),
                     Forms\Components\TextInput::make('reading_time')
                         ->label(trans_message('knowledge_hub.filament.field_reading_time'))
                         ->numeric()
                         ->minValue(1)
                         ->default(1),
+                    Forms\Components\DateTimePicker::make('published_at')
+                        ->label(trans_message('knowledge_hub.filament.field_published_at')),
+                ])
+                ->columns(2),
+            Section::make(trans_message('knowledge_hub.filament.section_body'))
+                ->schema([
                     Forms\Components\Textarea::make('excerpt')
                         ->label(trans_message('knowledge_hub.filament.field_excerpt'))
                         ->rows(3)
                         ->maxLength(600)
                         ->columnSpanFull(),
-                    Forms\Components\Textarea::make('content')
+                    Forms\Components\RichEditor::make('content')
                         ->label(trans_message('knowledge_hub.filament.field_content'))
-                        ->rows(16)
                         ->columnSpanFull(),
                     Forms\Components\TagsInput::make('tags')
                         ->label(trans_message('knowledge_hub.filament.field_tags'))
                         ->columnSpanFull(),
                 ])
+                ->columns(1),
+            Section::make(trans_message('knowledge_hub.filament.section_targeting'))
+                ->schema([
+                    Forms\Components\Select::make('audiences')
+                        ->label(trans_message('knowledge_hub.filament.field_audiences'))
+                        ->options(KnowledgeAudience::options())
+                        ->multiple()
+                        ->preload(),
+                    Forms\Components\Select::make('surfaces')
+                        ->label(trans_message('knowledge_hub.filament.field_surfaces'))
+                        ->options(KnowledgeSurface::options())
+                        ->multiple()
+                        ->preload(),
+                    Forms\Components\TagsInput::make('module_slugs')
+                        ->label(trans_message('knowledge_hub.filament.field_module_slugs'))
+                        ->columnSpanFull(),
+                    Forms\Components\TagsInput::make('permission_keys')
+                        ->label(trans_message('knowledge_hub.filament.field_permission_keys'))
+                        ->columnSpanFull(),
+                    Forms\Components\TagsInput::make('context_keys')
+                        ->label(trans_message('knowledge_hub.filament.field_context_keys'))
+                        ->columnSpanFull(),
+                ])
                 ->columns(2),
-            Section::make(trans_message('knowledge_hub.kinds.changelog'))
+            Section::make(trans_message('knowledge_hub.filament.section_changelog'))
                 ->schema([
                     Forms\Components\TextInput::make('release_version')
                         ->label(trans_message('knowledge_hub.filament.field_release_version'))
                         ->maxLength(120),
                     Forms\Components\DatePicker::make('release_date')
                         ->label(trans_message('knowledge_hub.filament.field_release_date')),
-                    Forms\Components\DateTimePicker::make('published_at')
-                        ->label(trans_message('knowledge_hub.filament.field_published_at')),
                 ])
-                ->columns(3),
+                ->columns(2),
         ]);
     }
 
@@ -150,9 +210,17 @@ class KnowledgeArticleResource extends Resource
                             : ''),
                     Infolists\Components\TextEntry::make('category.title')
                         ->label(trans_message('knowledge_hub.filament.field_category')),
+                    Infolists\Components\TextEntry::make('parent.title')
+                        ->label(trans_message('knowledge_hub.filament.field_parent')),
                     Infolists\Components\TextEntry::make('excerpt')
                         ->label(trans_message('knowledge_hub.filament.field_excerpt'))
                         ->columnSpanFull(),
+                    Infolists\Components\TextEntry::make('surfaces')
+                        ->label(trans_message('knowledge_hub.filament.field_surfaces'))
+                        ->badge(),
+                    Infolists\Components\TextEntry::make('module_slugs')
+                        ->label(trans_message('knowledge_hub.filament.field_module_slugs'))
+                        ->badge(),
                     Infolists\Components\TextEntry::make('published_at')
                         ->label(trans_message('knowledge_hub.filament.field_published_at'))
                         ->dateTime('d.m.Y H:i'),
@@ -189,8 +257,22 @@ class KnowledgeArticleResource extends Resource
                     ->label(trans_message('knowledge_hub.filament.field_category'))
                     ->badge()
                     ->toggleable(),
+                Tables\Columns\TextColumn::make('parent.title')
+                    ->label(trans_message('knowledge_hub.filament.field_parent'))
+                    ->toggleable(isToggledHiddenByDefault: true),
+                Tables\Columns\TextColumn::make('surfaces')
+                    ->label(trans_message('knowledge_hub.filament.field_surfaces'))
+                    ->badge()
+                    ->toggleable(),
+                Tables\Columns\TextColumn::make('module_slugs')
+                    ->label(trans_message('knowledge_hub.filament.field_module_slugs'))
+                    ->badge()
+                    ->toggleable(isToggledHiddenByDefault: true),
                 Tables\Columns\IconColumn::make('is_featured')
                     ->label(trans_message('knowledge_hub.filament.field_is_featured'))
+                    ->boolean(),
+                Tables\Columns\IconColumn::make('is_pinned')
+                    ->label(trans_message('knowledge_hub.filament.field_is_pinned'))
                     ->boolean(),
                 Tables\Columns\TextColumn::make('published_at')
                     ->label(trans_message('knowledge_hub.filament.field_published_at'))
@@ -211,6 +293,12 @@ class KnowledgeArticleResource extends Resource
                         ->ordered()
                         ->pluck('title', 'id')
                         ->all()),
+                Tables\Filters\SelectFilter::make('surfaces')
+                    ->label(trans_message('knowledge_hub.filament.field_surfaces'))
+                    ->options(KnowledgeSurface::options())
+                    ->query(fn (Builder $query, array $data): Builder => empty($data['value'])
+                        ? $query
+                        : $query->whereJsonContains('surfaces', $data['value'])),
             ])
             ->defaultSort('published_at', 'desc')
             ->actions([
