@@ -83,6 +83,7 @@ class EstimateGenerationPackagePresenter
         $workComposition = is_array($metadata['work_composition'] ?? null)
             ? array_values($metadata['work_composition'])
             : [];
+        $flags = $item->flags ?? [];
 
         return [
             'id' => $item->id,
@@ -91,6 +92,7 @@ class EstimateGenerationPackagePresenter
             'level' => $item->level,
             'item_type' => $item->item_type,
             'name' => $item->name,
+            'work_category' => $metadata['work_category'] ?? null,
             'unit' => $item->unit,
             'quantity' => $item->quantity,
             'quantity_basis' => $item->quantity_basis ?? [],
@@ -98,6 +100,11 @@ class EstimateGenerationPackagePresenter
             'pricing_status' => $metadata['pricing_status'] ?? $this->pricingStatus($item),
             'pricing_blocker' => $metadata['pricing_blocker'] ?? null,
             'pricing_blocker_message' => $metadata['pricing_blocker_message'] ?? null,
+            'normative_rate_code' => $metadata['normative_match']['code'] ?? null,
+            'normative_match' => is_array($metadata['normative_match'] ?? null) ? $metadata['normative_match'] : null,
+            'normative_candidates' => is_array($metadata['normative_candidates'] ?? null)
+                ? array_values($metadata['normative_candidates'])
+                : [],
             'normative_status' => $item->normative_status,
             'normative_confidence' => $item->normative_confidence,
             'unit_price' => $item->unit_price,
@@ -107,7 +114,10 @@ class EstimateGenerationPackagePresenter
             'total_cost' => $item->total_cost,
             'resources' => $item->resources ?? [],
             'work_composition' => $workComposition,
-            'flags' => $item->flags ?? [],
+            'source_refs' => is_array($metadata['source_refs'] ?? null) ? array_values($metadata['source_refs']) : [],
+            'confidence' => isset($metadata['confidence']) ? (float) $metadata['confidence'] : ($item->normative_confidence ?? 0.7),
+            'validation_flags' => $flags,
+            'flags' => $flags,
             'metadata' => $metadata,
             'sort_order' => $item->sort_order,
         ];

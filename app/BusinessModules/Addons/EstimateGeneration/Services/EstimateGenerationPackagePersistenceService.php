@@ -200,6 +200,7 @@ class EstimateGenerationPackagePersistenceService
                 'pricing_blocker' => $workItem['pricing_blocker'] ?? null,
                 'pricing_blocker_message' => $workItem['pricing_blocker_message'] ?? null,
                 'source_refs' => $workItem['source_refs'] ?? [],
+                'work_category' => $workItem['work_category'] ?? null,
                 'confidence' => $workItem['confidence'] ?? null,
                 ...($workItem['metadata'] ?? []),
                 'work_composition' => $workComposition,
