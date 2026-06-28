@@ -27,7 +27,11 @@ final class NormativeWorkItemPlannerService
         }
 
         foreach ($this->definitions($localEstimate, $section, $analysis, $quantityModel) as $index => $definition) {
-            $items[] = $this->workItemFromDefinition($definition, $localEstimate, $section, $analysis, $quantityModel, $index);
+            $item = $this->workItemFromDefinition($definition, $localEstimate, $section, $analysis, $quantityModel, $index);
+
+            if ($item !== null) {
+                $items[] = $item;
+            }
         }
 
         $items = $this->uniquePricedItems($items);
@@ -72,7 +76,7 @@ final class NormativeWorkItemPlannerService
      * @param array<string, mixed> $section
      * @param array<string, mixed> $analysis
      * @param array<string, mixed> $quantityModel
-     * @return array<string, mixed>
+     * @return array<string, mixed>|null
      */
     private function workItemFromDefinition(
         array $definition,
@@ -81,8 +85,13 @@ final class NormativeWorkItemPlannerService
         array $analysis,
         array $quantityModel,
         int $index
-    ): array {
+    ): ?array {
         $quantity = $this->quantityForDefinition($definition, $analysis, $quantityModel);
+
+        if ($this->shouldSkipUnsupportedPlannerDefinition($localEstimate, $quantity)) {
+            return null;
+        }
+
         $packageKey = (string) ($localEstimate['key'] ?? 'package');
         $key = $packageKey . '-norm-intent-' . ($index + 1);
         $flags = ['normative_required'];
@@ -108,6 +117,7 @@ final class NormativeWorkItemPlannerService
             metadata: [
                 'generation_source' => $definition['generation_source'] ?? 'normative_intent_catalog',
                 'quantity_key' => $definition['quantity_key'],
+                'quantity_source' => $quantity['source'],
                 'package_key' => $packageKey,
                 ...($definition['metadata'] ?? []),
             ],
@@ -468,7 +478,7 @@ final class NormativeWorkItemPlannerService
      * @param array<string, mixed> $definition
      * @param array<string, mixed> $analysis
      * @param array<string, mixed> $quantityModel
-     * @return array{value: float, unit: string, basis: string, confidence: float, source_refs: array<int, array<string, mixed>>, review_required: bool}
+     * @return array{value: float, unit: string, basis: string, confidence: float, source_refs: array<int, array<string, mixed>>, review_required: bool, source: string}
      */
     private function quantityForDefinition(array $definition, array $analysis, array $quantityModel): array
     {
@@ -485,6 +495,7 @@ final class NormativeWorkItemPlannerService
                     ? $this->normalizeSourceRefs($quantities[$quantityKey]['source_refs'])
                     : $this->sourceRefsForQuantityKey($analysis, $quantityKey),
                 'review_required' => (bool) ($quantities[$quantityKey]['review_required'] ?? false),
+                'source' => (string) ($quantities[$quantityKey]['source'] ?? 'document_quantity'),
             ];
         }
 
@@ -499,6 +510,7 @@ final class NormativeWorkItemPlannerService
                 'confidence' => (float) ($inference['confidence'] ?? 0.74),
                 'source_refs' => isset($inference['source_ref']) && is_array($inference['source_ref']) ? [$inference['source_ref']] : [],
                 'review_required' => (bool) ($inference['review_required'] ?? true),
+                'source' => 'scope_inference',
             ];
         }
 
@@ -509,7 +521,21 @@ final class NormativeWorkItemPlannerService
             'confidence' => 0.48,
             'source_refs' => [],
             'review_required' => true,
+            'source' => 'planner_fallback',
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $localEstimate
+     * @param array<string, mixed> $quantity
+     */
+    private function shouldSkipUnsupportedPlannerDefinition(array $localEstimate, array $quantity): bool
+    {
+        $packageKey = (string) ($localEstimate['key'] ?? '');
+
+        return in_array($packageKey, ['external_networks', 'siteworks', 'roads'], true)
+            && ($quantity['source'] ?? null) === 'planner_fallback'
+            && ($quantity['source_refs'] ?? []) === [];
     }
 
     /**
@@ -638,7 +664,7 @@ final class NormativeWorkItemPlannerService
 
     /**
      * @param array<int, mixed> $sourceRefs
-     * @return array{value: float, unit: string, basis: string, confidence: float, source_refs: array<int, array<string, mixed>>, review_required: bool}
+     * @return array{value: float, unit: string, basis: string, confidence: float, source_refs: array<int, array<string, mixed>>, review_required: bool, source: string}
      */
     private function modelQuantity(
         float $value,
@@ -646,7 +672,8 @@ final class NormativeWorkItemPlannerService
         string $basis,
         float $confidence,
         array $sourceRefs,
-        bool $reviewRequired = false
+        bool $reviewRequired = false,
+        string $source = 'document_quantity'
     ): array {
         return [
             'value' => round($value, 4),
@@ -655,6 +682,7 @@ final class NormativeWorkItemPlannerService
             'confidence' => round(max(min($confidence, 0.98), 0.35), 4),
             'source_refs' => $this->normalizeSourceRefs($sourceRefs),
             'review_required' => $reviewRequired,
+            'source' => $source,
         ];
     }
 

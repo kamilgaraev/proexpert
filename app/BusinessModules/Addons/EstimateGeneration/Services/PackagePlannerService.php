@@ -19,6 +19,8 @@ class PackagePlannerService
             $packages = $this->housePackages();
         }
 
+        $packages = $this->withOptionalSitePackages($packages, $profile);
+
         return new PackagePlanData(
             packages: array_map(fn (array $package, int $index): array => $this->packagePayload($package, $index), $packages, array_keys($packages)),
             assumptions: $profile->assumptions,
@@ -77,6 +79,7 @@ class PackagePlannerService
             assumptions: is_array($analysis['assumptions'] ?? null) ? array_values($analysis['assumptions']) : [],
             missingInputs: is_array($analysis['missing_inputs'] ?? null) ? array_values($analysis['missing_inputs']) : [],
             confidence: isset($analysis['confidence']) ? (float) $analysis['confidence'] : 0.65,
+            planningSignals: $this->planningSignalsFromAnalysis($analysis, $description),
         );
     }
 
@@ -139,8 +142,6 @@ class PackagePlannerService
             $this->package('ventilation', 'Вентиляция', 'ventilation', 8, 20),
             $this->package('rough_finishing', 'Черновая отделка', 'finishing', 24, 52),
             $this->package('finish_finishing', 'Чистовая отделка', 'finishing', 28, 60),
-            $this->package('external_networks', 'Наружные сети', 'site', 14, 32),
-            $this->package('siteworks', 'Благоустройство', 'site', 14, 32),
         ];
     }
 
@@ -165,8 +166,6 @@ class PackagePlannerService
             $this->package('fire_safety', 'Пожарная безопасность', 'engineering', 50, 110),
             $this->package('water_sewerage', 'Водоснабжение и канализация', 'plumbing', 35, 80),
             $this->package('low_current', 'Слаботочные системы', 'electrical', 25, 60),
-            $this->package('external_networks', 'Наружные сети', 'site', 40, 90),
-            $this->package('roads', 'Дороги и площадки', 'site', 35, 80),
         ];
     }
 
@@ -196,9 +195,88 @@ class PackagePlannerService
             $this->package('fire_safety', 'Пожарная безопасность', 'engineering', 50, 110),
             $this->package('water_sewerage', 'Водоснабжение и канализация', 'plumbing', 35, 80),
             $this->package('low_current', 'Слаботочные системы', 'electrical', 25, 60),
-            $this->package('external_networks', 'Наружные сети', 'site', 40, 90),
-            $this->package('roads', 'Дороги и площадки', 'site', 35, 80),
         ];
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $packages
+     * @return array<int, array<string, mixed>>
+     */
+    private function withOptionalSitePackages(array $packages, ObjectProfileData $profile): array
+    {
+        $largeObject = $this->isWarehouse($profile) || $this->isMixedWarehouseOffice($profile);
+
+        if ($this->hasPlanningSignal($profile, 'external_networks')) {
+            $packages[] = $this->package('external_networks', 'Наружные сети', 'site', $largeObject ? 40 : 14, $largeObject ? 90 : 32);
+        }
+
+        if ($this->hasPlanningSignal($profile, 'siteworks')) {
+            $packages[] = $this->package('siteworks', 'Благоустройство', 'site', $largeObject ? 35 : 14, $largeObject ? 80 : 32);
+        }
+
+        if ($this->hasPlanningSignal($profile, 'roads')) {
+            $packages[] = $this->package('roads', 'Дороги и площадки', 'site', $largeObject ? 35 : 14, $largeObject ? 80 : 32);
+        }
+
+        return $packages;
+    }
+
+    private function hasPlanningSignal(ObjectProfileData $profile, string $key): bool
+    {
+        return ($profile->planningSignals[$key] ?? false) === true;
+    }
+
+    /**
+     * @param array<string, mixed> $analysis
+     * @return array<string, bool>
+     */
+    private function planningSignalsFromAnalysis(array $analysis, string $description): array
+    {
+        $detectedStructure = is_array($analysis['detected_structure'] ?? null) ? $analysis['detected_structure'] : [];
+        $fragments = [$description];
+
+        foreach (['zones', 'constructives'] as $key) {
+            foreach (($detectedStructure[$key] ?? []) as $value) {
+                if (is_string($value) && trim($value) !== '') {
+                    $fragments[] = $value;
+                }
+            }
+        }
+
+        foreach (($detectedStructure['scopes'] ?? []) as $scope) {
+            if (!is_array($scope)) {
+                continue;
+            }
+
+            foreach (['title', 'scope_type'] as $field) {
+                if (is_string($scope[$field] ?? null) && trim($scope[$field]) !== '') {
+                    $fragments[] = $scope[$field];
+                }
+            }
+        }
+
+        $haystack = mb_strtolower(implode(' ', $fragments));
+
+        return [
+            'external_networks' => $this->containsExternalNetworkSignal($haystack),
+            'siteworks' => $this->containsSiteworksSignal($haystack),
+            'roads' => $this->containsRoadsSignal($haystack),
+        ];
+    }
+
+    private function containsExternalNetworkSignal(string $text): bool
+    {
+        return preg_match('/(?:external\s+networks?|utilities|utility|наружн\p{L}*\s+(?:сет|инженер)|внешн\p{L}*\s+сет|подключен\p{L}*\s+к\s+сет)/u', $text) === 1;
+    }
+
+    private function containsSiteworksSignal(string $text): bool
+    {
+        return preg_match('/(?:landscap\p{L}*|благоустрой\p{L}*|озелен\p{L}*|отмостк\p{L}*|тротуар\p{L}*|наружн\p{L}*\s+площадк\p{L}*)/u', $text) === 1;
+    }
+
+    private function containsRoadsSignal(string $text): bool
+    {
+        return preg_match('/(?:roads?|driveway|parking|дорог\p{L}*|проезд\p{L}*|подъезд\p{L}*|парковк\p{L}*|площадк\p{L}*\s+для\s+(?:транспорт|авто))/u', $text) === 1;
     }
 
     /**

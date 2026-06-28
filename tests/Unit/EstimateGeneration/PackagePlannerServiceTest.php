@@ -6,7 +6,7 @@ namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\ObjectProfileData;
 use App\BusinessModules\Addons\EstimateGeneration\Services\PackagePlannerService;
-use Tests\TestCase;
+use PHPUnit\Framework\TestCase;
 
 class PackagePlannerServiceTest extends TestCase
 {
@@ -28,7 +28,7 @@ class PackagePlannerServiceTest extends TestCase
             confidence: 0.86,
         );
 
-        $plan = app(PackagePlannerService::class)->plan($profile);
+        $plan = $this->planner()->plan($profile);
         $keys = array_column($plan->packages, 'key');
 
         $this->assertContains('foundation', $keys);
@@ -38,6 +38,55 @@ class PackagePlannerServiceTest extends TestCase
         $this->assertContains('heating', $keys);
         $this->assertGreaterThanOrEqual(250, $plan->targetItemsMinTotal());
         $this->assertGreaterThanOrEqual(15, count($plan->packages));
+    }
+
+    public function test_house_plan_does_not_include_optional_site_packages_without_explicit_scope(): void
+    {
+        $profile = new ObjectProfileData(
+            objectType: 'house',
+            area: 150.0,
+            floors: 2,
+            rooms: 8,
+            regionCode: 'RU-MOS',
+            regionalPriceVersionId: 1,
+            quarterKey: '2026-q1',
+            dimensions: [],
+            finishLevels: ['rough', 'finish'],
+            engineeringSystems: ['electrical', 'plumbing', 'heating'],
+            assumptions: [],
+            missingInputs: [],
+            confidence: 0.86,
+        );
+
+        $plan = $this->planner()->plan($profile);
+        $keys = array_column($plan->packages, 'key');
+
+        $this->assertNotContains('external_networks', $keys);
+        $this->assertNotContains('siteworks', $keys);
+        $this->assertNotContains('roads', $keys);
+    }
+
+    public function test_profile_from_analysis_adds_optional_site_packages_when_scope_is_explicit(): void
+    {
+        $analysis = [
+            'object' => [
+                'object_type' => 'house',
+                'building_type' => 'house',
+                'description' => 'External networks, landscaping and driveway roads are included in the project.',
+                'area' => 150,
+            ],
+            'document_context' => [
+                'context_text' => '',
+            ],
+        ];
+
+        $profile = $this->planner()->profileFromAnalysis($analysis);
+        $plan = $this->planner()->plan($profile);
+        $keys = array_column($plan->packages, 'key');
+
+        $this->assertContains('external_networks', $keys);
+        $this->assertContains('siteworks', $keys);
+        $this->assertContains('roads', $keys);
     }
 
     public function test_warehouse_plan_uses_industrial_packages_and_density(): void
@@ -58,7 +107,7 @@ class PackagePlannerServiceTest extends TestCase
             confidence: 0.82,
         );
 
-        $plan = app(PackagePlannerService::class)->plan($profile);
+        $plan = $this->planner()->plan($profile);
         $keys = array_column($plan->packages, 'key');
 
         $this->assertContains('metal_frame', $keys);
@@ -84,8 +133,8 @@ class PackagePlannerServiceTest extends TestCase
             ],
         ];
 
-        $profile = app(PackagePlannerService::class)->profileFromAnalysis($analysis);
-        $plan = app(PackagePlannerService::class)->plan($profile);
+        $profile = $this->planner()->profileFromAnalysis($analysis);
+        $plan = $this->planner()->plan($profile);
         $keys = array_column($plan->packages, 'key');
 
         $this->assertSame('mixed_warehouse_office', $profile->objectType);
@@ -108,12 +157,17 @@ class PackagePlannerServiceTest extends TestCase
             ],
         ];
 
-        $profile = app(PackagePlannerService::class)->profileFromAnalysis($analysis);
-        $plan = app(PackagePlannerService::class)->plan($profile);
+        $profile = $this->planner()->profileFromAnalysis($analysis);
+        $plan = $this->planner()->plan($profile);
         $keys = array_column($plan->packages, 'key');
 
         $this->assertSame('house', $profile->objectType);
         $this->assertContains('foundation', $keys);
         $this->assertNotContains('industrial_floor', $keys);
+    }
+
+    private function planner(): PackagePlannerService
+    {
+        return new PackagePlannerService();
     }
 }

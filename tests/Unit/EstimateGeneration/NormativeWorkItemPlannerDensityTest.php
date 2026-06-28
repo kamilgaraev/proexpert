@@ -167,6 +167,50 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertContains('quantity_review_required', $wallItem['validation_flags']);
     }
 
+    public function test_optional_site_package_without_document_quantity_is_not_expanded_from_catalog_fallback(): void
+    {
+        $localEstimate = $this->localEstimate('external_networks', 'External networks', 'site', 12);
+
+        $items = $this->planner()->build($localEstimate, $localEstimate['sections'][0], [
+            'document_context' => [
+                'facts_summary' => [
+                    'total_area_m2' => 214,
+                ],
+            ],
+        ]);
+
+        self::assertSame([], $items);
+    }
+
+    public function test_optional_site_package_uses_document_quantity_takeoff_when_available(): void
+    {
+        $localEstimate = $this->localEstimate('external_networks', 'External networks', 'site', 12);
+
+        $items = $this->planner()->build($localEstimate, $localEstimate['sections'][0], [
+            'document_context' => [
+                'quantity_takeoffs' => [[
+                    'scope_key' => 'external_networks',
+                    'quantity_key' => 'networks.external',
+                    'name' => 'External utility route length from plan',
+                    'unit' => 'm',
+                    'quantity' => 42.5,
+                    'source_refs' => [[
+                        'type' => 'drawing',
+                        'filename' => 'site-plan.pdf',
+                        'page_number' => 2,
+                    ]],
+                ]],
+            ],
+        ]);
+        $pricedItems = $this->pricedItems($items);
+
+        self::assertCount(1, $pricedItems);
+        self::assertSame('networks.external', $pricedItems[0]['quantity_formula']);
+        self::assertSame(42.5, (float) $pricedItems[0]['quantity']);
+        self::assertNotContains('quantity_review_required', $pricedItems[0]['validation_flags']);
+        self::assertContains('operation', array_column($items, 'item_type'));
+    }
+
     /**
      * @return array<string, mixed>
      */

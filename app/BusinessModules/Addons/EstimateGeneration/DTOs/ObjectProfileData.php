@@ -12,6 +12,7 @@ final readonly class ObjectProfileData
      * @param array<int, string> $engineeringSystems
      * @param array<int, string> $assumptions
      * @param array<int, string> $missingInputs
+     * @param array<string, mixed> $planningSignals
      */
     public function __construct(
         public string $objectType,
@@ -27,6 +28,7 @@ final readonly class ObjectProfileData
         public array $assumptions,
         public array $missingInputs,
         public float $confidence,
+        public array $planningSignals = [],
     ) {
     }
 
@@ -49,6 +51,9 @@ final readonly class ObjectProfileData
             assumptions: array_values(array_map('strval', is_array($payload['assumptions'] ?? null) ? $payload['assumptions'] : [])),
             missingInputs: array_values(array_map('strval', is_array($payload['missing_inputs'] ?? null) ? $payload['missing_inputs'] : [])),
             confidence: isset($payload['confidence']) ? (float) $payload['confidence'] : 0.5,
+            planningSignals: is_array($payload['planning_signals'] ?? $payload['planningSignals'] ?? null)
+                ? ($payload['planning_signals'] ?? $payload['planningSignals'])
+                : [],
         );
     }
 
@@ -71,6 +76,7 @@ final readonly class ObjectProfileData
             'assumptions' => $this->assumptions,
             'missing_inputs' => $this->missingInputs,
             'confidence' => $this->confidence,
+            'planning_signals' => $this->planningSignals,
         ];
     }
 }
