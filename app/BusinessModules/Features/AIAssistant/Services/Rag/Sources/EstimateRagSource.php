@@ -97,9 +97,7 @@ final class EstimateRagSource implements RagSourceCollectorInterface
             ->values()
             ->all();
 
-        $items = $estimate->items
-            ->sortByDesc(fn (EstimateItem $item): float => (float) ($item->current_total_amount ?? $item->total_amount ?? 0))
-            ->take(8)
+        $items = $this->topItemsByAmount($estimate->items, 8)
             ->map(fn (EstimateItem $item): string => trim(sprintf(
                 '%s %s %s %s x %s = %s',
                 $this->stringValue($item->position_number),
@@ -152,9 +150,7 @@ final class EstimateRagSource implements RagSourceCollectorInterface
     private function sectionChunk(Estimate $estimate, EstimateSection $section): RagChunkData
     {
         $sectionItems = $this->sectionItems($estimate, $section);
-        $items = $sectionItems
-            ->sortByDesc(fn (EstimateItem $item): float => $this->itemAmount($item))
-            ->take(self::SECTION_ITEMS_LIMIT)
+        $items = $this->topItemsByAmount($sectionItems, self::SECTION_ITEMS_LIMIT)
             ->map(fn (EstimateItem $item): string => $this->itemLine($item))
             ->filter()
             ->values()
@@ -209,7 +205,14 @@ final class EstimateRagSource implements RagSourceCollectorInterface
         return [
             'project',
             'contract',
+            'sections' => static fn ($query) => $query
+                ->orderBy('sort_order')
+                ->orderBy('section_number')
+                ->orderBy('id'),
             'sections.parent',
+            'items' => static fn ($query) => $query
+                ->orderBy('position_number')
+                ->orderBy('id'),
             'items.section',
             'items.workType',
             'items.measurementUnit',
@@ -225,7 +228,14 @@ final class EstimateRagSource implements RagSourceCollectorInterface
     private function sectionRelations(): array
     {
         return [
+            'estimate.sections' => static fn ($query) => $query
+                ->orderBy('sort_order')
+                ->orderBy('section_number')
+                ->orderBy('id'),
             'estimate.sections.parent',
+            'estimate.items' => static fn ($query) => $query
+                ->orderBy('position_number')
+                ->orderBy('id'),
             'estimate.items.section',
             'estimate.items.workType',
             'estimate.items.measurementUnit',
@@ -235,6 +245,9 @@ final class EstimateRagSource implements RagSourceCollectorInterface
             'estimate.project',
             'estimate.contract',
             'parent',
+            'items' => static fn ($query) => $query
+                ->orderBy('position_number')
+                ->orderBy('id'),
             'items.workType',
             'items.measurementUnit',
             'items.normativeRate',
@@ -326,6 +339,24 @@ final class EstimateRagSource implements RagSourceCollectorInterface
     private function sectionItemsTotal(Collection $items): float
     {
         return (float) $items->sum(fn (EstimateItem $item): float => $this->itemAmount($item));
+    }
+
+    /**
+     * @param  Collection<int, EstimateItem>  $items
+     * @return Collection<int, EstimateItem>
+     */
+    private function topItemsByAmount(Collection $items, int $limit): Collection
+    {
+        return $items
+            ->sort(function (EstimateItem $left, EstimateItem $right): int {
+                $amountComparison = $this->itemAmount($right) <=> $this->itemAmount($left);
+
+                return $amountComparison !== 0
+                    ? $amountComparison
+                    : ((int) $left->id <=> (int) $right->id);
+            })
+            ->take($limit)
+            ->values();
     }
 
     private function itemAmount(EstimateItem $item): float
