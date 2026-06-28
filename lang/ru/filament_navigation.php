@@ -11,6 +11,7 @@ return [
         'users' => 'Пользователи',
         'blog' => 'Блог CMS',
         'knowledge_hub' => 'База знаний',
+        'ai_estimator' => 'AI-сметчик',
         'support' => 'Поддержка',
         'notifications' => 'Уведомления',
         'audit' => 'Аудит',

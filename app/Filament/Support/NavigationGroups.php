@@ -17,10 +17,11 @@ final class NavigationGroups
     public const SORT_USERS = 50;
     public const SORT_BLOG = 60;
     public const SORT_KNOWLEDGE_HUB = 70;
-    public const SORT_SUPPORT = 80;
-    public const SORT_NOTIFICATIONS = 90;
-    public const SORT_AUDIT = 100;
-    public const SORT_SETTINGS = 110;
+    public const SORT_AI_ESTIMATOR = 80;
+    public const SORT_SUPPORT = 90;
+    public const SORT_NOTIFICATIONS = 100;
+    public const SORT_AUDIT = 110;
+    public const SORT_SETTINGS = 120;
 
     public static function dashboard(): string
     {
@@ -57,6 +58,11 @@ final class NavigationGroups
         return trans_message('filament_navigation.groups.knowledge_hub');
     }
 
+    public static function aiEstimator(): string
+    {
+        return trans_message('filament_navigation.groups.ai_estimator');
+    }
+
     public static function support(): string
     {
         return trans_message('filament_navigation.groups.support');
@@ -90,6 +96,7 @@ final class NavigationGroups
             self::users(),
             self::blog(),
             self::knowledgeHub(),
+            self::aiEstimator(),
             self::support(),
             self::notifications(),
             self::audit(),
@@ -117,6 +124,8 @@ final class NavigationGroups
                 ->label(self::blog()),
             NavigationGroup::make()
                 ->label(self::knowledgeHub()),
+            NavigationGroup::make()
+                ->label(self::aiEstimator()),
             NavigationGroup::make()
                 ->label(self::support()),
             NavigationGroup::make()

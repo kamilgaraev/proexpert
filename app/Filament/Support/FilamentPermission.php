@@ -76,6 +76,11 @@ final class FilamentPermission
     public const KNOWLEDGE_HUB_ARTICLES_DELETE = 'system_admin.knowledge_hub.articles.delete';
     public const KNOWLEDGE_HUB_CATEGORIES_MANAGE = 'system_admin.knowledge_hub.categories.manage';
 
+    public const AI_ESTIMATOR_TRAINING_VIEW = 'system_admin.ai_estimator_training.view';
+    public const AI_ESTIMATOR_TRAINING_CREATE = 'system_admin.ai_estimator_training.create';
+    public const AI_ESTIMATOR_TRAINING_PROCESS = 'system_admin.ai_estimator_training.process';
+    public const AI_ESTIMATOR_TRAINING_DELETE = 'system_admin.ai_estimator_training.delete';
+
     public const NOTIFICATIONS_TEMPLATES_VIEW = 'system_admin.notifications.templates.view';
     public const NOTIFICATIONS_TEMPLATES_CREATE = 'system_admin.notifications.templates.create';
     public const NOTIFICATIONS_TEMPLATES_UPDATE = 'system_admin.notifications.templates.update';

@@ -19,6 +19,9 @@
     "system_admin.subscriptions.view",
     "system_admin.payments.view",
     "system_admin.modules.view",
+    "system_admin.ai_estimator_training.view",
+    "system_admin.ai_estimator_training.create",
+    "system_admin.ai_estimator_training.process",
     "system_admin.monitoring.view",
     "system_admin.blog.articles.view",
     "system_admin.blog.media.view",
@@ -50,6 +53,11 @@
     ],
     "modules": [
       "system_admin.modules.view"
+    ],
+    "ai_estimator_training": [
+      "system_admin.ai_estimator_training.view",
+      "system_admin.ai_estimator_training.create",
+      "system_admin.ai_estimator_training.process"
     ],
     "monitoring": [
       "system_admin.monitoring.view"
