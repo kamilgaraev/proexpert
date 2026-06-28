@@ -134,6 +134,16 @@ class EstimatorReadinessService
             $blockers[] = $this->issue('norms_require_review', 'estimate_generation.readiness_blocker_norms_require_review');
         }
 
+        if (
+            $hasDraft
+            && (
+                $metrics['not_calculated_work_items'] > 0
+                || $metrics['safe_norm_required_work_items'] > 0
+            )
+        ) {
+            $blockers[] = $this->issue('prices_require_review', 'estimate_generation.readiness_blocker_prices_require_review');
+        }
+
         if ($hasDraft && ($qualityStatus === 'critical' || $qualityLevel === 'blocked')) {
             $blockers[] = $this->issue('quality_blocked', 'estimate_generation.readiness_blocker_quality_blocked');
         }
@@ -191,7 +201,7 @@ class EstimatorReadinessService
             return 'draft_blocked';
         }
 
-        if ($this->hasBlocker($blockers, ['norms_require_review'])) {
+        if ($this->hasBlocker($blockers, ['norms_require_review', 'prices_require_review'])) {
             return 'draft_needs_review';
         }
 

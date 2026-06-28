@@ -93,7 +93,7 @@ class NormativeCandidateSelectionService
             [$originalWorkItem, $selectedWorkItem, $context] = $learningSelection;
             $this->learningRecorder->recordUserSelection($session, $originalWorkItem, $selectedWorkItem, $normId, $context);
         }
-        $status = ((int) data_get($draft, 'quality_summary.normative_items.requires_review', 0)) > 0
+        $status = $this->draftRequiresReview($draft)
             ? 'review_required'
             : 'ready_for_review';
 
@@ -114,6 +114,14 @@ class NormativeCandidateSelectionService
      */
     private function assertCandidateWasOffered(array $workItem, int $normId): void
     {
+        $currentMatch = $workItem['normative_match'] ?? null;
+        if (
+            is_array($currentMatch)
+            && (int) ($currentMatch['norm_id'] ?? $currentMatch['id'] ?? 0) === $normId
+        ) {
+            return;
+        }
+
         foreach ($workItem['normative_candidates'] ?? [] as $candidate) {
             if ((int) ($candidate['norm_id'] ?? 0) === $normId) {
                 return;
@@ -123,5 +131,15 @@ class NormativeCandidateSelectionService
         throw ValidationException::withMessages([
             'norm_id' => [trans_message('estimate_generation.normative_candidate_not_offered')],
         ]);
+    }
+
+    /**
+     * @param array<string, mixed> $draft
+     */
+    private function draftRequiresReview(array $draft): bool
+    {
+        return (int) data_get($draft, 'quality_summary.normative_items.requires_review', 0) > 0
+            || (int) data_get($draft, 'quality_summary.not_calculated_work_items', 0) > 0
+            || (int) data_get($draft, 'quality_summary.safe_norm_required_work_items', 0) > 0;
     }
 }

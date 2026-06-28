@@ -63,6 +63,26 @@ class EstimatorReadinessServiceTest extends TestCase
         self::assertSame('norms_require_review', $readiness['blockers'][0]['code']);
     }
 
+    public function test_blocks_apply_when_prices_are_not_calculated_without_normative_review_count(): void
+    {
+        $readiness = $this->service()->evaluate($this->session([
+            $this->document('ready', facts: 4, quantityTakeoffs: 2),
+        ], $this->draft([
+            'status' => 'review_required',
+            'level' => 'review_required',
+            'total_work_items' => 10,
+            'priced_work_items' => 9,
+            'operation_work_items' => 0,
+            'not_calculated_work_items' => 1,
+            'safe_norm_required_work_items' => 0,
+            'normative_items' => ['requires_review' => 0],
+        ])));
+
+        self::assertSame('draft_needs_review', $readiness['status']);
+        self::assertFalse($readiness['can_apply']);
+        self::assertContains('prices_require_review', array_column($readiness['blockers'], 'code'));
+    }
+
     public function test_allows_apply_for_priced_traceable_draft(): void
     {
         $readiness = $this->service()->evaluate($this->session([
