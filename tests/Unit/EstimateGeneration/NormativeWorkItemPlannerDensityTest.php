@@ -407,6 +407,33 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertNotSame('компл', $tileItem['unit']);
     }
 
+    public function test_floor_plan_rough_and_finish_packages_do_not_duplicate_finish_intents(): void
+    {
+        $analysis = [
+            'document_context' => [
+                'quantity_takeoffs' => [
+                    $this->confirmedTakeoff('rough.floor', 87.14, 'м2'),
+                    $this->confirmedTakeoff('rough.walls', 235.28, 'м2'),
+                    $this->confirmedTakeoff('finish.floor', 87.14, 'м2'),
+                    $this->confirmedTakeoff('finish.paint', 235.28, 'м2'),
+                    $this->confirmedTakeoff('office.ceiling', 87.14, 'м2'),
+                ],
+            ],
+        ];
+        $roughLocal = $this->localEstimate('rough_finishing', 'Черновая отделка', 'finishing', 6);
+        $finishLocal = $this->localEstimate('finish_finishing', 'Чистовая отделка', 'finishing', 6);
+        $planner = $this->planner();
+
+        $roughItems = $this->pricedItems($planner->build($roughLocal, $roughLocal['sections'][0], $analysis));
+        $finishItems = $this->pricedItems($planner->build($finishLocal, $finishLocal['sections'][0], $analysis));
+        $roughFormulas = array_column($roughItems, 'quantity_formula');
+        $finishFormulas = array_column($finishItems, 'quantity_formula');
+
+        self::assertSame(['rough.floor', 'rough.walls'], $roughFormulas);
+        self::assertSame(['finish.floor', 'finish.paint', 'office.ceiling'], $finishFormulas);
+        self::assertSame([], array_values(array_intersect($roughFormulas, $finishFormulas)));
+    }
+
     public function test_engineering_takeoff_scope_maps_to_matching_heating_quantity_key(): void
     {
         $localEstimate = $this->localEstimate('heating', 'Отопление', 'engineering', 12);
@@ -652,6 +679,28 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             'source_refs' => [[
                 'type' => 'document',
                 'filename' => 'ВОР.pdf',
+                'page_number' => 1,
+            ]],
+            'normalized_payload' => [
+                'quantity_key' => $quantityKey,
+                'review_required' => false,
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function confirmedTakeoff(string $quantityKey, float $quantity, string $unit): array
+    {
+        return [
+            'quantity_key' => $quantityKey,
+            'name' => 'Подтвержденный объем по планировке',
+            'unit' => $unit,
+            'quantity' => $quantity,
+            'source_refs' => [[
+                'type' => 'drawing',
+                'filename' => 'flat-plan.png',
                 'page_number' => 1,
             ]],
             'normalized_payload' => [

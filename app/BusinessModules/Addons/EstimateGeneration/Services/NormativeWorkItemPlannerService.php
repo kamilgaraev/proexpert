@@ -330,7 +330,16 @@ final class NormativeWorkItemPlannerService
             'fire_safety' => [
                 $this->definition('Пожарная сигнализация', 'engineering', 'монтаж пожарной сигнализации и оповещения', 'warehouse.fire'),
             ],
-            'rough_finishing', 'finish_finishing', 'office_finishing' => [
+            'rough_finishing' => [
+                $this->definition('Черновая подготовка пола', 'finishing', 'устройство черновой подготовки пола', 'rough.floor'),
+                $this->definition('Черновая подготовка стен', 'finishing', 'подготовка поверхностей стен', 'rough.walls'),
+            ],
+            'finish_finishing' => [
+                $this->definition('Чистовое покрытие пола', 'finishing', 'устройство чистового покрытия пола', 'finish.floor'),
+                $this->definition('Окраска стен', 'finishing', 'окраска стен', 'finish.paint'),
+                $this->definition('Подвесной потолок', 'finishing', 'монтаж подвесного потолка', 'office.ceiling'),
+            ],
+            'office_finishing' => [
                 $this->definition('Черновая подготовка пола', 'finishing', 'устройство черновой подготовки пола', 'rough.floor'),
                 $this->definition('Черновая подготовка стен', 'finishing', 'подготовка поверхностей стен', 'rough.walls'),
                 $this->definition('Чистовое покрытие пола', 'finishing', 'устройство чистового покрытия пола', 'finish.floor'),
