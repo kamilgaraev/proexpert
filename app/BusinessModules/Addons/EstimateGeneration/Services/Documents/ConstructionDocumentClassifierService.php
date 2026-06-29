@@ -43,10 +43,17 @@ final class ConstructionDocumentClassifierService
             }
         }
 
-        if (! $isCadDocument && $this->containsAny($value, ['локальная смета', 'гранд-смет', 'фер ', 'гэсн ', 'фсбц ', 'обоснование'])) {
-            $type = 'estimate';
+        $hasStrongEstimateMarker = $this->containsAny($value, ['локальная смета', 'гранд-смет', 'итого по смете']);
+        $hasNormativeMarker = $this->containsAny($value, ['фер ', 'гэсн ', 'фсбц ', 'обоснование']);
+
+        if (! $isCadDocument && ($hasStrongEstimateMarker || $hasNormativeMarker)) {
             $reasons[] = 'estimate_marker';
-            $score += 0.45;
+            $reasons[] = $hasStrongEstimateMarker ? 'strong_estimate_marker' : 'normative_estimate_marker';
+            $score += $hasStrongEstimateMarker ? 0.45 : 0.15;
+
+            if ($hasStrongEstimateMarker || !in_array($type, ['work_volume_statement', 'specification'], true)) {
+                $type = 'estimate';
+            }
         }
 
         $isStructuredDocument = in_array($type, ['work_volume_statement', 'specification', 'estimate', 'drawing_cad'], true);

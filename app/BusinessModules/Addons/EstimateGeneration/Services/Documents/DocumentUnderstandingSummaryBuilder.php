@@ -56,7 +56,12 @@ final class DocumentUnderstandingSummaryBuilder
             'classified_type' => $classifiedType,
             'source_format' => $sourceFormat,
             'confidence' => $this->confidence($classification, $documentProfile, $documentType, $capabilities),
-            'role_for_estimation' => $this->roleForEstimation($documentType, $classifiedType, $capabilities),
+            'role_for_estimation' => $this->roleForEstimation(
+                $documentType,
+                $classifiedType,
+                $capabilities,
+                array_values(array_map('strval', $classification['reasons'] ?? [])),
+            ),
             'reasons' => array_values(array_unique(array_map('strval', $classification['reasons'] ?? []))),
             'signals' => $this->signals($pageProfiles, $capabilities),
             'page_profiles' => $pageProfiles,
@@ -166,6 +171,7 @@ final class DocumentUnderstandingSummaryBuilder
         $hasWorkVolumeStatementMarkers = $classifiedType === 'work_volume_statement'
             || $documentType === 'work_volume_statement'
             || preg_match('/ведомость\s+(?:объемов|объёмов|работ)|объемы?\s+работ|объёмы?\s+работ/u', $text) === 1;
+        $hasStrongEstimateMarkers = preg_match('/локальная смета|гранд-смет|итого по смете/u', $text) === 1;
         $hasEstimateMarkers = $classifiedType === 'estimate'
             || preg_match('/локальная смета|гранд-смет|гэсн|фер|фсбц|обоснование/u', $text) === 1;
         $requiresManualReview = (bool) ($documentProfile['requires_manual_review'] ?? false)
@@ -181,6 +187,7 @@ final class DocumentUnderstandingSummaryBuilder
             'has_work_volume_statement_markers' => $hasWorkVolumeStatementMarkers,
             'has_specification_markers' => $hasSpecificationMarkers,
             'has_estimate_markers' => $hasEstimateMarkers,
+            'has_strong_estimate_markers' => $hasStrongEstimateMarkers,
             'requires_cad_geometry_pipeline' => $classifiedType === 'drawing_cad',
             'requires_manual_review' => $requiresManualReview,
         ];
@@ -188,15 +195,38 @@ final class DocumentUnderstandingSummaryBuilder
 
     /**
      * @param array<string, bool> $capabilities
+     * @param array<int, string> $classificationReasons
      */
-    private function roleForEstimation(string $documentType, string $classifiedType, array $capabilities): string
+    private function roleForEstimation(
+        string $documentType,
+        string $classifiedType,
+        array $capabilities,
+        array $classificationReasons
+    ): string
     {
         if (($capabilities['requires_manual_review'] ?? false) === true && $documentType === 'unknown') {
             return 'needs_review';
         }
 
-        if ($documentType === 'reference_estimate' || $classifiedType === 'estimate') {
+        $isQuantitySourceDocument = in_array($documentType, ['work_volume_statement', 'specification'], true)
+            || in_array($classifiedType, ['work_volume_statement', 'specification'], true);
+        $hasStrongEstimateMarkers = ($capabilities['has_strong_estimate_markers'] ?? false) === true
+            || in_array('strong_estimate_marker', $classificationReasons, true);
+
+        if (
+            $documentType === 'reference_estimate'
+            || ($classifiedType === 'estimate' && (! $isQuantitySourceDocument || $hasStrongEstimateMarkers))
+        ) {
             return 'reference_estimate';
+        }
+
+        if (
+            $isQuantitySourceDocument
+            && (($capabilities['has_work_volume_statement_markers'] ?? false) === true
+                || ($capabilities['has_specification_markers'] ?? false) === true)
+            && ($capabilities['has_quantity_takeoffs'] ?? false) === true
+        ) {
+            return 'quantity_source';
         }
 
         if (

@@ -102,6 +102,16 @@ final class QuantityStatementLineParser
         $normalized = mb_strtolower($name);
 
         return match (true) {
+            $this->containsAny($normalized, ['армир', 'арматур']) && $this->containsAny($normalized, ['фундамент', 'ростверк', 'плита фунда', 'ленточн']) => 'foundation.rebar',
+            $this->containsAny($normalized, ['гидроизоляц', 'изоляц']) && $this->containsAny($normalized, ['фундамент', 'ростверк', 'плита фунда', 'ленточн']) => 'foundation.waterproofing',
+            $this->containsAny($normalized, ['опалуб']) && $this->containsAny($normalized, ['фундамент', 'ростверк', 'плита фунда', 'ленточн']) => 'foundation.formwork',
+            $this->containsAny($normalized, ['подготовк']) && $this->containsAny($normalized, ['фундамент', 'ростверк', 'плита фунда', 'ленточн']) => 'foundation.prep',
+            $this->containsAny($normalized, ['бетонирован', 'бетон']) && $this->containsAny($normalized, ['фундамент', 'ростверк', 'плита фунда', 'ленточн']) => 'foundation.concrete',
+            $this->containsAny($normalized, ['кладк', 'возвед', 'устройств стен', 'монтаж стен']) && $this->containsAny($normalized, ['наруж', 'внешн', 'несущ']) => 'walls.external_volume',
+            $this->containsAny($normalized, ['утепл', 'покрыт', 'монтаж', 'устройств']) && $this->containsAny($normalized, ['кровл', 'крыши']) => 'roof.area',
+            $this->containsAny($normalized, ['армир', 'арматур']) && $this->containsAny($normalized, ['плита пола', 'пол', 'промышленн']) => 'warehouse.floor_rebar',
+            $this->containsAny($normalized, ['бетонирован', 'бетон']) && $this->containsAny($normalized, ['плита пола', 'пол', 'промышленн']) => 'warehouse.floor_concrete',
+            $this->containsAny($normalized, ['топпинг', 'упрочнен']) && $this->containsAny($normalized, ['пол', 'покрыт']) => 'warehouse.floor_hardener',
             $this->containsAny($normalized, ['обратн']) && $this->containsAny($normalized, ['засып']) => 'earth.backfill',
             $this->containsAny($normalized, ['разработк']) && $this->containsAny($normalized, ['грунт', 'котлован', 'транше']) => 'earth.trench',
             $this->containsAny($normalized, ['вывоз', 'погруз']) && str_contains($normalized, 'грунт') => 'earth.export',
@@ -134,6 +144,11 @@ final class QuantityStatementLineParser
     {
         return match (true) {
             str_starts_with($quantityKey, 'earth.') => 'earthworks',
+            str_starts_with($quantityKey, 'foundation.') => 'foundation',
+            str_starts_with($quantityKey, 'walls.') => 'walls',
+            str_starts_with($quantityKey, 'roof.') => 'roof',
+            in_array($quantityKey, ['warehouse.floor_concrete', 'warehouse.floor_rebar'], true) => 'slabs',
+            $quantityKey === 'warehouse.floor_hardener' => 'industrial_floor',
             str_starts_with($quantityKey, 'electrical.'), $quantityKey === 'warehouse.lighting' => 'electrical',
             str_starts_with($quantityKey, 'heating.') => 'heating',
             str_starts_with($quantityKey, 'plumbing.'), str_starts_with($quantityKey, 'sewerage.'), str_starts_with($quantityKey, 'sanitary.') => 'plumbing',

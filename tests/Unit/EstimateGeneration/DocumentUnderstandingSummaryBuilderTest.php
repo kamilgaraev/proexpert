@@ -93,18 +93,83 @@ final class DocumentUnderstandingSummaryBuilderTest extends TestCase
         self::assertSame('quantity_source', $this->builder()->pageUnderstandingByNumber($summary)[1]['role_for_estimation']);
     }
 
+    public function test_work_volume_statement_with_normative_basis_stays_quantity_source(): void
+    {
+        $summary = $this->builder()->build(
+            $this->document('Ведомость объемов работ.pdf', 'application/pdf'),
+            $this->recognition("Ведомость объемов работ\nНаименование работ Ед. изм. Количество Обоснование\nБетонирование фундаментов м3 12,5 ФЕР 06-01-001-01"),
+            [
+                'takeoffs_count' => 1,
+                'document_profile' => [
+                    'document_role' => 'work_volume_statement',
+                    'confidence' => 0.91,
+                    'requires_manual_review' => false,
+                ],
+                'page_profiles' => [[
+                    'page_number' => 1,
+                    'page_role' => 'work_volume_statement',
+                    'confidence' => 0.91,
+                    'signals' => ['work_volume_statement_keywords', 'work_volume_statement_quantities', 'estimate_or_norm_keywords'],
+                ]],
+            ],
+            []
+        );
+
+        self::assertSame('work_volume_statement', $summary['document_type']);
+        self::assertSame('work_volume_statement', $summary['classified_type']);
+        self::assertSame('quantity_source', $summary['role_for_estimation']);
+        self::assertTrue($summary['extracted_capabilities']['has_estimate_markers']);
+        self::assertTrue($summary['extracted_capabilities']['has_work_volume_statement_markers']);
+    }
+
     public function test_grand_smeta_reference_estimate_becomes_reference_estimate(): void
     {
         $summary = $this->builder()->build(
             $this->document('Локальная смета из Гранд-Сметы.pdf', 'application/pdf'),
             $this->recognition("Локальная смета\nГранд-Смета\nОбоснование ФЕР 08-02-001-01\nФСБЦ материалы"),
-            [],
+            [
+                'takeoffs_count' => 2,
+                'page_profiles' => [[
+                    'page_number' => 1,
+                    'page_role' => 'reference_estimate',
+                    'confidence' => 0.92,
+                    'signals' => ['estimate_or_norm_keywords', 'quantity_table'],
+                ]],
+            ],
             []
         );
 
         self::assertSame('estimate', $summary['classified_type']);
         self::assertSame('reference_estimate', $summary['role_for_estimation']);
         self::assertTrue($summary['extracted_capabilities']['has_estimate_markers']);
+    }
+
+    public function test_strong_estimate_marker_wins_over_wrong_quantity_document_profile(): void
+    {
+        $summary = $this->builder()->build(
+            $this->document('Локальная смета из Гранд-Сметы.pdf', 'application/pdf'),
+            $this->recognition("Локальная смета\nГранд-Смета\nНаименование работ Ед. изм. Количество\nОбоснование ФЕР 08-02-001-01"),
+            [
+                'takeoffs_count' => 1,
+                'document_profile' => [
+                    'document_role' => 'work_volume_statement',
+                    'confidence' => 0.82,
+                    'requires_manual_review' => false,
+                ],
+                'page_profiles' => [[
+                    'page_number' => 1,
+                    'page_role' => 'work_volume_statement',
+                    'confidence' => 0.82,
+                    'signals' => ['work_volume_statement_keywords', 'estimate_or_norm_keywords'],
+                ]],
+            ],
+            []
+        );
+
+        self::assertSame('work_volume_statement', $summary['document_type']);
+        self::assertSame('estimate', $summary['classified_type']);
+        self::assertSame('reference_estimate', $summary['role_for_estimation']);
+        self::assertTrue($summary['extracted_capabilities']['has_strong_estimate_markers']);
     }
 
     public function test_cad_without_takeoffs_requires_geometry_pipeline_and_manual_review(): void
