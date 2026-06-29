@@ -27,6 +27,7 @@ use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Lang;
 
 class KnowledgeArticleResource extends Resource
 {
@@ -142,17 +143,33 @@ class KnowledgeArticleResource extends Resource
                 ])
                 ->columns(2),
             Section::make(trans_message('knowledge_hub.filament.section_body'))
+                ->description(trans_message('knowledge_hub.filament.section_body_description'))
                 ->schema([
                     Forms\Components\Textarea::make('excerpt')
                         ->label(trans_message('knowledge_hub.filament.field_excerpt'))
-                        ->rows(3)
+                        ->placeholder(trans_message('knowledge_hub.filament.placeholder_excerpt'))
+                        ->helperText(trans_message('knowledge_hub.filament.helper_excerpt'))
+                        ->rows(2)
+                        ->autosize()
                         ->maxLength(600)
                         ->columnSpanFull(),
                     Forms\Components\RichEditor::make('content')
                         ->label(trans_message('knowledge_hub.filament.field_content'))
+                        ->placeholder(trans_message('knowledge_hub.filament.placeholder_content'))
+                        ->toolbarButtons([
+                            ['bold', 'italic', 'underline', 'link'],
+                            ['h2', 'h3', 'bulletList', 'orderedList'],
+                            ['blockquote', 'table'],
+                            ['undo', 'redo'],
+                        ])
+                        ->extraInputAttributes(['style' => 'min-height: 22rem;'])
+                        ->helperText(trans_message('knowledge_hub.filament.helper_content'))
                         ->columnSpanFull(),
                     Forms\Components\TagsInput::make('tags')
                         ->label(trans_message('knowledge_hub.filament.field_tags'))
+                        ->placeholder(trans_message('knowledge_hub.filament.placeholder_tags'))
+                        ->suggestions(fn (): array => self::tagSuggestions())
+                        ->helperText(trans_message('knowledge_hub.filament.helper_tags'))
                         ->columnSpanFull(),
                 ])
                 ->columns(1),
@@ -336,5 +353,17 @@ class KnowledgeArticleResource extends Resource
             'view' => Pages\ViewKnowledgeArticle::route('/{record}'),
             'edit' => Pages\EditKnowledgeArticle::route('/{record}/edit'),
         ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private static function tagSuggestions(): array
+    {
+        $suggestions = Lang::get('knowledge_hub.filament.tag_suggestions', [], 'ru');
+
+        return is_array($suggestions)
+            ? array_values(array_filter($suggestions, static fn (mixed $value): bool => is_string($value) && trim($value) !== ''))
+            : [];
     }
 }

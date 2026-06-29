@@ -342,6 +342,32 @@ class SuperadminErgonomicsTest extends TestCase
         $this->assertStringContainsString(KnowledgeArticleTargetingOptions::class, $source);
     }
 
+    public function test_knowledge_article_body_editor_is_comfortable_for_authors(): void
+    {
+        $source = (string) file_get_contents(app_path('Filament/Resources/KnowledgeArticleResource.php'));
+        $translations = require base_path('lang/ru/knowledge_hub.php');
+
+        foreach ([
+            'section_body_description',
+            'placeholder_excerpt',
+            'placeholder_content',
+            'placeholder_tags',
+            'helper_excerpt',
+            'helper_content',
+            'helper_tags',
+            'tag_suggestions',
+        ] as $translationKey) {
+            $this->assertNotEmpty($translations['filament'][$translationKey] ?? null);
+        }
+
+        $this->assertStringContainsString("->toolbarButtons([", $source);
+        $this->assertStringContainsString("['bold', 'italic', 'underline', 'link']", $source);
+        $this->assertStringContainsString("['h2', 'h3', 'bulletList', 'orderedList']", $source);
+        $this->assertStringContainsString("->extraInputAttributes(['style' => 'min-height: 22rem;'])", $source);
+        $this->assertStringContainsString("->autosize()", $source);
+        $this->assertStringContainsString("->suggestions(fn (): array => self::tagSuggestions())", $source);
+    }
+
     public function test_knowledge_article_targeting_options_have_business_labels(): void
     {
         $options = app(KnowledgeArticleTargetingOptions::class);
