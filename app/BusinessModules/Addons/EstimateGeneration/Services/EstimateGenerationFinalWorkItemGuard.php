@@ -8,6 +8,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPacka
 
 final class EstimateGenerationFinalWorkItemGuard
 {
+    public function __construct(
+        private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy(),
+    ) {}
+
     /**
      * @param array<string, mixed> $workItem
      */
@@ -20,6 +24,10 @@ final class EstimateGenerationFinalWorkItemGuard
         }
 
         if (in_array($type, EstimateGenerationPackageItem::SERVICE_ITEM_TYPES, true)) {
+            return false;
+        }
+
+        if ($this->noAirWorkItemPolicy->requiresReview($workItem)) {
             return false;
         }
 

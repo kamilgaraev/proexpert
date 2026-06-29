@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNoAirWorkItemPolicy;
 use PHPUnit\Framework\TestCase;
 
 final class EstimateValidationServiceTest extends TestCase
@@ -77,6 +78,45 @@ final class EstimateValidationServiceTest extends TestCase
         self::assertSame(1, $draft['quality_summary']['priced_work_items']);
         self::assertSame(0, $draft['quality_summary']['zero_price_work_items']);
         self::assertSame(0, $draft['quality_summary']['not_calculated_work_items']);
+    }
+
+    public function test_generic_priced_work_is_forced_to_manual_review_even_with_positive_price(): void
+    {
+        $draft = $this->service()->validate($this->draft([
+            [
+                'key' => 'generic-complex-work',
+                'item_type' => 'priced_work',
+                'name' => 'Комплекс строительных работ',
+                'normative_search_text' => 'Комплекс строительных работ',
+                'unit' => 'компл',
+                'quantity' => 1,
+                'quantity_basis' => 'Документация, стр. 1',
+                'total_cost' => 250000,
+                'materials' => [['total_price' => 180000]],
+                'labor' => [['total_price' => 50000]],
+                'machinery' => [['total_price' => 20000]],
+                'pricing_status' => 'calculated',
+                'normative_rate_code' => '01-01-001-01',
+                'normative_match' => [
+                    'status' => 'matched',
+                    'decision' => ['status' => 'accepted'],
+                ],
+                'validation_flags' => [],
+                'confidence' => 0.93,
+            ],
+        ]));
+
+        $item = $draft['local_estimates'][0]['sections'][0]['work_items'][0];
+
+        self::assertSame('not_calculated', $item['pricing_status']);
+        self::assertSame(EstimateGenerationNoAirWorkItemPolicy::BLOCKER, $item['pricing_blocker']);
+        self::assertSame(0, $item['total_cost']);
+        self::assertSame([], $item['materials']);
+        self::assertContains(EstimateGenerationNoAirWorkItemPolicy::FLAG, $item['validation_flags']);
+        self::assertContains(EstimateGenerationNoAirWorkItemPolicy::NO_AIR_FLAG, $item['validation_flags']);
+        self::assertContains('pricing_not_calculated', $item['validation_flags']);
+        self::assertSame(1, $draft['quality_summary']['safe_norm_required_work_items']);
+        self::assertSame(1, $draft['quality_summary']['not_calculated_work_items']);
     }
 
     public function test_partial_norm_resource_warning_blocks_calculated_work(): void

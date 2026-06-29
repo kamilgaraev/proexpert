@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNoAirWorkItemPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidatePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeMatchDecisionService;
@@ -101,7 +102,7 @@ final class ResourceAssemblySafetyTest extends TestCase
         $this->assertSame([], $item['materials']);
         $this->assertSame([], $item['labor']);
         $this->assertSame([], $item['machinery']);
-        $this->assertSame(0.0, $item['total_cost']);
+        $this->assertEquals(0.0, $item['total_cost']);
         $this->assertNull($item['price_source']);
         $this->assertContains('unit_mismatch', $item['normative_match']['warnings']);
         $this->assertContains('requires_normative_review', $item['validation_flags']);
@@ -214,7 +215,7 @@ final class ResourceAssemblySafetyTest extends TestCase
         $this->assertSame([], $item['labor']);
         $this->assertSame([], $item['machinery']);
         $this->assertSame([], $item['other_resources']);
-        $this->assertSame(0, $item['total_cost']);
+        $this->assertEquals(0.0, $item['total_cost']);
         $this->assertNull($item['price_source']);
         $this->assertSame('not_calculated', $item['pricing_status']);
         $this->assertSame('quantity_review_required', $item['pricing_blocker']);
@@ -268,12 +269,67 @@ final class ResourceAssemblySafetyTest extends TestCase
         $this->assertNull($item['normative_rate_code']);
         $this->assertNull($item['normative_match']);
         $this->assertSame([], $item['materials']);
-        $this->assertSame(0, $item['total_cost']);
+        $this->assertEquals(0.0, $item['total_cost']);
         $this->assertNull($item['price_source']);
         $this->assertSame('not_calculated', $item['pricing_status']);
         $this->assertSame('quantity_review_required', $item['pricing_blocker']);
         $this->assertContains('quantity_review_required', $item['validation_flags']);
         $this->assertContains('pricing_not_calculated', $item['validation_flags']);
+    }
+
+    public function test_generic_priced_item_is_not_matched_or_priced(): void
+    {
+        $workItem = [
+            'key' => 'generic-complex-work',
+            'name' => 'Комплекс строительных работ',
+            'normative_search_text' => 'Комплекс строительных работ',
+            'item_type' => 'priced_work',
+            'unit' => 'компл',
+            'quantity' => 1,
+            'confidence' => 0.9,
+            'validation_flags' => [],
+            'materials' => [[
+                'name' => 'stale material',
+                'total_price' => 100000,
+            ]],
+            'labor' => [],
+            'machinery' => [],
+            'other_resources' => [],
+            'work_cost' => 18000,
+            'materials_cost' => 100000,
+            'machinery_cost' => 0,
+            'labor_cost' => 0,
+            'total_cost' => 118000,
+            'price_source' => 'stale',
+        ];
+
+        $service = new ResourceAssemblyService(
+            new class extends EstimateNormativeMatcher {
+                public function __construct() {}
+
+                public function matchWorkItem(array $workItem, array $context = [], int $limit = 5): ?array
+                {
+                    throw new \RuntimeException('Generic priced item must not be matched.');
+                }
+            },
+            new NormativeMatchDecisionService(),
+            new NormativeCandidatePresenter(),
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog()),
+        );
+
+        $item = $service->enrich([$workItem], ['scope_type' => 'site'])[0];
+        $item = (new EstimatePricingService())->price([$item])[0];
+
+        $this->assertSame('priced_work', $item['item_type']);
+        $this->assertSame([], $item['materials']);
+        $this->assertSame([], $item['labor']);
+        $this->assertSame([], $item['machinery']);
+        $this->assertEquals(0.0, $item['total_cost']);
+        $this->assertNull($item['price_source']);
+        $this->assertSame('not_calculated', $item['pricing_status']);
+        $this->assertSame(EstimateGenerationNoAirWorkItemPolicy::BLOCKER, $item['pricing_blocker']);
+        $this->assertContains(EstimateGenerationNoAirWorkItemPolicy::FLAG, $item['validation_flags']);
+        $this->assertContains(EstimateGenerationNoAirWorkItemPolicy::NO_AIR_FLAG, $item['validation_flags']);
     }
 
     public function test_manually_selected_scope_mismatch_norm_stays_unpriced_candidate(): void
@@ -310,7 +366,7 @@ final class ResourceAssemblySafetyTest extends TestCase
         $this->assertSame('not_calculated', $item['pricing_status']);
         $this->assertSame('scope_mismatch', $item['pricing_blocker']);
         $this->assertSame([], $item['materials']);
-        $this->assertSame(0.0, $item['total_cost']);
+        $this->assertEquals(0.0, $item['total_cost']);
         $this->assertContains('scope_mismatch', $item['normative_match']['warnings']);
         $this->assertContains('safe_norm_required', $item['validation_flags']);
         $this->assertContains('pricing_not_calculated', $item['validation_flags']);
@@ -388,7 +444,7 @@ final class ResourceAssemblySafetyTest extends TestCase
         $this->assertSame('candidate', $item['normative_match']['status']);
         $this->assertSame('not_calculated', $item['pricing_status']);
         $this->assertSame('norm_with_unpriced_resources', $item['pricing_blocker']);
-        $this->assertSame(0.0, $item['total_cost']);
+        $this->assertEquals(0.0, $item['total_cost']);
         $this->assertContains('norm_with_unpriced_resources', $item['normative_match']['warnings']);
         $this->assertContains('safe_norm_required', $item['validation_flags']);
         $this->assertContains('pricing_not_calculated', $item['validation_flags']);
@@ -426,7 +482,7 @@ final class ResourceAssemblySafetyTest extends TestCase
         $this->assertSame('candidate', $item['normative_match']['status']);
         $this->assertSame('not_calculated', $item['pricing_status']);
         $this->assertSame('normative_resources_or_prices_missing', $item['pricing_blocker']);
-        $this->assertSame(0.0, $item['total_cost']);
+        $this->assertEquals(0.0, $item['total_cost']);
         $this->assertContains('norm_without_prices', $item['normative_match']['warnings']);
         $this->assertContains('safe_norm_required', $item['validation_flags']);
         $this->assertContains('pricing_not_calculated', $item['validation_flags']);

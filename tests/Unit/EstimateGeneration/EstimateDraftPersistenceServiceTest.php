@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNoAirWorkItemPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -78,6 +79,28 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
             $this->workItem('review-1', 'review_note', 0),
             $this->workItem('not-calculated-1', 'priced_work', 0, 'not_calculated'),
             $this->workItem('review-priced-1', 'priced_work', 1000, 'calculated_review_required'),
+        ]);
+
+        self::assertCount(1, $persistable);
+        self::assertSame('work-1', $persistable[0]['key']);
+    }
+
+    public function test_generic_priced_work_is_not_persistable_final_estimate_item(): void
+    {
+        $service = new TestableEstimateDraftPersistenceService();
+        $persistable = $service->persistableItemsFor([
+            [
+                'key' => 'generic-complex-work',
+                'item_type' => 'priced_work',
+                'name' => 'Комплекс строительных работ',
+                'normative_search_text' => 'Комплекс строительных работ',
+                'unit' => 'компл',
+                'quantity' => 1,
+                'total_cost' => 250000,
+                'pricing_status' => 'calculated',
+                'normative_rate_code' => '01-01-001-01',
+            ],
+            $this->workItem('work-1', 'priced_work', 1000),
         ]);
 
         self::assertCount(1, $persistable);
@@ -158,6 +181,39 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
                 'sections' => [[
                     'work_items' => [
                         $this->workItem('work-without-norm', 'priced_work', 1000, 'calculated', null),
+                    ],
+                ]],
+            ]],
+        ]);
+
+        self::assertSame(['type' => 'prices_require_review'], $blocker);
+    }
+
+    public function test_generic_priced_work_blocks_apply_even_when_quality_status_is_ready(): void
+    {
+        $blocker = (new TestableEstimateDraftPersistenceService())->blockerFor([
+            'quality_summary' => [
+                'status' => 'ready',
+                'not_calculated_work_items' => 0,
+                'safe_norm_required_work_items' => 0,
+                'normative_items' => [
+                    'requires_review' => 0,
+                ],
+            ],
+            'local_estimates' => [[
+                'sections' => [[
+                    'work_items' => [
+                        [
+                            'key' => 'generic-complex-work',
+                            'item_type' => 'priced_work',
+                            'name' => 'Комплекс строительных работ',
+                            'unit' => 'компл',
+                            'quantity' => 1,
+                            'total_cost' => 250000,
+                            'pricing_status' => 'calculated',
+                            'normative_rate_code' => '01-01-001-01',
+                            'validation_flags' => [EstimateGenerationNoAirWorkItemPolicy::FLAG],
+                        ],
                     ],
                 ]],
             ]],

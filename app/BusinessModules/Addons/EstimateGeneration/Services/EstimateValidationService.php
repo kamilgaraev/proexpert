@@ -6,6 +6,10 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
 class EstimateValidationService
 {
+    public function __construct(
+        private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy(),
+    ) {}
+
     /**
      * @param array<string, mixed> $draft
      * @return array<string, mixed>
@@ -60,6 +64,13 @@ class EstimateValidationService
                     $hasResources = ($workItem['materials'] ?? []) !== []
                         || ($workItem['labor'] ?? []) !== []
                         || ($workItem['machinery'] ?? []) !== [];
+
+                    if ($isPricedItem && $this->noAirWorkItemPolicy->requiresReview($workItem)) {
+                        $workItem = $this->noAirWorkItemPolicy->markRequiresReview($workItem);
+                        $flags = $workItem['validation_flags'];
+                        $total = 0.0;
+                        $hasResources = false;
+                    }
 
                     if ($isQuantityReviewItem) {
                         $quantityReviewWorkItemsCount++;
@@ -169,9 +180,13 @@ class EstimateValidationService
                     }
 
                     $flags = array_values(array_unique($flags));
-                    $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex]['validation_flags'] = $flags;
-                    $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex]['pricing_status'] = $workItem['pricing_status'] ?? null;
-                    $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex]['pricing_blocker'] = $workItem['pricing_blocker'] ?? null;
+                    $workItem['validation_flags'] = $flags;
+                    $workItem['pricing_status'] = $workItem['pricing_status'] ?? null;
+                    $workItem['pricing_blocker'] = $workItem['pricing_blocker'] ?? null;
+                    $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex] = [
+                        ...$draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex],
+                        ...$workItem,
+                    ];
                     $sectionTotal += $total;
                     $confidenceSum += (float) ($workItem['confidence'] ?? 0);
                     $confidenceCount++;

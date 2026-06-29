@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNoAirWorkItemPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationReviewItemService;
 use PHPUnit\Framework\TestCase;
 
@@ -121,6 +122,41 @@ final class EstimateGenerationReviewItemServiceTest extends TestCase
         self::assertSame(0, $result['summary']['blocking']);
         self::assertSame(0, $result['summary']['warning']);
         self::assertSame(0, $result['summary']['optional']);
+    }
+
+    public function test_generic_calculated_work_item_is_blocking_review_item(): void
+    {
+        $result = $this->service()->forSession(new EstimateGenerationSession([
+            'draft_payload' => $this->draft([
+                $this->workItem([
+                    'key' => 'generic-complex-work',
+                    'name' => 'Комплекс строительных работ',
+                    'normative_search_text' => 'Комплекс строительных работ',
+                    'unit' => 'компл',
+                    'quantity' => 1,
+                    'total_cost' => 250000,
+                    'pricing_status' => 'calculated',
+                    'normative_rate_code' => '01-01-001-01',
+                    'normative_match' => [
+                        'norm_id' => 101,
+                        'code' => '01-01-001-01',
+                        'status' => 'matched',
+                        'decision' => ['status' => 'accepted'],
+                    ],
+                    'materials' => [['total_price' => 180000]],
+                    'labor' => [['total_price' => 50000]],
+                    'machinery' => [['total_price' => 20000]],
+                ]),
+            ]),
+        ]));
+
+        self::assertSame(1, $result['summary']['total']);
+        self::assertSame(1, $result['summary']['blocking']);
+        self::assertSame('generic-complex-work', $result['items'][0]['work_item_key']);
+        self::assertSame('select_norm', $result['items'][0]['required_action']);
+        self::assertSame(EstimateGenerationNoAirWorkItemPolicy::BLOCKER, $result['items'][0]['pricing_blocker']);
+        self::assertContains(EstimateGenerationNoAirWorkItemPolicy::FLAG, $result['items'][0]['reason_codes']);
+        self::assertContains(EstimateGenerationNoAirWorkItemPolicy::NO_AIR_FLAG, $result['items'][0]['work_item']['validation_flags']);
     }
 
     public function test_uses_package_items_as_fallback_without_duplicating_draft_items(): void

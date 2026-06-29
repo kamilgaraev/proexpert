@@ -29,6 +29,8 @@ final class EstimateGenerationReviewItemService
     ];
 
     private const NORMATIVE_REVIEW_FLAGS = [
+        EstimateGenerationNoAirWorkItemPolicy::FLAG,
+        EstimateGenerationNoAirWorkItemPolicy::NO_AIR_FLAG,
         'safe_norm_required',
         'normative_candidate_only',
         'normative_not_found',
@@ -42,6 +44,8 @@ final class EstimateGenerationReviewItemService
     ];
 
     private const PRICING_FLAGS = [
+        EstimateGenerationNoAirWorkItemPolicy::FLAG,
+        EstimateGenerationNoAirWorkItemPolicy::NO_AIR_FLAG,
         'pricing_not_calculated',
         'missing_price',
         'missing_resources',
@@ -58,6 +62,7 @@ final class EstimateGenerationReviewItemService
 
     public function __construct(
         private readonly EstimateGenerationPackagePresenter $packagePresenter,
+        private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy(),
     ) {}
 
     /**
@@ -229,6 +234,13 @@ final class EstimateGenerationReviewItemService
         }
 
         $flags = $this->flags($workItem);
+        $genericReviewRequired = $this->noAirWorkItemPolicy->requiresReview($workItem);
+
+        if ($genericReviewRequired) {
+            $workItem = $this->noAirWorkItemPolicy->markRequiresReview($workItem);
+            $flags = $this->flags($workItem);
+        }
+
         $quantityReviewRequired = $itemType === EstimateGenerationPackageItem::QUANTITY_REVIEW_ITEM_TYPE
             || (string) ($workItem['pricing_blocker'] ?? '') === 'quantity_review_required'
             || in_array('quantity_review_required', $flags, true);
@@ -242,6 +254,7 @@ final class EstimateGenerationReviewItemService
         if (
             !$quantityReviewRequired
             && !$duplicateReviewRequired
+            && !$genericReviewRequired
             && !$normativeReviewRequired
             && !$pricingNotCalculated
             && !$priceReviewRequired
@@ -259,7 +272,7 @@ final class EstimateGenerationReviewItemService
         } elseif ($duplicateReviewRequired) {
             $severity = self::SEVERITY_BLOCKING;
             $requiredAction = self::ACTION_RESOLVE_DUPLICATE;
-        } elseif ($normativeReviewRequired || $pricingNotCalculated) {
+        } elseif ($genericReviewRequired || $normativeReviewRequired || $pricingNotCalculated) {
             $severity = self::SEVERITY_BLOCKING;
             $requiredAction = $this->requiresPriceCheck($workItem) ? self::ACTION_CHECK_PRICE : self::ACTION_SELECT_NORM;
         } elseif ($priceReviewRequired) {
@@ -288,6 +301,7 @@ final class EstimateGenerationReviewItemService
                 $normativeReviewRequired,
                 $priceReviewRequired,
                 $hasAlternative,
+                $genericReviewRequired,
             ),
             'candidates_count' => $this->candidatesCount($workItem),
             'has_current_norm' => $this->hasCurrentNorm($workItem),
@@ -480,6 +494,7 @@ final class EstimateGenerationReviewItemService
         bool $normativeReviewRequired,
         bool $priceReviewRequired,
         bool $hasAlternative,
+        bool $genericReviewRequired,
     ): array {
         $reasons = [];
 
@@ -493,6 +508,10 @@ final class EstimateGenerationReviewItemService
 
         if ($pricingNotCalculated) {
             $reasons[] = 'pricing_not_calculated';
+        }
+
+        if ($genericReviewRequired) {
+            $reasons[] = EstimateGenerationNoAirWorkItemPolicy::FLAG;
         }
 
         if ($normativeReviewRequired) {

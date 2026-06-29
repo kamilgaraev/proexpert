@@ -22,6 +22,7 @@ class ResourceAssemblyService
         protected NormativeMatchDecisionService $matchDecisionService,
         protected NormativeCandidatePresenter $candidatePresenter,
         protected ?WorkIntentClassifier $workIntentClassifier = null,
+        protected EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy(),
     ) {}
 
     public function enrich(array $workItems, array $context = []): array
@@ -33,6 +34,17 @@ class ResourceAssemblyService
         foreach ($workItems as $index => &$workItem) {
             if ($this->isQuantityReviewItem($workItem)) {
                 $workItem = $this->clearQuantityReviewPricing($workItem);
+                $processed = $index + 1;
+
+                if ($progressCallback !== null && ($processed % self::PROGRESS_STEP === 0 || $processed === $total)) {
+                    $progressCallback($processed, $total);
+                }
+
+                continue;
+            }
+
+            if ($this->noAirWorkItemPolicy->requiresReview($workItem)) {
+                $workItem = $this->markNoAirWorkItem($workItem);
                 $processed = $index + 1;
 
                 if ($progressCallback !== null && ($processed % self::PROGRESS_STEP === 0 || $processed === $total)) {
@@ -85,8 +97,11 @@ class ResourceAssemblyService
     public function applySelectedNormativeMatch(array $workItem, array $match, array $context = []): array
     {
         $workItem = $this->withWorkIntent($workItem, $context);
+        $workItem = $this->applyDecidedNormativeMatch($workItem, $match, true);
 
-        return $this->applyDecidedNormativeMatch($workItem, $match, true);
+        return $this->noAirWorkItemPolicy->requiresReview($workItem)
+            ? $this->markNoAirWorkItem($workItem)
+            : $workItem;
     }
 
     /**
@@ -134,6 +149,18 @@ class ResourceAssemblyService
         ]));
 
         return $workItem;
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @return array<string, mixed>
+     */
+    private function markNoAirWorkItem(array $workItem): array
+    {
+        return $this->noAirWorkItemPolicy->markRequiresReview(
+            $workItem,
+            trans_message('estimate_generation.pricing_not_calculated_safe_norm')
+        );
     }
 
     /**

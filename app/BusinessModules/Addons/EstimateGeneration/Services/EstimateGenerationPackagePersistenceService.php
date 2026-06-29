@@ -11,6 +11,10 @@ use Illuminate\Support\Facades\DB;
 
 class EstimateGenerationPackagePersistenceService
 {
+    public function __construct(
+        private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy(),
+    ) {}
+
     /**
      * @param array<string, mixed> $draft
      */
@@ -153,10 +157,17 @@ class EstimateGenerationPackagePersistenceService
      */
     private function estimateWorkItems(array $workItems): array
     {
-        return array_values(array_filter(
+        $workItems = array_values(array_filter(
             $workItems,
             fn (array $workItem): bool => $this->isEstimateWorkItem($workItem)
         ));
+
+        return array_map(
+            fn (array $workItem): array => $this->noAirWorkItemPolicy->requiresReview($workItem)
+                ? $this->noAirWorkItemPolicy->markRequiresReview($workItem)
+                : $workItem,
+            $workItems
+        );
     }
 
     /**
@@ -190,6 +201,16 @@ class EstimateGenerationPackagePersistenceService
         foreach ($workItems as $workItem) {
             foreach ($workItem['validation_flags'] ?? [] as $flag) {
                 if (in_array($flag, ['missing_price', 'missing_resources'], true)) {
+                    $critical[] = (string) $flag;
+                    continue;
+                }
+
+                if (in_array($flag, [
+                    EstimateGenerationNoAirWorkItemPolicy::FLAG,
+                    EstimateGenerationNoAirWorkItemPolicy::NO_AIR_FLAG,
+                    'pricing_not_calculated',
+                    'safe_norm_required',
+                ], true)) {
                     $critical[] = (string) $flag;
                     continue;
                 }
