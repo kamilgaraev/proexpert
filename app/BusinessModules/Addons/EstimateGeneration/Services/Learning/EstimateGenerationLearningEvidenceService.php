@@ -332,6 +332,14 @@ final class EstimateGenerationLearningEvidenceService
 
     private function sourceWeight(string $sourceType, bool $positive): float
     {
+        if ($sourceType === 'manual_review_choice') {
+            return $positive ? 1.45 : 1.0;
+        }
+
+        if ($sourceType === 'manual_review_rejection') {
+            return $positive ? 1.0 : 1.55;
+        }
+
         if ($sourceType === 'user_selection') {
             return 1.35;
         }

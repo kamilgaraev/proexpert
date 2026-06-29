@@ -87,8 +87,10 @@ final class FloorPlanEstimatePipelineTest extends TestCase
         self::assertNotContains('ventilation', $packageKeys);
         self::assertNotContains('fire_safety', $packageKeys);
         self::assertContains('openings.doors', $pricedFormulas);
-        self::assertContains('rough.floor', $reviewFormulas);
-        self::assertContains('finish.floor', $reviewFormulas);
+        self::assertContains('rough.floor', $pricedFormulas);
+        self::assertContains('finish.floor', $pricedFormulas);
+        self::assertNotContains('rough.floor', $reviewFormulas);
+        self::assertNotContains('finish.floor', $reviewFormulas);
         self::assertContains('office.ceiling', $reviewFormulas);
         self::assertContains('rough.walls', $reviewFormulas);
         self::assertContains('finish.paint', $reviewFormulas);
@@ -96,6 +98,14 @@ final class FloorPlanEstimatePipelineTest extends TestCase
         self::assertContains('sanitary.tile', $reviewFormulas);
         self::assertNotContains('ventilation.air_exchange', array_column($items, 'quantity_formula'));
         self::assertNotContains('warehouse.fire', array_column($items, 'quantity_formula'));
+
+        $finishFloor = $this->itemByQuantityFormula($items, 'finish.floor', 'priced_work');
+        $roughFloor = $this->itemByQuantityFormula($items, 'rough.floor', 'priced_work');
+
+        self::assertSame(61.65, $finishFloor['quantity']);
+        self::assertSame(61.65, $roughFloor['quantity']);
+        self::assertNotSame([], $finishFloor['source_refs']);
+        self::assertNotSame([], $roughFloor['source_refs']);
     }
 
     /**
@@ -108,5 +118,20 @@ final class FloorPlanEstimatePipelineTest extends TestCase
             static fn (array $item): string => (string) ($item['quantity_formula'] ?? ''),
             array_filter($items, static fn (array $item): bool => ($item['item_type'] ?? null) === $itemType)
         ));
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $items
+     * @return array<string, mixed>
+     */
+    private function itemByQuantityFormula(array $items, string $quantityFormula, string $itemType): array
+    {
+        foreach ($items as $item) {
+            if (($item['quantity_formula'] ?? null) === $quantityFormula && ($item['item_type'] ?? null) === $itemType) {
+                return $item;
+            }
+        }
+
+        self::fail("Item {$quantityFormula} with type {$itemType} was not found.");
     }
 }

@@ -566,6 +566,7 @@ final class NormativeWorkItemPlannerService
     {
         $takeoffs = is_array($documentContext['quantity_takeoffs'] ?? null) ? $documentContext['quantity_takeoffs'] : [];
         $quantities = [];
+        $hasFloorAreaAggregate = $this->hasTakeoffScope($takeoffs, ['floor_finish_area', 'rough_floor_area']);
 
         foreach ($takeoffs as $takeoff) {
             if (!is_array($takeoff)) {
@@ -573,7 +574,13 @@ final class NormativeWorkItemPlannerService
             }
 
             $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
-            $quantityKey = (string) ($payload['quantity_key'] ?? $takeoff['quantity_key'] ?? $this->quantityKeyFromTakeoffScope((string) ($takeoff['scope_key'] ?? '')));
+            $scopeKey = (string) ($takeoff['scope_key'] ?? '');
+
+            if ($scopeKey === 'room_area' && $hasFloorAreaAggregate) {
+                continue;
+            }
+
+            $quantityKey = (string) ($payload['quantity_key'] ?? $takeoff['quantity_key'] ?? $this->quantityKeyFromTakeoffScope($scopeKey));
             $value = $this->firstNumeric($takeoff, ['quantity', 'value', 'value_number']);
 
             if ($quantityKey === '' || $value === null || $value <= 0) {
@@ -594,6 +601,21 @@ final class NormativeWorkItemPlannerService
         }
 
         return $quantities;
+    }
+
+    /**
+     * @param array<int, mixed> $takeoffs
+     * @param array<int, string> $scopeKeys
+     */
+    private function hasTakeoffScope(array $takeoffs, array $scopeKeys): bool
+    {
+        foreach ($takeoffs as $takeoff) {
+            if (is_array($takeoff) && in_array((string) ($takeoff['scope_key'] ?? ''), $scopeKeys, true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -728,6 +750,10 @@ final class NormativeWorkItemPlannerService
             ];
         }
 
+        if ($this->isDuplicateFactsSummaryArea($left, $right)) {
+            return $this->sourceBackedQuantity($left, $right);
+        }
+
         return [
             'value' => round((float) ($left['value'] ?? 0) + (float) ($right['value'] ?? 0), 4),
             'unit' => (string) ($left['unit'] ?? $right['unit'] ?? ''),
@@ -738,6 +764,60 @@ final class NormativeWorkItemPlannerService
             'source' => ($left['source'] ?? null) === ($right['source'] ?? null)
                 ? (string) ($left['source'] ?? 'document_quantity')
                 : 'document_quantity_aggregate',
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $left
+     * @param array<string, mixed> $right
+     */
+    private function isDuplicateFactsSummaryArea(array $left, array $right): bool
+    {
+        $leftValue = (float) ($left['value'] ?? 0);
+        $rightValue = (float) ($right['value'] ?? 0);
+
+        if (abs($leftValue - $rightValue) > 0.01) {
+            return false;
+        }
+
+        return ($this->isFactsSummaryAreaQuantity($left) && $this->hasSourceBackedQuantity($right))
+            || ($this->isFactsSummaryAreaQuantity($right) && $this->hasSourceBackedQuantity($left));
+    }
+
+    /**
+     * @param array<string, mixed> $quantity
+     */
+    private function isFactsSummaryAreaQuantity(array $quantity): bool
+    {
+        return ($quantity['source'] ?? null) === 'facts_summary_area';
+    }
+
+    /**
+     * @param array<string, mixed> $quantity
+     */
+    private function hasSourceBackedQuantity(array $quantity): bool
+    {
+        return !$this->isFactsSummaryAreaQuantity($quantity)
+            && ($quantity['source_refs'] ?? []) !== [];
+    }
+
+    /**
+     * @param array<string, mixed> $left
+     * @param array<string, mixed> $right
+     * @return array{value: float, unit: string, basis: string, confidence: float, source_refs: array<int, array<string, mixed>>, review_required: bool, source: string}
+     */
+    private function sourceBackedQuantity(array $left, array $right): array
+    {
+        $quantity = $this->hasSourceBackedQuantity($left) ? $left : $right;
+
+        return [
+            'value' => (float) ($quantity['value'] ?? 0),
+            'unit' => (string) ($quantity['unit'] ?? ''),
+            'basis' => (string) ($quantity['basis'] ?? ''),
+            'confidence' => (float) ($quantity['confidence'] ?? 0.76),
+            'source_refs' => $this->normalizeSourceRefs($quantity['source_refs'] ?? []),
+            'review_required' => (bool) ($quantity['review_required'] ?? false),
+            'source' => (string) ($quantity['source'] ?? 'document_quantity'),
         ];
     }
 

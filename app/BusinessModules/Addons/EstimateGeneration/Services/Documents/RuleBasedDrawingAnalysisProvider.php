@@ -976,7 +976,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 confidence: min($confidence + 0.03, 0.98),
                 sourceRefs: $sourceRefs,
                 roomCount: $roomCount,
-                reviewRequired: true
+                reviewRequired: false
             ),
             $this->aggregateTakeoff(
                 scopeKey: 'rough_floor_area',
@@ -987,7 +987,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 confidence: min($confidence + 0.02, 0.98),
                 sourceRefs: $sourceRefs,
                 roomCount: $roomCount,
-                reviewRequired: true
+                reviewRequired: false
             ),
             $this->aggregateTakeoff(
                 scopeKey: 'ceiling_finish_area',

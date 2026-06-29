@@ -25,7 +25,7 @@ class EstimateGenerationFeedbackRequest extends FormRequest
 
         $payload = $payload ?? [];
 
-        foreach (['norm_id', 'normative_code', 'reason', 'quantity', 'unit', 'quantity_basis', 'action'] as $key) {
+        foreach (['norm_id', 'normative_code', 'reason', 'quantity', 'unit', 'quantity_basis', 'action', 'target_work_item_key'] as $key) {
             if (!array_key_exists($key, $payload) && $this->filled($key)) {
                 $payload[$key] = $this->input($key);
             }
@@ -54,14 +54,16 @@ class EstimateGenerationFeedbackRequest extends FormRequest
             'payload.quantity' => ['nullable', 'numeric', 'gt:0'],
             'payload.unit' => ['nullable', 'string', 'max:50'],
             'payload.quantity_basis' => ['nullable', 'string', 'max:2000'],
-            'payload.action' => ['nullable', 'string', Rule::in(['remove_item', 'keep_item'])],
+            'payload.action' => ['nullable', 'string', Rule::in(['remove_item', 'keep_item', 'merge_with_existing'])],
+            'payload.target_work_item_key' => ['nullable', 'string', 'max:255'],
             'norm_id' => ['nullable', 'integer'],
             'normative_code' => ['nullable', 'string', 'max:100'],
             'reason' => ['nullable', 'string', 'max:1000'],
             'quantity' => ['nullable', 'numeric', 'gt:0'],
             'unit' => ['nullable', 'string', 'max:50'],
             'quantity_basis' => ['nullable', 'string', 'max:2000'],
-            'action' => ['nullable', 'string', Rule::in(['remove_item', 'keep_item'])],
+            'action' => ['nullable', 'string', Rule::in(['remove_item', 'keep_item', 'merge_with_existing'])],
+            'target_work_item_key' => ['nullable', 'string', 'max:255'],
             'comments' => ['nullable', 'string', 'max:2000'],
         ];
     }

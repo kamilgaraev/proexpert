@@ -103,11 +103,13 @@ final class NormativeCandidateFeedbackService
     {
         $action = $this->nullableString($payload['action'] ?? null);
 
-        if (!in_array($action, ['remove_item', 'keep_item'], true)) {
+        if (!in_array($action, ['remove_item', 'keep_item', 'merge_with_existing'], true)) {
             throw $this->validationException([
                 'payload.action' => [$this->message('estimate_generation.duplicate_resolution_action_required')],
             ]);
         }
+
+        $targetWorkItemKey = $this->nullableString($payload['target_work_item_key'] ?? null);
 
         foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
             if (!is_array($localEstimate)) {
@@ -131,6 +133,7 @@ final class NormativeCandidateFeedbackService
                         (int) $workIndex,
                         $workItem,
                         $action,
+                        $targetWorkItemKey,
                         $comments
                     );
                 }
@@ -652,6 +655,7 @@ final class NormativeCandidateFeedbackService
         int $workIndex,
         array $workItem,
         string $action,
+        ?string $targetWorkItemKey,
         ?string $comments
     ): array {
         $workItems = $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'] ?? [];
@@ -674,21 +678,55 @@ final class NormativeCandidateFeedbackService
             array_splice($workItems, $workIndex, 1);
             $keptKey = $this->firstRemainingDuplicateKey($workItems, $signature);
         } else {
+            $targetKey = $action === 'merge_with_existing'
+                ? ($targetWorkItemKey ?? $keptKey)
+                : $keptKey;
+            $targetIsInGroup = false;
+
+            foreach ($matchingIndexes as $matchingIndex) {
+                if ((string) ($workItems[$matchingIndex]['key'] ?? '') === $targetKey) {
+                    $targetIsInGroup = true;
+                    break;
+                }
+            }
+
+            if (!$targetIsInGroup) {
+                throw $this->validationException([
+                    'payload.target_work_item_key' => [$this->message('estimate_generation.work_item_not_found')],
+                ]);
+            }
+
+            $mergedItems = [];
+
             foreach (array_reverse($matchingIndexes) as $matchingIndex) {
-                if ($matchingIndex === $workIndex) {
+                if ((string) ($workItems[$matchingIndex]['key'] ?? '') === $targetKey) {
                     continue;
+                }
+
+                if ($action === 'merge_with_existing' && is_array($workItems[$matchingIndex] ?? null)) {
+                    $mergedItems[] = $workItems[$matchingIndex];
                 }
 
                 $removedKeys[] = (string) ($workItems[$matchingIndex]['key'] ?? '');
                 array_splice($workItems, $matchingIndex, 1);
             }
 
-            $workItems = array_map(function (mixed $candidate) use ($keptKey, $comments): mixed {
+            $keptKey = $targetKey;
+            $workItems = array_map(function (mixed $candidate) use ($keptKey, $comments, $action, $removedKeys, $mergedItems): mixed {
                 if (!is_array($candidate) || (string) ($candidate['key'] ?? '') !== $keptKey) {
                     return $candidate;
                 }
 
-                return $this->markDuplicateKeptByUser($candidate, $comments);
+                if ($action === 'merge_with_existing') {
+                    $candidate = $this->mergeDuplicateEvidence($candidate, $mergedItems);
+                }
+
+                return $this->markDuplicateKeptByUser(
+                    $candidate,
+                    $comments,
+                    $removedKeys,
+                    $action === 'merge_with_existing' ? 'merged_by_user' : 'kept_by_user'
+                );
             }, $workItems);
         }
 
@@ -821,18 +859,57 @@ final class NormativeCandidateFeedbackService
      * @param array<string, mixed> $workItem
      * @return array<string, mixed>
      */
-    private function markDuplicateKeptByUser(array $workItem, ?string $comments): array
-    {
+    private function markDuplicateKeptByUser(
+        array $workItem,
+        ?string $comments,
+        array $removedKeys = [],
+        string $status = 'kept_by_user'
+    ): array {
         $workItem = $this->clearDuplicateReviewFlags($workItem);
         $workItem['metadata'] = [
             ...(is_array($workItem['metadata'] ?? null) ? $workItem['metadata'] : []),
             'duplicate_resolution' => [
-                'status' => 'kept_by_user',
+                'status' => $status,
                 'comments' => $comments,
+                'removed_work_item_keys' => array_values(array_filter($removedKeys, static fn (string $key): bool => $key !== '')),
             ],
         ];
 
         return $workItem;
+    }
+
+    /**
+     * @param array<string, mixed> $target
+     * @param array<int, array<string, mixed>> $removedItems
+     * @return array<string, mixed>
+     */
+    private function mergeDuplicateEvidence(array $target, array $removedItems): array
+    {
+        $sourceRefs = $this->arrayValues($target['source_refs'] ?? []);
+
+        foreach ($removedItems as $removedItem) {
+            $sourceRefs = [
+                ...$sourceRefs,
+                ...$this->arrayValues($removedItem['source_refs'] ?? []),
+            ];
+        }
+
+        $sourceRefs = $this->uniqueArrayValues($sourceRefs);
+
+        if ($sourceRefs !== []) {
+            $target['source_refs'] = $sourceRefs;
+        }
+
+        $quantityBasis = $this->uniqueStrings([
+            $target['quantity_basis'] ?? null,
+            ...array_map(static fn (array $item): mixed => $item['quantity_basis'] ?? null, $removedItems),
+        ]);
+
+        if ($quantityBasis !== []) {
+            $target['quantity_basis'] = implode('; ', $quantityBasis);
+        }
+
+        return $target;
     }
 
     /**
@@ -972,6 +1049,31 @@ final class NormativeCandidateFeedbackService
             array_map(static fn (mixed $value): string => trim((string) $value), $values),
             static fn (string $value): bool => $value !== ''
         )));
+    }
+
+    /**
+     * @param array<int, mixed> $values
+     * @return array<int, mixed>
+     */
+    private function uniqueArrayValues(array $values): array
+    {
+        $seen = [];
+        $result = [];
+
+        foreach ($values as $value) {
+            $key = is_array($value)
+                ? json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+                : (string) $value;
+
+            if ($key === false || $key === '' || isset($seen[$key])) {
+                continue;
+            }
+
+            $seen[$key] = true;
+            $result[] = $value;
+        }
+
+        return $result;
     }
 
     private function normalizeCode(string $code): string

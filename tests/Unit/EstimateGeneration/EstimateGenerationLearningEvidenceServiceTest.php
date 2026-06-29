@@ -44,6 +44,47 @@ final class EstimateGenerationLearningEvidenceServiceTest extends TestCase
         $this->assertSame('imported_estimate', $summary[$norm->id]['learning_sources'][0]['source_type']);
     }
 
+    public function test_manual_review_choices_are_weighted_above_imported_examples(): void
+    {
+        $organization = Organization::factory()->create();
+        $importedNorm = $this->norm('01-01-001-01', 'Imported foundation concrete norm', 'm3');
+        $manualNorm = $this->norm('01-01-002-01', 'Estimator confirmed foundation concrete norm', 'm3');
+        $workPayload = [
+            'work_name' => 'Foundation strip concrete B22.5',
+            'work_unit' => 'm3',
+            'normative_unit' => 'm3',
+            'work_intent' => ['scope' => 'foundation', 'action' => 'concreting', 'system' => null],
+            'is_positive' => true,
+            'source_quality_score' => 1.0,
+        ];
+
+        $this->learningExample($organization->id, [
+            ...$workPayload,
+            'estimate_norm_id' => $importedNorm->id,
+            'norm_code' => $importedNorm->code,
+            'source_type' => 'imported_estimate',
+        ]);
+        $this->learningExample($organization->id, [
+            ...$workPayload,
+            'estimate_norm_id' => $manualNorm->id,
+            'norm_code' => $manualNorm->code,
+            'source_type' => 'manual_review_choice',
+            'decision_status' => 'confirmed_by_user',
+        ]);
+
+        $summary = app(EstimateGenerationLearningEvidenceService::class)->summarizeForCandidates(
+            collect([$importedNorm, $manualNorm]),
+            ['name' => 'Foundation strip concrete B22.5', 'unit' => 'm3'],
+            ['organization_id' => $organization->id, 'scope_type' => 'foundation']
+        );
+
+        $this->assertGreaterThan(
+            $summary[$importedNorm->id]['learning_score'],
+            $summary[$manualNorm->id]['learning_score']
+        );
+        $this->assertSame('manual_review_choice', $summary[$manualNorm->id]['learning_sources'][0]['source_type']);
+    }
+
     public function test_negative_examples_for_same_work_and_norm_penalize_candidate(): void
     {
         $organization = Organization::factory()->create();

@@ -369,6 +369,59 @@ final class NormativeCandidateFeedbackServiceTest extends TestCase
         self::assertContains('requires_duplicate_review', $itemsByKey['paint-2']['validation_flags']);
     }
 
+    public function test_merges_duplicate_work_item_into_existing_target_and_preserves_evidence(): void
+    {
+        $duplicateWorkItem = [
+            'item_type' => 'priced_work',
+            'name' => 'Concrete works',
+            'normative_search_text' => 'concrete works',
+            'normative_search_key' => 'foundation|concrete|m3',
+            'unit' => 'm3',
+            'quantity' => 8,
+            'quantity_basis' => 'Drawing A101, page 1',
+            'total_cost' => 120000,
+            'materials' => [['total_price' => 80000]],
+            'labor' => [['total_price' => 25000]],
+            'machinery' => [['total_price' => 15000]],
+            'pricing_status' => 'calculated',
+            'normative_match' => [
+                'status' => 'matched',
+                'decision' => ['status' => 'accepted'],
+            ],
+            'source_refs' => [['type' => 'document', 'filename' => 'A101.pdf', 'page_number' => 1]],
+            'validation_flags' => ['possible_duplicate_work_item', 'requires_duplicate_review'],
+            'confidence' => 0.92,
+        ];
+        $draft = $this->drafts([
+            ['key' => 'work-1', ...$duplicateWorkItem],
+            [
+                'key' => 'work-2',
+                ...$duplicateWorkItem,
+                'quantity_basis' => 'Drawing A102, page 2',
+                'source_refs' => [['type' => 'document', 'filename' => 'A102.pdf', 'page_number' => 2]],
+            ],
+        ]);
+
+        $updated = $this->service()->applyDuplicateResolutionToDraft($draft, 'work-2', [
+            'action' => 'merge_with_existing',
+            'target_work_item_key' => 'work-1',
+        ], 'Merged duplicate evidence.');
+
+        $workItems = $updated['local_estimates'][0]['sections'][0]['work_items'];
+        $target = $workItems[0];
+
+        self::assertSame(['work-1'], array_column($workItems, 'key'));
+        self::assertCount(2, $target['source_refs']);
+        self::assertSame(['A101.pdf', 'A102.pdf'], array_column($target['source_refs'], 'filename'));
+        self::assertStringContainsString('Drawing A101, page 1', $target['quantity_basis']);
+        self::assertStringContainsString('Drawing A102, page 2', $target['quantity_basis']);
+        self::assertSame('merged_by_user', $target['metadata']['duplicate_resolution']['status']);
+        self::assertSame(['work-2'], $target['metadata']['duplicate_resolution']['removed_work_item_keys']);
+        self::assertSame('merge_with_existing', $updated['review_decisions'][0]['action']);
+        self::assertSame('work-1', $updated['review_decisions'][0]['kept_work_item_key']);
+        self::assertSame(['work-2'], $updated['review_decisions'][0]['removed_work_item_keys']);
+    }
+
     public function test_removes_generic_no_air_work_item_from_draft(): void
     {
         $draft = $this->drafts([
