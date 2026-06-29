@@ -322,6 +322,75 @@ final class FsnbFirstNormativeSafetyTest extends TestCase
         $this->assertContains('scope_mismatch', $decision->warnings);
     }
 
+    public function test_baseboard_can_be_priced_by_flooring_section_norm(): void
+    {
+        $decision = (new NormativeMatchDecisionService())->decide($this->candidate([
+            'code' => '11-01-039-01',
+            'name' => 'Устройство плинтусов: деревянных',
+            'unit' => '100 м',
+            'confidence' => 0.9,
+        ]), [
+            'name' => 'Монтаж плинтусов',
+            'unit' => 'м',
+            'quantity' => 77,
+        ]);
+
+        $this->assertTrue($decision->canUseForPricing);
+        $this->assertNotContains('scope_mismatch', $decision->warnings);
+    }
+
+    public function test_linear_baseboard_cannot_be_priced_by_wall_tiling_baseboard_norm(): void
+    {
+        $decision = (new NormativeMatchDecisionService())->decide($this->candidate([
+            'code' => '15-01-020-01',
+            'name' => 'Облицовка стен на цементном растворе с карнизными, плинтусными и угловыми плитками',
+            'unit' => '100 м2',
+            'confidence' => 0.9,
+        ]), [
+            'name' => 'Монтаж плинтусов',
+            'unit' => 'м',
+            'quantity' => 77,
+        ]);
+
+        $this->assertFalse($decision->canUseForPricing);
+        $this->assertContains('unit_mismatch', $decision->warnings);
+        $this->assertContains('scope_mismatch', $decision->warnings);
+    }
+
+    public function test_floor_covering_can_be_priced_by_flooring_section_norm(): void
+    {
+        $decision = (new NormativeMatchDecisionService())->decide($this->candidate([
+            'code' => '11-01-036-01',
+            'name' => 'Устройство покрытий: из линолеума на клее',
+            'unit' => '100 м2',
+            'confidence' => 0.9,
+        ]), [
+            'name' => 'Устройство чистового покрытия пола',
+            'unit' => 'м2',
+            'quantity' => 87.14,
+        ]);
+
+        $this->assertTrue($decision->canUseForPricing);
+        $this->assertNotContains('scope_mismatch', $decision->warnings);
+    }
+
+    public function test_ceiling_finishing_cannot_be_priced_by_boiler_ceiling_equipment_norm(): void
+    {
+        $decision = (new NormativeMatchDecisionService())->decide($this->candidate([
+            'code' => '06-01-006-14',
+            'name' => 'Пароперегреватель потолочный из гладких труб',
+            'unit' => '100 м2',
+            'confidence' => 0.9,
+        ]), [
+            'name' => 'Монтаж подвесного потолка',
+            'unit' => 'м2',
+            'quantity' => 87.14,
+        ]);
+
+        $this->assertFalse($decision->canUseForPricing);
+        $this->assertContains('scope_mismatch', $decision->warnings);
+    }
+
     public function test_temporary_site_fence_cannot_be_priced_by_railway_earthwork_norm(): void
     {
         $decision = (new NormativeMatchDecisionService())->decide($this->candidate([

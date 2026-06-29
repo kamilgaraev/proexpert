@@ -248,7 +248,10 @@ final class RuleBasedNormativeCandidateReranker implements NormativeCandidateRer
             'walls' => $action === 'masonry' ? ['08'] : ['07', '08'],
             'slabs' => ['06', '07'],
             'facade' => ['15', '26'],
-            'finishing' => ['15'],
+            'finishing' => match ($action) {
+                'floor_covering', 'baseboard_installation' => ['11'],
+                default => ['15'],
+            },
             'openings' => ['10', '15'],
             'temporary' => ['08', '09'],
             'site' => ['01', '27'],

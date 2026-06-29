@@ -70,6 +70,28 @@ final class WorkIntentClassifier
     {
         $contextScope = $this->normalizeScope($contextScope);
 
+        if ($contextScope === 'finishing' && $this->containsAny($text, [
+            'отделк',
+            'штукатур',
+            'окраск',
+            'покраск',
+            'шпатлев',
+            'плитк',
+            'облицов',
+            'плинтус',
+            'галтел',
+            'покрыти',
+            'линолеум',
+            'ламинат',
+            'паркет',
+            'подвесн',
+            'потолк',
+        ])) {
+            $signals[] = 'scope_context_finishing';
+
+            return 'finishing';
+        }
+
         foreach ([
             'roof' => ['кровл', 'стропил', 'мауэрлат'],
             'stairs' => ['лестниц', 'лестничн', 'марш'],
@@ -79,7 +101,7 @@ final class WorkIntentClassifier
             'slabs' => ['перекрыт', 'плит'],
             'facade' => ['фасад'],
             'openings' => ['окн', 'двер', 'ворот'],
-            'finishing' => ['отделк', 'штукатур', 'окраск', 'шпатлев', 'плитк', 'плинтус', 'галтел'],
+            'finishing' => ['отделк', 'штукатур', 'окраск', 'покраск', 'шпатлев', 'плитк', 'облицов', 'плинтус', 'галтел', 'покрыти', 'линолеум', 'ламинат', 'паркет', 'подвесн', 'потолк'],
             'temporary' => ['временн', 'стройплощад', 'огражден'],
             'site' => ['благоустрой', 'планировк', 'вывоз грунта'],
         ] as $scope => $needles) {
@@ -137,6 +159,10 @@ final class WorkIntentClassifier
         foreach ([
             'insulation' => ['утепл', 'теплоизоляц'],
             'plastering' => ['штукатур'],
+            'painting' => ['окраск', 'покраск'],
+            'tiling' => ['плитк', 'облицов'],
+            'floor_covering' => ['покрытие пола', 'покрытия пола', 'покрытий пола', 'чистовое покрыти', 'чистового покрыти', 'напольн покрыти', 'линолеум', 'ламинат', 'паркет'],
+            'ceiling_finishing' => ['подвесн', 'монтаж потол', 'потолок', 'потолк'],
             'cable_installation' => ['кабел'],
             'pipe_layout' => ['разводк труб', 'прокладк труб', 'труб отоплен'],
             'heating_equipment' => ['тепловой узел', 'теплового узла', 'теплопункт', 'завес', 'радиатор', 'котел', 'конвектор', 'теплогенератор'],
@@ -206,6 +232,14 @@ final class WorkIntentClassifier
             return 'baseboard';
         }
 
+        if ($this->containsAny($text, ['покрытие пола', 'покрытия пола', 'покрытий пола', 'напольн покрыти', 'линолеум', 'ламинат', 'паркет'])) {
+            return 'floor_covering';
+        }
+
+        if ($this->containsAny($text, ['подвесн', 'потолок', 'потолк'])) {
+            return 'ceiling';
+        }
+
         if ($this->containsAny($text, ['тепловой узел', 'теплового узла', 'теплопункт', 'завес', 'радиатор', 'котел'])) {
             return 'heating_equipment';
         }
@@ -248,7 +282,7 @@ final class WorkIntentClassifier
             'cable_installation', 'pipe_layout' => ['length'],
             'insulation', 'formwork', 'waterproofing' => ['area'],
             'masonry' => ['volume'],
-            'plastering', 'ventilation_installation' => ['area'],
+            'plastering', 'painting', 'tiling', 'floor_covering', 'ceiling_finishing', 'ventilation_installation' => ['area'],
             'window_installation', 'heating_equipment' => ['piece'],
             'fence_installation' => ['length'],
             'baseboard_installation' => ['length'],

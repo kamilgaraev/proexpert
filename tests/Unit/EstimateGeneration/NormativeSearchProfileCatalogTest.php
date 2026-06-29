@@ -64,9 +64,37 @@ final class NormativeSearchProfileCatalogTest extends TestCase
     {
         $profile = (new NormativeSearchProfileCatalog())->forIntent('finishing', 'baseboard_installation', null);
 
-        $this->assertSame(['15'], $profile->allowedSectionPrefixes);
+        $this->assertSame(['11'], $profile->allowedSectionPrefixes);
         $this->assertContains('плинтус', $profile->requiredTerms);
-        $this->assertContains('монтаж', $profile->synonymTerms);
+        $this->assertContains('устройств', $profile->synonymTerms);
+        $this->assertContains('электротехническ', $profile->forbiddenDomainTerms);
         $this->assertContains('землян', $profile->forbiddenDomainTerms);
+    }
+
+    public function test_floor_covering_profile_limits_search_to_floor_section(): void
+    {
+        $profile = (new NormativeSearchProfileCatalog())->forIntent('finishing', 'floor_covering', null);
+
+        $this->assertSame(['11'], $profile->allowedSectionPrefixes);
+        $this->assertContains('покрыт', $profile->requiredTerms);
+        $this->assertContains('линолеум', $profile->synonymTerms);
+        $this->assertContains('кабел', $profile->forbiddenDomainTerms);
+    }
+
+    public function test_paint_tile_and_ceiling_profiles_keep_finishing_section(): void
+    {
+        $catalog = new NormativeSearchProfileCatalog();
+        $painting = $catalog->forIntent('finishing', 'painting', null);
+        $tiling = $catalog->forIntent('finishing', 'tiling', null);
+        $ceiling = $catalog->forIntent('finishing', 'ceiling_finishing', null);
+
+        $this->assertSame(['15'], $painting->allowedSectionPrefixes);
+        $this->assertContains('окраск', $painting->requiredTerms);
+        $this->assertSame(['15'], $tiling->allowedSectionPrefixes);
+        $this->assertContains('плитк', $tiling->requiredTerms);
+        $this->assertSame(['15'], $ceiling->allowedSectionPrefixes);
+        $this->assertContains('потол', $ceiling->requiredTerms);
+        $this->assertContains('пароперегрев', $ceiling->forbiddenDomainTerms);
+        $this->assertContains('землян', $ceiling->forbiddenDomainTerms);
     }
 }
