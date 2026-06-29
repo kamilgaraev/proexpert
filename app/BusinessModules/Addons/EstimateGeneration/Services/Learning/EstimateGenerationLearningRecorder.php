@@ -90,6 +90,7 @@ final class EstimateGenerationLearningRecorder
                 'previous_normative_match' => $originalWorkItem['normative_match'] ?? null,
                 'selected_norm_id' => $normId,
                 'selected_normative_code' => $this->normalizeNormCode((string) $norm->code),
+                'quantity_snapshot' => $this->quantitySnapshot($selectedWorkItem, $originalWorkItem),
                 'local_estimate_title' => $context['local_estimate_title'] ?? null,
                 'section_title' => $context['section_title'] ?? null,
             ],
@@ -170,6 +171,7 @@ final class EstimateGenerationLearningRecorder
                 'rejected_normative_code' => $this->normalizeNormCode((string) $norm->code),
                 'selected_norm_id' => $selectedNormId,
                 'selected_normative_code' => $this->nullableString((string) data_get($selectedWorkItem, 'normative_match.code')),
+                'quantity_snapshot' => $this->quantitySnapshot($selectedWorkItem, $originalWorkItem),
                 'offered_candidates' => $originalWorkItem['normative_candidates'] ?? [],
                 'previous_normative_match' => $originalWorkItem['normative_match'] ?? null,
                 'local_estimate_title' => $context['local_estimate_title'] ?? null,
@@ -423,6 +425,52 @@ final class EstimateGenerationLearningRecorder
         }
 
         return (int) $value;
+    }
+
+    /**
+     * @param array<string, mixed> $selectedWorkItem
+     * @param array<string, mixed> $originalWorkItem
+     * @return array<string, mixed>|null
+     */
+    private function quantitySnapshot(array $selectedWorkItem, array $originalWorkItem): ?array
+    {
+        $quantityFeedback = data_get($selectedWorkItem, 'metadata.quantity_feedback');
+
+        if (!is_array($quantityFeedback)) {
+            $quantityFeedback = data_get($originalWorkItem, 'metadata.quantity_feedback');
+        }
+
+        if (!is_array($quantityFeedback)) {
+            $quantityFeedback = [];
+        }
+
+        $quantity = $this->nullableFloat(
+            data_get($selectedWorkItem, 'quantity')
+            ?? data_get($originalWorkItem, 'quantity')
+            ?? ($quantityFeedback['quantity'] ?? null)
+        );
+        $unit = $this->nullableString(
+            data_get($selectedWorkItem, 'unit')
+            ?? data_get($originalWorkItem, 'unit')
+            ?? ($quantityFeedback['unit'] ?? null)
+        );
+        $quantityBasis = $this->nullableString(
+            data_get($selectedWorkItem, 'quantity_basis')
+            ?? data_get($originalWorkItem, 'quantity_basis')
+            ?? ($quantityFeedback['quantity_basis'] ?? null)
+        );
+
+        if ($quantity === null && $unit === null && $quantityBasis === null && $quantityFeedback === []) {
+            return null;
+        }
+
+        return array_filter([
+            'quantity' => $quantity,
+            'unit' => $unit,
+            'quantity_basis' => $quantityBasis,
+            'confirmed_by_user' => ($quantityFeedback['status'] ?? null) === 'confirmed_by_user',
+            'feedback' => $quantityFeedback !== [] ? $quantityFeedback : null,
+        ], static fn (mixed $value): bool => $value !== null);
     }
 
     /**

@@ -25,8 +25,16 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
         [$user, $project, $session] = $this->makeSession();
         $normId = $this->seedNormative('01-01-006-01', 'Бетонирование фундаментной ленты B22.5', 'м3');
         $this->createPackageItem($session, 'foundation.concrete');
+        $draftPayload = $this->draftPayload($normId);
+        $draftPayload['local_estimates'][0]['sections'][0]['work_items'][0]['metadata']['quantity_feedback'] = [
+            'status' => 'confirmed_by_user',
+            'quantity' => 13.8,
+            'unit' => $draftPayload['local_estimates'][0]['sections'][0]['work_items'][0]['unit'],
+            'quantity_basis' => 'source-takeoff-checked',
+        ];
+
         $session->forceFill([
-            'draft_payload' => $this->draftPayload($normId),
+            'draft_payload' => $draftPayload,
         ])->save();
 
         app(NormativeCandidateSelectionService::class)->select($session, 'foundation.concrete', $normId);
@@ -45,6 +53,16 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
         $this->assertSame('01-01-006-01', $example->norm_code);
         $this->assertSame('foundation.concrete', $example->context_payload['work_item_key']);
         $this->assertCount(1, $example->context_payload['offered_candidates']);
+        $this->assertSame(13.8, $example->context_payload['quantity_snapshot']['quantity']);
+        $this->assertSame(
+            $draftPayload['local_estimates'][0]['sections'][0]['work_items'][0]['unit'],
+            $example->context_payload['quantity_snapshot']['unit']
+        );
+        $this->assertTrue($example->context_payload['quantity_snapshot']['confirmed_by_user']);
+        $this->assertSame(
+            'source-takeoff-checked',
+            $example->context_payload['quantity_snapshot']['feedback']['quantity_basis']
+        );
         $this->assertSame($user->id, $session->fresh()->user_id);
         $this->assertSame($project->id, $session->fresh()->project_id);
     }
