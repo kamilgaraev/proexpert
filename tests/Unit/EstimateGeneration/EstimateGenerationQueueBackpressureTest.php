@@ -39,8 +39,22 @@ final class EstimateGenerationQueueBackpressureTest extends TestCase
         self::assertIsString($source);
         self::assertStringContainsString("RateLimiter::for('estimate-generation-drafts'", $source);
         self::assertStringContainsString("RateLimiter::for('estimate-generation-ocr-documents'", $source);
+        self::assertStringContainsString("RateLimiter::for('estimate-generation-training-datasets'", $source);
         self::assertStringContainsString('max_draft_jobs_per_minute', $source);
         self::assertStringContainsString('max_document_jobs_per_minute', $source);
+        self::assertStringContainsString('max_dataset_jobs_per_minute', $source);
+    }
+
+    public function test_training_dataset_job_has_dataset_and_organization_backpressure(): void
+    {
+        $source = file_get_contents($this->projectPath('app/BusinessModules/Addons/EstimateGeneration/Jobs/ProcessEstimateGenerationTrainingDatasetJob.php'));
+
+        self::assertIsString($source);
+        self::assertStringContainsString('WithoutOverlapping', $source);
+        self::assertStringContainsString('estimate-generation-training-dataset-', $source);
+        self::assertStringContainsString('estimate-generation-training:', $source);
+        self::assertStringContainsString("new RateLimited('estimate-generation-training-datasets')", $source);
+        self::assertStringContainsString('public function rateLimitKey(): string', $source);
     }
 
     private function projectPath(string $path): string

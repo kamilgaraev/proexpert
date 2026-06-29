@@ -15,6 +15,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\Sy
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\SyncFgiscsRegionalPricesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationTrainingDatasetJob;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsClient;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsBuildingResourcePriceUpdateService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsRegionalCatalogService;
@@ -184,6 +185,13 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $key = $job instanceof ProcessEstimateGenerationDocumentJob ? $job->rateLimitKey() : 'global';
 
             return Limit::perMinute(max(1, (int) config('estimate-generation.ocr.max_document_jobs_per_minute', 6)))
+                ->by($key);
+        });
+
+        RateLimiter::for('estimate-generation-training-datasets', static function (object $job): Limit {
+            $key = $job instanceof ProcessEstimateGenerationTrainingDatasetJob ? $job->rateLimitKey() : 'global';
+
+            return Limit::perMinute(max(1, (int) config('estimate-generation.training.max_dataset_jobs_per_minute', 2)))
                 ->by($key);
         });
     }
