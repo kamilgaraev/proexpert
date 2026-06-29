@@ -33,6 +33,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Contracts\DrawingAnalysisProvi
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\ConstructionDocumentClassifierService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentUnderstandingSummaryBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DrawingUnderstandingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\RuleBasedDrawingAnalysisProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
@@ -91,6 +92,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(ConstructionDocumentFactExtractor::class);
         $this->app->singleton(DocumentFactMerger::class);
         $this->app->singleton(ConstructionDocumentClassifierService::class);
+        $this->app->singleton(DocumentUnderstandingSummaryBuilder::class);
         $this->app->singleton(RuleBasedDrawingAnalysisProvider::class);
         $this->app->singleton(DrawingAnalysisProviderInterface::class, RuleBasedDrawingAnalysisProvider::class);
         $this->app->singleton(DrawingUnderstandingService::class);

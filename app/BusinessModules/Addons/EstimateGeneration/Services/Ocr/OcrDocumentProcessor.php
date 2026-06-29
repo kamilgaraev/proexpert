@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentFact;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentUnderstandingSummaryBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DrawingUnderstandingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
@@ -32,6 +33,7 @@ class OcrDocumentProcessor
         private readonly SpreadsheetDocumentExtractor $spreadsheetExtractor,
         private readonly PdfTextLayerExtractor $pdfTextLayerExtractor,
         private readonly DrawingUnderstandingService $drawingUnderstandingService,
+        private readonly DocumentUnderstandingSummaryBuilder $documentUnderstandingSummaryBuilder,
         private readonly EstimatorScopeInferenceService $scopeInferenceService,
         private readonly OcrUsageLogger $usageLogger,
     ) {}
@@ -193,6 +195,7 @@ class OcrDocumentProcessor
             $document->scopeInferences()->delete();
             $document->pages()->delete();
             $pageIds = [];
+            $pageModels = [];
 
             foreach ($recognition->pages as $page) {
                 $pageModel = EstimateGenerationDocumentPage::create([
@@ -215,10 +218,18 @@ class OcrDocumentProcessor
                 ]);
 
                 $pageIds[$page->pageNumber] = $pageModel->id;
+                $pageModels[$page->pageNumber] = $pageModel;
             }
 
             $drawingAnalysis = $this->drawingUnderstandingService->analyzeAndPersist($document, $recognition, $pageIds);
             $scopeInferences = $this->scopeInferenceService->persistForDocument($document, $factsSummary, $drawingAnalysis);
+            $documentUnderstanding = $this->documentUnderstandingSummaryBuilder->build(
+                $document,
+                $recognition,
+                $drawingAnalysis->summary,
+                $factsSummary,
+            );
+            $this->persistPageUnderstanding($pageModels, $documentUnderstanding);
 
             foreach ($facts as $fact) {
                 $pageNumber = (int) ($fact->sourceRef['page_number'] ?? 0);
@@ -246,8 +257,13 @@ class OcrDocumentProcessor
                 'structured_payload' => $recognition->toArray(),
                 'facts_summary' => [
                     ...$factsSummary,
+                    'document_understanding' => $documentUnderstanding,
                     'drawing_understanding' => $drawingAnalysis->summary,
                     'scope_inferences' => $scopeInferences,
+                ],
+                'meta' => [
+                    ...(is_array($document->meta) ? $document->meta : []),
+                    'document_understanding' => $documentUnderstanding,
                 ],
                 'page_count' => count($recognition->pages),
                 'processed_page_count' => count($recognition->pages),
@@ -255,5 +271,31 @@ class OcrDocumentProcessor
                 'ocr_model' => $recognition->model,
             ])->save();
         });
+    }
+
+    /**
+     * @param array<int, EstimateGenerationDocumentPage> $pageModels
+     * @param array<string, mixed> $documentUnderstanding
+     */
+    private function persistPageUnderstanding(array $pageModels, array $documentUnderstanding): void
+    {
+        $pageUnderstanding = $this->documentUnderstandingSummaryBuilder->pageUnderstandingByNumber($documentUnderstanding);
+
+        foreach ($pageUnderstanding as $pageNumber => $understanding) {
+            $pageModel = $pageModels[$pageNumber] ?? null;
+
+            if (!$pageModel instanceof EstimateGenerationDocumentPage) {
+                continue;
+            }
+
+            $payload = is_array($pageModel->normalized_payload) ? $pageModel->normalized_payload : [];
+            $pageModel->forceFill([
+                'normalized_payload' => [
+                    ...$payload,
+                    'page_role' => $understanding['page_role'],
+                    'page_understanding' => $understanding,
+                ],
+            ])->save();
+        }
     }
 }

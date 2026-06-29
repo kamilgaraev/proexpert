@@ -34,6 +34,7 @@ class EstimateGenerationDocumentResource extends JsonResource
                 'level' => $document->quality_level,
                 'flags' => $document->quality_flags ?? [],
             ],
+            'document_understanding' => $this->documentUnderstanding($document),
             'facts_summary' => $document->facts_summary ?? [],
             'understanding_summary' => [
                 'pages' => $this->countRelationOrAttribute($document, 'pages_count', 'pages'),
@@ -76,5 +77,17 @@ class EstimateGenerationDocumentResource extends JsonResource
         $value = $document->getAttribute($attribute);
 
         return is_numeric($value) ? (int) $value : 0;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function documentUnderstanding(EstimateGenerationDocument $document): ?array
+    {
+        $factsSummary = is_array($document->facts_summary) ? $document->facts_summary : [];
+        $meta = is_array($document->meta) ? $document->meta : [];
+        $understanding = $factsSummary['document_understanding'] ?? $meta['document_understanding'] ?? null;
+
+        return is_array($understanding) ? $understanding : null;
     }
 }

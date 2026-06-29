@@ -48,4 +48,31 @@ final class ConstructionDocumentClassifierServiceTest extends TestCase
         self::assertSame('specification', $classification['type']);
         self::assertContains('spreadsheet_extension', $classification['reasons']);
     }
+
+    public function test_classifies_uploaded_flat_plan_image_as_architectural_drawing(): void
+    {
+        $classification = (new ConstructionDocumentClassifierService())->classify(
+            filename: 'flat-plan.png',
+            mimeType: 'image/png',
+            pageCount: 1,
+            text: "Планировка квартиры\nГостиная 46,52 м2\nКухня 9,99 м2\n8755 x 6190"
+        );
+
+        self::assertSame('drawing_architecture', $classification['type']);
+        self::assertGreaterThanOrEqual(0.5, $classification['confidence']);
+        self::assertContains('drawing_marker', $classification['reasons']);
+    }
+
+    public function test_classifies_grand_smeta_reference_estimate(): void
+    {
+        $classification = (new ConstructionDocumentClassifierService())->classify(
+            filename: 'Локальная смета из Гранд-Сметы.pdf',
+            mimeType: 'application/pdf',
+            pageCount: 8,
+            text: "Локальная смета\nГранд-Смета\nОбоснование ФЕР 08-02-001-01\nФСБЦ материалы"
+        );
+
+        self::assertSame('estimate', $classification['type']);
+        self::assertContains('estimate_marker', $classification['reasons']);
+    }
 }
