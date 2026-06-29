@@ -24,6 +24,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrc
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateFeedbackService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateManualSearchService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSelectionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
@@ -34,9 +35,10 @@ use App\Models\Project;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
-use Illuminate\Support\Facades\Log;
 
 use function trans_message;
 
@@ -54,6 +56,7 @@ class EstimateGenerationController extends Controller
         protected EstimatorReadinessService $estimatorReadinessService,
         protected EstimateGenerationLearningRecorder $learningRecorder,
         protected NormativeCandidateManualSearchService $candidateManualSearchService,
+        protected NormativeCandidateFeedbackService $candidateFeedbackService,
     ) {}
 
     public function index(Request $request, Project $project): JsonResponse
@@ -488,20 +491,33 @@ class EstimateGenerationController extends Controller
         try {
             $this->guardSession($request, $project, $session);
 
-            $feedback = EstimateGenerationFeedback::create([
-                'session_id' => $session->id,
-                'user_id' => $request->user()->id,
-                'feedback_type' => $request->validated('feedback_type'),
-                'section_key' => $request->validated('section_key'),
-                'work_item_key' => $request->validated('work_item_key'),
-                'payload' => $request->validated('payload', []),
-                'comments' => $request->validated('comments'),
-            ]);
-            $this->learningRecorder->recordUserRejection($session, $feedback);
+            $feedbackId = DB::transaction(function () use ($request, $project, $session): int {
+                $lockedSession = EstimateGenerationSession::query()
+                    ->whereKey($session->id)
+                    ->lockForUpdate()
+                    ->firstOrFail();
+                $this->guardSession($request, $project, $lockedSession);
+
+                $feedback = EstimateGenerationFeedback::create([
+                    'session_id' => $lockedSession->id,
+                    'user_id' => $request->user()->id,
+                    'feedback_type' => $request->validated('feedback_type'),
+                    'section_key' => $request->validated('section_key'),
+                    'work_item_key' => $request->validated('work_item_key'),
+                    'payload' => $request->validated('payload', []),
+                    'comments' => $request->validated('comments'),
+                ]);
+                $this->learningRecorder->recordUserRejection($lockedSession, $feedback);
+                $this->candidateFeedbackService->apply($lockedSession, $feedback);
+
+                return (int) $feedback->id;
+            });
 
             return AdminResponse::success([
-                'feedback_id' => $feedback->id,
+                'feedback_id' => $feedbackId,
             ], trans_message('estimate_generation.feedback_saved'));
+        } catch (ValidationException $e) {
+            return AdminResponse::error($e->getMessage(), 422, $e->errors());
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Feedback failed', [
                 'error' => $e->getMessage(),

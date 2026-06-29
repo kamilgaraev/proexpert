@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
+use Illuminate\Database\Eloquent\Collection;
 use PHPUnit\Framework\TestCase;
 
 final class EstimateGenerationPackagePresenterTest extends TestCase
@@ -63,5 +65,18 @@ final class EstimateGenerationPackagePresenterTest extends TestCase
         self::assertSame('earthworks', $payload['work_category'] ?? null);
         self::assertSame('pricing_not_calculated', $payload['validation_flags'][0] ?? null);
         self::assertSame('drawing', $payload['source_refs'][0]['type'] ?? null);
+    }
+
+    public function test_package_collection_counts_review_required_separately_from_ready(): void
+    {
+        $payload = (new EstimateGenerationPackagePresenter())->collection(new Collection([
+            new EstimateGenerationPackage(['status' => 'ready_for_review', 'totals' => []]),
+            new EstimateGenerationPackage(['status' => 'review_required', 'totals' => []]),
+            new EstimateGenerationPackage(['status' => 'blocked', 'totals' => []]),
+        ]));
+
+        self::assertSame(1, $payload['summary']['ready']);
+        self::assertSame(1, $payload['summary']['review_required']);
+        self::assertSame(1, $payload['summary']['blocked']);
     }
 }

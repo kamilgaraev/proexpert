@@ -143,6 +143,7 @@ class EstimateGenerationPackagePresenter
             'planned' => $packages->where('status', 'planned')->count(),
             'processing' => $packages->filter(static fn (EstimateGenerationPackage $package): bool => in_array($package->status, ['queued', 'processing', 'generating'], true))->count(),
             'ready' => $packages->whereIn('status', ['ready_for_review', 'approved'])->count(),
+            'review_required' => $packages->where('status', 'review_required')->count(),
             'approved' => $packages->where('status', 'approved')->count(),
             'blocked' => $packages->where('status', 'blocked')->count(),
             'failed' => $packages->where('status', 'failed')->count(),

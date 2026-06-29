@@ -46,6 +46,8 @@ return [
     'normative_manual_selection_required' => 'Нужно подобрать норму вручную.',
     'pricing_not_calculated_safe_norm' => 'Не рассчитано: нет безопасной нормы для этой позиции.',
     'work_item_not_found' => 'Позиция сметы не найдена.',
+    'normative_feedback_norm_required' => 'Выберите норму, которую нужно отклонить.',
+    'normative_feedback_norm_not_found' => 'Эта норма не относится к выбранной позиции.',
     'section_rebuilt' => 'Выбранный блок сметы пересобран.',
     'section_rebuild_error' => 'Не удалось пересобрать блок сметы.',
     'notification_project_fallback' => 'проекту',

@@ -29,7 +29,7 @@ class EstimateGenerationPackagePersistenceService
                     [
                         'title' => (string) ($localEstimate['title'] ?? 'Локальная смета'),
                         'scope_type' => (string) ($localEstimate['scope_type'] ?? 'custom'),
-                        'status' => $quality['level'] === 'blocked' ? 'blocked' : 'ready_for_review',
+                        'status' => $this->packageStatus($quality),
                         'generation_stage' => 'quality_check',
                         'generation_progress' => 100,
                         'target_items_min' => (int) ($localEstimate['target_items_min'] ?? 0),
@@ -118,6 +118,18 @@ class EstimateGenerationPackagePersistenceService
             'critical_flags' => $critical,
             'warning_flags' => $warnings,
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $quality
+     */
+    private function packageStatus(array $quality): string
+    {
+        return match ((string) ($quality['level'] ?? 'review_required')) {
+            'passed' => 'ready_for_review',
+            'blocked' => 'blocked',
+            default => 'review_required',
+        };
     }
 
     /**
