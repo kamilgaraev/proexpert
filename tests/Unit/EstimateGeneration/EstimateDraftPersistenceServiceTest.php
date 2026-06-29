@@ -221,6 +221,72 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
         self::assertSame(['type' => 'prices_require_review'], $blocker);
     }
 
+    public function test_positive_price_without_normative_resources_blocks_apply(): void
+    {
+        $blocker = (new TestableEstimateDraftPersistenceService())->blockerFor([
+            'quality_summary' => [
+                'status' => 'ready',
+                'not_calculated_work_items' => 0,
+                'safe_norm_required_work_items' => 0,
+                'normative_items' => [
+                    'requires_review' => 0,
+                ],
+            ],
+            'local_estimates' => [[
+                'sections' => [[
+                    'work_items' => [[
+                        'key' => 'priced-without-resources',
+                        'item_type' => 'priced_work',
+                        'quantity' => 1,
+                        'total_cost' => 1000,
+                        'pricing_status' => 'calculated',
+                        'normative_rate_code' => '01-01-001-01',
+                        'materials' => [],
+                        'labor' => [],
+                        'machinery' => [],
+                        'other_resources' => [],
+                        'normative_match' => [
+                            'status' => 'matched',
+                            'decision' => [
+                                'status' => 'accepted',
+                            ],
+                            'resources_count' => 1,
+                            'priced_resources_count' => 1,
+                        ],
+                    ]],
+                ]],
+            ]],
+        ]);
+
+        self::assertSame(['type' => 'prices_require_review'], $blocker);
+    }
+
+    public function test_positive_price_without_accepted_normative_match_blocks_apply(): void
+    {
+        $workItem = $this->workItem('priced-without-accepted-match', 'priced_work', 1000);
+        $workItem['normative_match']['decision']['status'] = 'review_priced';
+
+        $blocker = (new TestableEstimateDraftPersistenceService())->blockerFor([
+            'quality_summary' => [
+                'status' => 'ready',
+                'not_calculated_work_items' => 0,
+                'safe_norm_required_work_items' => 0,
+                'normative_items' => [
+                    'requires_review' => 0,
+                ],
+            ],
+            'local_estimates' => [[
+                'sections' => [[
+                    'work_items' => [
+                        $workItem,
+                    ],
+                ]],
+            ]],
+        ]);
+
+        self::assertSame(['type' => 'prices_require_review'], $blocker);
+    }
+
     public function test_generic_priced_work_blocks_apply_even_when_quality_status_is_ready(): void
     {
         $blocker = (new TestableEstimateDraftPersistenceService())->blockerFor([
@@ -349,6 +415,25 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
 
         if ($normativeRateCode !== null) {
             $workItem['normative_rate_code'] = $normativeRateCode;
+        }
+
+        if ($totalCost > 0 && $normativeRateCode !== null) {
+            $workItem['materials'] = [[
+                'name' => 'Нормативный ресурс',
+                'total_price' => $totalCost,
+            ]];
+            $workItem['labor'] = [];
+            $workItem['machinery'] = [];
+            $workItem['other_resources'] = [];
+            $workItem['normative_match'] = [
+                'status' => 'matched',
+                'code' => $normativeRateCode,
+                'decision' => [
+                    'status' => 'accepted',
+                ],
+                'resources_count' => 1,
+                'priced_resources_count' => 1,
+            ];
         }
 
         return $workItem;

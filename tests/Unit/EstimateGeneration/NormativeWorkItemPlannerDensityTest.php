@@ -319,6 +319,88 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         }
     }
 
+    public function test_known_planner_package_keys_do_not_expose_generic_work_composition(): void
+    {
+        $planner = $this->planner();
+        $genericOperations = [
+            'Подготовка фронта работ',
+            'Поставка материалов',
+            'Основной монтаж',
+            'Крепление',
+            'Контроль качества',
+        ];
+
+        foreach ($this->knownPackageScopes() as $packageKey => $scopeType) {
+            $localEstimate = $this->localEstimate($packageKey, $packageKey, $scopeType, 4);
+            $items = $this->pricedItems($planner->build($localEstimate, $localEstimate['sections'][0], [
+                'document_context' => [
+                    'quantity_takeoffs' => [
+                        $this->confirmedTakeoffForPackage($packageKey),
+                    ],
+                ],
+            ]));
+
+            self::assertNotEmpty($items, $packageKey);
+
+            foreach ($items as $item) {
+                self::assertNotSame(
+                    $genericOperations,
+                    array_values($item['work_composition'] ?? []),
+                    $packageKey . ':' . ($item['quantity_formula'] ?? $item['key'])
+                );
+            }
+        }
+    }
+
+    public function test_source_backed_package_takeoff_suppresses_duplicate_scope_inference_for_same_quantity_key(): void
+    {
+        $localEstimate = $this->localEstimate('finish_finishing', 'Finish', 'finishing', 8);
+
+        $items = $this->pricedItems($this->planner()->build($localEstimate, $localEstimate['sections'][0], [
+            'document_context' => [
+                'quantity_takeoffs' => [[
+                    'scope_key' => 'floor_finish_area',
+                    'quantity_key' => 'finish.floor',
+                    'name' => 'Floor finish area from plan',
+                    'unit' => 'm2',
+                    'quantity' => 87.14,
+                    'source_refs' => [[
+                        'type' => 'drawing',
+                        'filename' => 'floor-plan.pdf',
+                        'page_number' => 1,
+                    ]],
+                    'normalized_payload' => [
+                        'quantity_key' => 'finish.floor',
+                    ],
+                ]],
+                'scope_inferences' => [[
+                    'inference_type' => 'drawing_takeoff',
+                    'scope_type' => 'finishing',
+                    'title' => 'Floor finish area from scope inference',
+                    'confidence' => 0.82,
+                    'source_refs' => [[
+                        'type' => 'drawing',
+                        'filename' => 'floor-plan.pdf',
+                        'page_number' => 1,
+                    ]],
+                    'normalized_payload' => [
+                        'quantity_key' => 'finish.floor',
+                        'quantity_value' => 87.14,
+                        'unit' => 'm2',
+                    ],
+                ]],
+            ],
+        ]));
+        $finishFloorItems = array_values(array_filter(
+            $items,
+            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'finish.floor'
+        ));
+
+        self::assertCount(1, $finishFloorItems);
+        self::assertSame('normative_intent_catalog', $finishFloorItems[0]['metadata']['generation_source'] ?? null);
+        self::assertSame(87.14, (float) $finishFloorItems[0]['quantity']);
+    }
+
     public function test_mixed_office_warehouse_uses_document_scope_and_flat_roof_quantities(): void
     {
         $analysis = [

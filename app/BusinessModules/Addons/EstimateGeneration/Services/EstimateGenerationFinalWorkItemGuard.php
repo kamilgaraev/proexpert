@@ -43,6 +43,14 @@ final class EstimateGenerationFinalWorkItemGuard
             return false;
         }
 
+        if (!$this->hasAcceptedNormativeMatch($workItem)) {
+            return false;
+        }
+
+        if (!$this->hasPricedNormativeResources($workItem)) {
+            return false;
+        }
+
         return (float) ($workItem['quantity'] ?? 0) > 0 && (float) ($workItem['total_cost'] ?? 0) > 0;
     }
 
@@ -85,5 +93,43 @@ final class EstimateGenerationFinalWorkItemGuard
         $code = trim((string) ($workItem['normative_rate_code'] ?? data_get($workItem, 'normative_match.code', '')));
 
         return $code !== '' ? $code : null;
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    private function hasAcceptedNormativeMatch(array $workItem): bool
+    {
+        $match = is_array($workItem['normative_match'] ?? null) ? $workItem['normative_match'] : [];
+
+        if ((string) ($match['status'] ?? '') !== 'matched') {
+            return false;
+        }
+
+        if ((int) ($match['resources_count'] ?? 0) <= 0 || (int) ($match['priced_resources_count'] ?? 0) <= 0) {
+            return false;
+        }
+
+        $decision = is_array($match['decision'] ?? null) ? $match['decision'] : [];
+
+        return (string) ($decision['status'] ?? '') === 'accepted';
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    private function hasPricedNormativeResources(array $workItem): bool
+    {
+        foreach (['materials', 'labor', 'machinery', 'other_resources'] as $resourceKey) {
+            $resources = is_array($workItem[$resourceKey] ?? null) ? $workItem[$resourceKey] : [];
+
+            foreach ($resources as $resource) {
+                if (is_array($resource) && (float) ($resource['total_price'] ?? 0) > 0) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 }

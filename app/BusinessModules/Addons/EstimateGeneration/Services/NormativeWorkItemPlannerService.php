@@ -283,12 +283,41 @@ final class NormativeWorkItemPlannerService
     {
         $packageKey = (string) ($localEstimate['key'] ?? '');
         $scopeType = (string) ($localEstimate['scope_type'] ?? $section['construction_part'] ?? '');
+        $packageDefinitions = $this->packageDefinitions($packageKey, $scopeType, $quantityModel);
         $definitions = [
-            ...$this->packageDefinitions($packageKey, $scopeType, $quantityModel),
-            ...$this->scopeInferenceDefinitions($analysis, $scopeType, $packageKey),
+            ...$packageDefinitions,
+            ...$this->scopeInferenceDefinitions(
+                $analysis,
+                $scopeType,
+                $packageKey,
+                $this->sourceBackedPackageQuantityKeys($packageDefinitions, $quantityModel)
+            ),
         ];
 
         return $definitions;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $definitions
+     * @param array<string, mixed> $quantityModel
+     * @return array<string, bool>
+     */
+    private function sourceBackedPackageQuantityKeys(array $definitions, array $quantityModel): array
+    {
+        $quantities = is_array($quantityModel['quantities'] ?? null) ? $quantityModel['quantities'] : [];
+        $keys = [];
+
+        foreach ($definitions as $definition) {
+            $quantityKey = (string) ($definition['quantity_key'] ?? '');
+            $quantity = is_array($quantities[$quantityKey] ?? null) ? $quantities[$quantityKey] : [];
+            $sourceRefs = is_array($quantity['source_refs'] ?? null) ? $quantity['source_refs'] : [];
+
+            if ($quantityKey !== '' && $sourceRefs !== [] && ($quantity['review_required'] ?? false) !== true) {
+                $keys[$quantityKey] = true;
+            }
+        }
+
+        return $keys;
     }
 
     /**
@@ -436,7 +465,15 @@ final class NormativeWorkItemPlannerService
      * @param array<string, mixed> $analysis
      * @return array<int, array<string, mixed>>
      */
-    private function scopeInferenceDefinitions(array $analysis, string $scopeType, string $packageKey): array
+    /**
+     * @param array<string, bool> $sourceBackedPackageQuantityKeys
+     */
+    private function scopeInferenceDefinitions(
+        array $analysis,
+        string $scopeType,
+        string $packageKey,
+        array $sourceBackedPackageQuantityKeys = []
+    ): array
     {
         $definitions = [];
         $isUnmappedReviewPackage = $packageKey === 'unmapped_quantity_rows';
@@ -453,6 +490,10 @@ final class NormativeWorkItemPlannerService
             }
 
             if ($isUnmappedReviewPackage !== $isUnmappedQuantity) {
+                continue;
+            }
+
+            if (!$isUnmappedQuantity && isset($sourceBackedPackageQuantityKeys[$quantityKey])) {
                 continue;
             }
 
@@ -1040,10 +1081,12 @@ final class NormativeWorkItemPlannerService
     private function operationBank(string $category): array
     {
         return match ($category) {
+            'site' => ['Разметка территории', 'Подготовка основания', 'Устройство временных элементов', 'Планировка поверхности', 'Проверка отметок'],
             'earthworks' => ['Разметка участка', 'Разработка грунта', 'Погрузка грунта', 'Вывоз грунта', 'Уплотнение основания'],
             'foundation' => ['Подготовка основания', 'Монтаж опалубки', 'Вязка арматуры', 'Укладка бетонной смеси', 'Уход за бетоном'],
             'walls' => ['Разметка осей', 'Подача материалов', 'Кладка конструкций', 'Армирование рядов', 'Контроль плоскости'],
             'slabs', 'industrial_floor' => ['Подготовка основания', 'Монтаж арматуры', 'Укладка бетонной смеси', 'Выравнивание поверхности', 'Устройство швов'],
+            'stairs' => ['Разметка лестничного узла', 'Устройство основания', 'Монтаж несущих элементов', 'Устройство ограждений', 'Проверка геометрии'],
             'metal_frame' => ['Разметка осей', 'Монтаж элементов', 'Болтовые соединения', 'Выверка геометрии', 'Защитное покрытие'],
             'roof' => ['Подготовка основания', 'Устройство изоляции', 'Монтаж покрытия', 'Устройство примыканий', 'Контроль герметичности'],
             'facade' => ['Подготовка основания', 'Монтаж подсистемы', 'Монтаж облицовки', 'Устройство примыканий', 'Контроль креплений'],
@@ -1051,8 +1094,10 @@ final class NormativeWorkItemPlannerService
             'electrical' => ['Разметка трасс', 'Прокладка линий', 'Монтаж креплений', 'Подключение', 'Измерения'],
             'plumbing', 'sewerage', 'heating' => ['Разметка трасс', 'Прокладка труб', 'Монтаж арматуры', 'Крепление', 'Испытания'],
             'ventilation' => ['Разметка трасс', 'Монтаж воздуховодов', 'Монтаж решеток', 'Крепление', 'Пусковая проверка'],
+            'engineering' => ['Разметка трасс и зон установки', 'Монтаж оборудования', 'Прокладка линий', 'Подключение системы', 'Проверка работоспособности'],
             'finishing' => ['Подготовка поверхности', 'Грунтование', 'Основной слой', 'Выравнивание', 'Финишный контроль'],
-            default => ['Подготовка фронта работ', 'Поставка материалов', 'Основной монтаж', 'Крепление', 'Контроль качества'],
+            'temporary' => ['Разметка временной зоны', 'Установка опор', 'Монтаж ограждения', 'Крепление секций', 'Проверка устойчивости'],
+            default => [],
         };
     }
 
