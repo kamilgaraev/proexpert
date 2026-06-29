@@ -819,23 +819,33 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
      */
     private function roomAreaMatches(string $line): array
     {
-        if (preg_match_all('/(?:(?<label>[\p{L}\d][\p{L}\d\s№#.\-]{0,80}?)\s*(?:s|площадь)?\s*[=:]?\s*)?(?<area>\d{1,4}(?:[,.]\d{1,2})?)\s*(?:м2|м²|m2|m²)\b/iu', $line, $matches, PREG_SET_ORDER) === 0) {
+        if (preg_match_all('/(?<prefix>^|[^\d,.])(?<area>\d{1,4}(?:[,.]\d{1,2})?)\s*(?:м2|м²|m2|m²)\b/iu', $line, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE) === 0) {
             return [];
         }
 
         $areas = [];
+        $previousMatchEnd = 0;
 
         foreach ($matches as $match) {
-            $area = $this->number((string) $match['area']);
+            $areaText = (string) $match['area'][0];
+            $areaOffset = (int) $match['area'][1];
+            $fullMatchOffset = (int) $match[0][1];
+            $fullMatchEnd = $fullMatchOffset + strlen((string) $match[0][0]);
+            $rawLabel = $areaOffset > $previousMatchEnd
+                ? substr($line, $previousMatchEnd, $areaOffset - $previousMatchEnd)
+                : '';
+            $area = $this->number($areaText);
 
             if ($area < 1 || $area > 500) {
+                $previousMatchEnd = $fullMatchEnd;
                 continue;
             }
 
-            $label = $this->roomLabel((string) ($match['label'] ?? ''));
+            $label = $this->roomLabel($rawLabel);
             $normalizedLine = mb_strtolower($line);
 
             if (str_contains($normalizedLine, 'масштаб') || str_contains($normalizedLine, 'период цен')) {
+                $previousMatchEnd = $fullMatchEnd;
                 continue;
             }
 
@@ -843,6 +853,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 'label' => $label,
                 'area' => round($area, 4),
             ];
+            $previousMatchEnd = $fullMatchEnd;
         }
 
         return $areas;
@@ -852,8 +863,8 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     {
         $label = trim($value);
         $label = trim((string) preg_replace('/\s+/u', ' ', $label));
-        $label = trim((string) preg_replace('/(?:^|\s)(?:s|площадь)\s*$/iu', '', $label));
-        $label = trim($label, ":-–— \t\n\r\0\x0B");
+        $label = trim((string) preg_replace('/(?:^|\s)(?:s|площадь)\s*[=:]?\s*$/iu', '', $label));
+        $label = trim($label, "=:;-–— \t\n\r\0\x0B");
 
         if ($label === '' || preg_match('/^\d+(?:[,.]\d+)?$/u', $label) === 1) {
             return '';
@@ -976,7 +987,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 confidence: min($confidence + 0.03, 0.98),
                 sourceRefs: $sourceRefs,
                 roomCount: $roomCount,
-                reviewRequired: false
+                reviewRequired: true
             ),
             $this->aggregateTakeoff(
                 scopeKey: 'rough_floor_area',
@@ -987,7 +998,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 confidence: min($confidence + 0.02, 0.98),
                 sourceRefs: $sourceRefs,
                 roomCount: $roomCount,
-                reviewRequired: false
+                reviewRequired: true
             ),
             $this->aggregateTakeoff(
                 scopeKey: 'ceiling_finish_area',

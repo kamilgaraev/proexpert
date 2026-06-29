@@ -223,6 +223,62 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
         self::assertSame(8.0, $takeoffsByKey['openings.doors']['quantity']);
     }
 
+    public function test_preserves_decimal_room_areas_without_room_labels_from_plan_ocr(): void
+    {
+        $recognition = new OcrRecognitionResult(
+            provider: 'test',
+            model: 'page',
+            pages: [
+                new OcrPageResult(
+                    pageNumber: 1,
+                    text: implode("\n", [
+                        '5.14 м2',
+                        '5.49 м2',
+                        '7.84 м2',
+                        '11.90 м2',
+                        '5.00 м2',
+                        '10.54 м2',
+                        '2.55 м2',
+                        '10.24 м2',
+                        '4.34 м2',
+                        '9.99 м2',
+                        '17.65 м2',
+                        '46.52 м2',
+                        '9.87 м2',
+                        '15.11 м2',
+                        '7.21 м2',
+                    ]),
+                    confidence: 0.7
+                ),
+            ]
+        );
+
+        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+            documentId: 13,
+            filename: 'floor-plan.jpg',
+            recognition: $recognition
+        );
+        $roomTakeoffs = array_values(array_filter(
+            $result->takeoffs,
+            static fn (array $takeoff): bool => ($takeoff['scope_key'] ?? null) === 'room_area'
+        ));
+        $takeoffsByKey = [];
+
+        foreach ($result->takeoffs as $takeoff) {
+            $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
+            $takeoffsByKey[(string) ($payload['quantity_key'] ?? $takeoff['scope_key'] ?? '')] = $takeoff;
+        }
+
+        self::assertCount(15, $roomTakeoffs);
+        self::assertSame(169.39, $result->summary['room_area_total_m2'] ?? null);
+        self::assertSame(5.14, $roomTakeoffs[0]['quantity']);
+        self::assertSame(5.49, $roomTakeoffs[1]['quantity']);
+        self::assertSame(7.84, $roomTakeoffs[2]['quantity']);
+        self::assertSame(169.39, $takeoffsByKey['finish.floor']['quantity']);
+        self::assertSame(169.39, $takeoffsByKey['rough.floor']['quantity']);
+        self::assertNotSame(464.18, $takeoffsByKey['finish.floor']['quantity']);
+    }
+
     public function test_uses_nearby_dimension_pair_to_estimate_room_perimeter(): void
     {
         $recognition = new OcrRecognitionResult(
