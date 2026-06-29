@@ -58,6 +58,20 @@ final class ConstructionDocumentClassifierService
 
         $isStructuredDocument = in_array($type, ['work_volume_statement', 'specification', 'estimate', 'drawing_cad'], true);
 
+        if (! $isStructuredDocument && $this->hasFloorPlanGeometryDensity($value)) {
+            $type = 'floor_plan';
+            $isStructuredDocument = true;
+            $reasons[] = 'floor_plan_geometry_marker';
+            $score += 0.55;
+        }
+
+        if (! $isStructuredDocument && $this->hasFloorPlanLayoutSignals($value)) {
+            $type = 'floor_plan';
+            $isStructuredDocument = true;
+            $reasons[] = 'floor_plan_layout_marker';
+            $score += 0.55;
+        }
+
         if (! $isStructuredDocument && $this->containsAny($value, ['ар-', 'лист ар', 'архитектур', 'план этажа', 'экспликация помещений'])) {
             $type = 'drawing_architecture';
             $isStructuredDocument = true;
@@ -125,5 +139,61 @@ final class ConstructionDocumentClassifierService
     private function isWorkVolumeStatement(string $value): bool
     {
         return preg_match('/ведомость\s+(?:объемов|объёмов|работ)|объемы?\s+работ|объёмы?\s+работ|(?:^|[^\p{L}\p{N}])вор(?:$|[^\p{L}\p{N}])/u', $value) === 1;
+    }
+
+    private function hasFloorPlanGeometryDensity(string $value): bool
+    {
+        if (! $this->isVisualSource($value)) {
+            return false;
+        }
+
+        $stats = $this->floorPlanGeometryStats($value);
+
+        return $stats['area_count'] >= 3 && $stats['dimension_count'] >= 4;
+    }
+
+    private function hasFloorPlanLayoutSignals(string $value): bool
+    {
+        if (! $this->isVisualSource($value)) {
+            return false;
+        }
+
+        if (! $this->containsAny($value, ['планировка', 'план квартиры', 'план дома', 'экспликация помещений'])) {
+            return false;
+        }
+
+        $stats = $this->floorPlanGeometryStats($value);
+
+        return $stats['area_count'] >= 2 && $stats['dimension_count'] >= 1;
+    }
+
+    /**
+     * @return array{area_count: int, dimension_count: int}
+     */
+    private function floorPlanGeometryStats(string $value): array
+    {
+        preg_match_all('/\d+(?:[,.]\d+)?\s*(?:м\s*2|м2|м²|m\s*2|m2|m²|кв\.\s*м)/u', $value, $areaMatches);
+        preg_match_all('/(?<![\d,.])\d{3,5}(?![\d,.])/', $value, $dimensionMatches);
+
+        return [
+            'area_count' => count(array_unique($areaMatches[0] ?? [])),
+            'dimension_count' => count(array_unique($dimensionMatches[0] ?? [])),
+        ];
+    }
+
+    private function isVisualSource(string $value): bool
+    {
+        return $this->containsAny($value, [
+            '.png',
+            '.jpg',
+            '.jpeg',
+            '.webp',
+            '.tif',
+            '.tiff',
+            '.bmp',
+            'image/',
+            '.pdf',
+            'application/pdf',
+        ]);
     }
 }

@@ -49,6 +49,34 @@ final class DocumentUnderstandingSummaryBuilderTest extends TestCase
         self::assertSame('floor_plan', $this->builder()->pageUnderstandingByNumber($summary)[1]['page_role']);
     }
 
+    public function test_geometry_dense_floor_plan_screenshot_becomes_geometry_source_without_filename_hint(): void
+    {
+        $summary = $this->builder()->build(
+            $this->document('scan-001.png', 'image/png'),
+            $this->recognition("5.14 м²\n4.34 м²\n46.52 м²\n17.65 м²\n3255 1580 8755 14845 3355 5040"),
+            [
+                'source_format' => 'image',
+                'takeoffs_count' => 4,
+                'room_count' => 4,
+                'dimension_count' => 6,
+                'page_profiles' => [[
+                    'page_number' => 1,
+                    'page_role' => 'floor_plan',
+                    'confidence' => 0.86,
+                    'signals' => ['room_areas', 'dimensions'],
+                ]],
+            ],
+            []
+        );
+
+        self::assertSame('floor_plan', $summary['document_type']);
+        self::assertSame('floor_plan', $summary['classified_type']);
+        self::assertSame('geometry_source', $summary['role_for_estimation']);
+        self::assertContains('floor_plan_geometry_marker', $summary['reasons']);
+        self::assertTrue($summary['extracted_capabilities']['has_room_areas']);
+        self::assertTrue($summary['extracted_capabilities']['has_dimensions']);
+    }
+
     public function test_specification_spreadsheet_becomes_quantity_source(): void
     {
         $summary = $this->builder()->build(

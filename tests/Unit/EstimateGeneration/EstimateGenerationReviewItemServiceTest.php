@@ -88,8 +88,8 @@ final class EstimateGenerationReviewItemServiceTest extends TestCase
         self::assertSame(1, $result['summary']['optional']);
         self::assertSame(1, $result['summary']['confirm_quantity']);
         self::assertSame(1, $result['summary']['resolve_duplicate']);
-        self::assertSame(1, $result['summary']['select_norm']);
-        self::assertSame(1, $result['summary']['check_price']);
+        self::assertSame(2, $result['summary']['select_norm']);
+        self::assertSame(0, $result['summary']['check_price']);
         self::assertSame(1, $result['summary']['review_norm']);
         self::assertSame(
             ['quantity-review', 'duplicate-work', 'select-norm', 'check-price', 'optional-alternative'],
@@ -107,7 +107,7 @@ final class EstimateGenerationReviewItemServiceTest extends TestCase
         self::assertContains('requires_duplicate_review', $itemsByKey['duplicate-work']['reason_codes']);
         self::assertSame('select_norm', $itemsByKey['select-norm']['required_action']);
         self::assertSame(1, $itemsByKey['select-norm']['candidates_count']);
-        self::assertSame('check_price', $itemsByKey['check-price']['required_action']);
+        self::assertSame('select_norm', $itemsByKey['check-price']['required_action']);
         self::assertTrue($itemsByKey['check-price']['has_current_norm']);
         self::assertSame('review_norm', $itemsByKey['optional-alternative']['required_action']);
         self::assertContains('normative_alternative_available', $itemsByKey['optional-alternative']['reason_codes']);

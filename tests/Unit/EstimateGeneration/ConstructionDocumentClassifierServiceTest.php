@@ -63,7 +63,7 @@ final class ConstructionDocumentClassifierServiceTest extends TestCase
         self::assertContains('quantity_table_marker', $classification['reasons']);
     }
 
-    public function test_classifies_uploaded_flat_plan_image_as_architectural_drawing(): void
+    public function test_classifies_uploaded_flat_plan_image_as_floor_plan(): void
     {
         $classification = (new ConstructionDocumentClassifierService())->classify(
             filename: 'flat-plan.png',
@@ -72,9 +72,23 @@ final class ConstructionDocumentClassifierServiceTest extends TestCase
             text: "Планировка квартиры\nГостиная 46,52 м2\nКухня 9,99 м2\n8755 x 6190"
         );
 
-        self::assertSame('drawing_architecture', $classification['type']);
-        self::assertGreaterThanOrEqual(0.5, $classification['confidence']);
-        self::assertContains('drawing_marker', $classification['reasons']);
+        self::assertSame('floor_plan', $classification['type']);
+        self::assertGreaterThanOrEqual(0.7, $classification['confidence']);
+        self::assertContains('floor_plan_layout_marker', $classification['reasons']);
+    }
+
+    public function test_classifies_floor_plan_screenshot_by_geometry_density_without_filename_hint(): void
+    {
+        $classification = (new ConstructionDocumentClassifierService())->classify(
+            filename: 'scan-001.png',
+            mimeType: 'image/png',
+            pageCount: 1,
+            text: "5.14 м²\n4.34 м²\n46.52 м²\n17.65 м²\n3255 1580 8755 14845 3355 5040"
+        );
+
+        self::assertSame('floor_plan', $classification['type']);
+        self::assertGreaterThanOrEqual(0.7, $classification['confidence']);
+        self::assertContains('floor_plan_geometry_marker', $classification['reasons']);
     }
 
     public function test_classifies_cad_drawings_by_extension(): void

@@ -53,13 +53,6 @@ final class EstimateGenerationReviewItemService
         'prices_missing',
     ];
 
-    private const PRICE_REVIEW_BLOCKERS = [
-        'normative_resources_or_prices_missing',
-        'norm_with_unpriced_resources',
-        'resources_missing',
-        'prices_missing',
-    ];
-
     public function __construct(
         private readonly EstimateGenerationPackagePresenter $packagePresenter,
         private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy(),
@@ -274,7 +267,7 @@ final class EstimateGenerationReviewItemService
             $requiredAction = self::ACTION_RESOLVE_DUPLICATE;
         } elseif ($genericReviewRequired || $normativeReviewRequired || $pricingNotCalculated) {
             $severity = self::SEVERITY_BLOCKING;
-            $requiredAction = $this->requiresPriceCheck($workItem) ? self::ACTION_CHECK_PRICE : self::ACTION_SELECT_NORM;
+            $requiredAction = self::ACTION_SELECT_NORM;
         } elseif ($priceReviewRequired) {
             $severity = self::SEVERITY_WARNING;
             $requiredAction = self::ACTION_CHECK_PRICE;
@@ -400,15 +393,6 @@ final class EstimateGenerationReviewItemService
             || in_array('low_confidence', $flags, true)
             || (bool) data_get($workItem, 'normative_match.decision.can_use_for_pricing', false)
                 && $this->arrayValues(data_get($workItem, 'normative_match.warnings', [])) !== [];
-    }
-
-    /**
-     * @param array<string, mixed> $workItem
-     */
-    private function requiresPriceCheck(array $workItem): bool
-    {
-        return $this->hasCurrentNorm($workItem)
-            && in_array((string) ($workItem['pricing_blocker'] ?? ''), self::PRICE_REVIEW_BLOCKERS, true);
     }
 
     /**
