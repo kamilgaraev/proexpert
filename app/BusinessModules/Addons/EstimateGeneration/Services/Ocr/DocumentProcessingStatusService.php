@@ -56,14 +56,15 @@ class DocumentProcessingStatusService
         EstimateGenerationDocument $document,
         float $qualityScore,
         array $qualityFlags,
-        array $factsSummary = []
+        array $factsSummary = [],
+        ?string $qualityLevel = null
     ): void {
         $document->forceFill([
             'status' => 'needs_review',
             'processing_stage' => 'completed',
             'progress_percent' => 100,
             'quality_score' => $qualityScore,
-            'quality_level' => 'low',
+            'quality_level' => $qualityLevel ?? 'low',
             'quality_flags' => $qualityFlags,
             'facts_summary' => $factsSummary,
             'ocr_finished_at' => now(),

@@ -182,8 +182,32 @@ final class DocumentUnderstandingSummaryBuilderTest extends TestCase
         );
 
         self::assertSame('drawing_cad', $summary['classified_type']);
+        self::assertSame('needs_review', $summary['role_for_estimation']);
         self::assertSame('cad', $summary['source_format']);
         self::assertTrue($summary['extracted_capabilities']['requires_cad_geometry_pipeline']);
+        self::assertTrue($summary['extracted_capabilities']['requires_manual_review']);
+    }
+
+    public function test_uncertain_floor_plan_requires_review_before_generation(): void
+    {
+        $summary = $this->builder()->build(
+            $this->document('Планировка.jpg', 'image/jpeg'),
+            $this->recognition("Планировка квартиры\nГостиная 46,52 м2\nКухня 9,99 м2"),
+            [
+                'source_format' => 'image',
+                'takeoffs_count' => 2,
+                'room_count' => 2,
+                'document_profile' => [
+                    'document_role' => 'floor_plan',
+                    'confidence' => 0.54,
+                    'requires_manual_review' => true,
+                ],
+            ],
+            []
+        );
+
+        self::assertSame('floor_plan', $summary['document_type']);
+        self::assertSame('needs_review', $summary['role_for_estimation']);
         self::assertTrue($summary['extracted_capabilities']['requires_manual_review']);
     }
 

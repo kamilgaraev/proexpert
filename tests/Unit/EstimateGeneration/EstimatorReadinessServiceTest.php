@@ -46,6 +46,30 @@ class EstimatorReadinessServiceTest extends TestCase
         self::assertSame(2, $readiness['metrics']['quantity_takeoffs']);
     }
 
+    public function test_blocks_generation_when_ready_document_requires_understanding_review(): void
+    {
+        $readiness = $this->service()->evaluate($this->session([
+            $this->document(
+                'ready',
+                facts: 4,
+                quantityTakeoffs: 2,
+                factsSummary: [
+                    'document_understanding' => [
+                        'role_for_estimation' => 'needs_review',
+                        'extracted_capabilities' => [
+                            'requires_manual_review' => true,
+                        ],
+                    ],
+                ]
+            ),
+        ]));
+
+        self::assertSame('documents_need_review', $readiness['status']);
+        self::assertFalse($readiness['can_generate']);
+        self::assertSame(1, $readiness['metrics']['documents_action_required']);
+        self::assertSame('documents_require_review', $readiness['blockers'][0]['code']);
+    }
+
     public function test_blocks_apply_when_norms_require_review(): void
     {
         $readiness = $this->service()->evaluate($this->session([
@@ -219,10 +243,14 @@ class EstimatorReadinessServiceTest extends TestCase
         int $facts = 0,
         int $drawingElements = 0,
         int $quantityTakeoffs = 0,
-        int $scopeInferences = 0
+        int $scopeInferences = 0,
+        array $factsSummary = []
     ): EstimateGenerationDocument {
         $document = new EstimateGenerationDocument();
-        $document->forceFill(['status' => $status]);
+        $document->forceFill([
+            'status' => $status,
+            'facts_summary' => $factsSummary,
+        ]);
         $document->setAttribute('facts_count', $facts);
         $document->setAttribute('drawing_elements_count', $drawingElements);
         $document->setAttribute('quantity_takeoffs_count', $quantityTakeoffs);

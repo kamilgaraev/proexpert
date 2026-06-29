@@ -74,7 +74,8 @@ class EstimatorReadinessService
                 ->filter(static fn (EstimateGenerationDocument $document): bool => in_array((string) $document->status, ['uploaded', 'queued', 'processing'], true))
                 ->count(),
             'documents_action_required' => $documents
-                ->filter(static fn (EstimateGenerationDocument $document): bool => in_array((string) $document->status, ['failed', 'needs_review'], true))
+                ->filter(fn (EstimateGenerationDocument $document): bool => in_array((string) $document->status, ['failed', 'needs_review'], true)
+                    || $this->requiresDocumentReview($document))
                 ->count(),
             'facts' => $this->sumDocumentCount($documents, 'facts_count', 'facts'),
             'drawing_elements' => $this->sumDocumentCount($documents, 'drawing_elements_count', 'drawingElements'),
@@ -282,6 +283,24 @@ class EstimatorReadinessService
         return $metrics['documents_ready'] > 0
             && $metrics['documents_pending'] === 0
             && $metrics['documents_action_required'] === 0;
+    }
+
+    private function requiresDocumentReview(EstimateGenerationDocument $document): bool
+    {
+        if ((string) $document->status === 'ignored') {
+            return false;
+        }
+
+        $factsSummary = is_array($document->facts_summary) ? $document->facts_summary : [];
+        $understanding = is_array($factsSummary['document_understanding'] ?? null)
+            ? $factsSummary['document_understanding']
+            : [];
+        $capabilities = is_array($understanding['extracted_capabilities'] ?? null)
+            ? $understanding['extracted_capabilities']
+            : [];
+
+        return ($understanding['role_for_estimation'] ?? null) === 'needs_review'
+            || ($capabilities['requires_manual_review'] ?? false) === true;
     }
 
     /**

@@ -229,6 +229,10 @@ final class DocumentUnderstandingSummaryBuilder
             return 'quantity_source';
         }
 
+        if (($capabilities['requires_manual_review'] ?? false) === true) {
+            return 'needs_review';
+        }
+
         if (
             in_array($documentType, ['work_volume_statement', 'specification'], true)
             || in_array($classifiedType, ['work_volume_statement', 'specification'], true)
@@ -238,10 +242,6 @@ final class DocumentUnderstandingSummaryBuilder
 
         if ($documentType === 'floor_plan' || str_starts_with($classifiedType, 'drawing_')) {
             return 'geometry_source';
-        }
-
-        if (($capabilities['requires_manual_review'] ?? false) === true) {
-            return 'needs_review';
         }
 
         return 'context_document';

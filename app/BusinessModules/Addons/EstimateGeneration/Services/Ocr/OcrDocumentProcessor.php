@@ -68,7 +68,7 @@ class OcrDocumentProcessor
             $quality = $this->qualityAnalyzer->analyze($recognition);
             $facts = $this->factExtractor->extract($recognition, (int) $document->id, $document->filename);
             $factsSummary = $this->factMerger->summarize($facts);
-            $this->persistRecognition($document, $recognition, $facts, $factsSummary);
+            $factsSummary = $this->persistRecognition($document, $recognition, $facts, $factsSummary);
             $this->usageLogger->completed(
                 $document,
                 $recognition,
@@ -78,14 +78,20 @@ class OcrDocumentProcessor
                 $this->elapsedMs($startedAt)
             );
 
-            if (in_array($quality->level, ['low', 'unusable'], true) || ($factsSummary['conflicts'] ?? []) !== []) {
+            $requiresDocumentReview = $this->requiresDocumentReview($factsSummary);
+
+            if (in_array($quality->level, ['low', 'unusable'], true) || ($factsSummary['conflicts'] ?? []) !== [] || $requiresDocumentReview) {
                 $flags = $quality->flags;
 
                 if (($factsSummary['conflicts'] ?? []) !== []) {
                     $flags[] = 'conflicting_document_facts';
                 }
 
-                $this->statusService->markNeedsReview($document, $quality->score, array_values(array_unique($flags)), $factsSummary);
+                if ($requiresDocumentReview) {
+                    $flags[] = 'document_understanding_requires_review';
+                }
+
+                $this->statusService->markNeedsReview($document, $quality->score, array_values(array_unique($flags)), $factsSummary, $quality->level);
             } else {
                 $this->statusService->markReady($document, $quality->score, $quality->level, $factsSummary);
             }
@@ -218,17 +224,34 @@ class OcrDocumentProcessor
     }
 
     /**
+     * @param array<string, mixed> $factsSummary
+     */
+    private function requiresDocumentReview(array $factsSummary): bool
+    {
+        $understanding = is_array($factsSummary['document_understanding'] ?? null)
+            ? $factsSummary['document_understanding']
+            : [];
+        $capabilities = is_array($understanding['extracted_capabilities'] ?? null)
+            ? $understanding['extracted_capabilities']
+            : [];
+
+        return ($understanding['role_for_estimation'] ?? null) === 'needs_review'
+            || ($capabilities['requires_manual_review'] ?? false) === true;
+    }
+
+    /**
      * @param array<int, ExtractedDocumentFact> $facts
      * @param array<string, mixed> $factsSummary
+     * @return array<string, mixed>
      */
     private function persistRecognition(
         EstimateGenerationDocument $document,
         OcrRecognitionResult $recognition,
         array $facts,
         array $factsSummary
-    ): void
+    ): array
     {
-        DB::transaction(function () use ($document, $recognition, $facts, $factsSummary): void {
+        return DB::transaction(function () use ($document, $recognition, $facts, $factsSummary): array {
             $document->facts()->delete();
             $document->drawingElements()->delete();
             $document->quantityTakeoffs()->delete();
@@ -270,6 +293,12 @@ class OcrDocumentProcessor
                 $factsSummary,
             );
             $this->persistPageUnderstanding($pageModels, $documentUnderstanding);
+            $persistedFactsSummary = [
+                ...$factsSummary,
+                'document_understanding' => $documentUnderstanding,
+                'drawing_understanding' => $drawingAnalysis->summary,
+                'scope_inferences' => $scopeInferences,
+            ];
 
             foreach ($facts as $fact) {
                 $pageNumber = (int) ($fact->sourceRef['page_number'] ?? 0);
@@ -295,12 +324,7 @@ class OcrDocumentProcessor
             $document->forceFill([
                 'extracted_text' => $recognition->text(),
                 'structured_payload' => $recognition->toArray(),
-                'facts_summary' => [
-                    ...$factsSummary,
-                    'document_understanding' => $documentUnderstanding,
-                    'drawing_understanding' => $drawingAnalysis->summary,
-                    'scope_inferences' => $scopeInferences,
-                ],
+                'facts_summary' => $persistedFactsSummary,
                 'meta' => [
                     ...(is_array($document->meta) ? $document->meta : []),
                     'document_understanding' => $documentUnderstanding,
@@ -310,6 +334,8 @@ class OcrDocumentProcessor
                 'ocr_provider' => $recognition->provider,
                 'ocr_model' => $recognition->model,
             ])->save();
+
+            return $persistedFactsSummary;
         });
     }
 

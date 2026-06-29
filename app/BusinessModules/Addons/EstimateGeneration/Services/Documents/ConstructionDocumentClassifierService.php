@@ -60,30 +60,35 @@ final class ConstructionDocumentClassifierService
 
         if (! $isStructuredDocument && $this->containsAny($value, ['ар-', 'лист ар', 'архитектур', 'план этажа', 'экспликация помещений'])) {
             $type = 'drawing_architecture';
+            $isStructuredDocument = true;
             $reasons[] = 'architectural_marker';
             $score += 0.55;
         }
 
         if (! $isStructuredDocument && $this->containsAny($value, ['кр-', 'лист кр', 'конструктив', 'армирование', 'монолит', 'фундамент'])) {
             $type = 'drawing_structural';
+            $isStructuredDocument = true;
             $reasons[] = 'structural_marker';
             $score += 0.55;
         }
 
         if (! $isStructuredDocument && $this->containsAny($value, [' ов ', 'ов-', 'лист ов', 'вентиляция', 'воздуховод', 'отопление', 'теплоснабжение'])) {
             $type = 'drawing_engineering_hvac';
+            $isStructuredDocument = true;
             $reasons[] = 'hvac_marker';
             $score += 0.45;
         }
 
         if (! $isStructuredDocument && $this->containsAny($value, [' вк ', 'вк-', 'лист вк', 'водоснабжение', 'канализация', 'трубопровод', 'санузел'])) {
             $type = 'drawing_engineering_water';
+            $isStructuredDocument = true;
             $reasons[] = 'water_marker';
             $score += 0.45;
         }
 
         if (! $isStructuredDocument && $this->containsAny($value, ['эом', ' эо ', 'эо-', 'освещение', 'кабель', 'щит', 'щр-', 'электроснабжение'])) {
             $type = 'drawing_engineering_electrical';
+            $isStructuredDocument = true;
             $reasons[] = 'electrical_marker';
             $score += 0.55;
         }

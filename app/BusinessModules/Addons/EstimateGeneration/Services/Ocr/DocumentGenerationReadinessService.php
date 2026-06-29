@@ -44,11 +44,13 @@ class DocumentGenerationReadinessService
         $needsReview = $items->where('status', 'needs_review');
         $ignored = $items->where('status', 'ignored');
         $ready = $items->where('status', 'ready');
+        $actionRequired = $items
+            ->where('is_action_required', true)
+            ->where('status', '!=', 'ignored');
         $conflictDocuments = $items->where('has_conflicts', true)->where('status', '!=', 'ignored');
+        $understandingReviewDocuments = $items->where('requires_document_review', true)->where('status', '!=', 'ignored');
         $lowQualityDocuments = $items->where('has_low_quality', true)->where('status', '!=', 'ignored');
-        $actionRequiredCount = $failed->count()
-            + $needsReview->count()
-            + $conflictDocuments->whereNotIn('status', self::ACTION_REQUIRED_STATUSES)->count();
+        $actionRequiredCount = $actionRequired->count();
 
         return [
             'total' => $items->count(),
@@ -57,6 +59,7 @@ class DocumentGenerationReadinessService
             'failed_count' => $failed->count(),
             'needs_review_count' => $needsReview->count(),
             'ignored_count' => $ignored->count(),
+            'understanding_review_count' => $understandingReviewDocuments->count(),
             'action_required_count' => $actionRequiredCount,
             'has_documents' => $items->isNotEmpty(),
             'has_pending' => $pending->isNotEmpty(),
@@ -79,6 +82,7 @@ class DocumentGenerationReadinessService
         $qualityFlags = is_array($document->quality_flags) ? $document->quality_flags : [];
         $hasConflicts = (is_array($factsSummary['conflicts'] ?? null) && $factsSummary['conflicts'] !== []);
         $hasLowQuality = in_array($document->quality_level, ['low', 'unusable'], true);
+        $requiresDocumentReview = $this->requiresDocumentReview($factsSummary);
 
         return [
             'id' => $document->id,
@@ -95,8 +99,9 @@ class DocumentGenerationReadinessService
             'error_message_key' => $document->error_message_key,
             'has_conflicts' => $hasConflicts,
             'has_low_quality' => $hasLowQuality,
+            'requires_document_review' => $requiresDocumentReview,
             'is_pending' => in_array($status, self::PENDING_STATUSES, true),
-            'is_action_required' => in_array($status, self::ACTION_REQUIRED_STATUSES, true) || $hasConflicts,
+            'is_action_required' => in_array($status, self::ACTION_REQUIRED_STATUSES, true) || $hasConflicts || $requiresDocumentReview,
             'updated_at' => $document->updated_at?->toISOString(),
         ];
     }
@@ -117,11 +122,31 @@ class DocumentGenerationReadinessService
             $flags[] = 'document_low_quality';
         }
 
+        if ($items->where('requires_document_review', true)->where('status', '!=', 'ignored')->isNotEmpty()) {
+            $flags[] = 'document_understanding_requires_review';
+        }
+
         if ($items->where('status', 'failed')->isNotEmpty()) {
             $flags[] = 'document_processing_failed';
         }
 
         return $flags;
+    }
+
+    /**
+     * @param array<string, mixed> $factsSummary
+     */
+    private function requiresDocumentReview(array $factsSummary): bool
+    {
+        $understanding = is_array($factsSummary['document_understanding'] ?? null)
+            ? $factsSummary['document_understanding']
+            : [];
+        $capabilities = is_array($understanding['extracted_capabilities'] ?? null)
+            ? $understanding['extracted_capabilities']
+            : [];
+
+        return ($understanding['role_for_estimation'] ?? null) === 'needs_review'
+            || ($capabilities['requires_manual_review'] ?? false) === true;
     }
 
     /**
