@@ -57,6 +57,8 @@ class NormativeMatchDecisionService
 
         if ($pricedCount === 0) {
             $warnings[] = 'norm_without_prices';
+        } elseif ($pricedCount < $resourceCount) {
+            $warnings[] = 'norm_with_unpriced_resources';
         } else {
             $reasons[] = 'prices_present';
         }
@@ -71,6 +73,7 @@ class NormativeMatchDecisionService
                 'scope_mismatch',
                 'norm_without_resources',
                 'norm_without_prices',
+                'norm_with_unpriced_resources',
             ])),
             reviewWarnings: array_values(array_intersect($warnings, [
                 'low_confidence',
@@ -392,12 +395,32 @@ class NormativeMatchDecisionService
 
         foreach ($resources as $group) {
             foreach ($group as $resource) {
-                if (($resource['price_source'] ?? null) !== null) {
+                if (is_array($resource) && $this->resourceHasPositivePrice($resource)) {
                     $count++;
                 }
             }
         }
 
         return $count;
+    }
+
+    /**
+     * @param array<string, mixed> $resource
+     */
+    private function resourceHasPositivePrice(array $resource): bool
+    {
+        return ($resource['price_source'] ?? null) !== null && $this->resourceTotalPrice($resource) > 0;
+    }
+
+    /**
+     * @param array<string, mixed> $resource
+     */
+    private function resourceTotalPrice(array $resource): float
+    {
+        if (isset($resource['total_price']) && is_numeric($resource['total_price'])) {
+            return (float) $resource['total_price'];
+        }
+
+        return (float) ($resource['quantity'] ?? 0) * (float) ($resource['unit_price'] ?? 0);
     }
 }

@@ -289,7 +289,7 @@ class ResourceAssemblyService
         ];
         $workItem = $this->applyNormativeComposition($workItem, $selected);
         $workItem['normative_candidates'] = array_map(
-            fn (array $candidate): array => $this->candidateSummary($candidate),
+            fn (array $candidate): array => $this->candidateSummary($candidate, $workItem),
             $match['candidates']
         );
         $workItem['confidence'] = round(((float) ($workItem['confidence'] ?? 0.5) + (float) $selected['confidence']) / 2, 4);
@@ -322,9 +322,10 @@ class ResourceAssemblyService
             $flags[] = $flag;
         }
 
+        $pricingBlocker = $this->pricingBlocker($decision['warnings'] ?? []);
         $workItem['pricing_status'] = 'not_calculated';
-        $workItem['pricing_blocker'] = $this->pricingBlocker($decision['warnings'] ?? []);
-        $workItem['pricing_blocker_message'] = trans_message('estimate_generation.pricing_not_calculated_safe_norm');
+        $workItem['pricing_blocker'] = $pricingBlocker;
+        $workItem['pricing_blocker_message'] = trans_message($this->pricingBlockerMessageKey($pricingBlocker));
 
         $workItem['normative_match'] = [
             'status' => $decision['status'],
@@ -352,7 +353,7 @@ class ResourceAssemblyService
         ];
         $workItem = $this->applyNormativeComposition($workItem, $selected);
         $workItem['normative_candidates'] = array_map(
-            fn (array $candidate): array => $this->candidateSummary($candidate),
+            fn (array $candidate): array => $this->candidateSummary($candidate, $workItem),
             $match['candidates']
         );
         $workItem['validation_flags'] = array_values(array_unique($flags));
@@ -430,9 +431,9 @@ class ResourceAssemblyService
      * @param array<string, mixed> $candidate
      * @return array<string, mixed>
      */
-    private function candidateSummary(array $candidate): array
+    private function candidateSummary(array $candidate, array $workItem): array
     {
-        return $this->candidatePresenter->present($candidate);
+        return $this->candidatePresenter->present($candidate, $workItem);
     }
 
     /**
@@ -487,6 +488,7 @@ class ResourceAssemblyService
             'norm_without_resources',
             'norm_without_prices',
             'norm_without_resource_prices',
+            'norm_with_unpriced_resources',
         ]));
     }
 
@@ -509,7 +511,19 @@ class ResourceAssemblyService
             return 'normative_resources_or_prices_missing';
         }
 
+        if (in_array('norm_with_unpriced_resources', $warnings, true)) {
+            return 'norm_with_unpriced_resources';
+        }
+
         return 'safe_norm_required';
+    }
+
+    private function pricingBlockerMessageKey(string $pricingBlocker): string
+    {
+        return match ($pricingBlocker) {
+            'norm_with_unpriced_resources' => 'estimate_generation.pricing_not_calculated_partial_resource_prices',
+            default => 'estimate_generation.pricing_not_calculated_safe_norm',
+        };
     }
 
     /**
@@ -571,12 +585,32 @@ class ResourceAssemblyService
 
         foreach ($resources as $group) {
             foreach ($group as $resource) {
-                if (($resource['price_source'] ?? null) !== null) {
+                if (is_array($resource) && $this->resourceHasPositivePrice($resource)) {
                     $count++;
                 }
             }
         }
 
         return $count;
+    }
+
+    /**
+     * @param array<string, mixed> $resource
+     */
+    private function resourceHasPositivePrice(array $resource): bool
+    {
+        return ($resource['price_source'] ?? null) !== null && $this->resourceTotalPrice($resource) > 0;
+    }
+
+    /**
+     * @param array<string, mixed> $resource
+     */
+    private function resourceTotalPrice(array $resource): float
+    {
+        if (isset($resource['total_price']) && is_numeric($resource['total_price'])) {
+            return (float) $resource['total_price'];
+        }
+
+        return (float) ($resource['quantity'] ?? 0) * (float) ($resource['unit_price'] ?? 0);
     }
 }

@@ -7,13 +7,13 @@ namespace Tests\Unit\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\LLMNormativeCandidateReranker;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\RuleBasedNormativeCandidateReranker;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
-use Tests\TestCase;
+use PHPUnit\Framework\TestCase;
 
 final class NormativeCandidateRerankerTest extends TestCase
 {
     public function test_rule_based_reranker_selects_candidate_key_from_provided_list(): void
     {
-        $result = app(RuleBasedNormativeCandidateReranker::class)->rerank(
+        $result = $this->ruleBasedReranker()->rerank(
             ['name' => 'Бетонирование фундаментной ленты', 'unit' => 'м3'],
             ['scope_type' => 'foundation'],
             [
@@ -29,7 +29,7 @@ final class NormativeCandidateRerankerTest extends TestCase
 
     public function test_rule_based_reranker_returns_none_when_all_candidates_are_hard_gated(): void
     {
-        $result = app(RuleBasedNormativeCandidateReranker::class)->rerank(
+        $result = $this->ruleBasedReranker()->rerank(
             ['name' => 'Опалубка ленточного фундамента', 'unit' => 'м2'],
             ['scope_type' => 'foundation'],
             [
@@ -42,9 +42,66 @@ final class NormativeCandidateRerankerTest extends TestCase
         $this->assertContains('all_candidates_hard_gated', $result->warnings);
     }
 
+    public function test_rule_based_reranker_hard_gates_partially_priced_candidate(): void
+    {
+        $result = $this->ruleBasedReranker()->rerank(
+            ['name' => 'Бетонирование фундаментной ленты', 'unit' => 'м3'],
+            ['scope_type' => 'foundation'],
+            [
+                $this->candidate('candidate-partial', [
+                    'warnings' => ['norm_with_unpriced_resources'],
+                    'score' => 900,
+                    'learning_score' => 80,
+                    'resources' => [
+                        'materials' => [
+                            ['price_source' => 'fsbc_base'],
+                            ['price_source' => null],
+                        ],
+                        'machinery' => [],
+                        'labor' => [],
+                        'other' => [],
+                    ],
+                ]),
+                $this->candidate('candidate-priced', ['score' => 20]),
+            ]
+        );
+
+        $this->assertSame('candidate-priced', $result->selectedCandidateKey);
+        $this->assertSame('rule_based', $result->provider);
+    }
+
+    public function test_rule_based_reranker_hard_gates_zero_price_candidate_without_warning(): void
+    {
+        $result = $this->ruleBasedReranker()->rerank(
+            ['name' => 'Бетонирование фундаментной ленты', 'unit' => 'м3'],
+            ['scope_type' => 'foundation'],
+            [
+                $this->candidate('candidate-zero-price', [
+                    'score' => 900,
+                    'learning_score' => 80,
+                    'resources' => [
+                        'materials' => [[
+                            'price_source' => 'fsbc_base',
+                            'quantity' => 1,
+                            'unit_price' => 0,
+                            'total_price' => 0,
+                        ]],
+                        'machinery' => [],
+                        'labor' => [],
+                        'other' => [],
+                    ],
+                ]),
+                $this->candidate('candidate-priced', ['score' => 20]),
+            ]
+        );
+
+        $this->assertSame('candidate-priced', $result->selectedCandidateKey);
+        $this->assertSame('rule_based', $result->provider);
+    }
+
     public function test_rule_based_reranker_rejects_wrong_domain_even_with_higher_score(): void
     {
-        $result = app(RuleBasedNormativeCandidateReranker::class)->rerank(
+        $result = $this->ruleBasedReranker()->rerank(
             ['name' => 'Воздушно-тепловые завесы ворот', 'unit' => 'шт'],
             ['scope_type' => 'engineering', 'section_title' => 'Отопление'],
             [
@@ -73,7 +130,7 @@ final class NormativeCandidateRerankerTest extends TestCase
     {
         $reranker = new LLMNormativeCandidateReranker(
             new FakeNormativeRerankerLlm('{"selected_candidate_key":"ghost","confidence":0.9,"reason":"x","evidence_keys":[]}'),
-            app(RuleBasedNormativeCandidateReranker::class),
+            $this->ruleBasedReranker(),
             true
         );
 
@@ -92,7 +149,7 @@ final class NormativeCandidateRerankerTest extends TestCase
     {
         $reranker = new LLMNormativeCandidateReranker(
             new FakeNormativeRerankerLlm('{"selected_candidate_key":"candidate-a","confidence":0.95,"reason":"x","evidence_keys":[]}'),
-            app(RuleBasedNormativeCandidateReranker::class),
+            $this->ruleBasedReranker(),
             true
         );
 
@@ -110,11 +167,45 @@ final class NormativeCandidateRerankerTest extends TestCase
         $this->assertContains('llm_reranker_hard_gated_candidate', $result->warnings);
     }
 
+    public function test_llm_reranker_cannot_select_partially_priced_candidate(): void
+    {
+        $reranker = new LLMNormativeCandidateReranker(
+            new FakeNormativeRerankerLlm('{"selected_candidate_key":"candidate-partial","confidence":0.95,"reason":"x","evidence_keys":[]}'),
+            $this->ruleBasedReranker(),
+            true
+        );
+
+        $result = $reranker->rerank(
+            ['name' => 'Бетонирование фундаментной ленты', 'unit' => 'м3'],
+            ['scope_type' => 'foundation'],
+            [
+                $this->candidate('candidate-partial', [
+                    'warnings' => ['norm_with_unpriced_resources'],
+                    'score' => 900,
+                    'resources' => [
+                        'materials' => [
+                            ['price_source' => 'fsbc_base'],
+                            ['price_source' => null],
+                        ],
+                        'machinery' => [],
+                        'labor' => [],
+                        'other' => [],
+                    ],
+                ]),
+                $this->candidate('candidate-priced', ['score' => 40]),
+            ]
+        );
+
+        $this->assertSame('candidate-priced', $result->selectedCandidateKey);
+        $this->assertSame('rule_based', $result->provider);
+        $this->assertContains('llm_reranker_hard_gated_candidate', $result->warnings);
+    }
+
     public function test_invalid_llm_json_returns_rule_based_result_with_warning(): void
     {
         $reranker = new LLMNormativeCandidateReranker(
             new FakeNormativeRerankerLlm('не json'),
-            app(RuleBasedNormativeCandidateReranker::class),
+            $this->ruleBasedReranker(),
             true
         );
 
@@ -133,6 +224,11 @@ final class NormativeCandidateRerankerTest extends TestCase
      * @param array<string, mixed> $overrides
      * @return array<string, mixed>
      */
+    private function ruleBasedReranker(): RuleBasedNormativeCandidateReranker
+    {
+        return new RuleBasedNormativeCandidateReranker();
+    }
+
     private function candidate(string $key, array $overrides = []): array
     {
         return [
@@ -148,7 +244,7 @@ final class NormativeCandidateRerankerTest extends TestCase
             'learning_positive_count' => 0,
             'learning_negative_count' => 0,
             'resources' => [
-                'materials' => [['price_source' => 'fsbc_base']],
+                'materials' => [['price_source' => 'fsbc_base', 'total_price' => 1000]],
                 'machinery' => [],
                 'labor' => [],
                 'other' => [],

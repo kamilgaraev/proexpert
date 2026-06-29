@@ -242,6 +242,82 @@ final class ResourceAssemblySafetyTest extends TestCase
         $this->assertContains('safe_normative_analog', $item['validation_flags']);
     }
 
+    public function test_norm_with_partially_unpriced_resources_stays_unpriced_candidate(): void
+    {
+        $workItem = [
+            'key' => 'foundation-concrete-partial-prices',
+            'name' => 'Бетонирование фундамента',
+            'unit' => 'м3',
+            'quantity' => 10,
+            'confidence' => 0.86,
+            'validation_flags' => ['normative_required'],
+            'materials' => [],
+            'labor' => [],
+            'machinery' => [],
+            'work_intent' => [
+                'scope' => 'foundation',
+                'action' => 'concreting',
+                'preferred_section_prefixes' => ['01', '06'],
+                'forbidden_section_prefixes' => [],
+            ],
+        ];
+        $match = [
+            'version' => ['source_type' => 'fsnb_2022', 'version_key' => '2026-05-31'],
+            'price_version' => ['source_type' => 'fsbc', 'version_key' => '2026-05-31'],
+            'selected' => $this->partialPricesCandidate(),
+            'candidates' => [$this->partialPricesCandidate()],
+        ];
+
+        $item = $this->manualSelectionService()->applySelectedNormativeMatch($workItem, $match, ['scope_type' => 'foundation']);
+        $item = (new EstimatePricingService())->price([$item])[0];
+
+        $this->assertSame('candidate', $item['normative_match']['status']);
+        $this->assertSame('not_calculated', $item['pricing_status']);
+        $this->assertSame('norm_with_unpriced_resources', $item['pricing_blocker']);
+        $this->assertSame(0.0, $item['total_cost']);
+        $this->assertContains('norm_with_unpriced_resources', $item['normative_match']['warnings']);
+        $this->assertContains('safe_norm_required', $item['validation_flags']);
+        $this->assertContains('pricing_not_calculated', $item['validation_flags']);
+    }
+
+    public function test_norm_with_zero_price_source_stays_unpriced_candidate(): void
+    {
+        $workItem = [
+            'key' => 'foundation-concrete-zero-price',
+            'name' => 'Бетонирование фундамента',
+            'unit' => 'м3',
+            'quantity' => 10,
+            'confidence' => 0.86,
+            'validation_flags' => ['normative_required'],
+            'materials' => [],
+            'labor' => [],
+            'machinery' => [],
+            'work_intent' => [
+                'scope' => 'foundation',
+                'action' => 'concreting',
+                'preferred_section_prefixes' => ['01', '06'],
+                'forbidden_section_prefixes' => [],
+            ],
+        ];
+        $match = [
+            'version' => ['source_type' => 'fsnb_2022', 'version_key' => '2026-05-31'],
+            'price_version' => ['source_type' => 'fsbc', 'version_key' => '2026-05-31'],
+            'selected' => $this->zeroPriceSourceCandidate(),
+            'candidates' => [$this->zeroPriceSourceCandidate()],
+        ];
+
+        $item = $this->manualSelectionService()->applySelectedNormativeMatch($workItem, $match, ['scope_type' => 'foundation']);
+        $item = (new EstimatePricingService())->price([$item])[0];
+
+        $this->assertSame('candidate', $item['normative_match']['status']);
+        $this->assertSame('not_calculated', $item['pricing_status']);
+        $this->assertSame('normative_resources_or_prices_missing', $item['pricing_blocker']);
+        $this->assertSame(0.0, $item['total_cost']);
+        $this->assertContains('norm_without_prices', $item['normative_match']['warnings']);
+        $this->assertContains('safe_norm_required', $item['validation_flags']);
+        $this->assertContains('pricing_not_calculated', $item['validation_flags']);
+    }
+
     private function manualSelectionService(): ResourceAssemblyService
     {
         return new ResourceAssemblyService(
@@ -358,6 +434,93 @@ final class ResourceAssemblySafetyTest extends TestCase
                     'price_source' => 'fsbc_base',
                     'price_id' => 1,
                     'linked_resource_id' => null,
+                ]],
+                'labor' => [],
+                'machinery' => [],
+                'other' => [],
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function partialPricesCandidate(): array
+    {
+        return [
+            'key' => 'norm-202',
+            'norm_id' => 202,
+            'code' => '06-01-001-01',
+            'name' => 'Бетонирование фундамента',
+            'unit' => 'м3',
+            'collection' => ['code' => 'gesn', 'name' => 'ГЭСН', 'norm_type' => 'gesn'],
+            'section' => ['code' => '06-01', 'name' => 'Бетонные работы'],
+            'score' => 96,
+            'confidence' => 0.91,
+            'match_reasons' => ['exact_name', 'unit', 'resources', 'prices'],
+            'warnings' => [],
+            'work_composition' => ['Укладка бетонной смеси'],
+            'resources' => [
+                'materials' => [[
+                    'code' => '06.1.01.01-0001',
+                    'name' => 'Бетон тяжелый',
+                    'resource_type' => 'material',
+                    'unit' => 'м3',
+                    'quantity' => 1.0,
+                    'unit_price' => 5000.0,
+                    'total_price' => 5000.0,
+                    'price_source' => 'fsbc_base',
+                    'price_id' => 10,
+                    'linked_resource_id' => 20,
+                ], [
+                    'code' => '06.1.01.01-9999',
+                    'name' => 'Добавка к бетону',
+                    'resource_type' => 'material',
+                    'unit' => 'кг',
+                    'quantity' => 2.5,
+                    'unit_price' => 0.0,
+                    'total_price' => 0.0,
+                    'price_source' => null,
+                    'price_id' => null,
+                    'linked_resource_id' => 21,
+                ]],
+                'labor' => [],
+                'machinery' => [],
+                'other' => [],
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function zeroPriceSourceCandidate(): array
+    {
+        return [
+            'key' => 'norm-203',
+            'norm_id' => 203,
+            'code' => '06-01-002-01',
+            'name' => 'Бетонирование ростверка',
+            'unit' => 'м3',
+            'collection' => ['code' => 'gesn', 'name' => 'ГЭСН', 'norm_type' => 'gesn'],
+            'section' => ['code' => '06-01', 'name' => 'Бетонные работы'],
+            'score' => 96,
+            'confidence' => 0.91,
+            'match_reasons' => ['exact_name', 'unit', 'resources', 'prices'],
+            'warnings' => [],
+            'work_composition' => ['Укладка бетонной смеси'],
+            'resources' => [
+                'materials' => [[
+                    'code' => '06.1.01.01-0002',
+                    'name' => 'Бетон тяжелый',
+                    'resource_type' => 'material',
+                    'unit' => 'м3',
+                    'quantity' => 1.0,
+                    'unit_price' => 0.0,
+                    'total_price' => 0.0,
+                    'price_source' => 'fsbc_base',
+                    'price_id' => 11,
+                    'linked_resource_id' => 22,
                 ]],
                 'labor' => [],
                 'machinery' => [],

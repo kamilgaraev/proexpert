@@ -36,7 +36,7 @@ final class NormativeCandidateManualSearchService
             'work_item_key' => $workItemKey,
             'query' => $query !== '' ? $query : null,
             'candidates' => array_map(
-                fn (array $candidate): array => $this->presenter->present($candidate),
+                fn (array $candidate): array => $this->presenter->present($candidate, $workItem),
                 is_array($match['candidates'] ?? null) ? $match['candidates'] : []
             ),
         ];

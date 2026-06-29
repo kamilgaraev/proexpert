@@ -67,6 +67,17 @@ final class NormativeCandidateManualSearchServiceTest extends TestCase
                 'score' => 84.0,
                 'resources_count' => 1,
                 'priced_resources_count' => 1,
+                'unpriced_resources_count' => 0,
+                'preview_calculable' => true,
+                'unit_price_preview' => 100.0,
+                'total_cost_preview' => 4200.0,
+                'cost_breakdown_preview' => [
+                    'materials' => 100.0,
+                    'machinery' => 0.0,
+                    'labor' => 0.0,
+                    'other' => 0.0,
+                ],
+                'price_sources' => ['fsbc_base'],
                 'match_reasons' => ['exact_code'],
                 'warnings' => [],
                 'work_composition' => ['Засыпка грунта'],
@@ -76,6 +87,44 @@ final class NormativeCandidateManualSearchServiceTest extends TestCase
                 'learning_sources' => [],
             ],
         ], $result['candidates']);
+    }
+
+    public function test_search_returns_candidate_price_preview_for_current_work_item_quantity(): void
+    {
+        $matcher = new FakeManualSearchMatcher();
+        $service = new NormativeCandidateManualSearchService($matcher, new NormativeCandidatePresenter());
+        $session = new EstimateGenerationSession([
+            'id' => 16,
+            'input_payload' => [],
+            'draft_payload' => [
+                'local_estimates' => [[
+                    'key' => 'local-earth',
+                    'title' => 'Земляные работы',
+                    'scope_type' => 'earthworks',
+                    'sections' => [[
+                        'key' => 'section-earth',
+                        'title' => 'Земляные работы',
+                        'work_items' => [[
+                            'key' => 'earth.backfill',
+                            'item_type' => 'priced_work',
+                            'name' => 'Обратная засыпка пазух',
+                            'description' => '',
+                            'work_category' => 'earthworks',
+                            'unit' => 'м3',
+                            'quantity' => 42.0,
+                        ]],
+                    ]],
+                ]],
+            ],
+        ]);
+
+        $result = $service->search($session, 'earth.backfill', '01-02-057', 7);
+
+        self::assertTrue($result['candidates'][0]['preview_calculable']);
+        self::assertSame(100.0, $result['candidates'][0]['unit_price_preview']);
+        self::assertSame(4200.0, $result['candidates'][0]['total_cost_preview']);
+        self::assertArrayNotHasKey('work', $result['candidates'][0]['cost_breakdown_preview']);
+        self::assertSame(['fsbc_base'], $result['candidates'][0]['price_sources']);
     }
 }
 
@@ -111,6 +160,8 @@ final class FakeManualSearchMatcher extends EstimateNormativeMatcher
                 'resources' => [
                     'materials' => [[
                         'price_source' => 'fsbc_base',
+                        'quantity' => 1.0,
+                        'unit_price' => 100.0,
                     ]],
                     'machinery' => [],
                     'labor' => [],

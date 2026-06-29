@@ -79,6 +79,44 @@ final class EstimateValidationServiceTest extends TestCase
         self::assertSame(0, $draft['quality_summary']['not_calculated_work_items']);
     }
 
+    public function test_partial_norm_resource_warning_blocks_calculated_work(): void
+    {
+        $draft = $this->service()->validate($this->draft([
+            [
+                'key' => 'work-1',
+                'item_type' => 'priced_work',
+                'name' => 'Бетонирование конструкций',
+                'unit' => 'м3',
+                'quantity' => 8,
+                'quantity_basis' => 'Ведомость объемов, стр. 1',
+                'total_cost' => 120000,
+                'materials' => [['total_price' => 80000]],
+                'labor' => [['total_price' => 25000]],
+                'machinery' => [['total_price' => 15000]],
+                'pricing_status' => 'calculated',
+                'normative_match' => [
+                    'status' => 'matched',
+                    'warnings' => ['norm_with_unpriced_resources'],
+                    'decision' => [
+                        'status' => 'accepted',
+                        'warnings' => ['norm_with_unpriced_resources'],
+                    ],
+                ],
+                'validation_flags' => [],
+                'confidence' => 0.92,
+            ],
+        ]));
+
+        $item = $draft['local_estimates'][0]['sections'][0]['work_items'][0];
+
+        self::assertSame('not_calculated', $item['pricing_status']);
+        self::assertSame('normative_required', $item['pricing_blocker']);
+        self::assertContains('safe_norm_required', $item['validation_flags']);
+        self::assertContains('pricing_not_calculated', $item['validation_flags']);
+        self::assertSame(1, $draft['quality_summary']['safe_norm_required_work_items']);
+        self::assertSame(1, $draft['quality_summary']['not_calculated_work_items']);
+    }
+
     public function test_auto_review_priced_normative_match_still_requires_manual_review(): void
     {
         $draft = $this->service()->validate($this->draft([

@@ -571,13 +571,33 @@ class EstimateNormativeMatcher
 
         foreach ($resources as $group) {
             foreach ($group as $resource) {
-                if (($resource['price_source'] ?? null) !== null) {
+                if (is_array($resource) && $this->resourceHasPositivePrice($resource)) {
                     $count++;
                 }
             }
         }
 
         return $count;
+    }
+
+    /**
+     * @param array<string, mixed> $resource
+     */
+    private function resourceHasPositivePrice(array $resource): bool
+    {
+        return ($resource['price_source'] ?? null) !== null && $this->resourceTotalPrice($resource) > 0;
+    }
+
+    /**
+     * @param array<string, mixed> $resource
+     */
+    private function resourceTotalPrice(array $resource): float
+    {
+        if (isset($resource['total_price']) && is_numeric($resource['total_price'])) {
+            return (float) $resource['total_price'];
+        }
+
+        return (float) ($resource['quantity'] ?? 0) * (float) ($resource['unit_price'] ?? 0);
     }
 
     /**
@@ -604,6 +624,10 @@ class EstimateNormativeMatcher
 
         if ($resourceCount > 0 && $pricedCount === 0) {
             $warnings[] = 'norm_without_resource_prices';
+        }
+
+        if ($resourceCount > 0 && $pricedCount > 0 && $pricedCount < $resourceCount) {
+            $warnings[] = 'norm_with_unpriced_resources';
         }
 
         if ($unitMismatch) {

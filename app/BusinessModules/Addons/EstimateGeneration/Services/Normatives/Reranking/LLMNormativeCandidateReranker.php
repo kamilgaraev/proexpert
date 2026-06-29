@@ -120,7 +120,7 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
                 'learning_positive_count' => $candidate['learning_positive_count'] ?? 0,
                 'learning_negative_count' => $candidate['learning_negative_count'] ?? 0,
                 'work_composition' => array_slice($candidate['work_composition'] ?? [], 0, 8),
-            ], array_slice($candidates, 0, (int) config('estimate-generation.normative_matching.reranker.max_candidates', 8))),
+            ], array_slice($candidates, 0, $this->maxCandidates())),
         ];
 
         return [
@@ -133,6 +133,15 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
                 'content' => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
             ],
         ];
+    }
+
+    private function maxCandidates(): int
+    {
+        try {
+            return max(1, (int) config('estimate-generation.normative_matching.reranker.max_candidates', 8));
+        } catch (Throwable) {
+            return 8;
+        }
     }
 
     /**

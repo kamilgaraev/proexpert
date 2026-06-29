@@ -433,6 +433,7 @@ class EstimateValidationService
             'norm_without_resources',
             'norm_without_prices',
             'norm_without_resource_prices',
+            'norm_with_unpriced_resources',
         ]) !== [];
     }
 }

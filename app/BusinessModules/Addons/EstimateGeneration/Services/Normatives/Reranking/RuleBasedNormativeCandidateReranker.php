@@ -16,6 +16,7 @@ final class RuleBasedNormativeCandidateReranker implements NormativeCandidateRer
         'scope_mismatch',
         'norm_without_resources',
         'norm_without_resource_prices',
+        'norm_with_unpriced_resources',
         'norm_without_prices',
     ];
 
@@ -104,8 +105,11 @@ final class RuleBasedNormativeCandidateReranker implements NormativeCandidateRer
     public function hardGated(array $candidate): bool
     {
         $warnings = array_map('strval', is_array($candidate['warnings'] ?? null) ? $candidate['warnings'] : []);
+        $resourceCount = $this->resourcesCount($candidate['resources'] ?? []);
 
-        return array_intersect($warnings, self::HARD_WARNINGS) !== [];
+        return array_intersect($warnings, self::HARD_WARNINGS) !== []
+            || $resourceCount === 0
+            || $this->pricedResourcesCount($candidate['resources'] ?? []) < $resourceCount;
     }
 
     /**
@@ -372,12 +376,32 @@ final class RuleBasedNormativeCandidateReranker implements NormativeCandidateRer
 
         foreach ($resources as $group) {
             foreach (is_array($group) ? $group : [] as $resource) {
-                if (($resource['price_source'] ?? null) !== null) {
+                if (is_array($resource) && $this->resourceHasPositivePrice($resource)) {
                     $count++;
                 }
             }
         }
 
         return $count;
+    }
+
+    /**
+     * @param array<string, mixed> $resource
+     */
+    private function resourceHasPositivePrice(array $resource): bool
+    {
+        return ($resource['price_source'] ?? null) !== null && $this->resourceTotalPrice($resource) > 0;
+    }
+
+    /**
+     * @param array<string, mixed> $resource
+     */
+    private function resourceTotalPrice(array $resource): float
+    {
+        if (isset($resource['total_price']) && is_numeric($resource['total_price'])) {
+            return (float) $resource['total_price'];
+        }
+
+        return (float) ($resource['quantity'] ?? 0) * (float) ($resource['unit_price'] ?? 0);
     }
 }

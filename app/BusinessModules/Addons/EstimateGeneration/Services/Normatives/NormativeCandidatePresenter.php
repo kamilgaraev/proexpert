@@ -10,9 +10,10 @@ class NormativeCandidatePresenter
      * @param array<string, mixed> $candidate
      * @return array<string, mixed>
      */
-    public function present(array $candidate): array
+    public function present(array $candidate, ?array $workItem = null): array
     {
         $resources = is_array($candidate['resources'] ?? null) ? $candidate['resources'] : [];
+        $pricePreview = $this->pricePreview($candidate, $resources, $workItem);
 
         return [
             'key' => $candidate['key'] ?? null,
@@ -26,6 +27,12 @@ class NormativeCandidatePresenter
             'score' => round((float) ($candidate['score'] ?? 0), 4),
             'resources_count' => $this->resourcesCount($resources),
             'priced_resources_count' => $this->pricedResourcesCount($resources),
+            'unpriced_resources_count' => $pricePreview['unpriced_resources_count'],
+            'preview_calculable' => $pricePreview['preview_calculable'],
+            'unit_price_preview' => $pricePreview['unit_price_preview'],
+            'total_cost_preview' => $pricePreview['total_cost_preview'],
+            'cost_breakdown_preview' => $pricePreview['cost_breakdown_preview'],
+            'price_sources' => $pricePreview['price_sources'],
             'match_reasons' => array_values($candidate['match_reasons'] ?? []),
             'warnings' => array_values($candidate['warnings'] ?? []),
             'work_composition' => $this->normalizeComposition($candidate['work_composition'] ?? []),
@@ -34,6 +41,124 @@ class NormativeCandidatePresenter
             'learning_score' => round((float) ($candidate['learning_score'] ?? 0), 2),
             'learning_sources' => array_values($candidate['learning_sources'] ?? []),
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $candidate
+     * @param array<string, mixed> $resources
+     * @param array<string, mixed>|null $workItem
+     * @return array{
+     *     unpriced_resources_count: int,
+     *     preview_calculable: bool,
+     *     unit_price_preview: float|null,
+     *     total_cost_preview: float|null,
+     *     cost_breakdown_preview: array{materials: float, machinery: float, labor: float, other: float}|null,
+     *     price_sources: array<int, string>
+     * }
+     */
+    private function pricePreview(array $candidate, array $resources, ?array $workItem): array
+    {
+        $resourceCount = $this->resourcesCount($resources);
+        $pricedResourceCount = $this->pricedResourcesCount($resources);
+        $quantity = $workItem !== null ? max((float) ($workItem['quantity'] ?? 0), 0.0) : 1.0;
+        $quantityFactor = $workItem !== null
+            ? NormativeUnitNormalizer::quantityFactor((string) ($workItem['unit'] ?? ''), (string) ($candidate['unit'] ?? ''))
+            : 1.0;
+        $unitTotals = $this->resourceTotals($resources, $quantityFactor);
+        $unitPrice = round(
+            $unitTotals['materials'] + $unitTotals['machinery'] + $unitTotals['labor'] + $unitTotals['other'],
+            4
+        );
+        $previewCalculable = $resourceCount > 0 && $pricedResourceCount === $resourceCount && $unitPrice > 0;
+
+        return [
+            'unpriced_resources_count' => max($resourceCount - $pricedResourceCount, 0),
+            'preview_calculable' => $previewCalculable,
+            'unit_price_preview' => $previewCalculable ? $unitPrice : null,
+            'total_cost_preview' => $previewCalculable ? round($unitPrice * $quantity, 2) : null,
+            'cost_breakdown_preview' => $previewCalculable ? [
+                'materials' => round($unitTotals['materials'], 2),
+                'machinery' => round($unitTotals['machinery'], 2),
+                'labor' => round($unitTotals['labor'], 2),
+                'other' => round($unitTotals['other'], 2),
+            ] : null,
+            'price_sources' => $this->priceSources($resources),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $resources
+     * @return array{materials: float, machinery: float, labor: float, other: float}
+     */
+    private function resourceTotals(array $resources, float $quantityFactor): array
+    {
+        $totals = [
+            'materials' => 0.0,
+            'machinery' => 0.0,
+            'labor' => 0.0,
+            'other' => 0.0,
+        ];
+
+        foreach ($totals as $group => $total) {
+            foreach ($resources[$group] ?? [] as $resource) {
+                if (!is_array($resource) || !$this->resourceHasPositivePrice($resource)) {
+                    continue;
+                }
+
+                $totals[$group] = $total + $this->resourceTotalPrice($resource) * $quantityFactor;
+                $total = $totals[$group];
+            }
+        }
+
+        return $totals;
+    }
+
+    /**
+     * @param array<string, mixed> $resource
+     */
+    private function resourceTotalPrice(array $resource): float
+    {
+        if (isset($resource['total_price']) && is_numeric($resource['total_price'])) {
+            return (float) $resource['total_price'];
+        }
+
+        return (float) ($resource['quantity'] ?? 0) * (float) ($resource['unit_price'] ?? 0);
+    }
+
+    /**
+     * @param array<string, mixed> $resource
+     */
+    private function resourceHasPositivePrice(array $resource): bool
+    {
+        return ($resource['price_source'] ?? null) !== null && $this->resourceTotalPrice($resource) > 0;
+    }
+
+    /**
+     * @param array<string, mixed> $resources
+     * @return array<int, string>
+     */
+    private function priceSources(array $resources): array
+    {
+        $sources = [];
+
+        foreach ($resources as $group) {
+            foreach ($group as $resource) {
+                if (!is_array($resource)) {
+                    continue;
+                }
+
+                if (!$this->resourceHasPositivePrice($resource)) {
+                    continue;
+                }
+
+                $source = trim((string) ($resource['price_source'] ?? ''));
+                if ($source !== '') {
+                    $sources[] = $source;
+                }
+            }
+        }
+
+        return array_values(array_unique($sources));
     }
 
     /**
@@ -56,7 +181,7 @@ class NormativeCandidatePresenter
 
         foreach ($resources as $group) {
             foreach ($group as $resource) {
-                if (($resource['price_source'] ?? null) !== null) {
+                if (is_array($resource) && $this->resourceHasPositivePrice($resource)) {
                     $count++;
                 }
             }
