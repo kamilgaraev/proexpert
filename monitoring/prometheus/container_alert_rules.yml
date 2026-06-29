@@ -1,0 +1,62 @@
+groups:
+  - name: docker_container_alerts
+    rules:
+      - alert: ContainerMetricsUnavailable
+        expr: up{job="cadvisor"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: containers
+        annotations:
+          summary: "Метрики контейнеров недоступны"
+          description: "Prometheus не получает метрики cAdvisor. Состояние контейнеров и рестарты не будут видны."
+
+      - alert: HorizonContainerMissing
+        expr: absent(container_last_seen{container_label_com_docker_compose_service="horizon"})
+        for: 2m
+        labels:
+          severity: critical
+          service: horizon
+        annotations:
+          summary: "Horizon не найден среди контейнеров"
+          description: "Контейнер Horizon отсутствует в метриках cAdvisor дольше 2 минут."
+
+      - alert: HorizonContainerRestartLoop
+        expr: changes(container_start_time_seconds{container_label_com_docker_compose_service="horizon"}[30m]) >= 2
+        for: 1m
+        labels:
+          severity: critical
+          service: horizon
+        annotations:
+          summary: "Horizon часто перезапускается"
+          description: "Контейнер Horizon перезапускался несколько раз за 30 минут. Проверьте память, Horizon и очереди."
+
+      - alert: HorizonContainerHighMemory
+        expr: max by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{container_label_com_docker_compose_service="horizon"}) / 1024 / 1024 > 220
+        for: 5m
+        labels:
+          severity: warning
+          service: horizon
+        annotations:
+          summary: "Horizon близок к лимиту памяти"
+          description: "Horizon использует больше 220 MB памяти дольше 5 минут. Это ранний сигнал перед повторным падением."
+
+      - alert: ProhelperApiContainerMissing
+        expr: absent(container_last_seen{container_label_com_docker_compose_service="api"})
+        for: 2m
+        labels:
+          severity: critical
+          service: api
+        annotations:
+          summary: "API контейнер не найден"
+          description: "Контейнер API отсутствует в метриках cAdvisor дольше 2 минут."
+
+      - alert: ProhelperApiContainerRestartLoop
+        expr: changes(container_start_time_seconds{container_label_com_docker_compose_service="api"}[30m]) >= 2
+        for: 1m
+        labels:
+          severity: critical
+          service: api
+        annotations:
+          summary: "API контейнер часто перезапускается"
+          description: "Контейнер API перезапускался несколько раз за 30 минут. Проверьте healthcheck, память и логи приложения."

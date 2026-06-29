@@ -43,4 +43,35 @@ final class DockerComposeSecurityTest extends TestCase
         self::assertStringContainsString("      - '.dockerignore'", $workflow);
         self::assertStringContainsString("      - 'public/**'", $workflow);
     }
+
+    public function test_monitoring_stack_deploys_container_alerting_services(): void
+    {
+        $rootPath = dirname(__DIR__, 3);
+        $compose = file_get_contents($rootPath.'/docker-compose.yml');
+        $prometheus = file_get_contents($rootPath.'/monitoring/prometheus/prometheus.yml');
+        $workflow = file_get_contents($rootPath.'/.github/workflows/deploy-monitoring.yml');
+
+        self::assertIsString($compose);
+        self::assertIsString($prometheus);
+        self::assertIsString($workflow);
+
+        self::assertStringContainsString('alertmanager:', $compose);
+        self::assertStringContainsString('cadvisor:', $compose);
+        self::assertStringContainsString("targets: ['alertmanager:9093']", $prometheus);
+        self::assertStringContainsString("targets: ['cadvisor:8080']", $prometheus);
+        self::assertStringContainsString('container_alert_rules.yml', $prometheus);
+        self::assertStringContainsString('prometheus alertmanager cadvisor grafana', $workflow);
+    }
+
+    public function test_container_alert_rules_cover_horizon_failures(): void
+    {
+        $rules = file_get_contents(dirname(__DIR__, 3).'/monitoring/prometheus/container_alert_rules.yml');
+
+        self::assertIsString($rules);
+        self::assertStringContainsString('HorizonContainerMissing', $rules);
+        self::assertStringContainsString('HorizonContainerRestartLoop', $rules);
+        self::assertStringContainsString('HorizonContainerHighMemory', $rules);
+        self::assertStringContainsString('container_label_com_docker_compose_service="horizon"', $rules);
+        self::assertStringContainsString('ProhelperApiContainerRestartLoop', $rules);
+    }
 }

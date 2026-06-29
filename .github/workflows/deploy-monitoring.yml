@@ -32,7 +32,7 @@ jobs:
           script: |
             set -e
             cd /var/www/prohelper
-            MONITORING_SERVICES="loki promtail prometheus grafana node-exporter watchdog postgres-exporter"
+            MONITORING_SERVICES="loki promtail prometheus alertmanager cadvisor grafana node-exporter watchdog postgres-exporter"
 
             git fetch --all --prune
             git reset --hard origin/main

@@ -7,11 +7,12 @@ global:
 
 rule_files:
   - "alert_rules.yml"
+  - "container_alert_rules.yml"
 
 alerting:
   alertmanagers:
     - static_configs:
-        - targets: []
+        - targets: ['alertmanager:9093']
 
 scrape_configs:
   # Laravel приложение метрики (через веб-сервер HTTPS)
@@ -122,7 +123,7 @@ scrape_configs:
   # cAdvisor для контейнерных метрик (если установлен)
   - job_name: 'cadvisor'
     static_configs:
-      - targets: ['host.docker.internal:8080']
+      - targets: ['cadvisor:8080']
     scrape_interval: 30s
     metrics_path: /metrics
     relabel_configs:
