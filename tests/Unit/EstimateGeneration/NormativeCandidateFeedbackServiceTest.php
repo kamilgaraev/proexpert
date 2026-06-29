@@ -165,6 +165,51 @@ final class NormativeCandidateFeedbackServiceTest extends TestCase
         ]);
     }
 
+    public function test_confirms_drawing_quantity_and_moves_work_item_to_norm_selection(): void
+    {
+        $draft = $this->draft([
+            'key' => 'rough.walls',
+            'name' => 'Штукатурка стен',
+            'item_type' => 'quantity_review',
+            'unit' => 'м2',
+            'quantity' => 220.5,
+            'quantity_basis' => 'Площадь стен извлечена из планировки.',
+            'pricing_status' => 'not_applicable',
+            'pricing_blocker' => 'quantity_review_required',
+            'materials' => [],
+            'labor' => [],
+            'machinery' => [],
+            'other_resources' => [],
+            'total_cost' => 0.0,
+            'validation_flags' => ['quantity_review_required'],
+            'metadata' => [
+                'quantity_key' => 'rough.walls',
+                'display_role' => 'quantity_review',
+            ],
+        ]);
+
+        $updated = $this->service()->applyQuantityConfirmationToDraft($draft, 'rough.walls', [
+            'quantity' => 218.25,
+            'unit' => 'м2',
+            'quantity_basis' => 'Проверено по планировке, площадь стен 218,25 м2.',
+        ], 'Проверил площадь стен');
+        $workItem = $updated['local_estimates'][0]['sections'][0]['work_items'][0];
+
+        self::assertSame('priced_work', $workItem['item_type']);
+        self::assertSame(218.25, $workItem['quantity']);
+        self::assertSame('м2', $workItem['unit']);
+        self::assertSame('Проверено по планировке, площадь стен 218,25 м2.', $workItem['quantity_basis']);
+        self::assertSame('not_calculated', $workItem['pricing_status']);
+        self::assertSame('normative_required', $workItem['pricing_blocker']);
+        self::assertSame(0.0, $workItem['total_cost']);
+        self::assertContains('normative_required', $workItem['validation_flags']);
+        self::assertContains('safe_norm_required', $workItem['validation_flags']);
+        self::assertContains('pricing_not_calculated', $workItem['validation_flags']);
+        self::assertNotContains('quantity_review_required', $workItem['validation_flags']);
+        self::assertSame('confirmed_by_user', $workItem['metadata']['quantity_feedback']['status']);
+        self::assertSame(218.25, $workItem['metadata']['quantity_feedback']['quantity']);
+    }
+
     /**
      * @param array<string, mixed> $workItem
      * @return array<string, mixed>

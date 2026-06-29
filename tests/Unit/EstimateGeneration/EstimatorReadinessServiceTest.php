@@ -105,6 +105,28 @@ class EstimatorReadinessServiceTest extends TestCase
         self::assertContains('quality_requires_review', array_column($readiness['blockers'], 'code'));
     }
 
+    public function test_blocks_apply_when_drawing_quantities_require_confirmation(): void
+    {
+        $readiness = $this->service()->evaluate($this->session([
+            $this->document('ready', facts: 4, quantityTakeoffs: 6),
+        ], $this->draft([
+            'status' => 'review_required',
+            'level' => 'passed',
+            'total_work_items' => 4,
+            'priced_work_items' => 3,
+            'operation_work_items' => 0,
+            'not_calculated_work_items' => 0,
+            'safe_norm_required_work_items' => 0,
+            'quantity_review_work_items' => 1,
+            'normative_items' => ['requires_review' => 0],
+        ])));
+
+        self::assertSame('draft_needs_review', $readiness['status']);
+        self::assertFalse($readiness['can_apply']);
+        self::assertSame(1, $readiness['metrics']['quantity_review_work_items']);
+        self::assertContains('quantities_require_review', array_column($readiness['blockers'], 'code'));
+    }
+
     public function test_allows_apply_for_priced_traceable_draft(): void
     {
         $readiness = $this->service()->evaluate($this->session([

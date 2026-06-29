@@ -181,8 +181,10 @@ class EstimateGenerationPackagePersistenceService
         $counters = $this->itemCounters($workItems);
         $pricedTargetMin = min(10, max(3, (int) ceil(max($targetItemsMin, 1) / 7)));
 
-        if ($counters['priced_items_count'] < $pricedTargetMin) {
+        if ($counters['priced_items_count'] < $pricedTargetMin && $counters['quantity_review_items_count'] === 0) {
             $critical[] = 'insufficient_detail';
+        } elseif ($counters['quantity_review_items_count'] > 0) {
+            $warnings[] = 'quantity_review_required';
         }
 
         foreach ($workItems as $workItem) {
@@ -227,9 +229,15 @@ class EstimateGenerationPackagePersistenceService
         $priced = 0;
         $operations = 0;
         $reviewNotes = 0;
+        $quantityReviews = 0;
 
         foreach ($workItems as $workItem) {
             $type = (string) ($workItem['item_type'] ?? 'priced_work');
+
+            if ($type === EstimateGenerationPackageItem::QUANTITY_REVIEW_ITEM_TYPE) {
+                $quantityReviews++;
+                continue;
+            }
 
             if (in_array($type, ['operation', 'resource_note'], true)) {
                 $operations++;
@@ -248,6 +256,7 @@ class EstimateGenerationPackagePersistenceService
             'items_count' => count($workItems),
             'total_items_count' => count($workItems),
             'priced_items_count' => $priced,
+            'quantity_review_items_count' => $quantityReviews,
             'operation_items_count' => $operations,
             'review_notes_count' => $reviewNotes,
         ];

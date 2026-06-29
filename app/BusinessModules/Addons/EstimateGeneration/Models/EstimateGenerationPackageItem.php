@@ -9,6 +9,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class EstimateGenerationPackageItem extends Model
 {
+    public const QUANTITY_REVIEW_ITEM_TYPE = 'quantity_review';
+
     public const SERVICE_ITEM_TYPES = ['operation', 'resource_note', 'review_note'];
 
     protected $table = 'estimate_generation_package_items';

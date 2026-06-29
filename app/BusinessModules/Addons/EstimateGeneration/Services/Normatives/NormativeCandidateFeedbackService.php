@@ -39,18 +39,25 @@ final class NormativeCandidateFeedbackService
      */
     public function apply(EstimateGenerationSession $session, EstimateGenerationFeedback $feedback): ?array
     {
-        if ($feedback->feedback_type !== 'normative_rejection') {
+        if (!in_array($feedback->feedback_type, ['normative_rejection', 'quantity_confirmation'], true)) {
             return null;
         }
 
         $payload = is_array($feedback->payload) ? $feedback->payload : [];
         $draft = is_array($session->draft_payload ?? null) ? $session->draft_payload : [];
-        $draft = $this->applyRejectionToDraft(
-            $draft,
-            (string) $feedback->work_item_key,
-            $payload,
-            $feedback->comments
-        );
+        $draft = $feedback->feedback_type === 'quantity_confirmation'
+            ? $this->applyQuantityConfirmationToDraft(
+                $draft,
+                (string) $feedback->work_item_key,
+                $payload,
+                $feedback->comments
+            )
+            : $this->applyRejectionToDraft(
+                $draft,
+                (string) $feedback->work_item_key,
+                $payload,
+                $feedback->comments
+            );
         $draft = $this->validationService->validate($draft);
         $this->packagePersistenceService->syncFromDraft($session, $draft);
 
@@ -62,6 +69,59 @@ final class NormativeCandidateFeedbackService
             'processing_progress' => 100,
             'last_error' => null,
         ])->save();
+
+        return $draft;
+    }
+
+    /**
+     * @param array<string, mixed> $draft
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
+    public function applyQuantityConfirmationToDraft(array $draft, string $workItemKey, array $payload, ?string $comments = null): array
+    {
+        $found = false;
+        $quantity = $this->nullableFloat($payload['quantity'] ?? null);
+
+        if ($quantity === null || $quantity <= 0) {
+            throw $this->validationException([
+                'payload.quantity' => [$this->message('estimate_generation.quantity_confirmation_quantity_required')],
+            ]);
+        }
+
+        foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
+            if (!is_array($localEstimate)) {
+                continue;
+            }
+
+            foreach ($localEstimate['sections'] ?? [] as $sectionIndex => $section) {
+                if (!is_array($section)) {
+                    continue;
+                }
+
+                foreach ($section['work_items'] ?? [] as $workIndex => $workItem) {
+                    if (!is_array($workItem) || (string) ($workItem['key'] ?? '') !== $workItemKey) {
+                        continue;
+                    }
+
+                    $found = true;
+                    $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex] = $this->confirmWorkItemQuantity(
+                        $workItem,
+                        $quantity,
+                        $this->nullableString($payload['unit'] ?? null),
+                        $this->nullableString($payload['quantity_basis'] ?? null),
+                        $comments
+                    );
+                    break 3;
+                }
+            }
+        }
+
+        if (!$found) {
+            throw $this->validationException([
+                'work_item_key' => [$this->message('estimate_generation.work_item_not_found')],
+            ]);
+        }
 
         return $draft;
     }
@@ -213,6 +273,68 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
+     * @param array<string, mixed> $workItem
+     * @return array<string, mixed>
+     */
+    private function confirmWorkItemQuantity(
+        array $workItem,
+        float $quantity,
+        ?string $unit,
+        ?string $quantityBasis,
+        ?string $comments
+    ): array {
+        if ((string) ($workItem['item_type'] ?? '') !== 'quantity_review') {
+            throw $this->validationException([
+                'work_item_key' => [$this->message('estimate_generation.quantity_confirmation_not_required')],
+            ]);
+        }
+
+        $flags = $this->uniqueStrings(array_filter(
+            is_array($workItem['validation_flags'] ?? null) ? $workItem['validation_flags'] : [],
+            static fn (mixed $flag): bool => (string) $flag !== 'quantity_review_required'
+        ));
+
+        $workItem['item_type'] = 'priced_work';
+        $workItem['quantity'] = round($quantity, 4);
+        $workItem['unit'] = $unit ?? (string) ($workItem['unit'] ?? '');
+        $workItem['quantity_basis'] = $quantityBasis ?? (string) ($workItem['quantity_basis'] ?? '');
+        $workItem['normative_rate_code'] = null;
+        $workItem['materials'] = [];
+        $workItem['labor'] = [];
+        $workItem['machinery'] = [];
+        $workItem['other_resources'] = [];
+        $workItem['work_cost'] = 0.0;
+        $workItem['materials_cost'] = 0.0;
+        $workItem['machinery_cost'] = 0.0;
+        $workItem['labor_cost'] = 0.0;
+        $workItem['total_cost'] = 0.0;
+        $workItem['price_source'] = null;
+        $workItem['pricing_status'] = 'not_calculated';
+        $workItem['pricing_blocker'] = 'normative_required';
+        $workItem['pricing_blocker_message'] = null;
+        $workItem['validation_flags'] = $this->uniqueStrings([
+            ...$flags,
+            'normative_required',
+            'safe_norm_required',
+            'pricing_not_calculated',
+        ]);
+        $workItem['metadata'] = [
+            ...(is_array($workItem['metadata'] ?? null) ? $workItem['metadata'] : []),
+            'display_role' => 'priced_work',
+            'normative_grounding_policy' => 'fsnb_required',
+            'quantity_feedback' => [
+                'status' => 'confirmed_by_user',
+                'quantity' => round($quantity, 4),
+                'unit' => $workItem['unit'],
+                'quantity_basis' => $workItem['quantity_basis'],
+                'comments' => $comments,
+            ],
+        ];
+
+        return $workItem;
+    }
+
+    /**
      * @param array<int, mixed> $candidates
      * @return array<int, mixed>
      */
@@ -292,6 +414,15 @@ final class NormativeCandidateFeedbackService
         return (int) $value;
     }
 
+    private function nullableFloat(mixed $value): ?float
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return (float) $value;
+    }
+
     private function nullableString(mixed $value): ?string
     {
         $value = trim((string) ($value ?? ''));
@@ -326,6 +457,7 @@ final class NormativeCandidateFeedbackService
     private function draftRequiresReview(array $draft): bool
     {
         return (int) data_get($draft, 'quality_summary.normative_items.requires_review', 0) > 0
+            || (int) data_get($draft, 'quality_summary.quantity_review_work_items', 0) > 0
             || (int) data_get($draft, 'quality_summary.not_calculated_work_items', 0) > 0
             || (int) data_get($draft, 'quality_summary.safe_norm_required_work_items', 0) > 0
             || (int) data_get($draft, 'quality_summary.duplicate_work_items', 0) > 0;

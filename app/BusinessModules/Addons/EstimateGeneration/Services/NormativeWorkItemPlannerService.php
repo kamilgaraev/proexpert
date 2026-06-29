@@ -92,10 +92,15 @@ final class NormativeWorkItemPlannerService
 
         $packageKey = (string) ($localEstimate['key'] ?? 'package');
         $key = $packageKey . '-norm-intent-' . ($index + 1);
-        $flags = ['normative_required'];
 
         if (($quantity['review_required'] ?? false) === true) {
-            $flags[] = 'quantity_review_required';
+            return $this->quantityReviewItemFromDefinition(
+                key: $key,
+                definition: $definition,
+                localEstimate: $localEstimate,
+                section: $section,
+                quantity: $quantity
+            );
         }
 
         return $this->basePricedWorkItem(
@@ -111,7 +116,7 @@ final class NormativeWorkItemPlannerService
             quantityBasis: (string) $quantity['basis'],
             sourceRefs: $quantity['source_refs'] !== [] ? $quantity['source_refs'] : ($section['source_refs'] ?? $localEstimate['source_refs'] ?? []),
             confidence: (float) ($definition['confidence'] ?? $quantity['confidence'] ?? 0.7),
-            validationFlags: $flags,
+            validationFlags: ['normative_required'],
             metadata: [
                 'generation_source' => $definition['generation_source'] ?? 'normative_intent_catalog',
                 'quantity_key' => $definition['quantity_key'],
@@ -192,6 +197,76 @@ final class NormativeWorkItemPlannerService
                 'normative_grounding_policy' => 'fsnb_required',
                 'display_role' => 'priced_work',
                 'work_composition' => array_values($operations),
+                'composition_source' => 'planner_intent',
+            ],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $definition
+     * @param array<string, mixed> $localEstimate
+     * @param array<string, mixed> $section
+     * @param array<string, mixed> $quantity
+     * @return array<string, mixed>
+     */
+    private function quantityReviewItemFromDefinition(
+        string $key,
+        array $definition,
+        array $localEstimate,
+        array $section,
+        array $quantity
+    ): array {
+        $packageKey = (string) ($localEstimate['key'] ?? 'package');
+
+        return [
+            'key' => $key,
+            'parent_key' => null,
+            'level' => 0,
+            'item_type' => 'quantity_review',
+            'name' => (string) $definition['name'],
+            'description' => (string) ($definition['normative_search_text'] ?? $definition['name']),
+            'normative_search_text' => (string) ($definition['normative_search_text'] ?? $definition['name']),
+            'normative_search_key' => $this->normativeSearchKey(
+                $packageKey,
+                (string) ($localEstimate['scope_type'] ?? $section['construction_part'] ?? 'custom'),
+                (string) $definition['category'],
+                (string) ($definition['normative_search_text'] ?? $definition['name']),
+                (string) $quantity['unit'],
+                (string) $definition['quantity_key'],
+                isset($definition['normative_rate_code']) ? (string) $definition['normative_rate_code'] : null
+            ),
+            'normative_rate_code' => isset($definition['normative_rate_code']) ? (string) $definition['normative_rate_code'] : null,
+            'work_category' => (string) $definition['category'],
+            'unit' => (string) $quantity['unit'],
+            'quantity' => round(max((float) $quantity['value'], 0.01), 4),
+            'quantity_formula' => (string) $definition['quantity_key'],
+            'quantity_basis' => (string) $quantity['basis'],
+            'work_cost' => 0,
+            'materials_cost' => 0,
+            'machinery_cost' => 0,
+            'labor_cost' => 0,
+            'total_cost' => 0,
+            'materials' => [],
+            'labor' => [],
+            'machinery' => [],
+            'other_resources' => [],
+            'work_composition' => array_values($definition['operations'] ?? $this->operationBank((string) $definition['category'])),
+            'source_refs' => $this->normalizeSourceRefs($quantity['source_refs'] ?? []),
+            'confidence' => round(max(min((float) ($definition['confidence'] ?? $quantity['confidence'] ?? 0.7), 0.98), 0.35), 4),
+            'validation_flags' => ['quantity_review_required'],
+            'price_source' => null,
+            'pricing_status' => 'not_applicable',
+            'pricing_blocker' => 'quantity_review_required',
+            'pricing_blocker_message' => null,
+            'metadata' => [
+                'generation_source' => $definition['generation_source'] ?? 'normative_intent_catalog',
+                'quantity_key' => (string) $definition['quantity_key'],
+                'quantity_source' => (string) ($quantity['source'] ?? 'document_quantity'),
+                'package_key' => $packageKey,
+                ...($definition['metadata'] ?? []),
+                'normative_grounding_policy' => 'quantity_confirmation_required',
+                'display_role' => 'quantity_review',
+                'work_composition' => array_values($definition['operations'] ?? $this->operationBank((string) $definition['category'])),
                 'composition_source' => 'planner_intent',
             ],
         ];
@@ -448,7 +523,7 @@ final class NormativeWorkItemPlannerService
         return (
             ($quantity['source'] ?? null) === 'planner_fallback'
             && ($quantity['source_refs'] ?? []) === []
-        ) || ($quantity['review_required'] ?? false) === true;
+        );
     }
 
     /**

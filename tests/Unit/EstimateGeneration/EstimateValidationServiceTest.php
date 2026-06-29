@@ -114,6 +114,57 @@ final class EstimateValidationServiceTest extends TestCase
         self::assertSame('review_required', $draft['quality_summary']['status']);
     }
 
+    public function test_quantity_review_item_is_visible_but_not_counted_as_zero_price_work(): void
+    {
+        $draft = $this->service()->validate($this->draft([
+            [
+                'key' => 'quantity-review-1',
+                'item_type' => 'quantity_review',
+                'name' => 'Расчетная площадь стен по планировке',
+                'unit' => 'м2',
+                'quantity' => 220.5,
+                'quantity_formula' => 'rough.walls',
+                'quantity_basis' => 'Расчет по планировке требует подтверждения',
+                'total_cost' => 0,
+                'materials' => [],
+                'labor' => [],
+                'machinery' => [],
+                'pricing_status' => 'not_applicable',
+                'pricing_blocker' => 'quantity_review_required',
+                'validation_flags' => ['quantity_review_required'],
+                'confidence' => 0.68,
+                'source_refs' => [['document_id' => 10, 'page_number' => 1]],
+            ],
+            [
+                'key' => 'work-1',
+                'item_type' => 'priced_work',
+                'name' => 'Устройство основания пола',
+                'unit' => 'м2',
+                'quantity' => 87.14,
+                'quantity_basis' => 'Площадь помещений по планировке',
+                'total_cost' => 120000,
+                'materials' => [['total_price' => 80000]],
+                'labor' => [['total_price' => 30000]],
+                'machinery' => [['total_price' => 10000]],
+                'pricing_status' => 'calculated',
+                'normative_match' => [
+                    'status' => 'matched',
+                    'decision' => ['status' => 'accepted'],
+                ],
+                'validation_flags' => [],
+                'confidence' => 0.91,
+            ],
+        ]));
+
+        self::assertSame(2, $draft['quality_summary']['total_work_items']);
+        self::assertSame(1, $draft['quality_summary']['priced_work_items']);
+        self::assertSame(1, $draft['quality_summary']['quantity_review_work_items']);
+        self::assertSame(0, $draft['quality_summary']['zero_price_work_items']);
+        self::assertSame(0, $draft['quality_summary']['not_calculated_work_items']);
+        self::assertSame('review_required', $draft['quality_summary']['status']);
+        self::assertContains('quantity_review_required', $draft['problem_flags']);
+    }
+
     public function test_duplicate_priced_work_items_require_manual_review(): void
     {
         $workItem = [

@@ -36,6 +36,16 @@ final class NormativeCandidateSelectionServiceTest extends TestCase
         self::assertTrue(true);
     }
 
+    public function test_rejects_norm_selection_for_unconfirmed_drawing_quantity(): void
+    {
+        $this->expectException(ValidationException::class);
+
+        $this->service()->assertSelectable([
+            'key' => 'rough.walls',
+            'item_type' => 'quantity_review',
+        ]);
+    }
+
     private function service(): TestableNormativeCandidateSelectionService
     {
         return new TestableNormativeCandidateSelectionService(
@@ -57,6 +67,14 @@ final class TestableNormativeCandidateSelectionService extends NormativeCandidat
     public function assertCandidateFor(array $workItem, int $normId, bool $allowCatalogSelection = false): void
     {
         $this->assertCandidateWasOffered($workItem, $normId, $allowCatalogSelection);
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    public function assertSelectable(array $workItem): void
+    {
+        $this->assertWorkItemCanSelectNorm($workItem);
     }
 
     protected function message(string $key): string

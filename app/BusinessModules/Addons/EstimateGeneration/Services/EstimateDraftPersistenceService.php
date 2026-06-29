@@ -340,6 +340,12 @@ class EstimateDraftPersistenceService
             ]);
         }
 
+        if ($blocker['type'] === 'quantities_require_review') {
+            throw ValidationException::withMessages([
+                'draft' => [trans_message('estimate_generation.apply_quantities_require_review')],
+            ]);
+        }
+
         if ($blocker['type'] === 'blocked') {
             throw ValidationException::withMessages([
                 'draft' => [trans_message('estimate_generation.apply_blocked')],
@@ -359,11 +365,19 @@ class EstimateDraftPersistenceService
         $notCalculatedWorkItems = (int) data_get($draft, 'quality_summary.not_calculated_work_items', 0);
         $safeNormRequiredWorkItems = (int) data_get($draft, 'quality_summary.safe_norm_required_work_items', 0);
         $duplicateWorkItems = (int) data_get($draft, 'quality_summary.duplicate_work_items', 0);
+        $quantityReviewWorkItems = (int) data_get($draft, 'quality_summary.quantity_review_work_items', 0);
 
         if ($unresolvedNormatives > 0) {
             return [
                 'type' => 'unresolved_normatives',
                 'count' => $unresolvedNormatives,
+            ];
+        }
+
+        if ($quantityReviewWorkItems > 0) {
+            return [
+                'type' => 'quantities_require_review',
+                'count' => $quantityReviewWorkItems,
             ];
         }
 

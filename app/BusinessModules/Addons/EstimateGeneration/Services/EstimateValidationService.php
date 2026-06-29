@@ -32,6 +32,7 @@ class EstimateValidationService
         $safeNormRequiredWorkItemsCount = 0;
         $notCalculatedWorkItemsCount = 0;
         $duplicateWorkItemsCount = 0;
+        $quantityReviewWorkItemsCount = 0;
 
         foreach ($draft['local_estimates'] as $localIndex => $localEstimate) {
             $localFlags = [];
@@ -52,12 +53,20 @@ class EstimateValidationService
                     $workItemsCount++;
                     $flags = $workItem['validation_flags'] ?? [];
                     $total = (float) ($workItem['total_cost'] ?? 0);
-                    $isPricedItem = !in_array((string) ($workItem['item_type'] ?? 'priced_work'), ['operation', 'resource_note', 'review_note'], true);
+                    $itemType = (string) ($workItem['item_type'] ?? 'priced_work');
+                    $isQuantityReviewItem = $itemType === 'quantity_review';
+                    $isPricedItem = !$isQuantityReviewItem
+                        && !in_array($itemType, ['operation', 'resource_note', 'review_note'], true);
                     $hasResources = ($workItem['materials'] ?? []) !== []
                         || ($workItem['labor'] ?? []) !== []
                         || ($workItem['machinery'] ?? []) !== [];
 
-                    if (!$isPricedItem) {
+                    if ($isQuantityReviewItem) {
+                        $quantityReviewWorkItemsCount++;
+                        $flags[] = 'quantity_review_required';
+                        $workItem['pricing_status'] = 'not_applicable';
+                        $workItem['pricing_blocker'] = $workItem['pricing_blocker'] ?? 'quantity_review_required';
+                    } elseif (!$isPricedItem) {
                         $operationWorkItemsCount++;
                     }
 
@@ -222,6 +231,7 @@ class EstimateValidationService
             $safeNormRequiredWorkItemsCount,
             $notCalculatedWorkItemsCount,
             $duplicateWorkItemsCount,
+            $quantityReviewWorkItemsCount,
             $projectFlags
         );
 
@@ -266,13 +276,14 @@ class EstimateValidationService
         int $safeNormRequiredWorkItems,
         int $notCalculatedWorkItems,
         int $duplicateWorkItems,
+        int $quantityReviewWorkItems,
         array $projectFlags
     ): array {
         $requiresNormativeReview = $normativeReviewPricedWorkItems
             + $normativeCandidateWorkItems
             + $normativeRejectedWorkItems
             + $normativeNotFoundWorkItems;
-        $pricedDenominator = max($totalWorkItems - $operationWorkItems, 0);
+        $pricedDenominator = max($totalWorkItems - $operationWorkItems - $quantityReviewWorkItems, 0);
         $criticalFlags = array_values(array_intersect($projectFlags, ['missing_price', 'missing_resources', 'regional_context_missing']));
         $reviewFlags = array_values(array_intersect($projectFlags, [
             'requires_normative_review',
@@ -281,16 +292,20 @@ class EstimateValidationService
             'low_confidence',
             'possible_duplicate_work_item',
             'requires_duplicate_review',
+            'quantity_review_required',
         ]));
         $warningFlags = array_values(array_diff($projectFlags, $criticalFlags));
         $status = 'ready';
 
-        if ($pricedDenominator === 0 || $zeroPriceWorkItems === $pricedDenominator || $pricedWorkItems === 0) {
+        if ($pricedDenominator === 0) {
+            $status = $quantityReviewWorkItems > 0 ? 'review_required' : 'critical';
+        } elseif ($zeroPriceWorkItems === $pricedDenominator || $pricedWorkItems === 0) {
             $status = 'critical';
         } elseif (
             $zeroPriceWorkItems > 0
             || $marketEstimateWorkItems > 0
             || $duplicateWorkItems > 0
+            || $quantityReviewWorkItems > 0
             || $criticalFlags !== []
             || $requiresNormativeReview > 0
             || $reviewFlags !== []
@@ -307,6 +322,7 @@ class EstimateValidationService
             'not_calculated_work_items' => $notCalculatedWorkItems,
             'safe_norm_required_work_items' => $safeNormRequiredWorkItems,
             'duplicate_work_items' => $duplicateWorkItems,
+            'quantity_review_work_items' => $quantityReviewWorkItems,
             'normative_matched_work_items' => $normativeMatchedWorkItems,
             'market_estimate_work_items' => $marketEstimateWorkItems,
             'normative_items' => [

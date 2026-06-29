@@ -311,10 +311,10 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertNotContains('roof.area', array_column($roof, 'quantity_formula'));
     }
 
-    public function test_drawing_takeoff_review_required_is_not_priced_until_confirmed(): void
+    public function test_drawing_takeoff_review_required_becomes_visible_review_item_until_confirmed(): void
     {
         $localEstimate = $this->localEstimate('rough_finishing', 'Черновая отделка', 'finishing', 6);
-        $items = $this->pricedItems($this->planner()->build(
+        $items = $this->planner()->build(
             $localEstimate,
             $localEstimate['sections'][0],
             [
@@ -338,9 +338,16 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
                     ]],
                 ],
             ]
-        ));
+        );
 
-        self::assertSame([], $items);
+        self::assertCount(1, $items);
+        self::assertSame('quantity_review', $items[0]['item_type']);
+        self::assertSame('rough.walls', $items[0]['quantity_formula']);
+        self::assertSame(220.5, (float) $items[0]['quantity']);
+        self::assertSame('not_applicable', $items[0]['pricing_status']);
+        self::assertSame('quantity_review_required', $items[0]['pricing_blocker']);
+        self::assertContains('quantity_review_required', $items[0]['validation_flags']);
+        self::assertSame('rough.walls', $items[0]['metadata']['quantity_key'] ?? null);
     }
 
     public function test_confirmed_floor_plan_wall_and_wet_zone_takeoffs_feed_matching_normative_intents(): void

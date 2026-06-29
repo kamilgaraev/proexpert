@@ -60,7 +60,8 @@ class EstimatorReadinessService
     {
         $totalWorkItems = (int) ($quality['total_work_items'] ?? 0);
         $operationWorkItems = (int) ($quality['operation_work_items'] ?? 0);
-        $pricedTarget = max($totalWorkItems - $operationWorkItems, 0);
+        $quantityReviewWorkItems = (int) ($quality['quantity_review_work_items'] ?? 0);
+        $pricedTarget = max($totalWorkItems - $operationWorkItems - $quantityReviewWorkItems, 0);
         $normativeItems = is_array($quality['normative_items'] ?? null) ? $quality['normative_items'] : [];
         $zeroTotalCalculatedItems = $this->zeroTotalCalculatedPricedWorkItems($draft);
         $pricedWorkItems = max((int) ($quality['priced_work_items'] ?? 0) - $zeroTotalCalculatedItems, 0);
@@ -82,6 +83,7 @@ class EstimatorReadinessService
             'priced_work_items' => $pricedWorkItems,
             'priced_work_items_total' => $pricedTarget,
             'operation_work_items' => $operationWorkItems,
+            'quantity_review_work_items' => $quantityReviewWorkItems,
             'not_calculated_work_items' => $notCalculatedWorkItems,
             'zero_total_calculated_work_items' => $zeroTotalCalculatedItems,
             'safe_norm_required_work_items' => (int) ($quality['safe_norm_required_work_items'] ?? 0),
@@ -175,6 +177,10 @@ class EstimatorReadinessService
             $blockers[] = $this->issue('norms_require_review', 'estimate_generation.readiness_blocker_norms_require_review');
         }
 
+        if ($hasDraft && $metrics['quantity_review_work_items'] > 0) {
+            $blockers[] = $this->issue('quantities_require_review', 'estimate_generation.readiness_blocker_quantities_require_review');
+        }
+
         if (
             $hasDraft
             && (
@@ -246,7 +252,7 @@ class EstimatorReadinessService
             return 'draft_blocked';
         }
 
-        if ($this->hasBlocker($blockers, ['norms_require_review', 'prices_require_review', 'quality_requires_review'])) {
+        if ($this->hasBlocker($blockers, ['norms_require_review', 'quantities_require_review', 'prices_require_review', 'quality_requires_review'])) {
             return 'draft_needs_review';
         }
 

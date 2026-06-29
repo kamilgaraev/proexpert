@@ -79,7 +79,35 @@ final class EstimateGenerationPackagePersistenceServiceTest extends TestCase
             'items_count' => 2,
             'total_items_count' => 2,
             'priced_items_count' => 2,
+            'quantity_review_items_count' => 0,
             'operation_items_count' => 0,
+            'review_notes_count' => 0,
+        ], $counters);
+    }
+
+    public function test_package_item_counters_keep_quantity_review_separate_from_priced_positions(): void
+    {
+        $service = new EstimateGenerationPackagePersistenceService();
+        $method = new ReflectionMethod($service, 'itemCounters');
+        $method->setAccessible(true);
+
+        $counters = $method->invoke($service, [[
+            'key' => 'work-1',
+            'item_type' => 'priced_work',
+        ], [
+            'key' => 'walls-review',
+            'item_type' => 'quantity_review',
+        ], [
+            'key' => 'operation-1',
+            'item_type' => 'operation',
+        ]]);
+
+        self::assertSame([
+            'items_count' => 3,
+            'total_items_count' => 3,
+            'priced_items_count' => 1,
+            'quantity_review_items_count' => 1,
+            'operation_items_count' => 1,
             'review_notes_count' => 0,
         ], $counters);
     }

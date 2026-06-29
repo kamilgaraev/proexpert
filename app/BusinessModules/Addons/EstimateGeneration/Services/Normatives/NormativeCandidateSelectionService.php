@@ -45,6 +45,7 @@ class NormativeCandidateSelectionService
                     }
 
                     $found = true;
+                    $this->assertWorkItemCanSelectNorm($workItem);
                     $this->assertCandidateWasOffered($workItem, $normId, $allowCatalogSelection);
                     $originalWorkItem = $workItem;
 
@@ -109,6 +110,20 @@ class NormativeCandidateSelectionService
         ])->save();
 
         return $draft;
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    protected function assertWorkItemCanSelectNorm(array $workItem): void
+    {
+        if ((string) ($workItem['item_type'] ?? 'priced_work') !== 'quantity_review') {
+            return;
+        }
+
+        throw $this->validationException([
+            'work_item_key' => [$this->message('estimate_generation.quantity_confirmation_required')],
+        ]);
     }
 
     /**
