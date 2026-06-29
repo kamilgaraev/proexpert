@@ -561,8 +561,8 @@ class EstimateGenerationController extends Controller
                     'payload' => $request->validated('payload', []),
                     'comments' => $request->validated('comments'),
                 ]);
-                $this->learningRecorder->recordUserRejection($lockedSession, $feedback);
                 $this->candidateFeedbackService->apply($lockedSession, $feedback);
+                $this->learningRecorder->recordFeedbackDecision($lockedSession, $feedback);
 
                 return (int) $feedback->id;
             });

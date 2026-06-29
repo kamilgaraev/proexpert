@@ -187,6 +187,15 @@ final class EstimateGenerationLearningRecorder
         ]);
     }
 
+    public function recordFeedbackDecision(EstimateGenerationSession $session, EstimateGenerationFeedback $feedback): int
+    {
+        if ($feedback->feedback_type === 'normative_confirmation') {
+            return $this->recordUserConfirmation($session, $feedback);
+        }
+
+        return $this->recordUserRejection($session, $feedback);
+    }
+
     public function recordUserRejection(EstimateGenerationSession $session, EstimateGenerationFeedback $feedback): int
     {
         if (!in_array($feedback->feedback_type, ['normative_rejection', 'normative_correction'], true)) {
@@ -252,6 +261,83 @@ final class EstimateGenerationLearningRecorder
                 'package_item_id' => $packageItem?->id,
             ]],
             'quality_flags' => ['user_rejected'],
+            'accepted_at' => now(),
+        ]);
+    }
+
+    private function recordUserConfirmation(EstimateGenerationSession $session, EstimateGenerationFeedback $feedback): int
+    {
+        $payload = is_array($feedback->payload) ? $feedback->payload : [];
+        $workItemKey = $feedback->work_item_key;
+        $workItem = $this->findDraftWorkItem($session, $workItemKey);
+        $norm = $this->normFromPayload($payload);
+        $normCode = $this->normalizeNormCode((string) (
+            $payload['normative_code']
+            ?? data_get($workItem, 'normative_match.code')
+            ?? $norm?->code
+            ?? ''
+        ));
+
+        if (!$norm instanceof EstimateNorm && $normCode !== '') {
+            $norm = EstimateNorm::query()
+                ->with('collection')
+                ->where('code', $normCode)
+                ->latest('id')
+                ->first();
+        }
+
+        if (!$norm instanceof EstimateNorm || $normCode === '') {
+            return 0;
+        }
+
+        $packageItem = $this->findPackageItem($session, $workItemKey);
+        $workName = $this->workName($workItem);
+        $workUnit = $this->nullableString($workItem['unit'] ?? null);
+        $intent = $this->workIntentClassifier->classify([
+            'name' => $workName,
+            'unit' => $workUnit,
+        ], [
+            'section_title' => $this->sectionTitleForWorkItem($session, $workItemKey),
+        ]);
+
+        return $this->record([
+            'organization_id' => (int) $session->organization_id,
+            'project_id' => $session->project_id !== null ? (int) $session->project_id : null,
+            'source_type' => 'manual_review_choice',
+            'source_entity_type' => 'estimate_generation_feedback',
+            'source_entity_id' => (int) $feedback->id,
+            'generation_session_id' => (int) $session->id,
+            'generation_package_item_id' => $packageItem?->id,
+            'work_name' => $workName,
+            'work_unit' => $workUnit,
+            'work_quantity' => $this->nullableFloat($workItem['quantity'] ?? null),
+            'work_intent' => $this->intentPayload($intent),
+            'normative_dataset_version_id' => $norm->collection?->dataset_version_id !== null
+                ? (int) $norm->collection->dataset_version_id
+                : null,
+            'estimate_norm_id' => (int) $norm->id,
+            'norm_code' => $normCode,
+            'normative_name' => (string) $norm->name,
+            'normative_unit' => (string) $norm->unit,
+            'decision_status' => 'confirmed_by_user',
+            'confidence' => 1.0,
+            'is_positive' => true,
+            'source_quality_score' => 1.0,
+            'context_payload' => [
+                'work_item_key' => $workItemKey,
+                'confirmed_norm_id' => $payload['norm_id'] ?? data_get($workItem, 'normative_match.norm_id'),
+                'confirmed_normative_code' => $normCode,
+                'comments' => $feedback->comments,
+                'normative_match' => $workItem['normative_match'] ?? null,
+                'quantity_snapshot' => $this->quantitySnapshot($workItem, $workItem),
+            ],
+            'source_refs' => [[
+                'type' => 'estimate_generation_feedback',
+                'feedback_id' => (int) $feedback->id,
+                'session_id' => (int) $session->id,
+                'package_item_id' => $packageItem?->id,
+            ]],
+            'quality_flags' => ['user_confirmed_normative'],
             'accepted_at' => now(),
         ]);
     }

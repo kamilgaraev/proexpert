@@ -104,6 +104,44 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
         $this->assertSame('Не та работа', $example->context_payload['reason']);
     }
 
+    public function test_normative_confirmation_feedback_creates_positive_learning_example(): void
+    {
+        [$user, $project, $session] = $this->makeSession();
+        $normId = $this->seedNormative('12-01-013-01', 'Roof insulation', 'm2');
+        $packageItem = $this->createPackageItem($session, 'roof.insulation');
+        $session->forceFill([
+            'draft_payload' => $this->reviewPricedDraftPayload($normId),
+        ])->save();
+
+        $request = EstimateGenerationFeedbackRequest::create('/feedback', 'POST', [
+            'feedback_type' => 'normative_confirmation',
+            'work_item_key' => 'roof.insulation',
+            'payload' => [
+                'norm_id' => $normId,
+                'normative_code' => '12-01-013-01',
+            ],
+            'comments' => 'Checked by estimator.',
+        ]);
+        $request->setContainer(app());
+        $request->setRedirector(app('redirect'));
+        $request->setUserResolver(static fn (): User => $user);
+        $request->validateResolved();
+
+        app(EstimateGenerationController::class)->feedback($request, $project, $session);
+
+        $example = EstimateGenerationLearningExample::query()->firstOrFail();
+
+        $this->assertSame('manual_review_choice', $example->source_type);
+        $this->assertTrue($example->is_positive);
+        $this->assertSame($session->id, $example->generation_session_id);
+        $this->assertSame($packageItem->id, $example->generation_package_item_id);
+        $this->assertSame($normId, $example->estimate_norm_id);
+        $this->assertSame('12-01-013-01', $example->norm_code);
+        $this->assertSame('confirmed_by_user', $example->decision_status);
+        $this->assertSame('roof.insulation', $example->context_payload['work_item_key']);
+        $this->assertSame('Checked by estimator.', $example->context_payload['comments']);
+    }
+
     /**
      * @return array{0: User, 1: Project, 2: EstimateGenerationSession}
      */
@@ -185,6 +223,61 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
             'quality_summary' => [
                 'normative_items' => [
                     'requires_review' => 1,
+                ],
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function reviewPricedDraftPayload(int $normId): array
+    {
+        return [
+            'local_estimates' => [[
+                'key' => 'roof',
+                'title' => 'Roof',
+                'scope_type' => 'roof',
+                'source_refs' => [['type' => 'test', 'id' => 'source-2']],
+                'sections' => [[
+                    'key' => 'roof.main',
+                    'title' => 'Roof',
+                    'source_refs' => [['type' => 'test', 'id' => 'source-2']],
+                    'work_items' => [[
+                        'key' => 'roof.insulation',
+                        'name' => 'Roof insulation',
+                        'normative_search_text' => 'Roof insulation',
+                        'unit' => 'm2',
+                        'quantity' => 100.0,
+                        'quantity_basis' => 'Drawing A101',
+                        'unit_price' => 100.0,
+                        'total_cost' => 10000.0,
+                        'materials' => [['total_price' => 10000.0]],
+                        'labor' => [],
+                        'machinery' => [],
+                        'other_resources' => [],
+                        'pricing_status' => 'calculated_review_required',
+                        'normative_rate_code' => '12-01-013-01',
+                        'validation_flags' => ['requires_normative_review', 'safe_normative_analog'],
+                        'normative_match' => [
+                            'status' => 'matched',
+                            'selected_by_user' => false,
+                            'norm_id' => $normId,
+                            'code' => '12-01-013-01',
+                            'name' => 'Roof insulation',
+                            'decision' => [
+                                'status' => 'review_priced',
+                                'can_use_for_pricing' => true,
+                                'warnings' => ['requires_normative_review', 'safe_normative_analog'],
+                            ],
+                        ],
+                    ]],
+                ]],
+            ]],
+            'quality_summary' => [
+                'normative_items' => [
+                    'requires_review' => 1,
+                    'review_priced' => 1,
                 ],
             ],
         ];

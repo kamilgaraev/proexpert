@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Normatives;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationFeedback;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNoAirWorkItemPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
 use Illuminate\Validation\ValidationException;
 
@@ -29,6 +30,7 @@ final class NormativeCandidateFeedbackService
         private readonly EstimateGenerationPackagePersistenceService $packagePersistenceService,
         ?callable $messageResolver = null,
         ?callable $validationExceptionFactory = null,
+        private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy(),
     ) {
         $this->messageResolver = $messageResolver;
         $this->validationExceptionFactory = $validationExceptionFactory;
@@ -39,7 +41,7 @@ final class NormativeCandidateFeedbackService
      */
     public function apply(EstimateGenerationSession $session, EstimateGenerationFeedback $feedback): ?array
     {
-        if (!in_array($feedback->feedback_type, ['normative_rejection', 'quantity_confirmation', 'duplicate_resolution'], true)) {
+        if (!in_array($feedback->feedback_type, ['normative_rejection', 'normative_confirmation', 'quantity_confirmation', 'duplicate_resolution', 'work_item_resolution'], true)) {
             return null;
         }
 
@@ -53,6 +55,18 @@ final class NormativeCandidateFeedbackService
                 $feedback->comments
             ),
             'duplicate_resolution' => $this->applyDuplicateResolutionToDraft(
+                $draft,
+                (string) $feedback->work_item_key,
+                $payload,
+                $feedback->comments
+            ),
+            'normative_confirmation' => $this->applyNormativeConfirmationToDraft(
+                $draft,
+                (string) $feedback->work_item_key,
+                $payload,
+                $feedback->comments
+            ),
+            'work_item_resolution' => $this->applyWorkItemResolutionToDraft(
                 $draft,
                 (string) $feedback->work_item_key,
                 $payload,
@@ -133,6 +147,53 @@ final class NormativeCandidateFeedbackService
      * @param array<string, mixed> $payload
      * @return array<string, mixed>
      */
+    public function applyWorkItemResolutionToDraft(array $draft, string $workItemKey, array $payload, ?string $comments = null): array
+    {
+        $action = $this->nullableString($payload['action'] ?? null);
+
+        if ($action !== 'remove_item') {
+            throw $this->validationException([
+                'payload.action' => [$this->message('estimate_generation.work_item_resolution_action_required')],
+            ]);
+        }
+
+        foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
+            if (!is_array($localEstimate)) {
+                continue;
+            }
+
+            foreach ($localEstimate['sections'] ?? [] as $sectionIndex => $section) {
+                if (!is_array($section)) {
+                    continue;
+                }
+
+                foreach ($section['work_items'] ?? [] as $workIndex => $workItem) {
+                    if (!is_array($workItem) || (string) ($workItem['key'] ?? '') !== $workItemKey) {
+                        continue;
+                    }
+
+                    return $this->removeGenericWorkItem(
+                        $draft,
+                        (int) $localIndex,
+                        (int) $sectionIndex,
+                        (int) $workIndex,
+                        $workItem,
+                        $comments
+                    );
+                }
+            }
+        }
+
+        throw $this->validationException([
+            'work_item_key' => [$this->message('estimate_generation.work_item_not_found')],
+        ]);
+    }
+
+    /**
+     * @param array<string, mixed> $draft
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
     public function applyQuantityConfirmationToDraft(array $draft, string $workItemKey, array $payload, ?string $comments = null): array
     {
         $found = false;
@@ -165,6 +226,59 @@ final class NormativeCandidateFeedbackService
                         $quantity,
                         $this->nullableString($payload['unit'] ?? null),
                         $this->nullableString($payload['quantity_basis'] ?? null),
+                        $comments
+                    );
+                    break 3;
+                }
+            }
+        }
+
+        if (!$found) {
+            throw $this->validationException([
+                'work_item_key' => [$this->message('estimate_generation.work_item_not_found')],
+            ]);
+        }
+
+        return $draft;
+    }
+
+    /**
+     * @param array<string, mixed> $draft
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
+    public function applyNormativeConfirmationToDraft(array $draft, string $workItemKey, array $payload, ?string $comments = null): array
+    {
+        $found = false;
+        $normId = $this->nullableInt($payload['norm_id'] ?? null);
+        $normativeCode = $this->nullableString($payload['normative_code'] ?? null);
+
+        if ($normId === null && $normativeCode === null) {
+            throw $this->validationException([
+                'payload.norm_id' => [$this->message('estimate_generation.normative_confirmation_norm_required')],
+            ]);
+        }
+
+        foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
+            if (!is_array($localEstimate)) {
+                continue;
+            }
+
+            foreach ($localEstimate['sections'] ?? [] as $sectionIndex => $section) {
+                if (!is_array($section)) {
+                    continue;
+                }
+
+                foreach ($section['work_items'] ?? [] as $workIndex => $workItem) {
+                    if (!is_array($workItem) || (string) ($workItem['key'] ?? '') !== $workItemKey) {
+                        continue;
+                    }
+
+                    $found = true;
+                    $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex] = $this->confirmCurrentWorkItemNorm(
+                        $workItem,
+                        $normId,
+                        $normativeCode,
                         $comments
                     );
                     break 3;
@@ -331,6 +445,143 @@ final class NormativeCandidateFeedbackService
      * @param array<string, mixed> $workItem
      * @return array<string, mixed>
      */
+    private function confirmCurrentWorkItemNorm(
+        array $workItem,
+        ?int $normId,
+        ?string $normativeCode,
+        ?string $comments
+    ): array {
+        $currentMatch = is_array($workItem['normative_match'] ?? null) ? $workItem['normative_match'] : [];
+
+        if ($currentMatch === [] || !$this->matchesNormIdentity($currentMatch, $normId, $normativeCode)) {
+            throw $this->validationException([
+                'payload.norm_id' => [$this->message('estimate_generation.normative_feedback_norm_not_found')],
+            ]);
+        }
+
+        if (!$this->requiresNormativeConfirmation($workItem, $currentMatch)) {
+            throw $this->validationException([
+                'work_item_key' => [$this->message('estimate_generation.normative_confirmation_not_required')],
+            ]);
+        }
+
+        if (!$this->canConfirmCalculatedNorm($workItem)) {
+            throw $this->validationException([
+                'work_item_key' => [$this->message('estimate_generation.normative_confirmation_price_required')],
+            ]);
+        }
+
+        $decision = is_array($currentMatch['decision'] ?? null) ? $currentMatch['decision'] : [];
+        $workItem['pricing_status'] = 'calculated';
+        $workItem['pricing_blocker'] = null;
+        $workItem['pricing_blocker_message'] = null;
+        $workItem['normative_match'] = [
+            ...$currentMatch,
+            'status' => 'matched',
+            'selected_by_user' => true,
+            'user_confirmed' => true,
+            'warnings' => $this->withoutNormativeReviewWarnings($this->arrayValues($currentMatch['warnings'] ?? [])),
+            'decision' => [
+                ...$decision,
+                'status' => 'accepted',
+                'can_use_for_pricing' => true,
+                'user_confirmed' => true,
+                'warnings' => $this->withoutNormativeReviewWarnings($this->arrayValues($decision['warnings'] ?? [])),
+                'reasons' => $this->uniqueStrings([
+                    ...$this->arrayValues($decision['reasons'] ?? []),
+                    'user_confirmed',
+                ]),
+            ],
+        ];
+        $workItem['validation_flags'] = $this->withoutNormativeReviewFlags($this->arrayValues($workItem['validation_flags'] ?? []));
+        $workItem['metadata'] = [
+            ...(is_array($workItem['metadata'] ?? null) ? $workItem['metadata'] : []),
+            'normative_confirmation' => [
+                'status' => 'confirmed_by_user',
+                'norm_id' => $normId,
+                'normative_code' => $normativeCode,
+                'comments' => $comments,
+                'previous_decision_status' => $decision['status'] ?? null,
+            ],
+        ];
+
+        return $workItem;
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @param array<string, mixed> $currentMatch
+     */
+    private function requiresNormativeConfirmation(array $workItem, array $currentMatch): bool
+    {
+        $flags = $this->arrayValues($workItem['validation_flags'] ?? []);
+        $decisionStatus = (string) data_get($currentMatch, 'decision.status', '');
+
+        return (string) ($workItem['pricing_status'] ?? '') === 'calculated_review_required'
+            || $decisionStatus === 'review_priced'
+            || array_intersect($flags, [
+                'requires_normative_review',
+                'safe_normative_analog',
+                'normative_match_low_confidence',
+                'price_review_required',
+            ]) !== [];
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    private function canConfirmCalculatedNorm(array $workItem): bool
+    {
+        return (float) ($workItem['quantity'] ?? 0) > 0
+            && (float) ($workItem['total_cost'] ?? 0) > 0
+            && $this->nullableString($workItem['normative_rate_code'] ?? data_get($workItem, 'normative_match.code')) !== null
+            && (
+                $this->arrayValues($workItem['materials'] ?? []) !== []
+                || $this->arrayValues($workItem['labor'] ?? []) !== []
+                || $this->arrayValues($workItem['machinery'] ?? []) !== []
+            );
+    }
+
+    /**
+     * @param array<int, mixed> $flags
+     * @return array<int, string>
+     */
+    private function withoutNormativeReviewFlags(array $flags): array
+    {
+        return array_values(array_filter(
+            array_map(static fn (mixed $flag): string => trim((string) $flag), $flags),
+            static fn (string $flag): bool => $flag !== ''
+                && !in_array($flag, [
+                    'requires_normative_review',
+                    'safe_normative_analog',
+                    'normative_match_low_confidence',
+                    'low_confidence',
+                    'price_review_required',
+                ], true)
+        ));
+    }
+
+    /**
+     * @param array<int, mixed> $warnings
+     * @return array<int, string>
+     */
+    private function withoutNormativeReviewWarnings(array $warnings): array
+    {
+        return array_values(array_filter(
+            array_map(static fn (mixed $warning): string => trim((string) $warning), $warnings),
+            static fn (string $warning): bool => $warning !== ''
+                && !in_array($warning, [
+                    'requires_normative_review',
+                    'safe_normative_analog',
+                    'low_confidence',
+                ], true)
+        ));
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @return array<string, mixed>
+     */
     private function confirmWorkItemQuantity(
         array $workItem,
         float $quantity,
@@ -469,6 +720,46 @@ final class NormativeCandidateFeedbackService
                 $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$index] = $this->clearDuplicateReviewFlags($candidate);
             }
         }
+
+        return $draft;
+    }
+
+    /**
+     * @param array<string, mixed> $draft
+     * @param array<string, mixed> $workItem
+     * @return array<string, mixed>
+     */
+    private function removeGenericWorkItem(
+        array $draft,
+        int $localIndex,
+        int $sectionIndex,
+        int $workIndex,
+        array $workItem,
+        ?string $comments
+    ): array {
+        if (!$this->noAirWorkItemPolicy->requiresReview($workItem)) {
+            throw $this->validationException([
+                'work_item_key' => [$this->message('estimate_generation.work_item_resolution_not_required')],
+            ]);
+        }
+
+        $workItems = $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'] ?? [];
+        $workItems = is_array($workItems) ? array_values($workItems) : [];
+        $removedKey = (string) ($workItem['key'] ?? '');
+        array_splice($workItems, $workIndex, 1);
+
+        $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'] = array_values($workItems);
+        $draft['review_decisions'] = [
+            ...(is_array($draft['review_decisions'] ?? null) ? $draft['review_decisions'] : []),
+            [
+                'type' => 'work_item_resolution',
+                'action' => 'remove_item',
+                'work_item_key' => $removedKey,
+                'removed_work_item_keys' => $removedKey !== '' ? [$removedKey] : [],
+                'reason' => EstimateGenerationNoAirWorkItemPolicy::BLOCKER,
+                'comments' => $comments,
+            ],
+        ];
 
         return $draft;
     }

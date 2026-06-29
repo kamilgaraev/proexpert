@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNoAirWorkItemPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateFeedbackService;
 use Illuminate\Validation\ValidationException;
@@ -210,6 +211,71 @@ final class NormativeCandidateFeedbackServiceTest extends TestCase
         self::assertSame(218.25, $workItem['metadata']['quantity_feedback']['quantity']);
     }
 
+    public function test_confirms_current_review_priced_normative_match(): void
+    {
+        $draft = $this->draft([
+            'key' => 'roof.insulation',
+            'name' => 'Roof insulation',
+            'item_type' => 'priced_work',
+            'unit' => 'm2',
+            'quantity' => 100.0,
+            'quantity_basis' => 'Drawing A101',
+            'normative_rate_code' => '12-01-013-01',
+            'pricing_status' => 'calculated_review_required',
+            'price_source' => 'fsnb_normative',
+            'materials' => [['total_price' => 10000.0]],
+            'labor' => [],
+            'machinery' => [],
+            'other_resources' => [],
+            'work_cost' => 0.0,
+            'materials_cost' => 10000.0,
+            'machinery_cost' => 0.0,
+            'labor_cost' => 0.0,
+            'total_cost' => 10000.0,
+            'validation_flags' => [
+                'requires_normative_review',
+                'safe_normative_analog',
+                'normative_match_low_confidence',
+            ],
+            'normative_match' => [
+                'status' => 'matched',
+                'selected_by_user' => false,
+                'norm_id' => 77,
+                'code' => '12-01-013-01',
+                'warnings' => [
+                    'requires_normative_review',
+                    'safe_normative_analog',
+                    'low_confidence',
+                ],
+                'decision' => [
+                    'status' => 'review_priced',
+                    'can_use_for_pricing' => true,
+                    'warnings' => [
+                        'requires_normative_review',
+                        'safe_normative_analog',
+                        'low_confidence',
+                    ],
+                ],
+            ],
+        ]);
+
+        $updated = $this->service()->applyNormativeConfirmationToDraft($draft, 'roof.insulation', [
+            'norm_id' => 77,
+            'normative_code' => '12-01-013-01',
+        ], 'Checked manually.');
+        $workItem = $updated['local_estimates'][0]['sections'][0]['work_items'][0];
+
+        self::assertSame('calculated', $workItem['pricing_status']);
+        self::assertSame('matched', $workItem['normative_match']['status']);
+        self::assertSame('accepted', $workItem['normative_match']['decision']['status']);
+        self::assertTrue($workItem['normative_match']['selected_by_user']);
+        self::assertTrue($workItem['normative_match']['decision']['user_confirmed']);
+        self::assertNotContains('requires_normative_review', $workItem['validation_flags']);
+        self::assertNotContains('safe_normative_analog', $workItem['validation_flags']);
+        self::assertNotContains('normative_match_low_confidence', $workItem['validation_flags']);
+        self::assertSame('confirmed_by_user', $workItem['metadata']['normative_confirmation']['status']);
+    }
+
     public function test_removes_duplicate_work_item_from_draft(): void
     {
         $duplicateWorkItem = [
@@ -301,6 +367,60 @@ final class NormativeCandidateFeedbackServiceTest extends TestCase
         self::assertNotContains('requires_duplicate_review', $itemsByKey['concrete-1']['validation_flags']);
         self::assertContains('requires_duplicate_review', $itemsByKey['paint-1']['validation_flags']);
         self::assertContains('requires_duplicate_review', $itemsByKey['paint-2']['validation_flags']);
+    }
+
+    public function test_removes_generic_no_air_work_item_from_draft(): void
+    {
+        $draft = $this->drafts([
+            [
+                'key' => 'generic-front',
+                'item_type' => 'priced_work',
+                'name' => 'Generic front preparation',
+                'unit' => 'compl',
+                'quantity' => 1,
+                'quantity_basis' => 'Planner generic composition row',
+                'pricing_status' => 'not_calculated',
+                'pricing_blocker' => EstimateGenerationNoAirWorkItemPolicy::BLOCKER,
+                'total_cost' => 0.0,
+                'materials' => [],
+                'labor' => [],
+                'machinery' => [],
+                'other_resources' => [],
+                'validation_flags' => [
+                    EstimateGenerationNoAirWorkItemPolicy::FLAG,
+                    EstimateGenerationNoAirWorkItemPolicy::NO_AIR_FLAG,
+                    'pricing_not_calculated',
+                    'safe_norm_required',
+                ],
+            ],
+            [
+                'key' => 'real-work',
+                'item_type' => 'priced_work',
+                'name' => 'Concrete work',
+                'unit' => 'm3',
+                'quantity' => 8,
+                'quantity_basis' => 'Drawing A101',
+                'pricing_status' => 'calculated',
+                'normative_rate_code' => '06-01-001-01',
+                'total_cost' => 120000,
+                'materials' => [['total_price' => 80000]],
+                'labor' => [['total_price' => 25000]],
+                'machinery' => [['total_price' => 15000]],
+                'other_resources' => [],
+                'validation_flags' => [],
+            ],
+        ]);
+
+        $updated = $this->service()->applyWorkItemResolutionToDraft($draft, 'generic-front', [
+            'action' => 'remove_item',
+        ], 'Generic composition row removed by reviewer.');
+
+        $workItems = $updated['local_estimates'][0]['sections'][0]['work_items'];
+
+        self::assertSame(['real-work'], array_column($workItems, 'key'));
+        self::assertSame('work_item_resolution', $updated['review_decisions'][0]['type']);
+        self::assertSame('remove_item', $updated['review_decisions'][0]['action']);
+        self::assertSame(['generic-front'], $updated['review_decisions'][0]['removed_work_item_keys']);
     }
 
     /**

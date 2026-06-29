@@ -39,11 +39,11 @@ class EstimateGenerationFeedbackRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'feedback_type' => ['required', 'string', Rule::in(['normative_rejection', 'normative_correction', 'quantity_confirmation', 'duplicate_resolution'])],
+            'feedback_type' => ['required', 'string', Rule::in(['normative_rejection', 'normative_correction', 'normative_confirmation', 'quantity_confirmation', 'duplicate_resolution', 'work_item_resolution'])],
             'section_key' => ['nullable', 'string', 'max:255'],
             'work_item_key' => [
                 'nullable',
-                Rule::requiredIf(fn (): bool => in_array($this->input('feedback_type'), ['normative_rejection', 'quantity_confirmation', 'duplicate_resolution'], true)),
+                Rule::requiredIf(fn (): bool => in_array($this->input('feedback_type'), ['normative_rejection', 'normative_confirmation', 'quantity_confirmation', 'duplicate_resolution', 'work_item_resolution'], true)),
                 'string',
                 'max:255',
             ],
@@ -83,6 +83,20 @@ class EstimateGenerationFeedbackRequest extends FormRequest
                 }
             }
 
+            if ($this->input('feedback_type') === 'normative_confirmation') {
+                $payload = $this->input('payload', []);
+                $hasNormId = is_array($payload) && ($payload['norm_id'] ?? null) !== null && $payload['norm_id'] !== '';
+                $hasNormativeCode = is_array($payload)
+                    && trim((string) ($payload['normative_code'] ?? '')) !== '';
+
+                if (!$hasNormId && !$hasNormativeCode) {
+                    $validator->errors()->add(
+                        'payload.norm_id',
+                        trans_message('estimate_generation.normative_confirmation_norm_required')
+                    );
+                }
+            }
+
             if ($this->input('feedback_type') === 'quantity_confirmation') {
                 $payload = $this->input('payload', []);
                 $quantity = is_array($payload) ? $payload['quantity'] ?? null : null;
@@ -103,6 +117,18 @@ class EstimateGenerationFeedbackRequest extends FormRequest
                     $validator->errors()->add(
                         'payload.action',
                         trans_message('estimate_generation.duplicate_resolution_action_required')
+                    );
+                }
+            }
+
+            if ($this->input('feedback_type') === 'work_item_resolution') {
+                $payload = $this->input('payload', []);
+                $action = is_array($payload) ? trim((string) ($payload['action'] ?? '')) : '';
+
+                if ($action === '') {
+                    $validator->errors()->add(
+                        'payload.action',
+                        trans_message('estimate_generation.work_item_resolution_action_required')
                     );
                 }
             }

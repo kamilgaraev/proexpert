@@ -153,7 +153,8 @@ final class EstimateGenerationReviewItemServiceTest extends TestCase
         self::assertSame(1, $result['summary']['total']);
         self::assertSame(1, $result['summary']['blocking']);
         self::assertSame('generic-complex-work', $result['items'][0]['work_item_key']);
-        self::assertSame('select_norm', $result['items'][0]['required_action']);
+        self::assertSame('resolve_generic_work', $result['items'][0]['required_action']);
+        self::assertSame(1, $result['summary']['resolve_generic_work']);
         self::assertSame(EstimateGenerationNoAirWorkItemPolicy::BLOCKER, $result['items'][0]['pricing_blocker']);
         self::assertContains(EstimateGenerationNoAirWorkItemPolicy::FLAG, $result['items'][0]['reason_codes']);
         self::assertContains(EstimateGenerationNoAirWorkItemPolicy::NO_AIR_FLAG, $result['items'][0]['work_item']['validation_flags']);

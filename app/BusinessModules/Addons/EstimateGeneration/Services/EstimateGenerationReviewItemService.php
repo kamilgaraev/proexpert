@@ -18,6 +18,7 @@ final class EstimateGenerationReviewItemService
     private const ACTION_SELECT_NORM = 'select_norm';
     private const ACTION_REVIEW_NORM = 'review_norm';
     private const ACTION_RESOLVE_DUPLICATE = 'resolve_duplicate';
+    private const ACTION_RESOLVE_GENERIC_WORK = 'resolve_generic_work';
     private const ACTION_CHECK_PRICE = 'check_price';
 
     private const NORMATIVE_REVIEW_STATUSES = [
@@ -265,6 +266,9 @@ final class EstimateGenerationReviewItemService
         } elseif ($duplicateReviewRequired) {
             $severity = self::SEVERITY_BLOCKING;
             $requiredAction = self::ACTION_RESOLVE_DUPLICATE;
+        } elseif ($genericReviewRequired) {
+            $severity = self::SEVERITY_BLOCKING;
+            $requiredAction = self::ACTION_RESOLVE_GENERIC_WORK;
         } elseif ($genericReviewRequired || $normativeReviewRequired || $pricingNotCalculated) {
             $severity = self::SEVERITY_BLOCKING;
             $requiredAction = self::ACTION_SELECT_NORM;
@@ -320,6 +324,7 @@ final class EstimateGenerationReviewItemService
             self::ACTION_SELECT_NORM => 0,
             self::ACTION_REVIEW_NORM => 0,
             self::ACTION_RESOLVE_DUPLICATE => 0,
+            self::ACTION_RESOLVE_GENERIC_WORK => 0,
             self::ACTION_CHECK_PRICE => 0,
         ];
 

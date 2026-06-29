@@ -892,12 +892,15 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
 
         $heightEvidence = $this->heightEvidence($elements);
         $heightM = (float) $heightEvidence['height_m'];
+        $dimensionElements = $this->dimensionElementsForRooms($elements);
         $totalArea = 0.0;
         $estimatedWallArea = 0.0;
         $estimatedBaseboardLength = 0.0;
         $wetRoomArea = 0.0;
         $wetRoomWallArea = 0.0;
         $sourceRefs = [];
+        $dimensionSourceRefs = [];
+        $roomDimensions = [];
         $confidence = 0.0;
 
         foreach ($roomTakeoffs as $takeoff) {
@@ -906,11 +909,29 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             $roomLabel = (string) ($payload['room_label'] ?? $takeoff['name'] ?? '');
 
             $totalArea += $area;
-            $estimatedRoomPerimeter = $this->estimatedPerimeterFromRoomArea($area);
+            $roomGeometry = $this->roomGeometryFromDimensions($takeoff, $dimensionElements, $area);
+            $estimatedRoomPerimeter = $roomGeometry !== null
+                ? (float) $roomGeometry['perimeter_m']
+                : $this->estimatedPerimeterFromRoomArea($area);
             $estimatedRoomWallArea = $estimatedRoomPerimeter * $heightM;
             $estimatedWallArea += $estimatedRoomWallArea;
             $estimatedBaseboardLength += $estimatedRoomPerimeter;
             $confidence += (float) ($takeoff['confidence'] ?? 0.72);
+
+            if ($roomGeometry !== null) {
+                $roomDimensions[] = [
+                    'room_label' => $roomLabel,
+                    'length_m' => $roomGeometry['length_m'],
+                    'width_m' => $roomGeometry['width_m'],
+                    'perimeter_m' => $roomGeometry['perimeter_m'],
+                ];
+
+                foreach ($roomGeometry['source_refs'] as $sourceRef) {
+                    if (is_array($sourceRef)) {
+                        $dimensionSourceRefs[] = $sourceRef;
+                    }
+                }
+            }
 
             if ($this->isWetRoomLabel($roomLabel)) {
                 $wetRoomArea += $area;
@@ -928,10 +949,19 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         $totalArea = round($totalArea, 2);
         $confidence = round($confidence / max($roomCount, 1), 4);
         $sourceRefs = array_slice($sourceRefs, 0, 50);
-        $calculationSourceRefs = array_slice([
+        $dimensionSourceRefs = array_slice($dimensionSourceRefs, 0, 50);
+        $perimeterSourceRefs = array_slice([
             ...$sourceRefs,
+            ...$dimensionSourceRefs,
+        ], 0, 50);
+        $calculationSourceRefs = array_slice([
+            ...$perimeterSourceRefs,
             ...$heightEvidence['source_refs'],
         ], 0, 50);
+        $roomDimensionCount = count($roomDimensions);
+        $perimeterCalculationBasis = $roomDimensionCount > 0
+            ? 'room_dimension_geometry'
+            : 'estimated_room_perimeter';
 
         $baseboardLength = round($estimatedBaseboardLength, 2);
         $wallArea = round($estimatedWallArea > 0 ? $estimatedWallArea : $totalArea * $heightM, 2);
@@ -983,6 +1013,9 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 extraPayload: [
                     'height_m' => $heightM,
                     'height_source' => $heightEvidence['source'],
+                    'calculation_basis' => $perimeterCalculationBasis,
+                    'room_dimension_count' => $roomDimensionCount,
+                    'room_dimensions' => array_slice($roomDimensions, 0, 20),
                 ]
             ),
             $this->aggregateTakeoff(
@@ -998,6 +1031,9 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 extraPayload: [
                     'height_m' => $heightM,
                     'height_source' => $heightEvidence['source'],
+                    'calculation_basis' => $perimeterCalculationBasis,
+                    'room_dimension_count' => $roomDimensionCount,
+                    'room_dimensions' => array_slice($roomDimensions, 0, 20),
                 ]
             ),
             $this->aggregateTakeoff(
@@ -1007,12 +1043,14 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 quantity: $baseboardLength,
                 formula: 'Ориентировочная длина плинтуса: сумма 4 x sqrt(S) = ' . $this->formatNumber($baseboardLength) . ' м',
                 confidence: max($confidence - 0.24, 0.35),
-                sourceRefs: $sourceRefs,
+                sourceRefs: $perimeterSourceRefs,
                 roomCount: $roomCount,
                 reviewRequired: true,
                 unit: 'м',
                 extraPayload: [
-                    'calculation_basis' => 'estimated_room_perimeter',
+                    'calculation_basis' => $perimeterCalculationBasis,
+                    'room_dimension_count' => $roomDimensionCount,
+                    'room_dimensions' => array_slice($roomDimensions, 0, 20),
                     'openings_subtracted' => false,
                 ]
             ),
@@ -1087,6 +1125,227 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         }
 
         return 4 * sqrt($area);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $elements
+     * @return array<int, array<string, mixed>>
+     */
+    private function dimensionElementsForRooms(array $elements): array
+    {
+        return array_values(array_filter(
+            $elements,
+            fn (array $element): bool => ($element['type'] ?? null) === 'dimension'
+                && $this->dimensionPairMeters($element) !== null
+                && !$this->isOpeningDimensionElement($element)
+        ));
+    }
+
+    /**
+     * @param array<string, mixed> $roomTakeoff
+     * @param array<int, array<string, mixed>> $dimensionElements
+     * @return array{length_m: float, width_m: float, perimeter_m: float, source_refs: array<int, array<string, mixed>>}|null
+     */
+    private function roomGeometryFromDimensions(array $roomTakeoff, array $dimensionElements, float $area): ?array
+    {
+        if ($area <= 0) {
+            return null;
+        }
+
+        $roomSourceRef = $this->firstSourceRefWithBbox($roomTakeoff['source_refs'] ?? []);
+
+        if ($roomSourceRef === null) {
+            return null;
+        }
+
+        $roomBbox = $this->normalizedBbox($roomSourceRef['bbox'] ?? null);
+
+        if ($roomBbox === null) {
+            return null;
+        }
+
+        $roomPage = $this->nullableInt($roomSourceRef['page_number'] ?? null);
+        $best = null;
+
+        foreach ($dimensionElements as $element) {
+            $dimension = $this->dimensionPairMeters($element);
+
+            if ($dimension === null || !$this->isDimensionAreaPlausible($area, $dimension['length_m'], $dimension['width_m'])) {
+                continue;
+            }
+
+            $sourceRef = is_array($element['source_ref'] ?? null) ? $element['source_ref'] : [];
+            $dimensionPage = $this->nullableInt($sourceRef['page_number'] ?? $element['page_number'] ?? null);
+
+            if ($roomPage !== null && $dimensionPage !== null && $roomPage !== $dimensionPage) {
+                continue;
+            }
+
+            $dimensionBbox = $this->normalizedBbox($element['bbox'] ?? $sourceRef['bbox'] ?? null);
+
+            if ($dimensionBbox === null) {
+                continue;
+            }
+
+            $distance = $this->bboxCenterDistance($roomBbox, $dimensionBbox);
+            $limit = $this->dimensionMatchDistanceLimit($roomBbox, $dimensionBbox);
+
+            if ($distance > $limit) {
+                continue;
+            }
+
+            $dimensionArea = $dimension['length_m'] * $dimension['width_m'];
+            $areaPenalty = abs($dimensionArea - $area) / max($area, 0.01);
+            $score = ($distance / max($limit, 0.0001)) + $areaPenalty;
+
+            if ($best === null || $score < $best['score']) {
+                $best = [
+                    ...$dimension,
+                    'score' => $score,
+                    'source_refs' => $sourceRef !== [] ? [$sourceRef] : [],
+                ];
+            }
+        }
+
+        if ($best === null) {
+            return null;
+        }
+
+        return [
+            'length_m' => round((float) $best['length_m'], 3),
+            'width_m' => round((float) $best['width_m'], 3),
+            'perimeter_m' => round(((float) $best['length_m'] + (float) $best['width_m']) * 2, 2),
+            'source_refs' => $best['source_refs'],
+        ];
+    }
+
+    private function firstSourceRefWithBbox(mixed $sourceRefs): ?array
+    {
+        if (!is_array($sourceRefs)) {
+            return null;
+        }
+
+        foreach ($sourceRefs as $sourceRef) {
+            if (is_array($sourceRef) && $this->normalizedBbox($sourceRef['bbox'] ?? null) !== null) {
+                return $sourceRef;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, mixed> $element
+     * @return array{length_m: float, width_m: float}|null
+     */
+    private function dimensionPairMeters(array $element): ?array
+    {
+        $payload = is_array($element['normalized_payload'] ?? null) ? $element['normalized_payload'] : [];
+        $length = $this->numericValue($payload['length_mm'] ?? $payload['length'] ?? null);
+        $width = $this->numericValue($payload['width_mm'] ?? $payload['width'] ?? null);
+
+        if ($length === null || $width === null) {
+            return null;
+        }
+
+        $lengthM = $length > 100 ? $length / 1000 : $length;
+        $widthM = $width > 100 ? $width / 1000 : $width;
+
+        if ($lengthM < 0.5 || $widthM < 0.5 || $lengthM > 50 || $widthM > 50) {
+            return null;
+        }
+
+        return [
+            'length_m' => round($lengthM, 3),
+            'width_m' => round($widthM, 3),
+        ];
+    }
+
+    private function isDimensionAreaPlausible(float $area, float $lengthM, float $widthM): bool
+    {
+        $dimensionArea = $lengthM * $widthM;
+
+        return $dimensionArea >= $area * 0.6 && $dimensionArea <= $area * 1.8;
+    }
+
+    /**
+     * @param array<string, mixed> $element
+     */
+    private function isOpeningDimensionElement(array $element): bool
+    {
+        $payload = is_array($element['normalized_payload'] ?? null) ? $element['normalized_payload'] : [];
+        $sourceRef = is_array($element['source_ref'] ?? null) ? $element['source_ref'] : [];
+        $text = mb_strtolower(implode(' ', array_filter([
+            (string) ($element['label'] ?? ''),
+            (string) ($payload['line'] ?? ''),
+            (string) ($sourceRef['excerpt'] ?? ''),
+        ])));
+
+        return $this->containsAny($text, [
+            'двер',
+            'окн',
+            'ворот',
+            'проем',
+            'проём',
+            'door',
+            'window',
+            'gate',
+        ]);
+    }
+
+    /**
+     * @param array<string, float> $left
+     * @param array<string, float> $right
+     */
+    private function bboxCenterDistance(array $left, array $right): float
+    {
+        $leftX = $left['x'] + ($left['width'] / 2);
+        $leftY = $left['y'] + ($left['height'] / 2);
+        $rightX = $right['x'] + ($right['width'] / 2);
+        $rightY = $right['y'] + ($right['height'] / 2);
+
+        return sqrt((($leftX - $rightX) ** 2) + (($leftY - $rightY) ** 2));
+    }
+
+    /**
+     * @param array<string, float> $roomBbox
+     * @param array<string, float> $dimensionBbox
+     */
+    private function dimensionMatchDistanceLimit(array $roomBbox, array $dimensionBbox): float
+    {
+        if ($this->usesNormalizedCoordinateSpace($roomBbox, $dimensionBbox)) {
+            return 0.25;
+        }
+
+        return max(
+            240.0,
+            max($roomBbox['width'], $roomBbox['height'], $dimensionBbox['width'], $dimensionBbox['height']) * 4
+        );
+    }
+
+    /**
+     * @param array<string, float> $left
+     * @param array<string, float> $right
+     */
+    private function usesNormalizedCoordinateSpace(array $left, array $right): bool
+    {
+        $maxCoordinate = max(
+            $left['x'] + $left['width'],
+            $left['y'] + $left['height'],
+            $right['x'] + $right['width'],
+            $right['y'] + $right['height']
+        );
+
+        return $maxCoordinate <= 2.0;
+    }
+
+    private function nullableInt(mixed $value): ?int
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return (int) $value;
     }
 
     /**

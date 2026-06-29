@@ -223,6 +223,72 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
         self::assertSame(8.0, $takeoffsByKey['openings.doors']['quantity']);
     }
 
+    public function test_uses_nearby_dimension_pair_to_estimate_room_perimeter(): void
+    {
+        $recognition = new OcrRecognitionResult(
+            provider: 'test',
+            model: 'page',
+            pages: [
+                new OcrPageResult(
+                    pageNumber: 1,
+                    text: implode("\n", [
+                        'Планировка квартиры',
+                        'h=3,0 m',
+                        'Гостиная 46,52 м2',
+                        '8755 x 6190',
+                    ]),
+                    blocks: [[
+                        'text' => '',
+                        'lines' => [
+                            [
+                                'text' => 'Планировка квартиры',
+                                'bounding_box' => ['x' => 20, 'y' => 20, 'width' => 180, 'height' => 24],
+                                'words' => [],
+                            ],
+                            [
+                                'text' => 'h=3,0 m',
+                                'bounding_box' => ['x' => 60, 'y' => 80, 'width' => 90, 'height' => 18],
+                                'words' => [],
+                            ],
+                            [
+                                'text' => 'Гостиная 46,52 м2',
+                                'bounding_box' => ['x' => 240, 'y' => 240, 'width' => 145, 'height' => 28],
+                                'words' => [],
+                            ],
+                            [
+                                'text' => '8755 x 6190',
+                                'bounding_box' => ['x' => 250, 'y' => 282, 'width' => 135, 'height' => 22],
+                                'words' => [],
+                            ],
+                        ],
+                    ]],
+                    width: 1200,
+                    height: 800,
+                    confidence: 0.92
+                ),
+            ]
+        );
+
+        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+            documentId: 10,
+            filename: 'flat-plan.png',
+            recognition: $recognition
+        );
+        $takeoffsByKey = [];
+
+        foreach ($result->takeoffs as $takeoff) {
+            $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
+            $takeoffsByKey[(string) ($payload['quantity_key'] ?? $takeoff['scope_key'] ?? '')] = $takeoff;
+        }
+
+        self::assertSame(89.67, $takeoffsByKey['rough.walls']['quantity']);
+        self::assertSame(29.89, $takeoffsByKey['finish.baseboard']['quantity']);
+        self::assertSame('room_dimension_geometry', $takeoffsByKey['rough.walls']['normalized_payload']['calculation_basis']);
+        self::assertSame(1, $takeoffsByKey['rough.walls']['normalized_payload']['room_dimension_count']);
+        self::assertSame(8.755, $takeoffsByKey['rough.walls']['normalized_payload']['room_dimensions'][0]['length_m']);
+        self::assertSame(6.19, $takeoffsByKey['rough.walls']['normalized_payload']['room_dimensions'][0]['width_m']);
+    }
+
     public function test_door_schedule_height_is_not_used_as_room_height(): void
     {
         $recognition = new OcrRecognitionResult(
