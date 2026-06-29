@@ -39,25 +39,32 @@ final class NormativeCandidateFeedbackService
      */
     public function apply(EstimateGenerationSession $session, EstimateGenerationFeedback $feedback): ?array
     {
-        if (!in_array($feedback->feedback_type, ['normative_rejection', 'quantity_confirmation'], true)) {
+        if (!in_array($feedback->feedback_type, ['normative_rejection', 'quantity_confirmation', 'duplicate_resolution'], true)) {
             return null;
         }
 
         $payload = is_array($feedback->payload) ? $feedback->payload : [];
         $draft = is_array($session->draft_payload ?? null) ? $session->draft_payload : [];
-        $draft = $feedback->feedback_type === 'quantity_confirmation'
-            ? $this->applyQuantityConfirmationToDraft(
+        $draft = match ($feedback->feedback_type) {
+            'quantity_confirmation' => $this->applyQuantityConfirmationToDraft(
                 $draft,
                 (string) $feedback->work_item_key,
                 $payload,
                 $feedback->comments
-            )
-            : $this->applyRejectionToDraft(
+            ),
+            'duplicate_resolution' => $this->applyDuplicateResolutionToDraft(
                 $draft,
                 (string) $feedback->work_item_key,
                 $payload,
                 $feedback->comments
-            );
+            ),
+            default => $this->applyRejectionToDraft(
+                $draft,
+                (string) $feedback->work_item_key,
+                $payload,
+                $feedback->comments
+            ),
+        };
         $draft = $this->validationService->validate($draft);
         $this->packagePersistenceService->syncFromDraft($session, $draft);
 
@@ -71,6 +78,54 @@ final class NormativeCandidateFeedbackService
         ])->save();
 
         return $draft;
+    }
+
+    /**
+     * @param array<string, mixed> $draft
+     * @param array<string, mixed> $payload
+     * @return array<string, mixed>
+     */
+    public function applyDuplicateResolutionToDraft(array $draft, string $workItemKey, array $payload, ?string $comments = null): array
+    {
+        $action = $this->nullableString($payload['action'] ?? null);
+
+        if (!in_array($action, ['remove_item', 'keep_item'], true)) {
+            throw $this->validationException([
+                'payload.action' => [$this->message('estimate_generation.duplicate_resolution_action_required')],
+            ]);
+        }
+
+        foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
+            if (!is_array($localEstimate)) {
+                continue;
+            }
+
+            foreach ($localEstimate['sections'] ?? [] as $sectionIndex => $section) {
+                if (!is_array($section)) {
+                    continue;
+                }
+
+                foreach ($section['work_items'] ?? [] as $workIndex => $workItem) {
+                    if (!is_array($workItem) || (string) ($workItem['key'] ?? '') !== $workItemKey) {
+                        continue;
+                    }
+
+                    return $this->resolveDuplicateWorkItem(
+                        $draft,
+                        (int) $localIndex,
+                        (int) $sectionIndex,
+                        (int) $workIndex,
+                        $workItem,
+                        $action,
+                        $comments
+                    );
+                }
+            }
+        }
+
+        throw $this->validationException([
+            'work_item_key' => [$this->message('estimate_generation.work_item_not_found')],
+        ]);
     }
 
     /**
@@ -335,6 +390,191 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
+     * @param array<string, mixed> $draft
+     * @param array<string, mixed> $workItem
+     * @return array<string, mixed>
+     */
+    private function resolveDuplicateWorkItem(
+        array $draft,
+        int $localIndex,
+        int $sectionIndex,
+        int $workIndex,
+        array $workItem,
+        string $action,
+        ?string $comments
+    ): array {
+        $workItems = $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'] ?? [];
+        $workItems = is_array($workItems) ? array_values($workItems) : [];
+        $signature = $this->duplicateSignature($workItem);
+        $matchingIndexes = $signature !== null ? $this->matchingDuplicateIndexes($workItems, $signature) : [];
+        $isDuplicateReviewItem = $this->isDuplicateReviewItem($workItem) || count($matchingIndexes) > 1;
+
+        if (!$isDuplicateReviewItem) {
+            throw $this->validationException([
+                'work_item_key' => [$this->message('estimate_generation.duplicate_resolution_not_required')],
+            ]);
+        }
+
+        $removedKeys = [];
+        $keptKey = (string) ($workItem['key'] ?? '');
+
+        if ($action === 'remove_item') {
+            $removedKeys[] = $keptKey;
+            array_splice($workItems, $workIndex, 1);
+            $keptKey = $this->firstRemainingDuplicateKey($workItems, $signature);
+        } else {
+            foreach (array_reverse($matchingIndexes) as $matchingIndex) {
+                if ($matchingIndex === $workIndex) {
+                    continue;
+                }
+
+                $removedKeys[] = (string) ($workItems[$matchingIndex]['key'] ?? '');
+                array_splice($workItems, $matchingIndex, 1);
+            }
+
+            $workItems = array_map(function (mixed $candidate) use ($keptKey, $comments): mixed {
+                if (!is_array($candidate) || (string) ($candidate['key'] ?? '') !== $keptKey) {
+                    return $candidate;
+                }
+
+                return $this->markDuplicateKeptByUser($candidate, $comments);
+            }, $workItems);
+        }
+
+        if ($removedKeys === []) {
+            throw $this->validationException([
+                'work_item_key' => [$this->message('estimate_generation.duplicate_resolution_not_required')],
+            ]);
+        }
+
+        $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'] = array_values($workItems);
+        $draft['review_decisions'] = [
+            ...(is_array($draft['review_decisions'] ?? null) ? $draft['review_decisions'] : []),
+            [
+                'type' => 'duplicate_resolution',
+                'action' => $action,
+                'work_item_key' => (string) ($workItem['key'] ?? ''),
+                'kept_work_item_key' => $keptKey,
+                'removed_work_item_keys' => array_values(array_filter($removedKeys, static fn (string $key): bool => $key !== '')),
+                'comments' => $comments,
+            ],
+        ];
+
+        foreach ($draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'] as $index => $candidate) {
+            if (!is_array($candidate)) {
+                continue;
+            }
+
+            if ($signature !== null && $this->duplicateSignature($candidate) === $signature) {
+                $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$index] = $this->clearDuplicateReviewFlags($candidate);
+            }
+        }
+
+        return $draft;
+    }
+
+    /**
+     * @param array<int, mixed> $workItems
+     * @return array<int, int>
+     */
+    private function matchingDuplicateIndexes(array $workItems, string $signature): array
+    {
+        $indexes = [];
+
+        foreach ($workItems as $index => $workItem) {
+            if (is_array($workItem) && $this->duplicateSignature($workItem) === $signature) {
+                $indexes[] = (int) $index;
+            }
+        }
+
+        return $indexes;
+    }
+
+    /**
+     * @param array<int, mixed> $workItems
+     */
+    private function firstRemainingDuplicateKey(array $workItems, ?string $signature): ?string
+    {
+        if ($signature === null) {
+            return null;
+        }
+
+        foreach ($workItems as $workItem) {
+            if (is_array($workItem) && $this->duplicateSignature($workItem) === $signature) {
+                $key = $this->nullableString($workItem['key'] ?? null);
+
+                if ($key !== null) {
+                    return $key;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    private function isDuplicateReviewItem(array $workItem): bool
+    {
+        $flags = [
+            ...$this->arrayValues($workItem['validation_flags'] ?? []),
+            ...$this->arrayValues($workItem['flags'] ?? []),
+        ];
+
+        return in_array('possible_duplicate_work_item', $flags, true)
+            || in_array('requires_duplicate_review', $flags, true);
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @return array<string, mixed>
+     */
+    private function markDuplicateKeptByUser(array $workItem, ?string $comments): array
+    {
+        $workItem = $this->clearDuplicateReviewFlags($workItem);
+        $workItem['metadata'] = [
+            ...(is_array($workItem['metadata'] ?? null) ? $workItem['metadata'] : []),
+            'duplicate_resolution' => [
+                'status' => 'kept_by_user',
+                'comments' => $comments,
+            ],
+        ];
+
+        return $workItem;
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @return array<string, mixed>
+     */
+    private function clearDuplicateReviewFlags(array $workItem): array
+    {
+        foreach (['validation_flags', 'flags'] as $field) {
+            if (!array_key_exists($field, $workItem)) {
+                continue;
+            }
+
+            $workItem[$field] = $this->withoutDuplicateReviewFlags($this->arrayValues($workItem[$field]));
+        }
+
+        return $workItem;
+    }
+
+    /**
+     * @param array<int, mixed> $flags
+     * @return array<int, string>
+     */
+    private function withoutDuplicateReviewFlags(array $flags): array
+    {
+        return array_values(array_filter(
+            array_map(static fn (mixed $flag): string => trim((string) $flag), $flags),
+            static fn (string $flag): bool => $flag !== ''
+                && !in_array($flag, ['possible_duplicate_work_item', 'requires_duplicate_review'], true)
+        ));
+    }
+
+    /**
      * @param array<int, mixed> $candidates
      * @return array<int, mixed>
      */
@@ -386,6 +626,49 @@ final class NormativeCandidateFeedbackService
         }
 
         return false;
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    private function duplicateSignature(array $workItem): ?string
+    {
+        $name = $this->normalizeSignaturePart((string) ($workItem['normative_search_text'] ?? $workItem['name'] ?? ''));
+        $unit = $this->normalizeSignaturePart((string) ($workItem['unit'] ?? ''));
+        $quantity = round((float) ($workItem['quantity'] ?? 0), 4);
+
+        if ($name === '' || $unit === '' || $quantity <= 0) {
+            return null;
+        }
+
+        $normativeIdentity = $this->normalizeSignaturePart((string) (
+            $workItem['normative_rate_code']
+            ?? $workItem['normative_search_key']
+            ?? $workItem['quantity_formula']
+            ?? ''
+        ));
+
+        return hash('sha256', implode('|', [
+            $name,
+            $unit,
+            (string) $quantity,
+            $normativeIdentity,
+        ]));
+    }
+
+    private function normalizeSignaturePart(string $value): string
+    {
+        $value = mb_strtolower(trim($value));
+
+        return preg_replace('/\s+/u', ' ', $value) ?? $value;
+    }
+
+    /**
+     * @return array<int, mixed>
+     */
+    private function arrayValues(mixed $value): array
+    {
+        return is_array($value) ? array_values($value) : [];
     }
 
     /**

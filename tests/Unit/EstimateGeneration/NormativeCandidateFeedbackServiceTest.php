@@ -210,11 +210,113 @@ final class NormativeCandidateFeedbackServiceTest extends TestCase
         self::assertSame(218.25, $workItem['metadata']['quantity_feedback']['quantity']);
     }
 
+    public function test_removes_duplicate_work_item_from_draft(): void
+    {
+        $duplicateWorkItem = [
+            'item_type' => 'priced_work',
+            'name' => 'Concrete works',
+            'normative_search_text' => 'concrete works',
+            'normative_search_key' => 'foundation|concrete|m3',
+            'unit' => 'm3',
+            'quantity' => 8,
+            'quantity_basis' => 'Drawing A101, page 1',
+            'total_cost' => 120000,
+            'materials' => [['total_price' => 80000]],
+            'labor' => [['total_price' => 25000]],
+            'machinery' => [['total_price' => 15000]],
+            'pricing_status' => 'calculated',
+            'normative_match' => [
+                'status' => 'matched',
+                'decision' => ['status' => 'accepted'],
+            ],
+            'source_refs' => [['document_id' => 1, 'page_number' => 1]],
+            'validation_flags' => ['possible_duplicate_work_item', 'requires_duplicate_review'],
+            'confidence' => 0.92,
+        ];
+        $draft = $this->drafts([
+            ['key' => 'work-1', ...$duplicateWorkItem],
+            ['key' => 'work-2', ...$duplicateWorkItem],
+        ]);
+
+        $updated = $this->service()->applyDuplicateResolutionToDraft($draft, 'work-2', [
+            'action' => 'remove_item',
+        ], 'Оставляем первую позицию, повтор удаляем.');
+
+        $workItems = $updated['local_estimates'][0]['sections'][0]['work_items'];
+
+        self::assertSame(['work-1'], array_column($workItems, 'key'));
+        self::assertNotContains('possible_duplicate_work_item', $workItems[0]['validation_flags']);
+        self::assertNotContains('requires_duplicate_review', $workItems[0]['validation_flags']);
+        self::assertSame('duplicate_resolution', $updated['review_decisions'][0]['type']);
+        self::assertSame('remove_item', $updated['review_decisions'][0]['action']);
+        self::assertSame(['work-2'], $updated['review_decisions'][0]['removed_work_item_keys']);
+    }
+
+    public function test_duplicate_resolution_preserves_other_duplicate_groups(): void
+    {
+        $concreteWorkItem = [
+            'item_type' => 'priced_work',
+            'name' => 'Concrete works',
+            'normative_search_text' => 'concrete works',
+            'normative_search_key' => 'foundation|concrete|m3',
+            'unit' => 'm3',
+            'quantity' => 8,
+            'quantity_basis' => 'Drawing A101, page 1',
+            'total_cost' => 120000,
+            'materials' => [['total_price' => 80000]],
+            'labor' => [['total_price' => 25000]],
+            'machinery' => [['total_price' => 15000]],
+            'pricing_status' => 'calculated',
+            'normative_match' => [
+                'status' => 'matched',
+                'decision' => ['status' => 'accepted'],
+            ],
+            'validation_flags' => ['possible_duplicate_work_item', 'requires_duplicate_review'],
+            'confidence' => 0.92,
+        ];
+        $paintWorkItem = [
+            ...$concreteWorkItem,
+            'name' => 'Wall painting',
+            'normative_search_text' => 'wall painting',
+            'normative_search_key' => 'finishing|paint|m2',
+            'unit' => 'm2',
+            'quantity' => 180,
+        ];
+        $draft = $this->drafts([
+            ['key' => 'concrete-1', ...$concreteWorkItem],
+            ['key' => 'concrete-2', ...$concreteWorkItem],
+            ['key' => 'paint-1', ...$paintWorkItem],
+            ['key' => 'paint-2', ...$paintWorkItem],
+        ]);
+
+        $updated = $this->service()->applyDuplicateResolutionToDraft($draft, 'concrete-2', [
+            'action' => 'remove_item',
+        ]);
+        $itemsByKey = [];
+        foreach ($updated['local_estimates'][0]['sections'][0]['work_items'] as $workItem) {
+            $itemsByKey[$workItem['key']] = $workItem;
+        }
+
+        self::assertArrayNotHasKey('concrete-2', $itemsByKey);
+        self::assertNotContains('requires_duplicate_review', $itemsByKey['concrete-1']['validation_flags']);
+        self::assertContains('requires_duplicate_review', $itemsByKey['paint-1']['validation_flags']);
+        self::assertContains('requires_duplicate_review', $itemsByKey['paint-2']['validation_flags']);
+    }
+
     /**
      * @param array<string, mixed> $workItem
      * @return array<string, mixed>
      */
     private function draft(array $workItem): array
+    {
+        return $this->drafts([$workItem]);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $workItems
+     * @return array<string, mixed>
+     */
+    private function drafts(array $workItems): array
     {
         return [
             'local_estimates' => [[
@@ -225,7 +327,7 @@ final class NormativeCandidateFeedbackServiceTest extends TestCase
                 'sections' => [[
                     'key' => 'section-1',
                     'title' => 'Земляные работы',
-                    'work_items' => [$workItem],
+                    'work_items' => $workItems,
                 ]],
             ]],
             'problem_flags' => [],

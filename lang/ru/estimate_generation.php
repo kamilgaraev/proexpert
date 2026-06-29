@@ -54,6 +54,8 @@ return [
     'quantity_confirmation_required' => 'Сначала подтвердите объем по чертежу, затем выберите норму.',
     'quantity_confirmation_quantity_required' => 'Укажите положительный объем для выбранной позиции.',
     'quantity_confirmation_not_required' => 'Для этой позиции подтверждение объема не требуется.',
+    'duplicate_resolution_action_required' => 'Выберите, что сделать с повторяющейся позицией.',
+    'duplicate_resolution_not_required' => 'Для этой позиции нет повторов, которые нужно разбирать.',
     'section_rebuilt' => 'Выбранный блок сметы пересобран.',
     'section_rebuild_error' => 'Не удалось пересобрать блок сметы.',
     'notification_project_fallback' => 'проекту',
