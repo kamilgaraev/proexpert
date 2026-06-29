@@ -23,6 +23,7 @@ class SuperadminErgonomicsTest extends TestCase
             'blog_revisions' => 'app/Filament/Resources/BlogArticleResource/RelationManagers/BlogArticleRevisionsRelationManager.php',
             'blog_seo_settings' => 'app/Filament/Resources/BlogSeoSettingsResource.php',
             'blog_tags' => 'app/Filament/Resources/BlogTagResource.php',
+            'knowledge_articles' => 'app/Filament/Resources/KnowledgeArticleResource.php',
             'module_activations' => 'app/Filament/Resources/OrganizationModuleActivationResource.php',
             'modules' => 'app/Filament/Resources/ModuleResource.php',
             'notification_analytics' => 'app/Filament/Resources/NotificationAnalyticsResource.php',
