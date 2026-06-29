@@ -11,6 +11,33 @@ use PHPUnit\Framework\TestCase;
 
 final class DocumentGenerationReadinessServiceTest extends TestCase
 {
+    public function test_ready_document_without_understanding_role_blocks_generation(): void
+    {
+        $document = new EstimateGenerationDocument();
+        $document->forceFill([
+            'id' => 6,
+            'filename' => 'unknown-upload.pdf',
+            'status' => 'ready',
+            'processing_stage' => 'completed',
+            'progress_percent' => 100,
+            'quality_level' => 'good',
+            'quality_score' => 0.91,
+            'quality_flags' => [],
+            'facts_summary' => [
+                'total_area_m2' => 128.0,
+            ],
+        ]);
+
+        $summary = (new DocumentGenerationReadinessService())->summary(new Collection([$document]));
+
+        self::assertSame(1, $summary['missing_understanding_count']);
+        self::assertSame(1, $summary['action_required_count']);
+        self::assertFalse($summary['can_generate']);
+        self::assertContains('document_understanding_missing', $summary['problem_flags']);
+        self::assertTrue($summary['items'][0]['missing_document_understanding']);
+        self::assertTrue($summary['items'][0]['is_action_required']);
+    }
+
     public function test_ready_document_that_requires_understanding_review_blocks_generation(): void
     {
         $document = new EstimateGenerationDocument();
