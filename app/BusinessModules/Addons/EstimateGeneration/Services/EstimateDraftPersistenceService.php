@@ -32,6 +32,7 @@ class EstimateDraftPersistenceService
 
         return DB::transaction(function () use ($session, $payload, $draft): Estimate {
             $regionalContext = $draft['regional_context'] ?? $session->input_payload['regional_context'] ?? [];
+            $persistableDraftTotal = $this->persistableDraftTotal($draft);
             $estimate = Estimate::create([
                 'organization_id' => $session->organization_id,
                 'project_id' => $session->project_id,
@@ -51,43 +52,63 @@ class EstimateDraftPersistenceService
                     'quality_summary' => $draft['quality_summary'] ?? null,
                     'regional_context' => $regionalContext,
                 ],
-                'total_direct_costs' => $draft['totals']['total_cost'] ?? 0,
-                'total_amount' => $draft['totals']['total_cost'] ?? 0,
-                'total_amount_with_vat' => $draft['totals']['total_cost'] ?? 0,
+                'total_direct_costs' => $persistableDraftTotal,
+                'total_amount' => $persistableDraftTotal,
+                'total_amount_with_vat' => $persistableDraftTotal,
             ]);
 
-            foreach ($draft['local_estimates'] as $localIndex => $localEstimate) {
+            $persistedLocalIndex = 0;
+
+            foreach ($draft['local_estimates'] as $localEstimate) {
+                $persistableLocalTotal = $this->persistableLocalEstimateTotal($localEstimate);
+
+                if ($persistableLocalTotal <= 0) {
+                    continue;
+                }
+
+                $persistedLocalIndex++;
+
                 $rootSection = EstimateSection::create([
                     'estimate_id' => $estimate->id,
-                    'section_number' => (string) ($localIndex + 1),
-                    'full_section_number' => (string) ($localIndex + 1),
+                    'section_number' => (string) $persistedLocalIndex,
+                    'full_section_number' => (string) $persistedLocalIndex,
                     'name' => $localEstimate['title'],
                     'description' => implode('; ', $localEstimate['assumptions'] ?? []),
-                    'sort_order' => $localIndex,
-                    'section_total_amount' => $localEstimate['totals']['total_cost'] ?? 0,
+                    'sort_order' => $persistedLocalIndex - 1,
+                    'section_total_amount' => $persistableLocalTotal,
                 ]);
 
-                foreach ($localEstimate['sections'] as $sectionIndex => $section) {
+                $persistedSectionIndex = 0;
+
+                foreach ($localEstimate['sections'] as $section) {
+                    $persistableWorkItems = $this->persistableWorkItems($section['work_items'] ?? []);
+
+                    if ($persistableWorkItems === []) {
+                        continue;
+                    }
+
+                    $persistedSectionIndex++;
+
                     $sectionModel = EstimateSection::create([
                         'estimate_id' => $estimate->id,
                         'parent_section_id' => $rootSection->id,
-                        'section_number' => (string) ($sectionIndex + 1),
-                        'full_section_number' => (($localIndex + 1) . '.' . ($sectionIndex + 1)),
+                        'section_number' => (string) $persistedSectionIndex,
+                        'full_section_number' => ($persistedLocalIndex . '.' . $persistedSectionIndex),
                         'name' => $section['title'],
                         'description' => $section['construction_part'] ?? null,
-                        'sort_order' => $sectionIndex,
-                        'section_total_amount' => $section['section_totals']['total_cost'] ?? 0,
+                        'sort_order' => $persistedSectionIndex - 1,
+                        'section_total_amount' => $this->workItemsTotal($persistableWorkItems),
                     ]);
 
-                    foreach ($section['work_items'] as $workIndex => $workItem) {
+                    foreach ($persistableWorkItems as $workIndex => $workItem) {
                         $work = EstimateItem::create([
                             'estimate_id' => $estimate->id,
                             'estimate_section_id' => $sectionModel->id,
                             'item_type' => EstimatePositionItemType::WORK->value,
-                            'position_number' => ($localIndex + 1) . '.' . ($sectionIndex + 1) . '.' . ($workIndex + 1),
+                            'position_number' => $persistedLocalIndex . '.' . $persistedSectionIndex . '.' . ($workIndex + 1),
                             'name' => $workItem['name'],
                             'description' => $workItem['description'],
-                            'normative_rate_code' => $workItem['normative_rate_code'] ?? null,
+                            'normative_rate_code' => $this->normativeRateCode($workItem),
                             'measurement_unit_id' => $this->resolveMeasurementUnitId($session->organization_id, $workItem['unit']),
                             'quantity' => $workItem['quantity'],
                             'quantity_total' => $workItem['quantity'],
@@ -170,6 +191,95 @@ class EstimateDraftPersistenceService
         }
     }
 
+    /**
+     * @param array<string, mixed> $draft
+     */
+    protected function persistableDraftTotal(array $draft): float
+    {
+        $total = 0.0;
+
+        foreach ($draft['local_estimates'] ?? [] as $localEstimate) {
+            if (is_array($localEstimate)) {
+                $total += $this->persistableLocalEstimateTotal($localEstimate);
+            }
+        }
+
+        return round($total, 2);
+    }
+
+    /**
+     * @param array<string, mixed> $localEstimate
+     */
+    protected function persistableLocalEstimateTotal(array $localEstimate): float
+    {
+        $total = 0.0;
+
+        foreach ($localEstimate['sections'] ?? [] as $section) {
+            if (!is_array($section)) {
+                continue;
+            }
+
+            $total += $this->workItemsTotal($this->persistableWorkItems($section['work_items'] ?? []));
+        }
+
+        return round($total, 2);
+    }
+
+    /**
+     * @param array<int, mixed> $workItems
+     * @return array<int, array<string, mixed>>
+     */
+    protected function persistableWorkItems(array $workItems): array
+    {
+        return array_values(array_filter(
+            $workItems,
+            fn (mixed $workItem): bool => is_array($workItem) && $this->isPersistableWorkItem($workItem)
+        ));
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $workItems
+     */
+    protected function workItemsTotal(array $workItems): float
+    {
+        return round(array_sum(array_map(
+            static fn (array $workItem): float => (float) ($workItem['total_cost'] ?? 0),
+            $workItems
+        )), 2);
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    protected function isPersistableWorkItem(array $workItem): bool
+    {
+        $type = (string) ($workItem['item_type'] ?? 'priced_work');
+
+        if (in_array($type, ['operation', 'resource_note', 'review_note'], true)) {
+            return false;
+        }
+
+        if ((string) ($workItem['pricing_status'] ?? '') === 'not_calculated') {
+            return false;
+        }
+
+        if ($this->normativeRateCode($workItem) === null) {
+            return false;
+        }
+
+        return (float) ($workItem['quantity'] ?? 0) > 0 && (float) ($workItem['total_cost'] ?? 0) > 0;
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    private function normativeRateCode(array $workItem): ?string
+    {
+        $code = trim((string) ($workItem['normative_rate_code'] ?? data_get($workItem, 'normative_match.code', '')));
+
+        return $code !== '' ? $code : null;
+    }
+
     protected function resolveMeasurementUnitId(int $organizationId, string $unit): ?int
     {
         $normalized = mb_strtolower(trim($unit));
@@ -248,6 +358,7 @@ class EstimateDraftPersistenceService
         $unresolvedNormatives = (int) data_get($draft, 'quality_summary.normative_items.requires_review', 0);
         $notCalculatedWorkItems = (int) data_get($draft, 'quality_summary.not_calculated_work_items', 0);
         $safeNormRequiredWorkItems = (int) data_get($draft, 'quality_summary.safe_norm_required_work_items', 0);
+        $duplicateWorkItems = (int) data_get($draft, 'quality_summary.duplicate_work_items', 0);
 
         if ($unresolvedNormatives > 0) {
             return [
@@ -256,7 +367,14 @@ class EstimateDraftPersistenceService
             ];
         }
 
-        if ($notCalculatedWorkItems > 0 || $safeNormRequiredWorkItems > 0 || $qualityStatus === 'review_required') {
+        if (
+            $notCalculatedWorkItems > 0
+            || $safeNormRequiredWorkItems > 0
+            || $duplicateWorkItems > 0
+            || $qualityStatus === 'review_required'
+            || $this->persistableDraftTotal($draft) <= 0
+            || $this->hasNonPersistablePricedWorkItems($draft)
+        ) {
             return ['type' => 'prices_require_review'];
         }
 
@@ -265,6 +383,38 @@ class EstimateDraftPersistenceService
         }
 
         return null;
+    }
+
+    /**
+     * @param array<string, mixed> $draft
+     */
+    private function hasNonPersistablePricedWorkItems(array $draft): bool
+    {
+        foreach ($draft['local_estimates'] ?? [] as $localEstimate) {
+            if (!is_array($localEstimate)) {
+                continue;
+            }
+
+            foreach ($localEstimate['sections'] ?? [] as $section) {
+                if (!is_array($section)) {
+                    continue;
+                }
+
+                foreach ($section['work_items'] ?? [] as $workItem) {
+                    if (!is_array($workItem)) {
+                        continue;
+                    }
+
+                    $type = (string) ($workItem['item_type'] ?? 'priced_work');
+
+                    if (!in_array($type, ['operation', 'resource_note', 'review_note'], true) && !$this->isPersistableWorkItem($workItem)) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
     }
 
     private function buildGeneratedEstimateName(EstimateGenerationSession $session): string
