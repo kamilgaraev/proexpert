@@ -137,6 +137,34 @@ final class EstimateGenerationLearningEvidenceServiceTest extends TestCase
         $this->assertSame(0, $summary[$norm->id]['learning_positive_count']);
     }
 
+    public function test_untrusted_generated_examples_are_not_scored(): void
+    {
+        $organization = Organization::factory()->create();
+        $norm = $this->norm('01-01-001-01', 'Бетонирование фундаментной ленты', 'м3');
+
+        $this->learningExample($organization->id, [
+            'estimate_norm_id' => $norm->id,
+            'norm_code' => $norm->code,
+            'work_name' => 'Бетонирование фундаментной ленты B22.5',
+            'work_unit' => 'м3',
+            'normative_unit' => 'м3',
+            'work_intent' => ['scope' => 'foundation', 'action' => 'concreting', 'system' => null],
+            'is_positive' => true,
+            'source_type' => 'ai_generated_estimate',
+            'source_quality_score' => 1.0,
+        ]);
+
+        $summary = app(EstimateGenerationLearningEvidenceService::class)->summarizeForCandidates(
+            collect([$norm]),
+            ['name' => 'Бетонирование фундаментной ленты B22.5', 'unit' => 'м3'],
+            ['organization_id' => $organization->id, 'scope_type' => 'foundation']
+        );
+
+        $this->assertSame(0.0, $summary[$norm->id]['learning_score']);
+        $this->assertSame(0, $summary[$norm->id]['learning_positive_count']);
+        $this->assertSame([], $summary[$norm->id]['learning_sources']);
+    }
+
     private function norm(string $code, string $name, string $unit): EstimateNorm
     {
         $versionId = (int) DB::table('estimate_dataset_versions')->insertGetId([

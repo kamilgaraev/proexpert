@@ -162,6 +162,66 @@ final class ResourceAssemblySafetyTest extends TestCase
         $this->assertContains('safe_normative_analog', $item['validation_flags']);
     }
 
+    public function test_quantity_review_item_is_not_matched_or_priced_before_quantity_confirmation(): void
+    {
+        $workItem = [
+            'key' => 'finish-floor-review',
+            'name' => 'Finish floor area',
+            'item_type' => 'quantity_review',
+            'unit' => 'm2',
+            'quantity' => 120,
+            'confidence' => 0.72,
+            'validation_flags' => [],
+            'materials' => [[
+                'name' => 'stale material',
+                'total_price' => 5000,
+            ]],
+            'labor' => [[
+                'name' => 'stale labor',
+                'total_price' => 2500,
+            ]],
+            'machinery' => [],
+            'other_resources' => [],
+            'work_cost' => 1000,
+            'materials_cost' => 5000,
+            'machinery_cost' => 0,
+            'labor_cost' => 2500,
+            'total_cost' => 8500,
+            'price_source' => 'stale',
+        ];
+
+        $service = new ResourceAssemblyService(
+            new class extends EstimateNormativeMatcher {
+                public function __construct() {}
+
+                public function matchWorkItem(array $workItem, array $context = [], int $limit = 5): ?array
+                {
+                    throw new \RuntimeException('Quantity review item must not be matched before confirmation.');
+                }
+            },
+            new NormativeMatchDecisionService(),
+            new NormativeCandidatePresenter(),
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog()),
+        );
+
+        $item = $service->enrich([$workItem], ['scope_type' => 'finishing'])[0];
+        $item = (new EstimatePricingService())->price([$item])[0];
+
+        $this->assertSame('quantity_review', $item['item_type']);
+        $this->assertNull($item['normative_rate_code']);
+        $this->assertNull($item['normative_match']);
+        $this->assertSame([], $item['materials']);
+        $this->assertSame([], $item['labor']);
+        $this->assertSame([], $item['machinery']);
+        $this->assertSame([], $item['other_resources']);
+        $this->assertSame(0, $item['total_cost']);
+        $this->assertNull($item['price_source']);
+        $this->assertSame('not_calculated', $item['pricing_status']);
+        $this->assertSame('quantity_review_required', $item['pricing_blocker']);
+        $this->assertContains('quantity_review_required', $item['validation_flags']);
+        $this->assertContains('pricing_not_calculated', $item['validation_flags']);
+    }
+
     public function test_manually_selected_scope_mismatch_norm_stays_unpriced_candidate(): void
     {
         $workItem = [

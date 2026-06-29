@@ -96,6 +96,10 @@ class RagIndexer
                 $this->indexChunk($chunk);
                 $indexed++;
             }
+
+            if ($collector instanceof RagSourcePrunerInterface) {
+                $collector->pruneForOrganization($organizationId, $projectId);
+            }
         }
 
         return $indexed;

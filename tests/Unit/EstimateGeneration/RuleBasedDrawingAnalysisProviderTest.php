@@ -111,6 +111,9 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
         self::assertSame(87.14, $takeoffsByKey['finish.floor']['quantity']);
         self::assertSame(87.14, $takeoffsByKey['rough.floor']['quantity']);
         self::assertSame(87.14, $takeoffsByKey['office.ceiling']['quantity']);
+        self::assertTrue($takeoffsByKey['finish.floor']['normalized_payload']['review_required'] ?? false);
+        self::assertTrue($takeoffsByKey['rough.floor']['normalized_payload']['review_required'] ?? false);
+        self::assertTrue($takeoffsByKey['office.ceiling']['normalized_payload']['review_required'] ?? false);
         self::assertSame(231.0, $takeoffsByKey['rough.walls']['quantity']);
         self::assertSame($takeoffsByKey['rough.walls']['quantity'], $takeoffsByKey['finish.paint']['quantity']);
         self::assertGreaterThan(5.14, $takeoffsByKey['sanitary.tile']['quantity']);

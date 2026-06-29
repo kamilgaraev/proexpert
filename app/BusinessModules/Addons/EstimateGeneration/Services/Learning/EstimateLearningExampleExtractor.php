@@ -23,6 +23,10 @@ final class EstimateLearningExampleExtractor
      */
     public function extractFromImportedEstimate(Estimate $estimate, ?ImportSession $importSession = null): array
     {
+        if ($this->isAiGeneratedEstimate($estimate)) {
+            return [];
+        }
+
         $examples = [];
 
         $estimate->loadMissing([
@@ -39,6 +43,13 @@ final class EstimateLearningExampleExtractor
         }
 
         return $examples;
+    }
+
+    private function isAiGeneratedEstimate(Estimate $estimate): bool
+    {
+        $metadata = is_array($estimate->metadata) ? $estimate->metadata : [];
+
+        return (bool) ($metadata['is_ai_generated'] ?? false);
     }
 
     /**

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentEvidencePolicy;
+
 class ConstructionSemanticParser
 {
     /**
@@ -18,6 +20,9 @@ class ConstructionSemanticParser
             $text = (string) ($document['extracted_text'] ?? '');
             $facts = is_array($document['facts'] ?? null) ? $document['facts'] : [];
             $factsSummary = is_array($document['facts_summary'] ?? null) ? $document['facts_summary'] : [];
+            $documentUnderstanding = is_array($document['document_understanding'] ?? null)
+                ? $document['document_understanding']
+                : (is_array($factsSummary['document_understanding'] ?? null) ? $factsSummary['document_understanding'] : []);
 
             return [
                 'id' => $document['id'] ?? null,
@@ -26,6 +31,7 @@ class ConstructionSemanticParser
                 'text' => $text,
                 'facts' => $facts,
                 'facts_summary' => $factsSummary,
+                'document_understanding' => $documentUnderstanding,
                 'drawing_elements' => is_array($document['drawing_elements'] ?? null) ? $document['drawing_elements'] : [],
                 'quantity_takeoffs' => is_array($document['quantity_takeoffs'] ?? null) ? $document['quantity_takeoffs'] : [],
                 'scope_inferences' => is_array($document['scope_inferences'] ?? null) ? $document['scope_inferences'] : ($factsSummary['scope_inferences'] ?? []),
@@ -50,7 +56,9 @@ class ConstructionSemanticParser
         $explicitScopes = $this->mergeScopes(
             $this->extractScopes($description, true),
             ...array_map(
-                static fn (array $document): array => $document['scopes'],
+                fn (array $document): array => DocumentEvidencePolicy::canUseScopeEvidence($document)
+                    ? $document['scopes']
+                    : ['items' => [], 'zones' => [], 'constructives' => []],
                 $documentsPayload
             )
         );
@@ -123,9 +131,10 @@ class ConstructionSemanticParser
         $roomAreaTotal = 0.0;
         $hasRoomAreaTotal = false;
         $aggregateAreaCandidate = null;
+        $nonPrimaryDocuments = [];
 
         foreach ($documentsPayload as $document) {
-            if (!$this->isDocumentTrusted($document)) {
+            if (!DocumentEvidencePolicy::isTrusted($document)) {
                 $reviewRequiredDocuments[] = [
                     'id' => $document['id'] ?? null,
                     'filename' => $document['filename'] ?? 'document',
@@ -135,6 +144,31 @@ class ConstructionSemanticParser
                 $problemFlags[] = 'document_review_required';
                 continue;
             }
+
+            $documentRole = DocumentEvidencePolicy::roleForEstimation($document);
+
+            if ($documentRole === 'needs_review') {
+                $reviewRequiredDocuments[] = [
+                    'id' => $document['id'] ?? null,
+                    'filename' => $document['filename'] ?? 'document',
+                    'status' => $document['status'] ?? null,
+                    'quality' => $document['quality'] ?? [],
+                    'document_role' => $documentRole,
+                ];
+                $problemFlags[] = 'document_review_required';
+                continue;
+            }
+
+            if ($documentRole === 'reference_estimate') {
+                $nonPrimaryDocuments[] = [
+                    'id' => $document['id'] ?? null,
+                    'filename' => $document['filename'] ?? 'document',
+                    'document_role' => $documentRole,
+                ];
+                continue;
+            }
+
+            $canUseQuantityEvidence = DocumentEvidencePolicy::canUseQuantityEvidence($document);
 
             if (($document['id'] ?? null) !== null) {
                 $trustedDocumentIds[] = (int) $document['id'];
@@ -169,7 +203,7 @@ class ConstructionSemanticParser
 
             $factsSummary = is_array($document['facts_summary'] ?? null) ? $document['facts_summary'] : [];
 
-            if (($summary['total_area_m2'] ?? null) === null && isset($factsSummary['total_area_m2'])) {
+            if ($canUseQuantityEvidence && ($summary['total_area_m2'] ?? null) === null && isset($factsSummary['total_area_m2'])) {
                 $summary['total_area_m2'] = $factsSummary['total_area_m2'];
             }
 
@@ -182,13 +216,15 @@ class ConstructionSemanticParser
                 : [];
             $drawingArea = $this->numericValue($drawingUnderstanding['room_area_total_m2'] ?? null);
 
-            if ($aggregateAreaCandidate === null && $drawingArea !== null && $drawingArea > 0) {
+            if ($canUseQuantityEvidence && $aggregateAreaCandidate === null && $drawingArea !== null && $drawingArea > 0) {
                 $aggregateAreaCandidate = $drawingArea;
             }
 
-            foreach ($factsSummary['zones'] ?? [] as $zone) {
-                if (is_array($zone)) {
-                    $summary['zones'][] = $zone;
+            if ($canUseQuantityEvidence) {
+                foreach ($factsSummary['zones'] ?? [] as $zone) {
+                    if (is_array($zone)) {
+                        $summary['zones'][] = $zone;
+                    }
                 }
             }
 
@@ -211,34 +247,38 @@ class ConstructionSemanticParser
                 }
             }
 
-            foreach ($document['quantity_takeoffs'] ?? [] as $takeoff) {
-                if (is_array($takeoff)) {
-                    $quantityTakeoffs[] = $takeoff;
-                    $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
-                    $scopeKey = (string) ($takeoff['scope_key'] ?? '');
-                    $quantityKey = (string) ($payload['quantity_key'] ?? $takeoff['quantity_key'] ?? '');
-                    $quantity = $this->numericValue($takeoff['quantity'] ?? null);
+            if ($canUseQuantityEvidence) {
+                foreach ($document['quantity_takeoffs'] ?? [] as $takeoff) {
+                    if (is_array($takeoff)) {
+                        $quantityTakeoffs[] = $takeoff;
+                        $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
+                        $scopeKey = (string) ($takeoff['scope_key'] ?? '');
+                        $quantityKey = (string) ($payload['quantity_key'] ?? $takeoff['quantity_key'] ?? '');
+                        $quantity = $this->numericValue($takeoff['quantity'] ?? null);
 
-                    if ($quantity !== null && $quantity > 0 && $scopeKey === 'room_area') {
-                        $roomAreaTotal += $quantity;
-                        $hasRoomAreaTotal = true;
-                    }
+                        if ($quantity !== null && $quantity > 0 && $scopeKey === 'room_area') {
+                            $roomAreaTotal += $quantity;
+                            $hasRoomAreaTotal = true;
+                        }
 
-                    if (
-                        $quantity !== null
-                        && $quantity > 0
-                        && $aggregateAreaCandidate === null
-                        && in_array($scopeKey, ['floor_finish_area', 'rough_floor_area', 'ceiling_finish_area'], true)
-                        && in_array($quantityKey, ['finish.floor', 'rough.floor', 'office.ceiling'], true)
-                    ) {
-                        $aggregateAreaCandidate = $quantity;
+                        if (
+                            $quantity !== null
+                            && $quantity > 0
+                            && $aggregateAreaCandidate === null
+                            && in_array($scopeKey, ['floor_finish_area', 'rough_floor_area', 'ceiling_finish_area'], true)
+                            && in_array($quantityKey, ['finish.floor', 'rough.floor', 'office.ceiling'], true)
+                        ) {
+                            $aggregateAreaCandidate = $quantity;
+                        }
                     }
                 }
             }
 
-            foreach ($document['scope_inferences'] ?? [] as $inference) {
-                if (is_array($inference)) {
-                    $scopeInferences[] = $inference;
+            if ($canUseQuantityEvidence) {
+                foreach ($document['scope_inferences'] ?? [] as $inference) {
+                    if (is_array($inference)) {
+                        $scopeInferences[] = $inference;
+                    }
                 }
             }
 
@@ -267,27 +307,9 @@ class ConstructionSemanticParser
             'scope_inferences' => $scopeInferences,
             'trusted_document_ids' => array_values(array_unique($trustedDocumentIds)),
             'review_required_documents' => $reviewRequiredDocuments,
+            'non_primary_documents' => $nonPrimaryDocuments,
             'problem_flags' => array_values(array_unique($problemFlags)),
         ];
-    }
-
-    /**
-     * @param array<string, mixed> $document
-     */
-    private function isDocumentTrusted(array $document): bool
-    {
-        if (($document['status'] ?? null) === 'ignored') {
-            return false;
-        }
-
-        $quality = is_array($document['quality'] ?? null) ? $document['quality'] : [];
-        $level = (string) ($quality['level'] ?? '');
-
-        if ($level !== '' && !in_array($level, ['good', 'acceptable'], true)) {
-            return false;
-        }
-
-        return in_array((string) ($document['status'] ?? 'ready'), ['ready', 'uploaded'], true);
     }
 
     /**

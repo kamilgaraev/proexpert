@@ -31,6 +31,17 @@ class ResourceAssemblyService
         $matchCache = [];
 
         foreach ($workItems as $index => &$workItem) {
+            if ($this->isQuantityReviewItem($workItem)) {
+                $workItem = $this->clearQuantityReviewPricing($workItem);
+                $processed = $index + 1;
+
+                if ($progressCallback !== null && ($processed % self::PROGRESS_STEP === 0 || $processed === $total)) {
+                    $progressCallback($processed, $total);
+                }
+
+                continue;
+            }
+
             if (($workItem['skip_normative_matching'] ?? false) === true || !$this->isPricedItem($workItem)) {
                 $processed = $index + 1;
 
@@ -83,7 +94,38 @@ class ResourceAssemblyService
      */
     private function isPricedItem(array $workItem): bool
     {
-        return !in_array((string) ($workItem['item_type'] ?? 'priced_work'), ['operation', 'resource_note', 'review_note'], true);
+        return !in_array((string) ($workItem['item_type'] ?? 'priced_work'), ['operation', 'resource_note', 'review_note', 'quantity_review'], true);
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    private function isQuantityReviewItem(array $workItem): bool
+    {
+        return (string) ($workItem['item_type'] ?? '') === 'quantity_review';
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @return array<string, mixed>
+     */
+    private function clearQuantityReviewPricing(array $workItem): array
+    {
+        $workItem = $this->clearNonNormativeResources($workItem);
+        $workItem['normative_rate_code'] = null;
+        $workItem['normative_dataset'] = null;
+        $workItem['normative_match'] = null;
+        $workItem['price_dataset'] = null;
+        $workItem['pricing_status'] = 'not_calculated';
+        $workItem['pricing_blocker'] = 'quantity_review_required';
+        $workItem['pricing_blocker_message'] = null;
+        $workItem['validation_flags'] = array_values(array_unique([
+            ...(is_array($workItem['validation_flags'] ?? null) ? $workItem['validation_flags'] : []),
+            'quantity_review_required',
+            'pricing_not_calculated',
+        ]));
+
+        return $workItem;
     }
 
     /**

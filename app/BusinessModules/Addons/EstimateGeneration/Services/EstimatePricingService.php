@@ -9,6 +9,23 @@ class EstimatePricingService
     public function price(array $workItems): array
     {
         foreach ($workItems as &$workItem) {
+            if ((string) ($workItem['item_type'] ?? 'priced_work') === 'quantity_review') {
+                $workItem['materials'] = [];
+                $workItem['labor'] = [];
+                $workItem['machinery'] = [];
+                $workItem['other_resources'] = [];
+                $workItem['work_cost'] = 0;
+                $workItem['materials_cost'] = 0;
+                $workItem['machinery_cost'] = 0;
+                $workItem['labor_cost'] = 0;
+                $workItem['total_cost'] = 0;
+                $workItem['price_source'] = null;
+                $workItem['pricing_status'] = 'not_calculated';
+                $workItem['pricing_blocker'] = 'quantity_review_required';
+
+                continue;
+            }
+
             if (in_array((string) ($workItem['item_type'] ?? 'priced_work'), ['operation', 'resource_note', 'review_note'], true)) {
                 $workItem['work_cost'] = 0;
                 $workItem['materials_cost'] = 0;

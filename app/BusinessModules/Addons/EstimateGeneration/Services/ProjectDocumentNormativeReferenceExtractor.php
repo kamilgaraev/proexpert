@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentEvidencePolicy;
+
 final class ProjectDocumentNormativeReferenceExtractor
 {
     /**
@@ -19,6 +21,10 @@ final class ProjectDocumentNormativeReferenceExtractor
 
         foreach ($analysis['source_documents'] ?? [] as $document) {
             if (!is_array($document)) {
+                continue;
+            }
+
+            if (!DocumentEvidencePolicy::canScanNormativeReferences($document)) {
                 continue;
             }
 

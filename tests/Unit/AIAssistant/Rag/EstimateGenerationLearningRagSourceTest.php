@@ -84,6 +84,101 @@ final class EstimateGenerationLearningRagSourceTest extends TestCase
         $this->assertContains('estimate_generation_learning', $registry->enabledSourceTypes());
     }
 
+    public function test_learning_source_does_not_collect_untrusted_generated_examples(): void
+    {
+        $organization = Organization::factory()->create();
+        $example = EstimateGenerationLearningExample::query()->create([
+            'organization_id' => $organization->id,
+            'source_type' => 'ai_generated_estimate',
+            'source_entity_type' => 'estimate_item',
+            'source_entity_id' => 17,
+            'work_name' => 'Бетонирование фундаментной ленты B22.5',
+            'work_unit' => 'м3',
+            'work_quantity' => 13.8,
+            'work_intent' => [
+                'scope' => 'foundation',
+                'action' => 'concreting',
+                'system' => null,
+            ],
+            'norm_code' => '01-01-006-01',
+            'normative_name' => 'Бетонирование конструкций',
+            'normative_unit' => 'м3',
+            'decision_status' => 'generated',
+            'is_positive' => true,
+            'confidence' => 1.0,
+            'source_quality_score' => 1.0,
+            'context_payload' => [],
+            'source_refs' => [],
+            'quality_flags' => ['unit_compatible'],
+        ]);
+        $source = app(EstimateGenerationLearningRagSource::class);
+
+        $chunks = collect($source->collectForOrganization($organization->id))->values();
+        $entityChunks = collect($source->collectEntity(
+            $organization->id,
+            'estimate_generation_learning_example',
+            $example->id
+        ))->values();
+
+        $this->assertCount(0, $chunks);
+        $this->assertCount(0, $entityChunks);
+    }
+
+    public function test_learning_source_prunes_previously_indexed_untrusted_examples(): void
+    {
+        $organization = Organization::factory()->create();
+        $example = EstimateGenerationLearningExample::query()->create([
+            'organization_id' => $organization->id,
+            'source_type' => 'ai_generated_estimate',
+            'source_entity_type' => 'estimate_item',
+            'source_entity_id' => 18,
+            'work_name' => 'Бетонирование фундаментной ленты B22.5',
+            'work_unit' => 'м3',
+            'work_quantity' => 13.8,
+            'work_intent' => [
+                'scope' => 'foundation',
+                'action' => 'concreting',
+                'system' => null,
+            ],
+            'norm_code' => '01-01-006-01',
+            'normative_name' => 'Бетонирование конструкций',
+            'normative_unit' => 'м3',
+            'decision_status' => 'generated',
+            'is_positive' => true,
+            'confidence' => 1.0,
+            'source_quality_score' => 1.0,
+            'context_payload' => [],
+            'source_refs' => [],
+            'quality_flags' => ['unit_compatible'],
+        ]);
+        $source = RagSource::query()->create([
+            'organization_id' => $organization->id,
+            'source_type' => 'estimate_generation_learning',
+            'entity_type' => 'estimate_generation_learning_example',
+            'entity_id' => (string) $example->id,
+            'title' => 'stale generated learning',
+            'checksum' => hash('sha256', 'stale'),
+            'metadata' => ['source_type' => 'ai_generated_estimate'],
+            'indexed_at' => now(),
+        ]);
+        $source->chunks()->create([
+            'organization_id' => $organization->id,
+            'chunk_index' => 0,
+            'content' => 'stale generated learning',
+            'content_hash' => hash('sha256', 'stale generated learning'),
+            'metadata' => [],
+            'embedding_provider' => 'fake',
+            'embedding_model' => 'fake-model',
+            'embedding_created_at' => now(),
+        ]);
+
+        $pruned = app(EstimateGenerationLearningRagSource::class)->pruneForOrganization($organization->id);
+
+        $this->assertSame(1, $pruned);
+        $this->assertFalse(RagSource::query()->whereKey($source->id)->exists());
+        $this->assertSame(0, $source->chunks()->count());
+    }
+
     public function test_learning_source_can_be_indexed_by_source_type(): void
     {
         $organization = Organization::factory()->create();

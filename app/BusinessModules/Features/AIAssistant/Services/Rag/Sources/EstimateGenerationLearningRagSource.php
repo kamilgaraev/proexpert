@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\Rag\Sources;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationLearningExample;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningSourceTrustPolicy;
 use App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagChunkData;
+use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceCollectorInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourcePrunerInterface;
 use DateTimeInterface;
 
-final class EstimateGenerationLearningRagSource implements RagSourceCollectorInterface
+final class EstimateGenerationLearningRagSource implements RagSourceCollectorInterface, RagSourcePrunerInterface
 {
     public function sourceType(): string
     {
@@ -25,6 +28,7 @@ final class EstimateGenerationLearningRagSource implements RagSourceCollectorInt
     {
         $query = EstimateGenerationLearningExample::query()
             ->where('organization_id', $organizationId)
+            ->whereIn('source_type', EstimateGenerationLearningSourceTrustPolicy::trustedSourceTypes())
             ->when($projectId !== null, static function ($query) use ($projectId): void {
                 $query->where(static function ($query) use ($projectId): void {
                     $query->where('project_id', $projectId)
@@ -48,12 +52,60 @@ final class EstimateGenerationLearningRagSource implements RagSourceCollectorInt
 
         $example = EstimateGenerationLearningExample::query()
             ->where('organization_id', $organizationId)
+            ->whereIn('source_type', EstimateGenerationLearningSourceTrustPolicy::trustedSourceTypes())
             ->whereKey($entityId)
             ->first();
 
         return $example instanceof EstimateGenerationLearningExample && $this->indexable($example)
             ? [$this->chunk($example)]
             : [];
+    }
+
+    public function pruneForOrganization(int $organizationId, ?int $projectId = null): int
+    {
+        $sources = RagSource::query()
+            ->where('organization_id', $organizationId)
+            ->where('source_type', $this->sourceType())
+            ->where('entity_type', 'estimate_generation_learning_example')
+            ->when($projectId !== null, static function ($query) use ($projectId): void {
+                $query->where(static function ($query) use ($projectId): void {
+                    $query->where('project_id', $projectId)
+                        ->orWhereNull('project_id');
+                });
+            })
+            ->get();
+
+        if ($sources->isEmpty()) {
+            return 0;
+        }
+
+        $entityIds = $sources
+            ->pluck('entity_id')
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->filter(static fn (int $id): bool => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+        $examples = EstimateGenerationLearningExample::query()
+            ->where('organization_id', $organizationId)
+            ->whereIn('id', $entityIds)
+            ->get()
+            ->keyBy(static fn (EstimateGenerationLearningExample $example): string => (string) $example->id);
+        $pruned = 0;
+
+        foreach ($sources as $source) {
+            $example = $examples->get((string) $source->entity_id);
+
+            if ($example instanceof EstimateGenerationLearningExample && $this->indexable($example)) {
+                continue;
+            }
+
+            $source->chunks()->delete();
+            $source->delete();
+            $pruned++;
+        }
+
+        return $pruned;
     }
 
     private function chunk(EstimateGenerationLearningExample $example): RagChunkData
@@ -99,9 +151,7 @@ final class EstimateGenerationLearningRagSource implements RagSourceCollectorInt
 
     private function indexable(EstimateGenerationLearningExample $example): bool
     {
-        $flags = array_map('strval', is_array($example->quality_flags) ? $example->quality_flags : []);
-
-        return count(array_intersect($flags, ['do_not_index', 'unindexable', 'low_quality'])) === 0;
+        return EstimateGenerationLearningSourceTrustPolicy::isIndexable($example);
     }
 
     /**

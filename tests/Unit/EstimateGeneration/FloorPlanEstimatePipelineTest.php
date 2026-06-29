@@ -83,10 +83,10 @@ final class FloorPlanEstimatePipelineTest extends TestCase
         self::assertNotContains('roof', $packageKeys);
         self::assertNotContains('ventilation', $packageKeys);
         self::assertNotContains('fire_safety', $packageKeys);
-        self::assertContains('rough.floor', $pricedFormulas);
-        self::assertContains('finish.floor', $pricedFormulas);
-        self::assertContains('office.ceiling', $pricedFormulas);
         self::assertContains('openings.doors', $pricedFormulas);
+        self::assertContains('rough.floor', $reviewFormulas);
+        self::assertContains('finish.floor', $reviewFormulas);
+        self::assertContains('office.ceiling', $reviewFormulas);
         self::assertContains('rough.walls', $reviewFormulas);
         self::assertContains('finish.paint', $reviewFormulas);
         self::assertContains('finish.baseboard', $reviewFormulas);

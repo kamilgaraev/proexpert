@@ -115,6 +115,7 @@ final class EstimateGenerationLearningEvidenceService
     {
         return EstimateGenerationLearningExample::query()
             ->where('organization_id', $organizationId)
+            ->whereIn('source_type', EstimateGenerationLearningSourceTrustPolicy::trustedSourceTypes())
             ->when($projectId !== null, static function (Builder $query) use ($projectId): void {
                 $query->where(static function (Builder $query) use ($projectId): void {
                     $query->where('project_id', $projectId)
@@ -351,9 +352,7 @@ final class EstimateGenerationLearningEvidenceService
 
     private function indexable(EstimateGenerationLearningExample $example): bool
     {
-        $flags = array_map('strval', is_array($example->quality_flags) ? $example->quality_flags : []);
-
-        return count(array_intersect($flags, ['do_not_index', 'unindexable', 'low_quality'])) === 0;
+        return EstimateGenerationLearningSourceTrustPolicy::isIndexable($example);
     }
 
     /**

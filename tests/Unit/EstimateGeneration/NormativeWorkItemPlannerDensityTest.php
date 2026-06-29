@@ -269,7 +269,11 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             $pricedItems = $this->pricedItems($items);
             $names = array_column($pricedItems, 'name');
 
-            self::assertSame(count($pricedItems), count($items), $packageKey);
+            self::assertSame(
+                [],
+                array_values(array_diff(array_column($items, 'item_type'), ['priced_work', 'quantity_review'])),
+                $packageKey
+            );
             self::assertNotContains('operation', array_column($items, 'item_type'), $packageKey);
             self::assertNotContains('custom', array_column($pricedItems, 'work_category'), $packageKey);
             self::assertNotContains('Комплекс строительных работ', $names, $packageKey);
@@ -410,6 +414,31 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertSame('quantity_review_required', $items[0]['pricing_blocker']);
         self::assertContains('quantity_review_required', $items[0]['validation_flags']);
         self::assertSame('rough.walls', $items[0]['metadata']['quantity_key'] ?? null);
+    }
+
+    public function test_summary_area_without_source_refs_requires_quantity_review(): void
+    {
+        $localEstimate = $this->localEstimate('rough_finishing', 'Черновая отделка', 'finishing', 6);
+        $items = $this->planner()->build(
+            $localEstimate,
+            $localEstimate['sections'][0],
+            [
+                'document_context' => [
+                    'facts_summary' => [
+                        'total_area_m2' => 87.14,
+                    ],
+                ],
+            ]
+        );
+
+        self::assertCount(1, $items);
+        self::assertSame('quantity_review', $items[0]['item_type']);
+        self::assertSame('rough.floor', $items[0]['quantity_formula']);
+        self::assertSame(87.14, (float) $items[0]['quantity']);
+        self::assertSame([], $items[0]['source_refs']);
+        self::assertSame('facts_summary_area', $items[0]['metadata']['quantity_source']);
+        self::assertContains('quantity_review_required', $items[0]['validation_flags']);
+        self::assertSame('quantity_review_required', $items[0]['pricing_blocker']);
     }
 
     public function test_floor_plan_baseboard_length_becomes_visible_review_item_until_confirmed(): void

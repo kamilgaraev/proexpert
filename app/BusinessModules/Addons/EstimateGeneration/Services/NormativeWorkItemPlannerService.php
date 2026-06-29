@@ -599,7 +599,15 @@ final class NormativeWorkItemPlannerService
 
         if ($area !== null && $area > 0) {
             foreach (['rough.floor', 'finish.floor'] as $quantityKey) {
-                $quantities[$quantityKey] = $this->modelQuantity($area, 'м2', 'Площадь объекта извлечена из проектной документации.', 0.72, []);
+                $quantities[$quantityKey] = $this->modelQuantity(
+                    $area,
+                    'м2',
+                    'Площадь объекта извлечена из проектной документации.',
+                    0.72,
+                    [],
+                    true,
+                    'facts_summary_area'
+                );
             }
         }
 
@@ -623,7 +631,9 @@ final class NormativeWorkItemPlannerService
                     'м2',
                     (string) ($zone['label'] ?? 'Площадь зоны извлечена из проектной документации.'),
                     (float) ($zone['confidence'] ?? 0.72),
-                    $sourceRefs
+                    $sourceRefs,
+                    $sourceRefs === [],
+                    'facts_summary_zone'
                 );
             }
         }

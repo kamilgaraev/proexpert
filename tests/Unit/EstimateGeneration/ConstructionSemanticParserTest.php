@@ -211,6 +211,87 @@ class ConstructionSemanticParserTest extends TestCase
         $this->assertSame(56.51, $analysis['document_context']['facts_summary']['total_area_m2']);
     }
 
+    public function test_parser_does_not_use_reference_estimate_as_primary_quantity_evidence(): void
+    {
+        $parser = new ConstructionSemanticParser();
+
+        $analysis = $parser->parse([
+            'description' => '',
+        ], [[
+            'id' => 81,
+            'filename' => 'grand-smeta-reference.pdf',
+            'status' => 'ready',
+            'quality' => ['level' => 'good', 'score' => 0.95, 'flags' => []],
+            'extracted_text' => "Локальная смета\nГранд-Смета\nКровля 999 м2\nЭлектрика",
+            'facts_summary' => [
+                'total_area_m2' => 999.0,
+                'document_understanding' => [
+                    'role_for_estimation' => 'reference_estimate',
+                    'document_type' => 'estimate',
+                ],
+                'zones' => [],
+                'engineering_systems' => [],
+                'conflicts' => [],
+            ],
+            'facts' => [],
+            'quantity_takeoffs' => [[
+                'scope_key' => 'floor_finish_area',
+                'quantity' => 999.0,
+                'unit' => 'м2',
+                'normalized_payload' => ['quantity_key' => 'finish.floor'],
+            ]],
+        ]]);
+
+        $this->assertNull($analysis['object']['area']);
+        $this->assertSame('', $analysis['document_context']['context_text']);
+        $this->assertSame([], $analysis['document_context']['quantity_takeoffs']);
+        $this->assertSame(81, $analysis['document_context']['non_primary_documents'][0]['id']);
+        $this->assertSame('reference_estimate', $analysis['document_context']['non_primary_documents'][0]['document_role']);
+    }
+
+    public function test_parser_keeps_context_document_text_without_quantity_evidence(): void
+    {
+        $parser = new ConstructionSemanticParser();
+
+        $analysis = $parser->parse([
+            'description' => '',
+        ], [[
+            'id' => 82,
+            'filename' => 'technical-note.pdf',
+            'status' => 'ready',
+            'quality' => ['level' => 'good', 'score' => 0.95, 'flags' => []],
+            'extracted_text' => 'Technical description. Total area 999 m2. Office zone 500 m2.',
+            'facts_summary' => [
+                'total_area_m2' => 999.0,
+                'document_understanding' => [
+                    'role_for_estimation' => 'context_document',
+                    'document_type' => 'technical_document',
+                ],
+                'drawing_understanding' => [
+                    'room_area_total_m2' => 999.0,
+                ],
+                'zones' => [
+                    ['scope_key' => 'office_area', 'label' => 'Office', 'area_m2' => 500.0],
+                ],
+                'engineering_systems' => [],
+                'conflicts' => [],
+            ],
+            'facts' => [],
+            'quantity_takeoffs' => [[
+                'scope_key' => 'floor_finish_area',
+                'quantity' => 999.0,
+                'unit' => 'm2',
+                'normalized_payload' => ['quantity_key' => 'finish.floor'],
+            ]],
+        ]]);
+
+        $this->assertNull($analysis['object']['area']);
+        $this->assertSame('Technical description. Total area 999 m2. Office zone 500 m2.', $analysis['document_context']['context_text']);
+        $this->assertNull($analysis['document_context']['facts_summary']['total_area_m2']);
+        $this->assertSame([], $analysis['document_context']['facts_summary']['zones']);
+        $this->assertSame([], $analysis['document_context']['quantity_takeoffs']);
+    }
+
     public function test_parser_does_not_trust_low_quality_ocr_for_object_defaults(): void
     {
         $parser = new ConstructionSemanticParser();
