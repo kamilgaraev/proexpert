@@ -27,7 +27,18 @@ class EstimateGenerationPackagePresenter
      */
     public function summary(EstimateGenerationPackage $package): array
     {
-        $totals = $package->totals ?? ['total_cost' => 0, 'items_count' => 0];
+        $rawTotals = $package->totals ?? ['total_cost' => 0, 'items_count' => 0];
+        $hiddenServiceItemsCount = $this->hiddenServiceItemsCount($rawTotals);
+        $pricedItemsCount = $this->visibleItemsCount($package, $rawTotals, $hiddenServiceItemsCount);
+        $totals = [
+            ...$rawTotals,
+            'items_count' => $pricedItemsCount,
+            'total_items_count' => $pricedItemsCount,
+            'priced_items_count' => $pricedItemsCount,
+            'operation_items_count' => 0,
+            'review_notes_count' => 0,
+            'hidden_service_items_count' => $hiddenServiceItemsCount,
+        ];
 
         return [
             'id' => $package->id,
@@ -39,13 +50,14 @@ class EstimateGenerationPackagePresenter
             'generation_progress' => $package->generation_progress,
             'target_items_min' => $package->target_items_min,
             'target_items_max' => $package->target_items_max,
-            'actual_items_count' => $package->actual_items_count,
+            'actual_items_count' => $pricedItemsCount,
             'totals' => $totals,
             'items_breakdown' => [
-                'total' => (int) ($totals['total_items_count'] ?? $totals['items_count'] ?? $package->actual_items_count),
-                'priced' => (int) ($totals['priced_items_count'] ?? $package->actual_items_count),
-                'operations' => (int) ($totals['operation_items_count'] ?? 0),
-                'review_notes' => (int) ($totals['review_notes_count'] ?? 0),
+                'total' => $pricedItemsCount,
+                'priced' => $pricedItemsCount,
+                'operations' => 0,
+                'review_notes' => 0,
+                'hidden_service_items' => $hiddenServiceItemsCount,
             ],
             'quality_summary' => $package->quality_summary ?? [
                 'level' => 'planned',
@@ -63,13 +75,17 @@ class EstimateGenerationPackagePresenter
      */
     public function detail(EstimateGenerationPackage $package, Collection $items): array
     {
+        $visibleItems = $items->filter(fn (EstimateGenerationPackageItem $item): bool => $this->isPricedItem($item))->values();
+        $hiddenServiceItemsCount = $items->count() - $visibleItems->count();
+
         return [
             'package' => $this->summary($package),
-            'items' => $items->map(fn (EstimateGenerationPackageItem $item): array => $this->item($item))->values()->all(),
+            'items' => $visibleItems->map(fn (EstimateGenerationPackageItem $item): array => $this->item($item))->values()->all(),
             'meta' => [
-                'items_count' => $items->count(),
-                'priced_items_count' => $items->filter(fn (EstimateGenerationPackageItem $item): bool => $this->isPricedItem($item))->count(),
-                'operation_items_count' => $items->filter(fn (EstimateGenerationPackageItem $item): bool => in_array($item->item_type, ['operation', 'resource_note'], true))->count(),
+                'items_count' => $visibleItems->count(),
+                'priced_items_count' => $visibleItems->count(),
+                'operation_items_count' => 0,
+                'hidden_service_items_count' => $hiddenServiceItemsCount,
             ],
         ];
     }
@@ -130,12 +146,13 @@ class EstimateGenerationPackagePresenter
     private function summaryCounters(Collection $packages): array
     {
         $priced = 0;
-        $operations = 0;
+        $hiddenServiceItems = 0;
 
         foreach ($packages as $package) {
             $totals = $package->totals ?? [];
-            $priced += (int) ($totals['priced_items_count'] ?? 0);
-            $operations += (int) ($totals['operation_items_count'] ?? 0);
+            $hidden = $this->hiddenServiceItemsCount($totals);
+            $priced += $this->visibleItemsCount($package, $totals, $hidden);
+            $hiddenServiceItems += $hidden;
         }
 
         return [
@@ -148,13 +165,36 @@ class EstimateGenerationPackagePresenter
             'blocked' => $packages->where('status', 'blocked')->count(),
             'failed' => $packages->where('status', 'failed')->count(),
             'priced_items_count' => $priced,
-            'operation_items_count' => $operations,
+            'operation_items_count' => 0,
+            'hidden_service_items_count' => $hiddenServiceItems,
         ];
     }
 
     private function isPricedItem(EstimateGenerationPackageItem $item): bool
     {
-        return !in_array($item->item_type, ['operation', 'resource_note', 'review_note'], true);
+        return !in_array($item->item_type, EstimateGenerationPackageItem::SERVICE_ITEM_TYPES, true);
+    }
+
+    /**
+     * @param array<string, mixed> $totals
+     */
+    private function hiddenServiceItemsCount(array $totals): int
+    {
+        return (int) ($totals['operation_items_count'] ?? 0) + (int) ($totals['review_notes_count'] ?? 0);
+    }
+
+    /**
+     * @param array<string, mixed> $totals
+     */
+    private function visibleItemsCount(EstimateGenerationPackage $package, array $totals, int $hiddenServiceItemsCount): int
+    {
+        if (isset($totals['priced_items_count'])) {
+            return max((int) $totals['priced_items_count'], 0);
+        }
+
+        $rawTotal = (int) ($totals['total_items_count'] ?? $totals['items_count'] ?? $package->actual_items_count);
+
+        return max($rawTotal - $hiddenServiceItemsCount, 0);
     }
 
     private function pricingStatus(EstimateGenerationPackageItem $item): string

@@ -79,4 +79,63 @@ final class EstimateGenerationPackagePresenterTest extends TestCase
         self::assertSame(1, $payload['summary']['review_required']);
         self::assertSame(1, $payload['summary']['blocked']);
     }
+
+    public function test_package_detail_hides_service_rows_from_estimate_positions(): void
+    {
+        $package = new EstimateGenerationPackage([
+            'id' => 7,
+            'key' => 'foundation',
+            'title' => 'Фундамент',
+            'status' => 'review_required',
+            'actual_items_count' => 3,
+            'totals' => [
+                'total_cost' => 0,
+                'priced_items_count' => 1,
+                'operation_items_count' => 2,
+                'review_notes_count' => 1,
+            ],
+        ]);
+
+        $items = new Collection([
+            new EstimateGenerationPackageItem([
+                'id' => 10,
+                'key' => 'foundation.concrete',
+                'item_type' => 'priced_work',
+                'name' => 'Бетонирование фундаментов',
+                'total_cost' => 0,
+                'metadata' => ['normative_candidates' => []],
+                'flags' => ['requires_normative_review'],
+            ]),
+            new EstimateGenerationPackageItem([
+                'id' => 11,
+                'key' => 'foundation.operation',
+                'item_type' => 'operation',
+                'name' => 'Подготовка фронта работ',
+            ]),
+            new EstimateGenerationPackageItem([
+                'id' => 12,
+                'key' => 'foundation.note',
+                'item_type' => 'review_note',
+                'name' => 'Требует проверки',
+            ]),
+        ]);
+
+        $payload = (new EstimateGenerationPackagePresenter())->detail($package, $items);
+
+        self::assertCount(1, $payload['items']);
+        self::assertSame('foundation.concrete', $payload['items'][0]['key']);
+        self::assertSame(1, $payload['package']['actual_items_count']);
+        self::assertSame(1, $payload['package']['totals']['items_count']);
+        self::assertSame(1, $payload['package']['totals']['total_items_count']);
+        self::assertSame(1, $payload['package']['totals']['priced_items_count']);
+        self::assertSame(0, $payload['package']['totals']['operation_items_count']);
+        self::assertSame(0, $payload['package']['totals']['review_notes_count']);
+        self::assertSame(3, $payload['package']['totals']['hidden_service_items_count']);
+        self::assertSame(1, $payload['package']['items_breakdown']['total']);
+        self::assertSame(0, $payload['package']['items_breakdown']['operations']);
+        self::assertSame(3, $payload['package']['items_breakdown']['hidden_service_items']);
+        self::assertSame(1, $payload['meta']['items_count']);
+        self::assertSame(0, $payload['meta']['operation_items_count']);
+        self::assertSame(2, $payload['meta']['hidden_service_items_count']);
+    }
 }

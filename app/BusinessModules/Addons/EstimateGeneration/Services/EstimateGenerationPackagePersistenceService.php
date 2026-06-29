@@ -24,9 +24,10 @@ class EstimateGenerationPackagePersistenceService
                     continue;
                 }
 
-                $workItems = $this->workItems($localEstimate);
+                $workItems = $this->estimateWorkItems($this->workItems($localEstimate));
                 $quality = $this->packageQuality($localEstimate, $workItems);
                 $itemCounters = $this->itemCounters($workItems);
+                $totalCost = $this->workItemsTotal($workItems);
                 $packageKey = $this->packageKey($localEstimate, (int) $localIndex);
                 $package = EstimateGenerationPackage::query()->updateOrCreate(
                     [
@@ -43,7 +44,7 @@ class EstimateGenerationPackagePersistenceService
                         'target_items_max' => (int) ($localEstimate['target_items_max'] ?? 0),
                         'actual_items_count' => $itemCounters['total_items_count'],
                         'totals' => [
-                            'total_cost' => (float) ($localEstimate['totals']['total_cost'] ?? 0),
+                            'total_cost' => $totalCost,
                             ...$itemCounters,
                         ],
                         'quality_summary' => $quality,
@@ -137,11 +138,33 @@ class EstimateGenerationPackagePersistenceService
 
         foreach ($localEstimate['sections'] ?? [] as $section) {
             foreach ($section['work_items'] ?? [] as $workItem) {
-                $items[] = $workItem;
+                if (is_array($workItem)) {
+                    $items[] = $workItem;
+                }
             }
         }
 
         return $items;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $workItems
+     * @return array<int, array<string, mixed>>
+     */
+    private function estimateWorkItems(array $workItems): array
+    {
+        return array_values(array_filter(
+            $workItems,
+            fn (array $workItem): bool => $this->isEstimateWorkItem($workItem)
+        ));
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    private function isEstimateWorkItem(array $workItem): bool
+    {
+        return !in_array((string) ($workItem['item_type'] ?? 'priced_work'), EstimateGenerationPackageItem::SERVICE_ITEM_TYPES, true);
     }
 
     /**
@@ -228,6 +251,17 @@ class EstimateGenerationPackagePersistenceService
             'operation_items_count' => $operations,
             'review_notes_count' => $reviewNotes,
         ];
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $workItems
+     */
+    private function workItemsTotal(array $workItems): float
+    {
+        return round(array_sum(array_map(
+            static fn (array $workItem): float => (float) ($workItem['total_cost'] ?? 0),
+            $workItems
+        )), 2);
     }
 
     /**

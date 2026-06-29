@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\ExcelEstimateBuilder;
 use App\Models\Estimate;
@@ -60,6 +61,10 @@ class EstimateGenerationExcelExportService
         $itemId = 1;
 
         foreach ($draft['local_estimates'] ?? [] as $localEstimateIndex => $localEstimate) {
+            if (!is_array($localEstimate)) {
+                continue;
+            }
+
             $localEstimateSectionId = $sectionId++;
             $localEstimateTotal = (float) ($localEstimate['totals']['total_cost'] ?? 0);
 
@@ -76,18 +81,28 @@ class EstimateGenerationExcelExportService
             ];
 
             foreach ($localEstimate['sections'] ?? [] as $sectionIndex => $section) {
+                if (!is_array($section)) {
+                    continue;
+                }
+
                 $currentSectionId = $sectionId++;
                 $fullSectionNumber = (string) ($localEstimateIndex + 1) . '.' . ($sectionIndex + 1);
                 $sectionTotal = 0.0;
                 $preparedItems = [];
+                $visibleWorkIndex = 1;
 
-                foreach ($section['work_items'] ?? [] as $workIndex => $workItem) {
+                foreach ($section['work_items'] ?? [] as $workItem) {
+                    if (!is_array($workItem) || !$this->isEstimateWorkItem($workItem)) {
+                        continue;
+                    }
+
                     $preparedWorkItem = $this->prepareWorkItem(
                         $workItem,
                         $currentSectionId,
                         $itemId,
-                        (string) ($workIndex + 1)
+                        (string) $visibleWorkIndex
                     );
+                    $visibleWorkIndex++;
 
                     $itemId = $preparedWorkItem['next_item_id'];
                     $sectionTotal += (float) ($preparedWorkItem['item']['total_amount'] ?? 0);
@@ -183,6 +198,18 @@ class EstimateGenerationExcelExportService
                 ],
             ],
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    private function isEstimateWorkItem(array $workItem): bool
+    {
+        return !in_array(
+            (string) ($workItem['item_type'] ?? 'priced_work'),
+            EstimateGenerationPackageItem::SERVICE_ITEM_TYPES,
+            true
+        );
     }
 
     protected function prepareWorkItem(array $workItem, int $sectionId, int $itemId, string $positionNumber): array

@@ -16,6 +16,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerat
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationFeedback;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
@@ -300,6 +301,7 @@ class EstimateGenerationController extends Controller
 
         $perPage = min(max((int) $request->query('per_page', 100), 1), 500);
         $items = $package->items()
+            ->whereNotIn('item_type', EstimateGenerationPackageItem::SERVICE_ITEM_TYPES)
             ->limit($perPage)
             ->get();
 
@@ -329,8 +331,27 @@ class EstimateGenerationController extends Controller
                     fputcsv($handle, ['Локальная смета', 'Раздел', 'Работа', 'Ед.', 'Кол-во', 'Итого', 'Основание']);
 
                     foreach ($draft['local_estimates'] ?? [] as $localEstimate) {
+                        if (!is_array($localEstimate)) {
+                            continue;
+                        }
+
                         foreach ($localEstimate['sections'] ?? [] as $section) {
+                            if (!is_array($section)) {
+                                continue;
+                            }
+
                             foreach ($section['work_items'] ?? [] as $workItem) {
+                                if (
+                                    !is_array($workItem)
+                                    || in_array(
+                                        (string) ($workItem['item_type'] ?? 'priced_work'),
+                                        EstimateGenerationPackageItem::SERVICE_ITEM_TYPES,
+                                        true
+                                    )
+                                ) {
+                                    continue;
+                                }
+
                                 fputcsv($handle, [
                                     $localEstimate['title'] ?? '',
                                     $section['title'] ?? '',
