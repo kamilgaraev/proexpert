@@ -107,6 +107,38 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
         self::assertSame('work-1', $persistable[0]['key']);
     }
 
+    public function test_unconfirmed_quantity_review_trace_is_not_persistable_final_estimate_item(): void
+    {
+        $service = new TestableEstimateDraftPersistenceService();
+        $persistable = $service->persistableItemsFor([
+            [
+                ...$this->workItem('drawing-wall', 'priced_work', 1200),
+                'quantity' => 42.5,
+                'validation_flags' => ['quantity_review_required'],
+                'pricing_blocker' => 'quantity_review_required',
+                'metadata' => [
+                    'display_role' => 'quantity_review',
+                    'quantity_feedback' => [
+                        'status' => 'pending',
+                    ],
+                ],
+            ],
+            [
+                ...$this->workItem('confirmed-drawing-wall', 'priced_work', 1400),
+                'quantity' => 42.5,
+                'metadata' => [
+                    'display_role' => 'priced_work',
+                    'quantity_feedback' => [
+                        'status' => 'confirmed_by_user',
+                    ],
+                ],
+            ],
+        ]);
+
+        self::assertCount(1, $persistable);
+        self::assertSame('confirmed-drawing-wall', $persistable[0]['key']);
+    }
+
     public function test_persistable_total_ignores_service_and_not_calculated_rows(): void
     {
         $service = new TestableEstimateDraftPersistenceService();

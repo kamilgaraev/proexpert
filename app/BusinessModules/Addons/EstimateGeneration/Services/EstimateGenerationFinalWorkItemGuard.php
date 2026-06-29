@@ -27,6 +27,10 @@ final class EstimateGenerationFinalWorkItemGuard
             return false;
         }
 
+        if ($this->hasUnconfirmedQuantityReviewTrace($workItem)) {
+            return false;
+        }
+
         if ($this->noAirWorkItemPolicy->requiresReview($workItem)) {
             return false;
         }
@@ -40,6 +44,37 @@ final class EstimateGenerationFinalWorkItemGuard
         }
 
         return (float) ($workItem['quantity'] ?? 0) > 0 && (float) ($workItem['total_cost'] ?? 0) > 0;
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    private function hasUnconfirmedQuantityReviewTrace(array $workItem): bool
+    {
+        $flags = [
+            ...array_map('strval', is_array($workItem['validation_flags'] ?? null) ? $workItem['validation_flags'] : []),
+            ...array_map('strval', is_array($workItem['flags'] ?? null) ? $workItem['flags'] : []),
+        ];
+
+        if (
+            in_array('quantity_review_required', $flags, true)
+            || (string) ($workItem['pricing_blocker'] ?? '') === 'quantity_review_required'
+        ) {
+            return true;
+        }
+
+        $metadata = is_array($workItem['metadata'] ?? null) ? $workItem['metadata'] : [];
+        if ((string) ($metadata['display_role'] ?? '') === EstimateGenerationPackageItem::QUANTITY_REVIEW_ITEM_TYPE) {
+            return true;
+        }
+
+        if (array_key_exists('quantity_feedback', $metadata)) {
+            $feedback = is_array($metadata['quantity_feedback']) ? $metadata['quantity_feedback'] : [];
+
+            return (string) ($feedback['status'] ?? '') !== 'confirmed_by_user';
+        }
+
+        return false;
     }
 
     /**
