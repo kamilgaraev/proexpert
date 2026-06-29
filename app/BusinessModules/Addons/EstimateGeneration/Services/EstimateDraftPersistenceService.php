@@ -208,7 +208,40 @@ class EstimateDraftPersistenceService
     /**
      * @param array<string, mixed> $draft
      */
-    private function assertDraftCanBeApplied(array $draft): void
+    protected function assertDraftCanBeApplied(array $draft): void
+    {
+        $blocker = $this->applyBlocker($draft);
+
+        if ($blocker === null) {
+            return;
+        }
+
+        if ($blocker['type'] === 'unresolved_normatives') {
+            throw ValidationException::withMessages([
+                'draft' => [trans_message('estimate_generation.unresolved_normatives', [
+                    'count' => $blocker['count'],
+                ])],
+            ]);
+        }
+
+        if ($blocker['type'] === 'prices_require_review') {
+            throw ValidationException::withMessages([
+                'draft' => [trans_message('estimate_generation.apply_prices_require_review')],
+            ]);
+        }
+
+        if ($blocker['type'] === 'blocked') {
+            throw ValidationException::withMessages([
+                'draft' => [trans_message('estimate_generation.apply_blocked')],
+            ]);
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $draft
+     * @return array{type: string, count?: int}|null
+     */
+    protected function applyBlocker(array $draft): ?array
     {
         $qualityStatus = (string) ($draft['quality_summary']['status'] ?? '');
         $qualityLevel = (string) ($draft['quality_summary']['level'] ?? '');
@@ -217,24 +250,21 @@ class EstimateDraftPersistenceService
         $safeNormRequiredWorkItems = (int) data_get($draft, 'quality_summary.safe_norm_required_work_items', 0);
 
         if ($unresolvedNormatives > 0) {
-            throw ValidationException::withMessages([
-                'draft' => [trans_message('estimate_generation.unresolved_normatives', [
-                    'count' => $unresolvedNormatives,
-                ])],
-            ]);
+            return [
+                'type' => 'unresolved_normatives',
+                'count' => $unresolvedNormatives,
+            ];
         }
 
-        if ($notCalculatedWorkItems > 0 || $safeNormRequiredWorkItems > 0) {
-            throw ValidationException::withMessages([
-                'draft' => [trans_message('estimate_generation.apply_prices_require_review')],
-            ]);
+        if ($notCalculatedWorkItems > 0 || $safeNormRequiredWorkItems > 0 || $qualityStatus === 'review_required') {
+            return ['type' => 'prices_require_review'];
         }
 
         if ($qualityStatus === 'critical' || $qualityLevel === 'blocked') {
-            throw ValidationException::withMessages([
-                'draft' => [trans_message('estimate_generation.apply_blocked')],
-            ]);
+            return ['type' => 'blocked'];
         }
+
+        return null;
     }
 
     private function buildGeneratedEstimateName(EstimateGenerationSession $session): string

@@ -79,6 +79,41 @@ final class EstimateValidationServiceTest extends TestCase
         self::assertSame(0, $draft['quality_summary']['not_calculated_work_items']);
     }
 
+    public function test_auto_review_priced_normative_match_still_requires_manual_review(): void
+    {
+        $draft = $this->service()->validate($this->draft([
+            [
+                'key' => 'work-1',
+                'item_type' => 'priced_work',
+                'name' => 'РњРѕРЅС‚Р°Р¶ С‚СЂСѓР±РѕРїСЂРѕРІРѕРґР°',
+                'unit' => 'Рј',
+                'quantity' => 12,
+                'quantity_basis' => 'РџРѕ СЃРїРµС†РёС„РёРєР°С†РёРё, СЃС‚СЂ. 2',
+                'total_cost' => 12000,
+                'materials' => [['total_price' => 8000]],
+                'labor' => [['total_price' => 3000]],
+                'machinery' => [['total_price' => 1000]],
+                'pricing_status' => 'calculated_review_required',
+                'normative_match' => [
+                    'status' => 'matched',
+                    'selected_by_user' => false,
+                    'decision' => ['status' => 'review_priced'],
+                ],
+                'validation_flags' => ['requires_normative_review', 'safe_normative_analog'],
+                'confidence' => 0.76,
+            ],
+        ]));
+
+        $item = $draft['local_estimates'][0]['sections'][0]['work_items'][0];
+
+        self::assertSame('calculated_review_required', $item['pricing_status']);
+        self::assertSame(1, $draft['quality_summary']['priced_work_items']);
+        self::assertSame(0, $draft['quality_summary']['not_calculated_work_items']);
+        self::assertSame(1, $draft['quality_summary']['normative_items']['review_priced']);
+        self::assertSame(1, $draft['quality_summary']['normative_items']['requires_review']);
+        self::assertSame('review_required', $draft['quality_summary']['status']);
+    }
+
     /**
      * @param array<int, array<string, mixed>> $workItems
      * @return array<string, mixed>

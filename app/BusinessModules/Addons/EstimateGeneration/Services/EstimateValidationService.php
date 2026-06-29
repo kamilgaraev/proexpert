@@ -240,7 +240,10 @@ class EstimateValidationService
         int $notCalculatedWorkItems,
         array $projectFlags
     ): array {
-        $requiresNormativeReview = $normativeCandidateWorkItems + $normativeRejectedWorkItems + $normativeNotFoundWorkItems;
+        $requiresNormativeReview = $normativeReviewPricedWorkItems
+            + $normativeCandidateWorkItems
+            + $normativeRejectedWorkItems
+            + $normativeNotFoundWorkItems;
         $pricedDenominator = max($totalWorkItems - $operationWorkItems, 0);
         $criticalFlags = array_values(array_intersect($projectFlags, ['missing_price', 'missing_resources', 'regional_context_missing']));
         $reviewFlags = array_values(array_intersect($projectFlags, [
