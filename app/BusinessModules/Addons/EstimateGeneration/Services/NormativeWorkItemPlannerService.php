@@ -501,13 +501,15 @@ final class NormativeWorkItemPlannerService
         $payload = is_array($inference['normalized_payload'] ?? null) ? $inference['normalized_payload'] : [];
 
         if (isset($payload['quantity_value'])) {
+            $sourceRefs = $this->sourceRefsFromScopeInference($inference);
+
             return [
                 'value' => (float) $payload['quantity_value'],
                 'unit' => (string) ($payload['unit'] ?? 'ед'),
                 'basis' => 'Количество извлечено из чертежа и требует сметной проверки.',
                 'confidence' => (float) ($inference['confidence'] ?? 0.74),
-                'source_refs' => isset($inference['source_ref']) && is_array($inference['source_ref']) ? [$inference['source_ref']] : [],
-                'review_required' => (bool) ($inference['review_required'] ?? true),
+                'source_refs' => $sourceRefs,
+                'review_required' => $sourceRefs === [] || (bool) ($inference['review_required'] ?? true),
                 'source' => (string) ($payload['source'] ?? $inference['inference_type'] ?? 'scope_inference'),
             ];
         }
@@ -893,6 +895,25 @@ final class NormativeWorkItemPlannerService
     private function normalizeSourceRefs(array $sourceRefs): array
     {
         return array_values(array_filter($sourceRefs, 'is_array'));
+    }
+
+    /**
+     * @param array<string, mixed> $inference
+     * @return array<int, array<string, mixed>>
+     */
+    private function sourceRefsFromScopeInference(array $inference): array
+    {
+        $sourceRefs = is_array($inference['source_refs'] ?? null)
+            ? $this->normalizeSourceRefs($inference['source_refs'])
+            : [];
+
+        if ($sourceRefs !== []) {
+            return $sourceRefs;
+        }
+
+        return isset($inference['source_ref']) && is_array($inference['source_ref']) && $inference['source_ref'] !== []
+            ? [$inference['source_ref']]
+            : [];
     }
 
     private function scopeCompatible(string $inferenceScope, string $targetScope): bool

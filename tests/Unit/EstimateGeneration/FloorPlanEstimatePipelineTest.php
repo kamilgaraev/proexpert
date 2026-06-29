@@ -47,6 +47,9 @@ final class FloorPlanEstimatePipelineTest extends TestCase
             'quality' => ['level' => 'good', 'score' => 0.91, 'flags' => []],
             'extracted_text' => $recognition->pages[0]->text,
             'facts_summary' => [
+                'document_understanding' => [
+                    'role_for_estimation' => 'geometry_source',
+                ],
                 'drawing_understanding' => $drawing->summary,
                 'zones' => [],
                 'engineering_systems' => [],

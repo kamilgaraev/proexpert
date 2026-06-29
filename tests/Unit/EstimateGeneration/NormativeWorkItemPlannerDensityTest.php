@@ -646,6 +646,48 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertNotEmpty($items[0]['source_refs']);
     }
 
+    public function test_scope_inference_without_own_source_refs_requires_quantity_review_even_when_section_has_sources(): void
+    {
+        $localEstimate = $this->localEstimate('custom-earthworks', 'Земляные работы', 'earthworks', 1);
+        $localEstimate['source_refs'] = [[
+            'type' => 'document',
+            'filename' => 'Общий архив.pdf',
+            'page_number' => 1,
+        ]];
+        $localEstimate['sections'][0]['source_refs'] = $localEstimate['source_refs'];
+
+        $items = $this->planner()->build(
+            $localEstimate,
+            $localEstimate['sections'][0],
+            [
+                'document_context' => [
+                    'scope_inferences' => [[
+                        'inference_type' => 'specification_takeoff',
+                        'title' => 'Обратная засыпка пазух',
+                        'scope_type' => 'earthworks',
+                        'work_intent' => [
+                            'scope' => 'earthworks',
+                            'quantity_key' => 'earth.backfill',
+                            'source' => 'work_volume_statement',
+                        ],
+                        'normative_basis' => [
+                            'quantity_value' => 42.0,
+                            'unit' => 'м3',
+                        ],
+                        'confidence' => 0.84,
+                        'review_required' => false,
+                    ]],
+                ],
+            ]
+        );
+
+        self::assertCount(1, $items);
+        self::assertSame('quantity_review', $items[0]['item_type']);
+        self::assertSame('earth.backfill', $items[0]['quantity_formula']);
+        self::assertSame([], $items[0]['source_refs']);
+        self::assertContains('quantity_review_required', $items[0]['validation_flags']);
+    }
+
     public function test_unmapped_review_package_ignores_regular_scope_inferences(): void
     {
         $localEstimate = $this->localEstimate('unmapped_quantity_rows', 'Позиции для разбора', 'custom', 1);
