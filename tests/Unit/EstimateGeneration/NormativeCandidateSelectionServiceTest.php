@@ -46,6 +46,19 @@ final class NormativeCandidateSelectionServiceTest extends TestCase
         ]);
     }
 
+    public function test_draft_still_requires_review_when_quantities_are_unconfirmed(): void
+    {
+        self::assertTrue($this->service()->draftNeedsReview([
+            'quality_summary' => [
+                'normative_items' => ['requires_review' => 0],
+                'quantity_review_work_items' => 1,
+                'not_calculated_work_items' => 0,
+                'safe_norm_required_work_items' => 0,
+                'duplicate_work_items' => 0,
+            ],
+        ]));
+    }
+
     private function service(): TestableNormativeCandidateSelectionService
     {
         return new TestableNormativeCandidateSelectionService(
@@ -75,6 +88,17 @@ final class TestableNormativeCandidateSelectionService extends NormativeCandidat
     public function assertSelectable(array $workItem): void
     {
         $this->assertWorkItemCanSelectNorm($workItem);
+    }
+
+    /**
+     * @param array<string, mixed> $draft
+     */
+    public function draftNeedsReview(array $draft): bool
+    {
+        $method = new \ReflectionMethod(NormativeCandidateSelectionService::class, 'draftRequiresReview');
+        $method->setAccessible(true);
+
+        return (bool) $method->invoke($this, $draft);
     }
 
     protected function message(string $key): string

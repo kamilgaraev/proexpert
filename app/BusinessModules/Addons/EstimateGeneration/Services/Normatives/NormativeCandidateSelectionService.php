@@ -173,6 +173,7 @@ class NormativeCandidateSelectionService
     private function draftRequiresReview(array $draft): bool
     {
         return (int) data_get($draft, 'quality_summary.normative_items.requires_review', 0) > 0
+            || (int) data_get($draft, 'quality_summary.quantity_review_work_items', 0) > 0
             || (int) data_get($draft, 'quality_summary.not_calculated_work_items', 0) > 0
             || (int) data_get($draft, 'quality_summary.safe_norm_required_work_items', 0) > 0
             || (int) data_get($draft, 'quality_summary.duplicate_work_items', 0) > 0;
