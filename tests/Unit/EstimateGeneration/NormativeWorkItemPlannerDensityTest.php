@@ -138,6 +138,27 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertSame([], $items);
     }
 
+    public function test_total_area_does_not_create_ventilation_or_fire_safety_without_explicit_takeoff(): void
+    {
+        $planner = $this->planner();
+        $analysis = [
+            'document_context' => [
+                'facts_summary' => [
+                    'total_area_m2' => 214,
+                ],
+            ],
+        ];
+
+        foreach ([
+            'ventilation' => ['Вентиляция', 'engineering'],
+            'fire_safety' => ['Пожарная безопасность', 'engineering'],
+        ] as $packageKey => [$title, $scopeType]) {
+            $localEstimate = $this->localEstimate($packageKey, $title, $scopeType, 12);
+
+            self::assertSame([], $planner->build($localEstimate, $localEstimate['sections'][0], $analysis), $packageKey);
+        }
+    }
+
     public function test_unknown_custom_scope_does_not_create_generic_complex_work(): void
     {
         $localEstimate = $this->localEstimate('local-custom', 'Основные строительные работы', 'custom', 12);

@@ -595,7 +595,7 @@ final class NormativeWorkItemPlannerService
         $area = $this->numericValue($factsSummary['total_area_m2'] ?? null);
 
         if ($area !== null && $area > 0) {
-            foreach (['rough.floor', 'finish.floor', 'ventilation.air_exchange', 'warehouse.fire'] as $quantityKey) {
+            foreach (['rough.floor', 'finish.floor'] as $quantityKey) {
                 $quantities[$quantityKey] = $this->modelQuantity($area, 'м2', 'Площадь объекта извлечена из проектной документации.', 0.72, []);
             }
         }
