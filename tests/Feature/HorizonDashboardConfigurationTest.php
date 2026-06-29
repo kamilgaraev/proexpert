@@ -16,4 +16,9 @@ class HorizonDashboardConfigurationTest extends LaravelTestCase
         $this->assertNotContains('auth:api', $middleware);
         $this->assertNotContains('authorize:notifications.view_analytics', $middleware);
     }
+
+    public function test_horizon_master_memory_limit_is_safe_for_production_boot(): void
+    {
+        $this->assertGreaterThanOrEqual(256, (int) config('horizon.memory_limit'));
+    }
 }

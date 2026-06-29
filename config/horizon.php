@@ -36,7 +36,7 @@ return [
     
     'fast_termination' => false,
     
-    'memory_limit' => 64,
+    'memory_limit' => (int) env('HORIZON_MEMORY_LIMIT', 256),
     
     'defaults' => [
         'supervisor-1' => [
