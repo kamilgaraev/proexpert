@@ -59,4 +59,14 @@ final class NormativeSearchProfileCatalogTest extends TestCase
         $this->assertContains('лестниц', $profile->requiredTerms);
         $this->assertContains('землян', $profile->forbiddenDomainTerms);
     }
+
+    public function test_baseboard_profile_limits_search_to_finishing_sections(): void
+    {
+        $profile = (new NormativeSearchProfileCatalog())->forIntent('finishing', 'baseboard_installation', null);
+
+        $this->assertSame(['15'], $profile->allowedSectionPrefixes);
+        $this->assertContains('плинтус', $profile->requiredTerms);
+        $this->assertContains('монтаж', $profile->synonymTerms);
+        $this->assertContains('землян', $profile->forbiddenDomainTerms);
+    }
 }

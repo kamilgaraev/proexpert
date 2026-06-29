@@ -25,6 +25,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 array_push(
                     $elements,
                     ...$this->scaleElements($documentId, $filename, $page, $line),
+                    ...$this->heightElements($documentId, $filename, $page, $line),
                     ...$this->roomElements($documentId, $filename, $page, $line),
                     ...$this->openingElements($documentId, $filename, $page, $line),
                     ...$this->engineeringRouteElements($documentId, $filename, $page, $line),
@@ -46,7 +47,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             $takeoffs,
             static fn (array $takeoff): bool => ($takeoff['scope_key'] ?? null) === 'room_area'
         ));
-        array_push($takeoffs, ...$this->aggregateRoomTakeoffs($roomTakeoffs));
+        array_push($takeoffs, ...$this->aggregateRoomTakeoffs($roomTakeoffs, $elements));
 
         $pageProfiles = $this->pageProfiles($filename, $recognition->pages, $elements, $takeoffs);
         $summary = $this->summary($filename, $recognition, $elements, $takeoffs, $roomTakeoffs, $pageProfiles);
@@ -75,6 +76,32 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             'confidence' => $this->confidence($page),
             'source_ref' => $this->sourceRef($documentId, $filename, $page, $line),
             'normalized_payload' => ['scale_denominator' => (int) $match['scale']],
+            'page_number' => $page->pageNumber,
+        ]];
+    }
+
+    private function heightElements(int $documentId, string $filename, OcrPageResult $page, string $line): array
+    {
+        $height = $this->heightMetersFromLine($line);
+
+        if ($height === null) {
+            return [];
+        }
+
+        return [[
+            'type' => 'height',
+            'label' => 'Высота помещения',
+            'value_text' => $this->formatNumber($height) . ' м',
+            'value_number' => $height,
+            'unit' => 'м',
+            'bbox' => null,
+            'geometry' => null,
+            'confidence' => $this->confidence($page),
+            'source_ref' => $this->sourceRef($documentId, $filename, $page, $line),
+            'normalized_payload' => [
+                'line' => $line,
+                'height_m' => $height,
+            ],
             'page_number' => $page->pageNumber,
         ]];
     }
@@ -363,6 +390,66 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         return (float) str_replace(',', '.', $value);
     }
 
+    private function numericValue(mixed $value): ?float
+    {
+        if (is_int($value) || is_float($value)) {
+            return (float) $value;
+        }
+
+        if (!is_string($value)) {
+            return null;
+        }
+
+        $normalized = str_replace(',', '.', trim($value));
+
+        return is_numeric($normalized) ? (float) $normalized : null;
+    }
+
+    private function heightMetersFromLine(string $line): ?float
+    {
+        if ($this->isOpeningScheduleHeightLine($line)) {
+            return null;
+        }
+
+        $patterns = [
+            '/(?:^|[^\p{L}\p{N}])h\s*[=:]?\s*(?<height>\d{1,4}(?:[,.]\d{1,2})?)\s*(?<unit>мм|mm|м|m)?(?:$|[^\p{L}\p{N}])/iu',
+            '/(?:высота|выс\.)\s*(?:потолк(?:а|ов)?|помещени[яй])?\s*[=:]?\s*(?<height>\d{1,4}(?:[,.]\d{1,2})?)\s*(?<unit>мм|mm|м|m)?/iu',
+            '/потолк(?:а|ов)?\s*[=:]?\s*(?<height>\d{1,4}(?:[,.]\d{1,2})?)\s*(?<unit>мм|mm|м|m)?/iu',
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $line, $match) !== 1) {
+                continue;
+            }
+
+            $height = $this->number((string) $match['height']);
+            $unit = mb_strtolower((string) ($match['unit'] ?? ''));
+
+            if ($unit === 'мм' || $unit === 'mm' || $height > 10) {
+                $height /= 1000;
+            }
+
+            if ($height >= 2.0 && $height <= 6.0) {
+                return round($height, 3);
+            }
+        }
+
+        return null;
+    }
+
+    private function isOpeningScheduleHeightLine(string $line): bool
+    {
+        $normalized = mb_strtolower($line);
+
+        if (!$this->containsAny($normalized, ['двер', 'окн', 'ворот', 'дп-', 'ду-', 'ок-', 'проем', 'проём', 'door', 'window', 'gate'])) {
+            return false;
+        }
+
+        return preg_match('/(?:^|[^\p{L}\p{N}])h\s*=/iu', $line) === 1
+            || preg_match('/(?:^|[^\p{L}\p{N}])(?:b|w)\s*=/iu', $line) === 1
+            || preg_match('/\d{2,5}\s*[xх×]\s*\d{2,5}/u', $line) === 1;
+    }
+
     private function formatNumber(float $value): string
     {
         $formatted = number_format($value, 4, '.', '');
@@ -457,16 +544,20 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
 
     /**
      * @param array<int, array<string, mixed>> $roomTakeoffs
+     * @param array<int, array<string, mixed>> $elements
      * @return array<int, array<string, mixed>>
      */
-    private function aggregateRoomTakeoffs(array $roomTakeoffs): array
+    private function aggregateRoomTakeoffs(array $roomTakeoffs, array $elements): array
     {
         if ($roomTakeoffs === []) {
             return [];
         }
 
+        $heightEvidence = $this->heightEvidence($elements);
+        $heightM = (float) $heightEvidence['height_m'];
         $totalArea = 0.0;
         $estimatedWallArea = 0.0;
+        $estimatedBaseboardLength = 0.0;
         $wetRoomArea = 0.0;
         $wetRoomWallArea = 0.0;
         $sourceRefs = [];
@@ -478,8 +569,10 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             $roomLabel = (string) ($payload['room_label'] ?? $takeoff['name'] ?? '');
 
             $totalArea += $area;
-            $estimatedRoomWallArea = $this->estimatedWallAreaFromRoomArea($area);
+            $estimatedRoomPerimeter = $this->estimatedPerimeterFromRoomArea($area);
+            $estimatedRoomWallArea = $estimatedRoomPerimeter * $heightM;
             $estimatedWallArea += $estimatedRoomWallArea;
+            $estimatedBaseboardLength += $estimatedRoomPerimeter;
             $confidence += (float) ($takeoff['confidence'] ?? 0.72);
 
             if ($this->isWetRoomLabel($roomLabel)) {
@@ -498,8 +591,14 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         $totalArea = round($totalArea, 2);
         $confidence = round($confidence / max($roomCount, 1), 4);
         $sourceRefs = array_slice($sourceRefs, 0, 50);
+        $calculationSourceRefs = array_slice([
+            ...$sourceRefs,
+            ...$heightEvidence['source_refs'],
+        ], 0, 50);
 
-        $wallArea = round($estimatedWallArea > 0 ? $estimatedWallArea : $totalArea * 2.7, 2);
+        $baseboardLength = round($estimatedBaseboardLength, 2);
+        $wallArea = round($estimatedWallArea > 0 ? $estimatedWallArea : $totalArea * $heightM, 2);
+        $heightFormulaPart = ' x ' . $this->formatNumber($heightM) . ' м';
         $aggregates = [
             $this->aggregateTakeoff(
                 scopeKey: 'floor_finish_area',
@@ -539,11 +638,15 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 quantityKey: 'rough.walls',
                 name: 'Расчетная площадь стен по планировке',
                 quantity: $wallArea,
-                formula: 'Ориентировочная площадь стен по комнатам: сумма 4 x sqrt(S) x 2.7 = ' . $this->formatNumber($wallArea) . ' м2',
+                formula: 'Ориентировочная площадь стен по комнатам: сумма 4 x sqrt(S)' . $heightFormulaPart . ' = ' . $this->formatNumber($wallArea) . ' м2',
                 confidence: max($confidence - 0.18, 0.35),
-                sourceRefs: $sourceRefs,
+                sourceRefs: $calculationSourceRefs,
                 roomCount: $roomCount,
-                reviewRequired: true
+                reviewRequired: true,
+                extraPayload: [
+                    'height_m' => $heightM,
+                    'height_source' => $heightEvidence['source'],
+                ]
             ),
             $this->aggregateTakeoff(
                 scopeKey: 'paint_area',
@@ -552,9 +655,29 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 quantity: $wallArea,
                 formula: 'Ориентировочная площадь окраски принята по расчетной площади стен: ' . $this->formatNumber($wallArea) . ' м2',
                 confidence: max($confidence - 0.22, 0.35),
+                sourceRefs: $calculationSourceRefs,
+                roomCount: $roomCount,
+                reviewRequired: true,
+                extraPayload: [
+                    'height_m' => $heightM,
+                    'height_source' => $heightEvidence['source'],
+                ]
+            ),
+            $this->aggregateTakeoff(
+                scopeKey: 'skirting_length',
+                quantityKey: 'finish.baseboard',
+                name: 'Расчетная длина плинтуса по планировке',
+                quantity: $baseboardLength,
+                formula: 'Ориентировочная длина плинтуса: сумма 4 x sqrt(S) = ' . $this->formatNumber($baseboardLength) . ' м',
+                confidence: max($confidence - 0.24, 0.35),
                 sourceRefs: $sourceRefs,
                 roomCount: $roomCount,
-                reviewRequired: true
+                reviewRequired: true,
+                unit: 'м',
+                extraPayload: [
+                    'calculation_basis' => 'estimated_room_perimeter',
+                    'openings_subtracted' => false,
+                ]
             ),
         ];
 
@@ -567,10 +690,12 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 quantity: $wetZoneTileArea,
                 formula: 'Мокрые зоны: пол ' . $this->formatNumber($wetRoomArea) . ' м2 + стены ' . $this->formatNumber($wetRoomWallArea) . ' м2',
                 confidence: max($confidence - 0.2, 0.35),
-                sourceRefs: $sourceRefs,
+                sourceRefs: $calculationSourceRefs,
                 roomCount: $roomCount,
                 reviewRequired: true,
                 extraPayload: [
+                    'height_m' => $heightM,
+                    'height_source' => $heightEvidence['source'],
                     'wet_room_area_m2' => round($wetRoomArea, 2),
                     'wet_room_wall_area_m2' => round($wetRoomWallArea, 2),
                 ]
@@ -594,6 +719,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         array $sourceRefs,
         int $roomCount,
         bool $reviewRequired,
+        string $unit = 'м2',
         array $extraPayload = []
     ): array {
         return [
@@ -601,7 +727,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             'scope_key' => $scopeKey,
             'work_intent' => ['scope' => 'finishing', 'basis' => 'room_area_sum'],
             'name' => $name,
-            'unit' => 'м2',
+            'unit' => $unit,
             'quantity' => $quantity,
             'formula' => $formula,
             'confidence' => round(max(min($confidence, 0.98), 0.35), 4),
@@ -617,13 +743,55 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         ];
     }
 
-    private function estimatedWallAreaFromRoomArea(float $area): float
+    private function estimatedPerimeterFromRoomArea(float $area): float
     {
         if ($area <= 0) {
             return 0.0;
         }
 
-        return 4 * sqrt($area) * 2.7;
+        return 4 * sqrt($area);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $elements
+     * @return array{height_m: float, source: string, source_refs: array<int, array<string, mixed>>}
+     */
+    private function heightEvidence(array $elements): array
+    {
+        $heights = [];
+        $sourceRefs = [];
+
+        foreach ($elements as $element) {
+            if (($element['type'] ?? null) !== 'height') {
+                continue;
+            }
+
+            $height = $this->numericValue($element['value_number'] ?? null);
+
+            if ($height === null || $height < 2.0 || $height > 6.0) {
+                continue;
+            }
+
+            $heights[] = $height;
+
+            if (is_array($element['source_ref'] ?? null)) {
+                $sourceRefs[] = $element['source_ref'];
+            }
+        }
+
+        if ($heights === []) {
+            return [
+                'height_m' => 2.7,
+                'source' => 'default_assumption',
+                'source_refs' => [],
+            ];
+        }
+
+        return [
+            'height_m' => round(array_sum($heights) / count($heights), 3),
+            'source' => 'drawing_height',
+            'source_refs' => array_slice($sourceRefs, 0, 10),
+        ];
     }
 
     private function isWetRoomLabel(string $label): bool
@@ -670,6 +838,10 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 $pageElements,
                 static fn (array $element): bool => ($element['type'] ?? null) === 'dimension'
             ));
+            $heightCount = count(array_filter(
+                $pageElements,
+                static fn (array $element): bool => ($element['type'] ?? null) === 'height'
+            ));
             $specificationCount = count(array_filter(
                 $pageTakeoffs,
                 static fn (array $takeoff): bool => ($takeoff['scope_key'] ?? null) === 'specification_quantity'
@@ -701,11 +873,13 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                     $hasEstimateSignal ? 'estimate_or_norm_keywords' : null,
                     $roomCount > 0 ? 'room_areas' : null,
                     $dimensionCount > 0 ? 'dimensions' : null,
+                    $heightCount > 0 ? 'height' : null,
                     $workVolumeStatementCount > 0 ? 'work_volume_statement_quantities' : null,
                     $specificationCount > 0 ? 'specification_quantities' : null,
                 ])),
                 'room_area_count' => $roomCount,
                 'dimension_count' => $dimensionCount,
+                'height_count' => $heightCount,
                 'work_volume_statement_quantity_count' => $workVolumeStatementCount,
                 'specification_quantity_count' => $specificationCount,
             ];
@@ -783,6 +957,12 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             $elements,
             static fn (array $element): bool => ($element['type'] ?? null) === 'dimension'
         ));
+        $heightCount = count(array_filter(
+            $elements,
+            static fn (array $element): bool => ($element['type'] ?? null) === 'height'
+        ));
+        $heightEvidence = $this->heightEvidence($elements);
+        $detectedHeight = $heightEvidence['source'] === 'drawing_height' ? $heightEvidence['height_m'] : null;
         $documentProfile = $this->documentProfile($filename, $pageProfiles, count($roomTakeoffs), $dimensionCount);
 
         return [
@@ -795,6 +975,8 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             'room_count' => count($roomTakeoffs),
             'room_area_total_m2' => $roomAreaTotal > 0 ? $roomAreaTotal : null,
             'dimension_count' => $dimensionCount,
+            'height_count' => $heightCount,
+            'detected_height_m' => $detectedHeight,
             'evidence_graph' => $this->evidenceGraph($takeoffs),
         ];
     }

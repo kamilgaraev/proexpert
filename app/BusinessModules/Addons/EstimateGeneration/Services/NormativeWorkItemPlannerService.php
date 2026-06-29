@@ -412,6 +412,7 @@ final class NormativeWorkItemPlannerService
             'finish_finishing' => [
                 $this->definition('Чистовое покрытие пола', 'finishing', 'устройство чистового покрытия пола', 'finish.floor'),
                 $this->definition('Окраска стен', 'finishing', 'окраска стен', 'finish.paint'),
+                $this->definition('Монтаж плинтуса', 'finishing', 'монтаж плинтусов', 'finish.baseboard'),
                 $this->definition('Подвесной потолок', 'finishing', 'монтаж подвесного потолка', 'office.ceiling'),
             ],
             'office_finishing' => [
@@ -419,6 +420,7 @@ final class NormativeWorkItemPlannerService
                 $this->definition('Черновая подготовка стен', 'finishing', 'подготовка поверхностей стен', 'rough.walls'),
                 $this->definition('Чистовое покрытие пола', 'finishing', 'устройство чистового покрытия пола', 'finish.floor'),
                 $this->definition('Окраска стен', 'finishing', 'окраска стен', 'finish.paint'),
+                $this->definition('Монтаж плинтуса', 'finishing', 'монтаж плинтусов', 'finish.baseboard'),
                 $this->definition('Подвесной потолок', 'finishing', 'монтаж подвесного потолка', 'office.ceiling'),
             ],
             'external_networks', 'siteworks', 'roads' => [
@@ -790,6 +792,7 @@ final class NormativeWorkItemPlannerService
             'wall_finish_area' => 'rough.walls',
             'paint_area' => 'finish.paint',
             'wet_zone_tile_area' => 'sanitary.tile',
+            'skirting_length' => 'finish.baseboard',
             'door_count' => 'openings.doors',
             'window_count' => 'openings.windows',
             'opening_count' => 'openings.doors',

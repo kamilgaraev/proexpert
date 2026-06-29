@@ -79,6 +79,7 @@ final class WorkIntentClassifierTest extends TestCase
             ['Воздушно-тепловые завесы ворот', 'шт', 'engineering', 'heating_equipment', 'piece', ['gesn_earthwork']],
             ['Монтаж вентиляции', 'м2', 'engineering', 'ventilation_installation', 'area', ['gesn_earthwork']],
             ['Установка окон и дверей', 'шт', 'openings', 'window_installation', 'piece', ['gesn_earthwork']],
+            ['Монтаж плинтусов', 'м', 'finishing', 'baseboard_installation', 'length', ['gesn_earthwork']],
             ['Временное ограждение площадки', 'м', 'temporary', 'fence_installation', 'length', ['gesn_earthwork']],
             ['Устройство лестничных маршей', 'м2', 'stairs', 'general_work', 'area', ['gesn_earthwork']],
             ['Опалубка ленточного фундамента', 'м2', 'foundation', 'formwork', 'area', []],

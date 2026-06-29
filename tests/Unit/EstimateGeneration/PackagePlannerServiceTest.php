@@ -241,6 +241,40 @@ class PackagePlannerServiceTest extends TestCase
         $this->assertNotContains('roof', $keys);
     }
 
+    public function test_baseboard_work_volume_statement_does_not_switch_to_plan_only_geometry_without_plan_signal(): void
+    {
+        $analysis = [
+            'object' => [
+                'object_type' => 'custom',
+                'building_type' => 'custom',
+                'description' => '',
+            ],
+            'document_context' => [
+                'context_text' => 'Ведомость объемов работ',
+                'quantity_takeoffs' => [[
+                    'scope_key' => 'specification_quantity',
+                    'name' => 'Монтаж плинтуса ПВХ',
+                    'quantity' => 77,
+                    'unit' => 'м',
+                    'source_refs' => [[
+                        'type' => 'document',
+                        'filename' => 'ВОР.pdf',
+                        'page_number' => 1,
+                    ]],
+                    'normalized_payload' => [
+                        'quantity_key' => 'finish.baseboard',
+                    ],
+                ]],
+            ],
+        ];
+
+        $profile = $this->planner()->profileFromAnalysis($analysis);
+
+        $this->assertSame('custom', $profile->objectType);
+        $this->assertFalse($profile->planningSignals['plan_only_geometry']);
+        $this->assertTrue($profile->planningSignals['floor_plan_finishing']);
+    }
+
     private function planner(): PackagePlannerService
     {
         return new PackagePlannerService();

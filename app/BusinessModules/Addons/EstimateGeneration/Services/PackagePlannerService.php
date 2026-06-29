@@ -322,6 +322,7 @@ class PackagePlannerService
                 'finish.floor',
                 'rough.walls',
                 'finish.paint',
+                'finish.baseboard',
                 'office.ceiling',
             ]),
             'floor_plan_openings' => $this->hasAnyQuantityKey($quantityKeys, [
@@ -383,7 +384,7 @@ class PackagePlannerService
      */
     private function hasPlanOnlyGeometryEvidence(array $quantityKeys, string $haystack): bool
     {
-        if (!$this->hasAnyQuantityKey($quantityKeys, ['rough.floor', 'finish.floor', 'rough.walls', 'office.ceiling'])) {
+        if (!$this->hasAnyQuantityKey($quantityKeys, ['rough.floor', 'finish.floor', 'rough.walls', 'finish.baseboard', 'office.ceiling'])) {
             return false;
         }
 
@@ -424,6 +425,7 @@ class PackagePlannerService
             'wall_finish_area' => 'rough.walls',
             'paint_area' => 'finish.paint',
             'wet_zone_tile_area' => 'sanitary.tile',
+            'skirting_length' => 'finish.baseboard',
             'opening_count' => 'openings.doors',
             'door_count' => 'openings.doors',
             'window_count' => 'openings.windows',

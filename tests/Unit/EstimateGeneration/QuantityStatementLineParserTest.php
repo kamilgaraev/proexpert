@@ -87,6 +87,19 @@ final class QuantityStatementLineParserTest extends TestCase
         self::assertSame('finishing', $plaster['scope_type']);
     }
 
+    public function test_maps_baseboard_finishing_rows(): void
+    {
+        $row = (new QuantityStatementLineParser())->parse('Монтаж плинтуса ПВХ м 77', 'work_volume_statement');
+
+        self::assertIsArray($row);
+        self::assertSame('finish.baseboard', $row['quantity_key']);
+        self::assertSame('finishing', $row['scope_type']);
+        self::assertSame('м', $row['unit']);
+        self::assertSame(77.0, $row['quantity']);
+        self::assertTrue($row['mapped']);
+        self::assertFalse($row['review_required']);
+    }
+
     public function test_unknown_quantity_row_is_not_mapped_to_takeoff(): void
     {
         $row = (new QuantityStatementLineParser())->parse('Авторский надзор компл 1', 'work_volume_statement');

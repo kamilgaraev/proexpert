@@ -119,6 +119,7 @@ final class QuantityStatementLineParser
             $this->containsAny($normalized, ['стяжк', 'подготовк пола', 'основани пола', 'чернов']) => 'rough.floor',
             $this->containsAny($normalized, ['штукатур', 'шпатлев', 'шпаклев']) => 'rough.walls',
             $this->containsAny($normalized, ['окраск', 'покраск']) => 'finish.paint',
+            $this->containsAny($normalized, ['плинтус', 'галтел']) => 'finish.baseboard',
             $this->containsAny($normalized, ['покрытие пола', 'ламинат', 'линолеум', 'чистовое покрытие']) => 'finish.floor',
             $this->containsAny($normalized, ['плитк', 'облицов']) && $this->containsAny($normalized, ['сануз', 'ванн', 'душ', 'мокр']) => 'sanitary.tile',
             $this->containsAny($normalized, ['потолок', 'потолк']) => 'office.ceiling',

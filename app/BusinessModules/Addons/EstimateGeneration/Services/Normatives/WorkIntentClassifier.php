@@ -79,7 +79,7 @@ final class WorkIntentClassifier
             'slabs' => ['перекрыт', 'плит'],
             'facade' => ['фасад'],
             'openings' => ['окн', 'двер', 'ворот'],
-            'finishing' => ['отделк', 'штукатур', 'окраск', 'шпатлев', 'плитк'],
+            'finishing' => ['отделк', 'штукатур', 'окраск', 'шпатлев', 'плитк', 'плинтус', 'галтел'],
             'temporary' => ['временн', 'стройплощад', 'огражден'],
             'site' => ['благоустрой', 'планировк', 'вывоз грунта'],
         ] as $scope => $needles) {
@@ -143,6 +143,7 @@ final class WorkIntentClassifier
             'window_installation' => ['установк окон', 'монтаж окон', 'окн', 'двер', 'ворот'],
             'masonry' => ['кладк', 'кирпич', 'блок'],
             'ventilation_installation' => ['монтаж вентиляц', 'вентиляц', 'воздуховод'],
+            'baseboard_installation' => ['плинтус', 'галтел'],
             'socket_installation' => ['розет', 'выключател'],
             'fence_installation' => ['огражден', 'забор'],
             'formwork' => ['опалуб'],
@@ -201,6 +202,10 @@ final class WorkIntentClassifier
             return 'opening';
         }
 
+        if ($this->containsAny($text, ['плинтус', 'галтел'])) {
+            return 'baseboard';
+        }
+
         if ($this->containsAny($text, ['тепловой узел', 'теплового узла', 'теплопункт', 'завес', 'радиатор', 'котел'])) {
             return 'heating_equipment';
         }
@@ -246,6 +251,7 @@ final class WorkIntentClassifier
             'plastering', 'ventilation_installation' => ['area'],
             'window_installation', 'heating_equipment' => ['piece'],
             'fence_installation' => ['length'],
+            'baseboard_installation' => ['length'],
             'concreting', 'excavation', 'backfill' => ['volume'],
             'reinforcement' => ['mass'],
             default => ['piece'],

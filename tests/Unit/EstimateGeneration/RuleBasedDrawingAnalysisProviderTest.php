@@ -65,6 +65,7 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
                     pageNumber: 1,
                     text: implode("\n", [
                         'Планировка квартиры',
+                        'Высота потолка 3,0 м',
                         'Гостиная 46,52 м²',
                         'Кухня 9.99 м2',
                         'Спальня 17,65 м²',
@@ -92,8 +93,10 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
 
         self::assertSame('floor_plan', $result->summary['document_profile']['document_role'] ?? null);
         self::assertSame('floor_plan', $result->summary['page_profiles'][0]['page_role'] ?? null);
+        self::assertContains('height', array_column($result->elements, 'type'));
         self::assertGreaterThanOrEqual(5, $result->summary['room_count'] ?? 0);
         self::assertSame(87.14, $result->summary['room_area_total_m2'] ?? null);
+        self::assertSame(3.0, $result->summary['detected_height_m'] ?? null);
         self::assertSame('review_required', $result->summary['evidence_graph']['quality_level'] ?? null);
         self::assertGreaterThanOrEqual(1, $result->summary['evidence_graph']['review_required_count'] ?? 0);
         self::assertGreaterThanOrEqual(1, $result->summary['evidence_graph']['nodes_count'] ?? 0);
@@ -104,16 +107,51 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
         self::assertArrayHasKey('rough.walls', $takeoffsByKey);
         self::assertArrayHasKey('finish.paint', $takeoffsByKey);
         self::assertArrayHasKey('sanitary.tile', $takeoffsByKey);
+        self::assertArrayHasKey('finish.baseboard', $takeoffsByKey);
         self::assertSame(87.14, $takeoffsByKey['finish.floor']['quantity']);
         self::assertSame(87.14, $takeoffsByKey['rough.floor']['quantity']);
         self::assertSame(87.14, $takeoffsByKey['office.ceiling']['quantity']);
-        self::assertGreaterThan(87.14, $takeoffsByKey['rough.walls']['quantity']);
+        self::assertSame(231.0, $takeoffsByKey['rough.walls']['quantity']);
         self::assertSame($takeoffsByKey['rough.walls']['quantity'], $takeoffsByKey['finish.paint']['quantity']);
         self::assertGreaterThan(5.14, $takeoffsByKey['sanitary.tile']['quantity']);
+        self::assertSame(77.0, $takeoffsByKey['finish.baseboard']['quantity']);
+        self::assertSame('м', $takeoffsByKey['finish.baseboard']['unit']);
+        self::assertSame(3.0, $takeoffsByKey['rough.walls']['normalized_payload']['height_m'] ?? null);
         self::assertTrue($takeoffsByKey['rough.walls']['normalized_payload']['review_required'] ?? false);
         self::assertTrue($takeoffsByKey['finish.paint']['normalized_payload']['review_required'] ?? false);
         self::assertTrue($takeoffsByKey['sanitary.tile']['normalized_payload']['review_required'] ?? false);
+        self::assertTrue($takeoffsByKey['finish.baseboard']['normalized_payload']['review_required'] ?? false);
         self::assertSame(8.0, $takeoffsByKey['openings.doors']['quantity']);
+    }
+
+    public function test_door_schedule_height_is_not_used_as_room_height(): void
+    {
+        $recognition = new OcrRecognitionResult(
+            provider: 'test',
+            model: 'page',
+            pages: [
+                new OcrPageResult(
+                    pageNumber: 1,
+                    text: implode("\n", [
+                        'Планировка квартиры',
+                        'Гостиная 46,52 м²',
+                        'Кухня 9.99 м2',
+                        'Дверь ДП-1 B=900 H=2100',
+                    ]),
+                    confidence: 0.91
+                ),
+            ]
+        );
+
+        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+            documentId: 10,
+            filename: 'flat-plan.png',
+            recognition: $recognition
+        );
+
+        self::assertNotContains('height', array_column($result->elements, 'type'));
+        self::assertSame(0, $result->summary['height_count'] ?? null);
+        self::assertNull($result->summary['detected_height_m'] ?? null);
     }
 
     public function test_extracts_specification_rows_as_quantity_takeoffs(): void

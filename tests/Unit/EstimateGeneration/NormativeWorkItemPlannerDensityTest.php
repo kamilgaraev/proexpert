@@ -350,6 +350,45 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertSame('rough.walls', $items[0]['metadata']['quantity_key'] ?? null);
     }
 
+    public function test_floor_plan_baseboard_length_becomes_visible_review_item_until_confirmed(): void
+    {
+        $localEstimate = $this->localEstimate('finish_finishing', 'Чистовая отделка', 'finishing', 6);
+        $items = $this->planner()->build(
+            $localEstimate,
+            $localEstimate['sections'][0],
+            [
+                'document_context' => [
+                    'quantity_takeoffs' => [[
+                        'scope_key' => 'skirting_length',
+                        'name' => 'Расчетная длина плинтуса по планировке',
+                        'unit' => 'м',
+                        'quantity' => 77.0,
+                        'confidence' => 0.66,
+                        'source_refs' => [[
+                            'type' => 'drawing',
+                            'document_id' => 10,
+                            'filename' => 'flat-plan.png',
+                            'page_number' => 1,
+                        ]],
+                        'normalized_payload' => [
+                            'quantity_key' => 'finish.baseboard',
+                            'review_required' => true,
+                        ],
+                    ]],
+                ],
+            ]
+        );
+
+        self::assertCount(1, $items);
+        self::assertSame('quantity_review', $items[0]['item_type']);
+        self::assertSame('finish.baseboard', $items[0]['quantity_formula']);
+        self::assertSame(77.0, (float) $items[0]['quantity']);
+        self::assertSame('м', $items[0]['unit']);
+        self::assertSame('quantity_review_required', $items[0]['pricing_blocker']);
+        self::assertContains('quantity_review_required', $items[0]['validation_flags']);
+        self::assertSame('finish.baseboard', $items[0]['metadata']['quantity_key'] ?? null);
+    }
+
     public function test_confirmed_floor_plan_wall_and_wet_zone_takeoffs_feed_matching_normative_intents(): void
     {
         $analysis = [
