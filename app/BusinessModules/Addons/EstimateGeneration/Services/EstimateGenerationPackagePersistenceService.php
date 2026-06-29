@@ -17,14 +17,21 @@ class EstimateGenerationPackagePersistenceService
     public function syncFromDraft(EstimateGenerationSession $session, array $draft): void
     {
         DB::transaction(function () use ($session, $draft): void {
+            $activePackageKeys = $this->draftPackageKeys($draft);
+
             foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
+                if (!is_array($localEstimate)) {
+                    continue;
+                }
+
                 $workItems = $this->workItems($localEstimate);
                 $quality = $this->packageQuality($localEstimate, $workItems);
                 $itemCounters = $this->itemCounters($workItems);
+                $packageKey = $this->packageKey($localEstimate, (int) $localIndex);
                 $package = EstimateGenerationPackage::query()->updateOrCreate(
                     [
                         'session_id' => $session->id,
-                        'key' => (string) ($localEstimate['key'] ?? 'package-' . ($localIndex + 1)),
+                        'key' => $packageKey,
                     ],
                     [
                         'title' => (string) ($localEstimate['title'] ?? 'Локальная смета'),
@@ -61,7 +68,63 @@ class EstimateGenerationPackagePersistenceService
                     EstimateGenerationPackageItem::query()->create($this->itemPayload($package, $workItem, $workIndex));
                 }
             }
+
+            $this->deleteStalePackages($session, $activePackageKeys);
         });
+    }
+
+    /**
+     * @param array<string, mixed> $draft
+     * @return array<int, string>
+     */
+    private function draftPackageKeys(array $draft): array
+    {
+        $keys = [];
+
+        foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
+            if (!is_array($localEstimate)) {
+                continue;
+            }
+
+            $keys[] = $this->packageKey($localEstimate, (int) $localIndex);
+        }
+
+        return array_values(array_unique($keys));
+    }
+
+    /**
+     * @param array<string, mixed> $localEstimate
+     */
+    private function packageKey(array $localEstimate, int $localIndex): string
+    {
+        return (string) ($localEstimate['key'] ?? 'package-' . ($localIndex + 1));
+    }
+
+    /**
+     * @param array<int, string> $activePackageKeys
+     */
+    private function deleteStalePackages(EstimateGenerationSession $session, array $activePackageKeys): void
+    {
+        $query = EstimateGenerationPackage::query()
+            ->where('session_id', $session->id);
+
+        if ($activePackageKeys !== []) {
+            $query->whereNotIn('key', $activePackageKeys);
+        }
+
+        $stalePackageIds = array_values(array_map('intval', $query->pluck('id')->all()));
+
+        if ($stalePackageIds === []) {
+            return;
+        }
+
+        EstimateGenerationPackageItem::query()
+            ->whereIn('package_id', $stalePackageIds)
+            ->delete();
+
+        EstimateGenerationPackage::query()
+            ->whereIn('id', $stalePackageIds)
+            ->delete();
     }
 
     /**
