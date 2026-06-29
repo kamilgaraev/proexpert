@@ -172,8 +172,9 @@ final class EstimatorScopeInferenceService
         $source = (string) ($payload['source'] ?? 'specification');
 
         $inferenceType = $source === 'work_volume_statement' ? 'work_volume_takeoff' : 'specification_takeoff';
+        $title = trim((string) ($takeoff['name'] ?? $payload['name'] ?? ''));
 
-        return $this->baseInference($inferenceType, $scopeType, $this->scopeTitle($scopeType), 0.84, $document, [
+        return $this->baseInference($inferenceType, $scopeType, $title !== '' ? $title : $this->scopeTitle($scopeType), 0.84, $document, [
             'quantity_key' => $quantityKey,
             'quantity_value' => $takeoff['quantity'] ?? $takeoff['value'] ?? null,
             'unit' => $takeoff['unit'] ?? $payload['unit'] ?? null,

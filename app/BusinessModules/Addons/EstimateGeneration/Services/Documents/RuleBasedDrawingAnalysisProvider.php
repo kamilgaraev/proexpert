@@ -21,9 +21,9 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         $takeoffs = [];
 
         foreach ($recognition->pages as $page) {
-            foreach ($this->lines($page) as $line) {
-                array_push(
-                    $elements,
+            foreach ($this->lineRecords($page) as $lineRecord) {
+                $line = $lineRecord['text'];
+                $lineElements = [
                     ...$this->scaleElements($documentId, $filename, $page, $line),
                     ...$this->heightElements($documentId, $filename, $page, $line),
                     ...$this->roomElements($documentId, $filename, $page, $line),
@@ -31,15 +31,16 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                     ...$this->engineeringRouteElements($documentId, $filename, $page, $line),
                     ...$this->specificationElements($documentId, $filename, $page, $line),
                     ...$this->dimensionElements($documentId, $filename, $page, $line),
-                );
+                ];
+                array_push($elements, ...$this->withElementLineEvidence($lineElements, $lineRecord));
 
-                array_push(
-                    $takeoffs,
+                $lineTakeoffs = [
                     ...$this->roomTakeoffs($documentId, $filename, $page, $line),
                     ...$this->openingTakeoffs($documentId, $filename, $page, $line),
                     ...$this->engineeringRouteTakeoffs($documentId, $filename, $page, $line),
                     ...$this->specificationTakeoffs($documentId, $filename, $page, $line),
-                );
+                ];
+                array_push($takeoffs, ...$this->withTakeoffLineEvidence($lineTakeoffs, $lineRecord));
             }
         }
 
@@ -463,6 +464,342 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             static fn (string $line): string => trim($line),
             preg_split('/\R/u', $page->text) ?: []
         )));
+    }
+
+    /**
+     * @return array<int, array{text: string, bbox: array<string, float>|null, block_index: int|null, line_index: int|null, line_hash: string}>
+     */
+    private function lineRecords(OcrPageResult $page): array
+    {
+        $records = [];
+
+        foreach ($page->blocks as $blockIndex => $block) {
+            if (!is_array($block)) {
+                continue;
+            }
+
+            $blockBbox = $this->normalizedBbox($block['bounding_box'] ?? $block['bbox'] ?? null);
+            $lines = is_array($block['lines'] ?? null) ? $block['lines'] : [];
+
+            foreach ($lines as $lineIndex => $line) {
+                if (!is_array($line)) {
+                    continue;
+                }
+
+                $text = $this->lineText($line);
+
+                if ($text === '') {
+                    continue;
+                }
+
+                $bbox = $this->normalizedBbox($line['bounding_box'] ?? $line['bbox'] ?? null)
+                    ?? $this->wordsBbox(is_array($line['words'] ?? null) ? $line['words'] : [])
+                    ?? $blockBbox;
+
+                $records[] = $this->lineRecord(
+                    text: $text,
+                    bbox: $bbox,
+                    pageNumber: $page->pageNumber,
+                    blockIndex: (int) $blockIndex,
+                    lineIndex: (int) $lineIndex
+                );
+            }
+
+            if ($lines === []) {
+                foreach ($this->splitTextLines((string) ($block['text'] ?? '')) as $lineIndex => $text) {
+                    $records[] = $this->lineRecord(
+                        text: $text,
+                        bbox: $blockBbox,
+                        pageNumber: $page->pageNumber,
+                        blockIndex: (int) $blockIndex,
+                        lineIndex: (int) $lineIndex
+                    );
+                }
+            }
+        }
+
+        if ($records !== []) {
+            return $records;
+        }
+
+        return array_map(
+            fn (string $line): array => $this->lineRecord(
+                text: $line,
+                bbox: null,
+                pageNumber: $page->pageNumber,
+                blockIndex: null,
+                lineIndex: null
+            ),
+            $this->lines($page)
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $line
+     */
+    private function lineText(array $line): string
+    {
+        $text = trim((string) ($line['text'] ?? ''));
+
+        if ($text !== '') {
+            return $text;
+        }
+
+        $words = is_array($line['words'] ?? null) ? $line['words'] : [];
+
+        return trim(implode(' ', array_filter(array_map(
+            static fn (mixed $word): string => is_array($word) ? trim((string) ($word['text'] ?? '')) : '',
+            $words
+        ))));
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function splitTextLines(string $text): array
+    {
+        return array_values(array_filter(array_map(
+            static fn (string $line): string => trim($line),
+            preg_split('/\R/u', $text) ?: []
+        )));
+    }
+
+    /**
+     * @param array<string, float>|null $bbox
+     * @return array{text: string, bbox: array<string, float>|null, block_index: int|null, line_index: int|null, line_hash: string}
+     */
+    private function lineRecord(
+        string $text,
+        ?array $bbox,
+        int $pageNumber,
+        ?int $blockIndex,
+        ?int $lineIndex
+    ): array {
+        return [
+            'text' => $text,
+            'bbox' => $bbox,
+            'block_index' => $blockIndex,
+            'line_index' => $lineIndex,
+            'line_hash' => sha1($pageNumber . '|' . ($blockIndex ?? 'text') . '|' . ($lineIndex ?? 'text') . '|' . $text),
+        ];
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $items
+     * @param array{text: string, bbox: array<string, float>|null, block_index: int|null, line_index: int|null, line_hash: string} $lineRecord
+     * @return array<int, array<string, mixed>>
+     */
+    private function withElementLineEvidence(array $items, array $lineRecord): array
+    {
+        if ($lineRecord['bbox'] === null) {
+            return $items;
+        }
+
+        foreach ($items as $index => $item) {
+            if (($item['bbox'] ?? null) === null) {
+                $item['bbox'] = $lineRecord['bbox'];
+            }
+
+            $item['source_ref'] = $this->withLineSourceEvidence(
+                is_array($item['source_ref'] ?? null) ? $item['source_ref'] : [],
+                $lineRecord
+            );
+
+            $payload = is_array($item['normalized_payload'] ?? null) ? $item['normalized_payload'] : [];
+            $payload['ocr_line_bbox'] = $lineRecord['bbox'];
+            $payload['ocr_line_hash'] = $lineRecord['line_hash'];
+            $item['normalized_payload'] = $payload;
+
+            $items[$index] = $item;
+        }
+
+        return $items;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $takeoffs
+     * @param array{text: string, bbox: array<string, float>|null, block_index: int|null, line_index: int|null, line_hash: string} $lineRecord
+     * @return array<int, array<string, mixed>>
+     */
+    private function withTakeoffLineEvidence(array $takeoffs, array $lineRecord): array
+    {
+        if ($lineRecord['bbox'] === null) {
+            return $takeoffs;
+        }
+
+        foreach ($takeoffs as $index => $takeoff) {
+            $sourceRefs = is_array($takeoff['source_refs'] ?? null) ? $takeoff['source_refs'] : [];
+            $takeoff['source_refs'] = array_map(
+                fn (mixed $sourceRef): array => $this->withLineSourceEvidence(
+                    is_array($sourceRef) ? $sourceRef : [],
+                    $lineRecord
+                ),
+                $sourceRefs
+            );
+
+            $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
+            $payload['ocr_line_bbox'] = $lineRecord['bbox'];
+            $payload['ocr_line_hash'] = $lineRecord['line_hash'];
+            $takeoff['normalized_payload'] = $payload;
+
+            $takeoffs[$index] = $takeoff;
+        }
+
+        return $takeoffs;
+    }
+
+    /**
+     * @param array<string, mixed> $sourceRef
+     * @param array{text: string, bbox: array<string, float>|null, block_index: int|null, line_index: int|null, line_hash: string} $lineRecord
+     * @return array<string, mixed>
+     */
+    private function withLineSourceEvidence(array $sourceRef, array $lineRecord): array
+    {
+        if ($lineRecord['bbox'] === null) {
+            return $sourceRef;
+        }
+
+        return [
+            ...$sourceRef,
+            'evidence_kind' => 'ocr_line',
+            'bbox' => $lineRecord['bbox'],
+            'block_index' => $lineRecord['block_index'],
+            'line_index' => $lineRecord['line_index'],
+            'line_hash' => $lineRecord['line_hash'],
+        ];
+    }
+
+    /**
+     * @param array<int, mixed> $words
+     * @return array<string, float>|null
+     */
+    private function wordsBbox(array $words): ?array
+    {
+        $boxes = [];
+
+        foreach ($words as $word) {
+            if (!is_array($word)) {
+                continue;
+            }
+
+            $bbox = $this->normalizedBbox($word['bounding_box'] ?? $word['bbox'] ?? null);
+
+            if ($bbox !== null) {
+                $boxes[] = $bbox;
+            }
+        }
+
+        if ($boxes === []) {
+            return null;
+        }
+
+        $left = min(array_column($boxes, 'x'));
+        $top = min(array_column($boxes, 'y'));
+        $right = max(array_map(static fn (array $bbox): float => $bbox['x'] + $bbox['width'], $boxes));
+        $bottom = max(array_map(static fn (array $bbox): float => $bbox['y'] + $bbox['height'], $boxes));
+
+        return [
+            'x' => $left,
+            'y' => $top,
+            'width' => round($right - $left, 4),
+            'height' => round($bottom - $top, 4),
+        ];
+    }
+
+    /**
+     * @return array<string, float>|null
+     */
+    private function normalizedBbox(mixed $bbox): ?array
+    {
+        if (!is_array($bbox)) {
+            return null;
+        }
+
+        if ($this->hasNumericKeys($bbox, ['x', 'y', 'width', 'height'])) {
+            return [
+                'x' => (float) $bbox['x'],
+                'y' => (float) $bbox['y'],
+                'width' => (float) $bbox['width'],
+                'height' => (float) $bbox['height'],
+            ];
+        }
+
+        if ($this->hasNumericKeys($bbox, ['left', 'top', 'right', 'bottom'])) {
+            return [
+                'x' => (float) $bbox['left'],
+                'y' => (float) $bbox['top'],
+                'width' => round((float) $bbox['right'] - (float) $bbox['left'], 4),
+                'height' => round((float) $bbox['bottom'] - (float) $bbox['top'], 4),
+            ];
+        }
+
+        if (array_is_list($bbox) && count($bbox) === 4 && is_numeric($bbox[0] ?? null) && is_numeric($bbox[1] ?? null)) {
+            return [
+                'x' => (float) $bbox[0],
+                'y' => (float) $bbox[1],
+                'width' => (float) $bbox[2],
+                'height' => (float) $bbox[3],
+            ];
+        }
+
+        return $this->bboxFromPoints($bbox['vertices'] ?? $bbox['points'] ?? $bbox['polygon'] ?? $bbox);
+    }
+
+    /**
+     * @param array<int, string> $keys
+     */
+    private function hasNumericKeys(array $value, array $keys): bool
+    {
+        foreach ($keys as $key) {
+            if (!is_numeric($value[$key] ?? null)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * @return array<string, float>|null
+     */
+    private function bboxFromPoints(mixed $points): ?array
+    {
+        if (!is_array($points)) {
+            return null;
+        }
+
+        $coordinates = [];
+
+        foreach ($points as $point) {
+            if (!is_array($point)) {
+                continue;
+            }
+
+            $x = $point['x'] ?? $point[0] ?? null;
+            $y = $point['y'] ?? $point[1] ?? null;
+
+            if (is_numeric($x) && is_numeric($y)) {
+                $coordinates[] = [(float) $x, (float) $y];
+            }
+        }
+
+        if ($coordinates === []) {
+            return null;
+        }
+
+        $xs = array_column($coordinates, 0);
+        $ys = array_column($coordinates, 1);
+        $left = min($xs);
+        $top = min($ys);
+        $right = max($xs);
+        $bottom = max($ys);
+
+        return [
+            'x' => $left,
+            'y' => $top,
+            'width' => round($right - $left, 4),
+            'height' => round($bottom - $top, 4),
+        ];
     }
 
     private function unique(array $items, array $keys): array

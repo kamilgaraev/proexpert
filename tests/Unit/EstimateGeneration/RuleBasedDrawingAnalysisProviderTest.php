@@ -55,6 +55,102 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
         self::assertSame(1, $roomTakeoff['source_refs'][0]['page_number']);
     }
 
+    public function test_attaches_ocr_line_bbox_to_elements_takeoffs_and_aggregate_sources(): void
+    {
+        $roomBbox = [
+            'vertices' => [
+                ['x' => 120, 'y' => 260],
+                ['x' => 280, 'y' => 260],
+                ['x' => 280, 'y' => 300],
+                ['x' => 120, 'y' => 300],
+            ],
+        ];
+        $normalizedRoomBbox = ['x' => 120.0, 'y' => 260.0, 'width' => 160.0, 'height' => 40.0];
+
+        $recognition = new OcrRecognitionResult(
+            provider: 'test',
+            model: 'page',
+            pages: [
+                new OcrPageResult(
+                    pageNumber: 1,
+                    text: implode("\n", [
+                        'Планировка квартиры',
+                        'Гостиная 46,52 м²',
+                        'Кухня 9,99 м2',
+                    ]),
+                    blocks: [[
+                        'text' => '',
+                        'bounding_box' => null,
+                        'lines' => [
+                            [
+                                'text' => 'Планировка квартиры',
+                                'bounding_box' => ['x' => 10, 'y' => 20, 'width' => 180, 'height' => 24],
+                                'words' => [],
+                            ],
+                            [
+                                'text' => 'Гостиная 46,52 м²',
+                                'bounding_box' => $roomBbox,
+                                'words' => [],
+                            ],
+                            [
+                                'text' => 'Кухня 9,99 м2',
+                                'bounding_box' => ['x' => 320, 'y' => 260, 'width' => 110, 'height' => 32],
+                                'words' => [],
+                            ],
+                        ],
+                    ]],
+                    width: 1200,
+                    height: 800,
+                    confidence: 0.93,
+                ),
+            ]
+        );
+
+        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+            documentId: 10,
+            filename: 'flat-plan.png',
+            recognition: $recognition
+        );
+
+        $roomElement = array_values(array_filter(
+            $result->elements,
+            static fn (array $element): bool => ($element['type'] ?? null) === 'room'
+                && ($element['label'] ?? null) === 'Гостиная'
+        ))[0] ?? null;
+        $roomTakeoff = array_values(array_filter(
+            $result->takeoffs,
+            static fn (array $takeoff): bool => ($takeoff['scope_key'] ?? null) === 'room_area'
+                && ($takeoff['name'] ?? null) === 'Гостиная'
+        ))[0] ?? null;
+        $floorAggregate = array_values(array_filter(
+            $result->takeoffs,
+            static function (array $takeoff): bool {
+                $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
+
+                return ($payload['quantity_key'] ?? null) === 'finish.floor';
+            }
+        ))[0] ?? null;
+
+        self::assertIsArray($roomElement);
+        self::assertSame($normalizedRoomBbox, $roomElement['bbox']);
+        self::assertSame($normalizedRoomBbox, $roomElement['source_ref']['bbox']);
+        self::assertSame('ocr_line', $roomElement['source_ref']['evidence_kind']);
+        self::assertSame(0, $roomElement['source_ref']['block_index']);
+        self::assertSame(1, $roomElement['source_ref']['line_index']);
+        self::assertSame($normalizedRoomBbox, $roomElement['normalized_payload']['ocr_line_bbox']);
+
+        self::assertIsArray($roomTakeoff);
+        self::assertSame($normalizedRoomBbox, $roomTakeoff['source_refs'][0]['bbox']);
+        self::assertSame('ocr_line', $roomTakeoff['source_refs'][0]['evidence_kind']);
+        self::assertSame($normalizedRoomBbox, $roomTakeoff['normalized_payload']['ocr_line_bbox']);
+
+        self::assertIsArray($floorAggregate);
+        self::assertNotEmpty(array_filter(
+            $floorAggregate['source_refs'],
+            static fn (array $sourceRef): bool => ($sourceRef['bbox'] ?? null) === $normalizedRoomBbox
+        ));
+    }
+
     public function test_classifies_floor_plan_and_builds_aggregate_takeoffs_from_room_areas(): void
     {
         $recognition = new OcrRecognitionResult(

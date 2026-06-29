@@ -41,6 +41,36 @@ final class EstimatorScopeInferenceServiceTest extends TestCase
         self::assertSame(42, $inferences[0]['normalized_payload']['quantity_value']);
     }
 
+    public function test_uses_source_takeoff_name_as_specification_inference_title(): void
+    {
+        $inferences = (new EstimatorScopeInferenceService())->inferFromDocumentPayload([
+            'id' => 12,
+            'filename' => 'spec.xlsx',
+            'quantity_takeoffs' => [[
+                'scope_key' => 'specification_quantity',
+                'name' => 'Radiator steel panel 22 500x1000',
+                'unit' => 'pcs',
+                'quantity' => 8,
+                'source_refs' => [[
+                    'type' => 'document',
+                    'document_id' => 12,
+                    'filename' => 'spec.xlsx',
+                    'page_number' => 1,
+                ]],
+                'normalized_payload' => [
+                    'quantity_key' => 'heating.radiators',
+                    'scope_type' => 'heating',
+                    'source' => 'specification',
+                ],
+            ]],
+        ]);
+
+        self::assertCount(1, $inferences);
+        self::assertSame('specification_takeoff', $inferences[0]['inference_type']);
+        self::assertSame('heating', $inferences[0]['scope_type']);
+        self::assertSame('Radiator steel panel 22 500x1000', $inferences[0]['title']);
+    }
+
     public function test_infers_work_volume_statement_scope_from_takeoff_payload(): void
     {
         $inferences = (new EstimatorScopeInferenceService())->inferFromDocumentPayload([
@@ -69,7 +99,7 @@ final class EstimatorScopeInferenceServiceTest extends TestCase
         self::assertCount(1, $inferences);
         self::assertSame('work_volume_takeoff', $inferences[0]['inference_type']);
         self::assertSame('earthworks', $inferences[0]['scope_type']);
-        self::assertSame('Земляные работы', $inferences[0]['title']);
+        self::assertSame('Обратная засыпка пазух', $inferences[0]['title']);
         self::assertSame('work_volume_statement', $inferences[0]['normalized_payload']['source']);
     }
 
