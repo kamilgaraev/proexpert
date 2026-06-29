@@ -62,14 +62,15 @@ class EstimateValidationService
                         $flags[] = 'missing_quantity_basis';
                     }
 
-                    if ($isPricedItem && $total <= 0) {
+                    $priceMissing = $isPricedItem && $total <= 0;
+                    $resourcesMissing = $isPricedItem && !$hasResources;
+
+                    if ($priceMissing) {
                         $flags[] = 'missing_price';
                         $zeroPriceWorkItemsCount++;
-                    } elseif ($isPricedItem) {
-                        $pricedWorkItemsCount++;
                     }
 
-                    if ($isPricedItem && !$hasResources) {
+                    if ($resourcesMissing) {
                         $flags[] = 'missing_resources';
                     }
 
@@ -92,6 +93,13 @@ class EstimateValidationService
                         $flags[] = 'safe_norm_required';
                         $flags[] = 'pricing_not_calculated';
                         $safeNormRequiredWorkItemsCount++;
+                    }
+
+                    if ($isPricedItem && ($priceMissing || $resourcesMissing || $safeNormRequired)) {
+                        $workItem['pricing_status'] = 'not_calculated';
+                        $workItem['pricing_blocker'] = $workItem['pricing_blocker']
+                            ?? ($safeNormRequired ? 'normative_required' : 'normative_resources_or_prices_missing');
+                        $flags[] = 'pricing_not_calculated';
                     }
 
                     if (in_array('unit_mismatch', $normativeWarnings, true)) {
@@ -123,10 +131,14 @@ class EstimateValidationService
 
                     if ($isPricedItem && (string) ($workItem['pricing_status'] ?? '') === 'not_calculated') {
                         $notCalculatedWorkItemsCount++;
+                    } elseif ($isPricedItem) {
+                        $pricedWorkItemsCount++;
                     }
 
                     $flags = array_values(array_unique($flags));
                     $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex]['validation_flags'] = $flags;
+                    $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex]['pricing_status'] = $workItem['pricing_status'] ?? null;
+                    $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex]['pricing_blocker'] = $workItem['pricing_blocker'] ?? null;
                     $sectionTotal += $total;
                     $confidenceSum += (float) ($workItem['confidence'] ?? 0);
                     $confidenceCount++;
