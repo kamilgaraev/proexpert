@@ -24,6 +24,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                     ...$this->roomElements($documentId, $filename, $page, $line),
                     ...$this->openingElements($documentId, $filename, $page, $line),
                     ...$this->engineeringRouteElements($documentId, $filename, $page, $line),
+                    ...$this->specificationElements($documentId, $filename, $page, $line),
                     ...$this->dimensionElements($documentId, $filename, $page, $line),
                 );
 
@@ -32,6 +33,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                     ...$this->roomTakeoffs($documentId, $filename, $page, $line),
                     ...$this->openingTakeoffs($documentId, $filename, $page, $line),
                     ...$this->engineeringRouteTakeoffs($documentId, $filename, $page, $line),
+                    ...$this->specificationTakeoffs($documentId, $filename, $page, $line),
                 );
             }
         }
@@ -149,6 +151,34 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         ]];
     }
 
+    private function specificationElements(int $documentId, string $filename, OcrPageResult $page, string $line): array
+    {
+        $item = $this->specificationLine($line);
+
+        if ($item === null) {
+            return [];
+        }
+
+        return [[
+            'type' => 'specification_item',
+            'label' => $item['name'],
+            'value_text' => $this->formatNumber($item['quantity']) . ' ' . $item['unit'],
+            'value_number' => $item['quantity'],
+            'unit' => $item['unit'],
+            'bbox' => null,
+            'geometry' => null,
+            'confidence' => $this->confidence($page),
+            'source_ref' => $this->sourceRef($documentId, $filename, $page, $line),
+            'normalized_payload' => [
+                'line' => $line,
+                'quantity_key' => $item['quantity_key'],
+                'scope_type' => $item['scope_type'],
+                'source' => 'specification',
+            ],
+            'page_number' => $page->pageNumber,
+        ]];
+    }
+
     private function dimensionElements(int $documentId, string $filename, OcrPageResult $page, string $line): array
     {
         if (preg_match('/(?<length>\d+(?:[,.]\d+)?)\s*[xх×]\s*(?<width>\d+(?:[,.]\d+)?)/iu', $line, $match) !== 1) {
@@ -254,6 +284,37 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         ]];
     }
 
+    private function specificationTakeoffs(int $documentId, string $filename, OcrPageResult $page, string $line): array
+    {
+        $item = $this->specificationLine($line);
+
+        if ($item === null) {
+            return [];
+        }
+
+        return [[
+            'source_element_ids' => [],
+            'scope_key' => 'specification_quantity',
+            'work_intent' => [
+                'scope' => $item['scope_type'],
+                'basis' => 'specification_row',
+            ],
+            'name' => $item['name'],
+            'unit' => $item['unit'],
+            'quantity' => $item['quantity'],
+            'formula' => $this->formatNumber($item['quantity']) . ' ' . $item['unit'],
+            'confidence' => $this->confidence($page),
+            'source_refs' => [$this->sourceRef($documentId, $filename, $page, $line)],
+            'normalized_payload' => [
+                'line' => $line,
+                'quantity_key' => $item['quantity_key'],
+                'source' => 'specification',
+                'review_required' => false,
+            ],
+            'page_number' => $page->pageNumber,
+        ]];
+    }
+
     private function sourceRef(int $documentId, string $filename, OcrPageResult $page, string $line): array
     {
         return [
@@ -348,6 +409,124 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         }
 
         return mb_substr($label, 0, 80);
+    }
+
+    /**
+     * @return array{name: string, unit: string, quantity: float, quantity_key: string, scope_type: string}|null
+     */
+    private function specificationLine(string $line): ?array
+    {
+        $normalized = mb_strtolower(trim($line));
+
+        if ($normalized === '' || preg_match('/(?:^|\s)(поз\.?|наименование|количество|ед\.?\s*изм)/u', $normalized) === 1) {
+            return null;
+        }
+
+        if (!$this->containsAny($normalized, [
+            'светиль',
+            'радиатор',
+            'труб',
+            'кабел',
+            'лоток',
+            'двер',
+            'окн',
+            'ворот',
+            'сан',
+            'унитаз',
+            'раков',
+            'душ',
+            'воздуховод',
+            'вентиляц',
+            'решетк',
+            'диффузор',
+            'тепловой узел',
+        ])) {
+            return null;
+        }
+
+        $unitPattern = '(?<unit>шт|штук|компл|м2|м²|м3|м³|п\.?\s*м|м)';
+        $quantityPattern = '(?<quantity>\d{1,6}(?:[,.]\d{1,3})?)';
+        $match = [];
+
+        if (preg_match('/^(?:\d+[.)]?\s+)?(?<name>.+?)\s+' . $unitPattern . '\s+' . $quantityPattern . '\b/iu', $line, $match) !== 1) {
+            if (preg_match('/^(?:\d+[.)]?\s+)?(?<name>.+?)\s+' . $quantityPattern . '\s+' . $unitPattern . '\b/iu', $line, $match) !== 1) {
+                return null;
+            }
+        }
+
+        $name = $this->specificationName((string) $match['name']);
+        $unit = $this->normalizeSpecificationUnit((string) $match['unit']);
+        $quantity = $this->number((string) $match['quantity']);
+        $quantityKey = $this->specificationQuantityKey($name);
+
+        if ($name === '' || $quantity <= 0 || $quantityKey === null) {
+            return null;
+        }
+
+        return [
+            'name' => $name,
+            'unit' => $unit,
+            'quantity' => round($quantity, 4),
+            'quantity_key' => $quantityKey,
+            'scope_type' => $this->scopeTypeForQuantityKey($quantityKey),
+        ];
+    }
+
+    private function specificationName(string $name): string
+    {
+        $name = trim((string) preg_replace('/\s+/u', ' ', $name));
+        $name = trim((string) preg_replace('/^\d+[.)]?\s*/u', '', $name));
+
+        return mb_substr($name, 0, 160);
+    }
+
+    private function normalizeSpecificationUnit(string $unit): string
+    {
+        $unit = mb_strtolower((string) preg_replace('/\s+/u', ' ', trim($unit)));
+
+        return match ($unit) {
+            'штук' => 'шт',
+            'м²' => 'м2',
+            'м³' => 'м3',
+            'п м', 'п. м', 'п.м' => 'м',
+            default => $unit,
+        };
+    }
+
+    private function specificationQuantityKey(string $name): ?string
+    {
+        $normalized = mb_strtolower($name);
+
+        return match (true) {
+            str_contains($normalized, 'светиль') => 'warehouse.lighting',
+            str_contains($normalized, 'радиатор') => 'heating.radiators',
+            str_contains($normalized, 'тепловой узел') => 'heating.unit',
+            str_contains($normalized, 'кабел') => 'electrical.power_lines',
+            str_contains($normalized, 'лоток') => 'electrical.trays',
+            str_contains($normalized, 'канализац') && str_contains($normalized, 'труб') => 'sewerage.pipe',
+            str_contains($normalized, 'отоп') && str_contains($normalized, 'труб') => 'heating.pipe',
+            (str_contains($normalized, 'вод') || str_contains($normalized, 'хвс') || str_contains($normalized, 'гвс')) && str_contains($normalized, 'труб') => 'plumbing.pipe',
+            str_contains($normalized, 'труб') => 'plumbing.pipe',
+            str_contains($normalized, 'унитаз') || str_contains($normalized, 'раков') || str_contains($normalized, 'душ') || str_contains($normalized, 'сан') => 'sanitary.points',
+            str_contains($normalized, 'двер') => 'openings.doors',
+            str_contains($normalized, 'окн') => 'openings.windows',
+            str_contains($normalized, 'ворот') => 'warehouse.gates',
+            str_contains($normalized, 'воздуховод') || str_contains($normalized, 'вентиляц') => 'ventilation.air_exchange',
+            str_contains($normalized, 'решетк') || str_contains($normalized, 'диффузор') => 'ventilation.office_points',
+            default => null,
+        };
+    }
+
+    private function scopeTypeForQuantityKey(string $quantityKey): string
+    {
+        return match (true) {
+            str_starts_with($quantityKey, 'electrical.'), $quantityKey === 'warehouse.lighting' => 'electrical',
+            str_starts_with($quantityKey, 'heating.') => 'heating',
+            str_starts_with($quantityKey, 'plumbing.'), str_starts_with($quantityKey, 'sewerage.'), str_starts_with($quantityKey, 'sanitary.') => 'plumbing',
+            str_starts_with($quantityKey, 'openings.'), $quantityKey === 'warehouse.gates' => 'openings',
+            str_starts_with($quantityKey, 'ventilation.') => 'ventilation',
+            default => 'engineering',
+        };
     }
 
     /**
@@ -491,9 +670,13 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 $pageElements,
                 static fn (array $element): bool => ($element['type'] ?? null) === 'dimension'
             ));
+            $specificationCount = count(array_filter(
+                $pageTakeoffs,
+                static fn (array $takeoff): bool => ($takeoff['scope_key'] ?? null) === 'specification_quantity'
+            ));
             $text = mb_strtolower($page->text . ' ' . $filename);
             $hasPlanSignal = preg_match('/план|планировка|экспликац/ui', $text) === 1;
-            $hasSpecificationSignal = preg_match('/спецификац|ведомость|экспликац/ui', $text) === 1;
+            $hasSpecificationSignal = $specificationCount > 0 || preg_match('/спецификац|ведомость|экспликац/ui', $text) === 1;
             $hasEstimateSignal = preg_match('/(?:гэсн|фер|тер)?\s*\d{2}-\d{2}-\d{3}-\d{2,3}|смет/ui', $text) === 1;
             $role = $this->pageRole($hasPlanSignal, $hasSpecificationSignal, $hasEstimateSignal, $roomCount, $dimensionCount);
 
@@ -507,9 +690,11 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                     $hasEstimateSignal ? 'estimate_or_norm_keywords' : null,
                     $roomCount > 0 ? 'room_areas' : null,
                     $dimensionCount > 0 ? 'dimensions' : null,
+                    $specificationCount > 0 ? 'specification_quantities' : null,
                 ])),
                 'room_area_count' => $roomCount,
                 'dimension_count' => $dimensionCount,
+                'specification_quantity_count' => $specificationCount,
             ];
         }
 
@@ -652,5 +837,19 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             str_contains($normalized, 'ворота') => 'openings.gates',
             default => 'openings.doors',
         };
+    }
+
+    /**
+     * @param array<int, string> $needles
+     */
+    private function containsAny(string $value, array $needles): bool
+    {
+        foreach ($needles as $needle) {
+            if (str_contains($value, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

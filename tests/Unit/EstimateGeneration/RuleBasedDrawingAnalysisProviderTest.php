@@ -105,4 +105,48 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
         self::assertTrue($takeoffsByKey['rough.walls']['normalized_payload']['review_required'] ?? false);
         self::assertSame(8.0, $takeoffsByKey['openings.doors']['quantity']);
     }
+
+    public function test_extracts_specification_rows_as_quantity_takeoffs(): void
+    {
+        $recognition = new OcrRecognitionResult(
+            provider: 'test',
+            model: 'spreadsheet',
+            pages: [
+                new OcrPageResult(
+                    pageNumber: 1,
+                    text: implode("\n", [
+                        'Спецификация оборудования',
+                        'Поз. Наименование Ед. Количество',
+                        '1 Светильник светодиодный шт 42',
+                        '2 Радиатор стальной шт 8',
+                        '3 Труба отопления м 36',
+                        '4 Дверь ДП-1 шт 5',
+                    ]),
+                    confidence: 0.99
+                ),
+            ]
+        );
+
+        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+            documentId: 10,
+            filename: 'spec.xlsx',
+            recognition: $recognition
+        );
+        $takeoffsByKey = [];
+
+        foreach ($result->takeoffs as $takeoff) {
+            $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
+            $takeoffsByKey[(string) ($payload['quantity_key'] ?? '')] = $takeoff;
+        }
+
+        self::assertSame('specification', $result->summary['document_profile']['document_role'] ?? null);
+        self::assertSame('specification', $result->summary['page_profiles'][0]['page_role'] ?? null);
+        self::assertArrayHasKey('warehouse.lighting', $takeoffsByKey);
+        self::assertArrayHasKey('heating.radiators', $takeoffsByKey);
+        self::assertArrayHasKey('heating.pipe', $takeoffsByKey);
+        self::assertArrayHasKey('openings.doors', $takeoffsByKey);
+        self::assertSame(42.0, $takeoffsByKey['warehouse.lighting']['quantity']);
+        self::assertSame('specification_quantity', $takeoffsByKey['warehouse.lighting']['scope_key']);
+        self::assertSame('specification', $takeoffsByKey['warehouse.lighting']['normalized_payload']['source']);
+    }
 }

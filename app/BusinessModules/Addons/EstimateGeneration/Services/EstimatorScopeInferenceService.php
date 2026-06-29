@@ -157,8 +157,34 @@ final class EstimatorScopeInferenceService
                 'unit' => $takeoff['unit'] ?? 'м',
                 'takeoff' => $takeoff,
             ]),
+            'specification_quantity' => $this->specificationInference($takeoff, $document),
             default => null,
         };
+    }
+
+    /**
+     * @param array<string, mixed> $takeoff
+     * @param array<string, mixed> $document
+     * @return array<string, mixed>|null
+     */
+    private function specificationInference(array $takeoff, array $document): ?array
+    {
+        $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
+        $quantityKey = (string) ($payload['quantity_key'] ?? $takeoff['quantity_key'] ?? '');
+
+        if ($quantityKey === '') {
+            return null;
+        }
+
+        $scopeType = $this->scopeFromQuantityKey($quantityKey);
+
+        return $this->baseInference('specification_takeoff', $scopeType, $this->scopeTitle($scopeType), 0.84, $document, [
+            'quantity_key' => $quantityKey,
+            'quantity_value' => $takeoff['quantity'] ?? $takeoff['value'] ?? null,
+            'unit' => $takeoff['unit'] ?? $payload['unit'] ?? null,
+            'takeoff' => $takeoff,
+            'source' => 'specification',
+        ]);
     }
 
     /**
@@ -242,6 +268,19 @@ final class EstimatorScopeInferenceService
             str_contains($value, 'heat') || str_contains($value, 'отоп') => 'heating',
             str_contains($value, 'water') || str_contains($value, 'plumb') || str_contains($value, 'вод') => 'plumbing',
             default => null,
+        };
+    }
+
+    private function scopeFromQuantityKey(string $quantityKey): string
+    {
+        return match (true) {
+            str_starts_with($quantityKey, 'electrical.'), $quantityKey === 'warehouse.lighting' => 'electrical',
+            str_starts_with($quantityKey, 'heating.') => 'heating',
+            str_starts_with($quantityKey, 'ventilation.') => 'ventilation',
+            str_starts_with($quantityKey, 'openings.'), $quantityKey === 'warehouse.gates' => 'openings',
+            str_starts_with($quantityKey, 'sewerage.') => 'sewerage',
+            str_starts_with($quantityKey, 'plumbing.'), str_starts_with($quantityKey, 'sanitary.') => 'plumbing',
+            default => 'engineering',
         };
     }
 
