@@ -62,6 +62,9 @@ class EstimatorReadinessService
         $operationWorkItems = (int) ($quality['operation_work_items'] ?? 0);
         $pricedTarget = max($totalWorkItems - $operationWorkItems, 0);
         $normativeItems = is_array($quality['normative_items'] ?? null) ? $quality['normative_items'] : [];
+        $zeroTotalCalculatedItems = $this->zeroTotalCalculatedPricedWorkItems($draft);
+        $pricedWorkItems = max((int) ($quality['priced_work_items'] ?? 0) - $zeroTotalCalculatedItems, 0);
+        $notCalculatedWorkItems = (int) ($quality['not_calculated_work_items'] ?? 0) + $zeroTotalCalculatedItems;
 
         return [
             'documents_total' => $documents->count(),
@@ -76,14 +79,51 @@ class EstimatorReadinessService
             'drawing_elements' => $this->sumDocumentCount($documents, 'drawing_elements_count', 'drawingElements'),
             'quantity_takeoffs' => $this->sumDocumentCount($documents, 'quantity_takeoffs_count', 'quantityTakeoffs'),
             'scope_inferences' => $this->sumDocumentCount($documents, 'scope_inferences_count', 'scopeInferences'),
-            'priced_work_items' => (int) ($quality['priced_work_items'] ?? 0),
+            'priced_work_items' => $pricedWorkItems,
             'priced_work_items_total' => $pricedTarget,
             'operation_work_items' => $operationWorkItems,
-            'not_calculated_work_items' => (int) ($quality['not_calculated_work_items'] ?? 0),
+            'not_calculated_work_items' => $notCalculatedWorkItems,
+            'zero_total_calculated_work_items' => $zeroTotalCalculatedItems,
             'safe_norm_required_work_items' => (int) ($quality['safe_norm_required_work_items'] ?? 0),
             'normative_requires_review' => (int) ($normativeItems['requires_review'] ?? $quality['safe_norm_required_work_items'] ?? 0),
             'problem_flags' => count(is_array($draft['problem_flags'] ?? null) ? $draft['problem_flags'] : ($session->problem_flags ?? [])),
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $draft
+     */
+    private function zeroTotalCalculatedPricedWorkItems(array $draft): int
+    {
+        $count = 0;
+
+        foreach (($draft['local_estimates'] ?? []) as $localEstimate) {
+            if (!is_array($localEstimate)) {
+                continue;
+            }
+
+            foreach (($localEstimate['sections'] ?? []) as $section) {
+                if (!is_array($section)) {
+                    continue;
+                }
+
+                foreach (($section['work_items'] ?? []) as $workItem) {
+                    if (!is_array($workItem)) {
+                        continue;
+                    }
+
+                    if (
+                        ($workItem['item_type'] ?? null) === 'priced_work'
+                        && ($workItem['pricing_status'] ?? null) === 'calculated'
+                        && (float) ($workItem['total_cost'] ?? 0) <= 0
+                    ) {
+                        $count++;
+                    }
+                }
+            }
+        }
+
+        return $count;
     }
 
     /**

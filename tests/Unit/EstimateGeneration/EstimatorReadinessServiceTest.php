@@ -102,6 +102,39 @@ class EstimatorReadinessServiceTest extends TestCase
         self::assertSame([], $readiness['blockers']);
     }
 
+    public function test_blocks_apply_when_calculated_priced_item_has_zero_total_cost(): void
+    {
+        $draft = $this->draft([
+            'status' => 'ready',
+            'level' => 'passed',
+            'total_work_items' => 1,
+            'priced_work_items' => 1,
+            'operation_work_items' => 0,
+            'not_calculated_work_items' => 0,
+            'safe_norm_required_work_items' => 0,
+            'normative_items' => ['requires_review' => 0],
+        ]);
+        $draft['local_estimates'][0]['sections'] = [[
+            'key' => 'section-1',
+            'work_items' => [[
+                'key' => 'work-1',
+                'item_type' => 'priced_work',
+                'pricing_status' => 'calculated',
+                'total_cost' => 0,
+            ]],
+        ]];
+
+        $readiness = $this->service()->evaluate($this->session([
+            $this->document('ready', facts: 4, quantityTakeoffs: 2),
+        ], $draft));
+
+        self::assertSame('draft_needs_review', $readiness['status']);
+        self::assertFalse($readiness['can_apply']);
+        self::assertSame(0, $readiness['metrics']['priced_work_items']);
+        self::assertSame(1, $readiness['metrics']['zero_total_calculated_work_items']);
+        self::assertContains('prices_require_review', array_column($readiness['blockers'], 'code'));
+    }
+
     /**
      * @param array<int, EstimateGenerationDocument> $documents
      * @param array<string, mixed> $draft

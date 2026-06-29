@@ -92,6 +92,76 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertNotContains('site.setup', array_column($pricedItems, 'quantity_formula'));
     }
 
+    public function test_unknown_engineering_package_does_not_fall_back_to_electrical_or_generic_work(): void
+    {
+        $localEstimate = $this->localEstimate('unclassified_engineering', 'Инженерные системы', 'engineering', 12);
+
+        $items = $this->planner()->build($localEstimate, $localEstimate['sections'][0], [
+            'document_context' => [
+                'facts_summary' => [
+                    'total_area_m2' => 214,
+                ],
+            ],
+        ]);
+
+        self::assertSame([], $items);
+    }
+
+    public function test_unknown_custom_scope_does_not_create_generic_complex_work(): void
+    {
+        $localEstimate = $this->localEstimate('local-custom', 'Основные строительные работы', 'custom', 12);
+
+        $items = $this->planner()->build($localEstimate, $localEstimate['sections'][0], [
+            'document_context' => [
+                'facts_summary' => [
+                    'total_area_m2' => 214,
+                ],
+            ],
+        ]);
+
+        self::assertSame([], $items);
+    }
+
+    public function test_stairs_package_uses_specific_normative_intents_instead_of_generic_complex_work(): void
+    {
+        $localEstimate = $this->localEstimate('stairs', 'Лестницы', 'stairs', 8);
+
+        $items = $this->planner()->build($localEstimate, $localEstimate['sections'][0], [
+            'document_context' => [
+                'facts_summary' => [
+                    'total_area_m2' => 214,
+                ],
+            ],
+        ]);
+        $pricedItems = $this->pricedItems($items);
+        $names = array_column($pricedItems, 'name');
+
+        self::assertContains('Устройство лестничных маршей', $names);
+        self::assertContains('Ограждение лестниц', $names);
+        self::assertNotContains('Комплекс строительных работ', $names);
+        self::assertNotContains('site.setup', array_column($pricedItems, 'quantity_formula'));
+        self::assertSame(count($pricedItems), count($items));
+        self::assertNotContains('operation', array_column($items, 'item_type'));
+    }
+
+    public function test_known_planner_package_keys_generate_subject_items_without_custom_fallback(): void
+    {
+        $planner = $this->planner();
+
+        foreach ($this->knownPackageScopes() as $packageKey => $scopeType) {
+            $localEstimate = $this->localEstimate($packageKey, $packageKey, $scopeType, 4);
+            $items = $planner->build($localEstimate, $localEstimate['sections'][0], $this->analysisForPackage($packageKey));
+            $pricedItems = $this->pricedItems($items);
+            $names = array_column($pricedItems, 'name');
+
+            self::assertNotEmpty($pricedItems, $packageKey);
+            self::assertSame(count($pricedItems), count($items), $packageKey);
+            self::assertNotContains('operation', array_column($items, 'item_type'), $packageKey);
+            self::assertNotContains('custom', array_column($pricedItems, 'work_category'), $packageKey);
+            self::assertNotContains('Комплекс строительных работ', $names, $packageKey);
+        }
+    }
+
     public function test_mixed_office_warehouse_uses_document_scope_and_flat_roof_quantities(): void
     {
         $analysis = [
@@ -302,5 +372,86 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             new ProjectDocumentNormativeReferenceExtractor(),
             new EstimatorScopeInferenceService(),
         );
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function knownPackageScopes(): array
+    {
+        return [
+            'preconstruction' => 'site',
+            'site_preparation' => 'site',
+            'earthworks' => 'foundation',
+            'foundation' => 'foundation',
+            'foundations' => 'foundation',
+            'walls' => 'walls',
+            'office_partitions' => 'walls',
+            'slabs' => 'slabs',
+            'industrial_floor' => 'slabs',
+            'stairs' => 'stairs',
+            'metal_frame' => 'structural',
+            'envelope' => 'facade',
+            'facade' => 'facade',
+            'roof' => 'roof',
+            'openings' => 'openings',
+            'gates' => 'openings',
+            'entrance_group' => 'openings',
+            'electrical' => 'electrical',
+            'power_supply' => 'electrical',
+            'lighting' => 'electrical',
+            'low_current' => 'electrical',
+            'server_room' => 'electrical',
+            'plumbing' => 'plumbing',
+            'water_sewerage' => 'plumbing',
+            'sanitary_rooms' => 'plumbing',
+            'sewerage' => 'sewerage',
+            'heating' => 'heating',
+            'ventilation' => 'ventilation',
+            'fire_safety' => 'engineering',
+            'rough_finishing' => 'finishing',
+            'finish_finishing' => 'finishing',
+            'office_finishing' => 'finishing',
+            'external_networks' => 'site',
+            'siteworks' => 'site',
+            'roads' => 'site',
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function analysisForPackage(string $packageKey): array
+    {
+        $takeoffs = match ($packageKey) {
+            'external_networks' => [[
+                'quantity_key' => 'networks.external',
+                'name' => 'Длина наружных сетей по плану',
+                'unit' => 'м',
+                'quantity' => 42.5,
+            ]],
+            'siteworks' => [[
+                'quantity_key' => 'siteworks.area',
+                'name' => 'Площадь благоустройства по генплану',
+                'unit' => 'м2',
+                'quantity' => 120,
+            ]],
+            'roads' => [[
+                'quantity_key' => 'warehouse.roads',
+                'name' => 'Площадь дорог и площадок по генплану',
+                'unit' => 'м2',
+                'quantity' => 180,
+            ]],
+            default => [],
+        };
+
+        return [
+            'document_context' => [
+                'facts_summary' => [
+                    'total_area_m2' => 214,
+                ],
+                'quantity_takeoffs' => $takeoffs,
+            ],
+        ];
     }
 }

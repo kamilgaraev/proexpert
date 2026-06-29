@@ -213,10 +213,6 @@ final class NormativeWorkItemPlannerService
             ...$this->scopeInferenceDefinitions($analysis, $scopeType),
         ];
 
-        if ($definitions === []) {
-            $definitions = $this->packageDefinitions('custom', $scopeType, $quantityModel);
-        }
-
         return $definitions;
     }
 
@@ -259,6 +255,11 @@ final class NormativeWorkItemPlannerService
                 $this->definition('Армирование плиты пола', 'slabs', 'армирование железобетонной плиты пола', 'warehouse.floor_rebar'),
                 $this->definition('Топпинг промышленного пола', 'industrial_floor', 'упрочнение верхнего слоя промышленного пола', 'warehouse.floor_hardener'),
                 $this->definition('Деформационные швы пола', 'industrial_floor', 'нарезка и герметизация деформационных швов', 'warehouse.floor_joints'),
+            ],
+            'stairs' => [
+                $this->definition('Устройство лестничных маршей', 'stairs', 'устройство лестничных маршей', 'stairs.flights'),
+                $this->definition('Устройство лестничных площадок', 'stairs', 'устройство лестничных площадок', 'stairs.landings'),
+                $this->definition('Ограждение лестниц', 'stairs', 'устройство ограждений лестниц', 'stairs.railings'),
             ],
             'metal_frame' => [
                 $this->definition('Монтаж металлических колонн', 'metal_frame', 'монтаж металлических колонн каркаса', 'warehouse.columns'),
@@ -341,27 +342,7 @@ final class NormativeWorkItemPlannerService
                 $this->definition('Благоустройство территории', 'site', 'благоустройство территории', 'siteworks.area'),
                 $this->definition('Дороги и площадки', 'site', 'устройство дорог и площадок', 'warehouse.roads'),
             ],
-            default => $this->scopeDefinitions($scopeType),
-        };
-    }
-
-    /**
-     * @return array<int, array<string, mixed>>
-     */
-    private function scopeDefinitions(string $scopeType): array
-    {
-        return match ($scopeType) {
-            'foundation' => $this->packageDefinitions('foundation', $scopeType, []),
-            'electrical', 'engineering' => $this->packageDefinitions('electrical', $scopeType, []),
-            'plumbing', 'water_supply' => $this->packageDefinitions('plumbing', $scopeType, []),
-            'sewerage' => $this->packageDefinitions('sewerage', $scopeType, []),
-            'heating' => $this->packageDefinitions('heating', $scopeType, []),
-            'ventilation' => $this->packageDefinitions('ventilation', $scopeType, []),
-            'roof' => $this->packageDefinitions('roof', $scopeType, ['features' => ['roof_type' => 'pitched']]),
-            'finishing' => $this->packageDefinitions('office_finishing', $scopeType, []),
-            default => [
-                $this->definition('Комплекс строительных работ', 'custom', 'строительные работы по проектной документации', 'site.setup'),
-            ],
+            default => [],
         };
     }
 

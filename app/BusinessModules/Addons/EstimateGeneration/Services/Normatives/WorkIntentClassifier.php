@@ -72,6 +72,7 @@ final class WorkIntentClassifier
 
         foreach ([
             'roof' => ['кровл', 'стропил', 'мауэрлат'],
+            'stairs' => ['лестниц', 'лестничн', 'марш'],
             'engineering' => ['отоплен', 'теплов', 'теплоснаб', 'завес', 'водоснаб', 'канализац', 'вентиляц', 'электр', 'кабел', 'труб', 'котел', 'радиатор'],
             'foundation' => ['фундамент', 'ростверк', 'свая', 'основани'],
             'walls' => ['стен', 'перегород', 'кладк'],
@@ -192,6 +193,10 @@ final class WorkIntentClassifier
             return 'roof';
         }
 
+        if ($this->containsAny($text, ['лестниц', 'лестничн', 'марш'])) {
+            return 'stairs';
+        }
+
         if ($this->containsAny($text, ['окн', 'двер', 'ворот'])) {
             return 'opening';
         }
@@ -272,7 +277,7 @@ final class WorkIntentClassifier
         $scope = mb_strtolower(trim($scope));
 
         return match ($scope) {
-            'foundation', 'roof', 'engineering', 'walls', 'slabs', 'facade', 'openings', 'finishing', 'site', 'temporary' => $scope,
+            'foundation', 'roof', 'stairs', 'engineering', 'walls', 'slabs', 'facade', 'openings', 'finishing', 'site', 'temporary' => $scope,
             'electrical', 'plumbing', 'heating', 'ventilation' => 'engineering',
             'rough_finishing', 'finish_finishing' => 'finishing',
             default => '',

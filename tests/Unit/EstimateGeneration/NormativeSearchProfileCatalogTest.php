@@ -48,4 +48,15 @@ final class NormativeSearchProfileCatalogTest extends TestCase
         $this->assertContains('кладк', $profile->requiredTerms);
         $this->assertContains('шпунт', $profile->forbiddenDomainTerms);
     }
+
+    public function test_stairs_profile_limits_search_to_building_sections(): void
+    {
+        $profile = (new NormativeSearchProfileCatalog())->forIntent('stairs', 'general_work', null);
+
+        $this->assertContains('06', $profile->allowedSectionPrefixes);
+        $this->assertContains('07', $profile->allowedSectionPrefixes);
+        $this->assertContains('08', $profile->allowedSectionPrefixes);
+        $this->assertContains('лестниц', $profile->requiredTerms);
+        $this->assertContains('землян', $profile->forbiddenDomainTerms);
+    }
 }
