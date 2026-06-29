@@ -13,12 +13,20 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
 {
     public function test_planner_keeps_work_composition_inside_priced_items_without_operation_rows(): void
     {
-        $localEstimate = $this->localEstimate('preconstruction', 'Подготовительные работы', 'site', 12);
+        $localEstimate = $this->localEstimate('foundation', 'Фундамент', 'foundation', 12);
         $items = $this->planner()->build($localEstimate, $localEstimate['sections'][0], [
             'document_context' => [
-                'facts_summary' => [
-                    'total_area_m2' => 214,
-                ],
+                'quantity_takeoffs' => [[
+                    'quantity_key' => 'foundation.concrete',
+                    'name' => 'Бетонирование фундаментов по ВОР',
+                    'unit' => 'м3',
+                    'quantity' => 32.5,
+                    'source_refs' => [[
+                        'type' => 'document',
+                        'filename' => 'ВОР.pdf',
+                        'page_number' => 1,
+                    ]],
+                ]],
             ],
         ]);
         $pricedItems = $this->pricedItems($items);
@@ -37,15 +45,27 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             self::assertNull($item['price_source']);
         }
 
-        self::assertContains('quantity_review_required', $pricedItems[0]['validation_flags']);
+        self::assertNotContains('quantity_review_required', $pricedItems[0]['validation_flags']);
+        self::assertSame('document_quantity', $pricedItems[0]['metadata']['quantity_source']);
     }
 
     public function test_package_key_selects_specific_normative_intents_even_when_scope_is_broad(): void
     {
         $analysis = [
             'document_context' => [
-                'facts_summary' => [
-                    'total_area_m2' => 214,
+                'quantity_takeoffs' => [
+                    [
+                        'quantity_key' => 'electrical.power_lines',
+                        'name' => 'Длина силовых линий по ведомости',
+                        'unit' => 'м',
+                        'quantity' => 120,
+                    ],
+                    [
+                        'quantity_key' => 'plumbing.pipe',
+                        'name' => 'Длина труб водоснабжения по ведомости',
+                        'unit' => 'м',
+                        'quantity' => 64,
+                    ],
                 ],
             ],
         ];
@@ -78,8 +98,19 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
 
         $pricedItems = $this->pricedItems($this->planner()->build($localEstimate, $localEstimate['sections'][0], [
             'document_context' => [
-                'facts_summary' => [
-                    'total_area_m2' => 214,
+                'quantity_takeoffs' => [
+                    [
+                        'quantity_key' => 'sewerage.pipe',
+                        'name' => 'Длина труб канализации по ведомости',
+                        'unit' => 'м',
+                        'quantity' => 42,
+                    ],
+                    [
+                        'quantity_key' => 'sewerage.outlets',
+                        'name' => 'Выпуски канализации по спецификации',
+                        'unit' => 'шт',
+                        'quantity' => 4,
+                    ],
                 ],
             ],
         ]));
@@ -113,8 +144,19 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
 
         $items = $this->planner()->build($localEstimate, $localEstimate['sections'][0], [
             'document_context' => [
-                'facts_summary' => [
-                    'total_area_m2' => 214,
+                'quantity_takeoffs' => [
+                    [
+                        'quantity_key' => 'stairs.flights',
+                        'name' => 'Лестничные марши по спецификации',
+                        'unit' => 'м2',
+                        'quantity' => 18,
+                    ],
+                    [
+                        'quantity_key' => 'stairs.railings',
+                        'name' => 'Ограждение лестниц по спецификации',
+                        'unit' => 'м',
+                        'quantity' => 22,
+                    ],
                 ],
             ],
         ]);
@@ -128,8 +170,19 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
 
         $items = $this->planner()->build($localEstimate, $localEstimate['sections'][0], [
             'document_context' => [
-                'facts_summary' => [
-                    'total_area_m2' => 214,
+                'quantity_takeoffs' => [
+                    [
+                        'quantity_key' => 'stairs.flights',
+                        'name' => 'Лестничные марши по спецификации',
+                        'unit' => 'м2',
+                        'quantity' => 18,
+                    ],
+                    [
+                        'quantity_key' => 'stairs.railings',
+                        'name' => 'Ограждение лестниц по спецификации',
+                        'unit' => 'м',
+                        'quantity' => 22,
+                    ],
                 ],
             ],
         ]);
@@ -144,7 +197,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertNotContains('operation', array_column($items, 'item_type'));
     }
 
-    public function test_known_planner_package_keys_generate_subject_items_without_custom_fallback(): void
+    public function test_known_planner_package_keys_do_not_generate_planner_fallback_priced_items(): void
     {
         $planner = $this->planner();
 
@@ -154,11 +207,49 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             $pricedItems = $this->pricedItems($items);
             $names = array_column($pricedItems, 'name');
 
-            self::assertNotEmpty($pricedItems, $packageKey);
             self::assertSame(count($pricedItems), count($items), $packageKey);
             self::assertNotContains('operation', array_column($items, 'item_type'), $packageKey);
             self::assertNotContains('custom', array_column($pricedItems, 'work_category'), $packageKey);
             self::assertNotContains('Комплекс строительных работ', $names, $packageKey);
+            self::assertNotContains(
+                'planner_fallback',
+                array_map(
+                    static fn (array $item): string => (string) ($item['metadata']['quantity_source'] ?? ''),
+                    $pricedItems
+                ),
+                $packageKey
+            );
+        }
+    }
+
+    public function test_known_planner_package_keys_generate_priced_items_from_confirmed_takeoffs_without_fallback(): void
+    {
+        $planner = $this->planner();
+
+        foreach ($this->knownPackageScopes() as $packageKey => $scopeType) {
+            $localEstimate = $this->localEstimate($packageKey, $packageKey, $scopeType, 4);
+            $items = $planner->build($localEstimate, $localEstimate['sections'][0], [
+                'document_context' => [
+                    'quantity_takeoffs' => [
+                        $this->confirmedTakeoffForPackage($packageKey),
+                    ],
+                ],
+            ]);
+            $pricedItems = $this->pricedItems($items);
+
+            self::assertNotEmpty($pricedItems, $packageKey);
+            self::assertNotContains(
+                'planner_fallback',
+                array_map(
+                    static fn (array $item): string => (string) ($item['metadata']['quantity_source'] ?? ''),
+                    $pricedItems
+                ),
+                $packageKey
+            );
+
+            foreach ($pricedItems as $pricedItem) {
+                self::assertNotContains('quantity_review_required', $pricedItem['validation_flags'], $packageKey);
+            }
         }
     }
 
@@ -212,15 +303,15 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             $analysis
         ));
 
-        self::assertGreaterThanOrEqual(4, count($industrialFloor));
-        self::assertGreaterThanOrEqual(5, count($roof));
+        self::assertCount(1, $industrialFloor);
+        self::assertCount(4, $roof);
         self::assertSame('warehouse.floor_concrete', $industrialFloor[0]['quantity_formula']);
         self::assertSame(75.6, (float) $industrialFloor[0]['quantity']);
         self::assertContains('roof.flat_area', array_column($roof, 'quantity_formula'));
         self::assertNotContains('roof.area', array_column($roof, 'quantity_formula'));
     }
 
-    public function test_drawing_takeoff_review_flag_is_preserved_for_normative_item_quantity(): void
+    public function test_drawing_takeoff_review_required_is_not_priced_until_confirmed(): void
     {
         $localEstimate = $this->localEstimate('rough_finishing', 'Черновая отделка', 'finishing', 6);
         $items = $this->pricedItems($this->planner()->build(
@@ -248,17 +339,11 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
                 ],
             ]
         ));
-        $wallItem = array_values(array_filter(
-            $items,
-            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'rough.walls'
-        ))[0] ?? null;
 
-        self::assertIsArray($wallItem);
-        self::assertSame(220.5, (float) $wallItem['quantity']);
-        self::assertContains('quantity_review_required', $wallItem['validation_flags']);
+        self::assertSame([], $items);
     }
 
-    public function test_floor_plan_wall_and_wet_zone_takeoffs_feed_matching_normative_intents(): void
+    public function test_confirmed_floor_plan_wall_and_wet_zone_takeoffs_feed_matching_normative_intents(): void
     {
         $analysis = [
             'document_context' => [
@@ -276,7 +361,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
                         ]],
                         'normalized_payload' => [
                             'quantity_key' => 'finish.paint',
-                            'review_required' => true,
+                            'review_required' => false,
                         ],
                     ],
                     [
@@ -292,7 +377,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
                         ]],
                         'normalized_payload' => [
                             'quantity_key' => 'sanitary.tile',
-                            'review_required' => true,
+                            'review_required' => false,
                         ],
                     ],
                 ],
@@ -315,10 +400,10 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
 
         self::assertIsArray($paintItem);
         self::assertSame(312.4, (float) $paintItem['quantity']);
-        self::assertContains('quantity_review_required', $paintItem['validation_flags']);
+        self::assertNotContains('quantity_review_required', $paintItem['validation_flags']);
         self::assertIsArray($tileItem);
         self::assertSame(54.2, (float) $tileItem['quantity']);
-        self::assertContains('quantity_review_required', $tileItem['validation_flags']);
+        self::assertNotContains('quantity_review_required', $tileItem['validation_flags']);
         self::assertNotSame('компл', $tileItem['unit']);
     }
 
@@ -521,6 +606,58 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             'external_networks' => 'site',
             'siteworks' => 'site',
             'roads' => 'site',
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function confirmedTakeoffForPackage(string $packageKey): array
+    {
+        [$quantityKey, $unit, $quantity] = match ($packageKey) {
+            'preconstruction', 'site_preparation' => ['site.setup', 'компл', 1],
+            'earthworks' => ['earth.trench', 'м3', 120],
+            'foundation', 'foundations' => ['foundation.concrete', 'м3', 32.5],
+            'walls' => ['walls.external_volume', 'м3', 38],
+            'office_partitions' => ['office.partitions', 'м2', 84],
+            'slabs', 'industrial_floor' => ['warehouse.floor_concrete', 'м3', 75.6],
+            'stairs' => ['stairs.flights', 'м2', 18],
+            'metal_frame' => ['warehouse.columns', 'т', 14.2],
+            'envelope' => ['warehouse.wall_panels', 'м2', 310],
+            'facade' => ['facade.area', 'м2', 280],
+            'roof' => ['roof.area', 'м2', 194],
+            'openings' => ['openings.windows', 'шт', 12],
+            'gates', 'entrance_group' => ['warehouse.gates', 'шт', 3],
+            'electrical', 'power_supply' => ['electrical.power_lines', 'м', 120],
+            'lighting' => ['warehouse.lighting', 'шт', 42],
+            'low_current', 'server_room' => ['warehouse.low_current', 'м', 95],
+            'plumbing', 'water_supply', 'water_sewerage', 'sanitary_rooms' => ['plumbing.pipe', 'м', 64],
+            'sewerage' => ['sewerage.pipe', 'м', 42],
+            'heating' => ['heating.pipe', 'м', 38.2],
+            'ventilation' => ['ventilation.air_exchange', 'м2', 214],
+            'fire_safety' => ['warehouse.fire', 'м2', 214],
+            'rough_finishing' => ['rough.floor', 'м2', 87.14],
+            'finish_finishing', 'office_finishing' => ['finish.floor', 'м2', 87.14],
+            'external_networks' => ['networks.external', 'м', 42.5],
+            'siteworks' => ['siteworks.area', 'м2', 120],
+            'roads' => ['warehouse.roads', 'м2', 180],
+            default => throw new \InvalidArgumentException('Unsupported package key: ' . $packageKey),
+        };
+
+        return [
+            'quantity_key' => $quantityKey,
+            'name' => 'Подтвержденный объем из ведомости',
+            'unit' => $unit,
+            'quantity' => $quantity,
+            'source_refs' => [[
+                'type' => 'document',
+                'filename' => 'ВОР.pdf',
+                'page_number' => 1,
+            ]],
+            'normalized_payload' => [
+                'quantity_key' => $quantityKey,
+                'review_required' => false,
+            ],
         ];
     }
 

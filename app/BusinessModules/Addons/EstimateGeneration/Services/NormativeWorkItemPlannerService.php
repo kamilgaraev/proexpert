@@ -436,11 +436,10 @@ final class NormativeWorkItemPlannerService
      */
     private function shouldSkipUnsupportedPlannerDefinition(array $localEstimate, array $quantity): bool
     {
-        $packageKey = (string) ($localEstimate['key'] ?? '');
-
-        return in_array($packageKey, ['external_networks', 'siteworks', 'roads'], true)
-            && ($quantity['source'] ?? null) === 'planner_fallback'
-            && ($quantity['source_refs'] ?? []) === [];
+        return (
+            ($quantity['source'] ?? null) === 'planner_fallback'
+            && ($quantity['source_refs'] ?? []) === []
+        ) || ($quantity['review_required'] ?? false) === true;
     }
 
     /**
