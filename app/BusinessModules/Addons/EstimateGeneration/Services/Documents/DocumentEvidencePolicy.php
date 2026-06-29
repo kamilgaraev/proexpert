@@ -50,7 +50,7 @@ final class DocumentEvidencePolicy
     {
         $role = self::roleForEstimation($document);
 
-        return $role === '' || in_array($role, self::QUANTITY_EVIDENCE_ROLES, true);
+        return in_array($role, self::QUANTITY_EVIDENCE_ROLES, true);
     }
 
     /**
@@ -58,7 +58,9 @@ final class DocumentEvidencePolicy
      */
     public static function canUseScopeEvidence(array $document): bool
     {
-        return !in_array(self::roleForEstimation($document), self::NON_PRIMARY_ROLES, true);
+        $role = self::roleForEstimation($document);
+
+        return $role !== '' && !in_array($role, self::NON_PRIMARY_ROLES, true);
     }
 
     /**

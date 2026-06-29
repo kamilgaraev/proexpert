@@ -94,6 +94,9 @@ class ConstructionSemanticParserTest extends TestCase
             'quality' => ['level' => 'good', 'score' => 0.91, 'flags' => []],
             'extracted_text' => 'Складской корпус 1280 м2. Склад 900 м2. Офис 280 м2. 1 этаж. Пожарная сигнализация, освещение.',
             'facts_summary' => [
+                'document_understanding' => [
+                    'role_for_estimation' => 'quantity_source',
+                ],
                 'total_area_m2' => 1280.0,
                 'floor_count' => 1.0,
                 'zones' => [
@@ -179,6 +182,9 @@ class ConstructionSemanticParserTest extends TestCase
             'quality' => ['level' => 'good', 'score' => 0.91, 'flags' => []],
             'extracted_text' => "Планировка квартиры\nГостиная 46,52 м²\nКухня 9,99 м2",
             'facts_summary' => [
+                'document_understanding' => [
+                    'role_for_estimation' => 'geometry_source',
+                ],
                 'drawing_understanding' => [
                     'room_area_total_m2' => 56.51,
                 ],
