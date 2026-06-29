@@ -11,6 +11,139 @@ use Tests\TestCase;
 
 final class NormativeCandidateSearchServiceTest extends TestCase
 {
+    public function test_search_finds_norm_by_work_composition_when_name_is_generic(): void
+    {
+        $versionId = (int) DB::table('estimate_dataset_versions')->insertGetId([
+            'source_type' => 'fsnb_2022',
+            'version_key' => '2026-06-01',
+            'bucket' => 'test-bucket',
+            'prefix' => 'test-prefix',
+            'status' => 'parsed',
+            'files_count' => 1,
+            'rows_read' => 1,
+            'rows_imported' => 1,
+            'errors_count' => 0,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $collectionId = (int) DB::table('estimate_norm_collections')->insertGetId([
+            'dataset_version_id' => $versionId,
+            'code' => 'gesn',
+            'name' => 'ГЭСН',
+            'norm_type' => 'gesn',
+            'source_file' => 'ГЭСН.xml',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $sectionId = (int) DB::table('estimate_norm_sections')->insertGetId([
+            'collection_id' => $collectionId,
+            'code' => '12',
+            'name' => 'Кровли',
+            'section_type' => 'Сборник',
+            'depth' => 0,
+            'path' => '12',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('estimate_norms')->insert([
+            [
+                'collection_id' => $collectionId,
+                'section_id' => $sectionId,
+                'code' => '12-01-013-01',
+                'name' => 'Изоляция покрытий плитами',
+                'unit' => 'м2',
+                'section_code' => '12-01-013',
+                'section_name' => 'Покрытия',
+                'work_composition' => json_encode(['Утепление кровли минераловатными плитами'], JSON_UNESCAPED_UNICODE),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
+
+        $candidates = app(NormativeCandidateSearchService::class)->search(
+            EstimateDatasetVersion::query()->findOrFail($versionId),
+            [
+                'name' => 'Утепление кровли 200 мм',
+                'unit' => 'м2',
+            ],
+            [
+                'scope_type' => 'roof',
+                'section_title' => 'Кровля',
+            ],
+            ['утепление', 'кровли'],
+            10
+        );
+
+        $this->assertSame(['12-01-013-01'], $candidates->pluck('code')->values()->all());
+    }
+
+    public function test_search_normalizes_prefixed_normative_code_tokens(): void
+    {
+        $versionId = (int) DB::table('estimate_dataset_versions')->insertGetId([
+            'source_type' => 'fsnb_2022',
+            'version_key' => '2026-06-02',
+            'bucket' => 'test-bucket',
+            'prefix' => 'test-prefix',
+            'status' => 'parsed',
+            'files_count' => 1,
+            'rows_read' => 1,
+            'rows_imported' => 1,
+            'errors_count' => 0,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $collectionId = (int) DB::table('estimate_norm_collections')->insertGetId([
+            'dataset_version_id' => $versionId,
+            'code' => 'gesn',
+            'name' => 'ГЭСН',
+            'norm_type' => 'gesn',
+            'source_file' => 'ГЭСН.xml',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $sectionId = (int) DB::table('estimate_norm_sections')->insertGetId([
+            'collection_id' => $collectionId,
+            'code' => '01',
+            'name' => 'Земляные работы',
+            'section_type' => 'Сборник',
+            'depth' => 0,
+            'path' => '01',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('estimate_norms')->insert([
+            [
+                'collection_id' => $collectionId,
+                'section_id' => $sectionId,
+                'code' => '01-02-057-01',
+                'name' => 'Обратная засыпка грунта',
+                'unit' => 'м3',
+                'section_code' => '01-02-057',
+                'section_name' => 'Земляные работы',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
+
+        $candidates = app(NormativeCandidateSearchService::class)->search(
+            EstimateDatasetVersion::query()->findOrFail($versionId),
+            [
+                'name' => 'Обратная засыпка пазух',
+                'unit' => 'м3',
+            ],
+            [
+                'scope_type' => 'foundation',
+                'section_title' => 'Земляные работы',
+            ],
+            ['фер01-02-057-01'],
+            10
+        );
+
+        $this->assertSame(['01-02-057-01'], $candidates->pluck('code')->values()->all());
+    }
+
     public function test_search_filters_to_compatible_unit_candidates_when_available(): void
     {
         $versionId = (int) DB::table('estimate_dataset_versions')->insertGetId([

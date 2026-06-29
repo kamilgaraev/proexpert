@@ -14,6 +14,7 @@ use Illuminate\Support\Collection;
 final class NormativeCandidateSearchService
 {
     private const MIN_POOL_SIZE = 300;
+    private const MIN_PROFILE_FALLBACK_POOL_SIZE = 30;
 
     public function __construct(
         private readonly WorkIntentClassifier $workIntentClassifier,
@@ -64,6 +65,34 @@ final class NormativeCandidateSearchService
     ): Collection
     {
         $tokens = $this->expandedTokens($tokens, $intent, $profile);
+        $pool = $this->executePoolQuery($version, $tokens, $intent, $profile, $poolLimit);
+
+        if ($this->shouldExpandByProfile($pool, $tokens, $profile, $poolLimit)) {
+            $profilePool = $this->executePoolQuery($version, [], $intent, $profile, $poolLimit);
+            $pool = $pool
+                ->merge($profilePool)
+                ->unique(static fn (EstimateNorm $norm): int => (int) $norm->id)
+                ->take($poolLimit)
+                ->values();
+        }
+
+        return $pool
+            ->reject(fn (EstimateNorm $norm): bool => $this->forbiddenDomainCandidate($norm, $workItem, $intent))
+            ->values();
+    }
+
+    /**
+     * @param array<int, string> $tokens
+     * @return Collection<int, EstimateNorm>
+     */
+    private function executePoolQuery(
+        EstimateDatasetVersion $version,
+        array $tokens,
+        WorkIntentData $intent,
+        NormativeSearchProfileData $profile,
+        int $poolLimit
+    ): Collection
+    {
         $query = EstimateNorm::query()
             ->with(['collection', 'section'])
             ->whereHas('collection', static function (Builder $query) use ($version): void {
@@ -76,7 +105,8 @@ final class NormativeCandidateSearchService
                     $like = '%' . mb_strtolower($token) . '%';
                     $query->orWhereRaw('LOWER(code) LIKE ?', [$like])
                         ->orWhereRaw('LOWER(name) LIKE ?', [$like])
-                        ->orWhereRaw('LOWER(COALESCE(section_name, \'\')) LIKE ?', [$like]);
+                        ->orWhereRaw('LOWER(COALESCE(section_name, \'\')) LIKE ?', [$like])
+                        ->orWhereRaw('LOWER(CAST(work_composition AS TEXT)) LIKE ?', [$like]);
                 }
             });
         }
@@ -101,9 +131,20 @@ final class NormativeCandidateSearchService
         return $query
             ->orderBy('code')
             ->limit($poolLimit)
-            ->get()
-            ->reject(fn (EstimateNorm $norm): bool => $this->forbiddenDomainCandidate($norm, $workItem, $intent))
-            ->values();
+            ->get();
+    }
+
+    /**
+     * @param Collection<int, EstimateNorm> $pool
+     * @param array<int, string> $tokens
+     */
+    private function shouldExpandByProfile(Collection $pool, array $tokens, NormativeSearchProfileData $profile, int $poolLimit): bool
+    {
+        if ($tokens === [] || $pool->count() >= min(self::MIN_PROFILE_FALLBACK_POOL_SIZE, $poolLimit)) {
+            return false;
+        }
+
+        return $profile->allowedSectionPrefixes !== [] || $profile->requiredTerms !== [] || $profile->synonymTerms !== [];
     }
 
     /**
@@ -170,29 +211,12 @@ final class NormativeCandidateSearchService
     private function expandedTokens(array $tokens, WorkIntentData $intent, NormativeSearchProfileData $profile): array
     {
         $expanded = [
-            ...$tokens,
             ...$profile->requiredTerms,
             ...$profile->synonymTerms,
         ];
 
         foreach ($tokens as $token) {
-            foreach ([
-                'кабел',
-                'проклад',
-                'труб',
-                'отопл',
-                'кров',
-                'утепл',
-                'фундамент',
-                'бетон',
-                'арматур',
-                'опалуб',
-                'грунт',
-            ] as $stem) {
-                if (str_contains(mb_strtolower($token), $stem)) {
-                    $expanded[] = $stem;
-                }
-            }
+            array_push($expanded, ...$this->tokenVariants($token));
         }
 
         if ($intent->action === 'cable_installation') {
@@ -213,6 +237,112 @@ final class NormativeCandidateSearchService
             $expanded,
             static fn (string $token): bool => mb_strlen($token) >= 3
         )));
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function tokenVariants(string $token): array
+    {
+        $normalized = mb_strtolower(trim($token));
+        $variants = [$normalized];
+        $code = $this->normalizeNormCodeToken($normalized);
+
+        if ($code !== null) {
+            $variants[] = $code;
+        }
+
+        foreach ($this->constructionStems() as $stem) {
+            if (str_contains($normalized, $stem)) {
+                $variants[] = $stem;
+            }
+        }
+
+        $roughStem = $this->roughRussianStem($normalized);
+        if ($roughStem !== null) {
+            $variants[] = $roughStem;
+        }
+
+        return array_values(array_unique(array_filter($variants, static fn (string $value): bool => $value !== '')));
+    }
+
+    private function normalizeNormCodeToken(string $token): ?string
+    {
+        $token = preg_replace('/^(гэснмр|гэснм|гэснп|гэснр|гэсн|фснб|фер|тер|тсн)[\s:№#-]*/u', '', $token) ?? $token;
+        $token = str_replace(['.', '_', ' '], '-', $token);
+        $token = preg_replace('/[^0-9-]/', '', $token) ?? '';
+        $token = preg_replace('/-+/', '-', trim($token, '-')) ?? '';
+
+        if (!preg_match('/^\d{2}-\d{2}-\d{3}(?:-\d{2})?$/', $token)) {
+            return null;
+        }
+
+        return $token;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function constructionStems(): array
+    {
+        return [
+            'армиров',
+            'арматур',
+            'бетон',
+            'бетонир',
+            'благоустрой',
+            'водоснаб',
+            'водосток',
+            'воздуховод',
+            'выемк',
+            'выключател',
+            'гидроизоляц',
+            'грунт',
+            'двер',
+            'засып',
+            'изоляц',
+            'кабел',
+            'канализац',
+            'кладк',
+            'котлован',
+            'кров',
+            'минераловат',
+            'окон',
+            'окраск',
+            'опалуб',
+            'освещ',
+            'планиров',
+            'плитк',
+            'проклад',
+            'радиатор',
+            'разработк',
+            'розет',
+            'стен',
+            'стяжк',
+            'тепл',
+            'транше',
+            'труб',
+            'уплотн',
+            'утепл',
+            'фундамент',
+            'шпатлев',
+            'штукатур',
+        ];
+    }
+
+    private function roughRussianStem(string $token): ?string
+    {
+        if (mb_strlen($token) < 6 || preg_match('/\d/', $token)) {
+            return null;
+        }
+
+        foreach (['иями', 'ями', 'ами', 'ого', 'его', 'ыми', 'ими', 'иях', 'ах', 'ях', 'ов', 'ев', 'ий', 'ый', 'ой', 'ая', 'ое', 'ые', 'ых', 'их', 'ка', 'ки', 'ку', 'ом', 'ем', 'ам', 'ям', 'ия', 'ие', 'ей', 'ой', 'а', 'ы', 'и', 'е', 'у'] as $suffix) {
+            if (str_ends_with($token, $suffix) && mb_strlen($token) - mb_strlen($suffix) >= 4) {
+                return mb_substr($token, 0, mb_strlen($token) - mb_strlen($suffix));
+            }
+        }
+
+        return null;
     }
 
     /**
