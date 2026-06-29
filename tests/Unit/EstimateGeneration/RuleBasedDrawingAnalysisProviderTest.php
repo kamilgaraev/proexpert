@@ -159,4 +159,55 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
         self::assertSame('specification_quantity', $takeoffsByKey['warehouse.lighting']['scope_key']);
         self::assertSame('specification', $takeoffsByKey['warehouse.lighting']['normalized_payload']['source']);
     }
+
+    public function test_extracts_work_volume_statement_rows_without_turning_unknown_rows_into_takeoffs(): void
+    {
+        $recognition = new OcrRecognitionResult(
+            provider: 'test',
+            model: 'pdf',
+            pages: [
+                new OcrPageResult(
+                    pageNumber: 1,
+                    text: implode("\n", [
+                        'Ведомость объемов работ',
+                        'Наименование работ Ед. изм. Количество',
+                        '1 Обратная засыпка пазух м3 42',
+                        '2 Окраска стен м2 180',
+                        '3 Авторский надзор компл 1',
+                    ]),
+                    confidence: 0.94
+                ),
+            ]
+        );
+
+        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+            documentId: 10,
+            filename: 'Ведомость объемов работ.pdf',
+            recognition: $recognition
+        );
+        $takeoffsByKey = [];
+
+        foreach ($result->takeoffs as $takeoff) {
+            $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
+            $takeoffsByKey[(string) ($payload['quantity_key'] ?? '')] = $takeoff;
+        }
+
+        $unmappedRows = array_values(array_filter(
+            $result->elements,
+            static fn (array $element): bool => ($element['type'] ?? null) === 'unmapped_specification_row'
+        ));
+
+        self::assertSame('work_volume_statement', $result->summary['document_profile']['document_role'] ?? null);
+        self::assertSame('work_volume_statement', $result->summary['page_profiles'][0]['page_role'] ?? null);
+        self::assertArrayHasKey('earth.backfill', $takeoffsByKey);
+        self::assertArrayHasKey('finish.paint', $takeoffsByKey);
+        self::assertSame('work_volume_statement', $takeoffsByKey['earth.backfill']['normalized_payload']['source']);
+        self::assertSame('earthworks', $takeoffsByKey['earth.backfill']['normalized_payload']['scope_type']);
+        self::assertSame(42.0, $takeoffsByKey['earth.backfill']['quantity']);
+        self::assertSame(180.0, $takeoffsByKey['finish.paint']['quantity']);
+        self::assertCount(1, $unmappedRows);
+        self::assertSame('Авторский надзор', $unmappedRows[0]['label']);
+        self::assertSame('quantity_row_not_mapped', $unmappedRows[0]['normalized_payload']['reason']);
+        self::assertArrayNotHasKey('', $takeoffsByKey);
+    }
 }

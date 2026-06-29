@@ -11,6 +11,10 @@ use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 
 final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderInterface
 {
+    public function __construct(
+        private readonly QuantityStatementLineParser $quantityLineParser = new QuantityStatementLineParser(),
+    ) {}
+
     public function analyze(int $documentId, string $filename, OcrRecognitionResult $recognition): DrawingAnalysisResultData
     {
         $elements = [];
@@ -153,10 +157,31 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
 
     private function specificationElements(int $documentId, string $filename, OcrPageResult $page, string $line): array
     {
-        $item = $this->specificationLine($line);
+        $item = $this->quantityLine($filename, $line);
 
         if ($item === null) {
             return [];
+        }
+
+        if (($item['mapped'] ?? false) !== true) {
+            return [[
+                'type' => 'unmapped_specification_row',
+                'label' => $item['name'],
+                'value_text' => $this->formatNumber((float) $item['quantity']) . ' ' . $item['unit'],
+                'value_number' => $item['quantity'],
+                'unit' => $item['unit'],
+                'bbox' => null,
+                'geometry' => null,
+                'confidence' => max($this->confidence($page) - 0.15, 0.35),
+                'source_ref' => $this->sourceRef($documentId, $filename, $page, $line),
+                'normalized_payload' => [
+                    'line' => $line,
+                    'source' => $item['source'],
+                    'review_required' => true,
+                    'reason' => 'quantity_row_not_mapped',
+                ],
+                'page_number' => $page->pageNumber,
+            ]];
         }
 
         return [[
@@ -173,7 +198,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 'line' => $line,
                 'quantity_key' => $item['quantity_key'],
                 'scope_type' => $item['scope_type'],
-                'source' => 'specification',
+                'source' => $item['source'],
             ],
             'page_number' => $page->pageNumber,
         ]];
@@ -286,9 +311,9 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
 
     private function specificationTakeoffs(int $documentId, string $filename, OcrPageResult $page, string $line): array
     {
-        $item = $this->specificationLine($line);
+        $item = $this->quantityLine($filename, $line);
 
-        if ($item === null) {
+        if ($item === null || ($item['mapped'] ?? false) !== true) {
             return [];
         }
 
@@ -297,7 +322,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             'scope_key' => 'specification_quantity',
             'work_intent' => [
                 'scope' => $item['scope_type'],
-                'basis' => 'specification_row',
+                'basis' => $item['source'] === 'work_volume_statement' ? 'work_volume_statement_row' : 'specification_row',
             ],
             'name' => $item['name'],
             'unit' => $item['unit'],
@@ -308,8 +333,10 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             'normalized_payload' => [
                 'line' => $line,
                 'quantity_key' => $item['quantity_key'],
-                'source' => 'specification',
-                'review_required' => false,
+                'scope_type' => $item['scope_type'],
+                'source' => $item['source'],
+                'unit' => $item['unit'],
+                'review_required' => (bool) ($item['review_required'] ?? false),
             ],
             'page_number' => $page->pageNumber,
         ]];
@@ -412,121 +439,20 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @return array{name: string, unit: string, quantity: float, quantity_key: string, scope_type: string}|null
+     * @return array{name: string, unit: string, quantity: float, quantity_key: string|null, scope_type: string, source: string, mapped: bool, review_required: bool}|null
      */
-    private function specificationLine(string $line): ?array
+    private function quantityLine(string $filename, string $line): ?array
     {
-        $normalized = mb_strtolower(trim($line));
-
-        if ($normalized === '' || preg_match('/(?:^|\s)(поз\.?|наименование|количество|ед\.?\s*изм)/u', $normalized) === 1) {
-            return null;
-        }
-
-        if (!$this->containsAny($normalized, [
-            'светиль',
-            'радиатор',
-            'труб',
-            'кабел',
-            'лоток',
-            'двер',
-            'окн',
-            'ворот',
-            'сан',
-            'унитаз',
-            'раков',
-            'душ',
-            'воздуховод',
-            'вентиляц',
-            'решетк',
-            'диффузор',
-            'тепловой узел',
-        ])) {
-            return null;
-        }
-
-        $unitPattern = '(?<unit>шт|штук|компл|м2|м²|м3|м³|п\.?\s*м|м)';
-        $quantityPattern = '(?<quantity>\d{1,6}(?:[,.]\d{1,3})?)';
-        $match = [];
-
-        if (preg_match('/^(?:\d+[.)]?\s+)?(?<name>.+?)\s+' . $unitPattern . '\s+' . $quantityPattern . '\b/iu', $line, $match) !== 1) {
-            if (preg_match('/^(?:\d+[.)]?\s+)?(?<name>.+?)\s+' . $quantityPattern . '\s+' . $unitPattern . '\b/iu', $line, $match) !== 1) {
-                return null;
-            }
-        }
-
-        $name = $this->specificationName((string) $match['name']);
-        $unit = $this->normalizeSpecificationUnit((string) $match['unit']);
-        $quantity = $this->number((string) $match['quantity']);
-        $quantityKey = $this->specificationQuantityKey($name);
-
-        if ($name === '' || $quantity <= 0 || $quantityKey === null) {
-            return null;
-        }
-
-        return [
-            'name' => $name,
-            'unit' => $unit,
-            'quantity' => round($quantity, 4),
-            'quantity_key' => $quantityKey,
-            'scope_type' => $this->scopeTypeForQuantityKey($quantityKey),
-        ];
+        return $this->quantityLineParser->parse($line, $this->quantityLineSource($filename, $line));
     }
 
-    private function specificationName(string $name): string
+    private function quantityLineSource(string $filename, string $line): string
     {
-        $name = trim((string) preg_replace('/\s+/u', ' ', $name));
-        $name = trim((string) preg_replace('/^\d+[.)]?\s*/u', '', $name));
+        $text = mb_strtolower($filename . ' ' . $line);
 
-        return mb_substr($name, 0, 160);
-    }
-
-    private function normalizeSpecificationUnit(string $unit): string
-    {
-        $unit = mb_strtolower((string) preg_replace('/\s+/u', ' ', trim($unit)));
-
-        return match ($unit) {
-            'штук' => 'шт',
-            'м²' => 'м2',
-            'м³' => 'м3',
-            'п м', 'п. м', 'п.м' => 'м',
-            default => $unit,
-        };
-    }
-
-    private function specificationQuantityKey(string $name): ?string
-    {
-        $normalized = mb_strtolower($name);
-
-        return match (true) {
-            str_contains($normalized, 'светиль') => 'warehouse.lighting',
-            str_contains($normalized, 'радиатор') => 'heating.radiators',
-            str_contains($normalized, 'тепловой узел') => 'heating.unit',
-            str_contains($normalized, 'кабел') => 'electrical.power_lines',
-            str_contains($normalized, 'лоток') => 'electrical.trays',
-            str_contains($normalized, 'канализац') && str_contains($normalized, 'труб') => 'sewerage.pipe',
-            str_contains($normalized, 'отоп') && str_contains($normalized, 'труб') => 'heating.pipe',
-            (str_contains($normalized, 'вод') || str_contains($normalized, 'хвс') || str_contains($normalized, 'гвс')) && str_contains($normalized, 'труб') => 'plumbing.pipe',
-            str_contains($normalized, 'труб') => 'plumbing.pipe',
-            str_contains($normalized, 'унитаз') || str_contains($normalized, 'раков') || str_contains($normalized, 'душ') || str_contains($normalized, 'сан') => 'sanitary.points',
-            str_contains($normalized, 'двер') => 'openings.doors',
-            str_contains($normalized, 'окн') => 'openings.windows',
-            str_contains($normalized, 'ворот') => 'warehouse.gates',
-            str_contains($normalized, 'воздуховод') || str_contains($normalized, 'вентиляц') => 'ventilation.air_exchange',
-            str_contains($normalized, 'решетк') || str_contains($normalized, 'диффузор') => 'ventilation.office_points',
-            default => null,
-        };
-    }
-
-    private function scopeTypeForQuantityKey(string $quantityKey): string
-    {
-        return match (true) {
-            str_starts_with($quantityKey, 'electrical.'), $quantityKey === 'warehouse.lighting' => 'electrical',
-            str_starts_with($quantityKey, 'heating.') => 'heating',
-            str_starts_with($quantityKey, 'plumbing.'), str_starts_with($quantityKey, 'sewerage.'), str_starts_with($quantityKey, 'sanitary.') => 'plumbing',
-            str_starts_with($quantityKey, 'openings.'), $quantityKey === 'warehouse.gates' => 'openings',
-            str_starts_with($quantityKey, 'ventilation.') => 'ventilation',
-            default => 'engineering',
-        };
+        return preg_match('/ведомость\s+(?:объемов|объёмов|работ)|объемы?\s+работ|объёмы?\s+работ|(?:^|[^\p{L}\p{N}])вор(?:$|[^\p{L}\p{N}])/u', $text) === 1
+            ? 'work_volume_statement'
+            : 'specification';
     }
 
     /**
@@ -748,11 +674,21 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 $pageTakeoffs,
                 static fn (array $takeoff): bool => ($takeoff['scope_key'] ?? null) === 'specification_quantity'
             ));
+            $workVolumeStatementCount = count(array_filter(
+                $pageTakeoffs,
+                static function (array $takeoff): bool {
+                    $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
+
+                    return ($payload['source'] ?? null) === 'work_volume_statement';
+                }
+            ));
             $text = mb_strtolower($page->text . ' ' . $filename);
             $hasPlanSignal = preg_match('/план|планировка|экспликац/ui', $text) === 1;
+            $hasWorkVolumeStatementSignal = $workVolumeStatementCount > 0
+                || preg_match('/ведомость\s+(?:объемов|объёмов|работ)|объемы?\s+работ|объёмы?\s+работ|вор\b/ui', $text) === 1;
             $hasSpecificationSignal = $specificationCount > 0 || preg_match('/спецификац|ведомость|экспликац/ui', $text) === 1;
             $hasEstimateSignal = preg_match('/(?:гэсн|фер|тер)?\s*\d{2}-\d{2}-\d{3}-\d{2,3}|смет/ui', $text) === 1;
-            $role = $this->pageRole($hasPlanSignal, $hasSpecificationSignal, $hasEstimateSignal, $roomCount, $dimensionCount);
+            $role = $this->pageRole($hasPlanSignal, $hasWorkVolumeStatementSignal, $hasSpecificationSignal, $hasEstimateSignal, $roomCount, $dimensionCount);
 
             $profiles[] = [
                 'page_number' => $pageNumber,
@@ -760,14 +696,17 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 'confidence' => $this->pageRoleConfidence($page, $role, $hasPlanSignal, $roomCount, $dimensionCount),
                 'signals' => array_values(array_filter([
                     $hasPlanSignal ? 'plan_keywords' : null,
+                    $hasWorkVolumeStatementSignal ? 'work_volume_statement_keywords' : null,
                     $hasSpecificationSignal ? 'specification_keywords' : null,
                     $hasEstimateSignal ? 'estimate_or_norm_keywords' : null,
                     $roomCount > 0 ? 'room_areas' : null,
                     $dimensionCount > 0 ? 'dimensions' : null,
+                    $workVolumeStatementCount > 0 ? 'work_volume_statement_quantities' : null,
                     $specificationCount > 0 ? 'specification_quantities' : null,
                 ])),
                 'room_area_count' => $roomCount,
                 'dimension_count' => $dimensionCount,
+                'work_volume_statement_quantity_count' => $workVolumeStatementCount,
                 'specification_quantity_count' => $specificationCount,
             ];
         }
@@ -777,6 +716,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
 
     private function pageRole(
         bool $hasPlanSignal,
+        bool $hasWorkVolumeStatementSignal,
         bool $hasSpecificationSignal,
         bool $hasEstimateSignal,
         int $roomCount,
@@ -784,6 +724,10 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     ): string {
         if (($hasPlanSignal && ($roomCount > 0 || $dimensionCount > 0)) || $roomCount >= 2) {
             return 'floor_plan';
+        }
+
+        if ($hasWorkVolumeStatementSignal) {
+            return 'work_volume_statement';
         }
 
         if ($hasSpecificationSignal) {

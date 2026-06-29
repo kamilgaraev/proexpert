@@ -30,19 +30,7 @@ final class EstimatorScopeInferenceService
         ]);
 
         foreach ($inferences as $inference) {
-            EstimateGenerationScopeInference::create([
-                'document_id' => $document->id,
-                'organization_id' => $document->organization_id,
-                'project_id' => $document->project_id,
-                'session_id' => $document->session_id,
-                'inference_type' => $inference['inference_type'],
-                'scope_type' => $inference['scope_type'],
-                'title' => $inference['title'],
-                'confidence' => $inference['confidence'],
-                'review_required' => $inference['review_required'],
-                'source_ref' => $inference['source_ref'],
-                'normalized_payload' => $inference['normalized_payload'],
-            ]);
+            EstimateGenerationScopeInference::create($this->scopeInferenceAttributes($document, $inference));
         }
 
         return $inferences;
@@ -57,7 +45,10 @@ final class EstimatorScopeInferenceService
         $documentContext = is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : [];
         $inferences = is_array($documentContext['scope_inferences'] ?? null) ? $documentContext['scope_inferences'] : [];
 
-        return array_values(array_filter($inferences, 'is_array'));
+        return array_values(array_filter(array_map(
+            fn (mixed $inference): ?array => is_array($inference) ? $this->normalizeInference($inference) : null,
+            $inferences
+        )));
     }
 
     /**
@@ -176,14 +167,18 @@ final class EstimatorScopeInferenceService
             return null;
         }
 
-        $scopeType = $this->scopeFromQuantityKey($quantityKey);
+        $workIntent = is_array($takeoff['work_intent'] ?? null) ? $takeoff['work_intent'] : [];
+        $scopeType = (string) ($payload['scope_type'] ?? $workIntent['scope'] ?? $this->scopeFromQuantityKey($quantityKey));
+        $source = (string) ($payload['source'] ?? 'specification');
 
-        return $this->baseInference('specification_takeoff', $scopeType, $this->scopeTitle($scopeType), 0.84, $document, [
+        $inferenceType = $source === 'work_volume_statement' ? 'work_volume_takeoff' : 'specification_takeoff';
+
+        return $this->baseInference($inferenceType, $scopeType, $this->scopeTitle($scopeType), 0.84, $document, [
             'quantity_key' => $quantityKey,
             'quantity_value' => $takeoff['quantity'] ?? $takeoff['value'] ?? null,
             'unit' => $takeoff['unit'] ?? $payload['unit'] ?? null,
             'takeoff' => $takeoff,
-            'source' => 'specification',
+            'source' => $source !== '' ? $source : 'specification',
         ]);
     }
 
@@ -236,12 +231,114 @@ final class EstimatorScopeInferenceService
             'scope_type' => $scopeType,
             'title' => $title,
             'confidence' => $confidence,
-            'review_required' => $confidence < 0.8,
+            'review_required' => $confidence < 0.8 || (bool) ($payload['review_required'] ?? false),
             'source_ref' => [
                 ...$sourceRef,
                 'document_id' => $document['id'] ?? $sourceRef['document_id'] ?? null,
                 'filename' => $document['filename'] ?? $sourceRef['filename'] ?? null,
             ],
+            'source_refs' => [[
+                ...$sourceRef,
+                'document_id' => $document['id'] ?? $sourceRef['document_id'] ?? null,
+                'filename' => $document['filename'] ?? $sourceRef['filename'] ?? null,
+            ]],
+            'normalized_payload' => $payload,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $inference
+     * @return array<string, mixed>
+     */
+    private function scopeInferenceAttributes(EstimateGenerationDocument $document, array $inference): array
+    {
+        $normalized = $this->normalizeInference($inference);
+        $payload = is_array($normalized['normalized_payload'] ?? null) ? $normalized['normalized_payload'] : [];
+        $scopeType = (string) ($normalized['scope_type'] ?? 'custom');
+        $quantityKey = (string) ($payload['quantity_key'] ?? '');
+
+        return [
+            'document_id' => $document->id,
+            'organization_id' => $document->organization_id,
+            'project_id' => $document->project_id,
+            'session_id' => $document->session_id,
+            'inference_type' => (string) ($normalized['inference_type'] ?? 'document_fact'),
+            'title' => (string) ($normalized['title'] ?? $this->scopeTitle($scopeType)),
+            'description' => null,
+            'confidence' => (float) ($normalized['confidence'] ?? 0.5),
+            'review_required' => (bool) ($normalized['review_required'] ?? true),
+            'source_refs' => $normalized['source_refs'],
+            'work_intent' => [
+                'scope_type' => $scopeType,
+                'scope' => $scopeType,
+                'quantity_key' => $quantityKey !== '' ? $quantityKey : null,
+                'quantity_value' => $payload['quantity_value'] ?? null,
+                'unit' => $payload['unit'] ?? null,
+                'source' => $payload['source'] ?? null,
+            ],
+            'normative_basis' => [
+                'quantity_key' => $quantityKey !== '' ? $quantityKey : null,
+                'quantity_value' => $payload['quantity_value'] ?? null,
+                'unit' => $payload['unit'] ?? null,
+                'source' => $payload['source'] ?? null,
+                'payload' => $payload,
+            ],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $inference
+     * @return array<string, mixed>
+     */
+    private function normalizeInference(array $inference): array
+    {
+        $workIntent = is_array($inference['work_intent'] ?? null) ? $inference['work_intent'] : [];
+        $normativeBasis = is_array($inference['normative_basis'] ?? null) ? $inference['normative_basis'] : [];
+        $payload = is_array($inference['normalized_payload'] ?? null)
+            ? $inference['normalized_payload']
+            : (is_array($normativeBasis['payload'] ?? null) ? $normativeBasis['payload'] : $normativeBasis);
+        $sourceRefs = is_array($inference['source_refs'] ?? null) ? array_values(array_filter($inference['source_refs'], 'is_array')) : [];
+        $sourceRef = is_array($inference['source_ref'] ?? null)
+            ? $inference['source_ref']
+            : (is_array($sourceRefs[0] ?? null) ? $sourceRefs[0] : []);
+        $scopeType = (string) (
+            $inference['scope_type']
+            ?? $workIntent['scope_type']
+            ?? $workIntent['scope']
+            ?? $payload['scope_type']
+            ?? ''
+        );
+
+        if ($scopeType === '') {
+            $scopeType = $this->scopeFromQuantityKey((string) ($payload['quantity_key'] ?? $workIntent['quantity_key'] ?? ''));
+        }
+
+        foreach (['quantity_key', 'quantity_value', 'unit', 'source'] as $field) {
+            if (!array_key_exists($field, $payload) && array_key_exists($field, $workIntent)) {
+                $payload[$field] = $workIntent[$field];
+            }
+
+            if (!array_key_exists($field, $payload) && array_key_exists($field, $normativeBasis)) {
+                $payload[$field] = $normativeBasis[$field];
+            }
+        }
+
+        if ($scopeType !== '' && !array_key_exists('scope_type', $payload)) {
+            $payload['scope_type'] = $scopeType;
+        }
+
+        if ($sourceRefs === [] && $sourceRef !== []) {
+            $sourceRefs = [$sourceRef];
+        }
+
+        return [
+            'inference_type' => (string) ($inference['inference_type'] ?? 'document_fact'),
+            'scope_type' => $scopeType,
+            'title' => (string) ($inference['title'] ?? $this->scopeTitle($scopeType)),
+            'confidence' => (float) ($inference['confidence'] ?? 0.5),
+            'review_required' => (bool) ($inference['review_required'] ?? true),
+            'source_ref' => $sourceRef,
+            'source_refs' => $sourceRefs,
             'normalized_payload' => $payload,
         ];
     }
@@ -274,12 +371,18 @@ final class EstimatorScopeInferenceService
     private function scopeFromQuantityKey(string $quantityKey): string
     {
         return match (true) {
+            str_starts_with($quantityKey, 'earth.') => 'earthworks',
+            str_starts_with($quantityKey, 'foundation.') => 'foundation',
+            str_starts_with($quantityKey, 'walls.') => 'walls',
+            str_starts_with($quantityKey, 'roof.') => 'roof',
+            str_starts_with($quantityKey, 'site.'), str_starts_with($quantityKey, 'siteworks.'), str_starts_with($quantityKey, 'networks.') => 'site',
             str_starts_with($quantityKey, 'electrical.'), $quantityKey === 'warehouse.lighting' => 'electrical',
             str_starts_with($quantityKey, 'heating.') => 'heating',
             str_starts_with($quantityKey, 'ventilation.') => 'ventilation',
             str_starts_with($quantityKey, 'openings.'), $quantityKey === 'warehouse.gates' => 'openings',
-            str_starts_with($quantityKey, 'sewerage.') => 'sewerage',
+            str_starts_with($quantityKey, 'sewerage.') => 'plumbing',
             str_starts_with($quantityKey, 'plumbing.'), str_starts_with($quantityKey, 'sanitary.') => 'plumbing',
+            str_starts_with($quantityKey, 'rough.'), str_starts_with($quantityKey, 'finish.'), str_starts_with($quantityKey, 'office.') => 'finishing',
             default => 'engineering',
         };
     }
@@ -292,6 +395,12 @@ final class EstimatorScopeInferenceService
             'heating' => 'Отопление',
             'plumbing' => 'Водоснабжение и канализация',
             'openings' => 'Окна и двери',
+            'earthworks' => 'Земляные работы',
+            'finishing' => 'Отделочные работы',
+            'foundation' => 'Фундамент',
+            'walls' => 'Стены и перегородки',
+            'roof' => 'Кровля',
+            'site' => 'Подготовка площадки',
             default => 'Строительные работы',
         };
     }

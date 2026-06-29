@@ -102,7 +102,7 @@ final class DocumentUnderstandingSummaryBuilder
             return 'floor_plan';
         }
 
-        if (in_array($documentRole, ['specification', 'reference_estimate', 'technical_document'], true)) {
+        if (in_array($documentRole, ['work_volume_statement', 'specification', 'reference_estimate', 'technical_document'], true)) {
             return $documentRole;
         }
 
@@ -163,6 +163,9 @@ final class DocumentUnderstandingSummaryBuilder
         $dimensionCount = (int) ($drawingSummary['dimension_count'] ?? 0);
         $hasSpecificationMarkers = $classifiedType === 'specification'
             || preg_match('/спецификац|ведомость|количество|поз\./u', $text) === 1;
+        $hasWorkVolumeStatementMarkers = $classifiedType === 'work_volume_statement'
+            || $documentType === 'work_volume_statement'
+            || preg_match('/ведомость\s+(?:объемов|объёмов|работ)|объемы?\s+работ|объёмы?\s+работ/u', $text) === 1;
         $hasEstimateMarkers = $classifiedType === 'estimate'
             || preg_match('/локальная смета|гранд-смет|гэсн|фер|фсбц|обоснование/u', $text) === 1;
         $requiresManualReview = (bool) ($documentProfile['requires_manual_review'] ?? false)
@@ -175,6 +178,7 @@ final class DocumentUnderstandingSummaryBuilder
             'has_room_areas' => $roomCount > 0,
             'has_dimensions' => $dimensionCount > 0,
             'has_quantity_takeoffs' => $takeoffsCount > 0,
+            'has_work_volume_statement_markers' => $hasWorkVolumeStatementMarkers,
             'has_specification_markers' => $hasSpecificationMarkers,
             'has_estimate_markers' => $hasEstimateMarkers,
             'requires_cad_geometry_pipeline' => $classifiedType === 'drawing_cad',
@@ -195,7 +199,10 @@ final class DocumentUnderstandingSummaryBuilder
             return 'reference_estimate';
         }
 
-        if ($documentType === 'specification' || $classifiedType === 'specification') {
+        if (
+            in_array($documentType, ['work_volume_statement', 'specification'], true)
+            || in_array($classifiedType, ['work_volume_statement', 'specification'], true)
+        ) {
             return 'quantity_source';
         }
 
@@ -214,6 +221,7 @@ final class DocumentUnderstandingSummaryBuilder
     {
         return match ($pageRole) {
             'floor_plan' => 'geometry_source',
+            'work_volume_statement' => 'quantity_source',
             'specification' => 'quantity_source',
             'reference_estimate' => 'reference_estimate',
             default => 'context_document',

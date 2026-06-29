@@ -40,7 +40,12 @@ final class DocumentUnderstandingModelsTest extends TestCase
         $model = new EstimateGenerationScopeInference();
 
         self::assertSame('estimate_generation_scope_inferences', $model->getTable());
+        self::assertContains('source_refs', $model->getFillable());
         self::assertContains('normative_basis', $model->getFillable());
+        self::assertContains('work_intent', $model->getFillable());
+        self::assertNotContains('scope_type', $model->getFillable());
+        self::assertNotContains('source_ref', $model->getFillable());
+        self::assertNotContains('normalized_payload', $model->getFillable());
         self::assertSame('array', $model->getCasts()['source_refs'] ?? null);
         self::assertSame('array', $model->getCasts()['normative_basis'] ?? null);
         self::assertSame('array', $model->getCasts()['work_intent'] ?? null);

@@ -355,6 +355,48 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertSame('м', $pipeItem['unit']);
     }
 
+    public function test_persisted_work_volume_statement_inference_creates_evidence_backed_single_work_item(): void
+    {
+        $localEstimate = $this->localEstimate('custom-earthworks', 'Земляные работы', 'earthworks', 1);
+
+        $items = $this->pricedItems($this->planner()->build(
+            $localEstimate,
+            $localEstimate['sections'][0],
+            [
+                'document_context' => [
+                    'scope_inferences' => [[
+                        'inference_type' => 'specification_takeoff',
+                        'title' => 'Земляные работы',
+                        'source_refs' => [[
+                            'type' => 'drawing',
+                            'filename' => 'Ведомость объемов работ.pdf',
+                            'page_number' => 1,
+                        ]],
+                        'work_intent' => [
+                            'scope' => 'earthworks',
+                            'quantity_key' => 'earth.backfill',
+                            'source' => 'work_volume_statement',
+                        ],
+                        'normative_basis' => [
+                            'quantity_value' => 42.0,
+                            'unit' => 'м3',
+                        ],
+                        'confidence' => 0.84,
+                        'review_required' => false,
+                    ]],
+                ],
+            ]
+        ));
+
+        self::assertCount(1, $items);
+        self::assertSame('earth.backfill', $items[0]['quantity_formula']);
+        self::assertSame(42.0, (float) $items[0]['quantity']);
+        self::assertSame('м3', $items[0]['unit']);
+        self::assertSame('scope_inference', $items[0]['metadata']['generation_source']);
+        self::assertSame('scope_inference', $items[0]['metadata']['quantity_source']);
+        self::assertNotEmpty($items[0]['source_refs']);
+    }
+
     public function test_optional_site_package_without_document_quantity_is_not_expanded_from_catalog_fallback(): void
     {
         $localEstimate = $this->localEstimate('external_networks', 'External networks', 'site', 12);

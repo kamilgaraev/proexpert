@@ -26,10 +26,21 @@ final class ConstructionDocumentClassifierService
             $score += 0.45;
         }
 
+        if (! $isCadDocument && $this->isWorkVolumeStatement($value)) {
+            $type = 'work_volume_statement';
+            $reasons[] = 'work_volume_statement_marker';
+            $score += 0.45;
+        }
+
         if (! $isCadDocument && $this->containsAny($value, ['спецификация', 'ведомость оборудования', 'поз.', 'количество', 'ед.'])) {
-            $type = 'specification';
-            $reasons[] = 'specification_marker';
-            $score += 0.35;
+            if ($type !== 'work_volume_statement') {
+                $type = 'specification';
+                $reasons[] = 'specification_marker';
+                $score += 0.35;
+            } else {
+                $reasons[] = 'quantity_table_marker';
+                $score += 0.12;
+            }
         }
 
         if (! $isCadDocument && $this->containsAny($value, ['локальная смета', 'гранд-смет', 'фер ', 'гэсн ', 'фсбц ', 'обоснование'])) {
@@ -38,7 +49,7 @@ final class ConstructionDocumentClassifierService
             $score += 0.45;
         }
 
-        $isStructuredDocument = in_array($type, ['specification', 'estimate', 'drawing_cad'], true);
+        $isStructuredDocument = in_array($type, ['work_volume_statement', 'specification', 'estimate', 'drawing_cad'], true);
 
         if (! $isStructuredDocument && $this->containsAny($value, ['ар-', 'лист ар', 'архитектур', 'план этажа', 'экспликация помещений'])) {
             $type = 'drawing_architecture';
@@ -97,5 +108,10 @@ final class ConstructionDocumentClassifierService
         }
 
         return false;
+    }
+
+    private function isWorkVolumeStatement(string $value): bool
+    {
+        return preg_match('/ведомость\s+(?:объемов|объёмов|работ)|объемы?\s+работ|объёмы?\s+работ|(?:^|[^\p{L}\p{N}])вор(?:$|[^\p{L}\p{N}])/u', $value) === 1;
     }
 }

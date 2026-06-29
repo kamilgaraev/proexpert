@@ -49,6 +49,20 @@ final class ConstructionDocumentClassifierServiceTest extends TestCase
         self::assertContains('spreadsheet_extension', $classification['reasons']);
     }
 
+    public function test_classifies_work_volume_statement_as_quantity_source_document(): void
+    {
+        $classification = (new ConstructionDocumentClassifierService())->classify(
+            filename: 'Ведомость объемов работ.pdf',
+            mimeType: 'application/pdf',
+            pageCount: 1,
+            text: "Наименование работ Ед. изм. Количество\nОбратная засыпка пазух м3 42"
+        );
+
+        self::assertSame('work_volume_statement', $classification['type']);
+        self::assertContains('work_volume_statement_marker', $classification['reasons']);
+        self::assertContains('quantity_table_marker', $classification['reasons']);
+    }
+
     public function test_classifies_uploaded_flat_plan_image_as_architectural_drawing(): void
     {
         $classification = (new ConstructionDocumentClassifierService())->classify(

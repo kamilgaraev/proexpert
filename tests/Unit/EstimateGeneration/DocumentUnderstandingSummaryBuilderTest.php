@@ -64,6 +64,35 @@ final class DocumentUnderstandingSummaryBuilderTest extends TestCase
         self::assertTrue($summary['extracted_capabilities']['has_specification_markers']);
     }
 
+    public function test_work_volume_statement_becomes_quantity_source(): void
+    {
+        $summary = $this->builder()->build(
+            $this->document('Ведомость объемов работ.pdf', 'application/pdf'),
+            $this->recognition("Ведомость объемов работ\nНаименование работ Ед. изм. Количество\nОбратная засыпка пазух м3 42"),
+            [
+                'takeoffs_count' => 1,
+                'document_profile' => [
+                    'document_role' => 'work_volume_statement',
+                    'confidence' => 0.91,
+                    'requires_manual_review' => false,
+                ],
+                'page_profiles' => [[
+                    'page_number' => 1,
+                    'page_role' => 'work_volume_statement',
+                    'confidence' => 0.91,
+                    'signals' => ['work_volume_statement_keywords', 'work_volume_statement_quantities'],
+                ]],
+            ],
+            []
+        );
+
+        self::assertSame('work_volume_statement', $summary['document_type']);
+        self::assertSame('work_volume_statement', $summary['classified_type']);
+        self::assertSame('quantity_source', $summary['role_for_estimation']);
+        self::assertTrue($summary['extracted_capabilities']['has_work_volume_statement_markers']);
+        self::assertSame('quantity_source', $this->builder()->pageUnderstandingByNumber($summary)[1]['role_for_estimation']);
+    }
+
     public function test_grand_smeta_reference_estimate_becomes_reference_estimate(): void
     {
         $summary = $this->builder()->build(
