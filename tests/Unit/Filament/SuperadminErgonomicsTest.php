@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Filament;
 
+use App\BusinessModules\Features\KnowledgeHub\Services\KnowledgeArticleTargetingOptions;
 use Tests\TestCase;
 
 class SuperadminErgonomicsTest extends TestCase
@@ -319,6 +320,45 @@ class SuperadminErgonomicsTest extends TestCase
         }
 
         $this->assertStringNotContainsString('protected ?string $subheading = \'', $source);
+    }
+
+    public function test_knowledge_article_targeting_uses_catalog_selects_instead_of_manual_tags(): void
+    {
+        $source = (string) file_get_contents(app_path('Filament/Resources/KnowledgeArticleResource.php'));
+
+        foreach (['module_slugs', 'permission_keys', 'context_keys'] as $field) {
+            $this->assertStringContainsString("Select::make('{$field}')", $source);
+            $this->assertStringNotContainsString("TagsInput::make('{$field}')", $source);
+        }
+
+        foreach ([
+            'helper_module_slugs',
+            'helper_permission_keys',
+            'helper_context_keys',
+        ] as $translationKey) {
+            $this->assertStringContainsString("trans_message('knowledge_hub.filament.{$translationKey}')", $source);
+        }
+
+        $this->assertStringContainsString(KnowledgeArticleTargetingOptions::class, $source);
+    }
+
+    public function test_knowledge_article_targeting_options_have_business_labels(): void
+    {
+        $options = app(KnowledgeArticleTargetingOptions::class);
+
+        $moduleOptions = $options->moduleOptions();
+        $permissionOptions = $options->permissionOptions();
+        $contextOptions = $options->contextOptions();
+
+        $this->assertArrayHasKey('site-requests', $moduleOptions);
+        $this->assertArrayHasKey('site_requests.view', $permissionOptions);
+        $this->assertArrayHasKey('users.invite', $contextOptions);
+        $this->assertArrayHasKey('site_requests.index', $contextOptions);
+
+        $this->assertNotSame('site-requests', $moduleOptions['site-requests']);
+        $this->assertNotSame('site_requests.view', $permissionOptions['site_requests.view']);
+        $this->assertNotSame('users.invite', $contextOptions['users.invite']);
+        $this->assertNotSame('site_requests.index', $contextOptions['site_requests.index']);
     }
 
     /**

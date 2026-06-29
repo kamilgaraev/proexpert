@@ -10,6 +10,7 @@ use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeAudience;
 use App\BusinessModules\Features\KnowledgeHub\Enums\KnowledgeSurface;
 use App\BusinessModules\Features\KnowledgeHub\Models\KnowledgeArticle;
 use App\BusinessModules\Features\KnowledgeHub\Models\KnowledgeCategory;
+use App\BusinessModules\Features\KnowledgeHub\Services\KnowledgeArticleTargetingOptions;
 use App\Filament\Resources\KnowledgeArticleResource\Pages;
 use App\Filament\Support\Concerns\AuthorizesSystemAdminResource;
 use App\Filament\Support\Concerns\HasDestructiveActionGuardrails;
@@ -167,14 +168,32 @@ class KnowledgeArticleResource extends Resource
                         ->options(KnowledgeSurface::options())
                         ->multiple()
                         ->preload(),
-                    Forms\Components\TagsInput::make('module_slugs')
+                    Forms\Components\Select::make('module_slugs')
                         ->label(trans_message('knowledge_hub.filament.field_module_slugs'))
+                        ->options(fn (): array => app(KnowledgeArticleTargetingOptions::class)->moduleOptions())
+                        ->getOptionLabelsUsing(fn (array $values): array => app(KnowledgeArticleTargetingOptions::class)->moduleLabels($values))
+                        ->multiple()
+                        ->searchable()
+                        ->preload()
+                        ->helperText(trans_message('knowledge_hub.filament.helper_module_slugs'))
                         ->columnSpanFull(),
-                    Forms\Components\TagsInput::make('permission_keys')
+                    Forms\Components\Select::make('permission_keys')
                         ->label(trans_message('knowledge_hub.filament.field_permission_keys'))
+                        ->options(fn (): array => app(KnowledgeArticleTargetingOptions::class)->permissionOptions())
+                        ->getOptionLabelsUsing(fn (array $values): array => app(KnowledgeArticleTargetingOptions::class)->permissionLabels($values))
+                        ->multiple()
+                        ->searchable()
+                        ->preload()
+                        ->helperText(trans_message('knowledge_hub.filament.helper_permission_keys'))
                         ->columnSpanFull(),
-                    Forms\Components\TagsInput::make('context_keys')
+                    Forms\Components\Select::make('context_keys')
                         ->label(trans_message('knowledge_hub.filament.field_context_keys'))
+                        ->options(fn (): array => app(KnowledgeArticleTargetingOptions::class)->contextOptions())
+                        ->getOptionLabelsUsing(fn (array $values): array => app(KnowledgeArticleTargetingOptions::class)->contextLabels($values))
+                        ->multiple()
+                        ->searchable()
+                        ->preload()
+                        ->helperText(trans_message('knowledge_hub.filament.helper_context_keys'))
                         ->columnSpanFull(),
                 ])
                 ->columns(2),
