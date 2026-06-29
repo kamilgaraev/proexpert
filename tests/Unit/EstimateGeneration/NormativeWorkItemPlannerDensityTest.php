@@ -92,6 +92,47 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         );
     }
 
+    public function test_same_quantity_key_takeoffs_are_aggregated_with_all_source_refs(): void
+    {
+        $localEstimate = $this->localEstimate('earthworks', 'Земляные работы', 'foundation', 4);
+
+        $items = $this->pricedItems($this->planner()->build($localEstimate, $localEstimate['sections'][0], [
+            'document_context' => [
+                'quantity_takeoffs' => [[
+                    'quantity_key' => 'earth.backfill',
+                    'name' => 'Обратная засыпка по ведомости, строка 1',
+                    'unit' => 'м3',
+                    'quantity' => 10.5,
+                    'source_refs' => [[
+                        'type' => 'document',
+                        'filename' => 'ВОР.pdf',
+                        'page_number' => 1,
+                    ]],
+                ], [
+                    'quantity_key' => 'earth.backfill',
+                    'name' => 'Обратная засыпка по ведомости, строка 2',
+                    'unit' => 'м3',
+                    'quantity' => 4.25,
+                    'source_refs' => [[
+                        'type' => 'document',
+                        'filename' => 'ВОР.pdf',
+                        'page_number' => 2,
+                    ]],
+                ]],
+            ],
+        ]));
+        $backfill = array_values(array_filter(
+            $items,
+            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'earth.backfill'
+        ))[0] ?? null;
+
+        self::assertIsArray($backfill);
+        self::assertSame(14.75, (float) $backfill['quantity']);
+        self::assertCount(2, $backfill['source_refs']);
+        self::assertStringContainsString('строка 1', $backfill['quantity_basis']);
+        self::assertStringContainsString('строка 2', $backfill['quantity_basis']);
+    }
+
     public function test_sewerage_package_uses_specific_normative_intents_instead_of_generic_complex_work(): void
     {
         $localEstimate = $this->localEstimate('sewerage', 'Канализация', 'engineering', 12);

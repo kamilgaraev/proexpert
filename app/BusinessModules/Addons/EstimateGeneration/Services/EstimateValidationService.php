@@ -399,7 +399,6 @@ class EstimateValidationService
             $unit,
             (string) $quantity,
             $normativeIdentity,
-            $this->sourceRefsSignature($workItem['source_refs'] ?? []),
         ]));
     }
 
@@ -408,35 +407,6 @@ class EstimateValidationService
         $value = mb_strtolower(trim($value));
 
         return preg_replace('/\s+/u', ' ', $value) ?? $value;
-    }
-
-    private function sourceRefsSignature(mixed $sourceRefs): string
-    {
-        if (!is_array($sourceRefs) || $sourceRefs === []) {
-            return 'no-source';
-        }
-
-        $refs = [];
-
-        foreach ($sourceRefs as $sourceRef) {
-            if (!is_array($sourceRef)) {
-                continue;
-            }
-
-            $refs[] = implode(':', array_map(
-                static fn (mixed $value): string => trim((string) $value),
-                [
-                    $sourceRef['document_id'] ?? '',
-                    $sourceRef['document_name'] ?? $sourceRef['filename'] ?? '',
-                    $sourceRef['page_number'] ?? $sourceRef['page'] ?? '',
-                    $sourceRef['fact_id'] ?? $sourceRef['takeoff_id'] ?? $sourceRef['id'] ?? '',
-                ]
-            ));
-        }
-
-        sort($refs);
-
-        return implode('|', array_values(array_filter($refs)));
     }
 
     /**

@@ -204,6 +204,52 @@ final class EstimateValidationServiceTest extends TestCase
         self::assertSame('review_required', $draft['quality_summary']['status']);
     }
 
+    public function test_duplicate_priced_work_items_from_different_sources_require_manual_review(): void
+    {
+        $workItem = [
+            'item_type' => 'priced_work',
+            'name' => 'Окраска стен',
+            'normative_search_text' => 'окраска стен водно-дисперсионной краской',
+            'normative_search_key' => '15|finishing|paint|м2',
+            'unit' => 'м2',
+            'quantity' => 180,
+            'quantity_basis' => 'По проектной документации',
+            'total_cost' => 95000,
+            'materials' => [['total_price' => 60000]],
+            'labor' => [['total_price' => 25000]],
+            'machinery' => [['total_price' => 10000]],
+            'pricing_status' => 'calculated',
+            'normative_match' => [
+                'status' => 'matched',
+                'decision' => ['status' => 'accepted'],
+            ],
+            'validation_flags' => [],
+            'confidence' => 0.88,
+        ];
+
+        $draft = $this->service()->validate($this->draft([
+            [
+                'key' => 'statement-paint',
+                ...$workItem,
+                'source_refs' => [['document_id' => 1, 'page_number' => 2, 'fact_id' => 11]],
+            ],
+            [
+                'key' => 'planner-paint',
+                ...$workItem,
+                'source_refs' => [['document_id' => 2, 'page_number' => 1, 'takeoff_id' => 34]],
+            ],
+        ]));
+
+        $firstItem = $draft['local_estimates'][0]['sections'][0]['work_items'][0];
+        $secondItem = $draft['local_estimates'][0]['sections'][0]['work_items'][1];
+
+        self::assertContains('possible_duplicate_work_item', $firstItem['validation_flags']);
+        self::assertContains('possible_duplicate_work_item', $secondItem['validation_flags']);
+        self::assertContains('requires_duplicate_review', $draft['problem_flags']);
+        self::assertSame(2, $draft['quality_summary']['duplicate_work_items']);
+        self::assertSame('review_required', $draft['quality_summary']['status']);
+    }
+
     /**
      * @param array<int, array<string, mixed>> $workItems
      * @return array<string, mixed>

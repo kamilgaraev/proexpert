@@ -42,4 +42,29 @@ final class DocumentGenerationReadinessServiceTest extends TestCase
         self::assertTrue($summary['items'][0]['requires_document_review']);
         self::assertTrue($summary['items'][0]['is_action_required']);
     }
+
+    public function test_ready_low_quality_document_blocks_generation(): void
+    {
+        $document = new EstimateGenerationDocument();
+        $document->forceFill([
+            'id' => 8,
+            'filename' => 'Размытый скан.pdf',
+            'status' => 'ready',
+            'processing_stage' => 'completed',
+            'progress_percent' => 100,
+            'quality_level' => 'unusable',
+            'quality_score' => 0.18,
+            'quality_flags' => ['ocr_text_too_short'],
+            'facts_summary' => [],
+        ]);
+
+        $summary = (new DocumentGenerationReadinessService())->summary(new Collection([$document]));
+
+        self::assertSame(1, $summary['low_quality_count']);
+        self::assertSame(1, $summary['action_required_count']);
+        self::assertFalse($summary['can_generate']);
+        self::assertContains('document_low_quality', $summary['problem_flags']);
+        self::assertTrue($summary['items'][0]['has_low_quality']);
+        self::assertTrue($summary['items'][0]['is_action_required']);
+    }
 }

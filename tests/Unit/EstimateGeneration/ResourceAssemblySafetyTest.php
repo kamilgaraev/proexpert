@@ -8,11 +8,49 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingServic
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidatePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeMatchDecisionService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeScopeRuleCatalog;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
-use Tests\TestCase;
+use Illuminate\Config\Repository;
+use Illuminate\Container\Container;
+use Illuminate\Filesystem\Filesystem;
+use Illuminate\Support\Facades\Facade;
+use Illuminate\Translation\FileLoader;
+use Illuminate\Translation\Translator;
+use PHPUnit\Framework\TestCase;
 
 final class ResourceAssemblySafetyTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $container = new Container();
+        $loader = new FileLoader(new Filesystem(), dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'lang');
+        $translator = new Translator($loader, 'ru');
+
+        $container->instance('app', new class {
+            public function getLocale(): string
+            {
+                return 'ru';
+            }
+        });
+        $container->instance('config', new Repository(['app' => ['fallback_locale' => 'ru']]));
+        $container->instance('translator', $translator);
+
+        Facade::setFacadeApplication($container);
+        Container::setInstance($container);
+    }
+
+    protected function tearDown(): void
+    {
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication(null);
+        Container::setInstance(null);
+
+        parent::tearDown();
+    }
+
     public function test_selected_norm_with_incompatible_unit_stays_unpriced_candidate(): void
     {
         $workItem = [
@@ -25,6 +63,12 @@ final class ResourceAssemblySafetyTest extends TestCase
             'materials' => [],
             'labor' => [],
             'machinery' => [],
+            'work_intent' => [
+                'scope' => 'roof',
+                'action' => 'insulation',
+                'preferred_section_prefixes' => ['12', '26'],
+                'forbidden_section_prefixes' => ['01', '16'],
+            ],
         ];
         $match = [
             'version' => ['source_type' => 'fsnb_2022', 'version_key' => '2026-05-07'],
@@ -45,12 +89,13 @@ final class ResourceAssemblySafetyTest extends TestCase
                     return $this->match;
                 }
             },
-            app(NormativeMatchDecisionService::class),
-            app(NormativeCandidatePresenter::class),
+            new NormativeMatchDecisionService(),
+            new NormativeCandidatePresenter(),
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog()),
         );
 
         $item = $service->enrich([$workItem], ['scope_type' => 'roof'])[0];
-        $item = app(EstimatePricingService::class)->price([$item])[0];
+        $item = (new EstimatePricingService())->price([$item])[0];
 
         $this->assertSame('candidate', $item['normative_match']['status']);
         $this->assertSame([], $item['materials']);
@@ -100,12 +145,13 @@ final class ResourceAssemblySafetyTest extends TestCase
                     return $this->match;
                 }
             },
-            app(NormativeMatchDecisionService::class),
-            app(NormativeCandidatePresenter::class),
+            new NormativeMatchDecisionService(),
+            new NormativeCandidatePresenter(),
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog()),
         );
 
         $item = $service->enrich([$workItem], ['scope_type' => 'roof'])[0];
-        $item = app(EstimatePricingService::class)->price([$item])[0];
+        $item = (new EstimatePricingService())->price([$item])[0];
 
         $this->assertSame('matched', $item['normative_match']['status']);
         $this->assertSame('review_priced', $item['normative_match']['decision']['status']);
@@ -114,6 +160,96 @@ final class ResourceAssemblySafetyTest extends TestCase
         $this->assertNotContains('safe_norm_required', $item['validation_flags']);
         $this->assertNotContains('pricing_not_calculated', $item['validation_flags']);
         $this->assertContains('safe_normative_analog', $item['validation_flags']);
+    }
+
+    public function test_manually_selected_scope_mismatch_norm_stays_unpriced_candidate(): void
+    {
+        $workItem = [
+            'key' => 'finish-paint-1',
+            'name' => 'Окраска стен',
+            'description' => 'Окраска стен водно-дисперсионной краской',
+            'unit' => 'м2',
+            'quantity' => 80,
+            'confidence' => 0.72,
+            'validation_flags' => ['normative_required'],
+            'materials' => [],
+            'labor' => [],
+            'machinery' => [],
+            'work_intent' => [
+                'scope' => 'finishing',
+                'action' => 'painting',
+                'preferred_section_prefixes' => ['15'],
+                'forbidden_section_prefixes' => ['01'],
+            ],
+        ];
+        $match = [
+            'version' => ['source_type' => 'fsnb_2022', 'version_key' => '2026-05-31'],
+            'price_version' => ['source_type' => 'fsbc', 'version_key' => '2026-05-31'],
+            'selected' => $this->earthSquareCandidate(),
+            'candidates' => [$this->earthSquareCandidate()],
+        ];
+
+        $item = $this->manualSelectionService()->applySelectedNormativeMatch($workItem, $match, ['scope_type' => 'finishing']);
+        $item = (new EstimatePricingService())->price([$item])[0];
+
+        $this->assertSame('candidate', $item['normative_match']['status']);
+        $this->assertSame('not_calculated', $item['pricing_status']);
+        $this->assertSame('scope_mismatch', $item['pricing_blocker']);
+        $this->assertSame([], $item['materials']);
+        $this->assertSame(0.0, $item['total_cost']);
+        $this->assertContains('scope_mismatch', $item['normative_match']['warnings']);
+        $this->assertContains('safe_norm_required', $item['validation_flags']);
+        $this->assertContains('pricing_not_calculated', $item['validation_flags']);
+    }
+
+    public function test_manually_selected_review_priced_norm_keeps_review_warnings(): void
+    {
+        $workItem = [
+            'key' => 'roof-insulation-manual',
+            'name' => 'Утепление кровли 200 мм',
+            'unit' => 'м2',
+            'quantity' => 100,
+            'confidence' => 0.7,
+            'validation_flags' => ['normative_required'],
+            'materials' => [],
+            'labor' => [],
+            'machinery' => [],
+            'work_intent' => [
+                'scope' => 'roof',
+                'action' => 'insulation',
+                'preferred_section_prefixes' => ['12', '26'],
+                'forbidden_section_prefixes' => ['01', '16'],
+            ],
+        ];
+        $match = [
+            'version' => ['source_type' => 'fsnb_2022', 'version_key' => '2026-05-31'],
+            'price_version' => ['source_type' => 'fsbc', 'version_key' => '2026-05-31'],
+            'selected' => $this->safeReviewCandidate(),
+            'candidates' => [$this->safeReviewCandidate()],
+        ];
+
+        $item = $this->manualSelectionService()->applySelectedNormativeMatch($workItem, $match, ['scope_type' => 'roof']);
+        $item = (new EstimatePricingService())->price([$item])[0];
+
+        $this->assertSame('matched', $item['normative_match']['status']);
+        $this->assertTrue($item['normative_match']['selected_by_user']);
+        $this->assertSame('review_priced', $item['normative_match']['decision']['status']);
+        $this->assertSame('calculated_review_required', $item['pricing_status']);
+        $this->assertGreaterThan(0, $item['total_cost']);
+        $this->assertContains('requires_normative_review', $item['normative_match']['warnings']);
+        $this->assertContains('safe_normative_analog', $item['normative_match']['warnings']);
+        $this->assertContains('requires_normative_review', $item['validation_flags']);
+        $this->assertContains('safe_normative_analog', $item['validation_flags']);
+    }
+
+    private function manualSelectionService(): ResourceAssemblyService
+    {
+        return new ResourceAssemblyService(
+            $this->createMock(EstimateNormativeMatcher::class),
+            new NormativeMatchDecisionService(),
+            new NormativeCandidatePresenter(),
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog()),
+        );
     }
 
     /**
@@ -181,6 +317,44 @@ final class ResourceAssemblySafetyTest extends TestCase
                     'quantity' => 1.05,
                     'unit_price' => 800.0,
                     'total_price' => 840.0,
+                    'price_source' => 'fsbc_base',
+                    'price_id' => 1,
+                    'linked_resource_id' => null,
+                ]],
+                'labor' => [],
+                'machinery' => [],
+                'other' => [],
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function earthSquareCandidate(): array
+    {
+        return [
+            'key' => 'norm-101',
+            'norm_id' => 101,
+            'code' => '01-01-011-01',
+            'name' => 'Разработка грунта',
+            'unit' => 'м2',
+            'collection' => ['code' => 'gesn', 'name' => 'ГЭСН', 'norm_type' => 'gesn'],
+            'section' => ['code' => '01-01', 'name' => 'Земляные работы'],
+            'score' => 91,
+            'confidence' => 0.93,
+            'match_reasons' => ['unit'],
+            'warnings' => [],
+            'work_composition' => ['Разработка грунта'],
+            'resources' => [
+                'materials' => [[
+                    'code' => '01.1.01.01-0001',
+                    'name' => 'Песок',
+                    'resource_type' => 'material',
+                    'unit' => 'м3',
+                    'quantity' => 1.0,
+                    'unit_price' => 1000.0,
+                    'total_price' => 1000.0,
                     'price_source' => 'fsbc_base',
                     'price_id' => 1,
                     'linked_resource_id' => null,

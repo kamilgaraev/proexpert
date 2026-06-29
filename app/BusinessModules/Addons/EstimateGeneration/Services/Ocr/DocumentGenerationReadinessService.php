@@ -60,6 +60,7 @@ class DocumentGenerationReadinessService
             'needs_review_count' => $needsReview->count(),
             'ignored_count' => $ignored->count(),
             'understanding_review_count' => $understandingReviewDocuments->count(),
+            'low_quality_count' => $lowQualityDocuments->count(),
             'action_required_count' => $actionRequiredCount,
             'has_documents' => $items->isNotEmpty(),
             'has_pending' => $pending->isNotEmpty(),
@@ -101,7 +102,10 @@ class DocumentGenerationReadinessService
             'has_low_quality' => $hasLowQuality,
             'requires_document_review' => $requiresDocumentReview,
             'is_pending' => in_array($status, self::PENDING_STATUSES, true),
-            'is_action_required' => in_array($status, self::ACTION_REQUIRED_STATUSES, true) || $hasConflicts || $requiresDocumentReview,
+            'is_action_required' => in_array($status, self::ACTION_REQUIRED_STATUSES, true)
+                || $hasConflicts
+                || $hasLowQuality
+                || $requiresDocumentReview,
             'updated_at' => $document->updated_at?->toISOString(),
         ];
     }

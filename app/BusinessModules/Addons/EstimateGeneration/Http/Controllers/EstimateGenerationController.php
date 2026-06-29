@@ -21,6 +21,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationExcelExportService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationFinalWorkItemGuard;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
@@ -51,6 +52,7 @@ class EstimateGenerationController extends Controller
         protected EstimateDraftPersistenceService $draftPersistenceService,
         protected EstimateGenerationExcelExportService $excelExportService,
         protected EstimateGenerationRegionalContextResolver $regionalContextResolver,
+        protected EstimateGenerationFinalWorkItemGuard $finalWorkItemGuard,
         protected EstimateGenerationPackagePresenter $packagePresenter,
         protected NormativeCandidateSelectionService $candidateSelectionService,
         protected DocumentGenerationReadinessService $documentReadinessService,
@@ -341,14 +343,7 @@ class EstimateGenerationController extends Controller
                             }
 
                             foreach ($section['work_items'] ?? [] as $workItem) {
-                                if (
-                                    !is_array($workItem)
-                                    || in_array(
-                                        (string) ($workItem['item_type'] ?? 'priced_work'),
-                                        EstimateGenerationPackageItem::SERVICE_ITEM_TYPES,
-                                        true
-                                    )
-                                ) {
+                                if (!is_array($workItem) || !$this->finalWorkItemGuard->isFinalEstimateWorkItem($workItem)) {
                                     continue;
                                 }
 

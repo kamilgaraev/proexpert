@@ -571,7 +571,7 @@ final class NormativeWorkItemPlannerService
                 continue;
             }
 
-            $quantities[$quantityKey] = $this->modelQuantity(
+            $quantity = $this->modelQuantity(
                 value: $value,
                 unit: (string) ($takeoff['unit'] ?? $payload['unit'] ?? 'ед'),
                 basis: (string) ($takeoff['name'] ?? $takeoff['label'] ?? $takeoff['formula'] ?? 'Количество извлечено из проектной документации.'),
@@ -579,6 +579,9 @@ final class NormativeWorkItemPlannerService
                 sourceRefs: is_array($takeoff['source_refs'] ?? null) ? $takeoff['source_refs'] : [],
                 reviewRequired: (bool) ($payload['review_required'] ?? $takeoff['review_required'] ?? false)
             );
+            $quantities[$quantityKey] = isset($quantities[$quantityKey])
+                ? $this->mergeModelQuantities($quantities[$quantityKey], $quantity)
+                : $quantity;
         }
 
         return $quantities;
@@ -673,6 +676,49 @@ final class NormativeWorkItemPlannerService
             'source_refs' => $this->normalizeSourceRefs($sourceRefs),
             'review_required' => $reviewRequired,
             'source' => $source,
+        ];
+    }
+
+    /**
+     * @param array{value: float, unit: string, basis: string, confidence: float, source_refs: array<int, array<string, mixed>>, review_required: bool, source: string} $left
+     * @param array{value: float, unit: string, basis: string, confidence: float, source_refs: array<int, array<string, mixed>>, review_required: bool, source: string} $right
+     * @return array{value: float, unit: string, basis: string, confidence: float, source_refs: array<int, array<string, mixed>>, review_required: bool, source: string}
+     */
+    private function mergeModelQuantities(array $left, array $right): array
+    {
+        $leftUnit = mb_strtolower(trim((string) ($left['unit'] ?? '')));
+        $rightUnit = mb_strtolower(trim((string) ($right['unit'] ?? '')));
+        $sourceRefs = $this->normalizeSourceRefs([
+            ...($left['source_refs'] ?? []),
+            ...($right['source_refs'] ?? []),
+        ]);
+        $basis = implode('; ', array_values(array_filter([
+            (string) ($left['basis'] ?? ''),
+            (string) ($right['basis'] ?? ''),
+        ])));
+
+        if ($leftUnit !== $rightUnit) {
+            return [
+                'value' => (float) ($left['value'] ?? 0),
+                'unit' => (string) ($left['unit'] ?? ''),
+                'basis' => trim($basis . '; единицы измерения извлеченных объемов различаются и требуют проверки.'),
+                'confidence' => round(min((float) ($left['confidence'] ?? 0.5), (float) ($right['confidence'] ?? 0.5), 0.5), 4),
+                'source_refs' => $sourceRefs,
+                'review_required' => true,
+                'source' => 'document_quantity_conflict',
+            ];
+        }
+
+        return [
+            'value' => round((float) ($left['value'] ?? 0) + (float) ($right['value'] ?? 0), 4),
+            'unit' => (string) ($left['unit'] ?? $right['unit'] ?? ''),
+            'basis' => $basis,
+            'confidence' => round(min((float) ($left['confidence'] ?? 0.76), (float) ($right['confidence'] ?? 0.76)), 4),
+            'source_refs' => $sourceRefs,
+            'review_required' => (bool) ($left['review_required'] ?? false) || (bool) ($right['review_required'] ?? false),
+            'source' => ($left['source'] ?? null) === ($right['source'] ?? null)
+                ? (string) ($left['source'] ?? 'document_quantity')
+                : 'document_quantity_aggregate',
         ];
     }
 

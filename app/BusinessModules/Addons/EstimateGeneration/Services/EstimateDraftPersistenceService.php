@@ -21,6 +21,13 @@ class EstimateDraftPersistenceService
 {
     private const ESTIMATE_NAME_MAX_LENGTH = 255;
 
+    protected EstimateGenerationFinalWorkItemGuard $finalWorkItemGuard;
+
+    public function __construct(?EstimateGenerationFinalWorkItemGuard $finalWorkItemGuard = null)
+    {
+        $this->finalWorkItemGuard = $finalWorkItemGuard ?? new EstimateGenerationFinalWorkItemGuard();
+    }
+
     public function apply(EstimateGenerationSession $session, array $payload, User $user): Estimate
     {
         $draft = $session->draft_payload ?? [];
@@ -253,21 +260,7 @@ class EstimateDraftPersistenceService
      */
     protected function isPersistableWorkItem(array $workItem): bool
     {
-        $type = (string) ($workItem['item_type'] ?? 'priced_work');
-
-        if (in_array($type, ['operation', 'resource_note', 'review_note'], true)) {
-            return false;
-        }
-
-        if ((string) ($workItem['pricing_status'] ?? '') === 'not_calculated') {
-            return false;
-        }
-
-        if ($this->normativeRateCode($workItem) === null) {
-            return false;
-        }
-
-        return (float) ($workItem['quantity'] ?? 0) > 0 && (float) ($workItem['total_cost'] ?? 0) > 0;
+        return $this->finalWorkItemGuard->isFinalEstimateWorkItem($workItem);
     }
 
     /**
@@ -275,9 +268,7 @@ class EstimateDraftPersistenceService
      */
     private function normativeRateCode(array $workItem): ?string
     {
-        $code = trim((string) ($workItem['normative_rate_code'] ?? data_get($workItem, 'normative_match.code', '')));
-
-        return $code !== '' ? $code : null;
+        return $this->finalWorkItemGuard->normativeRateCode($workItem);
     }
 
     protected function resolveMeasurementUnitId(int $organizationId, string $unit): ?int

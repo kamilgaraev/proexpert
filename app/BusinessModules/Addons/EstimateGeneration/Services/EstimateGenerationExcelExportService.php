@@ -4,16 +4,20 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
-use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\ExcelEstimateBuilder;
 use App\Models\Estimate;
 
 class EstimateGenerationExcelExportService
 {
+    private ?EstimateGenerationFinalWorkItemGuard $finalWorkItemGuard = null;
+
     public function __construct(
-        protected ExcelEstimateBuilder $excelEstimateBuilder
-    ) {}
+        protected ExcelEstimateBuilder $excelEstimateBuilder,
+        ?EstimateGenerationFinalWorkItemGuard $finalWorkItemGuard = null,
+    ) {
+        $this->finalWorkItemGuard = $finalWorkItemGuard ?? new EstimateGenerationFinalWorkItemGuard();
+    }
 
     public function export(EstimateGenerationSession $session): array
     {
@@ -59,6 +63,7 @@ class EstimateGenerationExcelExportService
         $sections = [];
         $sectionId = 1;
         $itemId = 1;
+        $exportTotal = 0.0;
 
         foreach ($draft['local_estimates'] ?? [] as $localEstimateIndex => $localEstimate) {
             if (!is_array($localEstimate)) {
@@ -66,7 +71,8 @@ class EstimateGenerationExcelExportService
             }
 
             $localEstimateSectionId = $sectionId++;
-            $localEstimateTotal = (float) ($localEstimate['totals']['total_cost'] ?? 0);
+            $localEstimateSectionIndex = count($sections);
+            $localEstimateTotal = 0.0;
 
             $sections[] = [
                 'id' => $localEstimateSectionId,
@@ -123,7 +129,11 @@ class EstimateGenerationExcelExportService
                     'section_total_amount' => round($sectionTotal, 2),
                     'items' => $preparedItems,
                 ];
+                $localEstimateTotal += $sectionTotal;
             }
+
+            $sections[$localEstimateSectionIndex]['section_total_amount'] = round($localEstimateTotal, 2);
+            $exportTotal += $localEstimateTotal;
         }
 
         return [
@@ -154,11 +164,11 @@ class EstimateGenerationExcelExportService
             ],
             'sections' => $sections,
             'totals' => [
-                'total_direct_costs' => (float) ($draft['totals']['total_cost'] ?? 0),
+                'total_direct_costs' => round($exportTotal, 2),
                 'total_overhead_costs' => 0.0,
                 'total_estimated_profit' => 0.0,
-                'total_amount' => (float) ($draft['totals']['total_cost'] ?? 0),
-                'total_amount_with_vat' => (float) ($draft['totals']['total_cost'] ?? 0),
+                'total_amount' => round($exportTotal, 2),
+                'total_amount_with_vat' => round($exportTotal, 2),
                 'vat_rate' => 0.0,
                 'overhead_rate' => 0.0,
                 'profit_rate' => 0.0,
@@ -205,11 +215,12 @@ class EstimateGenerationExcelExportService
      */
     private function isEstimateWorkItem(array $workItem): bool
     {
-        return !in_array(
-            (string) ($workItem['item_type'] ?? 'priced_work'),
-            EstimateGenerationPackageItem::SERVICE_ITEM_TYPES,
-            true
-        );
+        return $this->finalWorkItemGuard()->isFinalEstimateWorkItem($workItem);
+    }
+
+    private function finalWorkItemGuard(): EstimateGenerationFinalWorkItemGuard
+    {
+        return $this->finalWorkItemGuard ??= new EstimateGenerationFinalWorkItemGuard();
     }
 
     protected function prepareWorkItem(array $workItem, int $sectionId, int $itemId, string $positionNumber): array

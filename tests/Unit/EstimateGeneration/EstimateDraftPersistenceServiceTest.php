@@ -35,6 +35,7 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
             $this->workItem('note-1', 'resource_note', 0),
             $this->workItem('review-1', 'review_note', 0),
             $this->workItem('not-calculated-1', 'priced_work', 0, 'not_calculated'),
+            $this->workItem('review-priced-1', 'priced_work', 1000, 'calculated_review_required'),
         ]);
 
         self::assertCount(1, $persistable);

@@ -75,7 +75,7 @@ class ResourceAssemblyService
     {
         $workItem = $this->withWorkIntent($workItem, $context);
 
-        return $this->applyNormativeResources($workItem, $match, true);
+        return $this->applyDecidedNormativeMatch($workItem, $match, true);
     }
 
     /**
@@ -173,15 +173,25 @@ class ResourceAssemblyService
      */
     private function applyNormativeMatch(array $workItem, array $match): array
     {
+        return $this->applyDecidedNormativeMatch($workItem, $match, false);
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @param array<string, mixed> $match
+     * @return array<string, mixed>
+     */
+    private function applyDecidedNormativeMatch(array $workItem, array $match, bool $selectedByUser): array
+    {
         $selected = $match['selected'];
         $decision = $this->matchDecisionService->decide($selected, $workItem);
 
         if (!$decision->canUseForPricing) {
-            return $this->applyCandidateOnlyMatch($workItem, $match, $decision->toArray());
+            return $this->applyCandidateOnlyMatch($workItem, $match, $decision->toArray(), $selectedByUser);
         }
 
         $decisionPayload = $decision->toArray();
-        $workItem = $this->applyNormativeResources($workItem, $match, false, $decisionPayload);
+        $workItem = $this->applyNormativeResources($workItem, $match, $selectedByUser, $decisionPayload);
         $flags = $this->acceptedFlags($workItem['validation_flags'] ?? []);
 
         if ($decision->status === 'review_priced') {
@@ -231,7 +241,7 @@ class ResourceAssemblyService
                 'confidence' => (float) ($selected['confidence'] ?? 0),
                 'reasons' => [],
                 'warnings' => ['unit_mismatch'],
-            ]);
+            ], $selectedByUser);
         }
 
         $normQuantity = max((float) ($workItem['quantity'] ?? 0), 0.0) * $quantityFactor;
@@ -251,7 +261,7 @@ class ResourceAssemblyService
             : 'calculated';
         $workItem['pricing_blocker'] = null;
         $workItem['pricing_blocker_message'] = null;
-        $warnings = $selectedByUser ? [] : array_values(array_unique([
+        $warnings = array_values(array_unique([
             ...($selected['warnings'] ?? []),
             ...($decision['warnings'] ?? []),
         ]));
@@ -269,7 +279,7 @@ class ResourceAssemblyService
             'dataset_version' => $version,
             'price_version' => $priceVersion,
             'score' => $selected['score'],
-            'confidence' => $selectedByUser ? 1.0 : $selected['confidence'],
+            'confidence' => $selected['confidence'],
             'match_reasons' => $selected['match_reasons'],
             'warnings' => $warnings,
             'decision' => $decision,
@@ -282,9 +292,7 @@ class ResourceAssemblyService
             fn (array $candidate): array => $this->candidateSummary($candidate),
             $match['candidates']
         );
-        $workItem['confidence'] = $selectedByUser
-            ? max((float) ($workItem['confidence'] ?? 0.5), 0.8)
-            : round(((float) ($workItem['confidence'] ?? 0.5) + (float) $selected['confidence']) / 2, 4);
+        $workItem['confidence'] = round(((float) ($workItem['confidence'] ?? 0.5) + (float) $selected['confidence']) / 2, 4);
         $workItem['validation_flags'] = $this->acceptedFlags($workItem['validation_flags'] ?? []);
 
         return $workItem;
@@ -296,7 +304,7 @@ class ResourceAssemblyService
      * @param array<string, mixed> $decision
      * @return array<string, mixed>
      */
-    private function applyCandidateOnlyMatch(array $workItem, array $match, array $decision): array
+    private function applyCandidateOnlyMatch(array $workItem, array $match, array $decision, bool $selectedByUser = false): array
     {
         $selected = $match['selected'];
         $flags = $workItem['validation_flags'] ?? [];
@@ -320,6 +328,7 @@ class ResourceAssemblyService
 
         $workItem['normative_match'] = [
             'status' => $decision['status'],
+            'selected_by_user' => $selectedByUser,
             'selected_candidate_key' => $selected['key'],
             'norm_id' => $selected['norm_id'],
             'code' => $selected['code'],
