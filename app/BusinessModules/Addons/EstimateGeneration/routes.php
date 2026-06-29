@@ -31,8 +31,9 @@ Route::middleware([
         Route::get('/{session}/status', [EstimateGenerationController::class, 'status'])->name('status');
         Route::get('/{session}/packages', [EstimateGenerationController::class, 'packages'])->name('packages.index');
         Route::get('/{session}/packages/{package}', [EstimateGenerationController::class, 'package'])->name('packages.show');
-        Route::get('/{session}', [EstimateGenerationController::class, 'show'])->name('show');
         Route::get('/{session}/draft', [EstimateGenerationController::class, 'draft'])->name('draft');
+        Route::get('/{session}/review-items', [EstimateGenerationController::class, 'reviewItems'])->name('review-items');
+        Route::get('/{session}', [EstimateGenerationController::class, 'show'])->name('show');
         Route::get('/{session}/export', [EstimateGenerationController::class, 'export'])->name('export');
         Route::post('/{session}/apply', [EstimateGenerationController::class, 'apply'])->name('apply');
         Route::get('/{session}/normative-candidates/search', [EstimateGenerationController::class, 'searchNormativeCandidates'])->name('normative-candidates.search');

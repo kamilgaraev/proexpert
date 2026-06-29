@@ -67,6 +67,7 @@ return [
     'notification_open_action' => 'Открыть смету',
     'feedback_saved' => 'Обратная связь по генерации сохранена.',
     'feedback_error' => 'Не удалось сохранить обратную связь.',
+    'review_items_error' => 'Не удалось получить список позиций для проверки.',
     'stage_documents_processing' => 'Документы обрабатываются',
     'stage_documents_processing_description' => 'Можно закрыть страницу: мы продолжим обработку и запустим расчет, когда документы будут готовы.',
     'stage_object_analysis' => 'Анализируем объект',

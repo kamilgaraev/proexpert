@@ -25,6 +25,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationFin
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationReviewItemService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateFeedbackService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateManualSearchService;
@@ -60,6 +61,7 @@ class EstimateGenerationController extends Controller
         protected EstimateGenerationLearningRecorder $learningRecorder,
         protected NormativeCandidateManualSearchService $candidateManualSearchService,
         protected NormativeCandidateFeedbackService $candidateFeedbackService,
+        protected EstimateGenerationReviewItemService $reviewItemService,
     ) {}
 
     public function index(Request $request, Project $project): JsonResponse
@@ -317,6 +319,23 @@ class EstimateGenerationController extends Controller
         $this->guardSession($request, $project, $session);
 
         return AdminResponse::success($session->draft_payload ?? []);
+    }
+
+    public function reviewItems(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
+    {
+        try {
+            $this->guardSession($request, $project, $session);
+
+            return AdminResponse::success($this->reviewItemService->forSession($session));
+        } catch (\Throwable $e) {
+            Log::error('[EstimateGeneration] Review items failed', [
+                'project_id' => $project->id,
+                'session_id' => $session->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('estimate_generation.review_items_error'), 500);
+        }
     }
 
     public function export(Request $request, Project $project, EstimateGenerationSession $session): Response|StreamedResponse|JsonResponse
