@@ -9,6 +9,7 @@ use App\Exceptions\AI\AIParsingException;
 use App\Exceptions\AI\AIQuotaExceededException;
 use App\Exceptions\Billing\InsufficientBalanceException;
 use App\Exceptions\BusinessLogicException;
+use App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob;
 use App\Services\Monitoring\GlitchTipReportPolicy;
 use Filament\Actions\Exceptions\ActionNotResolvableException;
 use Illuminate\Auth\AuthenticationException;
@@ -17,6 +18,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Http\Exceptions\PostTooLargeException;
 use Illuminate\Http\Request;
+use Illuminate\Queue\MaxAttemptsExceededException;
 use Illuminate\Support\MessageBag;
 use Illuminate\Validation\ValidationException;
 use PDOException;
@@ -111,6 +113,36 @@ class GlitchTipReportPolicyTest extends TestCase
 
         self::assertFalse($policy->shouldCapture($exception));
         self::assertTrue($policy->shouldCapture($exception, Request::create('/api/v1/admin/dashboard', 'GET')));
+    }
+
+    public function test_skips_recoverable_org_wide_rag_estimate_max_attempts(): void
+    {
+        $policy = new GlitchTipReportPolicy($this->config());
+        $exception = new MaxAttemptsExceededException(
+            IndexRagSourceJob::class.' has been attempted too many times.'
+        );
+        $exception->job = self::queueJob(
+            IndexRagSourceJob::class,
+            'O:66:"App\\BusinessModules\\Features\\AIAssistant\\Jobs\\IndexRagSourceJob":4:{'
+            .'s:14:"organizationId";i:39;s:9:"projectId";N;s:10:"sourceType";s:8:"estimate";s:5:"runId";i:77091;}'
+        );
+
+        self::assertFalse($policy->shouldCapture($exception));
+    }
+
+    public function test_captures_project_scoped_rag_estimate_max_attempts(): void
+    {
+        $policy = new GlitchTipReportPolicy($this->config());
+        $exception = new MaxAttemptsExceededException(
+            IndexRagSourceJob::class.' has been attempted too many times.'
+        );
+        $exception->job = self::queueJob(
+            IndexRagSourceJob::class,
+            'O:66:"App\\BusinessModules\\Features\\AIAssistant\\Jobs\\IndexRagSourceJob":4:{'
+            .'s:14:"organizationId";i:39;s:9:"projectId";i:55;s:10:"sourceType";s:8:"estimate";s:5:"runId";i:77091;}'
+        );
+
+        self::assertTrue($policy->shouldCapture($exception));
     }
 
     public static function reportableExceptions(): array
@@ -331,6 +363,26 @@ class GlitchTipReportPolicyTest extends TestCase
             public function hasDataToRead(): bool
             {
                 return false;
+            }
+        };
+    }
+
+    private static function queueJob(string $commandName, string $command): object
+    {
+        return new class($commandName, $command) {
+            public function __construct(
+                private readonly string $commandName,
+                private readonly string $command
+            ) {}
+
+            public function payload(): array
+            {
+                return [
+                    'data' => [
+                        'commandName' => $this->commandName,
+                        'command' => $this->command,
+                    ],
+                ];
             }
         };
     }
