@@ -777,6 +777,67 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             'room_count' => count($roomTakeoffs),
             'room_area_total_m2' => $roomAreaTotal > 0 ? $roomAreaTotal : null,
             'dimension_count' => $dimensionCount,
+            'evidence_graph' => $this->evidenceGraph($takeoffs),
+        ];
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $takeoffs
+     * @return array<string, mixed>
+     */
+    private function evidenceGraph(array $takeoffs): array
+    {
+        $nodes = [];
+        $reviewRequiredCount = 0;
+        $lowConfidenceCount = 0;
+        $missingSourceRefsCount = 0;
+
+        foreach (array_values($takeoffs) as $index => $takeoff) {
+            $sourceRefs = array_values(array_filter($takeoff['source_refs'] ?? [], 'is_array'));
+            $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
+            $confidence = (float) ($takeoff['confidence'] ?? 0);
+            $reviewRequired = (bool) ($payload['review_required'] ?? false);
+
+            if ($reviewRequired) {
+                $reviewRequiredCount++;
+            }
+
+            if ($confidence < 0.7) {
+                $lowConfidenceCount++;
+            }
+
+            if ($sourceRefs === []) {
+                $missingSourceRefsCount++;
+            }
+
+            if (count($nodes) >= 40) {
+                continue;
+            }
+
+            $nodes[] = [
+                'id' => 'takeoff-' . ($index + 1),
+                'type' => 'quantity_takeoff',
+                'scope_key' => $takeoff['scope_key'] ?? null,
+                'quantity_key' => $payload['quantity_key'] ?? null,
+                'name' => $takeoff['name'] ?? null,
+                'quantity' => $takeoff['quantity'] ?? null,
+                'unit' => $takeoff['unit'] ?? null,
+                'confidence' => round(max(min($confidence, 1.0), 0.0), 4),
+                'requires_review' => $reviewRequired,
+                'source_refs_count' => count($sourceRefs),
+                'source_refs' => array_slice($sourceRefs, 0, 3),
+            ];
+        }
+
+        return [
+            'nodes_count' => count($takeoffs),
+            'nodes' => $nodes,
+            'review_required_count' => $reviewRequiredCount,
+            'low_confidence_count' => $lowConfidenceCount,
+            'missing_source_refs_count' => $missingSourceRefsCount,
+            'quality_level' => $reviewRequiredCount > 0 || $lowConfidenceCount > 0 || $missingSourceRefsCount > 0
+                ? 'review_required'
+                : 'ready',
         ];
     }
 

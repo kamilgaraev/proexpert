@@ -94,6 +94,10 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
         self::assertSame('floor_plan', $result->summary['page_profiles'][0]['page_role'] ?? null);
         self::assertGreaterThanOrEqual(5, $result->summary['room_count'] ?? 0);
         self::assertSame(87.14, $result->summary['room_area_total_m2'] ?? null);
+        self::assertSame('review_required', $result->summary['evidence_graph']['quality_level'] ?? null);
+        self::assertGreaterThanOrEqual(1, $result->summary['evidence_graph']['review_required_count'] ?? 0);
+        self::assertGreaterThanOrEqual(1, $result->summary['evidence_graph']['nodes_count'] ?? 0);
+        self::assertGreaterThanOrEqual(1, $result->summary['evidence_graph']['nodes'][0]['source_refs_count'] ?? 0);
         self::assertArrayHasKey('finish.floor', $takeoffsByKey);
         self::assertArrayHasKey('rough.floor', $takeoffsByKey);
         self::assertArrayHasKey('office.ceiling', $takeoffsByKey);
