@@ -9,7 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\ConstructionDocumentFactExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentFactMerger;
-use Tests\TestCase;
+use PHPUnit\Framework\TestCase;
 
 class ConstructionDocumentFactExtractorTest extends TestCase
 {
@@ -33,7 +33,7 @@ class ConstructionDocumentFactExtractorTest extends TestCase
             ],
         );
 
-        $facts = app(ConstructionDocumentFactExtractor::class)->extract($result, 15, 'plan.pdf');
+        $facts = (new ConstructionDocumentFactExtractor())->extract($result, 15, 'plan.pdf');
         $types = array_map(static fn (ExtractedDocumentFact $fact): string => $fact->factType, $facts);
 
         $this->assertContains('total_area', $types);
@@ -44,10 +44,42 @@ class ConstructionDocumentFactExtractorTest extends TestCase
         $this->assertContains('engineering_system', $types);
 
         $totalArea = collect($facts)->firstWhere('factType', 'total_area');
+        $dimension = collect($facts)->firstWhere('factType', 'dimension');
 
+        $this->assertInstanceOf(ExtractedDocumentFact::class, $dimension);
         $this->assertSame(1280.0, $totalArea->valueNumber);
         $this->assertSame(3, $totalArea->sourceRef['page_number']);
         $this->assertSame('plan.pdf', $totalArea->sourceRef['filename']);
+        $this->assertSame(864.0, $dimension->valueNumber);
+        $this->assertSame(24.0, $dimension->normalizedPayload['length_m']);
+        $this->assertSame(36.0, $dimension->normalizedPayload['width_m']);
+        $this->assertSame('m', $dimension->normalizedPayload['unit_assumption']);
+    }
+
+    public function test_it_normalizes_unlabeled_plan_dimensions_from_millimeters(): void
+    {
+        $result = new OcrRecognitionResult(
+            provider: 'test',
+            model: 'page',
+            pages: [
+                new OcrPageResult(
+                    pageNumber: 1,
+                    text: 'Габариты 8755 x 6190',
+                    confidence: 0.9,
+                ),
+            ],
+        );
+
+        $facts = (new ConstructionDocumentFactExtractor())->extract($result, 16, 'flat-plan.png');
+        $dimension = collect($facts)->firstWhere('factType', 'dimension');
+
+        $this->assertInstanceOf(ExtractedDocumentFact::class, $dimension);
+        $this->assertEqualsWithDelta(54.1935, $dimension->valueNumber, 0.0001);
+        $this->assertSame(8.755, $dimension->normalizedPayload['length_m']);
+        $this->assertSame(6.19, $dimension->normalizedPayload['width_m']);
+        $this->assertSame(8755.0, $dimension->normalizedPayload['raw_length']);
+        $this->assertSame(6190.0, $dimension->normalizedPayload['raw_width']);
+        $this->assertSame('mm', $dimension->normalizedPayload['unit_assumption']);
     }
 
     public function test_it_uses_total_area_after_parenthetical_terrace_with_split_unit(): void
@@ -69,8 +101,8 @@ class ConstructionDocumentFactExtractorTest extends TestCase
             ],
         );
 
-        $facts = app(ConstructionDocumentFactExtractor::class)->extract($result, 21, 'house.pdf');
-        $summary = app(DocumentFactMerger::class)->summarize($facts);
+        $facts = (new ConstructionDocumentFactExtractor())->extract($result, 21, 'house.pdf');
+        $summary = (new DocumentFactMerger())->summarize($facts);
         $totalAreaValues = array_map(
             static fn (ExtractedDocumentFact $fact): ?float => $fact->factType === 'total_area' ? $fact->valueNumber : null,
             $facts,
@@ -99,8 +131,8 @@ class ConstructionDocumentFactExtractorTest extends TestCase
             ],
         );
 
-        $facts = app(ConstructionDocumentFactExtractor::class)->extract($result, 31, 'areas.pdf');
-        $summary = app(DocumentFactMerger::class)->summarize($facts);
+        $facts = (new ConstructionDocumentFactExtractor())->extract($result, 31, 'areas.pdf');
+        $summary = (new DocumentFactMerger())->summarize($facts);
         $factsByValue = collect($facts)->keyBy(static fn (ExtractedDocumentFact $fact): string => (string) $fact->valueNumber);
         $areaRoles = collect($facts)
             ->pluck('normalizedPayload')
@@ -142,7 +174,7 @@ class ConstructionDocumentFactExtractorTest extends TestCase
             ),
         ];
 
-        $summary = app(DocumentFactMerger::class)->summarize($facts);
+        $summary = (new DocumentFactMerger())->summarize($facts);
 
         $this->assertSame(151.76, $summary['total_area_m2']);
     }
@@ -177,7 +209,7 @@ class ConstructionDocumentFactExtractorTest extends TestCase
             ),
         ];
 
-        $summary = app(DocumentFactMerger::class)->summarize($facts);
+        $summary = (new DocumentFactMerger())->summarize($facts);
 
         $this->assertSame(1200.0, $summary['total_area_m2']);
         $this->assertCount(1, $summary['engineering_systems']);

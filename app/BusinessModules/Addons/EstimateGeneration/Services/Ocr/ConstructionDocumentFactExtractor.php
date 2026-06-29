@@ -191,23 +191,91 @@ class ConstructionDocumentFactExtractor
      */
     private function extractDimensionFacts(string $line, OcrPageResult $page, int $documentId, string $filename): array
     {
-        preg_match_all('/(?P<length>\d+(?:[,.]\d+)?)\s*[xх×]\s*(?P<width>\d+(?:[,.]\d+)?)/iu', $line, $matches, PREG_SET_ORDER);
+        preg_match_all(
+            '/(?P<length>\d+(?:[,.]\d+)?)\s*[xх×]\s*(?P<width>\d+(?:[,.]\d+)?)(?:\s*(?P<unit>мм|см|м)(?![2²3³]))?/iu',
+            $line,
+            $matches,
+            PREG_SET_ORDER
+        );
 
-        return array_values(array_map(fn (array $match): ExtractedDocumentFact => new ExtractedDocumentFact(
-            factType: 'dimension',
-            label: 'Габарит',
-            confidence: $page->confidence ?? 0.7,
-            scopeKey: 'dimension',
-            valueText: $match['length'] . ' x ' . $match['width'],
-            valueNumber: $this->number((string) $match['length']) * $this->number((string) $match['width']),
-            unit: 'м2',
-            sourceRef: $this->sourceRef($documentId, $filename, $page, $line),
-            normalizedPayload: [
-                'length' => $this->number((string) $match['length']),
-                'width' => $this->number((string) $match['width']),
-                'line' => $line,
-            ],
-        ), $matches));
+        return array_values(array_map(function (array $match) use ($line, $page, $documentId, $filename): ExtractedDocumentFact {
+            $rawLength = $this->number((string) $match['length']);
+            $rawWidth = $this->number((string) $match['width']);
+            $dimension = $this->normalizeDimension($rawLength, $rawWidth, (string) ($match['unit'] ?? ''));
+
+            return new ExtractedDocumentFact(
+                factType: 'dimension',
+                label: 'Габарит',
+                confidence: $page->confidence ?? 0.7,
+                scopeKey: 'dimension',
+                valueText: $match['length'] . ' x ' . $match['width'],
+                valueNumber: $dimension['area_m2'],
+                unit: 'м2',
+                sourceRef: $this->sourceRef($documentId, $filename, $page, $line),
+                normalizedPayload: [
+                    'length' => $dimension['length_m'],
+                    'width' => $dimension['width_m'],
+                    'length_m' => $dimension['length_m'],
+                    'width_m' => $dimension['width_m'],
+                    'area_m2' => $dimension['area_m2'],
+                    'raw_length' => $rawLength,
+                    'raw_width' => $rawWidth,
+                    'unit_assumption' => $dimension['unit_assumption'],
+                    'line' => $line,
+                ],
+            );
+        }, $matches));
+    }
+
+    /**
+     * @return array{length_m: float, width_m: float, area_m2: float, unit_assumption: string}
+     */
+    private function normalizeDimension(float $length, float $width, string $unit): array
+    {
+        $unitAssumption = $this->dimensionUnitAssumption($length, $width, $unit);
+        $factor = match ($unitAssumption) {
+            'mm' => 0.001,
+            'cm' => 0.01,
+            default => 1.0,
+        };
+        $lengthM = round($length * $factor, 4);
+        $widthM = round($width * $factor, 4);
+
+        return [
+            'length_m' => $lengthM,
+            'width_m' => $widthM,
+            'area_m2' => round($lengthM * $widthM, 4),
+            'unit_assumption' => $unitAssumption,
+        ];
+    }
+
+    private function dimensionUnitAssumption(float $length, float $width, string $unit): string
+    {
+        $unit = mb_strtolower(trim($unit));
+
+        if ($unit === 'мм') {
+            return 'mm';
+        }
+
+        if ($unit === 'см') {
+            return 'cm';
+        }
+
+        if ($unit === 'м') {
+            return 'm';
+        }
+
+        $max = max($length, $width);
+
+        if ($max >= 1000) {
+            return 'mm';
+        }
+
+        if ($max >= 100) {
+            return 'cm';
+        }
+
+        return 'm';
     }
 
     /**
