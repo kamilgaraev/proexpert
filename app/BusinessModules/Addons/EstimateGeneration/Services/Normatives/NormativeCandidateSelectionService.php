@@ -29,7 +29,7 @@ class NormativeCandidateSelectionService
     /**
      * @return array<string, mixed>
      */
-    public function select(EstimateGenerationSession $session, string $workItemKey, int $normId): array
+    public function select(EstimateGenerationSession $session, string $workItemKey, int $normId, bool $allowCatalogSelection = false): array
     {
         $draft = $session->draft_payload ?? [];
         $regionalContext = $draft['regional_context'] ?? $session->input_payload['regional_context'] ?? [];
@@ -45,7 +45,7 @@ class NormativeCandidateSelectionService
                     }
 
                     $found = true;
-                    $this->assertCandidateWasOffered($workItem, $normId);
+                    $this->assertCandidateWasOffered($workItem, $normId, $allowCatalogSelection);
                     $originalWorkItem = $workItem;
 
                     $context = [
@@ -54,13 +54,14 @@ class NormativeCandidateSelectionService
                         'section_title' => $section['title'] ?? null,
                         'source_refs' => $section['source_refs'] ?? $localEstimate['source_refs'] ?? [],
                         'regional_context' => $regionalContext,
+                        'selection_source' => $allowCatalogSelection ? 'catalog_search' : 'offered_candidate',
                     ];
 
                     $match = $this->matcher->matchSelectedNorm($normId, $workItem, $context);
 
                     if ($match === null) {
-                        throw ValidationException::withMessages([
-                            'norm_id' => [trans_message('estimate_generation.normative_candidate_not_available')],
+                        throw $this->validationException([
+                            'norm_id' => [$this->message('estimate_generation.normative_candidate_not_available')],
                         ]);
                     }
 
@@ -76,14 +77,14 @@ class NormativeCandidateSelectionService
         }
 
         if (!$found) {
-            throw ValidationException::withMessages([
-                'work_item_key' => [trans_message('estimate_generation.work_item_not_found')],
+            throw $this->validationException([
+                'work_item_key' => [$this->message('estimate_generation.work_item_not_found')],
             ]);
         }
 
         if (!$updated) {
-            throw ValidationException::withMessages([
-                'norm_id' => [trans_message('estimate_generation.normative_candidate_not_available')],
+            throw $this->validationException([
+                'norm_id' => [$this->message('estimate_generation.normative_candidate_not_available')],
             ]);
         }
 
@@ -113,8 +114,12 @@ class NormativeCandidateSelectionService
     /**
      * @param array<string, mixed> $workItem
      */
-    private function assertCandidateWasOffered(array $workItem, int $normId): void
+    protected function assertCandidateWasOffered(array $workItem, int $normId, bool $allowCatalogSelection = false): void
     {
+        if ($allowCatalogSelection) {
+            return;
+        }
+
         $currentMatch = $workItem['normative_match'] ?? null;
         if (
             is_array($currentMatch)
@@ -129,9 +134,22 @@ class NormativeCandidateSelectionService
             }
         }
 
-        throw ValidationException::withMessages([
-            'norm_id' => [trans_message('estimate_generation.normative_candidate_not_offered')],
+        throw $this->validationException([
+            'norm_id' => [$this->message('estimate_generation.normative_candidate_not_offered')],
         ]);
+    }
+
+    protected function message(string $key): string
+    {
+        return trans_message($key);
+    }
+
+    /**
+     * @param array<string, array<int, string>> $messages
+     */
+    protected function validationException(array $messages): ValidationException
+    {
+        return ValidationException::withMessages($messages);
     }
 
     /**
@@ -141,6 +159,7 @@ class NormativeCandidateSelectionService
     {
         return (int) data_get($draft, 'quality_summary.normative_items.requires_review', 0) > 0
             || (int) data_get($draft, 'quality_summary.not_calculated_work_items', 0) > 0
-            || (int) data_get($draft, 'quality_summary.safe_norm_required_work_items', 0) > 0;
+            || (int) data_get($draft, 'quality_summary.safe_norm_required_work_items', 0) > 0
+            || (int) data_get($draft, 'quality_summary.duplicate_work_items', 0) > 0;
     }
 }

@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ApplyEstimateGen
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\CreateEstimateGenerationSessionRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\EstimateGenerationFeedbackRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\RebuildEstimateGenerationSectionRequest;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\SearchEstimateGenerationNormativeCandidatesRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\SelectEstimateGenerationNormativeCandidateRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\UploadEstimateGenerationDocumentsRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentResource;
@@ -23,6 +24,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrc
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateManualSearchService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSelectionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorReadinessService;
@@ -51,6 +53,7 @@ class EstimateGenerationController extends Controller
         protected DocumentGenerationReadinessService $documentReadinessService,
         protected EstimatorReadinessService $estimatorReadinessService,
         protected EstimateGenerationLearningRecorder $learningRecorder,
+        protected NormativeCandidateManualSearchService $candidateManualSearchService,
     ) {}
 
     public function index(Request $request, Project $project): JsonResponse
@@ -416,7 +419,8 @@ class EstimateGenerationController extends Controller
             $this->candidateSelectionService->select(
                 $session,
                 (string) $request->validated('work_item_key'),
-                (int) $request->validated('norm_id')
+                (int) $request->validated('norm_id'),
+                $request->validated('selection_source') === 'catalog_search'
             );
 
             return AdminResponse::success(
@@ -427,6 +431,33 @@ class EstimateGenerationController extends Controller
             return AdminResponse::error($e->getMessage(), 422, $e->errors());
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Normative candidate selection failed', [
+                'error' => $e->getMessage(),
+                'session_id' => $session->id,
+            ]);
+
+            return AdminResponse::error(trans_message('estimate_generation.normative_candidate_select_error'), 500);
+        }
+    }
+
+    public function searchNormativeCandidates(
+        SearchEstimateGenerationNormativeCandidatesRequest $request,
+        Project $project,
+        EstimateGenerationSession $session
+    ): JsonResponse {
+        try {
+            $this->guardSession($request, $project, $session);
+            $validated = $request->validated();
+
+            return AdminResponse::success($this->candidateManualSearchService->search(
+                $session,
+                (string) $validated['work_item_key'],
+                isset($validated['query']) ? (string) $validated['query'] : null,
+                (int) ($validated['limit'] ?? 10)
+            ));
+        } catch (ValidationException $e) {
+            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (\Throwable $e) {
+            Log::error('[EstimateGeneration] Normative candidate search failed', [
                 'error' => $e->getMessage(),
                 'session_id' => $session->id,
             ]);

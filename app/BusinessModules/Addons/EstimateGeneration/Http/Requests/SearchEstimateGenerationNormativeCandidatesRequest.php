@@ -6,7 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 
-class SelectEstimateGenerationNormativeCandidateRequest extends FormRequest
+class SearchEstimateGenerationNormativeCandidatesRequest extends FormRequest
 {
     public function authorize(): bool
     {
@@ -20,8 +20,8 @@ class SelectEstimateGenerationNormativeCandidateRequest extends FormRequest
     {
         return [
             'work_item_key' => ['required', 'string', 'max:255'],
-            'norm_id' => ['required', 'integer'],
-            'selection_source' => ['nullable', 'string', 'in:offered_candidate,catalog_search'],
+            'query' => ['nullable', 'string', 'max:255'],
+            'limit' => ['nullable', 'integer', 'min:1', 'max:20'],
         ];
     }
 }

@@ -540,12 +540,26 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         }
 
         $totalArea = 0.0;
+        $estimatedWallArea = 0.0;
+        $wetRoomArea = 0.0;
+        $wetRoomWallArea = 0.0;
         $sourceRefs = [];
         $confidence = 0.0;
 
         foreach ($roomTakeoffs as $takeoff) {
-            $totalArea += (float) ($takeoff['quantity'] ?? 0);
+            $area = (float) ($takeoff['quantity'] ?? 0);
+            $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
+            $roomLabel = (string) ($payload['room_label'] ?? $takeoff['name'] ?? '');
+
+            $totalArea += $area;
+            $estimatedRoomWallArea = $this->estimatedWallAreaFromRoomArea($area);
+            $estimatedWallArea += $estimatedRoomWallArea;
             $confidence += (float) ($takeoff['confidence'] ?? 0.72);
+
+            if ($this->isWetRoomLabel($roomLabel)) {
+                $wetRoomArea += $area;
+                $wetRoomWallArea += $estimatedRoomWallArea;
+            }
 
             foreach (($takeoff['source_refs'] ?? []) as $sourceRef) {
                 if (is_array($sourceRef)) {
@@ -559,7 +573,8 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         $confidence = round($confidence / max($roomCount, 1), 4);
         $sourceRefs = array_slice($sourceRefs, 0, 50);
 
-        return [
+        $wallArea = round($estimatedWallArea > 0 ? $estimatedWallArea : $totalArea * 2.7, 2);
+        $aggregates = [
             $this->aggregateTakeoff(
                 scopeKey: 'floor_finish_area',
                 quantityKey: 'finish.floor',
@@ -597,14 +612,46 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 scopeKey: 'wall_finish_area',
                 quantityKey: 'rough.walls',
                 name: 'Расчетная площадь стен по планировке',
-                quantity: round($totalArea * 2.7, 2),
-                formula: 'Площадь стен ориентировочно: ' . $this->formatNumber($totalArea) . ' м2 x 2.7',
+                quantity: $wallArea,
+                formula: 'Ориентировочная площадь стен по комнатам: сумма 4 x sqrt(S) x 2.7 = ' . $this->formatNumber($wallArea) . ' м2',
+                confidence: max($confidence - 0.18, 0.35),
+                sourceRefs: $sourceRefs,
+                roomCount: $roomCount,
+                reviewRequired: true
+            ),
+            $this->aggregateTakeoff(
+                scopeKey: 'paint_area',
+                quantityKey: 'finish.paint',
+                name: 'Расчетная площадь окраски стен по планировке',
+                quantity: $wallArea,
+                formula: 'Ориентировочная площадь окраски принята по расчетной площади стен: ' . $this->formatNumber($wallArea) . ' м2',
                 confidence: max($confidence - 0.22, 0.35),
                 sourceRefs: $sourceRefs,
                 roomCount: $roomCount,
                 reviewRequired: true
             ),
         ];
+
+        if ($wetRoomArea > 0) {
+            $wetZoneTileArea = round($wetRoomArea + $wetRoomWallArea, 2);
+            $aggregates[] = $this->aggregateTakeoff(
+                scopeKey: 'wet_zone_tile_area',
+                quantityKey: 'sanitary.tile',
+                name: 'Расчетная площадь отделки мокрых зон по планировке',
+                quantity: $wetZoneTileArea,
+                formula: 'Мокрые зоны: пол ' . $this->formatNumber($wetRoomArea) . ' м2 + стены ' . $this->formatNumber($wetRoomWallArea) . ' м2',
+                confidence: max($confidence - 0.2, 0.35),
+                sourceRefs: $sourceRefs,
+                roomCount: $roomCount,
+                reviewRequired: true,
+                extraPayload: [
+                    'wet_room_area_m2' => round($wetRoomArea, 2),
+                    'wet_room_wall_area_m2' => round($wetRoomWallArea, 2),
+                ]
+            );
+        }
+
+        return $aggregates;
     }
 
     /**
@@ -620,7 +667,8 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         float $confidence,
         array $sourceRefs,
         int $roomCount,
-        bool $reviewRequired
+        bool $reviewRequired,
+        array $extraPayload = []
     ): array {
         return [
             'source_element_ids' => [],
@@ -637,9 +685,35 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 'room_count' => $roomCount,
                 'calculation_basis' => 'room_area_sum',
                 'review_required' => $reviewRequired,
+                ...$extraPayload,
             ],
             'page_number' => 0,
         ];
+    }
+
+    private function estimatedWallAreaFromRoomArea(float $area): float
+    {
+        if ($area <= 0) {
+            return 0.0;
+        }
+
+        return 4 * sqrt($area) * 2.7;
+    }
+
+    private function isWetRoomLabel(string $label): bool
+    {
+        $normalized = mb_strtolower($label);
+
+        return $this->containsAny($normalized, [
+            'сануз',
+            'ванн',
+            'душ',
+            'туалет',
+            'wc',
+            'bath',
+            'shower',
+            'toilet',
+        ]);
     }
 
     /**

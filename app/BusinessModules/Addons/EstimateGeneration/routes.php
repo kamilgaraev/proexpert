@@ -35,6 +35,7 @@ Route::middleware([
         Route::get('/{session}/draft', [EstimateGenerationController::class, 'draft'])->name('draft');
         Route::get('/{session}/export', [EstimateGenerationController::class, 'export'])->name('export');
         Route::post('/{session}/apply', [EstimateGenerationController::class, 'apply'])->name('apply');
+        Route::get('/{session}/normative-candidates/search', [EstimateGenerationController::class, 'searchNormativeCandidates'])->name('normative-candidates.search');
         Route::post('/{session}/normative-candidate', [EstimateGenerationController::class, 'selectNormativeCandidate'])->name('normative-candidate.select');
         Route::post('/{session}/rebuild-section', [EstimateGenerationController::class, 'rebuildSection'])->name('rebuild-section');
         Route::post('/{session}/feedback', [EstimateGenerationController::class, 'feedback'])->name('feedback');

@@ -258,6 +258,70 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertContains('quantity_review_required', $wallItem['validation_flags']);
     }
 
+    public function test_floor_plan_wall_and_wet_zone_takeoffs_feed_matching_normative_intents(): void
+    {
+        $analysis = [
+            'document_context' => [
+                'quantity_takeoffs' => [
+                    [
+                        'scope_key' => 'paint_area',
+                        'name' => 'Wall paint area from floor plan',
+                        'unit' => 'м2',
+                        'quantity' => 312.4,
+                        'confidence' => 0.69,
+                        'source_refs' => [[
+                            'type' => 'drawing',
+                            'filename' => 'flat-plan.png',
+                            'page_number' => 1,
+                        ]],
+                        'normalized_payload' => [
+                            'quantity_key' => 'finish.paint',
+                            'review_required' => true,
+                        ],
+                    ],
+                    [
+                        'scope_key' => 'wet_zone_tile_area',
+                        'name' => 'Wet zone tile area from floor plan',
+                        'unit' => 'м2',
+                        'quantity' => 54.2,
+                        'confidence' => 0.67,
+                        'source_refs' => [[
+                            'type' => 'drawing',
+                            'filename' => 'flat-plan.png',
+                            'page_number' => 1,
+                        ]],
+                        'normalized_payload' => [
+                            'quantity_key' => 'sanitary.tile',
+                            'review_required' => true,
+                        ],
+                    ],
+                ],
+            ],
+        ];
+        $finishLocal = $this->localEstimate('finish_finishing', 'Чистовая отделка', 'finishing', 6);
+        $plumbingLocal = $this->localEstimate('plumbing', 'Водоснабжение', 'plumbing', 6);
+        $planner = $this->planner();
+
+        $finishItems = $this->pricedItems($planner->build($finishLocal, $finishLocal['sections'][0], $analysis));
+        $plumbingItems = $this->pricedItems($planner->build($plumbingLocal, $plumbingLocal['sections'][0], $analysis));
+        $paintItem = array_values(array_filter(
+            $finishItems,
+            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'finish.paint'
+        ))[0] ?? null;
+        $tileItem = array_values(array_filter(
+            $plumbingItems,
+            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'sanitary.tile'
+        ))[0] ?? null;
+
+        self::assertIsArray($paintItem);
+        self::assertSame(312.4, (float) $paintItem['quantity']);
+        self::assertContains('quantity_review_required', $paintItem['validation_flags']);
+        self::assertIsArray($tileItem);
+        self::assertSame(54.2, (float) $tileItem['quantity']);
+        self::assertContains('quantity_review_required', $tileItem['validation_flags']);
+        self::assertNotSame('компл', $tileItem['unit']);
+    }
+
     public function test_engineering_takeoff_scope_maps_to_matching_heating_quantity_key(): void
     {
         $localEstimate = $this->localEstimate('heating', 'Отопление', 'engineering', 12);

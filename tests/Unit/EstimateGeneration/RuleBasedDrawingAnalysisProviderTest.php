@@ -102,11 +102,17 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
         self::assertArrayHasKey('rough.floor', $takeoffsByKey);
         self::assertArrayHasKey('office.ceiling', $takeoffsByKey);
         self::assertArrayHasKey('rough.walls', $takeoffsByKey);
+        self::assertArrayHasKey('finish.paint', $takeoffsByKey);
+        self::assertArrayHasKey('sanitary.tile', $takeoffsByKey);
         self::assertSame(87.14, $takeoffsByKey['finish.floor']['quantity']);
         self::assertSame(87.14, $takeoffsByKey['rough.floor']['quantity']);
         self::assertSame(87.14, $takeoffsByKey['office.ceiling']['quantity']);
         self::assertGreaterThan(87.14, $takeoffsByKey['rough.walls']['quantity']);
+        self::assertSame($takeoffsByKey['rough.walls']['quantity'], $takeoffsByKey['finish.paint']['quantity']);
+        self::assertGreaterThan(5.14, $takeoffsByKey['sanitary.tile']['quantity']);
         self::assertTrue($takeoffsByKey['rough.walls']['normalized_payload']['review_required'] ?? false);
+        self::assertTrue($takeoffsByKey['finish.paint']['normalized_payload']['review_required'] ?? false);
+        self::assertTrue($takeoffsByKey['sanitary.tile']['normalized_payload']['review_required'] ?? false);
         self::assertSame(8.0, $takeoffsByKey['openings.doors']['quantity']);
     }
 

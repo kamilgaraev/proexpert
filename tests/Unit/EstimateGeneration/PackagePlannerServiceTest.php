@@ -166,8 +166,104 @@ class PackagePlannerServiceTest extends TestCase
         $this->assertNotContains('industrial_floor', $keys);
     }
 
+    public function test_plan_only_geometry_uses_only_evidence_backed_fitout_packages(): void
+    {
+        $analysis = [
+            'object' => [
+                'object_type' => 'custom',
+                'building_type' => 'custom',
+                'description' => '',
+            ],
+            'document_context' => [
+                'context_text' => "Планировка квартиры\nГостиная 46,52 м2\nКухня 9,99 м2",
+                'quantity_takeoffs' => [
+                    $this->takeoff('floor_finish_area', 'finish.floor', 87.14, 'м2'),
+                    $this->takeoff('rough_floor_area', 'rough.floor', 87.14, 'м2'),
+                    $this->takeoff('wall_finish_area', 'rough.walls', 235.28, 'м2'),
+                    $this->takeoff('ceiling_finish_area', 'office.ceiling', 87.14, 'м2'),
+                    $this->takeoff('opening_count', 'openings.doors', 8, 'шт'),
+                ],
+            ],
+        ];
+
+        $profile = $this->planner()->profileFromAnalysis($analysis);
+        $plan = $this->planner()->plan($profile);
+        $keys = array_column($plan->packages, 'key');
+
+        $this->assertSame('floor_plan_geometry', $profile->objectType);
+        $this->assertTrue($profile->planningSignals['plan_only_geometry']);
+        $this->assertContains('rough_finishing', $keys);
+        $this->assertContains('finish_finishing', $keys);
+        $this->assertContains('openings', $keys);
+        $this->assertNotContains('foundation', $keys);
+        $this->assertNotContains('earthworks', $keys);
+        $this->assertNotContains('roof', $keys);
+        $this->assertNotContains('facade', $keys);
+        $this->assertNotContains('electrical', $keys);
+        $this->assertLessThan(80, $plan->targetItemsMinTotal());
+    }
+
+    public function test_plan_only_geometry_adds_engineering_packages_only_from_specification_takeoffs(): void
+    {
+        $analysis = [
+            'object' => [
+                'object_type' => 'custom',
+                'building_type' => 'custom',
+                'description' => '',
+            ],
+            'document_context' => [
+                'context_text' => 'Планировка и спецификация оборудования',
+                'quantity_takeoffs' => [
+                    $this->takeoff('floor_finish_area', 'finish.floor', 87.14, 'м2'),
+                    $this->takeoff('specification_quantity', 'warehouse.lighting', 42, 'шт'),
+                    $this->takeoff('specification_quantity', 'heating.pipe', 36, 'м'),
+                    $this->takeoff('specification_quantity', 'sanitary.points', 5, 'шт'),
+                    $this->takeoff('specification_quantity', 'sewerage.pipe', 18, 'м'),
+                    $this->takeoff('specification_quantity', 'ventilation.air_exchange', 87.14, 'м2'),
+                ],
+            ],
+        ];
+
+        $profile = $this->planner()->profileFromAnalysis($analysis);
+        $plan = $this->planner()->plan($profile);
+        $keys = array_column($plan->packages, 'key');
+
+        $this->assertSame('floor_plan_geometry', $profile->objectType);
+        $this->assertContains('rough_finishing', $keys);
+        $this->assertContains('finish_finishing', $keys);
+        $this->assertContains('electrical', $keys);
+        $this->assertContains('plumbing', $keys);
+        $this->assertContains('sewerage', $keys);
+        $this->assertContains('heating', $keys);
+        $this->assertContains('ventilation', $keys);
+        $this->assertNotContains('foundation', $keys);
+        $this->assertNotContains('walls', $keys);
+        $this->assertNotContains('roof', $keys);
+    }
+
     private function planner(): PackagePlannerService
     {
         return new PackagePlannerService();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function takeoff(string $scopeKey, string $quantityKey, float $quantity, string $unit): array
+    {
+        return [
+            'scope_key' => $scopeKey,
+            'name' => $quantityKey,
+            'quantity' => $quantity,
+            'unit' => $unit,
+            'source_refs' => [[
+                'type' => 'drawing',
+                'filename' => 'flat-plan.png',
+                'page_number' => 1,
+            ]],
+            'normalized_payload' => [
+                'quantity_key' => $quantityKey,
+            ],
+        ];
     }
 }

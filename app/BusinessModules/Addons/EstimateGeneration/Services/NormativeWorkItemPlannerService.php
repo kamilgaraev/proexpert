@@ -706,6 +706,7 @@ final class NormativeWorkItemPlannerService
             'ceiling_finish_area' => 'office.ceiling',
             'wall_finish_area' => 'rough.walls',
             'paint_area' => 'finish.paint',
+            'wet_zone_tile_area' => 'sanitary.tile',
             'door_count' => 'openings.doors',
             'window_count' => 'openings.windows',
             'opening_count' => 'openings.doors',

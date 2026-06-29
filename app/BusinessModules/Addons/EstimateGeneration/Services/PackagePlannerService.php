@@ -11,7 +11,9 @@ class PackagePlannerService
 {
     public function plan(ObjectProfileData $profile): PackagePlanData
     {
-        if ($this->isMixedWarehouseOffice($profile)) {
+        if ($this->isPlanOnlyGeometry($profile)) {
+            $packages = $this->floorPlanEvidencePackages($profile);
+        } elseif ($this->isMixedWarehouseOffice($profile)) {
             $packages = $this->mixedWarehouseOfficePackages();
         } elseif ($this->isWarehouse($profile)) {
             $packages = $this->warehousePackages();
@@ -54,6 +56,7 @@ class PackagePlannerService
             || $this->containsIndustrialObjectSignal($description);
         $hasOffice = $this->containsOfficeSignal($type)
             || $this->containsOfficeSignal($description);
+        $planningSignals = $this->planningSignalsFromAnalysis($analysis, $description);
 
         if ($this->containsResidentialObjectSignal($buildingType)) {
             $type = 'house';
@@ -63,6 +66,8 @@ class PackagePlannerService
             $type = 'warehouse';
         } elseif ($this->containsResidentialObjectSignal($type)) {
             $type = 'house';
+        } elseif (($planningSignals['plan_only_geometry'] ?? false) === true) {
+            $type = 'floor_plan_geometry';
         }
 
         return new ObjectProfileData(
@@ -79,7 +84,7 @@ class PackagePlannerService
             assumptions: is_array($analysis['assumptions'] ?? null) ? array_values($analysis['assumptions']) : [],
             missingInputs: is_array($analysis['missing_inputs'] ?? null) ? array_values($analysis['missing_inputs']) : [],
             confidence: isset($analysis['confidence']) ? (float) $analysis['confidence'] : 0.65,
-            planningSignals: $this->planningSignalsFromAnalysis($analysis, $description),
+            planningSignals: $planningSignals,
         );
     }
 
@@ -96,6 +101,12 @@ class PackagePlannerService
     private function isMixedWarehouseOffice(ObjectProfileData $profile): bool
     {
         return mb_strtolower($profile->objectType) === 'mixed_warehouse_office';
+    }
+
+    private function isPlanOnlyGeometry(ObjectProfileData $profile): bool
+    {
+        return mb_strtolower($profile->objectType) === 'floor_plan_geometry'
+            || $this->hasPlanningSignal($profile, 'plan_only_geometry');
     }
 
     private function containsResidentialObjectSignal(string $text): bool
@@ -204,6 +215,10 @@ class PackagePlannerService
      */
     private function withOptionalSitePackages(array $packages, ObjectProfileData $profile): array
     {
+        if ($this->isPlanOnlyGeometry($profile)) {
+            return $packages;
+        }
+
         $largeObject = $this->isWarehouse($profile) || $this->isMixedWarehouseOffice($profile);
 
         if ($this->hasPlanningSignal($profile, 'external_networks')) {
@@ -221,6 +236,45 @@ class PackagePlannerService
         return $packages;
     }
 
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function floorPlanEvidencePackages(ObjectProfileData $profile): array
+    {
+        $packages = [];
+
+        if ($this->hasPlanningSignal($profile, 'floor_plan_finishing')) {
+            $packages[] = $this->package('rough_finishing', 'Черновая отделка по планировке', 'finishing', 8, 20);
+            $packages[] = $this->package('finish_finishing', 'Чистовая отделка по планировке', 'finishing', 8, 24);
+        }
+
+        if ($this->hasPlanningSignal($profile, 'floor_plan_openings')) {
+            $packages[] = $this->package('openings', 'Окна и двери по планировке', 'openings', 4, 14);
+        }
+
+        if ($this->hasPlanningSignal($profile, 'floor_plan_electrical')) {
+            $packages[] = $this->package('electrical', 'Электрика по спецификации', 'electrical', 6, 18);
+        }
+
+        if ($this->hasPlanningSignal($profile, 'floor_plan_plumbing')) {
+            $packages[] = $this->package('plumbing', 'Водоснабжение по спецификации', 'plumbing', 6, 18);
+        }
+
+        if ($this->hasPlanningSignal($profile, 'floor_plan_sewerage')) {
+            $packages[] = $this->package('sewerage', 'Канализация по спецификации', 'sewerage', 4, 14);
+        }
+
+        if ($this->hasPlanningSignal($profile, 'floor_plan_heating')) {
+            $packages[] = $this->package('heating', 'Отопление по спецификации', 'heating', 6, 18);
+        }
+
+        if ($this->hasPlanningSignal($profile, 'floor_plan_ventilation')) {
+            $packages[] = $this->package('ventilation', 'Вентиляция по спецификации', 'ventilation', 4, 14);
+        }
+
+        return $packages;
+    }
+
     private function hasPlanningSignal(ObjectProfileData $profile, string $key): bool
     {
         return ($profile->planningSignals[$key] ?? false) === true;
@@ -233,6 +287,7 @@ class PackagePlannerService
     private function planningSignalsFromAnalysis(array $analysis, string $description): array
     {
         $detectedStructure = is_array($analysis['detected_structure'] ?? null) ? $analysis['detected_structure'] : [];
+        $quantityKeys = $this->quantityKeysFromAnalysis($analysis);
         $fragments = [$description];
 
         foreach (['zones', 'constructives'] as $key) {
@@ -261,7 +316,120 @@ class PackagePlannerService
             'external_networks' => $this->containsExternalNetworkSignal($haystack),
             'siteworks' => $this->containsSiteworksSignal($haystack),
             'roads' => $this->containsRoadsSignal($haystack),
+            'plan_only_geometry' => $this->hasPlanOnlyGeometryEvidence($quantityKeys, $haystack),
+            'floor_plan_finishing' => $this->hasAnyQuantityKey($quantityKeys, [
+                'rough.floor',
+                'finish.floor',
+                'rough.walls',
+                'finish.paint',
+                'office.ceiling',
+            ]),
+            'floor_plan_openings' => $this->hasAnyQuantityKey($quantityKeys, [
+                'openings.doors',
+                'openings.windows',
+                'openings.gates',
+                'warehouse.gates',
+            ]),
+            'floor_plan_electrical' => $this->hasQuantityPrefix($quantityKeys, 'electrical.')
+                || $this->hasAnyQuantityKey($quantityKeys, ['warehouse.lighting']),
+            'floor_plan_plumbing' => $this->hasQuantityPrefix($quantityKeys, 'plumbing.')
+                || $this->hasQuantityPrefix($quantityKeys, 'sanitary.'),
+            'floor_plan_sewerage' => $this->hasQuantityPrefix($quantityKeys, 'sewerage.'),
+            'floor_plan_heating' => $this->hasQuantityPrefix($quantityKeys, 'heating.'),
+            'floor_plan_ventilation' => $this->hasQuantityPrefix($quantityKeys, 'ventilation.'),
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $analysis
+     * @return array<int, string>
+     */
+    private function quantityKeysFromAnalysis(array $analysis): array
+    {
+        $documentContext = is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : [];
+        $keys = [];
+
+        foreach ($documentContext['quantity_takeoffs'] ?? [] as $takeoff) {
+            if (!is_array($takeoff)) {
+                continue;
+            }
+
+            $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
+            $key = (string) ($payload['quantity_key'] ?? $takeoff['quantity_key'] ?? $this->quantityKeyFromTakeoffScope((string) ($takeoff['scope_key'] ?? '')));
+
+            if ($key !== '') {
+                $keys[] = $key;
+            }
+        }
+
+        foreach ($documentContext['scope_inferences'] ?? [] as $inference) {
+            if (!is_array($inference)) {
+                continue;
+            }
+
+            $payload = is_array($inference['normalized_payload'] ?? null) ? $inference['normalized_payload'] : [];
+            $key = (string) ($payload['quantity_key'] ?? '');
+
+            if ($key !== '') {
+                $keys[] = $key;
+            }
+        }
+
+        return array_values(array_unique($keys));
+    }
+
+    /**
+     * @param array<int, string> $quantityKeys
+     */
+    private function hasPlanOnlyGeometryEvidence(array $quantityKeys, string $haystack): bool
+    {
+        if (!$this->hasAnyQuantityKey($quantityKeys, ['rough.floor', 'finish.floor', 'rough.walls', 'office.ceiling'])) {
+            return false;
+        }
+
+        return preg_match('/(?:планировк|план\s|экспликац|room_area|floor_plan)/u', $haystack) === 1
+            || $this->hasAnyQuantityKey($quantityKeys, ['rough.walls', 'office.ceiling']);
+    }
+
+    /**
+     * @param array<int, string> $quantityKeys
+     * @param array<int, string> $needles
+     */
+    private function hasAnyQuantityKey(array $quantityKeys, array $needles): bool
+    {
+        return array_intersect($quantityKeys, $needles) !== [];
+    }
+
+    /**
+     * @param array<int, string> $quantityKeys
+     */
+    private function hasQuantityPrefix(array $quantityKeys, string $prefix): bool
+    {
+        foreach ($quantityKeys as $quantityKey) {
+            if (str_starts_with($quantityKey, $prefix)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function quantityKeyFromTakeoffScope(string $scopeKey): string
+    {
+        return match ($scopeKey) {
+            'room_area' => 'finish.floor',
+            'floor_finish_area' => 'finish.floor',
+            'rough_floor_area' => 'rough.floor',
+            'ceiling_finish_area' => 'office.ceiling',
+            'wall_finish_area' => 'rough.walls',
+            'paint_area' => 'finish.paint',
+            'wet_zone_tile_area' => 'sanitary.tile',
+            'opening_count' => 'openings.doors',
+            'door_count' => 'openings.doors',
+            'window_count' => 'openings.windows',
+            'engineering_route_length' => 'plumbing.pipe',
+            default => '',
+        };
     }
 
     private function containsExternalNetworkSignal(string $text): bool
