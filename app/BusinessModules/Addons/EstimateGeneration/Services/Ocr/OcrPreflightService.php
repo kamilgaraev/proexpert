@@ -15,13 +15,15 @@ class OcrPreflightService
 
     private const SPREADSHEET_EXTENSIONS = ['xlsx', 'xls'];
 
+    private const CAD_EXTENSIONS = ['dwg', 'dxf'];
+
     public function __construct(private readonly PdfParserRuntime $pdfParserRuntime) {}
 
     public function validateForRecognition(EstimateGenerationDocument $document): void
     {
         $extension = $this->extension($document);
 
-        if (!in_array($extension, [...self::OCR_EXTENSIONS, ...self::SPREADSHEET_EXTENSIONS], true)) {
+        if (!in_array($extension, [...self::OCR_EXTENSIONS, ...self::SPREADSHEET_EXTENSIONS, ...self::CAD_EXTENSIONS], true)) {
             throw new OcrProviderException(
                 'estimate_generation.ocr_unsupported_file',
                 providerCode: 'unsupported_file_type',
@@ -30,6 +32,7 @@ class OcrPreflightService
         }
 
         $maxBytes = match (true) {
+            $this->isCad($document) => (int) config('estimate-generation.ocr.max_cad_file_bytes', 200 * 1024 * 1024),
             $this->isSpreadsheet($document) => (int) config('estimate-generation.ocr.max_spreadsheet_file_bytes', 50 * 1024 * 1024),
             $this->isPdf($document) => (int) config('estimate-generation.ocr.max_pdf_file_bytes', 200 * 1024 * 1024),
             default => (int) config('estimate-generation.ocr.max_sync_file_bytes', 10 * 1024 * 1024),
@@ -78,6 +81,11 @@ class OcrPreflightService
     public function isSpreadsheet(EstimateGenerationDocument $document): bool
     {
         return in_array($this->extension($document), self::SPREADSHEET_EXTENSIONS, true);
+    }
+
+    public function isCad(EstimateGenerationDocument $document): bool
+    {
+        return in_array($this->extension($document), self::CAD_EXTENSIONS, true);
     }
 
     public function isPdf(EstimateGenerationDocument $document): bool

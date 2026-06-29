@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Ocr;
 
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\ExtractedDocumentFact;
+use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentFact;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
@@ -55,7 +56,9 @@ class OcrDocumentProcessor
 
             $provider = $this->preflightService->isSpreadsheet($document)
                 ? SpreadsheetDocumentExtractor::PROVIDER
-                : (string) config('estimate-generation.ocr.provider', 'yandex_cloud_ocr');
+                : ($this->preflightService->isCad($document)
+                    ? 'cad_metadata'
+                    : (string) config('estimate-generation.ocr.provider', 'yandex_cloud_ocr'));
             $this->usageLogger->started($document, $provider);
 
             $this->statusService->markProcessing($document, $this->recognitionStage($document), 35);
@@ -127,6 +130,10 @@ class OcrDocumentProcessor
             return $this->spreadsheetExtractor->extract($document, $content);
         }
 
+        if ($this->preflightService->isCad($document)) {
+            return $this->cadPlaceholderRecognition($document);
+        }
+
         if ($this->preflightService->isPdf($document)) {
             $textLayerRecognition = $this->pdfTextLayerExtractor->extract($content, $document->filename);
 
@@ -158,6 +165,10 @@ class OcrDocumentProcessor
             return 'spreadsheet_extraction';
         }
 
+        if ($this->preflightService->isCad($document)) {
+            return 'preflight';
+        }
+
         if ($this->preflightService->isPdf($document)) {
             return 'pdf_text_layer';
         }
@@ -170,6 +181,35 @@ class OcrDocumentProcessor
         $organization = $document->session?->organization;
 
         return $this->fileService->disk($organization)->get((string) $document->storage_path);
+    }
+
+    private function cadPlaceholderRecognition(EstimateGenerationDocument $document): OcrRecognitionResult
+    {
+        return new OcrRecognitionResult(
+            provider: 'cad_metadata',
+            model: 'cad_placeholder_v1',
+            pages: [
+                new OcrPageResult(
+                    pageNumber: 1,
+                    text: '',
+                    confidence: 0.2,
+                    languageCodes: [],
+                    rawPayload: [
+                        'extension' => $this->preflightService->extension($document),
+                        'filename' => $document->filename,
+                    ],
+                ),
+            ],
+            rawPayload: [
+                'source' => 'cad',
+                'extension' => $this->preflightService->extension($document),
+                'requires_geometry_pipeline' => true,
+            ],
+            metadata: [
+                'source_format' => 'cad',
+                'requires_geometry_pipeline' => true,
+            ],
+        );
     }
 
     private function elapsedMs(float $startedAt): int

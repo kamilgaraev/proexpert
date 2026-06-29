@@ -13,6 +13,7 @@ return [
         'retry_delay_ms' => (int) env('ESTIMATE_GENERATION_OCR_RETRY_DELAY_MS', 250),
         'max_sync_file_bytes' => 10 * 1024 * 1024,
         'max_pdf_file_bytes' => (int) env('ESTIMATE_GENERATION_OCR_MAX_PDF_FILE_BYTES', 200 * 1024 * 1024),
+        'max_cad_file_bytes' => (int) env('ESTIMATE_GENERATION_OCR_MAX_CAD_FILE_BYTES', 200 * 1024 * 1024),
         'max_spreadsheet_file_bytes' => 50 * 1024 * 1024,
         'max_spreadsheet_rows' => 2_000,
         'max_spreadsheet_columns' => 80,

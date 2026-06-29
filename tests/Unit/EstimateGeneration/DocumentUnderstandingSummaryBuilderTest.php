@@ -78,6 +78,21 @@ final class DocumentUnderstandingSummaryBuilderTest extends TestCase
         self::assertTrue($summary['extracted_capabilities']['has_estimate_markers']);
     }
 
+    public function test_cad_without_takeoffs_requires_geometry_pipeline_and_manual_review(): void
+    {
+        $summary = $this->builder()->build(
+            $this->document('АР-план.dwg', 'application/acad'),
+            $this->recognition(''),
+            [],
+            []
+        );
+
+        self::assertSame('drawing_cad', $summary['classified_type']);
+        self::assertSame('cad', $summary['source_format']);
+        self::assertTrue($summary['extracted_capabilities']['requires_cad_geometry_pipeline']);
+        self::assertTrue($summary['extracted_capabilities']['requires_manual_review']);
+    }
+
     private function builder(): DocumentUnderstandingSummaryBuilder
     {
         return new DocumentUnderstandingSummaryBuilder(new ConstructionDocumentClassifierService());

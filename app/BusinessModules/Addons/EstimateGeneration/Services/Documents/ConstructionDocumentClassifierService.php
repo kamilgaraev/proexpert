@@ -18,19 +18,27 @@ final class ConstructionDocumentClassifierService
             $score += 0.35;
         }
 
-        if ($this->containsAny($value, ['спецификация', 'ведомость оборудования', 'поз.', 'количество', 'ед.'])) {
+        $isCadDocument = $this->containsAny($value, ['.dwg', '.dxf', 'autocad', 'drawing/cad']);
+
+        if ($isCadDocument) {
+            $type = 'drawing_cad';
+            $reasons[] = 'cad_extension';
+            $score += 0.45;
+        }
+
+        if (! $isCadDocument && $this->containsAny($value, ['спецификация', 'ведомость оборудования', 'поз.', 'количество', 'ед.'])) {
             $type = 'specification';
             $reasons[] = 'specification_marker';
             $score += 0.35;
         }
 
-        if ($this->containsAny($value, ['локальная смета', 'гранд-смет', 'фер ', 'гэсн ', 'фсбц ', 'обоснование'])) {
+        if (! $isCadDocument && $this->containsAny($value, ['локальная смета', 'гранд-смет', 'фер ', 'гэсн ', 'фсбц ', 'обоснование'])) {
             $type = 'estimate';
             $reasons[] = 'estimate_marker';
             $score += 0.45;
         }
 
-        $isStructuredDocument = in_array($type, ['specification', 'estimate'], true);
+        $isStructuredDocument = in_array($type, ['specification', 'estimate', 'drawing_cad'], true);
 
         if (! $isStructuredDocument && $this->containsAny($value, ['ар-', 'лист ар', 'архитектур', 'план этажа', 'экспликация помещений'])) {
             $type = 'drawing_architecture';

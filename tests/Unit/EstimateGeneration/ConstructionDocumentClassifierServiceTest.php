@@ -63,6 +63,21 @@ final class ConstructionDocumentClassifierServiceTest extends TestCase
         self::assertContains('drawing_marker', $classification['reasons']);
     }
 
+    public function test_classifies_cad_drawings_by_extension(): void
+    {
+        foreach (['plan.dwg', 'АР-план.dwg'] as $filename) {
+            $classification = (new ConstructionDocumentClassifierService())->classify(
+                filename: $filename,
+                mimeType: 'application/acad',
+                pageCount: 1,
+                text: ''
+            );
+
+            self::assertSame('drawing_cad', $classification['type']);
+            self::assertContains('cad_extension', $classification['reasons']);
+        }
+    }
+
     public function test_classifies_grand_smeta_reference_estimate(): void
     {
         $classification = (new ConstructionDocumentClassifierService())->classify(

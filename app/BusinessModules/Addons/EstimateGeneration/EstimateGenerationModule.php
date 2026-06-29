@@ -111,7 +111,7 @@ final class EstimateGenerationModule implements ModuleInterface, ConfigurableInt
             'ocr' => [
                 'enabled' => true,
                 'max_file_size_mb' => 200,
-                'allowed_file_types' => ['pdf', 'jpg', 'jpeg', 'png', 'xlsx', 'xls'],
+                'allowed_file_types' => ['pdf', 'jpg', 'jpeg', 'png', 'xlsx', 'xls', 'dwg', 'dxf'],
             ],
             'generation' => [
                 'max_files_per_session' => 25,

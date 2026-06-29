@@ -17,7 +17,7 @@ class UploadEstimateGenerationDocumentsRequest extends FormRequest
     {
         return [
             'files' => ['required', 'array', 'min:1', 'max:10'],
-            'files.*' => ['file', 'max:51200', 'mimes:pdf,jpg,jpeg,png,xlsx,xls'],
+            'files.*' => ['file', 'max:204800', 'mimes:pdf,jpg,jpeg,png,xlsx,xls,dwg,dxf'],
         ];
     }
 }

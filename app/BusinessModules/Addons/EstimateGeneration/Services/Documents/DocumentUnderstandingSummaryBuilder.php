@@ -168,6 +168,7 @@ final class DocumentUnderstandingSummaryBuilder
         $requiresManualReview = (bool) ($documentProfile['requires_manual_review'] ?? false)
             || $documentType === 'unknown'
             || ($documentType === 'floor_plan' && $takeoffsCount === 0)
+            || ($classifiedType === 'drawing_cad' && $takeoffsCount === 0)
             || (($factsSummary['conflicts'] ?? []) !== []);
 
         return [
@@ -176,6 +177,7 @@ final class DocumentUnderstandingSummaryBuilder
             'has_quantity_takeoffs' => $takeoffsCount > 0,
             'has_specification_markers' => $hasSpecificationMarkers,
             'has_estimate_markers' => $hasEstimateMarkers,
+            'requires_cad_geometry_pipeline' => $classifiedType === 'drawing_cad',
             'requires_manual_review' => $requiresManualReview,
         ];
     }
