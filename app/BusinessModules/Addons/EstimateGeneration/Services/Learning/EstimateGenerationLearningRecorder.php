@@ -103,6 +103,88 @@ final class EstimateGenerationLearningRecorder
         ]);
     }
 
+    /**
+     * @param array<string, mixed> $originalWorkItem
+     * @param array<string, mixed> $selectedWorkItem
+     * @param array<string, mixed> $context
+     */
+    public function recordSupersededSelection(
+        EstimateGenerationSession $session,
+        array $originalWorkItem,
+        array $selectedWorkItem,
+        int $selectedNormId,
+        array $context
+    ): int {
+        $previousNormId = $this->nullableInt(
+            data_get($originalWorkItem, 'normative_match.norm_id')
+            ?? data_get($originalWorkItem, 'normative_match.id')
+        );
+
+        if ($previousNormId === null || $previousNormId === $selectedNormId) {
+            return 0;
+        }
+
+        $norm = EstimateNorm::query()->with('collection')->find($previousNormId);
+
+        if (!$norm instanceof EstimateNorm) {
+            return 0;
+        }
+
+        $workItemKey = $this->workItemKey($originalWorkItem);
+        $packageItem = $this->findPackageItem($session, $workItemKey);
+        $workName = $this->workName($originalWorkItem);
+        $workUnit = $this->nullableString($selectedWorkItem['unit'] ?? $originalWorkItem['unit'] ?? null);
+        $intent = $this->workIntentClassifier->classify([
+            'name' => $workName,
+            'unit' => $workUnit,
+        ], $context);
+
+        return $this->record([
+            'organization_id' => (int) $session->organization_id,
+            'project_id' => $session->project_id !== null ? (int) $session->project_id : null,
+            'source_type' => 'user_rejection',
+            'source_entity_type' => $packageItem instanceof EstimateGenerationPackageItem
+                ? 'estimate_generation_package_item'
+                : 'estimate_generation_work_item',
+            'source_entity_id' => $packageItem?->id,
+            'generation_session_id' => (int) $session->id,
+            'generation_package_item_id' => $packageItem?->id,
+            'work_name' => $workName,
+            'work_unit' => $workUnit,
+            'work_quantity' => $this->nullableFloat($selectedWorkItem['quantity'] ?? $originalWorkItem['quantity'] ?? null),
+            'work_intent' => $this->intentPayload($intent),
+            'normative_dataset_version_id' => $norm->collection?->dataset_version_id !== null
+                ? (int) $norm->collection->dataset_version_id
+                : null,
+            'estimate_norm_id' => (int) $norm->id,
+            'norm_code' => $this->normalizeNormCode((string) $norm->code),
+            'normative_name' => (string) $norm->name,
+            'normative_unit' => (string) $norm->unit,
+            'decision_status' => 'superseded_by_user_selection',
+            'confidence' => 1.0,
+            'is_positive' => false,
+            'source_quality_score' => 1.0,
+            'context_payload' => [
+                'work_item_key' => $workItemKey,
+                'rejected_norm_id' => $previousNormId,
+                'rejected_normative_code' => $this->normalizeNormCode((string) $norm->code),
+                'selected_norm_id' => $selectedNormId,
+                'selected_normative_code' => $this->nullableString((string) data_get($selectedWorkItem, 'normative_match.code')),
+                'offered_candidates' => $originalWorkItem['normative_candidates'] ?? [],
+                'previous_normative_match' => $originalWorkItem['normative_match'] ?? null,
+                'local_estimate_title' => $context['local_estimate_title'] ?? null,
+                'section_title' => $context['section_title'] ?? null,
+            ],
+            'source_refs' => [[
+                'type' => 'estimate_generation_session',
+                'session_id' => (int) $session->id,
+                'package_item_id' => $packageItem?->id,
+            ]],
+            'quality_flags' => ['user_replaced'],
+            'accepted_at' => now(),
+        ]);
+    }
+
     public function recordUserRejection(EstimateGenerationSession $session, EstimateGenerationFeedback $feedback): int
     {
         if (!in_array($feedback->feedback_type, ['normative_rejection', 'normative_correction'], true)) {
@@ -332,6 +414,15 @@ final class EstimateGenerationLearningRecorder
         }
 
         return (float) $value;
+    }
+
+    private function nullableInt(mixed $value): ?int
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return (int) $value;
     }
 
     /**

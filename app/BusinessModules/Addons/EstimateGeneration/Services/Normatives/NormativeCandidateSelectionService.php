@@ -92,6 +92,7 @@ class NormativeCandidateSelectionService
         if ($learningSelection !== null) {
             [$originalWorkItem, $selectedWorkItem, $context] = $learningSelection;
             $this->learningRecorder->recordUserSelection($session, $originalWorkItem, $selectedWorkItem, $normId, $context);
+            $this->learningRecorder->recordSupersededSelection($session, $originalWorkItem, $selectedWorkItem, $normId, $context);
         }
         $status = $this->draftRequiresReview($draft)
             ? 'review_required'
