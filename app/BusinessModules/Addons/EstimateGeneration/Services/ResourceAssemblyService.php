@@ -102,7 +102,14 @@ class ResourceAssemblyService
      */
     private function isQuantityReviewItem(array $workItem): bool
     {
-        return (string) ($workItem['item_type'] ?? '') === 'quantity_review';
+        $flags = array_values(array_filter(array_map('strval', [
+            ...(is_array($workItem['validation_flags'] ?? null) ? $workItem['validation_flags'] : []),
+            ...(is_array($workItem['flags'] ?? null) ? $workItem['flags'] : []),
+        ])));
+
+        return (string) ($workItem['item_type'] ?? '') === 'quantity_review'
+            || (string) ($workItem['pricing_blocker'] ?? '') === 'quantity_review_required'
+            || in_array('quantity_review_required', $flags, true);
     }
 
     /**
@@ -112,6 +119,7 @@ class ResourceAssemblyService
     private function clearQuantityReviewPricing(array $workItem): array
     {
         $workItem = $this->clearNonNormativeResources($workItem);
+        $workItem['item_type'] = 'quantity_review';
         $workItem['normative_rate_code'] = null;
         $workItem['normative_dataset'] = null;
         $workItem['normative_match'] = null;

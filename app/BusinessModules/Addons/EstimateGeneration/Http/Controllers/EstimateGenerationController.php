@@ -421,6 +421,25 @@ class EstimateGenerationController extends Controller
 
             $this->loadSessionDocumentsForReadiness($session);
             $readiness = $this->estimatorReadinessService->evaluate($session);
+            $reviewQueue = $this->reviewItemService->forSession($session);
+            $blockingReviewItems = (int) data_get($reviewQueue, 'summary.blocking', 0);
+
+            if ($blockingReviewItems > 0) {
+                $message = trans_message('estimate_generation.apply_review_items_blocked', [
+                    'count' => $blockingReviewItems,
+                ]);
+
+                return AdminResponse::error(
+                    $message,
+                    422,
+                    ['draft' => [$message]],
+                    [
+                        'estimator_readiness' => $readiness,
+                        'review_queue' => $reviewQueue,
+                    ]
+                );
+            }
+
             if (($readiness['can_apply'] ?? false) !== true) {
                 return AdminResponse::error(
                     trans_message('estimate_generation.apply_readiness_blocked'),

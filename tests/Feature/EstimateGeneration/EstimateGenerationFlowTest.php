@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ApplyEstimateGenerationDraftRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentProcessingStatusService;
 use App\Models\Organization;
@@ -75,6 +78,88 @@ final class EstimateGenerationFlowTest extends TestCase
         $this->assertSame('Можно закрыть страницу: мы продолжим расчет и сообщим, когда черновик будет готов.', $payload['data']['progress']['description']);
         $this->assertSame('wait', $payload['data']['progress']['user_action']);
         $this->assertTrue($payload['data']['progress']['can_close_page']);
+    }
+
+    public function test_apply_returns_review_queue_when_blocking_items_remain(): void
+    {
+        [$user, $project, $session] = $this->makeSession('ready_for_review', 'quality_check', 100);
+        $this->makeDocument($session, 'ready');
+        $session->forceFill([
+            'draft_payload' => [
+                'quality_summary' => [
+                    'status' => 'ready',
+                    'level' => 'passed',
+                    'total_work_items' => 1,
+                    'priced_work_items' => 1,
+                    'operation_work_items' => 0,
+                    'quantity_review_work_items' => 0,
+                    'not_calculated_work_items' => 0,
+                    'safe_norm_required_work_items' => 0,
+                    'duplicate_work_items' => 0,
+                    'normative_items' => ['requires_review' => 0],
+                ],
+                'local_estimates' => [[
+                    'key' => 'local-1',
+                    'title' => 'Local estimate',
+                    'sections' => [[
+                        'key' => 'section-1',
+                        'title' => 'Section',
+                        'work_items' => [[
+                            'key' => 'ready-work',
+                            'item_type' => 'priced_work',
+                            'name' => 'Ready work',
+                            'unit' => 'm2',
+                            'quantity' => 1,
+                            'total_cost' => 1000,
+                            'pricing_status' => 'calculated',
+                            'normative_match' => [
+                                'norm_id' => 10,
+                                'code' => '01-01-001-01',
+                                'status' => 'matched',
+                                'decision' => ['status' => 'accepted'],
+                            ],
+                            'validation_flags' => [],
+                        ]],
+                    ]],
+                ]],
+            ],
+        ])->save();
+
+        $package = EstimateGenerationPackage::query()->create([
+            'session_id' => $session->id,
+            'key' => 'local-1',
+            'title' => 'Local estimate',
+            'scope_type' => 'site',
+            'status' => 'ready_for_review',
+            'sort_order' => 100,
+        ]);
+        EstimateGenerationPackageItem::query()->create([
+            'package_id' => $package->id,
+            'key' => 'package-only-blocker',
+            'item_type' => 'priced_work',
+            'name' => 'Package only blocker',
+            'unit' => 'm',
+            'quantity' => 1,
+            'total_cost' => 0,
+            'flags' => ['pricing_not_calculated'],
+            'metadata' => [
+                'pricing_status' => 'not_calculated',
+                'pricing_blocker' => 'normative_required',
+                'normative_match' => ['status' => 'not_found'],
+            ],
+        ]);
+
+        $request = ApplyEstimateGenerationDraftRequest::create('/apply', 'POST', ['name' => 'Blocked draft']);
+        $request->setUserResolver(static fn (): User => $user);
+
+        $response = app(EstimateGenerationController::class)->apply($request, $project, $session->fresh());
+        $payload = json_decode($response->getContent(), true, 512, JSON_THROW_ON_ERROR);
+
+        $this->assertSame(422, $response->getStatusCode());
+        $this->assertFalse($payload['success']);
+        $this->assertSame(1, $payload['review_queue']['summary']['blocking']);
+        $this->assertSame('package-only-blocker', $payload['review_queue']['items'][0]['work_item_key']);
+        $this->assertSame('review_items_require_action', $payload['estimator_readiness']['blockers'][0]['code']);
     }
 
     /**

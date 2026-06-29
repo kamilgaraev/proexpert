@@ -5,10 +5,52 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use Illuminate\Config\Repository;
+use Illuminate\Container\Container;
+use Illuminate\Filesystem\Filesystem;
+use Illuminate\Support\Facades\Facade;
+use Illuminate\Translation\FileLoader;
+use Illuminate\Translation\Translator;
+use Illuminate\Validation\Factory as ValidationFactory;
+use Illuminate\Validation\ValidationException;
 use PHPUnit\Framework\TestCase;
 
 final class EstimateDraftPersistenceServiceTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $container = new Container();
+        $loader = new FileLoader(new Filesystem(), dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'lang');
+        $translator = new Translator($loader, 'ru');
+
+        $container->instance('app', new class {
+            public function getLocale(): string
+            {
+                return 'ru';
+            }
+        });
+        $container->instance('config', new Repository(['app' => ['fallback_locale' => 'ru']]));
+        $container->instance('translator', $translator);
+        $container->instance('validator', new ValidationFactory($translator, $container));
+
+        Facade::setFacadeApplication($container);
+        Container::setInstance($container);
+    }
+
+    protected function tearDown(): void
+    {
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication(null);
+        Container::setInstance(null);
+
+        parent::tearDown();
+    }
+
     public function test_review_required_quality_status_blocks_apply_guard(): void
     {
         $blocker = (new TestableEstimateDraftPersistenceService())->blockerFor([
@@ -147,6 +189,57 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
         self::assertSame(['type' => 'prices_require_review'], $blocker);
     }
 
+    public function test_blocking_review_queue_item_blocks_apply_even_when_quality_status_is_ready(): void
+    {
+        $package = new EstimateGenerationPackage([
+            'key' => 'local-1',
+            'title' => 'Local estimate',
+            'scope_type' => 'site',
+            'source_refs' => [],
+        ]);
+        $package->setRelation('items', collect([
+            new EstimateGenerationPackageItem([
+                'key' => 'package-only-blocker',
+                'item_type' => 'priced_work',
+                'name' => 'Package only blocker',
+                'unit' => 'm',
+                'quantity' => 1,
+                'total_cost' => 0,
+                'flags' => ['pricing_not_calculated'],
+                'metadata' => [
+                    'pricing_status' => 'not_calculated',
+                    'pricing_blocker' => 'normative_required',
+                    'normative_match' => ['status' => 'not_found'],
+                ],
+            ]),
+        ]));
+        $session = new EstimateGenerationSession([
+            'draft_payload' => [
+                'quality_summary' => [
+                    'status' => 'ready',
+                    'not_calculated_work_items' => 0,
+                    'safe_norm_required_work_items' => 0,
+                    'normative_items' => [
+                        'requires_review' => 0,
+                    ],
+                ],
+                'local_estimates' => [[
+                    'key' => 'local-1',
+                    'sections' => [[
+                        'work_items' => [
+                            $this->workItem('ready-work', 'priced_work', 1000),
+                        ],
+                    ]],
+                ]],
+            ],
+        ]);
+        $session->setRelation('packages', collect([$package]));
+
+        $this->expectException(ValidationException::class);
+
+        (new TestableEstimateDraftPersistenceService())->assertNoBlockingReviewItemsFor($session);
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -176,6 +269,11 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
 
 final class TestableEstimateDraftPersistenceService extends EstimateDraftPersistenceService
 {
+    public function assertNoBlockingReviewItemsFor(EstimateGenerationSession $session): void
+    {
+        $this->assertNoBlockingReviewItems($session);
+    }
+
     /**
      * @param array<string, mixed> $draft
      */

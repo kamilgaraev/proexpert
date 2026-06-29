@@ -23,9 +23,14 @@ class EstimateDraftPersistenceService
 
     protected EstimateGenerationFinalWorkItemGuard $finalWorkItemGuard;
 
-    public function __construct(?EstimateGenerationFinalWorkItemGuard $finalWorkItemGuard = null)
-    {
+    protected EstimateGenerationReviewItemService $reviewItemService;
+
+    public function __construct(
+        ?EstimateGenerationFinalWorkItemGuard $finalWorkItemGuard = null,
+        ?EstimateGenerationReviewItemService $reviewItemService = null,
+    ) {
         $this->finalWorkItemGuard = $finalWorkItemGuard ?? new EstimateGenerationFinalWorkItemGuard();
+        $this->reviewItemService = $reviewItemService ?? new EstimateGenerationReviewItemService(new EstimateGenerationPackagePresenter());
     }
 
     public function apply(EstimateGenerationSession $session, array $payload, User $user): Estimate
@@ -35,6 +40,7 @@ class EstimateDraftPersistenceService
             throw new \RuntimeException('Draft is empty.');
         }
 
+        $this->assertNoBlockingReviewItems($session);
         $this->assertDraftCanBeApplied($draft);
 
         return DB::transaction(function () use ($session, $payload, $draft): Estimate {
@@ -196,6 +202,22 @@ class EstimateDraftPersistenceService
                 'total_amount' => $resource['total_price'],
             ]);
         }
+    }
+
+    protected function assertNoBlockingReviewItems(EstimateGenerationSession $session): void
+    {
+        $reviewQueue = $this->reviewItemService->forSession($session);
+        $blockingCount = (int) data_get($reviewQueue, 'summary.blocking', 0);
+
+        if ($blockingCount <= 0) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'draft' => [trans_message('estimate_generation.apply_review_items_blocked', [
+                'count' => $blockingCount,
+            ])],
+        ]);
     }
 
     /**

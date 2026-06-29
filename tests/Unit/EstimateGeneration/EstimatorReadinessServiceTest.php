@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorReadinessService;
 use Illuminate\Database\Eloquent\Collection;
@@ -168,6 +170,51 @@ class EstimatorReadinessServiceTest extends TestCase
         self::assertSame('ready_to_apply', $readiness['status']);
         self::assertTrue($readiness['can_apply']);
         self::assertSame([], $readiness['blockers']);
+    }
+
+    public function test_blocks_apply_when_review_queue_has_blocking_item(): void
+    {
+        $session = $this->session([
+            $this->document('ready', facts: 4, drawingElements: 5, quantityTakeoffs: 2, scopeInferences: 3),
+        ], $this->draft([
+            'status' => 'ready',
+            'level' => 'passed',
+            'total_work_items' => 1,
+            'priced_work_items' => 1,
+            'operation_work_items' => 0,
+            'not_calculated_work_items' => 0,
+            'safe_norm_required_work_items' => 0,
+            'normative_items' => ['requires_review' => 0],
+        ]));
+        $package = new EstimateGenerationPackage([
+            'key' => 'local-1',
+            'title' => 'Local estimate',
+            'scope_type' => 'site',
+        ]);
+        $package->setRelation('items', new Collection([
+            new EstimateGenerationPackageItem([
+                'key' => 'package-only-blocker',
+                'item_type' => 'priced_work',
+                'name' => 'Package only blocker',
+                'unit' => 'm',
+                'quantity' => 1,
+                'total_cost' => 0,
+                'flags' => ['pricing_not_calculated'],
+                'metadata' => [
+                    'pricing_status' => 'not_calculated',
+                    'pricing_blocker' => 'normative_required',
+                    'normative_match' => ['status' => 'not_found'],
+                ],
+            ]),
+        ]));
+        $session->setRelation('packages', new Collection([$package]));
+
+        $readiness = $this->service()->evaluate($session);
+
+        self::assertSame('draft_needs_review', $readiness['status']);
+        self::assertFalse($readiness['can_apply']);
+        self::assertSame(1, $readiness['metrics']['review_items_blocking']);
+        self::assertContains('review_items_require_action', array_column($readiness['blockers'], 'code'));
     }
 
     public function test_blocks_apply_when_calculated_priced_item_has_zero_total_cost(): void

@@ -6,6 +6,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Quality;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationReviewItemService;
 use Illuminate\Support\Collection;
 use Throwable;
 
@@ -14,6 +16,10 @@ use function trans_message;
 
 class EstimatorReadinessService
 {
+    public function __construct(
+        private readonly ?EstimateGenerationReviewItemService $reviewItemService = null,
+    ) {}
+
     /**
      * @return array<string, mixed>
      */
@@ -63,6 +69,7 @@ class EstimatorReadinessService
         $quantityReviewWorkItems = (int) ($quality['quantity_review_work_items'] ?? 0);
         $pricedTarget = max($totalWorkItems - $operationWorkItems - $quantityReviewWorkItems, 0);
         $normativeItems = is_array($quality['normative_items'] ?? null) ? $quality['normative_items'] : [];
+        $reviewSummary = $this->reviewSummary($session);
         $zeroTotalCalculatedItems = $this->zeroTotalCalculatedPricedWorkItems($draft);
         $pricedWorkItems = max((int) ($quality['priced_work_items'] ?? 0) - $zeroTotalCalculatedItems, 0);
         $notCalculatedWorkItems = (int) ($quality['not_calculated_work_items'] ?? 0) + $zeroTotalCalculatedItems;
@@ -90,8 +97,28 @@ class EstimatorReadinessService
             'safe_norm_required_work_items' => (int) ($quality['safe_norm_required_work_items'] ?? 0),
             'duplicate_work_items' => (int) ($quality['duplicate_work_items'] ?? 0),
             'normative_requires_review' => (int) ($normativeItems['requires_review'] ?? $quality['safe_norm_required_work_items'] ?? 0),
+            'review_items_total' => (int) ($reviewSummary['total'] ?? 0),
+            'review_items_blocking' => (int) ($reviewSummary['blocking'] ?? 0),
+            'review_items_warning' => (int) ($reviewSummary['warning'] ?? 0),
+            'review_items_optional' => (int) ($reviewSummary['optional'] ?? 0),
             'problem_flags' => count(is_array($draft['problem_flags'] ?? null) ? $draft['problem_flags'] : ($session->problem_flags ?? [])),
         ];
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    private function reviewSummary(EstimateGenerationSession $session): array
+    {
+        try {
+            $service = $this->reviewItemService
+                ?? new EstimateGenerationReviewItemService(new EstimateGenerationPackagePresenter());
+            $queue = $service->forSession($session);
+
+            return is_array($queue['summary'] ?? null) ? $queue['summary'] : [];
+        } catch (Throwable) {
+            return [];
+        }
     }
 
     /**
@@ -182,6 +209,10 @@ class EstimatorReadinessService
             $blockers[] = $this->issue('quantities_require_review', 'estimate_generation.readiness_blocker_quantities_require_review');
         }
 
+        if ($hasDraft && $metrics['review_items_blocking'] > 0) {
+            $blockers[] = $this->issue('review_items_require_action', 'estimate_generation.readiness_blocker_review_items_require_action');
+        }
+
         if (
             $hasDraft
             && (
@@ -253,7 +284,7 @@ class EstimatorReadinessService
             return 'draft_blocked';
         }
 
-        if ($this->hasBlocker($blockers, ['norms_require_review', 'quantities_require_review', 'prices_require_review', 'quality_requires_review'])) {
+        if ($this->hasBlocker($blockers, ['norms_require_review', 'quantities_require_review', 'prices_require_review', 'quality_requires_review', 'review_items_require_action'])) {
             return 'draft_needs_review';
         }
 
