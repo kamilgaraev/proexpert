@@ -85,6 +85,7 @@ class EstimatorReadinessService
             'not_calculated_work_items' => $notCalculatedWorkItems,
             'zero_total_calculated_work_items' => $zeroTotalCalculatedItems,
             'safe_norm_required_work_items' => (int) ($quality['safe_norm_required_work_items'] ?? 0),
+            'duplicate_work_items' => (int) ($quality['duplicate_work_items'] ?? 0),
             'normative_requires_review' => (int) ($normativeItems['requires_review'] ?? $quality['safe_norm_required_work_items'] ?? 0),
             'problem_flags' => count(is_array($draft['problem_flags'] ?? null) ? $draft['problem_flags'] : ($session->problem_flags ?? [])),
         ];
@@ -184,6 +185,10 @@ class EstimatorReadinessService
             $blockers[] = $this->issue('prices_require_review', 'estimate_generation.readiness_blocker_prices_require_review');
         }
 
+        if ($hasDraft && ($qualityStatus === 'review_required' || $metrics['duplicate_work_items'] > 0)) {
+            $blockers[] = $this->issue('quality_requires_review', 'estimate_generation.readiness_next_review_draft');
+        }
+
         if ($hasDraft && ($qualityStatus === 'critical' || $qualityLevel === 'blocked')) {
             $blockers[] = $this->issue('quality_blocked', 'estimate_generation.readiness_blocker_quality_blocked');
         }
@@ -241,7 +246,7 @@ class EstimatorReadinessService
             return 'draft_blocked';
         }
 
-        if ($this->hasBlocker($blockers, ['norms_require_review', 'prices_require_review'])) {
+        if ($this->hasBlocker($blockers, ['norms_require_review', 'prices_require_review', 'quality_requires_review'])) {
             return 'draft_needs_review';
         }
 

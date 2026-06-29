@@ -31,6 +31,7 @@ class EstimateValidationService
         $marketEstimateWorkItemsCount = 0;
         $safeNormRequiredWorkItemsCount = 0;
         $notCalculatedWorkItemsCount = 0;
+        $duplicateWorkItemsCount = 0;
 
         foreach ($draft['local_estimates'] as $localIndex => $localEstimate) {
             $localFlags = [];
@@ -40,6 +41,8 @@ class EstimateValidationService
 
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 $sectionFlags = [];
+                $seenWorkItemSignatures = [];
+                $sectionDuplicateIndexes = [];
                 if (mb_strtolower($section['title']) === 'прочее') {
                     $sectionFlags[] = 'generic_section_name';
                 }
@@ -56,6 +59,27 @@ class EstimateValidationService
 
                     if (!$isPricedItem) {
                         $operationWorkItemsCount++;
+                    }
+
+                    if ($isPricedItem) {
+                        $duplicateSignature = $this->duplicateSignature($workItem);
+
+                        if ($duplicateSignature !== null && isset($seenWorkItemSignatures[$duplicateSignature])) {
+                            $firstDuplicateIndex = $seenWorkItemSignatures[$duplicateSignature];
+                            $sectionDuplicateIndexes[$firstDuplicateIndex] = true;
+                            $sectionDuplicateIndexes[$workIndex] = true;
+                            $flags[] = 'possible_duplicate_work_item';
+                            $flags[] = 'requires_duplicate_review';
+                            $this->appendWorkItemFlags(
+                                $draft,
+                                $localIndex,
+                                $sectionIndex,
+                                $firstDuplicateIndex,
+                                ['possible_duplicate_work_item', 'requires_duplicate_review']
+                            );
+                        } elseif ($duplicateSignature !== null) {
+                            $seenWorkItemSignatures[$duplicateSignature] = $workIndex;
+                        }
                     }
 
                     if (($workItem['quantity_basis'] ?? null) === null || $workItem['quantity_basis'] === '') {
@@ -145,6 +169,8 @@ class EstimateValidationService
                     $sectionFlags = array_values(array_unique([...$sectionFlags, ...$flags]));
                 }
 
+                $duplicateWorkItemsCount += count($sectionDuplicateIndexes);
+
                 $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['validation_flags'] = $sectionFlags;
                 $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['section_totals'] = [
                     'total_cost' => round($sectionTotal, 2),
@@ -195,6 +221,7 @@ class EstimateValidationService
             $marketEstimateWorkItemsCount,
             $safeNormRequiredWorkItemsCount,
             $notCalculatedWorkItemsCount,
+            $duplicateWorkItemsCount,
             $projectFlags
         );
 
@@ -238,6 +265,7 @@ class EstimateValidationService
         int $marketEstimateWorkItems,
         int $safeNormRequiredWorkItems,
         int $notCalculatedWorkItems,
+        int $duplicateWorkItems,
         array $projectFlags
     ): array {
         $requiresNormativeReview = $normativeReviewPricedWorkItems
@@ -251,13 +279,22 @@ class EstimateValidationService
             'normative_candidate_only',
             'normative_match_low_confidence',
             'low_confidence',
+            'possible_duplicate_work_item',
+            'requires_duplicate_review',
         ]));
         $warningFlags = array_values(array_diff($projectFlags, $criticalFlags));
         $status = 'ready';
 
         if ($pricedDenominator === 0 || $zeroPriceWorkItems === $pricedDenominator || $pricedWorkItems === 0) {
             $status = 'critical';
-        } elseif ($zeroPriceWorkItems > 0 || $marketEstimateWorkItems > 0 || $criticalFlags !== [] || $requiresNormativeReview > 0 || $reviewFlags !== []) {
+        } elseif (
+            $zeroPriceWorkItems > 0
+            || $marketEstimateWorkItems > 0
+            || $duplicateWorkItems > 0
+            || $criticalFlags !== []
+            || $requiresNormativeReview > 0
+            || $reviewFlags !== []
+        ) {
             $status = 'review_required';
         }
 
@@ -269,6 +306,7 @@ class EstimateValidationService
             'zero_price_work_items' => $zeroPriceWorkItems,
             'not_calculated_work_items' => $notCalculatedWorkItems,
             'safe_norm_required_work_items' => $safeNormRequiredWorkItems,
+            'duplicate_work_items' => $duplicateWorkItems,
             'normative_matched_work_items' => $normativeMatchedWorkItems,
             'market_estimate_work_items' => $marketEstimateWorkItems,
             'normative_items' => [
@@ -300,6 +338,89 @@ class EstimateValidationService
             ...array_map('strval', $normativeMatch['warnings'] ?? []),
             ...array_map('strval', $decision['warnings'] ?? []),
         ]));
+    }
+
+    /**
+     * @param array<string, mixed> $draft
+     * @param array<int, string> $flags
+     */
+    private function appendWorkItemFlags(array &$draft, int $localIndex, int $sectionIndex, int $workIndex, array $flags): void
+    {
+        $existingFlags = $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex]['validation_flags'] ?? [];
+
+        if (!is_array($existingFlags)) {
+            $existingFlags = [];
+        }
+
+        $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex]['validation_flags'] = array_values(array_unique([
+            ...array_map('strval', $existingFlags),
+            ...$flags,
+        ]));
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    private function duplicateSignature(array $workItem): ?string
+    {
+        $name = $this->normalizeSignaturePart((string) ($workItem['normative_search_text'] ?? $workItem['name'] ?? ''));
+        $unit = $this->normalizeSignaturePart((string) ($workItem['unit'] ?? ''));
+        $quantity = round((float) ($workItem['quantity'] ?? 0), 4);
+
+        if ($name === '' || $unit === '' || $quantity <= 0) {
+            return null;
+        }
+
+        $normativeIdentity = $this->normalizeSignaturePart((string) (
+            $workItem['normative_rate_code']
+            ?? $workItem['normative_search_key']
+            ?? $workItem['quantity_formula']
+            ?? ''
+        ));
+
+        return hash('sha256', implode('|', [
+            $name,
+            $unit,
+            (string) $quantity,
+            $normativeIdentity,
+            $this->sourceRefsSignature($workItem['source_refs'] ?? []),
+        ]));
+    }
+
+    private function normalizeSignaturePart(string $value): string
+    {
+        $value = mb_strtolower(trim($value));
+
+        return preg_replace('/\s+/u', ' ', $value) ?? $value;
+    }
+
+    private function sourceRefsSignature(mixed $sourceRefs): string
+    {
+        if (!is_array($sourceRefs) || $sourceRefs === []) {
+            return 'no-source';
+        }
+
+        $refs = [];
+
+        foreach ($sourceRefs as $sourceRef) {
+            if (!is_array($sourceRef)) {
+                continue;
+            }
+
+            $refs[] = implode(':', array_map(
+                static fn (mixed $value): string => trim((string) $value),
+                [
+                    $sourceRef['document_id'] ?? '',
+                    $sourceRef['document_name'] ?? $sourceRef['filename'] ?? '',
+                    $sourceRef['page_number'] ?? $sourceRef['page'] ?? '',
+                    $sourceRef['fact_id'] ?? $sourceRef['takeoff_id'] ?? $sourceRef['id'] ?? '',
+                ]
+            ));
+        }
+
+        sort($refs);
+
+        return implode('|', array_values(array_filter($refs)));
     }
 
     /**

@@ -114,6 +114,45 @@ final class EstimateValidationServiceTest extends TestCase
         self::assertSame('review_required', $draft['quality_summary']['status']);
     }
 
+    public function test_duplicate_priced_work_items_require_manual_review(): void
+    {
+        $workItem = [
+            'item_type' => 'priced_work',
+            'name' => 'Concrete works',
+            'normative_search_text' => 'concrete works',
+            'normative_search_key' => 'foundation|concrete|m3',
+            'unit' => 'm3',
+            'quantity' => 8,
+            'quantity_basis' => 'Drawing A101, page 1',
+            'total_cost' => 120000,
+            'materials' => [['total_price' => 80000]],
+            'labor' => [['total_price' => 25000]],
+            'machinery' => [['total_price' => 15000]],
+            'pricing_status' => 'calculated',
+            'normative_match' => [
+                'status' => 'matched',
+                'decision' => ['status' => 'accepted'],
+            ],
+            'source_refs' => [['document_id' => 1, 'page_number' => 1, 'takeoff_id' => 10]],
+            'validation_flags' => [],
+            'confidence' => 0.92,
+        ];
+
+        $draft = $this->service()->validate($this->draft([
+            ['key' => 'work-1', ...$workItem],
+            ['key' => 'work-2', ...$workItem],
+        ]));
+
+        $firstItem = $draft['local_estimates'][0]['sections'][0]['work_items'][0];
+        $secondItem = $draft['local_estimates'][0]['sections'][0]['work_items'][1];
+
+        self::assertContains('possible_duplicate_work_item', $firstItem['validation_flags']);
+        self::assertContains('possible_duplicate_work_item', $secondItem['validation_flags']);
+        self::assertContains('requires_duplicate_review', $draft['problem_flags']);
+        self::assertSame(2, $draft['quality_summary']['duplicate_work_items']);
+        self::assertSame('review_required', $draft['quality_summary']['status']);
+    }
+
     /**
      * @param array<int, array<string, mixed>> $workItems
      * @return array<string, mixed>
