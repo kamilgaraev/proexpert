@@ -21,6 +21,7 @@ class PackagePlannerService
             $packages = $this->housePackages();
         }
 
+        $packages = $this->withReviewPackages($packages, $profile);
         $packages = $this->withOptionalSitePackages($packages, $profile);
 
         return new PackagePlanData(
@@ -237,6 +238,21 @@ class PackagePlannerService
     }
 
     /**
+     * @param array<int, array<string, mixed>> $packages
+     * @return array<int, array<string, mixed>>
+     */
+    private function withReviewPackages(array $packages, ObjectProfileData $profile): array
+    {
+        if (!$this->hasPlanningSignal($profile, 'unmapped_quantity_rows')) {
+            return $packages;
+        }
+
+        $packages[] = $this->package('unmapped_quantity_rows', 'Позиции для разбора', 'custom', 1, 20);
+
+        return $packages;
+    }
+
+    /**
      * @return array<int, array<string, mixed>>
      */
     private function floorPlanEvidencePackages(ObjectProfileData $profile): array
@@ -338,6 +354,7 @@ class PackagePlannerService
             'floor_plan_sewerage' => $this->hasQuantityPrefix($quantityKeys, 'sewerage.'),
             'floor_plan_heating' => $this->hasQuantityPrefix($quantityKeys, 'heating.'),
             'floor_plan_ventilation' => $this->hasQuantityPrefix($quantityKeys, 'ventilation.'),
+            'unmapped_quantity_rows' => $this->hasQuantityPrefix($quantityKeys, 'unmapped.'),
         ];
     }
 

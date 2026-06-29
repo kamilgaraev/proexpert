@@ -285,7 +285,7 @@ final class NormativeWorkItemPlannerService
         $scopeType = (string) ($localEstimate['scope_type'] ?? $section['construction_part'] ?? '');
         $definitions = [
             ...$this->packageDefinitions($packageKey, $scopeType, $quantityModel),
-            ...$this->scopeInferenceDefinitions($analysis, $scopeType),
+            ...$this->scopeInferenceDefinitions($analysis, $scopeType, $packageKey),
         ];
 
         return $definitions;
@@ -436,16 +436,23 @@ final class NormativeWorkItemPlannerService
      * @param array<string, mixed> $analysis
      * @return array<int, array<string, mixed>>
      */
-    private function scopeInferenceDefinitions(array $analysis, string $scopeType): array
+    private function scopeInferenceDefinitions(array $analysis, string $scopeType, string $packageKey): array
     {
         $definitions = [];
+        $isUnmappedReviewPackage = $packageKey === 'unmapped_quantity_rows';
 
         foreach ($this->scopeInferenceService->inferFromAnalysis($analysis) as $inference) {
             $inferenceScope = (string) ($inference['scope_type'] ?? '');
+            $inferenceType = (string) ($inference['inference_type'] ?? '');
             $payload = is_array($inference['normalized_payload'] ?? null) ? $inference['normalized_payload'] : [];
             $quantityKey = (string) ($payload['quantity_key'] ?? '');
+            $isUnmappedQuantity = $inferenceType === 'unmapped_quantity_row' || str_starts_with($quantityKey, 'unmapped.');
 
             if ($quantityKey === '' || !$this->scopeCompatible($inferenceScope, $scopeType)) {
+                continue;
+            }
+
+            if ($isUnmappedReviewPackage !== $isUnmappedQuantity) {
                 continue;
             }
 
@@ -501,7 +508,7 @@ final class NormativeWorkItemPlannerService
                 'confidence' => (float) ($inference['confidence'] ?? 0.74),
                 'source_refs' => isset($inference['source_ref']) && is_array($inference['source_ref']) ? [$inference['source_ref']] : [],
                 'review_required' => (bool) ($inference['review_required'] ?? true),
-                'source' => 'scope_inference',
+                'source' => (string) ($payload['source'] ?? $inference['inference_type'] ?? 'scope_inference'),
             ];
         }
 

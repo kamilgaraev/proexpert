@@ -642,8 +642,60 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertSame(42.0, (float) $items[0]['quantity']);
         self::assertSame('м3', $items[0]['unit']);
         self::assertSame('scope_inference', $items[0]['metadata']['generation_source']);
-        self::assertSame('scope_inference', $items[0]['metadata']['quantity_source']);
+        self::assertSame('work_volume_statement', $items[0]['metadata']['quantity_source']);
         self::assertNotEmpty($items[0]['source_refs']);
+    }
+
+    public function test_unmapped_review_package_ignores_regular_scope_inferences(): void
+    {
+        $localEstimate = $this->localEstimate('unmapped_quantity_rows', 'Позиции для разбора', 'custom', 1);
+
+        $items = $this->planner()->build(
+            $localEstimate,
+            $localEstimate['sections'][0],
+            [
+                'document_context' => [
+                    'scope_inferences' => [
+                        [
+                            'inference_type' => 'work_volume_takeoff',
+                            'scope_type' => 'earthworks',
+                            'title' => 'Обратная засыпка пазух',
+                            'source_ref' => ['type' => 'drawing', 'document_id' => 80, 'page_number' => 1],
+                            'source_refs' => [['type' => 'drawing', 'document_id' => 80, 'page_number' => 1]],
+                            'normalized_payload' => [
+                                'quantity_key' => 'earth.backfill',
+                                'quantity_value' => 42.0,
+                                'unit' => 'м3',
+                                'source' => 'work_volume_statement',
+                            ],
+                            'confidence' => 0.84,
+                            'review_required' => false,
+                        ],
+                        [
+                            'inference_type' => 'unmapped_quantity_row',
+                            'scope_type' => 'custom',
+                            'title' => 'Авторский надзор',
+                            'source_ref' => ['type' => 'drawing', 'document_id' => 80, 'page_number' => 1],
+                            'source_refs' => [['type' => 'drawing', 'document_id' => 80, 'page_number' => 1]],
+                            'normalized_payload' => [
+                                'quantity_key' => 'unmapped.abc123',
+                                'quantity_value' => 1.0,
+                                'unit' => 'компл',
+                                'source' => 'work_volume_statement',
+                                'reason' => 'quantity_row_not_mapped',
+                            ],
+                            'confidence' => 0.72,
+                            'review_required' => true,
+                        ],
+                    ],
+                    'quantity_takeoffs' => [],
+                ],
+            ]
+        );
+
+        self::assertSame(['Авторский надзор'], array_column($items, 'name'));
+        self::assertSame(['quantity_review'], array_column($items, 'item_type'));
+        self::assertSame(['unmapped.abc123'], array_column($items, 'quantity_formula'));
     }
 
     public function test_optional_site_package_without_document_quantity_is_not_expanded_from_catalog_fallback(): void

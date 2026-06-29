@@ -205,8 +205,52 @@ final class EstimatorScopeInferenceService
                 'quantity_key' => $this->routeScope($element) . '.pipe',
                 'element' => $element,
             ]),
+            'unmapped_specification_row' => $this->unmappedQuantityRowInference($element, $document),
             default => null,
         };
+    }
+
+    /**
+     * @param array<string, mixed> $element
+     * @param array<string, mixed> $document
+     * @return array<string, mixed>|null
+     */
+    private function unmappedQuantityRowInference(array $element, array $document): ?array
+    {
+        $payload = is_array($element['normalized_payload'] ?? null) ? $element['normalized_payload'] : [];
+        $title = trim((string) ($element['label'] ?? $payload['name'] ?? ''));
+        $quantity = $this->numericValue($element['value_number'] ?? $payload['quantity'] ?? null);
+        $unit = trim((string) ($element['unit'] ?? $payload['unit'] ?? ''));
+
+        if ($title === '' || $quantity === null || $quantity <= 0 || $unit === '') {
+            return null;
+        }
+
+        $line = trim((string) ($payload['line'] ?? ''));
+        $source = trim((string) ($payload['source'] ?? 'unmapped_quantity_row'));
+        $reason = trim((string) ($payload['reason'] ?? 'quantity_row_not_mapped'));
+        $sourceRef = is_array($element['source_ref'] ?? null) ? $element['source_ref'] : [];
+        $quantityKey = 'unmapped.' . substr(sha1(implode('|', [
+            $document['id'] ?? '',
+            $document['filename'] ?? '',
+            $sourceRef['page_number'] ?? '',
+            $sourceRef['line_hash'] ?? '',
+            $title,
+            $unit,
+            (string) $quantity,
+        ])), 0, 16);
+        $scopeType = $this->scopeFromUnmappedQuantityText($title . ' ' . $line);
+
+        return $this->baseInference('unmapped_quantity_row', $scopeType, $title, 0.72, $document, [
+            'quantity_key' => $quantityKey,
+            'quantity_value' => $quantity,
+            'unit' => $unit,
+            'element' => $element,
+            'source' => $source !== '' ? $source : 'unmapped_quantity_row',
+            'reason' => $reason !== '' ? $reason : 'quantity_row_not_mapped',
+            'review_required' => true,
+            'line' => $line,
+        ]);
     }
 
     /**
@@ -366,6 +410,40 @@ final class EstimatorScopeInferenceService
             str_contains($value, 'heat') || str_contains($value, 'отоп') => 'heating',
             str_contains($value, 'water') || str_contains($value, 'plumb') || str_contains($value, 'вод') => 'plumbing',
             default => null,
+        };
+    }
+
+    private function numericValue(mixed $value): ?float
+    {
+        if (is_int($value) || is_float($value)) {
+            return (float) $value;
+        }
+
+        if (!is_string($value)) {
+            return null;
+        }
+
+        $normalized = str_replace(',', '.', trim($value));
+
+        return is_numeric($normalized) ? (float) $normalized : null;
+    }
+
+    private function scopeFromUnmappedQuantityText(string $value): string
+    {
+        $value = mb_strtolower($value);
+
+        return match (true) {
+            str_contains($value, 'элект') || str_contains($value, 'кабел') || str_contains($value, 'свет') => 'electrical',
+            str_contains($value, 'отоп') || str_contains($value, 'радиатор') || str_contains($value, 'тепл') => 'heating',
+            str_contains($value, 'вент') || str_contains($value, 'воздух') => 'ventilation',
+            str_contains($value, 'канал') || str_contains($value, 'вод') || str_contains($value, 'сантех') => 'plumbing',
+            str_contains($value, 'окн') || str_contains($value, 'двер') || str_contains($value, 'ворот') => 'openings',
+            str_contains($value, 'засып') || str_contains($value, 'грунт') || str_contains($value, 'котлован') => 'earthworks',
+            str_contains($value, 'бетон') || str_contains($value, 'фундамент') || str_contains($value, 'арматур') => 'foundation',
+            str_contains($value, 'стен') || str_contains($value, 'перегород') || str_contains($value, 'кладк') => 'walls',
+            str_contains($value, 'кров') || str_contains($value, 'крыша') => 'roof',
+            str_contains($value, 'пол') || str_contains($value, 'плит') || str_contains($value, 'окраск') || str_contains($value, 'штукатур') => 'finishing',
+            default => 'custom',
         };
     }
 

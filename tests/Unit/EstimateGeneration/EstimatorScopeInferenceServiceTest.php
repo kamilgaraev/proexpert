@@ -103,6 +103,47 @@ final class EstimatorScopeInferenceServiceTest extends TestCase
         self::assertSame('work_volume_statement', $inferences[0]['normalized_payload']['source']);
     }
 
+    public function test_infers_review_quantity_from_unmapped_specification_row_element(): void
+    {
+        $inferences = (new EstimatorScopeInferenceService())->inferFromDocumentPayload([
+            'id' => 12,
+            'filename' => 'Ведомость объемов работ.pdf',
+            'drawing_elements' => [[
+                'type' => 'unmapped_specification_row',
+                'label' => 'Авторский надзор',
+                'value_text' => '1 компл',
+                'value_number' => 1.0,
+                'unit' => 'компл',
+                'confidence' => 0.79,
+                'source_ref' => [
+                    'type' => 'drawing',
+                    'document_id' => 12,
+                    'filename' => 'Ведомость объемов работ.pdf',
+                    'page_number' => 1,
+                    'excerpt' => 'Авторский надзор компл 1',
+                    'line_hash' => 'line-1',
+                ],
+                'normalized_payload' => [
+                    'line' => 'Авторский надзор компл 1',
+                    'source' => 'work_volume_statement',
+                    'review_required' => true,
+                    'reason' => 'quantity_row_not_mapped',
+                ],
+            ]],
+        ]);
+
+        self::assertCount(1, $inferences);
+        self::assertSame('unmapped_quantity_row', $inferences[0]['inference_type']);
+        self::assertSame('custom', $inferences[0]['scope_type']);
+        self::assertSame('Авторский надзор', $inferences[0]['title']);
+        self::assertTrue($inferences[0]['review_required']);
+        self::assertStringStartsWith('unmapped.', $inferences[0]['normalized_payload']['quantity_key']);
+        self::assertSame(1.0, $inferences[0]['normalized_payload']['quantity_value']);
+        self::assertSame('компл', $inferences[0]['normalized_payload']['unit']);
+        self::assertSame('quantity_row_not_mapped', $inferences[0]['normalized_payload']['reason']);
+        self::assertSame('line-1', $inferences[0]['source_ref']['line_hash']);
+    }
+
     public function test_normalizes_persisted_scope_inference_shape_for_planner(): void
     {
         $inferences = (new EstimatorScopeInferenceService())->inferFromAnalysis([
