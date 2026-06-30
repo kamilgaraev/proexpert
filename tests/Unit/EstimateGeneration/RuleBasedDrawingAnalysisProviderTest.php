@@ -103,6 +103,43 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
         self::assertContains('title_block', $result->summary['page_profiles'][0]['signals'] ?? []);
     }
 
+    public function test_extracts_axis_labels_from_drawing_text(): void
+    {
+        $recognition = new OcrRecognitionResult(
+            provider: 'test',
+            model: 'page',
+            pages: [
+                new OcrPageResult(
+                    pageNumber: 1,
+                    text: implode("\n", [
+                        'АР-1 План фундаментов',
+                        'Оси 1-3',
+                        'Ось А',
+                    ]),
+                    confidence: 0.9
+                ),
+            ]
+        );
+
+        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+            documentId: 10,
+            filename: 'АР-1.pdf',
+            recognition: $recognition
+        );
+
+        $axisLabels = array_values(array_map(
+            static fn (array $element): string => (string) ($element['normalized_payload']['axis_label'] ?? ''),
+            array_filter(
+                $result->elements,
+                static fn (array $element): bool => ($element['type'] ?? null) === 'axis'
+            )
+        ));
+
+        self::assertSame(['1', '2', '3', 'А'], $axisLabels);
+        self::assertSame(4, $result->summary['axis_count'] ?? null);
+        self::assertContains('axes', $result->summary['page_profiles'][0]['signals'] ?? []);
+    }
+
     public function test_attaches_ocr_line_bbox_to_elements_takeoffs_and_aggregate_sources(): void
     {
         $roomBbox = [

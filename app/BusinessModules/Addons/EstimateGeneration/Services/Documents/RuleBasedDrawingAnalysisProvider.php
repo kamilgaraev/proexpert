@@ -29,6 +29,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 $line = $lineRecord['text'];
                 $lineElements = [
                     ...$this->scaleElements($documentId, $filename, $page, $line),
+                    ...$this->axisElements($documentId, $filename, $page, $line),
                     ...$this->heightElements($documentId, $filename, $page, $line),
                     ...$this->roomLabelElements($documentId, $filename, $page, $line),
                     ...$this->roomElements($documentId, $filename, $page, $line),
@@ -184,6 +185,112 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             'ГП', 'GP' => 'site_plan',
             default => 'technical',
         };
+    }
+
+    private function axisElements(int $documentId, string $filename, OcrPageResult $page, string $line): array
+    {
+        $labels = $this->axisLabelsFromLine($line);
+
+        if ($labels === []) {
+            return [];
+        }
+
+        return array_map(
+            fn (string $label): array => [
+                'type' => 'axis',
+                'label' => 'Ось ' . $label,
+                'value_text' => $label,
+                'value_number' => is_numeric($label) ? (float) $label : null,
+                'unit' => null,
+                'bbox' => null,
+                'geometry' => null,
+                'confidence' => max($this->confidence($page) - 0.05, 0.35),
+                'source_ref' => $this->sourceRef($documentId, $filename, $page, $line),
+                'normalized_payload' => [
+                    'line' => $line,
+                    'axis_label' => $label,
+                    'axis_source' => 'ocr_text',
+                ],
+                'page_number' => $page->pageNumber,
+            ],
+            $labels
+        );
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function axisLabelsFromLine(string $line): array
+    {
+        if (preg_match('/(?:^|[^\p{L}\p{N}])(?:оси|ось|axis|gridline|grid)(?:$|[^\p{L}\p{N}])/iu', $line) !== 1) {
+            return [];
+        }
+
+        $tail = preg_replace('/^.*?(?:оси|ось|axis|gridline|grid)\s*[:№#-]?\s*/iu', '', $line, 1) ?? $line;
+        $tail = preg_replace('/\s+и\s+/iu', ' ', $tail) ?? $tail;
+        $labels = [];
+
+        if (preg_match_all('/(?<!\d)(?<start>\d{1,3})\s*[-–—]\s*(?<end>\d{1,3})(?!\d)/u', $tail, $matches, PREG_SET_ORDER) > 0) {
+            foreach ($matches as $match) {
+                $start = (int) $match['start'];
+                $end = (int) $match['end'];
+
+                if ($start > 0 && $end >= $start && ($end - $start) <= 30) {
+                    foreach (range($start, $end) as $axis) {
+                        $labels[] = (string) $axis;
+                    }
+                }
+            }
+        }
+
+        if (preg_match_all('/(?<![\p{L}])(?<start>[A-ZА-Я])\s*[-–—]\s*(?<end>[A-ZА-Я])(?![\p{L}])/iu', $tail, $matches, PREG_SET_ORDER) > 0) {
+            foreach ($matches as $match) {
+                array_push($labels, ...$this->expandAxisLetterRange((string) $match['start'], (string) $match['end']));
+            }
+        }
+
+        if (preg_match_all('/(?<![\p{L}\p{N}])(?:[A-ZА-Я]{1,2}|\d{1,3})(?![\p{L}\p{N}])/iu', $tail, $matches) > 0) {
+            foreach ($matches[0] as $match) {
+                $labels[] = mb_strtoupper((string) $match);
+            }
+        }
+
+        return array_values(array_slice(array_unique(array_filter(
+            $labels,
+            static fn (string $label): bool => $label !== ''
+        )), 0, 40));
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function expandAxisLetterRange(string $start, string $end): array
+    {
+        $start = mb_strtoupper($start);
+        $end = mb_strtoupper($end);
+        $alphabets = [
+            ['А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ж', 'З', 'И', 'К', 'Л', 'М', 'Н', 'О', 'П', 'Р', 'С', 'Т', 'У', 'Ф', 'Х', 'Ц', 'Ч', 'Ш', 'Щ', 'Э', 'Ю', 'Я'],
+            range('A', 'Z'),
+        ];
+
+        foreach ($alphabets as $alphabet) {
+            $startIndex = array_search($start, $alphabet, true);
+            $endIndex = array_search($end, $alphabet, true);
+
+            if ($startIndex === false || $endIndex === false) {
+                continue;
+            }
+
+            if (abs($endIndex - $startIndex) > 20) {
+                return [$start, $end];
+            }
+
+            $slice = array_slice($alphabet, min($startIndex, $endIndex), abs($endIndex - $startIndex) + 1);
+
+            return $startIndex <= $endIndex ? $slice : array_reverse($slice);
+        }
+
+        return [$start, $end];
     }
 
     private function scaleElements(int $documentId, string $filename, OcrPageResult $page, string $line): array
@@ -2369,6 +2476,10 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 $pageElements,
                 static fn (array $element): bool => ($element['type'] ?? null) === 'dimension'
             ));
+            $axisCount = count(array_filter(
+                $pageElements,
+                static fn (array $element): bool => ($element['type'] ?? null) === 'axis'
+            ));
             $heightCount = count(array_filter(
                 $pageElements,
                 static fn (array $element): bool => ($element['type'] ?? null) === 'height'
@@ -2409,12 +2520,14 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                     $titleBlockCount > 0 ? 'title_block' : null,
                     $roomCount > 0 ? 'room_areas' : null,
                     $dimensionCount > 0 ? 'dimensions' : null,
+                    $axisCount > 0 ? 'axes' : null,
                     $heightCount > 0 ? 'height' : null,
                     $workVolumeStatementCount > 0 ? 'work_volume_statement_quantities' : null,
                     $specificationCount > 0 ? 'specification_quantities' : null,
                 ])),
                 'room_area_count' => $roomCount,
                 'dimension_count' => $dimensionCount,
+                'axis_count' => $axisCount,
                 'height_count' => $heightCount,
                 'title_block_count' => $titleBlockCount,
                 'work_volume_statement_quantity_count' => $workVolumeStatementCount,
@@ -2494,6 +2607,10 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             $elements,
             static fn (array $element): bool => ($element['type'] ?? null) === 'dimension'
         ));
+        $axisCount = count(array_filter(
+            $elements,
+            static fn (array $element): bool => ($element['type'] ?? null) === 'axis'
+        ));
         $heightCount = count(array_filter(
             $elements,
             static fn (array $element): bool => ($element['type'] ?? null) === 'height'
@@ -2504,7 +2621,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             $elements,
             static fn (array $element): bool => ($element['type'] ?? null) === 'title_block'
         ));
-        $documentProfile = $this->documentProfile($filename, $pageProfiles, count($roomTakeoffs), $dimensionCount, $titleBlockCount);
+        $documentProfile = $this->documentProfile($filename, $pageProfiles, count($roomTakeoffs), $dimensionCount, $axisCount, $titleBlockCount);
 
         return [
             'pages_count' => count($recognition->pages),
@@ -2516,6 +2633,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             'room_count' => count($roomTakeoffs),
             'room_area_total_m2' => $roomAreaTotal > 0 ? $roomAreaTotal : null,
             'dimension_count' => $dimensionCount,
+            'axis_count' => $axisCount,
             'height_count' => $heightCount,
             'title_block_count' => $titleBlockCount,
             'detected_height_m' => $detectedHeight,
@@ -2587,7 +2705,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
      * @param array<int, array<string, mixed>> $pageProfiles
      * @return array<string, mixed>
      */
-    private function documentProfile(string $filename, array $pageProfiles, int $roomCount, int $dimensionCount, int $titleBlockCount): array
+    private function documentProfile(string $filename, array $pageProfiles, int $roomCount, int $dimensionCount, int $axisCount, int $titleBlockCount): array
     {
         $roles = array_count_values(array_map(
             static fn (array $profile): string => (string) ($profile['page_role'] ?? 'technical_document'),
@@ -2613,6 +2731,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             'signals' => [
                 'room_count' => $roomCount,
                 'dimension_count' => $dimensionCount,
+                'axis_count' => $axisCount,
                 'title_block_count' => $titleBlockCount,
             ],
         ];
