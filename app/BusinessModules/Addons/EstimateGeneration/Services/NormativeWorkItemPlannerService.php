@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
+use Throwable;
+
 final class NormativeWorkItemPlannerService
 {
     public function __construct(
@@ -114,6 +117,7 @@ final class NormativeWorkItemPlannerService
                     'quantity_source' => $quantity['source'],
                     'package_key' => $packageKey,
                     ...($definition['metadata'] ?? []),
+                    ...$this->quantityLearningMetadata($quantity),
                 ],
                 normativeRateCode: isset($definition['normative_rate_code']) ? (string) $definition['normative_rate_code'] : null,
                 operations: $definition['operations'] ?? $this->operationBank((string) $definition['category'])
@@ -150,6 +154,7 @@ final class NormativeWorkItemPlannerService
                 'quantity_source' => $quantity['source'],
                 'package_key' => $packageKey,
                 ...($definition['metadata'] ?? []),
+                ...$this->quantityLearningMetadata($quantity),
             ],
             normativeRateCode: isset($definition['normative_rate_code']) ? (string) $definition['normative_rate_code'] : null,
             operations: $definition['operations'] ?? $this->operationBank((string) $definition['category'])
@@ -291,6 +296,7 @@ final class NormativeWorkItemPlannerService
                 'quantity_source' => (string) ($quantity['source'] ?? 'document_quantity'),
                 'package_key' => $packageKey,
                 ...($definition['metadata'] ?? []),
+                ...$this->quantityLearningMetadata($quantity),
                 'normative_grounding_policy' => 'quantity_confirmation_required',
                 'display_role' => 'quantity_review',
                 'work_composition' => array_values($definition['operations'] ?? $this->operationBank((string) $definition['category'])),
@@ -554,7 +560,7 @@ final class NormativeWorkItemPlannerService
      * @param array<string, mixed> $definition
      * @param array<string, mixed> $analysis
      * @param array<string, mixed> $quantityModel
-     * @return array{value: float, unit: string, basis: string, confidence: float, source_refs: array<int, array<string, mixed>>, review_required: bool, source: string}
+     * @return array{value: float, unit: string, basis: string, confidence: float, source_refs: array<int, array<string, mixed>>, review_required: bool, source: string, learning_hint?: array<string, mixed>}
      */
     private function quantityForDefinition(array $definition, array $analysis, array $quantityModel): array
     {
@@ -562,7 +568,8 @@ final class NormativeWorkItemPlannerService
         $quantities = is_array($quantityModel['quantities'] ?? null) ? $quantityModel['quantities'] : [];
 
         if (is_array($quantities[$quantityKey] ?? null)) {
-            return [
+            $quantity = $quantities[$quantityKey];
+            $result = [
                 'value' => (float) $quantities[$quantityKey]['value'],
                 'unit' => (string) $quantities[$quantityKey]['unit'],
                 'basis' => (string) $quantities[$quantityKey]['basis'],
@@ -573,6 +580,12 @@ final class NormativeWorkItemPlannerService
                 'review_required' => (bool) ($quantities[$quantityKey]['review_required'] ?? false),
                 'source' => (string) ($quantities[$quantityKey]['source'] ?? 'document_quantity'),
             ];
+
+            if (is_array($quantity['learning_hint'] ?? null)) {
+                $result['learning_hint'] = $this->quantityLearningHintForMetadata($quantity['learning_hint']);
+            }
+
+            return $result;
         }
 
         $inference = is_array($definition['metadata']['scope_inference'] ?? null) ? $definition['metadata']['scope_inference'] : [];
@@ -704,6 +717,8 @@ final class NormativeWorkItemPlannerService
             $quantities[$key] = $quantity;
         }
 
+        $quantities = $this->withQuantityLearningHints($quantities, $documentContext);
+
         return [
             'quantities' => $quantities,
             'features' => [
@@ -734,7 +749,7 @@ final class NormativeWorkItemPlannerService
                 continue;
             }
 
-            $quantityKey = (string) ($payload['quantity_key'] ?? $takeoff['quantity_key'] ?? $this->quantityKeyFromTakeoffScope($scopeKey));
+            $quantityKey = EstimateGenerationQuantityKeyResolver::fromTakeoff($takeoff);
             $value = $this->firstNumeric($takeoff, ['quantity', 'value', 'value_number']);
 
             if ($quantityKey === '' || $value === null || $value <= 0) {
@@ -755,6 +770,125 @@ final class NormativeWorkItemPlannerService
         }
 
         return $quantities;
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $quantities
+     * @param array<string, mixed> $documentContext
+     * @return array<string, array<string, mixed>>
+     */
+    private function withQuantityLearningHints(array $quantities, array $documentContext): array
+    {
+        $hints = is_array($documentContext['quantity_learning_hints'] ?? null)
+            ? $documentContext['quantity_learning_hints']
+            : [];
+
+        foreach ($quantities as $quantityKey => $quantity) {
+            $hint = is_array($hints[$quantityKey] ?? null) ? $hints[$quantityKey] : null;
+
+            if ($hint === null) {
+                continue;
+            }
+
+            $quantity['learning_hint'] = $this->quantityLearningHintForMetadata($hint);
+
+            if ($this->hasQuantityLearningConflict($quantity, $hint)) {
+                $quantity['review_required'] = true;
+                $quantity['confidence'] = round(min((float) ($quantity['confidence'] ?? 0.72), 0.6), 4);
+                $quantity['basis'] = $this->basisWithLearningConflict((string) ($quantity['basis'] ?? ''));
+                $quantity['source'] = 'document_quantity_learning_conflict';
+            }
+
+            $quantities[$quantityKey] = $quantity;
+        }
+
+        return $quantities;
+    }
+
+    /**
+     * @param array<string, mixed> $quantity
+     * @param array<string, mixed> $hint
+     */
+    private function hasQuantityLearningConflict(array $quantity, array $hint): bool
+    {
+        $currentQuantity = $this->numericValue($quantity['value'] ?? null);
+        $learnedQuantity = $this->numericValue($hint['quantity'] ?? null);
+
+        if ($currentQuantity === null || $learnedQuantity === null || $currentQuantity <= 0 || $learnedQuantity <= 0) {
+            return false;
+        }
+
+        $currentUnit = (string) ($quantity['unit'] ?? '');
+        $learnedUnit = (string) ($hint['unit'] ?? '');
+
+        if ($currentUnit === '' || $learnedUnit === '' || !NormativeUnitNormalizer::compatible($currentUnit, $learnedUnit)) {
+            return false;
+        }
+
+        $absoluteDiff = abs($currentQuantity - $learnedQuantity);
+        $relativeDiff = $absoluteDiff / max($learnedQuantity, 0.01);
+
+        return $absoluteDiff > 0.5 && $relativeDiff > 0.25;
+    }
+
+    private function basisWithLearningConflict(string $basis): string
+    {
+        $message = $this->estimateGenerationMessage(
+            'quantity_learning_conflict_basis',
+            'Объем отличается от ранее подтвержденного похожего значения; требуется проверка.'
+        );
+
+        return trim(implode('; ', array_values(array_filter([$basis, $message]))));
+    }
+
+    private function estimateGenerationMessage(string $key, string $fallback): string
+    {
+        try {
+            if (function_exists('app') && app()->bound('translator') && function_exists('trans_message')) {
+                return trans_message('estimate_generation.' . $key);
+            }
+        } catch (Throwable) {
+            return $fallback;
+        }
+
+        return $fallback;
+    }
+
+    /**
+     * @param array<string, mixed> $quantity
+     * @return array<string, mixed>
+     */
+    private function quantityLearningMetadata(array $quantity): array
+    {
+        if (!is_array($quantity['learning_hint'] ?? null)) {
+            return [];
+        }
+
+        return [
+            'quantity_learning_hint' => $this->quantityLearningHintForMetadata($quantity['learning_hint']),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $hint
+     * @return array<string, mixed>
+     */
+    private function quantityLearningHintForMetadata(array $hint): array
+    {
+        return array_filter([
+            'quantity_key' => isset($hint['quantity_key']) ? (string) $hint['quantity_key'] : null,
+            'learning_example_id' => isset($hint['learning_example_id']) ? (int) $hint['learning_example_id'] : null,
+            'quantity' => $this->numericValue($hint['quantity'] ?? null),
+            'unit' => isset($hint['unit']) ? (string) $hint['unit'] : null,
+            'quantity_basis' => isset($hint['quantity_basis']) ? (string) $hint['quantity_basis'] : null,
+            'calculation_basis' => isset($hint['calculation_basis']) ? (string) $hint['calculation_basis'] : null,
+            'source_quality_score' => $this->numericValue($hint['source_quality_score'] ?? null),
+            'confidence' => $this->numericValue($hint['confidence'] ?? null),
+            'same_project' => (bool) ($hint['same_project'] ?? false),
+            'accepted_at' => isset($hint['accepted_at']) ? (string) $hint['accepted_at'] : null,
+            'examples_count' => isset($hint['examples_count']) ? (int) $hint['examples_count'] : null,
+            'source_refs' => is_array($hint['source_refs'] ?? null) ? $this->normalizeSourceRefs($hint['source_refs']) : null,
+        ], static fn (mixed $value): bool => $value !== null && $value !== '');
     }
 
     /**
@@ -1069,8 +1203,7 @@ final class NormativeWorkItemPlannerService
                 continue;
             }
 
-            $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
-            $takeoffKey = (string) ($payload['quantity_key'] ?? $takeoff['quantity_key'] ?? $this->quantityKeyFromTakeoffScope((string) ($takeoff['scope_key'] ?? '')));
+            $takeoffKey = EstimateGenerationQuantityKeyResolver::fromTakeoff($takeoff);
 
             if ($takeoffKey === $quantityKey && is_array($takeoff['source_refs'] ?? null)) {
                 foreach ($takeoff['source_refs'] as $sourceRef) {
@@ -1082,31 +1215,6 @@ final class NormativeWorkItemPlannerService
         }
 
         return $refs;
-    }
-
-    private function quantityKeyFromTakeoffScope(string $scopeKey): string
-    {
-        return match ($scopeKey) {
-            'room_area' => 'finish.floor',
-            'floor_finish_area' => 'finish.floor',
-            'rough_floor_area' => 'rough.floor',
-            'ceiling_finish_area' => 'office.ceiling',
-            'wall_finish_area' => 'rough.walls',
-            'paint_area' => 'finish.paint',
-            'wet_zone_tile_area' => 'sanitary.tile',
-            'skirting_length' => 'finish.baseboard',
-            'door_count' => 'openings.doors',
-            'window_count' => 'openings.windows',
-            'opening_count' => 'openings.doors',
-            'plumbing_route_length' => 'plumbing.pipe',
-            'water_supply_route_length' => 'plumbing.pipe',
-            'sewerage_route_length' => 'sewerage.pipe',
-            'heating_route_length' => 'heating.pipe',
-            'radiator_count' => 'heating.radiators',
-            'heating_unit_count' => 'heating.unit',
-            'engineering_route_length' => 'plumbing.pipe',
-            default => '',
-        };
     }
 
     /**

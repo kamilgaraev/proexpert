@@ -547,6 +547,59 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         }
     }
 
+    public function test_quantity_learning_conflict_keeps_current_takeoff_quantity_and_requires_review(): void
+    {
+        $localEstimate = $this->localEstimate('rough_finishing', 'Черновая отделка', 'finishing', 6);
+        $items = $this->planner()->build(
+            $localEstimate,
+            $localEstimate['sections'][0],
+            [
+                'document_context' => [
+                    'quantity_takeoffs' => [[
+                        'scope_key' => 'wall_finish_area',
+                        'name' => 'Площадь стен по новой планировке',
+                        'unit' => 'm2',
+                        'quantity' => 320.0,
+                        'confidence' => 0.82,
+                        'source_refs' => [[
+                            'type' => 'drawing',
+                            'document_id' => 13,
+                            'filename' => 'flat-plan.png',
+                            'page_number' => 1,
+                        ]],
+                    ]],
+                    'quantity_learning_hints' => [
+                        'rough.walls' => [
+                            'quantity_key' => 'rough.walls',
+                            'learning_example_id' => 501,
+                            'quantity' => 218.25,
+                            'unit' => 'm2',
+                            'quantity_basis' => 'Подтверждено сметчиком по прошлой планировке.',
+                            'source_quality_score' => 1.0,
+                            'confidence' => 1.0,
+                            'same_project' => true,
+                            'examples_count' => 1,
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        $reviewItem = array_values(array_filter(
+            $items,
+            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'rough.walls'
+        ))[0] ?? null;
+
+        self::assertIsArray($reviewItem);
+        self::assertSame('quantity_review', $reviewItem['item_type']);
+        self::assertSame(320.0, (float) $reviewItem['quantity']);
+        self::assertSame('document_quantity_learning_conflict', $reviewItem['metadata']['quantity_source'] ?? null);
+        self::assertSame(218.25, (float) $reviewItem['metadata']['quantity_learning_hint']['quantity']);
+        self::assertSame(501, $reviewItem['metadata']['quantity_learning_hint']['learning_example_id']);
+        self::assertContains('quantity_review_required', $reviewItem['validation_flags']);
+        self::assertStringContainsString('требуется проверка', $reviewItem['quantity_basis']);
+    }
+
     public function test_summary_area_without_source_refs_requires_quantity_review(): void
     {
         $localEstimate = $this->localEstimate('rough_finishing', 'Черновая отделка', 'finishing', 6);

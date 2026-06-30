@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateGenerationQualityGateService;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationQuantityLearningEvidenceService;
 use Illuminate\Support\Arr;
 
 class EstimateGenerationOrchestrator
@@ -21,6 +22,7 @@ class EstimateGenerationOrchestrator
         protected EstimateGenerationPackagePersistenceService $packagePersistenceService,
         protected EstimateGenerationQualityGateService $qualityGateService,
         protected EstimateGenerationAuditService $auditService,
+        protected EstimateGenerationQuantityLearningEvidenceService $quantityLearningEvidenceService,
     ) {}
 
     public function analyze(EstimateGenerationSession $session): EstimateGenerationSession
@@ -66,7 +68,7 @@ class EstimateGenerationOrchestrator
             $session = $this->analyze($session);
         }
 
-        $analysis = $session->analysis_payload ?? [];
+        $analysis = $this->quantityLearningEvidenceService->enrichAnalysis($session, $session->analysis_payload ?? []);
         $this->updateGenerationProgress($session, 'package_planning', 40);
         $objectProfile = $this->packagePlannerService->profileFromAnalysis($analysis);
         $packagePlan = $this->packagePlannerService->plan($objectProfile);

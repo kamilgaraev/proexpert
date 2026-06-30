@@ -57,6 +57,7 @@ return [
     'quantity_confirmation_required' => 'Сначала подтвердите объем по чертежу, затем выберите норму.',
     'quantity_confirmation_quantity_required' => 'Укажите положительный объем для выбранной позиции.',
     'quantity_confirmation_not_required' => 'Для этой позиции подтверждение объема не требуется.',
+    'quantity_learning_conflict_basis' => 'Объем отличается от ранее подтвержденного похожего значения; требуется проверка.',
     'duplicate_resolution_action_required' => 'Выберите, что сделать с повторяющейся позицией.',
     'duplicate_resolution_not_required' => 'Для этой позиции нет повторов, которые нужно разбирать.',
     'work_item_resolution_action_required' => 'Выберите действие для обобщенной позиции.',

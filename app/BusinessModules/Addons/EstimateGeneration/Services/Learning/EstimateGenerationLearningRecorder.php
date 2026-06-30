@@ -592,21 +592,7 @@ final class EstimateGenerationLearningRecorder
 
     private function quantityLearningCode(string $quantityKey): string
     {
-        $normalized = mb_strtolower(trim($quantityKey));
-        $normalized = preg_replace('/[^a-z0-9_.:-]+/u', '_', $normalized) ?? $normalized;
-        $normalized = trim($normalized, '_');
-
-        if ($normalized === '') {
-            $normalized = substr(hash('sha256', $quantityKey), 0, 24);
-        }
-
-        $code = 'quantity:' . $normalized;
-
-        if (strlen($code) <= 100) {
-            return $code;
-        }
-
-        return 'quantity:' . substr(hash('sha256', $quantityKey), 0, 32);
+        return EstimateGenerationQuantityLearningKey::fromQuantityKey($quantityKey);
     }
 
     /**
