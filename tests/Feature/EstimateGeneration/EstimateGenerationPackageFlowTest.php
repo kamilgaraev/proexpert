@@ -6,8 +6,11 @@ namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentFact;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -15,6 +18,108 @@ use Tests\TestCase;
 
 class EstimateGenerationPackageFlowTest extends TestCase
 {
+    public function test_package_sync_persists_only_estimate_positions_and_prunes_old_service_rows(): void
+    {
+        $organization = Organization::factory()->create();
+        $user = User::factory()->create([
+            'current_organization_id' => $organization->id,
+        ]);
+        $project = Project::factory()->create([
+            'organization_id' => $organization->id,
+        ]);
+        $session = EstimateGenerationSession::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => $user->id,
+            'status' => 'generated',
+            'processing_stage' => 'generated',
+            'processing_progress' => 100,
+            'input_payload' => [],
+            'problem_flags' => [],
+        ]);
+        $existingPackage = EstimateGenerationPackage::query()->create([
+            'session_id' => $session->id,
+            'key' => 'foundation',
+            'title' => 'Foundation',
+            'scope_type' => 'foundation',
+            'status' => 'review_required',
+            'generation_stage' => 'quality_check',
+            'generation_progress' => 100,
+            'target_items_min' => 0,
+            'target_items_max' => 0,
+            'actual_items_count' => 1,
+            'totals' => [
+                'total_cost' => 0,
+                'operation_items_count' => 1,
+            ],
+            'quality_summary' => [],
+            'assumptions' => [],
+            'source_refs' => [],
+            'metadata' => [],
+            'sort_order' => 100,
+            'finished_at' => now(),
+        ]);
+        EstimateGenerationPackageItem::query()->create([
+            'package_id' => $existingPackage->id,
+            'key' => 'foundation.old-operation',
+            'item_type' => 'operation',
+            'name' => 'Prepare work front',
+            'total_cost' => 0,
+            'metadata' => [],
+            'sort_order' => 100,
+        ]);
+
+        app(EstimateGenerationPackagePersistenceService::class)->syncFromDraft($session, [
+            'local_estimates' => [[
+                'key' => 'foundation',
+                'title' => 'Foundation',
+                'scope_type' => 'foundation',
+                'sections' => [[
+                    'work_items' => [
+                        $this->pricedWorkItem('foundation.concrete', 1200),
+                        $this->pricedWorkItem('foundation.rebar', 800),
+                        $this->pricedWorkItem('foundation.formwork', 600),
+                        [
+                            'key' => 'foundation.operation',
+                            'item_type' => 'operation',
+                            'name' => 'Prepare work front',
+                            'total_cost' => 0,
+                        ],
+                        [
+                            'key' => 'foundation.resource-note',
+                            'item_type' => 'resource_note',
+                            'name' => 'Resource note',
+                            'total_cost' => 0,
+                        ],
+                        [
+                            'key' => 'foundation.review-note',
+                            'item_type' => 'review_note',
+                            'name' => 'Review note',
+                            'total_cost' => 0,
+                        ],
+                    ],
+                ]],
+            ]],
+        ]);
+
+        $package = $session->packages()->with('items')->firstWhere('key', 'foundation');
+
+        $this->assertNotNull($package);
+        $this->assertSame(3, $package->actual_items_count);
+        $this->assertSame(3, $package->items->count());
+        $this->assertSame(['priced_work'], $package->items->pluck('item_type')->unique()->values()->all());
+        $this->assertSame(0, (int) ($package->totals['operation_items_count'] ?? -1));
+        $this->assertSame(2600.0, (float) ($package->totals['total_cost'] ?? 0));
+        $this->assertDatabaseMissing('estimate_generation_package_items', [
+            'package_id' => $package->id,
+            'item_type' => 'operation',
+        ]);
+        $this->assertDatabaseMissing('estimate_generation_package_items', [
+            'package_id' => $package->id,
+            'key' => 'foundation.old-operation',
+        ]);
+    }
+
     public function test_generation_persists_local_estimate_packages_and_dense_items(): void
     {
         $organization = Organization::factory()->create();
@@ -215,5 +320,31 @@ class EstimateGenerationPackageFlowTest extends TestCase
         $this->assertNotEmpty($sourceBackedItems->all());
         $this->assertTrue($sourceBackedItems->contains(static fn (array $workItem): bool => (float) ($workItem['quantity'] ?? 0) > 0));
         $this->assertNotSame(100.0, $draft['object_profile']['area']);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function pricedWorkItem(string $key, float $totalCost): array
+    {
+        return [
+            'key' => $key,
+            'item_type' => 'priced_work',
+            'name' => $key,
+            'unit' => 'm3',
+            'quantity' => 1,
+            'price_source' => 'normative',
+            'unit_price' => $totalCost,
+            'materials_cost' => $totalCost,
+            'labor_cost' => 0,
+            'machinery_cost' => 0,
+            'total_cost' => $totalCost,
+            'normative_match' => [
+                'status' => 'accepted',
+                'confidence' => 0.95,
+                'work_composition' => ['Operation stays inside norm composition'],
+            ],
+            'validation_flags' => [],
+        ];
     }
 }

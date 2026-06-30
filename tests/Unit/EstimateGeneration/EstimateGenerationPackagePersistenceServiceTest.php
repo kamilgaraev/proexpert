@@ -85,7 +85,7 @@ final class EstimateGenerationPackagePersistenceServiceTest extends TestCase
         ], $counters);
     }
 
-    public function test_package_item_counters_keep_quantity_review_separate_from_priced_positions(): void
+    public function test_package_item_counters_keep_quantity_review_and_ignore_service_rows(): void
     {
         $service = new EstimateGenerationPackagePersistenceService();
         $method = new ReflectionMethod($service, 'itemCounters');
@@ -103,11 +103,11 @@ final class EstimateGenerationPackagePersistenceServiceTest extends TestCase
         ]]);
 
         self::assertSame([
-            'items_count' => 3,
-            'total_items_count' => 3,
+            'items_count' => 2,
+            'total_items_count' => 2,
             'priced_items_count' => 1,
             'quantity_review_items_count' => 1,
-            'operation_items_count' => 1,
+            'operation_items_count' => 0,
             'review_notes_count' => 0,
         ], $counters);
     }

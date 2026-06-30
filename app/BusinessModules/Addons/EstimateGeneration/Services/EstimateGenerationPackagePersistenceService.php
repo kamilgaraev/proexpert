@@ -248,8 +248,6 @@ class EstimateGenerationPackagePersistenceService
     private function itemCounters(array $workItems): array
     {
         $priced = 0;
-        $operations = 0;
-        $reviewNotes = 0;
         $quantityReviews = 0;
 
         foreach ($workItems as $workItem) {
@@ -260,26 +258,22 @@ class EstimateGenerationPackagePersistenceService
                 continue;
             }
 
-            if (in_array($type, ['operation', 'resource_note'], true)) {
-                $operations++;
-                continue;
-            }
-
-            if ($type === 'review_note') {
-                $reviewNotes++;
+            if (in_array($type, EstimateGenerationPackageItem::SERVICE_ITEM_TYPES, true)) {
                 continue;
             }
 
             $priced++;
         }
 
+        $visibleItems = $priced + $quantityReviews;
+
         return [
-            'items_count' => count($workItems),
-            'total_items_count' => count($workItems),
+            'items_count' => $visibleItems,
+            'total_items_count' => $visibleItems,
             'priced_items_count' => $priced,
             'quantity_review_items_count' => $quantityReviews,
-            'operation_items_count' => $operations,
-            'review_notes_count' => $reviewNotes,
+            'operation_items_count' => 0,
+            'review_notes_count' => 0,
         ];
     }
 
