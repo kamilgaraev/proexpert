@@ -26,7 +26,7 @@ use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Tables;
 use Filament\Tables\Table;
-use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Support\Facades\Lang;
 
 class KnowledgeArticleResource extends Resource
@@ -107,7 +107,7 @@ class KnowledgeArticleResource extends Resource
 
                                 $query
                                     ->whereKeyNot($record->id)
-                                    ->where(function (Builder $builder) use ($pathPrefix): void {
+                                    ->where(function (EloquentBuilder $builder) use ($pathPrefix): void {
                                         $builder->whereNull('path')
                                             ->orWhere('path', 'not like', $pathPrefix.'.%');
                                     });
@@ -333,7 +333,7 @@ class KnowledgeArticleResource extends Resource
                 Tables\Filters\SelectFilter::make('surfaces')
                     ->label(trans_message('knowledge_hub.filament.field_surfaces'))
                     ->options(KnowledgeSurface::options())
-                    ->query(fn (Builder $query, array $data): Builder => empty($data['value'])
+                    ->query(fn (EloquentBuilder $query, array $data): EloquentBuilder => empty($data['value'])
                         ? $query
                         : $query->whereJsonContains('surfaces', $data['value'])),
             ])
