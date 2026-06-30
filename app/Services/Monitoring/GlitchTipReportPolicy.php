@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace App\Services\Monitoring;
 
 use App\Exceptions\BusinessLogicException;
+use App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob;
 use App\Support\LivewirePayloadExceptionClassifier;
 use Illuminate\Http\Request;
+use Illuminate\Queue\MaxAttemptsExceededException;
 use Predis\Connection\ConnectionException as PredisConnectionException;
 use Sentry\Severity;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
@@ -30,6 +32,10 @@ class GlitchTipReportPolicy
         }
 
         if ($this->isTransientQueueWorkerRedisError($exception, $request)) {
+            return false;
+        }
+
+        if ($this->isRecoverableRagOrganizationEstimateMaxAttempts($exception)) {
             return false;
         }
 
@@ -134,6 +140,42 @@ class GlitchTipReportPolicy
         return $request === null
             && $exception instanceof PredisConnectionException
             && str_contains($exception->getMessage(), 'Stream is already at the end');
+    }
+
+    private function isRecoverableRagOrganizationEstimateMaxAttempts(Throwable $exception): bool
+    {
+        if (! $exception instanceof MaxAttemptsExceededException) {
+            return false;
+        }
+
+        $payload = $this->queueJobPayload($exception);
+        $commandName = $payload['data']['commandName'] ?? null;
+        $command = $payload['data']['command'] ?? null;
+
+        if ($commandName !== IndexRagSourceJob::class || ! is_string($command)) {
+            return false;
+        }
+
+        return str_contains($command, 's:9:"projectId";N;')
+            && str_contains($command, 's:10:"sourceType";s:8:"estimate";')
+            && str_contains($command, 's:5:"runId";i:');
+    }
+
+    private function queueJobPayload(MaxAttemptsExceededException $exception): array
+    {
+        $job = $exception->job;
+
+        if (! is_object($job) || ! method_exists($job, 'payload')) {
+            return [];
+        }
+
+        try {
+            $payload = $job->payload();
+        } catch (Throwable) {
+            return [];
+        }
+
+        return is_array($payload) ? $payload : [];
     }
 
     private function matchesConfiguredException(Throwable $exception, array $classes): bool
