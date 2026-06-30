@@ -84,6 +84,50 @@ final class EstimateGenerationLearningRagSourceTest extends TestCase
         $this->assertContains('estimate_generation_learning', $registry->enabledSourceTypes());
     }
 
+    public function test_collects_manual_quantity_confirmation_examples_as_rag_chunks(): void
+    {
+        $organization = Organization::factory()->create();
+        $example = EstimateGenerationLearningExample::query()->create([
+            'organization_id' => $organization->id,
+            'source_type' => 'manual_quantity_confirmation',
+            'source_entity_type' => 'estimate_generation_feedback',
+            'source_entity_id' => 31,
+            'work_name' => 'Площадь стен',
+            'work_unit' => 'м2',
+            'work_quantity' => 218.25,
+            'work_intent' => [
+                'scope' => 'rough',
+                'action' => 'surface_preparation',
+                'system' => null,
+            ],
+            'norm_code' => 'quantity:rough.walls',
+            'decision_status' => 'quantity_confirmed_by_user',
+            'is_positive' => true,
+            'confidence' => 1.0,
+            'source_quality_score' => 1.0,
+            'context_payload' => [
+                'section_title' => 'Стены',
+                'quantity_key' => 'rough.walls',
+            ],
+            'source_refs' => [[
+                'type' => 'document',
+                'filename' => 'plan.pdf',
+                'page_number' => 1,
+            ]],
+            'quality_flags' => ['user_confirmed_quantity', 'manual_quantity_review'],
+        ]);
+
+        $chunks = collect(app(EstimateGenerationLearningRagSource::class)->collectForOrganization($organization->id))->values();
+
+        $this->assertCount(1, $chunks);
+        $chunk = $chunks[0];
+
+        $this->assertSame($example->id, $chunk->entityId);
+        $this->assertStringContainsString('work_quantity=218.25', $chunk->content);
+        $this->assertStringContainsString('normative_code=quantity:rough.walls', $chunk->content);
+        $this->assertSame('manual_quantity_confirmation', $chunk->metadata['source_type']);
+    }
+
     public function test_learning_source_does_not_collect_untrusted_generated_examples(): void
     {
         $organization = Organization::factory()->create();

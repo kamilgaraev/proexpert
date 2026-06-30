@@ -193,6 +193,10 @@ final class EstimateGenerationLearningRecorder
             return $this->recordUserConfirmation($session, $feedback);
         }
 
+        if ($feedback->feedback_type === 'quantity_confirmation') {
+            return $this->recordQuantityConfirmation($session, $feedback);
+        }
+
         return $this->recordUserRejection($session, $feedback);
     }
 
@@ -339,6 +343,65 @@ final class EstimateGenerationLearningRecorder
                 'package_item_id' => $packageItem?->id,
             ]],
             'quality_flags' => ['user_confirmed_normative'],
+            'accepted_at' => now(),
+        ]);
+    }
+
+    private function recordQuantityConfirmation(EstimateGenerationSession $session, EstimateGenerationFeedback $feedback): int
+    {
+        $payload = is_array($feedback->payload) ? $feedback->payload : [];
+        $workItemKey = $feedback->work_item_key;
+        $workItem = $this->findDraftWorkItem($session, $workItemKey);
+        $quantity = $this->nullableFloat($workItem['quantity'] ?? $payload['quantity'] ?? null);
+
+        if ($quantity === null || $quantity <= 0) {
+            return 0;
+        }
+
+        $packageItem = $this->findPackageItem($session, $workItemKey);
+        $workName = $this->workName($workItem);
+        $workUnit = $this->nullableString($workItem['unit'] ?? $payload['unit'] ?? null);
+        $quantityKey = $this->quantityKey($workItem, $workItemKey);
+        $intent = $this->workIntentClassifier->classify([
+            'name' => $workName,
+            'unit' => $workUnit,
+        ], [
+            'section_title' => $this->sectionTitleForWorkItem($session, $workItemKey),
+        ]);
+
+        return $this->record([
+            'organization_id' => (int) $session->organization_id,
+            'project_id' => $session->project_id !== null ? (int) $session->project_id : null,
+            'source_type' => 'manual_quantity_confirmation',
+            'source_entity_type' => 'estimate_generation_feedback',
+            'source_entity_id' => (int) $feedback->id,
+            'generation_session_id' => (int) $session->id,
+            'generation_package_item_id' => $packageItem?->id,
+            'work_name' => $workName,
+            'work_unit' => $workUnit,
+            'work_quantity' => $quantity,
+            'work_intent' => $this->intentPayload($intent),
+            'estimate_norm_id' => null,
+            'norm_code' => $this->quantityLearningCode($quantityKey),
+            'normative_name' => null,
+            'normative_unit' => null,
+            'decision_status' => 'quantity_confirmed_by_user',
+            'confidence' => 1.0,
+            'is_positive' => true,
+            'source_quality_score' => 1.0,
+            'context_payload' => [
+                'work_item_key' => $workItemKey,
+                'quantity_key' => $quantityKey,
+                'quantity_formula' => $this->nullableString($workItem['quantity_formula'] ?? null),
+                'quantity_basis' => $this->nullableString($workItem['quantity_basis'] ?? $payload['quantity_basis'] ?? null),
+                'quantity_snapshot' => $this->quantitySnapshot($workItem, $payload),
+                'quantity_feedback' => data_get($workItem, 'metadata.quantity_feedback'),
+                'calculation_basis' => $this->nullableString(data_get($workItem, 'metadata.calculation_basis')),
+                'comments' => $feedback->comments,
+                'section_title' => $this->sectionTitleForWorkItem($session, $workItemKey),
+            ],
+            'source_refs' => $this->quantitySourceRefs($session, $feedback, $packageItem, $workItem),
+            'quality_flags' => ['user_confirmed_quantity', 'manual_quantity_review'],
             'accepted_at' => now(),
         ]);
     }
@@ -512,6 +575,72 @@ final class EstimateGenerationLearningRecorder
         }
 
         return (int) $value;
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    private function quantityKey(array $workItem, ?string $workItemKey): string
+    {
+        $quantityKey = $this->nullableString(data_get($workItem, 'metadata.quantity_key'))
+            ?? $this->nullableString($workItem['quantity_formula'] ?? null)
+            ?? $this->nullableString($workItemKey)
+            ?? 'unknown';
+
+        return $quantityKey;
+    }
+
+    private function quantityLearningCode(string $quantityKey): string
+    {
+        $normalized = mb_strtolower(trim($quantityKey));
+        $normalized = preg_replace('/[^a-z0-9_.:-]+/u', '_', $normalized) ?? $normalized;
+        $normalized = trim($normalized, '_');
+
+        if ($normalized === '') {
+            $normalized = substr(hash('sha256', $quantityKey), 0, 24);
+        }
+
+        $code = 'quantity:' . $normalized;
+
+        if (strlen($code) <= 100) {
+            return $code;
+        }
+
+        return 'quantity:' . substr(hash('sha256', $quantityKey), 0, 32);
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @return array<int, array<string, mixed>>
+     */
+    private function quantitySourceRefs(
+        EstimateGenerationSession $session,
+        EstimateGenerationFeedback $feedback,
+        ?EstimateGenerationPackageItem $packageItem,
+        array $workItem
+    ): array {
+        $sourceRefs = [[
+            'type' => 'estimate_generation_feedback',
+            'feedback_id' => (int) $feedback->id,
+            'session_id' => (int) $session->id,
+            'package_item_id' => $packageItem?->id,
+        ]];
+
+        foreach ($this->arrayValues($workItem['source_refs'] ?? []) as $sourceRef) {
+            if (is_array($sourceRef)) {
+                $sourceRefs[] = $sourceRef;
+            }
+        }
+
+        return $sourceRefs;
+    }
+
+    /**
+     * @return array<int, mixed>
+     */
+    private function arrayValues(mixed $value): array
+    {
+        return is_array($value) ? array_values($value) : [];
     }
 
     /**

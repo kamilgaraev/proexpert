@@ -194,6 +194,52 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
         $this->assertSame('Checked by estimator.', $example->context_payload['comments']);
     }
 
+    public function test_quantity_confirmation_feedback_creates_manual_quantity_learning_example(): void
+    {
+        [$user, $project, $session] = $this->makeSession();
+        $this->createPackageItem($session, 'rough.walls');
+        $session->forceFill([
+            'draft_payload' => $this->quantityReviewDraftPayload(),
+        ])->save();
+
+        $request = EstimateGenerationFeedbackRequest::create('/feedback', 'POST', [
+            'feedback_type' => 'quantity_confirmation',
+            'work_item_key' => 'rough.walls',
+            'payload' => [
+                'quantity' => 218.25,
+                'unit' => 'м2',
+                'quantity_basis' => 'Проверено по планировке, площадь стен 218,25 м2.',
+            ],
+            'comments' => 'Проверил площадь стен по планировке.',
+        ]);
+        $request->setContainer(app());
+        $request->setRedirector(app('redirect'));
+        $request->setUserResolver(static fn (): User => $user);
+        $request->validateResolved();
+
+        $response = app(EstimateGenerationController::class)->feedback($request, $project, $session);
+
+        $this->assertSame(200, $response->getStatusCode());
+
+        $example = EstimateGenerationLearningExample::query()->firstOrFail();
+        $updatedWorkItem = $session->fresh()->draft_payload['local_estimates'][0]['sections'][0]['work_items'][0];
+
+        $this->assertSame('manual_quantity_confirmation', $example->source_type);
+        $this->assertTrue($example->is_positive);
+        $this->assertSame('quantity:rough.walls', $example->norm_code);
+        $this->assertNull($example->estimate_norm_id);
+        $this->assertSame($session->id, $example->generation_session_id);
+        $this->assertSame('rough.walls', $example->context_payload['work_item_key']);
+        $this->assertSame('rough.walls', $example->context_payload['quantity_key']);
+        $this->assertSame(218.25, $example->context_payload['quantity_snapshot']['quantity']);
+        $this->assertSame('м2', $example->context_payload['quantity_snapshot']['unit']);
+        $this->assertTrue($example->context_payload['quantity_snapshot']['confirmed_by_user']);
+        $this->assertSame('wall_area_from_floor_plan', $example->context_payload['calculation_basis']);
+        $this->assertSame('Проверил площадь стен по планировке.', $example->context_payload['comments']);
+        $this->assertSame('confirmed_by_user', $updatedWorkItem['metadata']['quantity_feedback']['status']);
+        $this->assertSame(218.25, $updatedWorkItem['metadata']['quantity_feedback']['quantity']);
+    }
+
     /**
      * @return array{0: User, 1: Project, 2: EstimateGenerationSession}
      */
@@ -330,6 +376,55 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
                 'normative_items' => [
                     'requires_review' => 1,
                     'review_priced' => 1,
+                ],
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function quantityReviewDraftPayload(): array
+    {
+        return [
+            'local_estimates' => [[
+                'key' => 'rough',
+                'title' => 'Черновые работы',
+                'scope_type' => 'rough',
+                'source_refs' => [['type' => 'document', 'filename' => 'plan.pdf', 'page_number' => 1]],
+                'sections' => [[
+                    'key' => 'rough.main',
+                    'title' => 'Стены',
+                    'source_refs' => [['type' => 'document', 'filename' => 'plan.pdf', 'page_number' => 1]],
+                    'work_items' => [[
+                        'key' => 'rough.walls',
+                        'name' => 'Площадь стен',
+                        'item_type' => 'quantity_review',
+                        'unit' => 'м2',
+                        'quantity' => 220.5,
+                        'quantity_formula' => '(46.52 + 9.99) * 2.7 - проемы',
+                        'quantity_basis' => 'Площадь стен извлечена из планировки.',
+                        'pricing_status' => 'not_applicable',
+                        'pricing_blocker' => 'quantity_review_required',
+                        'materials' => [],
+                        'labor' => [],
+                        'machinery' => [],
+                        'other_resources' => [],
+                        'total_cost' => 0.0,
+                        'validation_flags' => ['quantity_review_required'],
+                        'metadata' => [
+                            'quantity_key' => 'rough.walls',
+                            'display_role' => 'quantity_review',
+                            'calculation_basis' => 'wall_area_from_floor_plan',
+                        ],
+                        'source_refs' => [['type' => 'document', 'filename' => 'plan.pdf', 'page_number' => 1]],
+                    ]],
+                ]],
+            ]],
+            'quality_summary' => [
+                'quantity_review_work_items' => 1,
+                'normative_items' => [
+                    'requires_review' => 0,
                 ],
             ],
         ];

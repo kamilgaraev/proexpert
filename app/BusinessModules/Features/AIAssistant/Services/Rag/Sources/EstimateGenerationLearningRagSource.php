@@ -128,13 +128,17 @@ final class EstimateGenerationLearningRagSource implements RagSourceCollectorInt
             'section=' . $this->stringValue($context['section_name'] ?? $context['section_title'] ?? null),
         ]);
 
+        $titlePrefix = str_starts_with((string) $example->norm_code, 'quantity:')
+            ? 'Estimate quantity learning: '
+            : 'Estimate normative learning: ';
+
         return new RagChunkData(
             organizationId: (int) $example->organization_id,
             projectId: $example->project_id !== null ? (int) $example->project_id : null,
             sourceType: $this->sourceType(),
             entityType: 'estimate_generation_learning_example',
             entityId: (int) $example->id,
-            title: 'FSNB learning: ' . $this->stringValue($example->norm_code),
+            title: $titlePrefix . $this->stringValue($example->norm_code),
             content: $content,
             metadata: [
                 'learning_example_id' => (int) $example->id,

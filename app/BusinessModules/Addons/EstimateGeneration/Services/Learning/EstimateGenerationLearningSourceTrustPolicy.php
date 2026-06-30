@@ -14,6 +14,7 @@ final class EstimateGenerationLearningSourceTrustPolicy
         'superadmin_training_dataset',
         'manual_review_choice',
         'manual_review_rejection',
+        'manual_quantity_confirmation',
         'user_selection',
         'user_rejection',
     ];
