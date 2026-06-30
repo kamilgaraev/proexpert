@@ -1263,7 +1263,7 @@ final class NormativeWorkItemPlannerService
 
     private function scopeCompatible(string $inferenceScope, string $targetScope): bool
     {
-        if ($targetScope === '' || $targetScope === 'custom' || $inferenceScope === $targetScope) {
+        if ($targetScope === '' || $inferenceScope === $targetScope) {
             return true;
         }
 

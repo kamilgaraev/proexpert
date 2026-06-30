@@ -241,6 +241,33 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertSame([], $items);
     }
 
+    public function test_custom_scope_ignores_regular_scope_inferences(): void
+    {
+        $localEstimate = $this->localEstimate('local-custom', 'Custom package', 'custom', 12);
+
+        $items = $this->planner()->build($localEstimate, $localEstimate['sections'][0], [
+            'document_context' => [
+                'scope_inferences' => [[
+                    'inference_type' => 'specification_takeoff',
+                    'scope_type' => 'earthworks',
+                    'title' => 'Backfill from statement',
+                    'source_refs' => [[
+                        'type' => 'document',
+                        'filename' => 'statement.pdf',
+                        'page_number' => 1,
+                    ]],
+                    'normalized_payload' => [
+                        'quantity_key' => 'earth.backfill',
+                        'quantity_value' => 42.0,
+                        'unit' => 'm3',
+                    ],
+                ]],
+            ],
+        ]);
+
+        self::assertSame([], $items);
+    }
+
     public function test_stairs_package_uses_specific_normative_intents_instead_of_generic_complex_work(): void
     {
         $localEstimate = $this->localEstimate('stairs', 'Лестницы', 'stairs', 8);
