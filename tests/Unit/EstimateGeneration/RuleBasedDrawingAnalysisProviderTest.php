@@ -113,7 +113,7 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
                     pageNumber: 1,
                     text: implode("\n", [
                         'АР-2 План первого этажа',
-                        'ОК-1 1080 1650',
+                        'ОК1 1080 1650',
                         'ДП-1 900 2100 5 шт',
                     ]),
                     confidence: 0.9

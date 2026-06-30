@@ -2759,7 +2759,9 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         $normalized = mb_strtolower($label);
 
         return match (true) {
-            str_contains($normalized, 'окно') || str_contains($normalized, 'ок-') => 'openings.windows',
+            str_contains($normalized, 'окно')
+                || str_contains($normalized, 'ок-')
+                || preg_match('/(?:^|[^\p{L}\p{N}])ок\s*-?\s*\d/iu', $normalized) === 1 => 'openings.windows',
             str_contains($normalized, 'ворота') => 'openings.gates',
             default => 'openings.doors',
         };
