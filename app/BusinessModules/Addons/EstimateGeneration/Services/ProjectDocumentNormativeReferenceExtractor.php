@@ -73,11 +73,13 @@ final class ProjectDocumentNormativeReferenceExtractor
      */
     private function referenceFromLine(string $line, array $document, array $localEstimate, array $section): ?array
     {
-        if (preg_match('/(?<![\p{L}\p{N}])((?:ГЭСН|ФЕР|ТЕР)?\s*\d{2}-\d{2}-\d{3}-\d{2,3})(?![\p{L}\p{N}])/u', $line, $codeMatch) !== 1) {
+        $referenceCode = $this->referenceCodeFromLine($line);
+
+        if ($referenceCode === null) {
             return null;
         }
 
-        $code = trim(preg_replace('/^(?:ГЭСН|ФЕР|ТЕР)\s*/u', '', $codeMatch[1]) ?? $codeMatch[1]);
+        $code = $referenceCode['code'];
         $scope = (string) ($localEstimate['scope_type'] ?? $section['construction_part'] ?? '');
         $category = $this->categoryForLine($line, $scope);
 
@@ -94,10 +96,25 @@ final class ProjectDocumentNormativeReferenceExtractor
             $flags[] = 'quantity_review_required';
         }
 
+        $metadata = [
+            'generation_source' => 'project_document_normative_reference',
+            'document_role' => 'project_documentation',
+            'normative_reference_kind' => $referenceCode['kind'],
+            'original_normative_code' => $referenceCode['raw_code'],
+        ];
+        $normativeRateCode = $code;
+
+        if ($referenceCode['kind'] !== 'work_norm') {
+            $normativeRateCode = null;
+            $flags[] = 'normative_code_required';
+            $metadata['normative_resource_code'] = $code;
+            $metadata['requires_work_norm_selection'] = true;
+        }
+
         return [
             'name' => $name,
             'normative_search_text' => $name,
-            'normative_rate_code' => $code,
+            'normative_rate_code' => $normativeRateCode,
             'work_category' => $category,
             'unit' => $quantity['unit'],
             'quantity' => $quantity['value'],
@@ -111,11 +128,48 @@ final class ProjectDocumentNormativeReferenceExtractor
             ]],
             'confidence' => $confidence,
             'validation_flags' => $flags,
-            'metadata' => [
-                'generation_source' => 'project_document_normative_reference',
-                'document_role' => 'project_documentation',
-            ],
+            'metadata' => $metadata,
         ];
+    }
+
+    /**
+     * @return array{kind: string, code: string, raw_code: string}|null
+     */
+    private function referenceCodeFromLine(string $line): ?array
+    {
+        if (preg_match('/(?<![\p{L}\p{N}])(?<raw>(?:ГЭСН|ФЕР|ТЕР)?\s*(?<code>\d{2}-\d{2}-\d{3}-\d{2,3}))(?![\p{L}\p{N}])/u', $line, $match) === 1) {
+            return [
+                'kind' => 'work_norm',
+                'code' => (string) $match['code'],
+                'raw_code' => trim((string) $match['raw']),
+            ];
+        }
+
+        if (preg_match('/(?<![\p{L}\p{N}])(?<raw>(?:ФСБЦ|КСР)?\s*(?<code>\d{2}\.\d\.\d{2}\.\d{2}-\d{4}))(?![\p{L}\p{N}])/u', $line, $match) === 1) {
+            return [
+                'kind' => 'fsbc_resource',
+                'code' => (string) $match['code'],
+                'raw_code' => trim((string) $match['raw']),
+            ];
+        }
+
+        if (preg_match('/(?<![\p{L}\p{N}])(?<raw>(?:ФСБЦ|КСР)?\s*(?<code>\d{2}\.\d{2}\.\d{2}-\d{3}))(?![\p{L}\p{N}])/u', $line, $match) === 1) {
+            return [
+                'kind' => 'fsbc_machine_resource',
+                'code' => (string) $match['code'],
+                'raw_code' => trim((string) $match['raw']),
+            ];
+        }
+
+        if (preg_match('/(?<![\p{L}\p{N}])(?<raw>(?:ФСБЦ|КСР)?\s*(?<code>\d{1,2}-\d{3}-\d{2,3}))(?![\p{L}\p{N}])/u', $line, $match) === 1) {
+            return [
+                'kind' => 'ksr_resource',
+                'code' => (string) $match['code'],
+                'raw_code' => trim((string) $match['raw']),
+            ];
+        }
+
+        return null;
     }
 
     /**
@@ -157,7 +211,7 @@ final class ProjectDocumentNormativeReferenceExtractor
 
     private function nameFromLine(string $line, string $code): string
     {
-        $name = trim(str_replace($code, '', preg_replace('/^(?:ГЭСН|ФЕР|ТЕР)\s*/u', '', $line) ?? $line));
+        $name = trim(str_replace($code, '', preg_replace('/^(?:ГЭСН|ФЕР|ТЕР|ФСБЦ|КСР)\s*/u', '', $line) ?? $line));
         $name = trim(preg_replace('/\s{2,}/u', ' ', $name) ?? $name);
         $name = trim(preg_replace('/^\W+|\W+$/u', '', $name) ?? $name);
 

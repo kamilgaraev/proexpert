@@ -49,6 +49,37 @@ final class ProjectDocumentNormativeReferenceExtractorTest extends TestCase
         self::assertSame(82, $references[0]['source_refs'][0]['document_id']);
     }
 
+    public function test_quantity_source_document_preserves_fsbc_resource_reference_without_work_norm(): void
+    {
+        $references = $this->extractor()->extract([
+            'source_documents' => [[
+                'id' => 83,
+                'filename' => 'material-specification.pdf',
+                'status' => 'ready',
+                'quality' => ['level' => 'good'],
+                'text' => 'ФСБЦ 01.1.01.01-0001 Бетон тяжелый 12 м3',
+                'document_understanding' => [
+                    'role_for_estimation' => 'quantity_source',
+                ],
+            ]],
+        ], [
+            'key' => 'materials',
+            'scope_type' => 'custom',
+        ], [
+            'construction_part' => 'custom',
+        ]);
+
+        self::assertCount(1, $references);
+        self::assertNull($references[0]['normative_rate_code']);
+        self::assertSame('01.1.01.01-0001', $references[0]['metadata']['normative_resource_code']);
+        self::assertSame('fsbc_resource', $references[0]['metadata']['normative_reference_kind']);
+        self::assertTrue($references[0]['metadata']['requires_work_norm_selection']);
+        self::assertContains('normative_code_required', $references[0]['validation_flags']);
+        self::assertSame(12.0, $references[0]['quantity']);
+        self::assertSame('м3', $references[0]['unit']);
+        self::assertSame(83, $references[0]['source_refs'][0]['document_id']);
+    }
+
     private function extractor(): ProjectDocumentNormativeReferenceExtractor
     {
         return new ProjectDocumentNormativeReferenceExtractor();
