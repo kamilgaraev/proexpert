@@ -130,6 +130,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                     'line' => $line,
                     'quantity_key' => 'finish.floor',
                     'room_label' => $match['label'],
+                    'room_label_detected' => $match['label'] !== '',
                 ],
                 'page_number' => $page->pageNumber,
             ];
@@ -343,6 +344,8 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         $takeoffs = [];
 
         foreach ($this->roomElements($documentId, $filename, $page, $line) as $element) {
+            $payload = is_array($element['normalized_payload'] ?? null) ? $element['normalized_payload'] : [];
+
             $takeoffs[] = [
                 'source_element_ids' => [],
                 'scope_key' => 'room_area',
@@ -356,6 +359,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 'normalized_payload' => [
                     'line' => $line,
                     'room_label' => $element['label'],
+                    'room_label_detected' => (bool) ($payload['room_label_detected'] ?? false),
                 ],
                 'page_number' => $page->pageNumber,
             ];
@@ -990,14 +994,17 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         $sourceRefs = [];
         $dimensionSourceRefs = [];
         $roomDimensions = [];
+        $labeledRoomCount = 0;
         $confidence = 0.0;
 
         foreach ($roomTakeoffs as $takeoff) {
             $area = (float) ($takeoff['quantity'] ?? 0);
             $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
             $roomLabel = (string) ($payload['room_label'] ?? $takeoff['name'] ?? '');
+            $roomLabelDetected = (bool) ($payload['room_label_detected'] ?? false);
 
             $totalArea += $area;
+            $labeledRoomCount += $roomLabelDetected ? 1 : 0;
             $roomGeometry = $this->roomGeometryFromDimensions($takeoff, $dimensionElements, $area);
             $estimatedRoomPerimeter = $roomGeometry !== null
                 ? (float) $roomGeometry['perimeter_m']
@@ -1036,6 +1043,18 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         }
 
         $roomCount = count($roomTakeoffs);
+        $unlabeledRoomCount = max($roomCount - $labeledRoomCount, 0);
+        $unlabeledRoomShare = $roomCount > 0 ? $unlabeledRoomCount / $roomCount : 0.0;
+        $roomAreaReviewRequired = $unlabeledRoomCount > 0 && ($labeledRoomCount === 0 || $unlabeledRoomShare >= 0.5);
+        $roomAreaQualityPayload = [
+            'labeled_room_count' => $labeledRoomCount,
+            'unlabeled_room_count' => $unlabeledRoomCount,
+        ];
+
+        if ($roomAreaReviewRequired) {
+            $roomAreaQualityPayload['review_reason'] = 'unlabeled_room_areas';
+        }
+
         $totalArea = round($totalArea, 2);
         $confidence = round($confidence / max($roomCount, 1), 4);
         $sourceRefs = array_slice($sourceRefs, 0, 50);
@@ -1074,10 +1093,11 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 name: 'Площадь чистовой отделки пола по планировке',
                 quantity: $totalArea,
                 formula: 'Сумма площадей помещений: ' . $this->formatNumber($totalArea) . ' м2',
-                confidence: min($confidence + 0.03, 0.98),
+                confidence: $roomAreaReviewRequired ? max($confidence - 0.08, 0.35) : min($confidence + 0.03, 0.98),
                 sourceRefs: $sourceRefs,
                 roomCount: $roomCount,
-                reviewRequired: false
+                reviewRequired: $roomAreaReviewRequired,
+                extraPayload: $roomAreaQualityPayload
             ),
             $this->aggregateTakeoff(
                 scopeKey: 'rough_floor_area',
@@ -1085,10 +1105,11 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 name: 'Площадь основания пола по планировке',
                 quantity: $totalArea,
                 formula: 'Сумма площадей помещений: ' . $this->formatNumber($totalArea) . ' м2',
-                confidence: min($confidence + 0.02, 0.98),
+                confidence: $roomAreaReviewRequired ? max($confidence - 0.08, 0.35) : min($confidence + 0.02, 0.98),
                 sourceRefs: $sourceRefs,
                 roomCount: $roomCount,
-                reviewRequired: false
+                reviewRequired: $roomAreaReviewRequired,
+                extraPayload: $roomAreaQualityPayload
             ),
             $this->aggregateTakeoff(
                 scopeKey: 'ceiling_finish_area',

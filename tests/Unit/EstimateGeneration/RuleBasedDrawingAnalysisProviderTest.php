@@ -283,6 +283,11 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
         self::assertSame(169.39, $takeoffsByKey['finish.floor']['quantity']);
         self::assertSame(169.39, $takeoffsByKey['rough.floor']['quantity']);
         self::assertNotSame(464.18, $takeoffsByKey['finish.floor']['quantity']);
+        self::assertTrue($takeoffsByKey['finish.floor']['normalized_payload']['review_required'] ?? false);
+        self::assertTrue($takeoffsByKey['rough.floor']['normalized_payload']['review_required'] ?? false);
+        self::assertSame('unlabeled_room_areas', $takeoffsByKey['finish.floor']['normalized_payload']['review_reason'] ?? null);
+        self::assertSame(0, $takeoffsByKey['finish.floor']['normalized_payload']['labeled_room_count'] ?? null);
+        self::assertSame(15, $takeoffsByKey['finish.floor']['normalized_payload']['unlabeled_room_count'] ?? null);
     }
 
     public function test_uses_explicit_overall_dimension_pair_as_review_required_footprint_when_rooms_are_missing(): void
