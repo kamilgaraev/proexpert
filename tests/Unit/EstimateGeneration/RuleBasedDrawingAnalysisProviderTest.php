@@ -358,6 +358,98 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
         self::assertSame(3.0, $takeoffsByKey['rough.walls']['normalized_payload']['height_m'] ?? null);
     }
 
+    public function test_marks_room_area_sum_for_review_when_overall_dimensions_show_incomplete_coverage(): void
+    {
+        $recognition = new OcrRecognitionResult(
+            provider: 'test',
+            model: 'page',
+            pages: [
+                new OcrPageResult(
+                    pageNumber: 1,
+                    text: implode("\n", [
+                        'Floor plan house',
+                        'h=3.0 m',
+                        'Living 46.52 m2',
+                        'Kitchen 9.99 m2',
+                        'Bathroom 5.14 m2',
+                        '14845 x 8755',
+                    ]),
+                    blocks: [[
+                        'text' => '',
+                        'lines' => [
+                            [
+                                'text' => 'Floor plan house',
+                                'bounding_box' => ['x' => 20, 'y' => 20, 'width' => 180, 'height' => 24],
+                                'words' => [],
+                            ],
+                            [
+                                'text' => 'h=3.0 m',
+                                'bounding_box' => ['x' => 40, 'y' => 80, 'width' => 140, 'height' => 18],
+                                'words' => [],
+                            ],
+                            [
+                                'text' => 'Living 46.52 m2',
+                                'bounding_box' => ['x' => 240, 'y' => 240, 'width' => 145, 'height' => 28],
+                                'words' => [],
+                            ],
+                            [
+                                'text' => 'Kitchen 9.99 m2',
+                                'bounding_box' => ['x' => 500, 'y' => 240, 'width' => 120, 'height' => 24],
+                                'words' => [],
+                            ],
+                            [
+                                'text' => 'Bathroom 5.14 m2',
+                                'bounding_box' => ['x' => 250, 'y' => 140, 'width' => 120, 'height' => 24],
+                                'words' => [],
+                            ],
+                            [
+                                'text' => '14845 x 8755',
+                                'bounding_box' => ['x' => 180, 'y' => 520, 'width' => 220, 'height' => 26],
+                                'words' => [],
+                            ],
+                        ],
+                    ]],
+                    width: 1200,
+                    height: 800,
+                    confidence: 0.9
+                ),
+            ]
+        );
+
+        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+            documentId: 13,
+            filename: 'house-floor-plan.jpg',
+            recognition: $recognition
+        );
+        $takeoffsByKey = [];
+
+        foreach ($result->takeoffs as $takeoff) {
+            $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
+            $takeoffsByKey[(string) ($payload['quantity_key'] ?? $takeoff['scope_key'] ?? '')] = $takeoff;
+        }
+
+        self::assertSame(61.65, $takeoffsByKey['finish.floor']['quantity']);
+        self::assertSame(61.65, $takeoffsByKey['rough.floor']['quantity']);
+        self::assertTrue($takeoffsByKey['finish.floor']['normalized_payload']['review_required'] ?? false);
+        self::assertSame(
+            'room_area_footprint_mismatch',
+            $takeoffsByKey['finish.floor']['normalized_payload']['review_reason'] ?? null
+        );
+        self::assertContains(
+            'room_area_footprint_mismatch',
+            $takeoffsByKey['finish.floor']['normalized_payload']['review_reasons'] ?? []
+        );
+        self::assertSame(129.97, $takeoffsByKey['finish.floor']['normalized_payload']['footprint_area_m2'] ?? null);
+        self::assertSame(14.845, $takeoffsByKey['finish.floor']['normalized_payload']['footprint_length_m'] ?? null);
+        self::assertSame(8.755, $takeoffsByKey['finish.floor']['normalized_payload']['footprint_width_m'] ?? null);
+        self::assertSame(0.4743, $takeoffsByKey['finish.floor']['normalized_payload']['room_to_footprint_area_ratio'] ?? null);
+        self::assertSame(68.32, $takeoffsByKey['finish.floor']['normalized_payload']['missing_room_area_against_footprint_m2'] ?? null);
+        self::assertNotEmpty(array_filter(
+            $takeoffsByKey['finish.floor']['source_refs'],
+            static fn (array $sourceRef): bool => ($sourceRef['excerpt'] ?? null) === '14845 x 8755'
+        ));
+    }
+
     public function test_uses_nearby_dimension_pair_to_estimate_room_perimeter(): void
     {
         $recognition = new OcrRecognitionResult(

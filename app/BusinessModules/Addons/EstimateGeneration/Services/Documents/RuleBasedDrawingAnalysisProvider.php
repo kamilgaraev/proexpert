@@ -1045,20 +1045,37 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         $roomCount = count($roomTakeoffs);
         $unlabeledRoomCount = max($roomCount - $labeledRoomCount, 0);
         $unlabeledRoomShare = $roomCount > 0 ? $unlabeledRoomCount / $roomCount : 0.0;
-        $roomAreaReviewRequired = $unlabeledRoomCount > 0 && ($labeledRoomCount === 0 || $unlabeledRoomShare >= 0.5);
+        $footprintCoverage = $this->footprintCoverage($elements, $totalArea);
+        $reviewReasons = array_values(array_filter([
+            $unlabeledRoomCount > 0 && ($labeledRoomCount === 0 || $unlabeledRoomShare >= 0.5)
+                ? 'unlabeled_room_areas'
+                : null,
+            ($footprintCoverage['review_required'] ?? false) === true
+                ? 'room_area_footprint_mismatch'
+                : null,
+        ]));
+        $roomAreaReviewRequired = $reviewReasons !== [];
         $roomAreaQualityPayload = [
             'labeled_room_count' => $labeledRoomCount,
             'unlabeled_room_count' => $unlabeledRoomCount,
+            ...$footprintCoverage['payload'],
         ];
 
-        if ($roomAreaReviewRequired) {
-            $roomAreaQualityPayload['review_reason'] = 'unlabeled_room_areas';
+        if ($reviewReasons !== []) {
+            $roomAreaQualityPayload['review_reasons'] = $reviewReasons;
+            $roomAreaQualityPayload['review_reason'] = count($reviewReasons) === 1
+                ? $reviewReasons[0]
+                : 'multiple_room_area_quality_issues';
         }
 
         $totalArea = round($totalArea, 2);
         $confidence = round($confidence / max($roomCount, 1), 4);
         $sourceRefs = array_slice($sourceRefs, 0, 50);
         $dimensionSourceRefs = array_slice($dimensionSourceRefs, 0, 50);
+        $roomAreaSourceRefs = array_slice([
+            ...$sourceRefs,
+            ...$footprintCoverage['source_refs'],
+        ], 0, 50);
         $perimeterSourceRefs = array_slice([
             ...$sourceRefs,
             ...$dimensionSourceRefs,
@@ -1094,7 +1111,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 quantity: $totalArea,
                 formula: 'Сумма площадей помещений: ' . $this->formatNumber($totalArea) . ' м2',
                 confidence: $roomAreaReviewRequired ? max($confidence - 0.08, 0.35) : min($confidence + 0.03, 0.98),
-                sourceRefs: $sourceRefs,
+                sourceRefs: $roomAreaSourceRefs,
                 roomCount: $roomCount,
                 reviewRequired: $roomAreaReviewRequired,
                 extraPayload: $roomAreaQualityPayload
@@ -1106,7 +1123,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 quantity: $totalArea,
                 formula: 'Сумма площадей помещений: ' . $this->formatNumber($totalArea) . ' м2',
                 confidence: $roomAreaReviewRequired ? max($confidence - 0.08, 0.35) : min($confidence + 0.02, 0.98),
-                sourceRefs: $sourceRefs,
+                sourceRefs: $roomAreaSourceRefs,
                 roomCount: $roomCount,
                 reviewRequired: $roomAreaReviewRequired,
                 extraPayload: $roomAreaQualityPayload
@@ -1211,6 +1228,50 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         }
 
         return $aggregates;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $elements
+     * @return array{review_required: bool, payload: array<string, mixed>, source_refs: array<int, array<string, mixed>>}
+     */
+    private function footprintCoverage(array $elements, float $roomArea): array
+    {
+        $footprint = $this->bestFootprintDimensionPair($elements);
+
+        if ($footprint === null || $roomArea <= 0) {
+            return [
+                'review_required' => false,
+                'payload' => [],
+                'source_refs' => [],
+            ];
+        }
+
+        $footprintArea = round((float) $footprint['length_m'] * (float) $footprint['width_m'], 2);
+
+        if ($footprintArea <= 0) {
+            return [
+                'review_required' => false,
+                'payload' => [],
+                'source_refs' => [],
+            ];
+        }
+
+        $coverageRatio = round($roomArea / $footprintArea, 4);
+        $missingArea = round(max($footprintArea - $roomArea, 0.0), 2);
+        $reviewRequired = $footprintArea >= $roomArea * 1.25 && $missingArea >= 10.0;
+
+        return [
+            'review_required' => $reviewRequired,
+            'payload' => [
+                'footprint_area_m2' => $footprintArea,
+                'footprint_length_m' => $footprint['length_m'],
+                'footprint_width_m' => $footprint['width_m'],
+                'room_to_footprint_area_ratio' => $coverageRatio,
+                'missing_room_area_against_footprint_m2' => $missingArea,
+                'footprint_coverage_review_required' => $reviewRequired,
+            ],
+            'source_refs' => array_values(array_filter($footprint['source_refs'], 'is_array')),
+        ];
     }
 
     /**
