@@ -379,6 +379,73 @@ final class ResourceAssemblySafetyTest extends TestCase
         $this->assertContains('pricing_not_calculated', $item['validation_flags']);
     }
 
+    public function test_generic_foundation_work_does_not_accept_wall_masonry_norm(): void
+    {
+        $workItem = [
+            'key' => 'foundation-generic',
+            'name' => 'Foundation work',
+            'description' => '',
+            'unit' => 'm3',
+            'quantity' => 10,
+            'confidence' => 0.72,
+            'validation_flags' => ['normative_required'],
+            'materials' => [],
+            'labor' => [],
+            'machinery' => [],
+        ];
+        $match = [
+            'version' => ['source_type' => 'fsnb_2022', 'version_key' => '2026-05-31'],
+            'price_version' => ['source_type' => 'fsbc', 'version_key' => '2026-05-31'],
+            'selected' => $this->wallMasonryCandidate(),
+            'candidates' => [$this->wallMasonryCandidate()],
+        ];
+
+        $item = $this->manualSelectionService()->applySelectedNormativeMatch($workItem, $match, ['scope_type' => 'foundation']);
+        $item = (new EstimatePricingService())->price([$item])[0];
+
+        $this->assertSame('candidate', $item['normative_match']['status']);
+        $this->assertSame('not_calculated', $item['pricing_status']);
+        $this->assertSame('scope_mismatch', $item['pricing_blocker']);
+        $this->assertEquals(0.0, $item['total_cost']);
+        $this->assertContains('scope_mismatch', $item['normative_match']['warnings']);
+        $this->assertContains('safe_norm_required', $item['validation_flags']);
+    }
+
+    public function test_foundation_waterproofing_can_accept_waterproofing_norm_from_section_08(): void
+    {
+        $workItem = [
+            'key' => 'foundation-waterproofing',
+            'name' => 'Foundation waterproofing',
+            'unit' => 'm2',
+            'quantity' => 50,
+            'confidence' => 0.82,
+            'validation_flags' => ['normative_required'],
+            'materials' => [],
+            'labor' => [],
+            'machinery' => [],
+            'work_intent' => [
+                'scope' => 'foundation',
+                'action' => 'waterproofing',
+                'preferred_section_prefixes' => ['08', '12'],
+                'forbidden_section_prefixes' => [],
+            ],
+        ];
+        $match = [
+            'version' => ['source_type' => 'fsnb_2022', 'version_key' => '2026-05-31'],
+            'price_version' => ['source_type' => 'fsbc', 'version_key' => '2026-05-31'],
+            'selected' => $this->foundationWaterproofingCandidate(),
+            'candidates' => [$this->foundationWaterproofingCandidate()],
+        ];
+
+        $item = $this->manualSelectionService()->applySelectedNormativeMatch($workItem, $match, ['scope_type' => 'foundation']);
+        $item = (new EstimatePricingService())->price([$item])[0];
+
+        $this->assertSame('matched', $item['normative_match']['status']);
+        $this->assertSame('calculated', $item['pricing_status']);
+        $this->assertGreaterThan(0, $item['total_cost']);
+        $this->assertNotContains('scope_mismatch', $item['normative_match']['warnings']);
+    }
+
     public function test_manually_selected_review_priced_norm_keeps_review_warnings(): void
     {
         $workItem = [
@@ -663,6 +730,82 @@ final class ResourceAssemblySafetyTest extends TestCase
                     'quantity' => 1.0,
                     'unit_price' => 1000.0,
                     'total_price' => 1000.0,
+                    'price_source' => 'fsbc_base',
+                    'price_id' => 1,
+                    'linked_resource_id' => null,
+                ]],
+                'labor' => [],
+                'machinery' => [],
+                'other' => [],
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function wallMasonryCandidate(): array
+    {
+        return [
+            'key' => 'norm-150',
+            'norm_id' => 150,
+            'code' => '08-02-001-01',
+            'name' => 'Masonry walls',
+            'unit' => 'm3',
+            'collection' => ['code' => 'gesn', 'name' => 'Р“Р­РЎРќ', 'norm_type' => 'gesn'],
+            'section' => ['code' => '08-02', 'name' => 'Walls'],
+            'score' => 98,
+            'confidence' => 0.94,
+            'match_reasons' => ['manual_catalog_selection'],
+            'warnings' => [],
+            'work_composition' => ['Wall masonry'],
+            'resources' => [
+                'materials' => [[
+                    'code' => '08.1.01.01-0001',
+                    'name' => 'Blocks',
+                    'resource_type' => 'material',
+                    'unit' => 'm3',
+                    'quantity' => 1.0,
+                    'unit_price' => 3000.0,
+                    'total_price' => 3000.0,
+                    'price_source' => 'fsbc_base',
+                    'price_id' => 1,
+                    'linked_resource_id' => null,
+                ]],
+                'labor' => [],
+                'machinery' => [],
+                'other' => [],
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function foundationWaterproofingCandidate(): array
+    {
+        return [
+            'key' => 'norm-151',
+            'norm_id' => 151,
+            'code' => '08-01-003-01',
+            'name' => 'Foundation waterproofing',
+            'unit' => 'm2',
+            'collection' => ['code' => 'gesn', 'name' => 'Р“Р­РЎРќ', 'norm_type' => 'gesn'],
+            'section' => ['code' => '08-01', 'name' => 'Waterproofing'],
+            'score' => 96,
+            'confidence' => 0.91,
+            'match_reasons' => ['manual_catalog_selection'],
+            'warnings' => [],
+            'work_composition' => ['Waterproofing'],
+            'resources' => [
+                'materials' => [[
+                    'code' => '08.1.01.03-0001',
+                    'name' => 'Membrane',
+                    'resource_type' => 'material',
+                    'unit' => 'm2',
+                    'quantity' => 1.0,
+                    'unit_price' => 500.0,
+                    'total_price' => 500.0,
                     'price_source' => 'fsbc_base',
                     'price_id' => 1,
                     'linked_resource_id' => null,

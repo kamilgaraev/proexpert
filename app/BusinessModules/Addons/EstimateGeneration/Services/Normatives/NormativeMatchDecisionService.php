@@ -269,7 +269,11 @@ class NormativeMatchDecisionService
             'site' => ['01', '27'],
             'foundation' => in_array($action, ['excavation', 'backfill'], true)
                 ? ['01']
-                : (in_array($action, ['concreting', 'reinforcement', 'formwork'], true) ? ['01', '06'] : ['01', '06', '07', '08']),
+                : (match ($action) {
+                    'concreting', 'reinforcement', 'formwork' => ['01', '06'],
+                    'waterproofing' => ['08', '12'],
+                    default => ['01', '06'],
+                }),
             default => [],
         };
     }

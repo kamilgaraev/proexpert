@@ -60,7 +60,7 @@ final class NormativeScopeRuleCatalog
     private function scopeRules(string $scope): array
     {
         return match ($scope) {
-            'foundation' => $this->rule(['gesn_building', 'gesn_concrete'], [], ['01', '06', '07', '08'], []),
+            'foundation' => $this->rule(['gesn_building', 'gesn_concrete'], [], ['01', '06'], []),
             'roof' => $this->rule(['gesn_building', 'gesnr_roof'], ['gesn_earthwork', 'gesnp_plumbing'], ['10', '12', '26'], ['01', '03', '09', '16', '18', '20', '27', '28']),
             'stairs' => $this->rule(['gesn_building', 'gesn_concrete'], ['gesn_earthwork'], ['06', '07', '08'], ['01', '03', '05', '09', '16', '18', '20', '27', '28']),
             'engineering' => $this->rule(['gesnm', 'gesnp'], ['gesn_earthwork'], ['08', '16', '18', '20'], ['01', '05', '07', '09', '10', '12', '15', '26', '27', '28']),
