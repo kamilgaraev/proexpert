@@ -249,6 +249,7 @@ final class EstimateGenerationLearningRecorder
                 'work_item_key' => $workItemKey,
                 'rejected_norm_id' => $payload['norm_id'] ?? null,
                 'rejected_normative_code' => $normCode,
+                'selection_source' => $payload['selection_source'] ?? null,
                 'reason' => $payload['reason'] ?? null,
                 'comments' => $feedback->comments,
                 'offered_candidates' => $workItem['normative_candidates'] ?? [],

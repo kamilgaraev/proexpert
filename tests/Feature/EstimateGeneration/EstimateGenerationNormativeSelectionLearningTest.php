@@ -108,6 +108,50 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
         $this->assertSame('Не та работа', $example->context_payload['reason']);
     }
 
+    public function test_catalog_search_normative_rejection_creates_negative_learning_example_without_offered_candidate(): void
+    {
+        [$user, $project, $session] = $this->makeSession();
+        $normId = $this->seedNormative('01-01-006-01', 'Foundation concrete B22.5', 'm3');
+        $this->createPackageItem($session, 'foundation.concrete');
+        $draftPayload = $this->draftPayload($normId);
+        $draftPayload['local_estimates'][0]['sections'][0]['work_items'][0]['normative_candidates'] = [];
+        $session->forceFill([
+            'draft_payload' => $draftPayload,
+        ])->save();
+
+        $request = EstimateGenerationFeedbackRequest::create('/feedback', 'POST', [
+            'feedback_type' => 'normative_rejection',
+            'work_item_key' => 'foundation.concrete',
+            'payload' => [
+                'selection_source' => 'catalog_search',
+                'norm_id' => $normId,
+                'normative_code' => '01-01-006-01',
+                'reason' => 'wrong catalog match',
+            ],
+            'comments' => 'Manual search result is not suitable.',
+        ]);
+        $request->setContainer(app());
+        $request->setRedirector(app('redirect'));
+        $request->setUserResolver(static fn (): User => $user);
+        $request->validateResolved();
+
+        $response = app(EstimateGenerationController::class)->feedback($request, $project, $session);
+
+        $this->assertSame(200, $response->getStatusCode());
+
+        $example = EstimateGenerationLearningExample::query()->firstOrFail();
+        $updatedWorkItem = $session->fresh()->draft_payload['local_estimates'][0]['sections'][0]['work_items'][0];
+
+        $this->assertSame('user_rejection', $example->source_type);
+        $this->assertFalse($example->is_positive);
+        $this->assertSame($normId, $example->estimate_norm_id);
+        $this->assertSame('01-01-006-01', $example->context_payload['rejected_normative_code']);
+        $this->assertSame('catalog_search', $example->context_payload['selection_source']);
+        $this->assertSame('catalog_search', $updatedWorkItem['metadata']['normative_feedback']['selection_source']);
+        $this->assertTrue($updatedWorkItem['normative_candidates'][0]['rejected_by_user']);
+        $this->assertSame('catalog_search', $updatedWorkItem['normative_candidates'][0]['selection_source']);
+    }
+
     public function test_normative_confirmation_feedback_creates_positive_learning_example(): void
     {
         [$user, $project, $session] = $this->makeSession();

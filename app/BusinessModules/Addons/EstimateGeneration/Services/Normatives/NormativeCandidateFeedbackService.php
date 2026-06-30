@@ -309,6 +309,7 @@ final class NormativeCandidateFeedbackService
         $rejectedNormId = $this->nullableInt($payload['norm_id'] ?? null);
         $rejectedCode = $this->nullableString($payload['normative_code'] ?? null);
         $reason = $this->nullableString($payload['reason'] ?? null);
+        $selectionSource = $this->nullableString($payload['selection_source'] ?? null);
 
         if ($rejectedNormId === null && $rejectedCode === null) {
             throw $this->validationException([
@@ -337,6 +338,7 @@ final class NormativeCandidateFeedbackService
                         $rejectedNormId,
                         $rejectedCode,
                         $reason,
+                        $selectionSource,
                         $comments
                     );
                     break 3;
@@ -362,24 +364,32 @@ final class NormativeCandidateFeedbackService
         ?int $rejectedNormId,
         ?string $rejectedCode,
         ?string $reason,
+        ?string $selectionSource,
         ?string $comments
     ): array {
         $currentMatch = is_array($workItem['normative_match'] ?? null) ? $workItem['normative_match'] : [];
         $rejectsCurrentMatch = $this->matchesNormIdentity($currentMatch, $rejectedNormId, $rejectedCode);
         $candidates = is_array($workItem['normative_candidates'] ?? null) ? $workItem['normative_candidates'] : [];
         $rejectsOfferedCandidate = $this->hasMatchingCandidate($candidates, $rejectedNormId, $rejectedCode);
+        $rejectsCatalogSearchCandidate = $selectionSource === 'catalog_search';
 
-        if (!$rejectsCurrentMatch && !$rejectsOfferedCandidate) {
+        if (!$rejectsCurrentMatch && !$rejectsOfferedCandidate && !$rejectsCatalogSearchCandidate) {
             throw $this->validationException([
                 'payload.norm_id' => [$this->message('estimate_generation.normative_feedback_norm_not_found')],
             ]);
         }
 
-        $workItem['normative_candidates'] = $this->markRejectedCandidates(
-            $candidates,
+        $workItem['normative_candidates'] = $this->ensureRejectedCandidate(
+            $this->markRejectedCandidates(
+                $candidates,
+                $rejectedNormId,
+                $rejectedCode,
+                $reason
+            ),
             $rejectedNormId,
             $rejectedCode,
-            $reason
+            $reason,
+            $selectionSource
         );
         $workItem['metadata'] = [
             ...(is_array($workItem['metadata'] ?? null) ? $workItem['metadata'] : []),
@@ -388,6 +398,7 @@ final class NormativeCandidateFeedbackService
                 'norm_id' => $rejectedNormId,
                 'normative_code' => $rejectedCode,
                 'reason' => $reason,
+                'selection_source' => $selectionSource,
                 'comments' => $comments,
             ],
         ];
@@ -964,6 +975,38 @@ final class NormativeCandidateFeedbackService
                 ]),
             ];
         }, $candidates);
+    }
+
+    /**
+     * @param array<int, mixed> $candidates
+     * @return array<int, mixed>
+     */
+    private function ensureRejectedCandidate(
+        array $candidates,
+        ?int $rejectedNormId,
+        ?string $rejectedCode,
+        ?string $reason,
+        ?string $selectionSource
+    ): array {
+        if ($this->hasMatchingCandidate($candidates, $rejectedNormId, $rejectedCode)) {
+            return $candidates;
+        }
+
+        if ($selectionSource !== 'catalog_search') {
+            return $candidates;
+        }
+
+        $candidates[] = [
+            'norm_id' => $rejectedNormId,
+            'code' => $rejectedCode,
+            'selection_source' => 'catalog_search',
+            'user_feedback' => 'rejected',
+            'rejected_by_user' => true,
+            'rejection_reason' => $reason,
+            'warnings' => ['rejected_by_user'],
+        ];
+
+        return $candidates;
     }
 
     /**
