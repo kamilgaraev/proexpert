@@ -516,6 +516,75 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
         self::assertSame(6.19, $takeoffsByKey['rough.walls']['normalized_payload']['room_dimensions'][0]['width_m']);
     }
 
+    public function test_estimates_room_area_from_room_label_and_nearby_dimension_pair(): void
+    {
+        $recognition = new OcrRecognitionResult(
+            provider: 'test',
+            model: 'page',
+            pages: [
+                new OcrPageResult(
+                    pageNumber: 1,
+                    text: implode("\n", [
+                        'Планировка квартиры',
+                        'Гостиная',
+                        '8755 x 6190',
+                    ]),
+                    blocks: [[
+                        'text' => '',
+                        'lines' => [
+                            [
+                                'text' => 'Планировка квартиры',
+                                'bounding_box' => ['x' => 20, 'y' => 20, 'width' => 180, 'height' => 24],
+                                'words' => [],
+                            ],
+                            [
+                                'text' => 'Гостиная',
+                                'bounding_box' => ['x' => 240, 'y' => 240, 'width' => 100, 'height' => 24],
+                                'words' => [],
+                            ],
+                            [
+                                'text' => '8755 x 6190',
+                                'bounding_box' => ['x' => 250, 'y' => 282, 'width' => 135, 'height' => 22],
+                                'words' => [],
+                            ],
+                        ],
+                    ]],
+                    width: 1200,
+                    height: 800,
+                    confidence: 0.9
+                ),
+            ]
+        );
+
+        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+            documentId: 10,
+            filename: 'flat-plan.png',
+            recognition: $recognition
+        );
+        $roomTakeoffs = array_values(array_filter(
+            $result->takeoffs,
+            static fn (array $takeoff): bool => ($takeoff['scope_key'] ?? null) === 'room_area'
+        ));
+        $takeoffsByKey = [];
+
+        foreach ($result->takeoffs as $takeoff) {
+            $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
+            $takeoffsByKey[(string) ($payload['quantity_key'] ?? $takeoff['scope_key'] ?? '')] = $takeoff;
+        }
+
+        self::assertCount(1, $roomTakeoffs);
+        self::assertSame('Гостиная', $roomTakeoffs[0]['name']);
+        self::assertSame(54.19, $roomTakeoffs[0]['quantity']);
+        self::assertSame('dimension_pair_geometry', $roomTakeoffs[0]['normalized_payload']['calculation_basis'] ?? null);
+        self::assertTrue($roomTakeoffs[0]['normalized_payload']['review_required'] ?? false);
+        self::assertSame(54.19, $takeoffsByKey['finish.floor']['quantity']);
+        self::assertSame('dimension_derived_room_area', $takeoffsByKey['finish.floor']['normalized_payload']['review_reason'] ?? null);
+        self::assertNotEmpty(array_filter(
+            $takeoffsByKey['finish.floor']['source_refs'],
+            static fn (array $sourceRef): bool => ($sourceRef['excerpt'] ?? null) === '8755 x 6190'
+        ));
+    }
+
     public function test_uses_nearby_orthogonal_dimension_lines_to_estimate_room_perimeter(): void
     {
         $recognition = new OcrRecognitionResult(

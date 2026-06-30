@@ -26,6 +26,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 $lineElements = [
                     ...$this->scaleElements($documentId, $filename, $page, $line),
                     ...$this->heightElements($documentId, $filename, $page, $line),
+                    ...$this->roomLabelElements($documentId, $filename, $page, $line),
                     ...$this->roomElements($documentId, $filename, $page, $line),
                     ...$this->openingElements($documentId, $filename, $page, $line),
                     ...$this->engineeringRouteElements($documentId, $filename, $page, $line),
@@ -43,6 +44,8 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 array_push($takeoffs, ...$this->withTakeoffLineEvidence($lineTakeoffs, $lineRecord));
             }
         }
+
+        array_push($takeoffs, ...$this->roomAreaTakeoffsFromDimensionLabels($elements));
 
         $roomTakeoffs = array_values(array_filter(
             $takeoffs,
@@ -111,6 +114,35 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         ]];
     }
 
+    private function roomLabelElements(int $documentId, string $filename, OcrPageResult $page, string $line): array
+    {
+        $label = $this->roomLabelWithoutArea($line);
+
+        if ($label === null) {
+            return [];
+        }
+
+        return [[
+            'type' => 'room_label',
+            'label' => $label,
+            'value_text' => null,
+            'value_number' => null,
+            'unit' => null,
+            'bbox' => null,
+            'geometry' => null,
+            'confidence' => max($this->confidence($page) - 0.05, 0.35),
+            'source_ref' => $this->sourceRef($documentId, $filename, $page, $line),
+            'normalized_payload' => [
+                'line' => $line,
+                'quantity_key' => 'finish.floor',
+                'room_label' => $label,
+                'room_label_detected' => true,
+                'area_source' => 'dimension_geometry',
+            ],
+            'page_number' => $page->pageNumber,
+        ]];
+    }
+
     private function roomElements(int $documentId, string $filename, OcrPageResult $page, string $line): array
     {
         $elements = [];
@@ -137,6 +169,89 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         }
 
         return $elements;
+    }
+
+    private function roomLabelWithoutArea(string $line): ?string
+    {
+        if ($this->roomAreaMatches($line) !== []) {
+            return null;
+        }
+
+        $label = trim((string) preg_replace('/\s+/u', ' ', $line));
+
+        if ($label === '' || mb_strlen($label) > 48) {
+            return null;
+        }
+
+        if (
+            $this->linearDimensionFromLine($label) !== null
+            || preg_match('/\d+(?:[,.]\d+)?\s*[xх×]\s*\d+(?:[,.]\d+)?/iu', $label) === 1
+            || preg_match('/(?:\d{2}-\d{2}-\d{3}|[,.]\d{1,2}\s*(?:м2|м²|m2|m²)|%|₽|rub|руб)/iu', $label) === 1
+        ) {
+            return null;
+        }
+
+        $label = trim((string) preg_replace('/^(?:пом(?:ещ)?\.?|room|№|#)?\s*\d+[.\-: ]*/iu', '', $label));
+
+        if ($label === '') {
+            return null;
+        }
+
+        $normalized = mb_strtolower($label);
+
+        if ($this->containsAny($normalized, [
+            'план',
+            'масштаб',
+            'высот',
+            'размер',
+            'двер',
+            'окн',
+            'проем',
+            'проём',
+            'вентиляц',
+            'водоснаб',
+            'канализац',
+            'отоплен',
+            'кабель',
+            'спецификац',
+            'ведомост',
+            'смет',
+        ])) {
+            return null;
+        }
+
+        if (!$this->containsAny($normalized, [
+            'гостиная',
+            'кухня',
+            'санузел',
+            'ванная',
+            'туалет',
+            'спальня',
+            'детская',
+            'кабинет',
+            'прихожая',
+            'коридор',
+            'холл',
+            'гардероб',
+            'кладовая',
+            'постирочная',
+            'тамбур',
+            'котельная',
+            'бойлерная',
+            'living',
+            'kitchen',
+            'bedroom',
+            'bathroom',
+            'toilet',
+            'hall',
+            'corridor',
+            'wardrobe',
+            'storage',
+        ])) {
+            return null;
+        }
+
+        return $label;
     }
 
     private function openingElements(int $documentId, string $filename, OcrPageResult $page, string $line): array
@@ -972,6 +1087,70 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
+     * @param array<int, array<string, mixed>> $elements
+     * @return array<int, array<string, mixed>>
+     */
+    private function roomAreaTakeoffsFromDimensionLabels(array $elements): array
+    {
+        $dimensionElements = $this->dimensionElementsForRooms($elements);
+
+        if ($dimensionElements === []) {
+            return [];
+        }
+
+        $takeoffs = [];
+
+        foreach ($elements as $element) {
+            if (($element['type'] ?? null) !== 'room_label') {
+                continue;
+            }
+
+            $geometry = $this->roomGeometryFromLabelElement($element, $dimensionElements);
+
+            if ($geometry === null) {
+                continue;
+            }
+
+            $payload = is_array($element['normalized_payload'] ?? null) ? $element['normalized_payload'] : [];
+            $label = (string) ($payload['room_label'] ?? $element['label'] ?? 'Помещение');
+            $sourceRef = is_array($element['source_ref'] ?? null) ? $element['source_ref'] : [];
+            $quantity = round((float) $geometry['length_m'] * (float) $geometry['width_m'], 2);
+            $sourceRefs = array_slice(array_values(array_filter([
+                $sourceRef !== [] ? $sourceRef : null,
+                ...$geometry['source_refs'],
+            ], 'is_array')), 0, 10);
+
+            $takeoffs[] = [
+                'source_element_ids' => [],
+                'scope_key' => 'room_area',
+                'work_intent' => ['scope' => 'finishing', 'basis' => 'dimension_room_area'],
+                'name' => $label,
+                'unit' => 'м2',
+                'quantity' => $quantity,
+                'formula' => $label . ': ' . $this->formatNumber((float) $geometry['length_m']) . ' x ' . $this->formatNumber((float) $geometry['width_m']) . ' = ' . $this->formatNumber($quantity) . ' м2',
+                'confidence' => max((float) ($element['confidence'] ?? 0.72) - 0.12, 0.35),
+                'source_refs' => $sourceRefs,
+                'normalized_payload' => [
+                    'line' => (string) ($payload['line'] ?? ''),
+                    'room_label' => $label,
+                    'room_label_detected' => true,
+                    'quantity_key' => 'finish.floor',
+                    'calculation_basis' => $geometry['basis'],
+                    'review_required' => true,
+                    'review_reason' => 'dimension_derived_room_area',
+                    'review_reasons' => ['dimension_derived_room_area'],
+                    'length_m' => $geometry['length_m'],
+                    'width_m' => $geometry['width_m'],
+                    'perimeter_m' => $geometry['perimeter_m'],
+                ],
+                'page_number' => (int) ($element['page_number'] ?? ($sourceRef['page_number'] ?? 0)),
+            ];
+        }
+
+        return $takeoffs;
+    }
+
+    /**
      * @param array<int, array<string, mixed>> $roomTakeoffs
      * @param array<int, array<string, mixed>> $elements
      * @return array<int, array<string, mixed>>
@@ -995,6 +1174,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         $dimensionSourceRefs = [];
         $roomDimensions = [];
         $labeledRoomCount = 0;
+        $dimensionDerivedRoomAreaCount = 0;
         $confidence = 0.0;
 
         foreach ($roomTakeoffs as $takeoff) {
@@ -1002,9 +1182,12 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
             $roomLabel = (string) ($payload['room_label'] ?? $takeoff['name'] ?? '');
             $roomLabelDetected = (bool) ($payload['room_label_detected'] ?? false);
+            $dimensionDerivedRoomArea = ($payload['review_reason'] ?? null) === 'dimension_derived_room_area'
+                || in_array('dimension_derived_room_area', is_array($payload['review_reasons'] ?? null) ? $payload['review_reasons'] : [], true);
 
             $totalArea += $area;
             $labeledRoomCount += $roomLabelDetected ? 1 : 0;
+            $dimensionDerivedRoomAreaCount += $dimensionDerivedRoomArea ? 1 : 0;
             $roomGeometry = $this->roomGeometryFromDimensions($takeoff, $dimensionElements, $area);
             $estimatedRoomPerimeter = $roomGeometry !== null
                 ? (float) $roomGeometry['perimeter_m']
@@ -1053,11 +1236,15 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             ($footprintCoverage['review_required'] ?? false) === true
                 ? 'room_area_footprint_mismatch'
                 : null,
+            $dimensionDerivedRoomAreaCount > 0
+                ? 'dimension_derived_room_area'
+                : null,
         ]));
         $roomAreaReviewRequired = $reviewReasons !== [];
         $roomAreaQualityPayload = [
             'labeled_room_count' => $labeledRoomCount,
             'unlabeled_room_count' => $unlabeledRoomCount,
+            'dimension_derived_room_area_count' => $dimensionDerivedRoomAreaCount,
             ...$footprintCoverage['payload'],
         ];
 
@@ -1582,6 +1769,30 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
+     * @param array<string, mixed> $roomElement
+     * @param array<int, array<string, mixed>> $dimensionElements
+     * @return array{length_m: float, width_m: float, perimeter_m: float, basis: string, source_refs: array<int, array<string, mixed>>}|null
+     */
+    private function roomGeometryFromLabelElement(array $roomElement, array $dimensionElements): ?array
+    {
+        $roomSourceRef = is_array($roomElement['source_ref'] ?? null) ? $roomElement['source_ref'] : [];
+        $roomBbox = $this->normalizedBbox($roomElement['bbox'] ?? $roomSourceRef['bbox'] ?? null);
+
+        if ($roomBbox === null) {
+            return null;
+        }
+
+        $roomPage = $this->nullableInt($roomSourceRef['page_number'] ?? $roomElement['page_number'] ?? null);
+        $dimensionPairGeometry = $this->roomGeometryFromDimensionPairs($dimensionElements, null, $roomBbox, $roomPage);
+
+        if ($dimensionPairGeometry !== null) {
+            return $dimensionPairGeometry;
+        }
+
+        return $this->roomGeometryFromOrthogonalDimensions($dimensionElements, null, $roomBbox, $roomPage);
+    }
+
+    /**
      * @param array<string, mixed> $roomTakeoff
      * @param array<int, array<string, mixed>> $dimensionElements
      * @return array{length_m: float, width_m: float, perimeter_m: float, basis: string, source_refs: array<int, array<string, mixed>>}|null
@@ -1619,14 +1830,14 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
      * @param array<string, float> $roomBbox
      * @return array{length_m: float, width_m: float, perimeter_m: float, basis: string, source_refs: array<int, array<string, mixed>>}|null
      */
-    private function roomGeometryFromDimensionPairs(array $dimensionElements, float $area, array $roomBbox, ?int $roomPage): ?array
+    private function roomGeometryFromDimensionPairs(array $dimensionElements, ?float $area, array $roomBbox, ?int $roomPage): ?array
     {
         $best = null;
 
         foreach ($dimensionElements as $element) {
             $dimension = $this->dimensionPairMeters($element);
 
-            if ($dimension === null || !$this->isDimensionAreaPlausible($area, $dimension['length_m'], $dimension['width_m'])) {
+            if ($dimension === null || !$this->isRoomDimensionCandidatePlausible($area, $dimension['length_m'], $dimension['width_m'])) {
                 continue;
             }
 
@@ -1651,7 +1862,9 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             }
 
             $dimensionArea = $dimension['length_m'] * $dimension['width_m'];
-            $areaPenalty = abs($dimensionArea - $area) / max($area, 0.01);
+            $areaPenalty = $area !== null
+                ? abs($dimensionArea - $area) / max($area, 0.01)
+                : min($dimensionArea / 120.0, 1.0) * 0.15;
             $score = ($distance / max($limit, 0.0001)) + $areaPenalty;
 
             if ($best === null || $score < $best['score']) {
@@ -1681,7 +1894,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
      * @param array<string, float> $roomBbox
      * @return array{length_m: float, width_m: float, perimeter_m: float, basis: string, source_refs: array<int, array<string, mixed>>}|null
      */
-    private function roomGeometryFromOrthogonalDimensions(array $dimensionElements, float $area, array $roomBbox, ?int $roomPage): ?array
+    private function roomGeometryFromOrthogonalDimensions(array $dimensionElements, ?float $area, array $roomBbox, ?int $roomPage): ?array
     {
         $horizontal = [];
         $vertical = [];
@@ -1739,12 +1952,14 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 $lengthM = max((float) $horizontalDimension['length_m'], (float) $verticalDimension['length_m']);
                 $widthM = min((float) $horizontalDimension['length_m'], (float) $verticalDimension['length_m']);
 
-                if (!$this->isDimensionAreaPlausible($area, $lengthM, $widthM)) {
+                if (!$this->isRoomDimensionCandidatePlausible($area, $lengthM, $widthM)) {
                     continue;
                 }
 
                 $dimensionArea = $lengthM * $widthM;
-                $areaPenalty = abs($dimensionArea - $area) / max($area, 0.01);
+                $areaPenalty = $area !== null
+                    ? abs($dimensionArea - $area) / max($area, 0.01)
+                    : min($dimensionArea / 120.0, 1.0) * 0.15;
                 $score = (float) $horizontalDimension['distance_score']
                     + (float) $verticalDimension['distance_score']
                     + ($areaPenalty * 1.5);
@@ -1856,11 +2071,17 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         return 'unknown';
     }
 
-    private function isDimensionAreaPlausible(float $area, float $lengthM, float $widthM): bool
+    private function isRoomDimensionCandidatePlausible(?float $area, float $lengthM, float $widthM): bool
     {
         $dimensionArea = $lengthM * $widthM;
 
-        return $dimensionArea >= $area * 0.6 && $dimensionArea <= $area * 1.8;
+        if ($area !== null) {
+            return $dimensionArea >= $area * 0.6 && $dimensionArea <= $area * 1.8;
+        }
+
+        return $dimensionArea >= 1.0
+            && $dimensionArea <= 150.0
+            && max($lengthM, $widthM) <= 20.0;
     }
 
     /**
