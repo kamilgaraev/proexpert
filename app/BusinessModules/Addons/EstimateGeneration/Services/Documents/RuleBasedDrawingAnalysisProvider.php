@@ -21,7 +21,11 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         $takeoffs = [];
 
         foreach ($recognition->pages as $page) {
-            foreach ($this->lineRecords($page) as $lineRecord) {
+            $pageLineRecords = $this->lineRecords($page);
+
+            array_push($elements, ...$this->titleBlockElements($documentId, $filename, $page, $pageLineRecords));
+
+            foreach ($pageLineRecords as $lineRecord) {
                 $line = $lineRecord['text'];
                 $lineElements = [
                     ...$this->scaleElements($documentId, $filename, $page, $line),
@@ -65,6 +69,121 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             takeoffs: $this->unique($takeoffs, ['scope_key', 'name', 'unit', 'quantity', 'page_number']),
             summary: $summary,
         );
+    }
+
+    /**
+     * @param array<int, array{text: string, bbox: array<string, float>|null, block_index: int|null, line_index: int|null, line_hash: string}> $lineRecords
+     * @return array<int, array<string, mixed>>
+     */
+    private function titleBlockElements(int $documentId, string $filename, OcrPageResult $page, array $lineRecords): array
+    {
+        $sheetMark = null;
+        $sheetNumber = null;
+        $sheetName = null;
+        $stage = null;
+        $revision = null;
+        $scaleDenominator = null;
+        $objectName = null;
+        $sourceLines = [];
+
+        foreach (array_slice($lineRecords, 0, 40) as $lineRecord) {
+            $line = trim($lineRecord['text']);
+
+            if ($line === '') {
+                continue;
+            }
+
+            if ($objectName === null && preg_match('/(?:^|[^\p{L}\p{N}])(?:объект|наименование объекта)\s*[:\-]\s*(?<name>.+)$/iu', $line, $match) === 1) {
+                $objectName = $this->cleanTitleBlockValue((string) $match['name']);
+                $sourceLines[] = $line;
+            }
+
+            if ($sheetMark === null && preg_match('/(?<![\p{L}\p{N}])(?<code>АР|АС|КР|КЖ|КМ|ОВ|ВК|НВК|ЭОМ|ЭО|ЭС|СС|ПС|ПТ|ГП|ТХ|AR|AS|KR|KJ|KM|OV|VK|EOM|EO|ES|SS|GP)\s*[-.]?\s*(?<number>\d+(?:[.\-]\d+)*)(?:\s+(?<name>[\p{L}\p{N}\s.,;:()\/\-]{3,120}))?/iu', $line, $match) === 1) {
+                $sheetMark = mb_strtoupper((string) $match['code']) . '-' . (string) $match['number'];
+                $sheetName = $this->cleanTitleBlockValue((string) ($match['name'] ?? '')) ?: null;
+                $sourceLines[] = $line;
+            }
+
+            if ($stage === null && preg_match('/(?:^|[^\p{L}\p{N}])(?:стадия|стад\.?)\s*[:\-]?\s*(?<stage>[A-ZА-Я]{1,4})(?:$|[^\p{L}\p{N}])/iu', $line, $match) === 1) {
+                $stage = mb_strtoupper((string) $match['stage']);
+                $sourceLines[] = $line;
+            }
+
+            if ($sheetNumber === null && preg_match('/(?<![\p{L}\p{N}])(?:лист|л\.)\s*[:\-]?\s*(?<number>\d+[A-ZА-Я]?)(?:$|[^\p{L}\p{N}])/iu', $line, $match) === 1) {
+                $sheetNumber = (string) $match['number'];
+                $sourceLines[] = $line;
+            }
+
+            if ($revision === null && preg_match('/(?:^|[^\p{L}\p{N}])(?:изм\.?|изменение|rev\.?)\s*[:\-]?\s*(?<revision>\d+[A-ZА-Я]?)(?:$|[^\p{L}\p{N}])/iu', $line, $match) === 1) {
+                $revision = mb_strtoupper((string) $match['revision']);
+                $sourceLines[] = $line;
+            }
+
+            if ($scaleDenominator === null && preg_match('/(?:масштаб|м|scale)\s*[: ]?\s*1\s*:\s*(?<scale>\d+)/iu', $line, $match) === 1) {
+                $scaleDenominator = (int) $match['scale'];
+                $sourceLines[] = $line;
+            }
+        }
+
+        if ($sheetMark === null && $sheetName === null && !($stage !== null && $sheetNumber !== null)) {
+            return [];
+        }
+
+        $sourceLines = array_values(array_unique(array_slice($sourceLines, 0, 12)));
+        $valueParts = array_values(array_filter([$sheetMark, $sheetName]));
+        $discipline = $this->titleBlockDiscipline($sheetMark);
+
+        return [[
+            'type' => 'title_block',
+            'label' => $sheetName ?? $sheetMark ?? 'Штамп листа',
+            'value_text' => $valueParts !== [] ? implode(' · ', $valueParts) : 'Лист ' . $sheetNumber,
+            'value_number' => null,
+            'unit' => null,
+            'bbox' => null,
+            'geometry' => null,
+            'confidence' => $this->confidence($page),
+            'source_ref' => $this->sourceRef($documentId, $filename, $page, implode(' | ', $sourceLines)),
+            'normalized_payload' => [
+                'sheet_mark' => $sheetMark,
+                'sheet_number' => $sheetNumber,
+                'sheet_name' => $sheetName,
+                'stage' => $stage,
+                'revision' => $revision,
+                'scale_denominator' => $scaleDenominator,
+                'discipline' => $discipline,
+                'object_name' => $objectName,
+                'source_lines' => $sourceLines,
+                'title_block_detected' => true,
+            ],
+            'page_number' => $page->pageNumber,
+        ]];
+    }
+
+    private function cleanTitleBlockValue(string $value): string
+    {
+        $value = trim((string) preg_replace('/\s+/u', ' ', $value));
+
+        return trim($value, " \t\n\r\0\x0B:-—–.");
+    }
+
+    private function titleBlockDiscipline(?string $sheetMark): ?string
+    {
+        if ($sheetMark === null) {
+            return null;
+        }
+
+        $code = mb_strtoupper((string) preg_replace('/[-.\d\s].*$/u', '', $sheetMark));
+
+        return match ($code) {
+            'АР', 'АС', 'AR', 'AS' => 'architecture',
+            'КР', 'КЖ', 'КМ', 'KR', 'KJ', 'KM' => 'structural',
+            'ОВ', 'OV' => 'hvac',
+            'ВК', 'НВК', 'VK' => 'water_sewer',
+            'ЭОМ', 'ЭО', 'ЭС', 'EOM', 'EO', 'ES' => 'electrical',
+            'СС', 'ПС', 'ПТ', 'SS' => 'low_current',
+            'ГП', 'GP' => 'site_plan',
+            default => 'technical',
+        };
     }
 
     private function scaleElements(int $documentId, string $filename, OcrPageResult $page, string $line): array
@@ -2254,6 +2373,10 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 $pageElements,
                 static fn (array $element): bool => ($element['type'] ?? null) === 'height'
             ));
+            $titleBlockCount = count(array_filter(
+                $pageElements,
+                static fn (array $element): bool => ($element['type'] ?? null) === 'title_block'
+            ));
             $specificationCount = count(array_filter(
                 $pageTakeoffs,
                 static fn (array $takeoff): bool => ($takeoff['scope_key'] ?? null) === 'specification_quantity'
@@ -2283,6 +2406,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                     $hasWorkVolumeStatementSignal ? 'work_volume_statement_keywords' : null,
                     $hasSpecificationSignal ? 'specification_keywords' : null,
                     $hasEstimateSignal ? 'estimate_or_norm_keywords' : null,
+                    $titleBlockCount > 0 ? 'title_block' : null,
                     $roomCount > 0 ? 'room_areas' : null,
                     $dimensionCount > 0 ? 'dimensions' : null,
                     $heightCount > 0 ? 'height' : null,
@@ -2292,6 +2416,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 'room_area_count' => $roomCount,
                 'dimension_count' => $dimensionCount,
                 'height_count' => $heightCount,
+                'title_block_count' => $titleBlockCount,
                 'work_volume_statement_quantity_count' => $workVolumeStatementCount,
                 'specification_quantity_count' => $specificationCount,
             ];
@@ -2375,7 +2500,11 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         ));
         $heightEvidence = $this->heightEvidence($elements);
         $detectedHeight = $heightEvidence['source'] === 'drawing_height' ? $heightEvidence['height_m'] : null;
-        $documentProfile = $this->documentProfile($filename, $pageProfiles, count($roomTakeoffs), $dimensionCount);
+        $titleBlockCount = count(array_filter(
+            $elements,
+            static fn (array $element): bool => ($element['type'] ?? null) === 'title_block'
+        ));
+        $documentProfile = $this->documentProfile($filename, $pageProfiles, count($roomTakeoffs), $dimensionCount, $titleBlockCount);
 
         return [
             'pages_count' => count($recognition->pages),
@@ -2388,6 +2517,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             'room_area_total_m2' => $roomAreaTotal > 0 ? $roomAreaTotal : null,
             'dimension_count' => $dimensionCount,
             'height_count' => $heightCount,
+            'title_block_count' => $titleBlockCount,
             'detected_height_m' => $detectedHeight,
             'evidence_graph' => $this->evidenceGraph($takeoffs),
         ];
@@ -2457,7 +2587,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
      * @param array<int, array<string, mixed>> $pageProfiles
      * @return array<string, mixed>
      */
-    private function documentProfile(string $filename, array $pageProfiles, int $roomCount, int $dimensionCount): array
+    private function documentProfile(string $filename, array $pageProfiles, int $roomCount, int $dimensionCount, int $titleBlockCount): array
     {
         $roles = array_count_values(array_map(
             static fn (array $profile): string => (string) ($profile['page_role'] ?? 'technical_document'),
@@ -2483,6 +2613,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             'signals' => [
                 'room_count' => $roomCount,
                 'dimension_count' => $dimensionCount,
+                'title_block_count' => $titleBlockCount,
             ],
         ];
     }

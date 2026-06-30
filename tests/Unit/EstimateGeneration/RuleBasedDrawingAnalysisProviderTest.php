@@ -55,6 +55,54 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
         self::assertSame(1, $roomTakeoff['source_refs'][0]['page_number']);
     }
 
+    public function test_extracts_title_block_candidates_from_drawing_page(): void
+    {
+        $recognition = new OcrRecognitionResult(
+            provider: 'test',
+            model: 'page',
+            pages: [
+                new OcrPageResult(
+                    pageNumber: 1,
+                    text: implode("\n", [
+                        'Объект: Жилой дом',
+                        'АР-2 План первого этажа',
+                        'Стадия Р',
+                        'Лист 5',
+                        'Изм. 1',
+                        'Масштаб 1:100',
+                    ]),
+                    confidence: 0.88
+                ),
+            ]
+        );
+
+        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+            documentId: 10,
+            filename: 'АР-2.pdf',
+            recognition: $recognition
+        );
+
+        $titleBlock = array_values(array_filter(
+            $result->elements,
+            static fn (array $element): bool => ($element['type'] ?? null) === 'title_block'
+        ))[0] ?? null;
+
+        self::assertIsArray($titleBlock);
+        self::assertSame('План первого этажа', $titleBlock['label']);
+        self::assertSame('АР-2 · План первого этажа', $titleBlock['value_text']);
+        self::assertSame('АР-2', $titleBlock['normalized_payload']['sheet_mark']);
+        self::assertSame('5', $titleBlock['normalized_payload']['sheet_number']);
+        self::assertSame('План первого этажа', $titleBlock['normalized_payload']['sheet_name']);
+        self::assertSame('Р', $titleBlock['normalized_payload']['stage']);
+        self::assertSame('1', $titleBlock['normalized_payload']['revision']);
+        self::assertSame(100, $titleBlock['normalized_payload']['scale_denominator']);
+        self::assertSame('architecture', $titleBlock['normalized_payload']['discipline']);
+        self::assertSame('Жилой дом', $titleBlock['normalized_payload']['object_name']);
+        self::assertSame(1, $titleBlock['source_ref']['page_number']);
+        self::assertSame(1, $result->summary['title_block_count'] ?? null);
+        self::assertContains('title_block', $result->summary['page_profiles'][0]['signals'] ?? []);
+    }
+
     public function test_attaches_ocr_line_bbox_to_elements_takeoffs_and_aggregate_sources(): void
     {
         $roomBbox = [
