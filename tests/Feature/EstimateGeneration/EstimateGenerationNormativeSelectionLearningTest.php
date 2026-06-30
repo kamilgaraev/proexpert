@@ -166,6 +166,15 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
         $response = app(EstimateGenerationController::class)->feedback($request, $project, $session);
 
         $this->assertSame(200, $response->getStatusCode());
+        $responsePayload = json_decode($response->getContent(), true, flags: JSON_THROW_ON_ERROR);
+        $responseData = $responsePayload['data'];
+
+        $this->assertSame($session->id, $responseData['session']['id']);
+        $this->assertArrayHasKey('draft', $responseData);
+        $this->assertArrayHasKey('packages', $responseData);
+        $this->assertArrayHasKey('review_queue', $responseData);
+        $this->assertArrayHasKey('items', $responseData['review_queue']);
+        $this->assertArrayHasKey('summary', $responseData['review_queue']);
 
         $example = EstimateGenerationLearningExample::query()->firstOrFail();
         $updatedWorkItem = $session->fresh()->draft_payload['local_estimates'][0]['sections'][0]['work_items'][0];

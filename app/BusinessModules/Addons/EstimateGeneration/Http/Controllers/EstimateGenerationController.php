@@ -567,9 +567,10 @@ class EstimateGenerationController extends Controller
                 return (int) $feedback->id;
             });
 
-            return AdminResponse::success([
-                'feedback_id' => $feedbackId,
-            ], trans_message('estimate_generation.feedback_saved'));
+            return AdminResponse::success(
+                $this->feedbackPayload($session->fresh() ?? $session, $feedbackId),
+                trans_message('estimate_generation.feedback_saved')
+            );
         } catch (ValidationException $e) {
             return AdminResponse::error($e->getMessage(), 422, $e->errors());
         } catch (\Throwable $e) {
@@ -604,6 +605,22 @@ class EstimateGenerationController extends Controller
         $payload['documents_summary'] = $this->documentReadinessService->evaluate($session)['summary'];
 
         return $payload;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function feedbackPayload(EstimateGenerationSession $session, int $feedbackId): array
+    {
+        $session->refresh();
+
+        return [
+            'feedback_id' => $feedbackId,
+            'session' => $this->sessionPayload($session),
+            'draft' => $session->draft_payload ?? [],
+            'packages' => $this->packagePresenter->collection($session->packages()->get()),
+            'review_queue' => $this->reviewItemService->forSession($session),
+        ];
     }
 
     private function loadSessionDocumentsForReadiness(EstimateGenerationSession $session): void
