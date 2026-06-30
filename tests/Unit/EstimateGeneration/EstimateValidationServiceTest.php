@@ -163,10 +163,10 @@ final class EstimateValidationServiceTest extends TestCase
             [
                 'key' => 'work-1',
                 'item_type' => 'priced_work',
-                'name' => 'РњРѕРЅС‚Р°Р¶ С‚СЂСѓР±РѕРїСЂРѕРІРѕРґР°',
-                'unit' => 'Рј',
+                'name' => 'Монтаж трубопровода',
+                'unit' => 'м',
                 'quantity' => 12,
-                'quantity_basis' => 'РџРѕ СЃРїРµС†РёС„РёРєР°С†РёРё, СЃС‚СЂ. 2',
+                'quantity_basis' => 'По спецификации, стр. 2',
                 'total_cost' => 12000,
                 'materials' => [['total_price' => 8000]],
                 'labor' => [['total_price' => 3000]],

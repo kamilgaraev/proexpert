@@ -27,7 +27,7 @@ class StrictNormativeGenerationTest extends TestCase
             'target_items_min' => 12,
             'sections' => [[
                 'key' => 'foundation-section',
-                'title' => 'Р¤СѓРЅРґР°РјРµРЅС‚',
+                'title' => 'Фундамент',
                 'construction_part' => 'foundation',
                 'source_refs' => [],
             ]],
