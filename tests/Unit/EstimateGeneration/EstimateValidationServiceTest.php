@@ -161,6 +161,55 @@ final class EstimateValidationServiceTest extends TestCase
         self::assertSame(1, $draft['quality_summary']['not_calculated_work_items']);
     }
 
+    public function test_project_document_norm_reference_without_code_requires_norm_selection(): void
+    {
+        $draft = $this->service()->validate($this->draft([
+            [
+                'key' => 'project-reference-without-code',
+                'item_type' => 'priced_work',
+                'name' => 'Монтаж трубопровода',
+                'unit' => 'м',
+                'quantity' => 12,
+                'quantity_basis' => 'Проектная документация, лист ВК-1',
+                'total_cost' => 12000,
+                'materials' => [['total_price' => 8000]],
+                'labor' => [['total_price' => 3000]],
+                'machinery' => [['total_price' => 1000]],
+                'pricing_status' => 'calculated',
+                'normative_match' => [
+                    'status' => 'matched',
+                    'decision' => ['status' => 'accepted'],
+                    'resources_count' => 3,
+                    'priced_resources_count' => 3,
+                ],
+                'source_refs' => [[
+                    'type' => 'project_document_norm_reference',
+                    'filename' => 'spec.pdf',
+                    'page_number' => 3,
+                ]],
+                'metadata' => [
+                    'generation_source' => 'project_document_normative_reference',
+                ],
+                'validation_flags' => [],
+                'confidence' => 0.9,
+            ],
+        ]));
+
+        $item = $draft['local_estimates'][0]['sections'][0]['work_items'][0];
+
+        self::assertSame('not_calculated', $item['pricing_status']);
+        self::assertSame('normative_code_required', $item['pricing_blocker']);
+        self::assertContains('normative_code_required', $item['validation_flags']);
+        self::assertContains('safe_norm_required', $item['validation_flags']);
+        self::assertContains('pricing_not_calculated', $item['validation_flags']);
+        self::assertContains('normative_code_required', $draft['problem_flags']);
+        self::assertContains('normative_code_required', $draft['quality_summary']['critical_flags']);
+        self::assertSame(1, $draft['quality_summary']['normative_code_required_work_items']);
+        self::assertSame(1, $draft['quality_summary']['normative_items']['code_required']);
+        self::assertSame(1, $draft['quality_summary']['not_calculated_work_items']);
+        self::assertSame(0, $draft['quality_summary']['priced_work_items']);
+    }
+
     public function test_auto_review_priced_normative_match_still_requires_manual_review(): void
     {
         $draft = $this->service()->validate($this->draft([

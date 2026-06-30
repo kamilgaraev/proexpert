@@ -33,6 +33,7 @@ final class EstimateGenerationReviewItemService
         EstimateGenerationNoAirWorkItemPolicy::FLAG,
         EstimateGenerationNoAirWorkItemPolicy::NO_AIR_FLAG,
         'safe_norm_required',
+        'normative_code_required',
         'normative_candidate_only',
         'normative_not_found',
         'normative_match_low_confidence',
@@ -48,11 +49,17 @@ final class EstimateGenerationReviewItemService
         EstimateGenerationNoAirWorkItemPolicy::FLAG,
         EstimateGenerationNoAirWorkItemPolicy::NO_AIR_FLAG,
         'normative_price_required',
+        'normative_code_required',
         'pricing_not_calculated',
         'missing_price',
         'missing_resources',
         'resources_missing',
         'prices_missing',
+    ];
+
+    private const NORMATIVE_CODE_FLAGS = [
+        'normative_code_required',
+        'normative_code_expected',
     ];
 
     private const NORMATIVE_PRICE_FLAGS = [
@@ -250,6 +257,7 @@ final class EstimateGenerationReviewItemService
             || in_array('quantity_review_required', $flags, true);
         $duplicateReviewRequired = in_array('requires_duplicate_review', $flags, true)
             || in_array('possible_duplicate_work_item', $flags, true);
+        $normativeCodeRequired = !$quantityReviewRequired && $this->normativeCodeRequired($workItem, $flags);
         $normativePriceRequired = !$quantityReviewRequired && $this->normativePriceRequired($workItem, $flags);
         $normativeReviewRequired = !$quantityReviewRequired && $this->normativeReviewRequired($workItem, $flags);
         $pricingNotCalculated = !$quantityReviewRequired && $this->pricingNotCalculated($workItem, $flags);
@@ -260,6 +268,7 @@ final class EstimateGenerationReviewItemService
             !$quantityReviewRequired
             && !$duplicateReviewRequired
             && !$genericReviewRequired
+            && !$normativeCodeRequired
             && !$normativePriceRequired
             && !$normativeReviewRequired
             && !$pricingNotCalculated
@@ -281,6 +290,9 @@ final class EstimateGenerationReviewItemService
         } elseif ($genericReviewRequired) {
             $severity = self::SEVERITY_BLOCKING;
             $requiredAction = self::ACTION_RESOLVE_GENERIC_WORK;
+        } elseif ($normativeCodeRequired) {
+            $severity = self::SEVERITY_BLOCKING;
+            $requiredAction = self::ACTION_SELECT_NORM;
         } elseif ($normativePriceRequired) {
             $severity = self::SEVERITY_BLOCKING;
             $requiredAction = self::ACTION_CHECK_PRICE;
@@ -310,6 +322,7 @@ final class EstimateGenerationReviewItemService
                 $quantityReviewRequired,
                 $duplicateReviewRequired,
                 $pricingNotCalculated,
+                $normativeCodeRequired,
                 $normativePriceRequired,
                 $normativeReviewRequired,
                 $priceReviewRequired,
@@ -425,6 +438,30 @@ final class EstimateGenerationReviewItemService
      * @param array<string, mixed> $workItem
      * @param array<int, string> $flags
      */
+    private function normativeCodeRequired(array $workItem, array $flags): bool
+    {
+        if ($this->normativeRateCode($workItem) !== null) {
+            return false;
+        }
+
+        $metadata = is_array($workItem['metadata'] ?? null) ? $workItem['metadata'] : [];
+        $sourceRefs = is_array($workItem['source_refs'] ?? null) ? $workItem['source_refs'] : [];
+        $markers = [
+            ...$flags,
+            (string) ($workItem['pricing_blocker'] ?? ''),
+        ];
+
+        return array_intersect($markers, self::NORMATIVE_CODE_FLAGS) !== []
+            || (bool) ($metadata['normative_code_required'] ?? false)
+            || (bool) ($metadata['normative_code_expected'] ?? false)
+            || (string) ($metadata['generation_source'] ?? '') === 'project_document_normative_reference'
+            || $this->hasProjectDocumentNormReference($sourceRefs);
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @param array<int, string> $flags
+     */
     private function priceReviewRequired(array $workItem, array $flags): bool
     {
         return (string) ($workItem['pricing_status'] ?? '') === 'calculated_review_required'
@@ -514,6 +551,7 @@ final class EstimateGenerationReviewItemService
         bool $quantityReviewRequired,
         bool $duplicateReviewRequired,
         bool $pricingNotCalculated,
+        bool $normativeCodeRequired,
         bool $normativePriceRequired,
         bool $normativeReviewRequired,
         bool $priceReviewRequired,
@@ -532,6 +570,10 @@ final class EstimateGenerationReviewItemService
 
         if ($pricingNotCalculated) {
             $reasons[] = 'pricing_not_calculated';
+        }
+
+        if ($normativeCodeRequired) {
+            $reasons[] = 'normative_code_required';
         }
 
         if ($normativePriceRequired) {
@@ -563,6 +605,30 @@ final class EstimateGenerationReviewItemService
     private function candidatesCount(array $workItem): int
     {
         return count(array_filter($this->arrayValues($workItem['normative_candidates'] ?? []), 'is_array'));
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    private function normativeRateCode(array $workItem): ?string
+    {
+        $code = trim((string) ($workItem['normative_rate_code'] ?? data_get($workItem, 'normative_match.code', '')));
+
+        return $code !== '' ? $code : null;
+    }
+
+    /**
+     * @param array<int, mixed> $sourceRefs
+     */
+    private function hasProjectDocumentNormReference(array $sourceRefs): bool
+    {
+        foreach ($this->arrayValues($sourceRefs) as $sourceRef) {
+            if (is_array($sourceRef) && (string) ($sourceRef['type'] ?? '') === 'project_document_norm_reference') {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

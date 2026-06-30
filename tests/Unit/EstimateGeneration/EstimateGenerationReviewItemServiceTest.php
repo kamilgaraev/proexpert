@@ -115,6 +115,40 @@ final class EstimateGenerationReviewItemServiceTest extends TestCase
         self::assertContains('normative_alternative_available', $itemsByKey['optional-alternative']['reason_codes']);
     }
 
+    public function test_project_document_norm_reference_without_code_requires_norm_selection(): void
+    {
+        $result = $this->service()->forSession(new EstimateGenerationSession([
+            'draft_payload' => $this->draft([
+                $this->workItem([
+                    'key' => 'document-norm-without-code',
+                    'pricing_status' => 'not_calculated',
+                    'pricing_blocker' => 'normative_code_required',
+                    'validation_flags' => ['normative_code_required', 'safe_norm_required', 'pricing_not_calculated'],
+                    'source_refs' => [
+                        [
+                            'type' => 'project_document_norm_reference',
+                            'filename' => 'spec.pdf',
+                            'page_number' => 3,
+                        ],
+                    ],
+                    'metadata' => [
+                        'generation_source' => 'project_document_normative_reference',
+                    ],
+                    'normative_candidates' => [
+                        ['norm_id' => 601, 'code' => '16-02-052-05'],
+                    ],
+                ]),
+            ]),
+        ]));
+
+        self::assertSame(1, $result['summary']['total']);
+        self::assertSame(1, $result['summary']['blocking']);
+        self::assertSame(1, $result['summary']['select_norm']);
+        self::assertSame('select_norm', $result['items'][0]['required_action']);
+        self::assertContains('normative_code_required', $result['items'][0]['reason_codes']);
+        self::assertContains('pricing_not_calculated', $result['items'][0]['reason_codes']);
+    }
+
     public function test_returns_empty_summary_for_missing_draft(): void
     {
         $result = $this->service()->forSession(new EstimateGenerationSession());
