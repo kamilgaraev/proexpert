@@ -123,6 +123,82 @@ class EstimateNormativeMatcher
     /**
      * @return array<string, mixed>|null
      */
+    public function searchWorkItemCandidates(array $workItem, array $context = [], int $limit = 10): ?array
+    {
+        $limit = max(1, min($limit, 20));
+        $version = $this->latestFsnbVersion();
+        $priceVersions = $this->latestPriceVersions($context);
+
+        if ($version === null) {
+            return null;
+        }
+
+        $intent = $this->workIntentClassifier->classify($workItem, $context);
+        $profile = $this->searchProfileCatalog->forIntentData($intent);
+        $workItem = [
+            ...$workItem,
+            'work_intent' => $this->intentPayload($intent),
+        ];
+        $tokens = $this->tokensForWorkItem($workItem, $context);
+        $candidateLimit = max($limit * 2, 20);
+        $poolLimit = max($limit * 6, 80);
+        $candidates = $this->candidateSearchService->search(
+            $version,
+            $workItem,
+            $context,
+            $tokens,
+            $candidateLimit,
+            $poolLimit
+        );
+
+        if ($candidates->isEmpty()) {
+            return null;
+        }
+
+        $learningEvidence = $this->learningEvidenceService->summarizeForCandidates($candidates, $workItem, $context);
+        $ranked = $candidates
+            ->map(fn (EstimateNorm $norm): array => $this->scoreNorm(
+                $norm,
+                $workItem,
+                $context,
+                $tokens,
+                $priceVersions,
+                $learningEvidence[(int) $norm->id] ?? $this->emptyLearningEvidence(),
+                $intent,
+                $profile
+            ))
+            ->filter(static fn (array $candidate): bool => (float) $candidate['score'] > 0)
+            ->sortByDesc('score')
+            ->values()
+            ->take($limit)
+            ->all();
+
+        if ($ranked === []) {
+            return null;
+        }
+
+        return [
+            'version' => [
+                'source_type' => $version->source_type->value,
+                'version_key' => $version->version_key,
+            ],
+            'price_version' => $priceVersions->first() !== null ? [
+                'source_type' => $priceVersions->first()->source_type->value,
+                'version_key' => $priceVersions->first()->version_key,
+            ] : null,
+            'price_versions' => $priceVersions->map(static fn (EstimateDatasetVersion $version): array => [
+                'source_type' => $version->source_type->value,
+                'version_key' => $version->version_key,
+            ])->values()->all(),
+            'rerank' => null,
+            'selected' => $ranked[0],
+            'candidates' => $ranked,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
     public function matchSelectedNorm(int $normId, array $workItem, array $context = []): ?array
     {
         $version = $this->latestFsnbVersion();

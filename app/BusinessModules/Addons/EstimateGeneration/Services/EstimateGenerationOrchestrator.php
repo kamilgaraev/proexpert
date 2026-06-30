@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateGenerationQualityGateService;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationQuantityLearningEvidenceService;
@@ -72,6 +73,8 @@ class EstimateGenerationOrchestrator
         $this->updateGenerationProgress($session, 'package_planning', 40);
         $objectProfile = $this->packagePlannerService->profileFromAnalysis($analysis);
         $packagePlan = $this->packagePlannerService->plan($objectProfile);
+        $generationMode = EstimateGenerationMode::fromInput($objectProfile->planningSignals['generation_mode'] ?? null)->value;
+        $documentRequirements = $this->packagePlannerService->documentRequirements($objectProfile);
         $localEstimates = $this->decompositionService->decomposePackagePlan($analysis, $packagePlan);
         $regionalContext = $session->input_payload['regional_context'] ?? $analysis['regional_context'] ?? [];
         $localEstimatesCount = max(count($localEstimates), 1);
@@ -109,6 +112,8 @@ class EstimateGenerationOrchestrator
 
         $draft = [
             'title' => $session->input_payload['description'] ?? 'AI draft estimate',
+            'generation_mode' => $generationMode,
+            'document_requirements' => $documentRequirements,
             'object_profile' => $objectProfile->toArray(),
             'package_plan' => $packagePlan->toArray(),
             'source_documents' => Arr::get($analysis, 'source_documents', []),

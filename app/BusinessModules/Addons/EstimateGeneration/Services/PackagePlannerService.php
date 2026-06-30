@@ -6,12 +6,15 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\ObjectProfileData;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\PackagePlanData;
+use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
+
+use function trans_message;
 
 class PackagePlannerService
 {
     public function plan(ObjectProfileData $profile): PackagePlanData
     {
-        if ($this->isPlanOnlyGeometry($profile)) {
+        if ($this->isPlanOnlyGeometry($profile) && !$this->usesAiAssistedHouseExpansion($profile)) {
             $packages = $this->floorPlanEvidencePackages($profile);
         } elseif ($this->isDocumentEvidenceOnly($profile)) {
             $packages = $this->documentEvidencePackages($profile);
@@ -30,6 +33,28 @@ class PackagePlannerService
             packages: array_map(fn (array $package, int $index): array => $this->packagePayload($package, $index), $packages, array_keys($packages)),
             assumptions: $profile->assumptions,
         );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function documentRequirements(ObjectProfileData $profile): array
+    {
+        $mode = $this->generationMode($profile);
+        $isPlanOnlyGeometry = $this->isPlanOnlyGeometry($profile);
+        $isHouse = $this->isHouse($profile);
+        $missingForFullEstimate = $isHouse && $isPlanOnlyGeometry;
+
+        return [
+            'mode' => $mode->value,
+            'coverage' => match (true) {
+                $mode === EstimateGenerationMode::AiAssisted && $missingForFullEstimate => 'assumption_expanded',
+                $mode === EstimateGenerationMode::StrictDocuments && $missingForFullEstimate => 'document_limited',
+                default => 'document_backed',
+            },
+            'missing_for_full_estimate' => $missingForFullEstimate,
+            'items' => $missingForFullEstimate ? $this->fullHouseRequiredDocuments() : [],
+        ];
     }
 
     /**
@@ -60,6 +85,7 @@ class PackagePlannerService
         $hasOffice = $this->containsOfficeSignal($type)
             || $this->containsOfficeSignal($description);
         $planningSignals = $this->planningSignalsFromAnalysis($analysis, $description);
+        $planningSignals['generation_mode'] = $this->generationModeFromAnalysis($analysis)->value;
 
         $hasExplicitObjectType = $objectType !== '' && $objectType !== 'custom';
         $hasExplicitBuildingType = $buildingType !== '' && $buildingType !== 'custom';
@@ -120,6 +146,33 @@ class PackagePlannerService
     private function isDocumentEvidenceOnly(ObjectProfileData $profile): bool
     {
         return mb_strtolower($profile->objectType) === 'document_evidence';
+    }
+
+    private function isHouse(ObjectProfileData $profile): bool
+    {
+        return mb_strtolower($profile->objectType) === 'house'
+            || $this->containsResidentialObjectSignal(mb_strtolower($profile->objectType));
+    }
+
+    private function usesAiAssistedHouseExpansion(ObjectProfileData $profile): bool
+    {
+        return $this->generationMode($profile) === EstimateGenerationMode::AiAssisted
+            && $this->isHouse($profile);
+    }
+
+    private function generationMode(ObjectProfileData $profile): EstimateGenerationMode
+    {
+        return EstimateGenerationMode::fromInput($profile->planningSignals['generation_mode'] ?? null);
+    }
+
+    /**
+     * @param array<string, mixed> $analysis
+     */
+    private function generationModeFromAnalysis(array $analysis): EstimateGenerationMode
+    {
+        $object = is_array($analysis['object'] ?? null) ? $analysis['object'] : [];
+
+        return EstimateGenerationMode::fromInput($object['generation_mode'] ?? $analysis['generation_mode'] ?? null);
     }
 
     /**
@@ -237,7 +290,7 @@ class PackagePlannerService
      */
     private function withOptionalSitePackages(array $packages, ObjectProfileData $profile): array
     {
-        if ($this->isPlanOnlyGeometry($profile)) {
+        if ($this->isPlanOnlyGeometry($profile) && !$this->usesAiAssistedHouseExpansion($profile)) {
             return $packages;
         }
 
@@ -544,6 +597,59 @@ class PackagePlannerService
     private function containsRoadsSignal(string $text): bool
     {
         return preg_match('/(?:roads?|driveway|parking|дорог\p{L}*|проезд\p{L}*|подъезд\p{L}*|парковк\p{L}*|площадк\p{L}*\s+для\s+(?:транспорт|авто))/u', $text) === 1;
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function fullHouseRequiredDocuments(): array
+    {
+        return [
+            [
+                'key' => 'architectural_plans',
+                'title' => $this->requirementTitle('estimate_generation.document_requirement_architectural_plans'),
+                'required_for' => ['walls', 'openings', 'finishing'],
+            ],
+            [
+                'key' => 'structural_foundation',
+                'title' => $this->requirementTitle('estimate_generation.document_requirement_structural_foundation'),
+                'required_for' => ['earthworks', 'foundation', 'slabs'],
+            ],
+            [
+                'key' => 'elevations_sections_facade',
+                'title' => $this->requirementTitle('estimate_generation.document_requirement_elevations_sections_facade'),
+                'required_for' => ['facade', 'roof', 'walls'],
+            ],
+            [
+                'key' => 'roof_plan',
+                'title' => $this->requirementTitle('estimate_generation.document_requirement_roof_plan'),
+                'required_for' => ['roof'],
+            ],
+            [
+                'key' => 'openings_schedule',
+                'title' => $this->requirementTitle('estimate_generation.document_requirement_openings_schedule'),
+                'required_for' => ['openings'],
+            ],
+            [
+                'key' => 'engineering_plans',
+                'title' => $this->requirementTitle('estimate_generation.document_requirement_engineering_plans'),
+                'required_for' => ['electrical', 'plumbing', 'sewerage', 'heating', 'ventilation'],
+            ],
+            [
+                'key' => 'work_volume_statement',
+                'title' => $this->requirementTitle('estimate_generation.document_requirement_work_volume_statement'),
+                'required_for' => ['all'],
+            ],
+        ];
+    }
+
+    private function requirementTitle(string $translationKey): string
+    {
+        try {
+            return trans_message($translationKey);
+        } catch (\Throwable) {
+            return $translationKey;
+        }
     }
 
     /**

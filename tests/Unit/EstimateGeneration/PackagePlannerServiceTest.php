@@ -203,6 +203,83 @@ class PackagePlannerServiceTest extends TestCase
         $this->assertLessThan(80, $plan->targetItemsMinTotal());
     }
 
+    public function test_strict_residential_floor_plan_keeps_only_evidence_backed_packages(): void
+    {
+        $analysis = [
+            'generation_mode' => 'strict_documents',
+            'object' => [
+                'object_type' => 'custom',
+                'building_type' => 'Жилой',
+                'description' => 'Нужна смета на одноэтажный дом по прикрепленной планировке.',
+            ],
+            'document_context' => [
+                'context_text' => "Планировка дома\nГостиная 46,52 м2\nСпальня 17,65 м2",
+                'quantity_takeoffs' => [
+                    $this->takeoff('floor_finish_area', 'finish.floor', 169.39, 'м2'),
+                    $this->takeoff('rough_floor_area', 'rough.floor', 169.39, 'м2'),
+                    $this->takeoff('wall_finish_area', 'rough.walls', 535.76, 'м2'),
+                    $this->takeoff('skirting_length', 'finish.baseboard', 198.43, 'м'),
+                ],
+            ],
+        ];
+
+        $profile = $this->planner()->profileFromAnalysis($analysis);
+        $plan = $this->planner()->plan($profile);
+        $requirements = $this->planner()->documentRequirements($profile);
+        $keys = array_column($plan->packages, 'key');
+
+        $this->assertSame('house', $profile->objectType);
+        $this->assertSame('strict_documents', $profile->planningSignals['generation_mode']);
+        $this->assertTrue($profile->planningSignals['plan_only_geometry']);
+        $this->assertContains('rough_finishing', $keys);
+        $this->assertContains('finish_finishing', $keys);
+        $this->assertNotContains('foundation', $keys);
+        $this->assertNotContains('roof', $keys);
+        $this->assertNotContains('electrical', $keys);
+        $this->assertSame('document_limited', $requirements['coverage']);
+        $this->assertTrue($requirements['missing_for_full_estimate']);
+        $this->assertCount(7, $requirements['items']);
+    }
+
+    public function test_ai_assisted_residential_floor_plan_expands_to_house_package_frame(): void
+    {
+        $analysis = [
+            'generation_mode' => 'ai_assisted',
+            'object' => [
+                'object_type' => 'custom',
+                'building_type' => 'Жилой',
+                'description' => 'Хочу дом по прикрепленной планировке.',
+            ],
+            'document_context' => [
+                'context_text' => "Планировка дома\nГостиная 46,52 м2\nСпальня 17,65 м2",
+                'quantity_takeoffs' => [
+                    $this->takeoff('floor_finish_area', 'finish.floor', 169.39, 'м2'),
+                    $this->takeoff('rough_floor_area', 'rough.floor', 169.39, 'м2'),
+                    $this->takeoff('wall_finish_area', 'rough.walls', 535.76, 'м2'),
+                    $this->takeoff('skirting_length', 'finish.baseboard', 198.43, 'м'),
+                ],
+            ],
+        ];
+
+        $profile = $this->planner()->profileFromAnalysis($analysis);
+        $plan = $this->planner()->plan($profile);
+        $requirements = $this->planner()->documentRequirements($profile);
+        $keys = array_column($plan->packages, 'key');
+
+        $this->assertSame('house', $profile->objectType);
+        $this->assertSame('ai_assisted', $profile->planningSignals['generation_mode']);
+        $this->assertTrue($profile->planningSignals['plan_only_geometry']);
+        $this->assertContains('foundation', $keys);
+        $this->assertContains('walls', $keys);
+        $this->assertContains('roof', $keys);
+        $this->assertContains('electrical', $keys);
+        $this->assertContains('rough_finishing', $keys);
+        $this->assertContains('finish_finishing', $keys);
+        $this->assertGreaterThanOrEqual(16, count($plan->packages));
+        $this->assertSame('assumption_expanded', $requirements['coverage']);
+        $this->assertTrue($requirements['missing_for_full_estimate']);
+    }
+
     public function test_plan_only_geometry_adds_engineering_packages_only_from_specification_takeoffs(): void
     {
         $analysis = [

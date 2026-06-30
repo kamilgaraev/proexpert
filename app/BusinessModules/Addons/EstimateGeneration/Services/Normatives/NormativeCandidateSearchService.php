@@ -32,11 +32,13 @@ final class NormativeCandidateSearchService
         array $workItem,
         array $context,
         array $tokens,
-        int $limit
+        int $limit,
+        ?int $poolLimit = null
     ): Collection {
         $intent = $this->workIntentClassifier->classify($workItem, $context);
         $profile = $this->searchProfileCatalog->forIntentData($intent);
-        $pool = $this->queryPool($version, $workItem, $tokens, $intent, $profile, max($limit * 6, self::MIN_POOL_SIZE));
+        $effectivePoolLimit = max($limit, $poolLimit ?? max($limit * 6, self::MIN_POOL_SIZE));
+        $pool = $this->queryPool($version, $workItem, $tokens, $intent, $profile, $effectivePoolLimit);
 
         $ranked = $pool
             ->sortByDesc(fn (EstimateNorm $norm): float => $this->scorePoolCandidate($norm, $workItem, $tokens, $intent, $profile))

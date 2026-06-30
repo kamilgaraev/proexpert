@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
+use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ApplyEstimateGenerationDraftRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\CreateEstimateGenerationSessionRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\EstimateGenerationFeedbackRequest;
@@ -95,6 +96,7 @@ class EstimateGenerationController extends Controller
         try {
             $user = $request->user();
             $validated = $request->validated();
+            $generationMode = EstimateGenerationMode::fromInput($validated['generation_mode'] ?? null)->value;
 
             $session = EstimateGenerationSession::create([
                 'organization_id' => $user->current_organization_id,
@@ -104,6 +106,7 @@ class EstimateGenerationController extends Controller
                 'processing_stage' => 'created',
                 'processing_progress' => 0,
                 'input_payload' => array_merge($validated, [
+                    'generation_mode' => $generationMode,
                     'parameters' => $validated['parameters'] ?? [],
                     'regional_context' => $this->regionalContextResolver->resolve($validated),
                 ]),
@@ -195,6 +198,18 @@ class EstimateGenerationController extends Controller
     {
         try {
             $this->guardSession($request, $project, $session);
+            $generationMode = EstimateGenerationMode::fromInput(
+                $request->input('generation_mode', $session->input_payload['generation_mode'] ?? null)
+            )->value;
+
+            if (($session->input_payload['generation_mode'] ?? null) !== $generationMode) {
+                $session->forceFill([
+                    'input_payload' => [
+                        ...($session->input_payload ?? []),
+                        'generation_mode' => $generationMode,
+                    ],
+                ])->save();
+            }
 
             $readiness = $this->documentReadinessService->evaluate($session->load('documents'));
 

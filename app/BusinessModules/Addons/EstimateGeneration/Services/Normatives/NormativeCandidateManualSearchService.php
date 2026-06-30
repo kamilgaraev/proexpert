@@ -30,7 +30,7 @@ final class NormativeCandidateManualSearchService
             $workItem['description'] = $query;
         }
 
-        $match = $this->matcher->matchWorkItem($workItem, $context, max(min($limit, 20), 1));
+        $match = $this->matcher->searchWorkItemCandidates($workItem, $context, max(min($limit, 20), 1));
 
         return [
             'work_item_key' => $workItemKey,

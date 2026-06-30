@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Requests;
 
+use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 use function trans_message;
 
@@ -25,6 +27,7 @@ class CreateEstimateGenerationSessionRequest extends FormRequest
         return [
             'description' => ['nullable', 'string', 'max:10000'],
             'building_type' => ['nullable', 'string', 'max:255'],
+            'generation_mode' => ['nullable', 'string', Rule::in(EstimateGenerationMode::values())],
             'region' => ['nullable', 'string', 'max:255'],
             'estimate_regional_price_version_id' => ['nullable', 'integer', 'exists:estimate_regional_price_versions,id'],
             'region_id' => ['nullable', 'integer', 'exists:estimate_regions,id'],

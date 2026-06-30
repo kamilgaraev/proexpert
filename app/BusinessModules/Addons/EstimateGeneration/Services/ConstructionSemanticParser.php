@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentEvidencePolicy;
 
 class ConstructionSemanticParser
@@ -16,6 +17,7 @@ class ConstructionSemanticParser
     public function parse(array $input, array $documents): array
     {
         $description = (string) ($input['description'] ?? '');
+        $generationMode = EstimateGenerationMode::fromInput($input['generation_mode'] ?? null)->value;
         $documentsPayload = array_map(function (array $document): array {
             $text = (string) ($document['extracted_text'] ?? '');
             $facts = is_array($document['facts'] ?? null) ? $document['facts'] : [];
@@ -75,6 +77,7 @@ class ConstructionSemanticParser
                 'description' => $objectDescription !== '' ? $objectDescription : $description,
                 'object_type' => $objectType,
                 'building_type' => $buildingType,
+                'generation_mode' => $generationMode,
                 'region' => $input['region'] ?? $regionalContext['region_name'] ?? $this->detectRegion($combinedText),
                 'area' => $input['area'] ?? $documentContext['facts_summary']['total_area_m2'] ?? null,
                 'floors' => $input['floors'] ?? $documentContext['facts_summary']['floor_count'] ?? null,
@@ -89,6 +92,7 @@ class ConstructionSemanticParser
                 'quarter' => $regionalContext['quarter'] ?? $period['quarter'],
                 'contingency_percent' => $this->detectContingencyPercent($combinedText),
             ],
+            'generation_mode' => $generationMode,
             'regional_context' => $regionalContext,
             'document_context' => $documentContext,
             'problem_flags' => $documentContext['problem_flags'] ?? [],

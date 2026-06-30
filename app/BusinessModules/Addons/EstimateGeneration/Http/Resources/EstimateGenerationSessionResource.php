@@ -22,6 +22,7 @@ class EstimateGenerationSessionResource extends JsonResource
         $session = $this->resource;
         $input = $session->input_payload ?? [];
         $analysis = $session->analysis_payload ?? [];
+        $draft = $session->draft_payload ?? [];
         $regionalContext = $input['regional_context'] ?? $analysis['regional_context'] ?? null;
 
         return [
@@ -30,6 +31,8 @@ class EstimateGenerationSessionResource extends JsonResource
             'processing_stage' => $session->processing_stage,
             'processing_progress' => $session->processing_progress,
             'progress' => self::progressPayload($session),
+            'generation_mode' => $input['generation_mode'] ?? $draft['generation_mode'] ?? 'strict_documents',
+            'document_requirements' => $draft['document_requirements'] ?? null,
             'input' => $input,
             'analysis' => $analysis,
             'regional_context' => $regionalContext,

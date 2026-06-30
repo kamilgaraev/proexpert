@@ -140,7 +140,7 @@ final class FakeManualSearchMatcher extends EstimateNormativeMatcher
 
     public function __construct() {}
 
-    public function matchWorkItem(array $workItem, array $context = [], int $limit = 5): ?array
+    public function searchWorkItemCandidates(array $workItem, array $context = [], int $limit = 10): ?array
     {
         $this->workItem = $workItem;
         $this->context = $context;
