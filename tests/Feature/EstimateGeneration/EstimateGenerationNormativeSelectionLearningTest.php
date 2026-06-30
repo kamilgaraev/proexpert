@@ -71,7 +71,7 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
     {
         [$user, $project, $session] = $this->makeSession();
         $normId = $this->seedNormative('01-01-006-01', 'Бетонирование фундаментной ленты B22.5', 'м3');
-        $packageItem = $this->createPackageItem($session, 'foundation.concrete');
+        $this->createPackageItem($session, 'foundation.concrete');
         $session->forceFill([
             'draft_payload' => $this->draftPayload($normId),
         ])->save();
@@ -94,11 +94,15 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
         app(EstimateGenerationController::class)->feedback($request, $project, $session);
 
         $example = EstimateGenerationLearningExample::query()->firstOrFail();
+        $currentPackageItem = EstimateGenerationPackageItem::query()
+            ->where('key', 'foundation.concrete')
+            ->whereHas('package', static fn ($query) => $query->where('session_id', $session->id))
+            ->firstOrFail();
 
         $this->assertSame('user_rejection', $example->source_type);
         $this->assertFalse($example->is_positive);
         $this->assertSame($session->id, $example->generation_session_id);
-        $this->assertSame($packageItem->id, $example->generation_package_item_id);
+        $this->assertSame($currentPackageItem->id, $example->generation_package_item_id);
         $this->assertSame($normId, $example->estimate_norm_id);
         $this->assertSame('01-01-006-01', $example->context_payload['rejected_normative_code']);
         $this->assertSame('Не та работа', $example->context_payload['reason']);
@@ -108,7 +112,7 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
     {
         [$user, $project, $session] = $this->makeSession();
         $normId = $this->seedNormative('12-01-013-01', 'Roof insulation', 'm2');
-        $packageItem = $this->createPackageItem($session, 'roof.insulation');
+        $this->createPackageItem($session, 'roof.insulation');
         $session->forceFill([
             'draft_payload' => $this->reviewPricedDraftPayload($normId),
         ])->save();
@@ -130,11 +134,15 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
         app(EstimateGenerationController::class)->feedback($request, $project, $session);
 
         $example = EstimateGenerationLearningExample::query()->firstOrFail();
+        $currentPackageItem = EstimateGenerationPackageItem::query()
+            ->where('key', 'roof.insulation')
+            ->whereHas('package', static fn ($query) => $query->where('session_id', $session->id))
+            ->firstOrFail();
 
         $this->assertSame('manual_review_choice', $example->source_type);
         $this->assertTrue($example->is_positive);
         $this->assertSame($session->id, $example->generation_session_id);
-        $this->assertSame($packageItem->id, $example->generation_package_item_id);
+        $this->assertSame($currentPackageItem->id, $example->generation_package_item_id);
         $this->assertSame($normId, $example->estimate_norm_id);
         $this->assertSame('12-01-013-01', $example->norm_code);
         $this->assertSame('confirmed_by_user', $example->decision_status);

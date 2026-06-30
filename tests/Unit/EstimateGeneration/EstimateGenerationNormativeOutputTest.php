@@ -148,6 +148,7 @@ class EstimateGenerationNormativeOutputTest extends TestCase
                         'machinery_cost' => 0,
                         'labor_cost' => 0,
                         'total_cost' => 3000,
+                        'pricing_status' => 'calculated',
                         'source_refs' => [],
                         'confidence' => 0.85,
                         'validation_flags' => [],
@@ -161,6 +162,9 @@ class EstimateGenerationNormativeOutputTest extends TestCase
                             'code' => '01-01-001-01',
                             'name' => 'Бетонирование фундаментов',
                             'confidence' => 0.9,
+                            'resources_count' => 1,
+                            'priced_resources_count' => 1,
+                            'decision' => ['status' => 'accepted'],
                         ],
                         'normative_candidates' => [[
                             'code' => '01-01-001-01',

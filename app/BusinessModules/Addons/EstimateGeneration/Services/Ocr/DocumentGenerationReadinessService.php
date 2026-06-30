@@ -81,12 +81,14 @@ class DocumentGenerationReadinessService
     private function documentState(EstimateGenerationDocument $document): array
     {
         $status = (string) ($document->status ?? 'uploaded');
+        $isPending = in_array($status, self::PENDING_STATUSES, true);
+        $isActionStatus = in_array($status, self::ACTION_REQUIRED_STATUSES, true);
         $factsSummary = is_array($document->facts_summary) ? $document->facts_summary : [];
         $qualityFlags = is_array($document->quality_flags) ? $document->quality_flags : [];
         $hasConflicts = (is_array($factsSummary['conflicts'] ?? null) && $factsSummary['conflicts'] !== []);
         $hasLowQuality = in_array($document->quality_level, ['low', 'unusable'], true);
-        $missingDocumentUnderstanding = $this->missingDocumentUnderstanding($factsSummary);
-        $requiresDocumentReview = $this->requiresDocumentReview($factsSummary);
+        $missingDocumentUnderstanding = !$isPending && $this->missingDocumentUnderstanding($factsSummary);
+        $requiresDocumentReview = !$isPending && $this->requiresDocumentReview($factsSummary);
 
         return [
             'id' => $document->id,
@@ -105,8 +107,8 @@ class DocumentGenerationReadinessService
             'has_low_quality' => $hasLowQuality,
             'missing_document_understanding' => $missingDocumentUnderstanding,
             'requires_document_review' => $requiresDocumentReview,
-            'is_pending' => in_array($status, self::PENDING_STATUSES, true),
-            'is_action_required' => in_array($status, self::ACTION_REQUIRED_STATUSES, true)
+            'is_pending' => $isPending,
+            'is_action_required' => $isActionStatus
                 || $hasConflicts
                 || $hasLowQuality
                 || $missingDocumentUnderstanding

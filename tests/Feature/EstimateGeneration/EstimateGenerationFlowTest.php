@@ -51,7 +51,15 @@ final class EstimateGenerationFlowTest extends TestCase
         [, , $session] = $this->makeSession('waiting_for_documents', 'documents_processing', 10);
         $document = $this->makeDocument($session, 'processing');
 
-        app(DocumentProcessingStatusService::class)->markReady($document, 0.9, 'good', []);
+        app(DocumentProcessingStatusService::class)->markReady($document, 0.9, 'good', [
+            'document_understanding' => [
+                'role_for_estimation' => 'drawing_architecture',
+                'extracted_capabilities' => [
+                    'has_quantities' => true,
+                    'requires_manual_review' => false,
+                ],
+            ],
+        ]);
 
         $session->refresh();
         $this->assertSame('queued', $session->status);
@@ -211,7 +219,15 @@ final class EstimateGenerationFlowTest extends TestCase
             'quality_score' => $status === 'ready' ? 0.92 : null,
             'quality_level' => $status === 'ready' ? 'good' : null,
             'quality_flags' => [],
-            'facts_summary' => [],
+            'facts_summary' => $status === 'ready' ? [
+                'document_understanding' => [
+                    'role_for_estimation' => 'drawing_architecture',
+                    'extracted_capabilities' => [
+                        'has_quantities' => true,
+                        'requires_manual_review' => false,
+                    ],
+                ],
+            ] : [],
         ]);
     }
 

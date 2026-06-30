@@ -23,7 +23,7 @@ return new class extends Migration
             $table->string('status', 32)->default('started');
             $table->foreignId('project_id')->nullable()->constrained('projects')->nullOnDelete();
             $table->foreignId('contract_id')->nullable()->constrained('contracts')->nullOnDelete();
-            $table->jsonb('result_snapshot')->default(DB::raw("'{}'::jsonb"));
+            $table->jsonb('result_snapshot')->default($this->jsonbDefault('{}'));
             $table->string('error_code', 64)->nullable();
             $table->foreignId('created_by_user_id')->nullable()->constrained('users')->nullOnDelete();
             $table->timestampTz('completed_at')->nullable();
@@ -46,6 +46,15 @@ return new class extends Migration
             ON crm_conversion_operations (organization_id, crm_deal_id)
             WHERE status = 'completed'"
         );
+    }
+
+    private function jsonbDefault(string $json): mixed
+    {
+        if (Schema::getConnection()->getDriverName() === 'pgsql') {
+            return DB::raw("'" . str_replace("'", "''", $json) . "'::jsonb");
+        }
+
+        return $json;
     }
 
     public function down(): void

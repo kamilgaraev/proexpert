@@ -45,8 +45,23 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             self::assertNull($item['price_source']);
         }
 
-        self::assertNotContains('quantity_review_required', $pricedItems[0]['validation_flags']);
-        self::assertSame('document_quantity', $pricedItems[0]['metadata']['quantity_source']);
+        $concreteItem = array_values(array_filter(
+            $pricedItems,
+            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'foundation.concrete'
+        ))[0] ?? null;
+        $fallbackItems = array_values(array_filter(
+            $pricedItems,
+            static fn (array $item): bool => ($item['metadata']['quantity_source'] ?? null) === 'planner_fallback'
+        ));
+
+        self::assertIsArray($concreteItem);
+        self::assertNotContains('quantity_review_required', $concreteItem['validation_flags']);
+        self::assertSame('document_quantity', $concreteItem['metadata']['quantity_source']);
+        self::assertNotEmpty($fallbackItems);
+
+        foreach ($fallbackItems as $fallbackItem) {
+            self::assertContains('document_takeoff_required', $fallbackItem['validation_flags']);
+        }
     }
 
     public function test_package_key_selects_specific_normative_intents_even_when_scope_is_broad(): void
@@ -259,7 +274,7 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         self::assertNotContains('operation', array_column($items, 'item_type'));
     }
 
-    public function test_known_planner_package_keys_do_not_generate_planner_fallback_priced_items(): void
+    public function test_known_planner_package_keys_expose_domain_specific_takeoff_required_items(): void
     {
         $planner = $this->planner();
 
@@ -277,18 +292,18 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             self::assertNotContains('operation', array_column($items, 'item_type'), $packageKey);
             self::assertNotContains('custom', array_column($pricedItems, 'work_category'), $packageKey);
             self::assertNotContains('Комплекс строительных работ', $names, $packageKey);
-            self::assertNotContains(
-                'planner_fallback',
-                array_map(
-                    static fn (array $item): string => (string) ($item['metadata']['quantity_source'] ?? ''),
-                    $pricedItems
-                ),
-                $packageKey
-            );
+
+            foreach ($pricedItems as $pricedItem) {
+                if (($pricedItem['metadata']['quantity_source'] ?? null) !== 'planner_fallback') {
+                    continue;
+                }
+
+                self::assertContains('document_takeoff_required', $pricedItem['validation_flags'], $packageKey);
+            }
         }
     }
 
-    public function test_known_planner_package_keys_generate_priced_items_from_confirmed_takeoffs_without_fallback(): void
+    public function test_known_planner_package_keys_keep_confirmed_takeoffs_and_mark_missing_quantities(): void
     {
         $planner = $this->planner();
 
@@ -302,18 +317,20 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
                 ],
             ]);
             $pricedItems = $this->pricedItems($items);
+            $sourceBackedItems = array_values(array_filter(
+                $pricedItems,
+                static fn (array $item): bool => ($item['metadata']['quantity_source'] ?? null) !== 'planner_fallback'
+            ));
 
             self::assertNotEmpty($pricedItems, $packageKey);
-            self::assertNotContains(
-                'planner_fallback',
-                array_map(
-                    static fn (array $item): string => (string) ($item['metadata']['quantity_source'] ?? ''),
-                    $pricedItems
-                ),
-                $packageKey
-            );
+            self::assertNotEmpty($sourceBackedItems, $packageKey);
 
             foreach ($pricedItems as $pricedItem) {
+                if (($pricedItem['metadata']['quantity_source'] ?? null) === 'planner_fallback') {
+                    self::assertContains('document_takeoff_required', $pricedItem['validation_flags'], $packageKey);
+                    continue;
+                }
+
                 self::assertNotContains('quantity_review_required', $pricedItem['validation_flags'], $packageKey);
             }
         }
@@ -451,12 +468,32 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             $analysis
         ));
 
-        self::assertCount(1, $industrialFloor);
-        self::assertCount(4, $roof);
-        self::assertSame('warehouse.floor_concrete', $industrialFloor[0]['quantity_formula']);
-        self::assertSame(75.6, (float) $industrialFloor[0]['quantity']);
+        $floorConcrete = array_values(array_filter(
+            $industrialFloor,
+            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'warehouse.floor_concrete'
+        ))[0] ?? null;
+        $flatRoofItems = array_values(array_filter(
+            $roof,
+            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'roof.flat_area'
+        ));
+
+        self::assertIsArray($floorConcrete);
+        self::assertCount(4, $flatRoofItems);
+        self::assertSame(75.6, (float) $floorConcrete['quantity']);
         self::assertContains('roof.flat_area', array_column($roof, 'quantity_formula'));
         self::assertNotContains('roof.area', array_column($roof, 'quantity_formula'));
+
+        foreach ($industrialFloor as $item) {
+            if (($item['metadata']['quantity_source'] ?? null) === 'planner_fallback') {
+                self::assertContains('document_takeoff_required', $item['validation_flags']);
+            }
+        }
+
+        foreach ($roof as $item) {
+            if (($item['metadata']['quantity_source'] ?? null) === 'planner_fallback') {
+                self::assertContains('document_takeoff_required', $item['validation_flags']);
+            }
+        }
     }
 
     public function test_drawing_takeoff_review_required_becomes_visible_review_item_until_confirmed(): void
@@ -488,14 +525,26 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             ]
         );
 
-        self::assertCount(1, $items);
-        self::assertSame('quantity_review', $items[0]['item_type']);
-        self::assertSame('rough.walls', $items[0]['quantity_formula']);
-        self::assertSame(220.5, (float) $items[0]['quantity']);
-        self::assertSame('not_applicable', $items[0]['pricing_status']);
-        self::assertSame('quantity_review_required', $items[0]['pricing_blocker']);
-        self::assertContains('quantity_review_required', $items[0]['validation_flags']);
-        self::assertSame('rough.walls', $items[0]['metadata']['quantity_key'] ?? null);
+        $reviewItem = array_values(array_filter(
+            $items,
+            static fn (array $item): bool => ($item['item_type'] ?? null) === 'quantity_review'
+        ))[0] ?? null;
+        $fallbackItems = array_values(array_filter(
+            $items,
+            static fn (array $item): bool => ($item['metadata']['quantity_source'] ?? null) === 'planner_fallback'
+        ));
+
+        self::assertIsArray($reviewItem);
+        self::assertSame('rough.walls', $reviewItem['quantity_formula']);
+        self::assertSame(220.5, (float) $reviewItem['quantity']);
+        self::assertSame('not_applicable', $reviewItem['pricing_status']);
+        self::assertSame('quantity_review_required', $reviewItem['pricing_blocker']);
+        self::assertContains('quantity_review_required', $reviewItem['validation_flags']);
+        self::assertSame('rough.walls', $reviewItem['metadata']['quantity_key'] ?? null);
+
+        foreach ($fallbackItems as $fallbackItem) {
+            self::assertContains('document_takeoff_required', $fallbackItem['validation_flags']);
+        }
     }
 
     public function test_summary_area_without_source_refs_requires_quantity_review(): void
@@ -513,14 +562,24 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             ]
         );
 
-        self::assertCount(1, $items);
-        self::assertSame('quantity_review', $items[0]['item_type']);
-        self::assertSame('rough.floor', $items[0]['quantity_formula']);
-        self::assertSame(87.14, (float) $items[0]['quantity']);
-        self::assertSame([], $items[0]['source_refs']);
-        self::assertSame('facts_summary_area', $items[0]['metadata']['quantity_source']);
-        self::assertContains('quantity_review_required', $items[0]['validation_flags']);
-        self::assertSame('quantity_review_required', $items[0]['pricing_blocker']);
+        $reviewItem = array_values(array_filter(
+            $items,
+            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'rough.floor'
+        ))[0] ?? null;
+
+        self::assertIsArray($reviewItem);
+        self::assertSame('quantity_review', $reviewItem['item_type']);
+        self::assertSame(87.14, (float) $reviewItem['quantity']);
+        self::assertSame([], $reviewItem['source_refs']);
+        self::assertSame('facts_summary_area', $reviewItem['metadata']['quantity_source']);
+        self::assertContains('quantity_review_required', $reviewItem['validation_flags']);
+        self::assertSame('quantity_review_required', $reviewItem['pricing_blocker']);
+
+        foreach ($items as $item) {
+            if (($item['metadata']['quantity_source'] ?? null) === 'planner_fallback') {
+                self::assertContains('document_takeoff_required', $item['validation_flags']);
+            }
+        }
     }
 
     public function test_floor_plan_baseboard_length_becomes_visible_review_item_until_confirmed(): void
@@ -552,14 +611,24 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
             ]
         );
 
-        self::assertCount(1, $items);
-        self::assertSame('quantity_review', $items[0]['item_type']);
-        self::assertSame('finish.baseboard', $items[0]['quantity_formula']);
-        self::assertSame(77.0, (float) $items[0]['quantity']);
-        self::assertSame('м', $items[0]['unit']);
-        self::assertSame('quantity_review_required', $items[0]['pricing_blocker']);
-        self::assertContains('quantity_review_required', $items[0]['validation_flags']);
-        self::assertSame('finish.baseboard', $items[0]['metadata']['quantity_key'] ?? null);
+        $reviewItem = array_values(array_filter(
+            $items,
+            static fn (array $item): bool => ($item['quantity_formula'] ?? null) === 'finish.baseboard'
+        ))[0] ?? null;
+
+        self::assertIsArray($reviewItem);
+        self::assertSame('quantity_review', $reviewItem['item_type']);
+        self::assertSame(77.0, (float) $reviewItem['quantity']);
+        self::assertSame('м', $reviewItem['unit']);
+        self::assertSame('quantity_review_required', $reviewItem['pricing_blocker']);
+        self::assertContains('quantity_review_required', $reviewItem['validation_flags']);
+        self::assertSame('finish.baseboard', $reviewItem['metadata']['quantity_key'] ?? null);
+
+        foreach ($items as $item) {
+            if (($item['metadata']['quantity_source'] ?? null) === 'planner_fallback') {
+                self::assertContains('document_takeoff_required', $item['validation_flags']);
+            }
+        }
     }
 
     public function test_confirmed_floor_plan_wall_and_wet_zone_takeoffs_feed_matching_normative_intents(): void
@@ -647,10 +716,23 @@ class NormativeWorkItemPlannerDensityTest extends TestCase
         $finishItems = $this->pricedItems($planner->build($finishLocal, $finishLocal['sections'][0], $analysis));
         $roughFormulas = array_column($roughItems, 'quantity_formula');
         $finishFormulas = array_column($finishItems, 'quantity_formula');
+        $sourceBackedFinishFormulas = array_column(array_values(array_filter(
+            $finishItems,
+            static fn (array $item): bool => ($item['metadata']['quantity_source'] ?? null) !== 'planner_fallback'
+        )), 'quantity_formula');
+        $fallbackFinishItems = array_values(array_filter(
+            $finishItems,
+            static fn (array $item): bool => ($item['metadata']['quantity_source'] ?? null) === 'planner_fallback'
+        ));
 
         self::assertSame(['rough.floor', 'rough.walls'], $roughFormulas);
-        self::assertSame(['finish.floor', 'finish.paint', 'office.ceiling'], $finishFormulas);
+        self::assertSame(['finish.floor', 'finish.paint', 'office.ceiling'], $sourceBackedFinishFormulas);
+        self::assertContains('finish.baseboard', $finishFormulas);
         self::assertSame([], array_values(array_intersect($roughFormulas, $finishFormulas)));
+
+        foreach ($fallbackFinishItems as $fallbackItem) {
+            self::assertContains('document_takeoff_required', $fallbackItem['validation_flags']);
+        }
     }
 
     public function test_engineering_takeoff_scope_maps_to_matching_heating_quantity_key(): void

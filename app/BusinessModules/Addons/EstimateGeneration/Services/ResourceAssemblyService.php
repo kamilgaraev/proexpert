@@ -54,6 +54,17 @@ class ResourceAssemblyService
                 continue;
             }
 
+            if ($this->requiresDocumentTakeoff($workItem)) {
+                $workItem = $this->markDocumentTakeoffRequired($workItem);
+                $processed = $index + 1;
+
+                if ($progressCallback !== null && ($processed % self::PROGRESS_STEP === 0 || $processed === $total)) {
+                    $progressCallback($processed, $total);
+                }
+
+                continue;
+            }
+
             if (($workItem['skip_normative_matching'] ?? false) === true || !$this->isPricedItem($workItem)) {
                 $processed = $index + 1;
 
@@ -161,6 +172,42 @@ class ResourceAssemblyService
             $workItem,
             trans_message('estimate_generation.pricing_not_calculated_safe_norm')
         );
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    private function requiresDocumentTakeoff(array $workItem): bool
+    {
+        $flags = array_values(array_filter(array_map('strval', [
+            ...(is_array($workItem['validation_flags'] ?? null) ? $workItem['validation_flags'] : []),
+            ...(is_array($workItem['flags'] ?? null) ? $workItem['flags'] : []),
+        ])));
+
+        return (string) ($workItem['pricing_blocker'] ?? '') === 'document_takeoff_required'
+            || in_array('document_takeoff_required', $flags, true);
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @return array<string, mixed>
+     */
+    private function markDocumentTakeoffRequired(array $workItem): array
+    {
+        $workItem = $this->clearNonNormativeResources($workItem);
+        $workItem['price_source'] = null;
+        $workItem['pricing_status'] = 'not_calculated';
+        $workItem['pricing_blocker'] = 'document_takeoff_required';
+        $workItem['pricing_blocker_message'] = trans_message('estimate_generation.pricing_not_calculated_safe_norm');
+        $workItem['validation_flags'] = array_values(array_unique([
+            ...(is_array($workItem['validation_flags'] ?? null) ? $workItem['validation_flags'] : []),
+            'normative_required',
+            'requires_normative_review',
+            'document_takeoff_required',
+            'pricing_not_calculated',
+        ]));
+
+        return $workItem;
     }
 
     /**

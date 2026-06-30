@@ -131,13 +131,13 @@ class EstimateGenerationPackageApiTest extends TestCase
 
         $this->assertTrue($payload['success']);
         $this->assertSame('foundation', $payload['data']['package']['key']);
-        $this->assertCount(2, $payload['data']['items']);
+        $this->assertCount(1, $payload['data']['items']);
         $this->assertSame('foundation.concrete', $payload['data']['items'][0]['key']);
         $this->assertSame('priced_work', $payload['data']['items'][0]['item_type']);
         $this->assertCount(3, $payload['data']['items'][0]['work_composition']);
-        $this->assertSame('operation', $payload['data']['items'][1]['item_type']);
         $this->assertSame(1, $payload['data']['meta']['priced_items_count']);
-        $this->assertSame(1, $payload['data']['meta']['operation_items_count']);
+        $this->assertSame(0, $payload['data']['meta']['operation_items_count']);
+        $this->assertSame(0, $payload['data']['meta']['hidden_service_items_count']);
     }
 
     /**

@@ -22,7 +22,7 @@ final class WorkIntentClassifier
         $signals = [];
         $scope = $this->scope($text, (string) ($context['scope_type'] ?? $workItem['scope_type'] ?? ''), $signals);
         $system = $this->system($text, $signals);
-        $action = $this->action($text, $system, $signals);
+        $action = $this->action($text, $system, $scope, $signals);
         $object = $this->object($text, $scope);
         $material = $this->material($text);
         $expectedDimensions = $this->expectedDimensions((string) ($workItem['unit'] ?? ''), $action);
@@ -92,6 +92,38 @@ final class WorkIntentClassifier
             return 'finishing';
         }
 
+        if (!in_array($contextScope, [
+            'facade',
+            'roof',
+            'walls',
+            'foundation',
+            'slabs',
+            'stairs',
+            'openings',
+            'site',
+            'temporary',
+        ], true) && $this->containsAny($text, [
+            'отделк',
+            'штукатур',
+            'окраск',
+            'покраск',
+            'шпатлев',
+            'плитк',
+            'облицов',
+            'плинтус',
+            'галтел',
+            'покрыти',
+            'линолеум',
+            'ламинат',
+            'паркет',
+            'подвесн',
+            'потолк',
+        ])) {
+            $signals[] = 'scope_finishing';
+
+            return 'finishing';
+        }
+
         foreach ([
             'roof' => ['кровл', 'стропил', 'мауэрлат'],
             'stairs' => ['лестниц', 'лестничн', 'марш'],
@@ -148,9 +180,15 @@ final class WorkIntentClassifier
     /**
      * @param array<int, string> $signals
      */
-    private function action(string $text, ?string $system, array &$signals): string
+    private function action(string $text, ?string $system, string $scope, array &$signals): string
     {
-        if (in_array($system, ['water_supply', 'sewerage'], true) && $this->containsAny($text, ['арматур', 'сантехническ', 'канализац'])) {
+        if ($scope === 'engineering' && in_array($system, ['water_supply', 'sewerage'], true) && $this->containsAny($text, ['арматур', 'сантехническ', 'канализац'])) {
+            $signals[] = 'action_pipe_layout';
+
+            return 'pipe_layout';
+        }
+
+        if ($scope === 'engineering' && $this->containsAny($text, ['разводка труб', 'прокладка труб', 'прокладка трубопровод', 'труб отоплен'])) {
             $signals[] = 'action_pipe_layout';
 
             return 'pipe_layout';
@@ -187,19 +225,19 @@ final class WorkIntentClassifier
             }
         }
 
-        if ($system === 'electrical') {
+        if ($scope === 'engineering' && $system === 'electrical') {
             $signals[] = 'action_cable_installation';
 
             return 'cable_installation';
         }
 
-        if ($system === 'ventilation') {
+        if ($scope === 'engineering' && $system === 'ventilation') {
             $signals[] = 'action_ventilation_installation';
 
             return 'ventilation_installation';
         }
 
-        if ($system === 'heating' || $system === 'water_supply' || $system === 'sewerage') {
+        if ($scope === 'engineering' && ($system === 'heating' || $system === 'water_supply' || $system === 'sewerage')) {
             $signals[] = 'action_pipe_layout';
 
             return 'pipe_layout';

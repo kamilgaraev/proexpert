@@ -86,12 +86,39 @@ final class NormativeWorkItemPlannerService
     ): ?array {
         $quantity = $this->quantityForDefinition($definition, $analysis, $quantityModel);
 
-        if ($this->shouldSkipUnsupportedPlannerDefinition($localEstimate, $quantity)) {
-            return null;
-        }
-
         $packageKey = (string) ($localEstimate['key'] ?? 'package');
         $key = $packageKey . '-norm-intent-' . ($index + 1);
+
+        if ($this->isPlannerFallbackQuantity($quantity)) {
+            if (!$this->shouldExposePlannerFallback($definition, $localEstimate, $analysis)) {
+                return null;
+            }
+
+            return $this->basePricedWorkItem(
+                key: $key,
+                localEstimate: $localEstimate,
+                section: $section,
+                name: (string) $definition['name'],
+                searchText: (string) ($definition['normative_search_text'] ?? $definition['name']),
+                category: (string) $definition['category'],
+                unit: (string) $quantity['unit'],
+                quantity: (float) $quantity['value'],
+                quantityFormula: (string) $definition['quantity_key'],
+                quantityBasis: (string) $quantity['basis'],
+                sourceRefs: [],
+                confidence: (float) ($definition['confidence'] ?? $quantity['confidence'] ?? 0.48),
+                validationFlags: ['normative_required', 'document_takeoff_required'],
+                metadata: [
+                    'generation_source' => $definition['generation_source'] ?? 'normative_intent_catalog',
+                    'quantity_key' => $definition['quantity_key'],
+                    'quantity_source' => $quantity['source'],
+                    'package_key' => $packageKey,
+                    ...($definition['metadata'] ?? []),
+                ],
+                normativeRateCode: isset($definition['normative_rate_code']) ? (string) $definition['normative_rate_code'] : null,
+                operations: $definition['operations'] ?? $this->operationBank((string) $definition['category'])
+            );
+        }
 
         if (($quantity['review_required'] ?? false) === true) {
             return $this->quantityReviewItemFromDefinition(
@@ -327,8 +354,9 @@ final class NormativeWorkItemPlannerService
     private function packageDefinitions(string $packageKey, string $scopeType, array $quantityModel): array
     {
         $flatRoof = (string) ($quantityModel['features']['roof_type'] ?? '') === 'flat';
+        $definitionKey = $this->packageDefinitionKey($packageKey, $scopeType);
 
-        return match ($packageKey) {
+        return match ($definitionKey) {
             'preconstruction', 'site_preparation' => [
                 $this->definition('Подготовка строительной площадки', 'site', 'подготовка строительной площадки', 'site.setup'),
                 $this->definition('Временное ограждение площадки', 'site', 'устройство временного ограждения строительной площадки', 'site.fence'),
@@ -461,6 +489,15 @@ final class NormativeWorkItemPlannerService
         };
     }
 
+    private function packageDefinitionKey(string $packageKey, string $scopeType): string
+    {
+        if ($scopeType !== '' && ($packageKey === '' || str_starts_with($packageKey, 'local-'))) {
+            return $scopeType;
+        }
+
+        return $packageKey;
+    }
+
     /**
      * @param array<string, mixed> $analysis
      * @return array<int, array<string, mixed>>
@@ -567,15 +604,91 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $localEstimate
      * @param array<string, mixed> $quantity
      */
-    private function shouldSkipUnsupportedPlannerDefinition(array $localEstimate, array $quantity): bool
+    private function isPlannerFallbackQuantity(array $quantity): bool
     {
         return (
             ($quantity['source'] ?? null) === 'planner_fallback'
             && ($quantity['source_refs'] ?? []) === []
         );
+    }
+
+    /**
+     * @param array<string, mixed> $definition
+     * @param array<string, mixed> $localEstimate
+     * @param array<string, mixed> $analysis
+     */
+    private function shouldExposePlannerFallback(array $definition, array $localEstimate, array $analysis): bool
+    {
+        $packageKey = (string) ($localEstimate['key'] ?? '');
+        $category = (string) ($definition['category'] ?? '');
+
+        if (in_array($packageKey, ['external_networks', 'siteworks', 'roads'], true)) {
+            return $this->analysisMentionsAny($analysis, match ($packageKey) {
+                'external_networks' => [
+                    'external networks',
+                    'utility',
+                    'utilities',
+                    'наружн',
+                    'сети',
+                    'подключен',
+                ],
+                'siteworks' => [
+                    'landscaping',
+                    'siteworks',
+                    'благоустрой',
+                    'озелен',
+                    'отмост',
+                    'тротуар',
+                ],
+                'roads' => [
+                    'roads',
+                    'driveway',
+                    'parking',
+                    'дорог',
+                    'проезд',
+                    'подъезд',
+                    'парков',
+                ],
+                default => [],
+            });
+        }
+
+        if (!in_array($packageKey, ['ventilation', 'fire_safety'], true) && $category !== 'ventilation') {
+            return true;
+        }
+
+        return $this->analysisMentionsAny($analysis, [
+            'ventilation',
+            'fire safety',
+            'fire alarm',
+            'smoke removal',
+            'вентиляц',
+            'пожарн',
+            'сигнализац',
+            'дымоудален',
+        ]);
+    }
+
+    /**
+     * @param array<string, mixed> $analysis
+     * @param array<int, string> $needles
+     */
+    private function analysisMentionsAny(array $analysis, array $needles): bool
+    {
+        $text = mb_strtolower(implode(' ', $this->documentTextFragments(
+            $analysis,
+            is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : []
+        )));
+
+        foreach ($needles as $needle) {
+            if ($needle !== '' && str_contains($text, mb_strtolower($needle))) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -666,6 +779,9 @@ final class NormativeWorkItemPlannerService
     private function quantitiesFromFactsSummary(array $documentContext): array
     {
         $factsSummary = is_array($documentContext['facts_summary'] ?? null) ? $documentContext['facts_summary'] : [];
+        $documentSourceRefs = is_array($documentContext['source_refs'] ?? null)
+            ? $this->normalizeSourceRefs($documentContext['source_refs'])
+            : [];
         $quantities = [];
         $area = $this->numericValue($factsSummary['total_area_m2'] ?? null);
 
@@ -676,8 +792,8 @@ final class NormativeWorkItemPlannerService
                     'м2',
                     'Площадь объекта извлечена из проектной документации.',
                     0.72,
-                    [],
-                    true,
+                    $documentSourceRefs,
+                    $documentSourceRefs === [],
                     'facts_summary_area'
                 );
             }

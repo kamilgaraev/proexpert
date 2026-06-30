@@ -16,8 +16,8 @@ final class NormativeSafeAnalogDecisionTest extends TestCase
             'unit' => 'м2',
             'section' => ['code' => '12'],
             'resources' => [
-                'materials' => [['price_source' => 'fsbc_base']],
-                'labor' => [['price_source' => 'fgis_labor_prices_base']],
+                'materials' => [['price_source' => 'fsbc_base', 'unit_price' => 1000, 'quantity' => 1, 'total_price' => 1000]],
+                'labor' => [['price_source' => 'fgis_labor_prices_base', 'unit_price' => 100, 'quantity' => 1, 'total_price' => 100]],
                 'machinery' => [],
                 'other' => [],
             ],

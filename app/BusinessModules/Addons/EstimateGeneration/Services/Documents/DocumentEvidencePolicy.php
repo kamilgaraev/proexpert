@@ -35,10 +35,7 @@ final class DocumentEvidencePolicy
      */
     public static function roleForEstimation(array $document): string
     {
-        $factsSummary = is_array($document['facts_summary'] ?? null) ? $document['facts_summary'] : [];
-        $understanding = is_array($document['document_understanding'] ?? null)
-            ? $document['document_understanding']
-            : (is_array($factsSummary['document_understanding'] ?? null) ? $factsSummary['document_understanding'] : []);
+        $understanding = self::understanding($document);
 
         return (string) ($understanding['role_for_estimation'] ?? '');
     }
@@ -50,7 +47,18 @@ final class DocumentEvidencePolicy
     {
         $role = self::roleForEstimation($document);
 
-        return in_array($role, self::QUANTITY_EVIDENCE_ROLES, true);
+        if (in_array($role, self::QUANTITY_EVIDENCE_ROLES, true)) {
+            return true;
+        }
+
+        $understanding = self::understanding($document);
+        $capabilities = is_array($understanding['extracted_capabilities'] ?? null)
+            ? $understanding['extracted_capabilities']
+            : [];
+
+        return str_starts_with($role, 'drawing_')
+            && ($capabilities['has_quantities'] ?? false) === true
+            && ($capabilities['requires_manual_review'] ?? false) !== true;
     }
 
     /**
@@ -69,5 +77,18 @@ final class DocumentEvidencePolicy
     public static function canScanNormativeReferences(array $document): bool
     {
         return self::isTrusted($document) && self::canUseScopeEvidence($document);
+    }
+
+    /**
+     * @param array<string, mixed> $document
+     * @return array<string, mixed>
+     */
+    private static function understanding(array $document): array
+    {
+        $factsSummary = is_array($document['facts_summary'] ?? null) ? $document['facts_summary'] : [];
+
+        return is_array($document['document_understanding'] ?? null)
+            ? $document['document_understanding']
+            : (is_array($factsSummary['document_understanding'] ?? null) ? $factsSummary['document_understanding'] : []);
     }
 }

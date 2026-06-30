@@ -83,10 +83,14 @@ final class NormativeUnitNormalizer
 
         return match (true) {
             in_array($unit, ['км', 'километр', 'километра', 'километры'], true) => ['length', 'м', 1000.0],
-            in_array($unit, ['м', 'мп', 'пм', 'погм', 'метр', 'метра', 'метры'], true) => ['length', 'м', 1.0],
+            in_array($unit, ['м', 'мп', 'пм', 'погм', 'метр', 'метра', 'метры', 'm', 'lm', 'rm', 'linm', 'linearmeter'], true) => ['length', 'м', 1.0],
             str_starts_with($unit, 'м3'),
+            str_starts_with($unit, 'm3'),
+            str_starts_with($unit, 'cbm'),
             str_starts_with($unit, 'кубм') => ['volume', 'м3', 1.0],
             str_starts_with($unit, 'м2'),
+            str_starts_with($unit, 'm2'),
+            str_starts_with($unit, 'sqm'),
             str_starts_with($unit, 'квм') => ['area', 'м2', 1.0],
             str_starts_with($unit, 'чел-ч'),
             str_starts_with($unit, 'чел/ч'),

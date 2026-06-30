@@ -207,8 +207,8 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
         self::assertSame(87.14, $takeoffsByKey['finish.floor']['quantity']);
         self::assertSame(87.14, $takeoffsByKey['rough.floor']['quantity']);
         self::assertSame(87.14, $takeoffsByKey['office.ceiling']['quantity']);
-        self::assertTrue($takeoffsByKey['finish.floor']['normalized_payload']['review_required'] ?? false);
-        self::assertTrue($takeoffsByKey['rough.floor']['normalized_payload']['review_required'] ?? false);
+        self::assertFalse($takeoffsByKey['finish.floor']['normalized_payload']['review_required'] ?? true);
+        self::assertFalse($takeoffsByKey['rough.floor']['normalized_payload']['review_required'] ?? true);
         self::assertTrue($takeoffsByKey['office.ceiling']['normalized_payload']['review_required'] ?? false);
         self::assertSame(231.0, $takeoffsByKey['rough.walls']['quantity']);
         self::assertSame($takeoffsByKey['rough.walls']['quantity'], $takeoffsByKey['finish.paint']['quantity']);
@@ -343,6 +343,86 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
         self::assertSame(1, $takeoffsByKey['rough.walls']['normalized_payload']['room_dimension_count']);
         self::assertSame(8.755, $takeoffsByKey['rough.walls']['normalized_payload']['room_dimensions'][0]['length_m']);
         self::assertSame(6.19, $takeoffsByKey['rough.walls']['normalized_payload']['room_dimensions'][0]['width_m']);
+    }
+
+    public function test_uses_nearby_orthogonal_dimension_lines_to_estimate_room_perimeter(): void
+    {
+        $recognition = new OcrRecognitionResult(
+            provider: 'test',
+            model: 'page',
+            pages: [
+                new OcrPageResult(
+                    pageNumber: 1,
+                    text: implode("\n", [
+                        'Планировка квартиры',
+                        'h=3,0 m',
+                        '3255',
+                        'Санузел 5,14 м2',
+                        '1580',
+                    ]),
+                    blocks: [[
+                        'text' => '',
+                        'lines' => [
+                            [
+                                'text' => 'Планировка квартиры',
+                                'bounding_box' => ['x' => 20, 'y' => 20, 'width' => 180, 'height' => 24],
+                                'words' => [],
+                            ],
+                            [
+                                'text' => 'h=3,0 m',
+                                'bounding_box' => ['x' => 40, 'y' => 80, 'width' => 80, 'height' => 18],
+                                'words' => [],
+                            ],
+                            [
+                                'text' => '3255',
+                                'bounding_box' => ['x' => 238, 'y' => 192, 'width' => 95, 'height' => 16],
+                                'words' => [],
+                            ],
+                            [
+                                'text' => 'Санузел 5,14 м2',
+                                'bounding_box' => ['x' => 255, 'y' => 245, 'width' => 118, 'height' => 26],
+                                'words' => [],
+                            ],
+                            [
+                                'text' => '1580',
+                                'bounding_box' => ['x' => 205, 'y' => 220, 'width' => 16, 'height' => 78],
+                                'words' => [],
+                            ],
+                        ],
+                    ]],
+                    width: 1200,
+                    height: 800,
+                    confidence: 0.91
+                ),
+            ]
+        );
+
+        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+            documentId: 10,
+            filename: 'flat-plan.png',
+            recognition: $recognition
+        );
+        $takeoffsByKey = [];
+
+        foreach ($result->takeoffs as $takeoff) {
+            $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
+            $takeoffsByKey[(string) ($payload['quantity_key'] ?? $takeoff['scope_key'] ?? '')] = $takeoff;
+        }
+
+        self::assertSame(29.01, $takeoffsByKey['rough.walls']['quantity']);
+        self::assertSame(9.67, $takeoffsByKey['finish.baseboard']['quantity']);
+        self::assertSame('room_dimension_geometry', $takeoffsByKey['rough.walls']['normalized_payload']['calculation_basis']);
+        self::assertSame('orthogonal_dimension_geometry', $takeoffsByKey['rough.walls']['normalized_payload']['room_dimensions'][0]['basis']);
+        self::assertSame(3.255, $takeoffsByKey['rough.walls']['normalized_payload']['room_dimensions'][0]['length_m']);
+        self::assertSame(1.58, $takeoffsByKey['rough.walls']['normalized_payload']['room_dimensions'][0]['width_m']);
+        self::assertCount(1, array_filter(
+            $takeoffsByKey['rough.walls']['source_refs'],
+            static fn (array $sourceRef): bool => ($sourceRef['excerpt'] ?? null) === '3255'
+        ));
+        self::assertCount(1, array_filter(
+            $takeoffsByKey['rough.walls']['source_refs'],
+            static fn (array $sourceRef): bool => ($sourceRef['excerpt'] ?? null) === '1580'
+        ));
     }
 
     public function test_door_schedule_height_is_not_used_as_room_height(): void

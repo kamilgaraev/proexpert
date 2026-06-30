@@ -67,6 +67,20 @@ final class EstimateGenerationExcelExportServiceTest extends TestCase
                         'total_cost' => 1200,
                         'pricing_status' => 'calculated',
                         'normative_rate_code' => '01-01-001-01',
+                        'normative_match' => [
+                            'status' => 'matched',
+                            'resources_count' => 1,
+                            'priced_resources_count' => 1,
+                            'decision' => ['status' => 'accepted'],
+                        ],
+                        'materials' => [[
+                            'name' => 'Concrete',
+                            'unit' => 'm3',
+                            'quantity' => 10,
+                            'unit_price' => 120,
+                            'total_price' => 1200,
+                            'normative_ref' => ['resource_code' => '01.1.01.01-0001'],
+                        ]],
                     ], [
                         'key' => 'foundation.review-priced',
                         'item_type' => 'priced_work',
@@ -102,9 +116,11 @@ final class EstimateGenerationExcelExportServiceTest extends TestCase
         ]);
 
         self::assertIsArray($data);
-        self::assertCount(1, $data['sections'][1]['items']);
+        self::assertCount(2, $data['sections'][1]['items']);
         self::assertSame('Concrete foundation', $data['sections'][1]['items'][0]['name']);
         self::assertSame('1', $data['sections'][1]['items'][0]['position_number']);
+        self::assertSame('Concrete', $data['sections'][1]['items'][1]['name']);
+        self::assertSame('1.1', $data['sections'][1]['items'][1]['position_number']);
         self::assertSame(1200.0, $data['sections'][1]['section_total_amount']);
     }
 }

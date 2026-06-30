@@ -68,6 +68,39 @@ final class WorkIntentClassifierTest extends TestCase
         $this->assertNotContains('16', $intent->preferredSectionPrefixes);
     }
 
+    public function test_finishing_work_keeps_finishing_scope_inside_plumbing_package(): void
+    {
+        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog()))->classify([
+            'name' => 'Отделка мокрых зон плиткой',
+            'unit' => 'м2',
+        ], [
+            'scope_type' => 'plumbing',
+            'section_title' => 'Водоснабжение и канализация',
+        ]);
+
+        $this->assertSame('finishing', $intent->scope);
+        $this->assertSame('tiling', $intent->action);
+        $this->assertContains('15', $intent->preferredSectionPrefixes);
+        $this->assertNotContains('16', $intent->preferredSectionPrefixes);
+    }
+
+    public function test_pipe_layout_is_not_classified_as_masonry_because_of_prokladka(): void
+    {
+        $intent = (new WorkIntentClassifier(new NormativeScopeRuleCatalog()))->classify([
+            'name' => 'Прокладка труб отопления',
+            'unit' => 'м',
+        ], [
+            'scope_type' => 'heating',
+            'section_title' => 'Отопление',
+        ]);
+
+        $this->assertSame('engineering', $intent->scope);
+        $this->assertSame('heating', $intent->system);
+        $this->assertSame('pipe_layout', $intent->action);
+        $this->assertContains('16', $intent->preferredSectionPrefixes);
+        $this->assertNotContains('08', $intent->preferredSectionPrefixes);
+    }
+
     public static function workIntentProvider(): array
     {
         return [

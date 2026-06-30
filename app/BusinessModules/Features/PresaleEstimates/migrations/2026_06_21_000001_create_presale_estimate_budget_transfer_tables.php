@@ -31,7 +31,7 @@ return new class extends Migration
             $table->string('currency', 3)->default('RUB');
             $table->foreignId('created_by_user_id')->nullable()->constrained('users')->nullOnDelete();
             $table->foreignId('updated_by_user_id')->nullable()->constrained('users')->nullOnDelete();
-            $table->jsonb('metadata')->default(DB::raw("'{}'::jsonb"));
+            $table->jsonb('metadata')->default($this->jsonbDefault('{}'));
             $table->timestampsTz();
             $table->softDeletesTz();
 
@@ -55,8 +55,8 @@ return new class extends Migration
             $table->unsignedInteger('version_number');
             $table->string('status', 32)->default('draft')->index();
             $table->string('title');
-            $table->jsonb('sections_snapshot')->default(DB::raw("'[]'::jsonb"));
-            $table->jsonb('totals_snapshot')->default(DB::raw("'{}'::jsonb"));
+            $table->jsonb('sections_snapshot')->default($this->jsonbDefault('[]'));
+            $table->jsonb('totals_snapshot')->default($this->jsonbDefault('{}'));
             $table->string('content_hash', 128)->nullable();
             $table->foreignId('created_by_user_id')->nullable()->constrained('users')->nullOnDelete();
             $table->timestampTz('accepted_at')->nullable();
@@ -90,7 +90,7 @@ return new class extends Migration
             $table->string('title');
             $table->text('description')->nullable();
             $table->unsignedInteger('sort_order')->default(0);
-            $table->jsonb('metadata')->default(DB::raw("'{}'::jsonb"));
+            $table->jsonb('metadata')->default($this->jsonbDefault('{}'));
             $table->timestampsTz();
 
             $table->foreign('presale_estimate_id', 'presale_sections_estimate_fk')
@@ -124,7 +124,7 @@ return new class extends Migration
             $table->decimal('subtotal_amount', 18, 2)->default(0);
             $table->decimal('total_amount', 18, 2)->default(0);
             $table->unsignedInteger('sort_order')->default(0);
-            $table->jsonb('metadata')->default(DB::raw("'{}'::jsonb"));
+            $table->jsonb('metadata')->default($this->jsonbDefault('{}'));
             $table->timestampsTz();
 
             $table->foreign('presale_estimate_id', 'presale_items_estimate_fk')
@@ -156,7 +156,7 @@ return new class extends Migration
             $table->string('payload_hash', 128);
             $table->string('preview_hash', 128)->nullable();
             $table->string('status', 32)->default('started');
-            $table->jsonb('result_snapshot')->default(DB::raw("'{}'::jsonb"));
+            $table->jsonb('result_snapshot')->default($this->jsonbDefault('{}'));
             $table->string('error_code', 64)->nullable();
             $table->text('error_message')->nullable();
             $table->foreignId('created_by_user_id')->nullable()->constrained('users')->nullOnDelete();
@@ -187,6 +187,15 @@ return new class extends Migration
             ON presale_estimate_budget_transfer_operations (organization_id, source_type, source_id, project_id, contract_id)
             WHERE status = 'completed'"
         );
+    }
+
+    private function jsonbDefault(string $json): mixed
+    {
+        if (Schema::getConnection()->getDriverName() === 'pgsql') {
+            return DB::raw("'" . str_replace("'", "''", $json) . "'::jsonb");
+        }
+
+        return $json;
     }
 
     public function down(): void

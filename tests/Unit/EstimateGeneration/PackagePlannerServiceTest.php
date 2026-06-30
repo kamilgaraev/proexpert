@@ -270,9 +270,43 @@ class PackagePlannerServiceTest extends TestCase
 
         $profile = $this->planner()->profileFromAnalysis($analysis);
 
-        $this->assertSame('custom', $profile->objectType);
+        $this->assertSame('document_evidence', $profile->objectType);
         $this->assertFalse($profile->planningSignals['plan_only_geometry']);
         $this->assertTrue($profile->planningSignals['floor_plan_finishing']);
+    }
+
+    public function test_work_volume_statement_uses_only_evidence_backed_packages_without_house_template(): void
+    {
+        $analysis = [
+            'object' => [
+                'object_type' => 'custom',
+                'building_type' => 'custom',
+                'description' => '',
+            ],
+            'document_context' => [
+                'context_text' => 'Ведомость объемов работ',
+                'scope_inferences' => [[
+                    'normalized_payload' => [
+                        'quantity_key' => 'earth.backfill',
+                    ],
+                ], [
+                    'normalized_payload' => [
+                        'quantity_key' => 'unmapped.abc123',
+                    ],
+                ]],
+            ],
+        ];
+
+        $profile = $this->planner()->profileFromAnalysis($analysis);
+        $plan = $this->planner()->plan($profile);
+        $keys = array_column($plan->packages, 'key');
+
+        $this->assertSame('document_evidence', $profile->objectType);
+        $this->assertContains('custom-earthworks', $keys);
+        $this->assertContains('unmapped_quantity_rows', $keys);
+        $this->assertNotContains('foundation', $keys);
+        $this->assertNotContains('walls', $keys);
+        $this->assertNotContains('roof', $keys);
     }
 
     private function planner(): PackagePlannerService

@@ -14,6 +14,8 @@ use Tests\TestCase;
 
 final class EstimateGenerationLearningEvidenceServiceTest extends TestCase
 {
+    private static int $datasetVersionSequence = 0;
+
     public function test_positive_examples_for_similar_work_boost_same_norm_code(): void
     {
         $organization = Organization::factory()->create();
@@ -210,7 +212,7 @@ final class EstimateGenerationLearningEvidenceServiceTest extends TestCase
     {
         $versionId = (int) DB::table('estimate_dataset_versions')->insertGetId([
             'source_type' => 'fsnb_2022',
-            'version_key' => '2026-05-30',
+            'version_key' => sprintf('2026-05-30-%04d', ++self::$datasetVersionSequence),
             'bucket' => 'test',
             'prefix' => 'test',
             'status' => 'parsed',

@@ -18,7 +18,7 @@ return new class extends Migration
             $table->string('label');
             $table->string('channel_type', 64);
             $table->boolean('is_active')->default(true);
-            $table->jsonb('settings')->default(DB::raw("'{}'::jsonb"));
+            $table->jsonb('settings')->default($this->jsonbDefault('{}'));
             $table->foreignId('created_by_user_id')->nullable()->constrained('users')->nullOnDelete();
             $table->foreignId('updated_by_user_id')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamps();
@@ -49,8 +49,8 @@ return new class extends Migration
             $table->string('category', 32)->default('open');
             $table->unsignedSmallInteger('sort_order')->default(0);
             $table->unsignedSmallInteger('probability_percent')->nullable();
-            $table->jsonb('required_fields')->default(DB::raw("'[]'::jsonb"));
-            $table->jsonb('required_links')->default(DB::raw("'[]'::jsonb"));
+            $table->jsonb('required_fields')->default($this->jsonbDefault('[]'));
+            $table->jsonb('required_links')->default($this->jsonbDefault('[]'));
             $table->boolean('is_terminal')->default(false);
             $table->timestamps();
 
@@ -72,7 +72,7 @@ return new class extends Migration
             $table->text('name');
             $table->text('legal_name')->nullable();
             $table->string('company_type', 32)->default('legal_entity');
-            $table->jsonb('roles')->default(DB::raw("'[]'::jsonb"));
+            $table->jsonb('roles')->default($this->jsonbDefault('[]'));
             $table->string('status', 32)->default('new');
             $table->string('inn', 32)->nullable();
             $table->string('kpp', 32)->nullable();
@@ -82,8 +82,8 @@ return new class extends Migration
             $table->string('website')->nullable();
             $table->text('legal_address')->nullable();
             $table->text('actual_address')->nullable();
-            $table->jsonb('tags')->default(DB::raw("'[]'::jsonb"));
-            $table->jsonb('custom_fields')->default(DB::raw("'{}'::jsonb"));
+            $table->jsonb('tags')->default($this->jsonbDefault('[]'));
+            $table->jsonb('custom_fields')->default($this->jsonbDefault('{}'));
             $table->text('notes')->nullable();
             $table->timestampTz('last_activity_at')->nullable();
             $table->foreignId('created_by_user_id')->nullable()->constrained('users')->nullOnDelete();
@@ -120,7 +120,7 @@ return new class extends Migration
             $table->string('position')->nullable();
             $table->string('phone', 64)->nullable();
             $table->string('email')->nullable();
-            $table->jsonb('messengers')->default(DB::raw("'{}'::jsonb"));
+            $table->jsonb('messengers')->default($this->jsonbDefault('{}'));
             $table->boolean('is_primary')->default(false);
             $table->string('status', 32)->default('active');
             $table->timestampTz('personal_data_consent_at')->nullable();
@@ -158,7 +158,7 @@ return new class extends Migration
             $table->text('normalized_value')->nullable();
             $table->boolean('is_primary')->default(false);
             $table->boolean('is_verified')->default(false);
-            $table->jsonb('metadata')->default(DB::raw("'{}'::jsonb"));
+            $table->jsonb('metadata')->default($this->jsonbDefault('{}'));
             $table->timestamps();
             $table->softDeletes();
 
@@ -177,7 +177,7 @@ return new class extends Migration
             $table->text('value');
             $table->text('normalized_value')->nullable();
             $table->string('source', 64)->nullable();
-            $table->jsonb('metadata')->default(DB::raw("'{}'::jsonb"));
+            $table->jsonb('metadata')->default($this->jsonbDefault('{}'));
             $table->timestamps();
             $table->softDeletes();
 
@@ -203,8 +203,8 @@ return new class extends Migration
             $table->decimal('estimated_amount', 18, 2)->nullable();
             $table->date('expected_start_date')->nullable();
             $table->text('need_description')->nullable();
-            $table->jsonb('utm')->default(DB::raw("'{}'::jsonb"));
-            $table->jsonb('raw_source_data')->default(DB::raw("'{}'::jsonb"));
+            $table->jsonb('utm')->default($this->jsonbDefault('{}'));
+            $table->jsonb('raw_source_data')->default($this->jsonbDefault('{}'));
             $table->text('lost_reason')->nullable();
             $table->timestampTz('converted_at')->nullable();
             $table->foreignId('created_by_user_id')->nullable()->constrained('users')->nullOnDelete();
@@ -244,7 +244,7 @@ return new class extends Migration
             $table->timestampTz('lost_at')->nullable();
             $table->text('lost_reason')->nullable();
             $table->timestampTz('next_activity_at')->nullable();
-            $table->jsonb('custom_fields')->default(DB::raw("'{}'::jsonb"));
+            $table->jsonb('custom_fields')->default($this->jsonbDefault('{}'));
             $table->foreignId('created_by_user_id')->nullable()->constrained('users')->nullOnDelete();
             $table->foreignId('updated_by_user_id')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamps();
@@ -311,8 +311,8 @@ return new class extends Migration
             $table->unsignedInteger('warning_rows')->default(0);
             $table->unsignedInteger('blocked_rows')->default(0);
             $table->unsignedSmallInteger('progress_percent')->default(0);
-            $table->jsonb('mapping')->default(DB::raw("'{}'::jsonb"));
-            $table->jsonb('summary')->default(DB::raw("'{}'::jsonb"));
+            $table->jsonb('mapping')->default($this->jsonbDefault('{}'));
+            $table->jsonb('summary')->default($this->jsonbDefault('{}'));
             $table->foreignId('uploaded_by_user_id')->nullable()->constrained('users')->nullOnDelete();
             $table->foreignId('confirmed_by_user_id')->nullable()->constrained('users')->nullOnDelete();
             $table->timestampTz('confirmed_at')->nullable();
@@ -327,13 +327,13 @@ return new class extends Migration
             $table->uuid('id')->primary();
             $table->uuid('batch_id');
             $table->unsignedInteger('row_number');
-            $table->jsonb('raw_values')->default(DB::raw("'{}'::jsonb"));
-            $table->jsonb('normalized_values')->default(DB::raw("'{}'::jsonb"));
+            $table->jsonb('raw_values')->default($this->jsonbDefault('{}'));
+            $table->jsonb('normalized_values')->default($this->jsonbDefault('{}'));
             $table->string('decision', 32)->default('create');
             $table->string('status', 32)->default('accepted');
-            $table->jsonb('validation_errors')->default(DB::raw("'[]'::jsonb"));
-            $table->jsonb('validation_warnings')->default(DB::raw("'[]'::jsonb"));
-            $table->jsonb('duplicate_candidates')->default(DB::raw("'[]'::jsonb"));
+            $table->jsonb('validation_errors')->default($this->jsonbDefault('[]'));
+            $table->jsonb('validation_warnings')->default($this->jsonbDefault('[]'));
+            $table->jsonb('duplicate_candidates')->default($this->jsonbDefault('[]'));
             $table->uuid('created_entity_id')->nullable();
             $table->timestamps();
 
@@ -351,9 +351,9 @@ return new class extends Migration
             $table->uuid('duplicate_id');
             $table->foreignId('actor_user_id')->nullable()->constrained('users')->nullOnDelete();
             $table->text('reason')->nullable();
-            $table->jsonb('before')->default(DB::raw("'{}'::jsonb"));
-            $table->jsonb('after')->default(DB::raw("'{}'::jsonb"));
-            $table->jsonb('affected_links')->default(DB::raw("'{}'::jsonb"));
+            $table->jsonb('before')->default($this->jsonbDefault('{}'));
+            $table->jsonb('after')->default($this->jsonbDefault('{}'));
+            $table->jsonb('affected_links')->default($this->jsonbDefault('{}'));
             $table->timestampTz('created_at');
 
             $table->index(['organization_id', 'entity_type']);
@@ -369,12 +369,21 @@ return new class extends Migration
             $table->uuid('entity_id');
             $table->string('event_type', 64);
             $table->text('summary');
-            $table->jsonb('metadata')->default(DB::raw("'{}'::jsonb"));
+            $table->jsonb('metadata')->default($this->jsonbDefault('{}'));
             $table->timestampTz('created_at');
 
             $table->index(['organization_id', 'entity_type', 'entity_id'], 'crm_timeline_entity_idx');
             $table->index(['organization_id', 'created_at']);
         });
+    }
+
+    private function jsonbDefault(string $json): mixed
+    {
+        if (Schema::getConnection()->getDriverName() === 'pgsql') {
+            return DB::raw("'" . str_replace("'", "''", $json) . "'::jsonb");
+        }
+
+        return $json;
     }
 
     public function down(): void

@@ -66,7 +66,9 @@ final class EstimateGenerationFinalWorkItemGuard
 
         if (
             in_array('quantity_review_required', $flags, true)
+            || in_array('document_takeoff_required', $flags, true)
             || (string) ($workItem['pricing_blocker'] ?? '') === 'quantity_review_required'
+            || (string) ($workItem['pricing_blocker'] ?? '') === 'document_takeoff_required'
         ) {
             return true;
         }

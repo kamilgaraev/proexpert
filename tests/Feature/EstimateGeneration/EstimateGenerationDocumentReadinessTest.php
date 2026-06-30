@@ -165,7 +165,15 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
             'quality_score' => $status === 'ready' ? 0.92 : null,
             'quality_level' => $status === 'ready' ? 'good' : null,
             'quality_flags' => [],
-            'facts_summary' => [],
+            'facts_summary' => $status === 'ready' ? [
+                'document_understanding' => [
+                    'role_for_estimation' => 'drawing_architecture',
+                    'extracted_capabilities' => [
+                        'has_quantities' => true,
+                        'requires_manual_review' => false,
+                    ],
+                ],
+            ] : [],
         ]);
     }
 

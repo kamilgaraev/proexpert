@@ -33,6 +33,19 @@ final class DocumentEvidencePolicyTest extends TestCase
         self::assertTrue(DocumentEvidencePolicy::canUseScopeEvidence($this->documentWithRole('context_document')));
     }
 
+    public function test_drawing_with_extracted_quantities_can_supply_quantity_evidence(): void
+    {
+        self::assertTrue(DocumentEvidencePolicy::canUseQuantityEvidence($this->documentWithRole('drawing_architecture', [
+            'has_quantities' => true,
+            'requires_manual_review' => false,
+        ])));
+
+        self::assertFalse(DocumentEvidencePolicy::canUseQuantityEvidence($this->documentWithRole('drawing_architecture', [
+            'has_quantities' => true,
+            'requires_manual_review' => true,
+        ])));
+    }
+
     public function test_reference_estimate_and_needs_review_are_not_primary_evidence(): void
     {
         foreach (['reference_estimate', 'needs_review'] as $role) {
@@ -45,7 +58,7 @@ final class DocumentEvidencePolicyTest extends TestCase
     /**
      * @return array<string, mixed>
      */
-    private function documentWithRole(string $role): array
+    private function documentWithRole(string $role, array $capabilities = []): array
     {
         return [
             'status' => 'ready',
@@ -55,6 +68,7 @@ final class DocumentEvidencePolicyTest extends TestCase
             'facts_summary' => [
                 'document_understanding' => [
                     'role_for_estimation' => $role,
+                    'extracted_capabilities' => $capabilities,
                 ],
             ],
         ];

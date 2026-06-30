@@ -40,6 +40,10 @@ class NormativeUnitNormalizerTest extends TestCase
     {
         $this->assertTrue(NormativeUnitNormalizer::compatible('1000 м³', 'м3'));
         $this->assertTrue(NormativeUnitNormalizer::compatible('100 м²', 'м2'));
+        $this->assertTrue(NormativeUnitNormalizer::compatible('m3', 'м3'));
+        $this->assertTrue(NormativeUnitNormalizer::compatible('m²', 'м2'));
+        $this->assertTrue(NormativeUnitNormalizer::compatible('sqm', 'м2'));
+        $this->assertTrue(NormativeUnitNormalizer::compatible('cbm', 'м3'));
         $this->assertTrue(NormativeUnitNormalizer::compatible('100 м³', 'м3'));
         $this->assertTrue(NormativeUnitNormalizer::compatible('100 пог. м', 'м'));
         $this->assertSame(0.001, NormativeUnitNormalizer::quantityFactor('м3', '1000 м³'));

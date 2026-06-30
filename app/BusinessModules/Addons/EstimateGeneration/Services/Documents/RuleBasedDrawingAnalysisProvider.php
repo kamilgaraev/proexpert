@@ -234,31 +234,104 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
 
     private function dimensionElements(int $documentId, string $filename, OcrPageResult $page, string $line): array
     {
-        if (preg_match('/(?<length>\d+(?:[,.]\d+)?)\s*[xх×]\s*(?<width>\d+(?:[,.]\d+)?)/iu', $line, $match) !== 1) {
-            return [];
+        if (preg_match('/(?<length>\d+(?:[,.]\d+)?)\s*[xх×]\s*(?<width>\d+(?:[,.]\d+)?)/iu', $line, $match) === 1) {
+            $length = $this->number($match['length']);
+            $width = $this->number($match['width']);
+
+            return [[
+                'type' => 'dimension',
+                'label' => 'Размер',
+                'value_text' => $match['length'] . 'x' . $match['width'],
+                'value_number' => null,
+                'unit' => null,
+                'bbox' => null,
+                'geometry' => null,
+                'confidence' => $this->confidence($page),
+                'source_ref' => $this->sourceRef($documentId, $filename, $page, $line),
+                'normalized_payload' => [
+                    'dimension_kind' => 'pair',
+                    'length' => $length,
+                    'width' => $width,
+                    'length_mm' => $length,
+                    'width_mm' => $width,
+                ],
+                'page_number' => $page->pageNumber,
+            ]];
         }
 
-        $length = $this->number($match['length']);
-        $width = $this->number($match['width']);
+        $linearDimension = $this->linearDimensionFromLine($line);
+
+        if ($linearDimension === null) {
+            return [];
+        }
 
         return [[
             'type' => 'dimension',
             'label' => 'Размер',
-            'value_text' => $match['length'] . 'x' . $match['width'],
-            'value_number' => null,
-            'unit' => null,
+            'value_text' => $linearDimension['value_text'],
+            'value_number' => $linearDimension['value_mm'],
+            'unit' => 'мм',
             'bbox' => null,
             'geometry' => null,
-            'confidence' => $this->confidence($page),
+            'confidence' => max($this->confidence($page) - 0.08, 0.35),
             'source_ref' => $this->sourceRef($documentId, $filename, $page, $line),
             'normalized_payload' => [
-                'length' => $length,
-                'width' => $width,
-                'length_mm' => $length,
-                'width_mm' => $width,
+                'dimension_kind' => 'linear',
+                'line' => $line,
+                'value_mm' => $linearDimension['value_mm'],
+                'value_m' => $linearDimension['value_m'],
             ],
             'page_number' => $page->pageNumber,
         ]];
+    }
+
+    /**
+     * @return array{value_text: string, value_mm: float, value_m: float}|null
+     */
+    private function linearDimensionFromLine(string $line): ?array
+    {
+        $line = trim((string) preg_replace('/\s+/u', ' ', $line));
+
+        if ($line === '' || $this->looksLikeNonDimensionNumericLine($line)) {
+            return null;
+        }
+
+        if (preg_match('/^(?<value>\d{3,5}|\d{1,2}[\s\x{00A0}]\d{3})(?:\s*(?<unit>mm|m|мм|м))?$/iu', $line, $match) !== 1) {
+            return null;
+        }
+
+        $rawValue = str_replace(["\xC2\xA0", ' '], '', (string) $match['value']);
+        $value = $this->number($rawValue);
+        $unit = mb_strtolower((string) ($match['unit'] ?? ''));
+        $valueM = ($unit === 'm' || $unit === 'м') && $value <= 50
+            ? $value
+            : $value / 1000;
+
+        if ($valueM < 0.5 || $valueM > 50) {
+            return null;
+        }
+
+        return [
+            'value_text' => $rawValue,
+            'value_mm' => round($valueM * 1000, 3),
+            'value_m' => round($valueM, 3),
+        ];
+    }
+
+    private function looksLikeNonDimensionNumericLine(string $line): bool
+    {
+        $normalized = mb_strtolower($line);
+
+        if (preg_match('/(?:\d{2}-\d{2}-\d{3}|[,.]\d{1,2}\s*(?:м2|м²|m2|m²)|%|₽|rub|руб)/iu', $normalized) === 1) {
+            return true;
+        }
+
+        return $this->containsAny($normalized, [
+            'масштаб',
+            'смет',
+            'цен',
+            'итог',
+        ]);
     }
 
     private function roomTakeoffs(int $documentId, string $filename, OcrPageResult $page, string $line): array
@@ -935,6 +1008,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                     'length_m' => $roomGeometry['length_m'],
                     'width_m' => $roomGeometry['width_m'],
                     'perimeter_m' => $roomGeometry['perimeter_m'],
+                    'basis' => $roomGeometry['basis'] ?? 'dimension_geometry',
                 ];
 
                 foreach ($roomGeometry['source_refs'] as $sourceRef) {
@@ -987,7 +1061,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 confidence: min($confidence + 0.03, 0.98),
                 sourceRefs: $sourceRefs,
                 roomCount: $roomCount,
-                reviewRequired: true
+                reviewRequired: false
             ),
             $this->aggregateTakeoff(
                 scopeKey: 'rough_floor_area',
@@ -998,7 +1072,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 confidence: min($confidence + 0.02, 0.98),
                 sourceRefs: $sourceRefs,
                 roomCount: $roomCount,
-                reviewRequired: true
+                reviewRequired: false
             ),
             $this->aggregateTakeoff(
                 scopeKey: 'ceiling_finish_area',
@@ -1147,7 +1221,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         return array_values(array_filter(
             $elements,
             fn (array $element): bool => ($element['type'] ?? null) === 'dimension'
-                && $this->dimensionPairMeters($element) !== null
+                && ($this->dimensionPairMeters($element) !== null || $this->linearDimensionMeters($element) !== null)
                 && !$this->isOpeningDimensionElement($element)
         ));
     }
@@ -1155,7 +1229,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     /**
      * @param array<string, mixed> $roomTakeoff
      * @param array<int, array<string, mixed>> $dimensionElements
-     * @return array{length_m: float, width_m: float, perimeter_m: float, source_refs: array<int, array<string, mixed>>}|null
+     * @return array{length_m: float, width_m: float, perimeter_m: float, basis: string, source_refs: array<int, array<string, mixed>>}|null
      */
     private function roomGeometryFromDimensions(array $roomTakeoff, array $dimensionElements, float $area): ?array
     {
@@ -1176,6 +1250,22 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         }
 
         $roomPage = $this->nullableInt($roomSourceRef['page_number'] ?? null);
+        $dimensionPairGeometry = $this->roomGeometryFromDimensionPairs($dimensionElements, $area, $roomBbox, $roomPage);
+
+        if ($dimensionPairGeometry !== null) {
+            return $dimensionPairGeometry;
+        }
+
+        return $this->roomGeometryFromOrthogonalDimensions($dimensionElements, $area, $roomBbox, $roomPage);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $dimensionElements
+     * @param array<string, float> $roomBbox
+     * @return array{length_m: float, width_m: float, perimeter_m: float, basis: string, source_refs: array<int, array<string, mixed>>}|null
+     */
+    private function roomGeometryFromDimensionPairs(array $dimensionElements, float $area, array $roomBbox, ?int $roomPage): ?array
+    {
         $best = null;
 
         foreach ($dimensionElements as $element) {
@@ -1226,6 +1316,109 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             'length_m' => round((float) $best['length_m'], 3),
             'width_m' => round((float) $best['width_m'], 3),
             'perimeter_m' => round(((float) $best['length_m'] + (float) $best['width_m']) * 2, 2),
+            'basis' => 'dimension_pair_geometry',
+            'source_refs' => $best['source_refs'],
+        ];
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $dimensionElements
+     * @param array<string, float> $roomBbox
+     * @return array{length_m: float, width_m: float, perimeter_m: float, basis: string, source_refs: array<int, array<string, mixed>>}|null
+     */
+    private function roomGeometryFromOrthogonalDimensions(array $dimensionElements, float $area, array $roomBbox, ?int $roomPage): ?array
+    {
+        $horizontal = [];
+        $vertical = [];
+
+        foreach ($dimensionElements as $element) {
+            $lengthM = $this->linearDimensionMeters($element);
+
+            if ($lengthM === null) {
+                continue;
+            }
+
+            $sourceRef = is_array($element['source_ref'] ?? null) ? $element['source_ref'] : [];
+            $dimensionPage = $this->nullableInt($sourceRef['page_number'] ?? $element['page_number'] ?? null);
+
+            if ($roomPage !== null && $dimensionPage !== null && $roomPage !== $dimensionPage) {
+                continue;
+            }
+
+            $dimensionBbox = $this->normalizedBbox($element['bbox'] ?? $sourceRef['bbox'] ?? null);
+
+            if ($dimensionBbox === null) {
+                continue;
+            }
+
+            $orientation = $this->dimensionOrientation($dimensionBbox);
+
+            if ($orientation === 'unknown') {
+                continue;
+            }
+
+            $distance = $this->bboxCenterDistance($roomBbox, $dimensionBbox);
+            $limit = $this->dimensionMatchDistanceLimit($roomBbox, $dimensionBbox);
+
+            if ($distance > $limit) {
+                continue;
+            }
+
+            $candidate = [
+                'length_m' => $lengthM,
+                'distance_score' => $distance / max($limit, 0.0001),
+                'source_ref' => $sourceRef,
+            ];
+
+            if ($orientation === 'horizontal') {
+                $horizontal[] = $candidate;
+            } else {
+                $vertical[] = $candidate;
+            }
+        }
+
+        $best = null;
+
+        foreach ($horizontal as $horizontalDimension) {
+            foreach ($vertical as $verticalDimension) {
+                $lengthM = max((float) $horizontalDimension['length_m'], (float) $verticalDimension['length_m']);
+                $widthM = min((float) $horizontalDimension['length_m'], (float) $verticalDimension['length_m']);
+
+                if (!$this->isDimensionAreaPlausible($area, $lengthM, $widthM)) {
+                    continue;
+                }
+
+                $dimensionArea = $lengthM * $widthM;
+                $areaPenalty = abs($dimensionArea - $area) / max($area, 0.01);
+                $score = (float) $horizontalDimension['distance_score']
+                    + (float) $verticalDimension['distance_score']
+                    + ($areaPenalty * 1.5);
+
+                if ($best === null || $score < $best['score']) {
+                    $sourceRefs = array_values(array_filter([
+                        $horizontalDimension['source_ref'] ?? null,
+                        $verticalDimension['source_ref'] ?? null,
+                    ], 'is_array'));
+
+                    $best = [
+                        'length_m' => $lengthM,
+                        'width_m' => $widthM,
+                        'score' => $score,
+                        'source_refs' => $sourceRefs,
+                    ];
+                }
+            }
+        }
+
+        if ($best === null) {
+            return null;
+        }
+
+        return [
+            'length_m' => round((float) $best['length_m'], 3),
+            'width_m' => round((float) $best['width_m'], 3),
+            'perimeter_m' => round(((float) $best['length_m'] + (float) $best['width_m']) * 2, 2),
+            'basis' => 'orthogonal_dimension_geometry',
             'source_refs' => $best['source_refs'],
         ];
     }
@@ -1270,6 +1463,42 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             'length_m' => round($lengthM, 3),
             'width_m' => round($widthM, 3),
         ];
+    }
+
+    private function linearDimensionMeters(array $element): ?float
+    {
+        $payload = is_array($element['normalized_payload'] ?? null) ? $element['normalized_payload'] : [];
+        $valueM = $this->numericValue($payload['value_m'] ?? null);
+
+        if ($valueM === null) {
+            $valueMm = $this->numericValue($payload['value_mm'] ?? null);
+            $valueM = $valueMm !== null ? $valueMm / 1000 : null;
+        }
+
+        if ($valueM === null || $valueM < 0.5 || $valueM > 50) {
+            return null;
+        }
+
+        return round($valueM, 3);
+    }
+
+    /**
+     * @param array<string, float> $bbox
+     */
+    private function dimensionOrientation(array $bbox): string
+    {
+        $width = max((float) ($bbox['width'] ?? 0.0), 0.0001);
+        $height = max((float) ($bbox['height'] ?? 0.0), 0.0001);
+
+        if ($width >= $height * 1.8) {
+            return 'horizontal';
+        }
+
+        if ($height >= $width * 1.8) {
+            return 'vertical';
+        }
+
+        return 'unknown';
     }
 
     private function isDimensionAreaPlausible(float $area, float $lengthM, float $widthM): bool

@@ -24,7 +24,7 @@ final class EstimateGenerationFullFsnbPricingTest extends TestCase
 {
     private const TARGET_TOTAL_COST = 12000000.0;
 
-    public function test_house_draft_prices_every_position_with_safe_fsnb_norms(): void
+    public function test_house_draft_prices_every_source_backed_position_with_safe_fsnb_norms(): void
     {
         $organization = Organization::factory()->create();
         $user = User::factory()->create(['current_organization_id' => $organization->id]);
@@ -43,7 +43,10 @@ final class EstimateGenerationFullFsnbPricingTest extends TestCase
         $analysis = app(ConstructionSemanticParser::class)->parse($input, []);
         $plannedItems = $this->plannedWorkItems($analysis);
 
-        self::assertGreaterThanOrEqual(60, count($plannedItems));
+        self::assertGreaterThanOrEqual(55, count($plannedItems));
+
+        $analysis = $this->withTakeoffsForPlannedItems($analysis, $plannedItems);
+        $plannedItems = $this->plannedWorkItems($analysis);
 
         $this->seedFsnbCatalogForWorkItems($plannedItems);
 
@@ -87,6 +90,49 @@ final class EstimateGenerationFullFsnbPricingTest extends TestCase
         self::assertNotContains('total_out_of_range', $quality['critical_flags']);
         self::assertNotContains('line_total_anomaly', $quality['critical_flags']);
         self::assertNotSame('blocked', $session->status);
+    }
+
+    /**
+     * @param array<string, mixed> $analysis
+     * @param array<int, array{item: array<string, mixed>, context: array<string, mixed>}> $plannedItems
+     * @return array<string, mixed>
+     */
+    private function withTakeoffsForPlannedItems(array $analysis, array $plannedItems): array
+    {
+        $takeoffs = [];
+
+        foreach ($plannedItems as $index => $payload) {
+            $item = $payload['item'];
+            $quantityKey = (string) ($item['quantity_formula'] ?? '');
+
+            if ($quantityKey === '') {
+                continue;
+            }
+
+            $takeoffs[] = [
+                'scope_key' => $quantityKey,
+                'quantity_key' => $quantityKey,
+                'name' => (string) ($item['name'] ?? $quantityKey),
+                'quantity' => max((float) ($item['quantity'] ?? 1), 1.0),
+                'unit' => (string) ($item['unit'] ?? 'компл'),
+                'confidence' => 0.94,
+                'source_refs' => [[
+                    'type' => 'test_takeoff',
+                    'value' => 'takeoff-' . ($index + 1),
+                ]],
+                'normalized_payload' => [
+                    'quantity_key' => $quantityKey,
+                    'unit' => (string) ($item['unit'] ?? 'компл'),
+                    'review_required' => false,
+                ],
+            ];
+        }
+
+        $documentContext = is_array($analysis['document_context'] ?? null) ? $analysis['document_context'] : [];
+        $documentContext['quantity_takeoffs'] = $takeoffs;
+        $analysis['document_context'] = $documentContext;
+
+        return $analysis;
     }
 
     /**

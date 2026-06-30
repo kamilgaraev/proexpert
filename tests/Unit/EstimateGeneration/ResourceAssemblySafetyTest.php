@@ -29,6 +29,7 @@ final class ResourceAssemblySafetyTest extends TestCase
         $container = new Container();
         $loader = new FileLoader(new Filesystem(), dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'lang');
         $translator = new Translator($loader, 'ru');
+        $config = new Repository(['app' => ['fallback_locale' => 'ru']]);
 
         $container->instance('app', new class {
             public function getLocale(): string
@@ -36,9 +37,15 @@ final class ResourceAssemblySafetyTest extends TestCase
                 return 'ru';
             }
         });
-        $container->instance('config', new Repository(['app' => ['fallback_locale' => 'ru']]));
+        $container->instance('config', $config);
+        $container->instance(\Illuminate\Contracts\Config\Repository::class, $config);
         $container->instance('translator', $translator);
+        $container->instance(\Illuminate\Contracts\Translation\Translator::class, $translator);
+        $container->instance('log', new class {
+            public function warning(string $message, array $context = []): void {}
+        });
 
+        Facade::clearResolvedInstances();
         Facade::setFacadeApplication($container);
         Container::setInstance($container);
     }
