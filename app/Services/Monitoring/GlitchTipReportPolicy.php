@@ -144,7 +144,7 @@ class GlitchTipReportPolicy
 
     private function isRecoverableRagOrganizationEstimateMaxAttempts(Throwable $exception): bool
     {
-        if (! $exception instanceof MaxAttemptsExceededException) {
+        if ($exception::class !== MaxAttemptsExceededException::class) {
             return false;
         }
 

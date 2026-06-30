@@ -19,6 +19,7 @@ use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Http\Exceptions\PostTooLargeException;
 use Illuminate\Http\Request;
 use Illuminate\Queue\MaxAttemptsExceededException;
+use Illuminate\Queue\TimeoutExceededException;
 use Illuminate\Support\MessageBag;
 use Illuminate\Validation\ValidationException;
 use PDOException;
@@ -140,6 +141,21 @@ class GlitchTipReportPolicyTest extends TestCase
             IndexRagSourceJob::class,
             'O:66:"App\\BusinessModules\\Features\\AIAssistant\\Jobs\\IndexRagSourceJob":4:{'
             .'s:14:"organizationId";i:39;s:9:"projectId";i:55;s:10:"sourceType";s:8:"estimate";s:5:"runId";i:77091;}'
+        );
+
+        self::assertTrue($policy->shouldCapture($exception));
+    }
+
+    public function test_captures_org_wide_rag_estimate_timeouts(): void
+    {
+        $policy = new GlitchTipReportPolicy($this->config());
+        $exception = new TimeoutExceededException(
+            IndexRagSourceJob::class.' has timed out.'
+        );
+        $exception->job = self::queueJob(
+            IndexRagSourceJob::class,
+            'O:66:"App\\BusinessModules\\Features\\AIAssistant\\Jobs\\IndexRagSourceJob":4:{'
+            .'s:14:"organizationId";i:39;s:9:"projectId";N;s:10:"sourceType";s:8:"estimate";s:5:"runId";i:77091;}'
         );
 
         self::assertTrue($policy->shouldCapture($exception));
