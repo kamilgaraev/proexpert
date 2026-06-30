@@ -103,6 +103,47 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
         self::assertContains('title_block', $result->summary['page_profiles'][0]['signals'] ?? []);
     }
 
+    public function test_extracts_compact_opening_marks_without_dimension_separator(): void
+    {
+        $recognition = new OcrRecognitionResult(
+            provider: 'test',
+            model: 'page',
+            pages: [
+                new OcrPageResult(
+                    pageNumber: 1,
+                    text: implode("\n", [
+                        'АР-2 План первого этажа',
+                        'ОК-1 1080 1650',
+                        'ДП-1 900 2100 5 шт',
+                    ]),
+                    confidence: 0.9
+                ),
+            ]
+        );
+
+        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+            documentId: 10,
+            filename: 'АР-2.pdf',
+            recognition: $recognition
+        );
+
+        $takeoffsByKey = [];
+
+        foreach ($result->takeoffs as $takeoff) {
+            $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
+            $takeoffsByKey[(string) ($payload['quantity_key'] ?? '')] = $takeoff;
+        }
+
+        self::assertArrayHasKey('openings.windows', $takeoffsByKey);
+        self::assertArrayHasKey('openings.doors', $takeoffsByKey);
+        self::assertSame(1.0, $takeoffsByKey['openings.windows']['quantity']);
+        self::assertSame(5.0, $takeoffsByKey['openings.doors']['quantity']);
+        self::assertSame(1080, $takeoffsByKey['openings.windows']['normalized_payload']['width_mm']);
+        self::assertSame(1650, $takeoffsByKey['openings.windows']['normalized_payload']['height_mm']);
+        self::assertSame(900, $takeoffsByKey['openings.doors']['normalized_payload']['width_mm']);
+        self::assertSame(2100, $takeoffsByKey['openings.doors']['normalized_payload']['height_mm']);
+    }
+
     public function test_extracts_axis_labels_from_drawing_text(): void
     {
         $recognition = new OcrRecognitionResult(

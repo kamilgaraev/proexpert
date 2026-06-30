@@ -482,7 +482,10 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
 
     private function openingElements(int $documentId, string $filename, OcrPageResult $page, string $line): array
     {
-        if (preg_match('/(?<label>(?:окно|дверь|ворота|ок|дп|ду)[\w\- ]*)\s+(?<width>\d{2,5})\s*[xх×]\s*(?<height>\d{2,5})(?:\s*[-–]\s*(?<count>\d+)\s*шт)?/iu', $line, $match) !== 1) {
+        if (
+            preg_match('/(?<label>(?:окно|дверь|ворота|ок|дп|ду)[\w\- ]*)\s+(?<width>\d{2,5})\s*[xх×]\s*(?<height>\d{2,5})(?:\s*[-–]\s*(?<count>\d+)\s*шт)?/iu', $line, $match) !== 1
+            && preg_match('/(?<label>(?:окно|дверь|ворота|ок|дп|ду)[\p{L}\p{N}_\- ]*?)\s+(?<width>\d{3,5})\s+(?<height>\d{3,5})(?:\s*(?:[-–]\s*)?(?<count>\d+)\s*шт)?/iu', $line, $match) !== 1
+        ) {
             return [];
         }
 
