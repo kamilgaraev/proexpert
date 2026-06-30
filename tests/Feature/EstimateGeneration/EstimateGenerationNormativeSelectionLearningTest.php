@@ -52,6 +52,7 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
         $this->assertSame($normId, $example->estimate_norm_id);
         $this->assertSame('01-01-006-01', $example->norm_code);
         $this->assertSame('foundation.concrete', $example->context_payload['work_item_key']);
+        $this->assertSame('offered_candidate', $example->context_payload['selection_source']);
         $this->assertCount(1, $example->context_payload['offered_candidates']);
         $this->assertSame(13.8, $example->context_payload['quantity_snapshot']['quantity']);
         $this->assertSame(
@@ -65,6 +66,33 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
         );
         $this->assertSame($user->id, $session->fresh()->user_id);
         $this->assertSame($project->id, $session->fresh()->project_id);
+    }
+
+    public function test_catalog_search_normative_selection_creates_positive_learning_example_without_offered_candidate(): void
+    {
+        [, , $session] = $this->makeSession();
+        $normId = $this->seedNormative('01-01-006-01', 'Foundation concrete B22.5', 'm3');
+        $this->createPackageItem($session, 'foundation.concrete');
+        $draftPayload = $this->draftPayload($normId);
+        $draftPayload['local_estimates'][0]['sections'][0]['work_items'][0]['normative_candidates'] = [];
+
+        $session->forceFill([
+            'draft_payload' => $draftPayload,
+        ])->save();
+
+        app(NormativeCandidateSelectionService::class)->select($session, 'foundation.concrete', $normId, true);
+
+        $example = EstimateGenerationLearningExample::query()->firstOrFail();
+
+        $this->assertSame('user_selection', $example->source_type);
+        $this->assertTrue($example->is_positive);
+        $this->assertSame($normId, $example->estimate_norm_id);
+        $this->assertSame('01-01-006-01', $example->norm_code);
+        $this->assertSame('foundation.concrete', $example->context_payload['work_item_key']);
+        $this->assertSame('catalog_search', $example->context_payload['selection_source']);
+        $this->assertSame($normId, $example->context_payload['selected_norm_id']);
+        $this->assertSame('01-01-006-01', $example->context_payload['selected_normative_code']);
+        $this->assertSame([], $example->context_payload['offered_candidates']);
     }
 
     public function test_normative_rejection_feedback_creates_negative_learning_example(): void
