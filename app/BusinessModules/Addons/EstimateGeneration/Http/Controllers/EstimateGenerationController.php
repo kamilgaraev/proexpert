@@ -495,6 +495,15 @@ class EstimateGenerationController extends Controller
                 $request->validated('selection_source') === 'catalog_search'
             );
 
+            if ($request->validated('response_scope') === 'review_queue') {
+                $session = $session->fresh() ?? $session;
+
+                return AdminResponse::success([
+                    'session' => $this->sessionPayload($session),
+                    'review_queue' => $this->reviewItemService->forSession($session),
+                ], trans_message('estimate_generation.normative_candidate_selected'));
+            }
+
             return AdminResponse::success(
                 (new EstimateGenerationSessionResource($session->fresh(['documents'])))->resolve(),
                 trans_message('estimate_generation.normative_candidate_selected')
@@ -582,8 +591,10 @@ class EstimateGenerationController extends Controller
                 return (int) $feedback->id;
             });
 
+            $responseScope = (string) ($request->validated('response_scope') ?? 'full');
+
             return AdminResponse::success(
-                $this->feedbackPayload($session->fresh() ?? $session, $feedbackId),
+                $this->feedbackPayload($session->fresh() ?? $session, $feedbackId, $responseScope),
                 trans_message('estimate_generation.feedback_saved')
             );
         } catch (ValidationException $e) {
@@ -625,16 +636,24 @@ class EstimateGenerationController extends Controller
     /**
      * @return array<string, mixed>
      */
-    private function feedbackPayload(EstimateGenerationSession $session, int $feedbackId): array
+    private function feedbackPayload(EstimateGenerationSession $session, int $feedbackId, string $responseScope = 'full'): array
     {
         $session->refresh();
 
-        return [
+        $payload = [
             'feedback_id' => $feedbackId,
             'session' => $this->sessionPayload($session),
+            'review_queue' => $this->reviewItemService->forSession($session),
+        ];
+
+        if ($responseScope === 'review_queue') {
+            return $payload;
+        }
+
+        return [
+            ...$payload,
             'draft' => $session->draft_payload ?? [],
             'packages' => $this->packagePresenter->collection($session->packages()->get()),
-            'review_queue' => $this->reviewItemService->forSession($session),
         ];
     }
 

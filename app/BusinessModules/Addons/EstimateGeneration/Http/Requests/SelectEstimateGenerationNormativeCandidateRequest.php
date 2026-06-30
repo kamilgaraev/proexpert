@@ -22,6 +22,7 @@ class SelectEstimateGenerationNormativeCandidateRequest extends FormRequest
             'work_item_key' => ['required', 'string', 'max:255'],
             'norm_id' => ['required', 'integer'],
             'selection_source' => ['nullable', 'string', 'in:offered_candidate,catalog_search'],
+            'response_scope' => ['nullable', 'string', 'in:full,review_queue'],
         ];
     }
 }

@@ -90,7 +90,9 @@ class NormativeCandidateSelectionService
         }
 
         $draft = $this->validationService->validate($draft);
-        $this->packagePersistenceService->syncFromDraft($session, $draft);
+        if (!$this->packagePersistenceService->syncWorkItemPackageFromDraft($session, $draft, $workItemKey)) {
+            $this->packagePersistenceService->syncFromDraft($session, $draft);
+        }
         if ($learningSelection !== null) {
             [$originalWorkItem, $selectedWorkItem, $context] = $learningSelection;
             $this->learningRecorder->recordUserSelection($session, $originalWorkItem, $selectedWorkItem, $normId, $context);

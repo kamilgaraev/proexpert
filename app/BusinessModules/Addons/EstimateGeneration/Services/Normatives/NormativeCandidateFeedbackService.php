@@ -80,7 +80,13 @@ final class NormativeCandidateFeedbackService
             ),
         };
         $draft = $this->validationService->validate($draft);
-        $this->packagePersistenceService->syncFromDraft($session, $draft);
+        $workItemKey = trim((string) $feedback->work_item_key);
+        $syncedPackage = $workItemKey !== ''
+            && $this->packagePersistenceService->syncWorkItemPackageFromDraft($session, $draft, $workItemKey);
+
+        if (!$syncedPackage) {
+            $this->packagePersistenceService->syncFromDraft($session, $draft);
+        }
 
         $session->forceFill([
             'draft_payload' => $draft,

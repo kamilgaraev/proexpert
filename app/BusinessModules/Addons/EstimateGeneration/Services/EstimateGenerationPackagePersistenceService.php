@@ -28,54 +28,31 @@ class EstimateGenerationPackagePersistenceService
                     continue;
                 }
 
-                $workItems = $this->estimateWorkItems($this->workItems($localEstimate));
-                $quality = $this->packageQuality($localEstimate, $workItems);
-                $itemCounters = $this->itemCounters($workItems);
-                $totalCost = $this->workItemsTotal($workItems);
-                $packageKey = $this->packageKey($localEstimate, (int) $localIndex);
-                $package = EstimateGenerationPackage::query()->updateOrCreate(
-                    [
-                        'session_id' => $session->id,
-                        'key' => $packageKey,
-                    ],
-                    [
-                        'title' => (string) ($localEstimate['title'] ?? 'Локальная смета'),
-                        'scope_type' => (string) ($localEstimate['scope_type'] ?? 'custom'),
-                        'status' => $this->packageStatus($quality),
-                        'generation_stage' => 'quality_check',
-                        'generation_progress' => 100,
-                        'target_items_min' => (int) ($localEstimate['target_items_min'] ?? 0),
-                        'target_items_max' => (int) ($localEstimate['target_items_max'] ?? 0),
-                        'actual_items_count' => $itemCounters['total_items_count'],
-                        'totals' => [
-                            'total_cost' => $totalCost,
-                            ...$itemCounters,
-                        ],
-                        'quality_summary' => $quality,
-                        'assumptions' => $localEstimate['assumptions'] ?? [],
-                        'source_refs' => $localEstimate['source_refs'] ?? [],
-                        'metadata' => [
-                            'generated_from' => 'estimate_generation_v2',
-                        ],
-                        'sort_order' => ($localIndex + 1) * 100,
-                        'finished_at' => now(),
-                        'failed_at' => null,
-                        'cancelled_at' => null,
-                        'last_error_code' => null,
-                    ]
-                );
-
-                EstimateGenerationPackageItem::query()
-                    ->where('package_id', $package->id)
-                    ->delete();
-
-                foreach ($workItems as $workIndex => $workItem) {
-                    EstimateGenerationPackageItem::query()->create($this->itemPayload($package, $workItem, $workIndex));
-                }
+                $this->syncLocalEstimate($session, $localEstimate, (int) $localIndex);
             }
 
             $this->deleteStalePackages($session, $activePackageKeys);
         });
+    }
+
+    /**
+     * @param array<string, mixed> $draft
+     */
+    public function syncWorkItemPackageFromDraft(EstimateGenerationSession $session, array $draft, string $workItemKey): bool
+    {
+        foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
+            if (!is_array($localEstimate) || !$this->localEstimateContainsWorkItem($localEstimate, $workItemKey)) {
+                continue;
+            }
+
+            DB::transaction(function () use ($session, $localEstimate, $localIndex): void {
+                $this->syncLocalEstimate($session, $localEstimate, (int) $localIndex);
+            });
+
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -103,6 +80,77 @@ class EstimateGenerationPackagePersistenceService
     private function packageKey(array $localEstimate, int $localIndex): string
     {
         return (string) ($localEstimate['key'] ?? 'package-' . ($localIndex + 1));
+    }
+
+    /**
+     * @param array<string, mixed> $localEstimate
+     */
+    private function syncLocalEstimate(EstimateGenerationSession $session, array $localEstimate, int $localIndex): void
+    {
+        $workItems = $this->estimateWorkItems($this->workItems($localEstimate));
+        $quality = $this->packageQuality($localEstimate, $workItems);
+        $itemCounters = $this->itemCounters($workItems);
+        $totalCost = $this->workItemsTotal($workItems);
+        $packageKey = $this->packageKey($localEstimate, $localIndex);
+        $package = EstimateGenerationPackage::query()->updateOrCreate(
+            [
+                'session_id' => $session->id,
+                'key' => $packageKey,
+            ],
+            [
+                'title' => (string) ($localEstimate['title'] ?? 'Локальная смета'),
+                'scope_type' => (string) ($localEstimate['scope_type'] ?? 'custom'),
+                'status' => $this->packageStatus($quality),
+                'generation_stage' => 'quality_check',
+                'generation_progress' => 100,
+                'target_items_min' => (int) ($localEstimate['target_items_min'] ?? 0),
+                'target_items_max' => (int) ($localEstimate['target_items_max'] ?? 0),
+                'actual_items_count' => $itemCounters['total_items_count'],
+                'totals' => [
+                    'total_cost' => $totalCost,
+                    ...$itemCounters,
+                ],
+                'quality_summary' => $quality,
+                'assumptions' => $localEstimate['assumptions'] ?? [],
+                'source_refs' => $localEstimate['source_refs'] ?? [],
+                'metadata' => [
+                    'generated_from' => 'estimate_generation_v2',
+                ],
+                'sort_order' => ($localIndex + 1) * 100,
+                'finished_at' => now(),
+                'failed_at' => null,
+                'cancelled_at' => null,
+                'last_error_code' => null,
+            ]
+        );
+
+        EstimateGenerationPackageItem::query()
+            ->where('package_id', $package->id)
+            ->delete();
+
+        foreach ($workItems as $workIndex => $workItem) {
+            EstimateGenerationPackageItem::query()->create($this->itemPayload($package, $workItem, $workIndex));
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $localEstimate
+     */
+    private function localEstimateContainsWorkItem(array $localEstimate, string $workItemKey): bool
+    {
+        foreach ($localEstimate['sections'] ?? [] as $section) {
+            if (!is_array($section)) {
+                continue;
+            }
+
+            foreach ($section['work_items'] ?? [] as $workItem) {
+                if (is_array($workItem) && (string) ($workItem['key'] ?? '') === $workItemKey) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /**

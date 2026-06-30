@@ -66,6 +66,7 @@ class EstimateGenerationFeedbackRequest extends FormRequest
             'action' => ['nullable', 'string', Rule::in(['remove_item', 'keep_item', 'merge_with_existing'])],
             'target_work_item_key' => ['nullable', 'string', 'max:255'],
             'selection_source' => ['nullable', 'string', Rule::in(['offered_candidate', 'catalog_search'])],
+            'response_scope' => ['nullable', 'string', Rule::in(['full', 'review_queue'])],
             'comments' => ['nullable', 'string', 'max:2000'],
         ];
     }
