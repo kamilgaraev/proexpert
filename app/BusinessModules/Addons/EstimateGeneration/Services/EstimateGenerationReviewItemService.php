@@ -263,6 +263,7 @@ final class EstimateGenerationReviewItemService
         $pricingNotCalculated = !$quantityReviewRequired && $this->pricingNotCalculated($workItem, $flags);
         $priceReviewRequired = !$quantityReviewRequired && $this->priceReviewRequired($workItem, $flags);
         $hasAlternative = !$quantityReviewRequired && $this->hasNormativeAlternative($workItem);
+        $hasNormativeResourceReference = !$quantityReviewRequired && $this->hasNormativeResourceReference($workItem);
 
         if (
             !$quantityReviewRequired
@@ -328,6 +329,7 @@ final class EstimateGenerationReviewItemService
                 $priceReviewRequired,
                 $hasAlternative,
                 $genericReviewRequired,
+                $hasNormativeResourceReference,
             ),
             'candidates_count' => $this->candidatesCount($workItem),
             'has_current_norm' => $this->hasCurrentNorm($workItem),
@@ -557,6 +559,7 @@ final class EstimateGenerationReviewItemService
         bool $priceReviewRequired,
         bool $hasAlternative,
         bool $genericReviewRequired,
+        bool $hasNormativeResourceReference,
     ): array {
         $reasons = [];
 
@@ -574,6 +577,10 @@ final class EstimateGenerationReviewItemService
 
         if ($normativeCodeRequired) {
             $reasons[] = 'normative_code_required';
+        }
+
+        if ($hasNormativeResourceReference) {
+            $reasons[] = 'normative_resource_reference';
         }
 
         if ($normativePriceRequired) {
@@ -615,6 +622,17 @@ final class EstimateGenerationReviewItemService
         $code = trim((string) ($workItem['normative_rate_code'] ?? data_get($workItem, 'normative_match.code', '')));
 
         return $code !== '' ? $code : null;
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     */
+    private function hasNormativeResourceReference(array $workItem): bool
+    {
+        $metadata = is_array($workItem['metadata'] ?? null) ? $workItem['metadata'] : [];
+
+        return trim((string) ($metadata['normative_resource_code'] ?? '')) !== ''
+            || in_array((string) ($metadata['normative_reference_kind'] ?? ''), ['fsbc_resource', 'fsbc_machine_resource', 'ksr_resource'], true);
     }
 
     /**

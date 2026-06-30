@@ -133,6 +133,9 @@ final class EstimateGenerationReviewItemServiceTest extends TestCase
                     ],
                     'metadata' => [
                         'generation_source' => 'project_document_normative_reference',
+                        'normative_reference_kind' => 'fsbc_resource',
+                        'normative_resource_code' => '01.1.01.01-0001',
+                        'requires_work_norm_selection' => true,
                     ],
                     'normative_candidates' => [
                         ['norm_id' => 601, 'code' => '16-02-052-05'],
@@ -146,6 +149,7 @@ final class EstimateGenerationReviewItemServiceTest extends TestCase
         self::assertSame(1, $result['summary']['select_norm']);
         self::assertSame('select_norm', $result['items'][0]['required_action']);
         self::assertContains('normative_code_required', $result['items'][0]['reason_codes']);
+        self::assertContains('normative_resource_reference', $result['items'][0]['reason_codes']);
         self::assertContains('pricing_not_calculated', $result['items'][0]['reason_codes']);
     }
 
