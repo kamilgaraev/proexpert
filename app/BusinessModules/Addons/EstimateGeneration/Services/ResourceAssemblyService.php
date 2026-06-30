@@ -412,9 +412,13 @@ class ResourceAssemblyService
             'work_composition' => $this->normalizeComposition($selected['work_composition'] ?? []),
         ];
         $workItem = $this->applyNormativeComposition($workItem, $selected);
-        $workItem['normative_candidates'] = array_map(
+        $freshCandidates = array_map(
             fn (array $candidate): array => $this->candidateSummary($candidate, $workItem),
             $match['candidates']
+        );
+        $workItem['normative_candidates'] = $this->mergeNormativeCandidates(
+            $freshCandidates,
+            is_array($workItem['normative_candidates'] ?? null) ? $workItem['normative_candidates'] : []
         );
         $workItem['confidence'] = round(((float) ($workItem['confidence'] ?? 0.5) + (float) $selected['confidence']) / 2, 4);
         $workItem['validation_flags'] = $this->acceptedFlags($workItem['validation_flags'] ?? []);
@@ -476,9 +480,13 @@ class ResourceAssemblyService
             'work_composition' => $this->normalizeComposition($selected['work_composition'] ?? []),
         ];
         $workItem = $this->applyNormativeComposition($workItem, $selected);
-        $workItem['normative_candidates'] = array_map(
+        $freshCandidates = array_map(
             fn (array $candidate): array => $this->candidateSummary($candidate, $workItem),
             $match['candidates']
+        );
+        $workItem['normative_candidates'] = $this->mergeNormativeCandidates(
+            $freshCandidates,
+            is_array($workItem['normative_candidates'] ?? null) ? $workItem['normative_candidates'] : []
         );
         $workItem['validation_flags'] = array_values(array_unique($flags));
 
@@ -558,6 +566,54 @@ class ResourceAssemblyService
     private function candidateSummary(array $candidate, array $workItem): array
     {
         return $this->candidatePresenter->present($candidate, $workItem);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $freshCandidates
+     * @param array<int, mixed> $existingCandidates
+     * @return array<int, array<string, mixed>>
+     */
+    private function mergeNormativeCandidates(array $freshCandidates, array $existingCandidates): array
+    {
+        $merged = [];
+        $seen = [];
+
+        foreach ([...$freshCandidates, ...$existingCandidates] as $candidate) {
+            if (!is_array($candidate)) {
+                continue;
+            }
+
+            $identity = $this->candidateIdentity($candidate);
+
+            if (isset($seen[$identity])) {
+                continue;
+            }
+
+            $seen[$identity] = true;
+            $merged[] = $candidate;
+        }
+
+        return $merged;
+    }
+
+    /**
+     * @param array<string, mixed> $candidate
+     */
+    private function candidateIdentity(array $candidate): string
+    {
+        $normId = $candidate['norm_id'] ?? $candidate['id'] ?? null;
+
+        if ($normId !== null && $normId !== '') {
+            return 'id:' . (int) $normId;
+        }
+
+        $code = trim((string) ($candidate['code'] ?? $candidate['normative_code'] ?? ''));
+
+        if ($code !== '') {
+            return 'code:' . mb_strtolower($code);
+        }
+
+        return 'raw:' . hash('sha256', json_encode($candidate, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: serialize($candidate));
     }
 
     /**

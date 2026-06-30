@@ -419,6 +419,61 @@ final class ResourceAssemblySafetyTest extends TestCase
         $this->assertContains('safe_normative_analog', $item['validation_flags']);
     }
 
+    public function test_manually_selected_norm_keeps_existing_candidates_and_rejected_markers(): void
+    {
+        $workItem = [
+            'key' => 'roof-insulation-manual',
+            'name' => 'Roof insulation',
+            'unit' => 'Рј2',
+            'quantity' => 100,
+            'confidence' => 0.7,
+            'validation_flags' => ['normative_required'],
+            'materials' => [],
+            'labor' => [],
+            'machinery' => [],
+            'normative_candidates' => [[
+                'norm_id' => 121,
+                'code' => '12-01-014-01',
+                'name' => 'Alternative roof insulation norm',
+                'unit' => 'Рј2',
+            ], [
+                'norm_id' => 999,
+                'code' => '01-02-057-01',
+                'name' => 'Rejected catalog norm',
+                'unit' => 'Рј3',
+                'selection_source' => 'catalog_search',
+                'user_feedback' => 'rejected',
+                'rejected_by_user' => true,
+                'warnings' => ['rejected_by_user'],
+            ]],
+            'work_intent' => [
+                'scope' => 'roof',
+                'action' => 'insulation',
+                'preferred_section_prefixes' => ['12', '26'],
+                'forbidden_section_prefixes' => ['01', '16'],
+            ],
+        ];
+        $match = [
+            'version' => ['source_type' => 'fsnb_2022', 'version_key' => '2026-05-31'],
+            'price_version' => ['source_type' => 'fsbc', 'version_key' => '2026-05-31'],
+            'selected' => $this->safeReviewCandidate(),
+            'candidates' => [$this->safeReviewCandidate()],
+        ];
+
+        $item = $this->manualSelectionService()->applySelectedNormativeMatch($workItem, $match, ['scope_type' => 'roof']);
+        $candidateCodes = array_column($item['normative_candidates'], 'code');
+        $rejectedCandidate = array_values(array_filter(
+            $item['normative_candidates'],
+            static fn (array $candidate): bool => ($candidate['code'] ?? null) === '01-02-057-01'
+        ))[0] ?? [];
+
+        $this->assertContains('12-01-013-01', $candidateCodes);
+        $this->assertContains('12-01-014-01', $candidateCodes);
+        $this->assertContains('01-02-057-01', $candidateCodes);
+        $this->assertTrue($rejectedCandidate['rejected_by_user'] ?? false);
+        $this->assertSame('catalog_search', $rejectedCandidate['selection_source'] ?? null);
+    }
+
     public function test_norm_with_partially_unpriced_resources_stays_unpriced_candidate(): void
     {
         $workItem = [
