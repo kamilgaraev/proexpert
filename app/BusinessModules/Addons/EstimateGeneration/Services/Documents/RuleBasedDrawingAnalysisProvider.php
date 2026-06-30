@@ -977,6 +977,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         $heightEvidence = $this->heightEvidence($elements);
         $heightM = (float) $heightEvidence['height_m'];
         $dimensionElements = $this->dimensionElementsForRooms($elements);
+        $openingAdjustment = $this->openingAdjustment($elements);
         $totalArea = 0.0;
         $estimatedWallArea = 0.0;
         $estimatedBaseboardLength = 0.0;
@@ -1038,6 +1039,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         $perimeterSourceRefs = array_slice([
             ...$sourceRefs,
             ...$dimensionSourceRefs,
+            ...$openingAdjustment['source_refs'],
         ], 0, 50);
         $calculationSourceRefs = array_slice([
             ...$perimeterSourceRefs,
@@ -1048,8 +1050,18 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             ? 'room_dimension_geometry'
             : 'estimated_room_perimeter';
 
-        $baseboardLength = round($estimatedBaseboardLength, 2);
-        $wallArea = round($estimatedWallArea > 0 ? $estimatedWallArea : $totalArea * $heightM, 2);
+        $grossBaseboardLength = round($estimatedBaseboardLength, 2);
+        $grossWallArea = round($estimatedWallArea > 0 ? $estimatedWallArea : $totalArea * $heightM, 2);
+        $openingArea = min((float) $openingAdjustment['opening_area_m2'], max($grossWallArea - 0.01, 0.0));
+        $doorWidth = min((float) $openingAdjustment['door_width_m'], $grossBaseboardLength);
+        $baseboardLength = round(max($grossBaseboardLength - $doorWidth, 0.0), 2);
+        $wallArea = round(max($grossWallArea - $openingArea, 0.01), 2);
+        $wallOpeningFormulaPart = $openingArea > 0
+            ? '; минус проемы ' . $this->formatNumber($openingArea) . ' м2'
+            : '';
+        $baseboardOpeningFormulaPart = $doorWidth > 0
+            ? '; минус дверные проемы ' . $this->formatNumber($doorWidth) . ' м'
+            : '';
         $heightFormulaPart = ' x ' . $this->formatNumber($heightM) . ' м';
         $aggregates = [
             $this->aggregateTakeoff(
@@ -1090,7 +1102,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 quantityKey: 'rough.walls',
                 name: 'Расчетная площадь стен по планировке',
                 quantity: $wallArea,
-                formula: 'Ориентировочная площадь стен по комнатам: сумма 4 x sqrt(S)' . $heightFormulaPart . ' = ' . $this->formatNumber($wallArea) . ' м2',
+                formula: 'Ориентировочная площадь стен по комнатам: сумма 4 x sqrt(S)' . $heightFormulaPart . $wallOpeningFormulaPart . ' = ' . $this->formatNumber($wallArea) . ' м2',
                 confidence: max($confidence - 0.18, 0.35),
                 sourceRefs: $calculationSourceRefs,
                 roomCount: $roomCount,
@@ -1101,6 +1113,10 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                     'calculation_basis' => $perimeterCalculationBasis,
                     'room_dimension_count' => $roomDimensionCount,
                     'room_dimensions' => array_slice($roomDimensions, 0, 20),
+                    'gross_wall_area_m2' => $grossWallArea,
+                    'opening_area_m2' => round($openingArea, 2),
+                    'opening_count' => $openingAdjustment['opening_count'],
+                    'openings_subtracted' => $openingArea > 0,
                 ]
             ),
             $this->aggregateTakeoff(
@@ -1108,7 +1124,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 quantityKey: 'finish.paint',
                 name: 'Расчетная площадь окраски стен по планировке',
                 quantity: $wallArea,
-                formula: 'Ориентировочная площадь окраски принята по расчетной площади стен: ' . $this->formatNumber($wallArea) . ' м2',
+                formula: 'Ориентировочная площадь окраски принята по расчетной площади стен: ' . $this->formatNumber($grossWallArea) . ' м2' . $wallOpeningFormulaPart . ' = ' . $this->formatNumber($wallArea) . ' м2',
                 confidence: max($confidence - 0.22, 0.35),
                 sourceRefs: $calculationSourceRefs,
                 roomCount: $roomCount,
@@ -1119,6 +1135,10 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                     'calculation_basis' => $perimeterCalculationBasis,
                     'room_dimension_count' => $roomDimensionCount,
                     'room_dimensions' => array_slice($roomDimensions, 0, 20),
+                    'gross_wall_area_m2' => $grossWallArea,
+                    'opening_area_m2' => round($openingArea, 2),
+                    'opening_count' => $openingAdjustment['opening_count'],
+                    'openings_subtracted' => $openingArea > 0,
                 ]
             ),
             $this->aggregateTakeoff(
@@ -1126,7 +1146,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 quantityKey: 'finish.baseboard',
                 name: 'Расчетная длина плинтуса по планировке',
                 quantity: $baseboardLength,
-                formula: 'Ориентировочная длина плинтуса: сумма 4 x sqrt(S) = ' . $this->formatNumber($baseboardLength) . ' м',
+                formula: 'Ориентировочная длина плинтуса: сумма 4 x sqrt(S)' . $baseboardOpeningFormulaPart . ' = ' . $this->formatNumber($baseboardLength) . ' м',
                 confidence: max($confidence - 0.24, 0.35),
                 sourceRefs: $perimeterSourceRefs,
                 roomCount: $roomCount,
@@ -1136,7 +1156,10 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                     'calculation_basis' => $perimeterCalculationBasis,
                     'room_dimension_count' => $roomDimensionCount,
                     'room_dimensions' => array_slice($roomDimensions, 0, 20),
-                    'openings_subtracted' => false,
+                    'gross_baseboard_length_m' => $grossBaseboardLength,
+                    'door_width_m' => round($doorWidth, 2),
+                    'opening_count' => $openingAdjustment['opening_count'],
+                    'openings_subtracted' => $doorWidth > 0,
                 ]
             ),
         ];
@@ -1163,6 +1186,62 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         }
 
         return $aggregates;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $elements
+     * @return array{opening_area_m2: float, door_width_m: float, opening_count: int, source_refs: array<int, array<string, mixed>>}
+     */
+    private function openingAdjustment(array $elements): array
+    {
+        $openingArea = 0.0;
+        $doorWidth = 0.0;
+        $openingCount = 0;
+        $sourceRefs = [];
+
+        foreach ($elements as $element) {
+            if (($element['type'] ?? null) !== 'opening') {
+                continue;
+            }
+
+            $payload = is_array($element['normalized_payload'] ?? null) ? $element['normalized_payload'] : [];
+            $widthM = $this->openingSizeMeters($payload['width_mm'] ?? null);
+            $heightM = $this->openingSizeMeters($payload['height_mm'] ?? null);
+            $count = max((int) ($payload['count'] ?? $element['value_number'] ?? 1), 1);
+
+            if ($widthM === null || $heightM === null) {
+                continue;
+            }
+
+            $openingArea += $widthM * $heightM * $count;
+            $openingCount += $count;
+
+            if (($payload['quantity_key'] ?? null) === 'openings.doors') {
+                $doorWidth += $widthM * $count;
+            }
+
+            if (is_array($element['source_ref'] ?? null)) {
+                $sourceRefs[] = $element['source_ref'];
+            }
+        }
+
+        return [
+            'opening_area_m2' => round($openingArea, 2),
+            'door_width_m' => round($doorWidth, 2),
+            'opening_count' => $openingCount,
+            'source_refs' => array_slice($sourceRefs, 0, 20),
+        ];
+    }
+
+    private function openingSizeMeters(mixed $value): ?float
+    {
+        $number = $this->numericValue($value);
+
+        if ($number === null || $number <= 0) {
+            return null;
+        }
+
+        return round($number > 20 ? $number / 1000 : $number, 3);
     }
 
     /**
