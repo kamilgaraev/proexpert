@@ -23,6 +23,8 @@ final class DocumentUnderstandingSummaryBuilderTest extends TestCase
                 'takeoffs_count' => 5,
                 'room_count' => 2,
                 'dimension_count' => 1,
+                'axis_count' => 4,
+                'title_block_count' => 1,
                 'document_profile' => [
                     'document_role' => 'floor_plan',
                     'source_format' => 'image',
@@ -33,7 +35,7 @@ final class DocumentUnderstandingSummaryBuilderTest extends TestCase
                     'page_number' => 1,
                     'page_role' => 'floor_plan',
                     'confidence' => 0.93,
-                    'signals' => ['plan_keywords', 'room_areas', 'dimensions'],
+                    'signals' => ['plan_keywords', 'room_areas', 'dimensions', 'axes', 'title_block'],
                 ]],
             ],
             []
@@ -44,8 +46,12 @@ final class DocumentUnderstandingSummaryBuilderTest extends TestCase
         self::assertSame('image', $summary['source_format']);
         self::assertTrue($summary['extracted_capabilities']['has_room_areas']);
         self::assertTrue($summary['extracted_capabilities']['has_dimensions']);
+        self::assertTrue($summary['extracted_capabilities']['has_axes']);
+        self::assertTrue($summary['extracted_capabilities']['has_title_block']);
         self::assertTrue($summary['extracted_capabilities']['has_quantity_takeoffs']);
         self::assertFalse($summary['extracted_capabilities']['requires_manual_review']);
+        self::assertContains('has_axes', $summary['signals']);
+        self::assertContains('has_title_block', $summary['signals']);
         self::assertSame('floor_plan', $this->builder()->pageUnderstandingByNumber($summary)[1]['page_role']);
     }
 

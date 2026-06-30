@@ -166,6 +166,8 @@ final class DocumentUnderstandingSummaryBuilder
         $takeoffsCount = (int) ($drawingSummary['takeoffs_count'] ?? 0);
         $roomCount = (int) ($drawingSummary['room_count'] ?? 0);
         $dimensionCount = (int) ($drawingSummary['dimension_count'] ?? 0);
+        $axisCount = (int) ($drawingSummary['axis_count'] ?? 0);
+        $titleBlockCount = (int) ($drawingSummary['title_block_count'] ?? 0);
         $hasSpecificationMarkers = $classifiedType === 'specification'
             || preg_match('/спецификац|ведомость|количество|поз\./u', $text) === 1;
         $hasWorkVolumeStatementMarkers = $classifiedType === 'work_volume_statement'
@@ -183,6 +185,8 @@ final class DocumentUnderstandingSummaryBuilder
         return [
             'has_room_areas' => $roomCount > 0,
             'has_dimensions' => $dimensionCount > 0,
+            'has_axes' => $axisCount > 0,
+            'has_title_block' => $titleBlockCount > 0,
             'has_quantity_takeoffs' => $takeoffsCount > 0,
             'has_work_volume_statement_markers' => $hasWorkVolumeStatementMarkers,
             'has_specification_markers' => $hasSpecificationMarkers,
