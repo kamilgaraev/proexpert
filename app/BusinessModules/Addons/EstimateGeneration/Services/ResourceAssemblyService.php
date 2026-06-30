@@ -336,6 +336,7 @@ class ResourceAssemblyService
 
         if ($this->pricedResourcesCount($selected['resources'] ?? []) === 0) {
             $flags[] = 'normative_prices_missing';
+            $flags[] = 'normative_price_required';
         }
 
         $workItem['validation_flags'] = array_values(array_unique($flags));
@@ -451,6 +452,10 @@ class ResourceAssemblyService
         }
 
         $pricingBlocker = $this->pricingBlocker($decision['warnings'] ?? []);
+        if ($this->requiresNormativePriceSelection($decision['warnings'] ?? [])) {
+            $flags[] = 'normative_price_required';
+        }
+
         $workItem['pricing_status'] = 'not_calculated';
         $workItem['pricing_blocker'] = $pricingBlocker;
         $workItem['pricing_blocker_message'] = trans_message($this->pricingBlockerMessageKey($pricingBlocker));
@@ -652,6 +657,7 @@ class ResourceAssemblyService
             'missing_price',
             'missing_resources',
             'safe_norm_required',
+            'normative_price_required',
             'pricing_not_calculated',
         ]));
     }
@@ -696,6 +702,19 @@ class ResourceAssemblyService
         }
 
         return 'safe_norm_required';
+    }
+
+    /**
+     * @param array<int, string> $warnings
+     */
+    private function requiresNormativePriceSelection(array $warnings): bool
+    {
+        return array_intersect(array_map('strval', $warnings), [
+            'norm_without_prices',
+            'norm_without_resource_prices',
+            'norm_with_unpriced_resources',
+            'prices_missing',
+        ]) !== [];
     }
 
     private function pricingBlockerMessageKey(string $pricingBlocker): string

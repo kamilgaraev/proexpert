@@ -6,6 +6,15 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
 class EstimateValidationService
 {
+    private const NORMATIVE_PRICE_REQUIRED_MARKERS = [
+        'normative_price_required',
+        'normative_prices_missing',
+        'norm_without_prices',
+        'norm_without_resource_prices',
+        'norm_with_unpriced_resources',
+        'prices_missing',
+    ];
+
     public function __construct(
         private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy(),
     ) {}
@@ -34,6 +43,7 @@ class EstimateValidationService
         $normativeScopeMismatchWorkItemsCount = 0;
         $marketEstimateWorkItemsCount = 0;
         $safeNormRequiredWorkItemsCount = 0;
+        $normativePriceRequiredWorkItemsCount = 0;
         $notCalculatedWorkItemsCount = 0;
         $duplicateWorkItemsCount = 0;
         $quantityReviewWorkItemsCount = 0;
@@ -131,7 +141,13 @@ class EstimateValidationService
                     $normativeDecision = is_array($normativeMatch['decision'] ?? null) ? $normativeMatch['decision'] : [];
                     $normativeDecisionStatus = (string) ($normativeDecision['status'] ?? '');
                     $normativeWarnings = $this->normativeWarnings($normativeMatch);
+                    $normativePriceRequired = $this->normativePriceRequired($normativeWarnings, $flags, $workItem);
                     $safeNormRequired = $this->safeNormRequired($normativeStatus, $normativeDecisionStatus, $normativeWarnings, $flags);
+
+                    if ($isPricedItem && $normativePriceRequired) {
+                        $flags[] = 'normative_price_required';
+                        $normativePriceRequiredWorkItemsCount++;
+                    }
 
                     if ($isPricedItem && $safeNormRequired) {
                         $flags[] = 'safe_norm_required';
@@ -141,8 +157,12 @@ class EstimateValidationService
 
                     if ($isPricedItem && ($priceMissing || $resourcesMissing || $safeNormRequired)) {
                         $workItem['pricing_status'] = 'not_calculated';
-                        $workItem['pricing_blocker'] = $workItem['pricing_blocker']
-                            ?? ($safeNormRequired ? 'normative_required' : 'normative_resources_or_prices_missing');
+                        $workItem['pricing_blocker'] = $this->pricingBlocker(
+                            $workItem['pricing_blocker'] ?? null,
+                            $safeNormRequired,
+                            $normativePriceRequired,
+                            $normativeWarnings
+                        );
                         $flags[] = 'pricing_not_calculated';
                     }
 
@@ -244,6 +264,7 @@ class EstimateValidationService
             $normativeScopeMismatchWorkItemsCount,
             $marketEstimateWorkItemsCount,
             $safeNormRequiredWorkItemsCount,
+            $normativePriceRequiredWorkItemsCount,
             $notCalculatedWorkItemsCount,
             $duplicateWorkItemsCount,
             $quantityReviewWorkItemsCount,
@@ -289,6 +310,7 @@ class EstimateValidationService
         int $normativeScopeMismatchWorkItems,
         int $marketEstimateWorkItems,
         int $safeNormRequiredWorkItems,
+        int $normativePriceRequiredWorkItems,
         int $notCalculatedWorkItems,
         int $duplicateWorkItems,
         int $quantityReviewWorkItems,
@@ -299,7 +321,12 @@ class EstimateValidationService
             + $normativeRejectedWorkItems
             + $normativeNotFoundWorkItems;
         $pricedDenominator = max($totalWorkItems - $operationWorkItems - $quantityReviewWorkItems, 0);
-        $criticalFlags = array_values(array_intersect($projectFlags, ['missing_price', 'missing_resources', 'regional_context_missing']));
+        $criticalFlags = array_values(array_intersect($projectFlags, [
+            'missing_price',
+            'missing_resources',
+            'normative_price_required',
+            'regional_context_missing',
+        ]));
         $reviewFlags = array_values(array_intersect($projectFlags, [
             'requires_normative_review',
             'normative_candidate_only',
@@ -336,6 +363,7 @@ class EstimateValidationService
             'zero_price_work_items' => $zeroPriceWorkItems,
             'not_calculated_work_items' => $notCalculatedWorkItems,
             'safe_norm_required_work_items' => $safeNormRequiredWorkItems,
+            'normative_price_required_work_items' => $normativePriceRequiredWorkItems,
             'duplicate_work_items' => $duplicateWorkItems,
             'quantity_review_work_items' => $quantityReviewWorkItems,
             'normative_matched_work_items' => $normativeMatchedWorkItems,
@@ -350,6 +378,7 @@ class EstimateValidationService
                 'unit_mismatch' => $normativeUnitMismatchWorkItems,
                 'scope_mismatch' => $normativeScopeMismatchWorkItems,
                 'safe_norm_required' => $safeNormRequiredWorkItems,
+                'price_required' => $normativePriceRequiredWorkItems,
                 'requires_review' => $requiresNormativeReview,
             ],
             'critical_flags' => $criticalFlags,
@@ -430,7 +459,11 @@ class EstimateValidationService
      */
     private function safeNormRequired(mixed $normativeStatus, string $decisionStatus, array $warnings, array $flags): bool
     {
-        if (in_array('safe_norm_required', $flags, true) || in_array('pricing_not_calculated', $flags, true)) {
+        if (
+            in_array('safe_norm_required', $flags, true)
+            || in_array('pricing_not_calculated', $flags, true)
+            || in_array('normative_price_required', $flags, true)
+        ) {
             return true;
         }
 
@@ -450,5 +483,50 @@ class EstimateValidationService
             'norm_without_resource_prices',
             'norm_with_unpriced_resources',
         ]) !== [];
+    }
+
+    /**
+     * @param array<int, string> $warnings
+     * @param array<int, string> $flags
+     * @param array<string, mixed> $workItem
+     */
+    private function normativePriceRequired(array $warnings, array $flags, array $workItem): bool
+    {
+        $markers = [
+            ...$warnings,
+            ...array_map('strval', $flags),
+            (string) ($workItem['pricing_blocker'] ?? ''),
+        ];
+
+        return array_intersect($markers, self::NORMATIVE_PRICE_REQUIRED_MARKERS) !== [];
+    }
+
+    /**
+     * @param array<int, string> $warnings
+     */
+    private function pricingBlocker(
+        mixed $currentBlocker,
+        bool $safeNormRequired,
+        bool $normativePriceRequired,
+        array $warnings
+    ): string {
+        $currentBlocker = trim((string) $currentBlocker);
+
+        if (
+            $normativePriceRequired
+            && ($currentBlocker === '' || in_array($currentBlocker, ['normative_required', 'safe_norm_required', 'normative_resources_or_prices_missing'], true))
+        ) {
+            if (in_array('norm_with_unpriced_resources', $warnings, true) || $currentBlocker === 'norm_with_unpriced_resources') {
+                return 'norm_with_unpriced_resources';
+            }
+
+            return 'normative_resources_or_prices_missing';
+        }
+
+        if ($currentBlocker !== '') {
+            return $currentBlocker;
+        }
+
+        return $safeNormRequired ? 'normative_required' : 'normative_resources_or_prices_missing';
     }
 }

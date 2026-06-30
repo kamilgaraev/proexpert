@@ -150,9 +150,13 @@ final class EstimateValidationServiceTest extends TestCase
         $item = $draft['local_estimates'][0]['sections'][0]['work_items'][0];
 
         self::assertSame('not_calculated', $item['pricing_status']);
-        self::assertSame('normative_required', $item['pricing_blocker']);
+        self::assertSame('norm_with_unpriced_resources', $item['pricing_blocker']);
+        self::assertContains('normative_price_required', $item['validation_flags']);
         self::assertContains('safe_norm_required', $item['validation_flags']);
         self::assertContains('pricing_not_calculated', $item['validation_flags']);
+        self::assertContains('normative_price_required', $draft['problem_flags']);
+        self::assertContains('normative_price_required', $draft['quality_summary']['critical_flags']);
+        self::assertSame(1, $draft['quality_summary']['normative_price_required_work_items']);
         self::assertSame(1, $draft['quality_summary']['safe_norm_required_work_items']);
         self::assertSame(1, $draft['quality_summary']['not_calculated_work_items']);
     }
