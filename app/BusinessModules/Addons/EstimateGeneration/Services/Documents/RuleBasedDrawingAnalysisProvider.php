@@ -50,6 +50,10 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         ));
         array_push($takeoffs, ...$this->aggregateRoomTakeoffs($roomTakeoffs, $elements));
 
+        if ($roomTakeoffs === []) {
+            array_push($takeoffs, ...$this->aggregateFootprintDimensionTakeoffs($filename, $recognition, $elements));
+        }
+
         $pageProfiles = $this->pageProfiles($filename, $recognition->pages, $elements, $takeoffs);
         $summary = $this->summary($filename, $recognition, $elements, $takeoffs, $roomTakeoffs, $pageProfiles);
 
@@ -1186,6 +1190,196 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         }
 
         return $aggregates;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $elements
+     * @return array<int, array<string, mixed>>
+     */
+    private function aggregateFootprintDimensionTakeoffs(string $filename, OcrRecognitionResult $recognition, array $elements): array
+    {
+        if (!$this->hasFloorPlanTextSignal($filename, $recognition)) {
+            return [];
+        }
+
+        $footprint = $this->bestFootprintDimensionPair($elements);
+
+        if ($footprint === null) {
+            return [];
+        }
+
+        $heightEvidence = $this->heightEvidence($elements);
+        $openingAdjustment = $this->openingAdjustment($elements);
+        $heightM = (float) $heightEvidence['height_m'];
+        $area = round((float) $footprint['length_m'] * (float) $footprint['width_m'], 2);
+        $perimeter = round(((float) $footprint['length_m'] + (float) $footprint['width_m']) * 2, 2);
+        $grossWallArea = round($perimeter * $heightM, 2);
+        $openingArea = min((float) $openingAdjustment['opening_area_m2'], max($grossWallArea - 0.01, 0.0));
+        $doorWidth = min((float) $openingAdjustment['door_width_m'], $perimeter);
+        $wallArea = round(max($grossWallArea - $openingArea, 0.01), 2);
+        $baseboardLength = round(max($perimeter - $doorWidth, 0.0), 2);
+        $sourceRefs = array_slice([
+            ...$footprint['source_refs'],
+            ...$openingAdjustment['source_refs'],
+        ], 0, 50);
+        $calculationSourceRefs = array_slice([
+            ...$sourceRefs,
+            ...$heightEvidence['source_refs'],
+        ], 0, 50);
+        $confidence = max((float) $footprint['confidence'] - 0.18, 0.35);
+        $dimensionPayload = [
+            'calculation_basis' => 'footprint_dimension_pair',
+            'length_m' => $footprint['length_m'],
+            'width_m' => $footprint['width_m'],
+            'perimeter_m' => $perimeter,
+            'review_reason' => 'overall_dimensions_without_room_areas',
+        ];
+        $openingPayload = [
+            'opening_area_m2' => round($openingArea, 2),
+            'door_width_m' => round($doorWidth, 2),
+            'opening_count' => $openingAdjustment['opening_count'],
+            'openings_subtracted' => $openingArea > 0 || $doorWidth > 0,
+        ];
+        $wallOpeningFormulaPart = $openingArea > 0
+            ? '; минус проемы ' . $this->formatNumber($openingArea) . ' м2'
+            : '';
+        $baseboardOpeningFormulaPart = $doorWidth > 0
+            ? '; минус дверные проемы ' . $this->formatNumber($doorWidth) . ' м'
+            : '';
+
+        return [
+            $this->aggregateTakeoff(
+                scopeKey: 'floor_finish_area',
+                quantityKey: 'finish.floor',
+                name: 'Площадь чистовой отделки пола по габаритам планировки',
+                quantity: $area,
+                formula: $this->formatNumber((float) $footprint['length_m']) . ' x ' . $this->formatNumber((float) $footprint['width_m']) . ' = ' . $this->formatNumber($area) . ' м2',
+                confidence: $confidence,
+                sourceRefs: $sourceRefs,
+                roomCount: 0,
+                reviewRequired: true,
+                extraPayload: $dimensionPayload
+            ),
+            $this->aggregateTakeoff(
+                scopeKey: 'rough_floor_area',
+                quantityKey: 'rough.floor',
+                name: 'Площадь основания пола по габаритам планировки',
+                quantity: $area,
+                formula: $this->formatNumber((float) $footprint['length_m']) . ' x ' . $this->formatNumber((float) $footprint['width_m']) . ' = ' . $this->formatNumber($area) . ' м2',
+                confidence: $confidence,
+                sourceRefs: $sourceRefs,
+                roomCount: 0,
+                reviewRequired: true,
+                extraPayload: $dimensionPayload
+            ),
+            $this->aggregateTakeoff(
+                scopeKey: 'wall_finish_area',
+                quantityKey: 'rough.walls',
+                name: 'Расчетная площадь стен по габаритам планировки',
+                quantity: $wallArea,
+                formula: 'Периметр ' . $this->formatNumber($perimeter) . ' м x высота ' . $this->formatNumber($heightM) . ' м' . $wallOpeningFormulaPart . ' = ' . $this->formatNumber($wallArea) . ' м2',
+                confidence: max($confidence - 0.06, 0.35),
+                sourceRefs: $calculationSourceRefs,
+                roomCount: 0,
+                reviewRequired: true,
+                extraPayload: [
+                    ...$dimensionPayload,
+                    ...$openingPayload,
+                    'height_m' => $heightM,
+                    'height_source' => $heightEvidence['source'],
+                    'gross_wall_area_m2' => $grossWallArea,
+                ]
+            ),
+            $this->aggregateTakeoff(
+                scopeKey: 'paint_area',
+                quantityKey: 'finish.paint',
+                name: 'Расчетная площадь окраски стен по габаритам планировки',
+                quantity: $wallArea,
+                formula: 'Периметр ' . $this->formatNumber($perimeter) . ' м x высота ' . $this->formatNumber($heightM) . ' м' . $wallOpeningFormulaPart . ' = ' . $this->formatNumber($wallArea) . ' м2',
+                confidence: max($confidence - 0.08, 0.35),
+                sourceRefs: $calculationSourceRefs,
+                roomCount: 0,
+                reviewRequired: true,
+                extraPayload: [
+                    ...$dimensionPayload,
+                    ...$openingPayload,
+                    'height_m' => $heightM,
+                    'height_source' => $heightEvidence['source'],
+                    'gross_wall_area_m2' => $grossWallArea,
+                ]
+            ),
+            $this->aggregateTakeoff(
+                scopeKey: 'skirting_length',
+                quantityKey: 'finish.baseboard',
+                name: 'Расчетная длина плинтуса по габаритам планировки',
+                quantity: $baseboardLength,
+                formula: 'Периметр по габаритам ' . $this->formatNumber($perimeter) . ' м' . $baseboardOpeningFormulaPart . ' = ' . $this->formatNumber($baseboardLength) . ' м',
+                confidence: max($confidence - 0.1, 0.35),
+                sourceRefs: $sourceRefs,
+                roomCount: 0,
+                reviewRequired: true,
+                unit: 'м',
+                extraPayload: [
+                    ...$dimensionPayload,
+                    ...$openingPayload,
+                    'gross_baseboard_length_m' => $perimeter,
+                ]
+            ),
+        ];
+    }
+
+    private function hasFloorPlanTextSignal(string $filename, OcrRecognitionResult $recognition): bool
+    {
+        $text = mb_strtolower($filename . ' ' . implode(' ', array_map(
+            static fn (OcrPageResult $page): string => $page->text,
+            $recognition->pages
+        )));
+
+        return preg_match('/план|планировка|этаж|floor\s*plan|layout|ар\b|архитектур/u', $text) === 1;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $elements
+     * @return array{length_m: float, width_m: float, confidence: float, source_refs: array<int, array<string, mixed>>}|null
+     */
+    private function bestFootprintDimensionPair(array $elements): ?array
+    {
+        $best = null;
+
+        foreach ($this->dimensionElementsForRooms($elements) as $element) {
+            $dimension = $this->dimensionPairMeters($element);
+
+            if ($dimension === null) {
+                continue;
+            }
+
+            $area = (float) $dimension['length_m'] * (float) $dimension['width_m'];
+
+            if ($area < 20.0 || $area > 2500.0) {
+                continue;
+            }
+
+            if ($best === null || $area > $best['area']) {
+                $sourceRef = is_array($element['source_ref'] ?? null) ? $element['source_ref'] : [];
+                $best = [
+                    ...$dimension,
+                    'area' => $area,
+                    'confidence' => (float) ($element['confidence'] ?? 0.7),
+                    'source_refs' => $sourceRef !== [] ? [$sourceRef] : [],
+                ];
+            }
+        }
+
+        if ($best === null) {
+            return null;
+        }
+
+        return [
+            'length_m' => round((float) $best['length_m'], 3),
+            'width_m' => round((float) $best['width_m'], 3),
+            'confidence' => round((float) $best['confidence'], 4),
+            'source_refs' => $best['source_refs'],
+        ];
     }
 
     /**

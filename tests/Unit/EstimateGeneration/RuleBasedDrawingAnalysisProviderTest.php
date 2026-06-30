@@ -285,6 +285,74 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
         self::assertNotSame(464.18, $takeoffsByKey['finish.floor']['quantity']);
     }
 
+    public function test_uses_explicit_overall_dimension_pair_as_review_required_footprint_when_rooms_are_missing(): void
+    {
+        $recognition = new OcrRecognitionResult(
+            provider: 'test',
+            model: 'page',
+            pages: [
+                new OcrPageResult(
+                    pageNumber: 1,
+                    text: implode("\n", [
+                        'Планировка дома',
+                        'Высота потолка 3,0 м',
+                        '14845 x 8755',
+                    ]),
+                    blocks: [[
+                        'text' => '',
+                        'lines' => [
+                            [
+                                'text' => 'Планировка дома',
+                                'bounding_box' => ['x' => 20, 'y' => 20, 'width' => 180, 'height' => 24],
+                                'words' => [],
+                            ],
+                            [
+                                'text' => 'Высота потолка 3,0 м',
+                                'bounding_box' => ['x' => 40, 'y' => 80, 'width' => 140, 'height' => 18],
+                                'words' => [],
+                            ],
+                            [
+                                'text' => '14845 x 8755',
+                                'bounding_box' => ['x' => 180, 'y' => 520, 'width' => 220, 'height' => 26],
+                                'words' => [],
+                            ],
+                        ],
+                    ]],
+                    width: 1200,
+                    height: 800,
+                    confidence: 0.88
+                ),
+            ]
+        );
+
+        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+            documentId: 13,
+            filename: 'house-floor-plan.jpg',
+            recognition: $recognition
+        );
+        $takeoffsByKey = [];
+
+        foreach ($result->takeoffs as $takeoff) {
+            $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
+            $takeoffsByKey[(string) ($payload['quantity_key'] ?? $takeoff['scope_key'] ?? '')] = $takeoff;
+        }
+
+        self::assertSame('floor_plan', $result->summary['document_profile']['document_role'] ?? null);
+        self::assertArrayHasKey('finish.floor', $takeoffsByKey);
+        self::assertArrayHasKey('rough.floor', $takeoffsByKey);
+        self::assertArrayHasKey('rough.walls', $takeoffsByKey);
+        self::assertArrayHasKey('finish.baseboard', $takeoffsByKey);
+        self::assertSame(129.97, $takeoffsByKey['finish.floor']['quantity']);
+        self::assertSame(129.97, $takeoffsByKey['rough.floor']['quantity']);
+        self::assertSame(141.6, $takeoffsByKey['rough.walls']['quantity']);
+        self::assertSame(47.2, $takeoffsByKey['finish.baseboard']['quantity']);
+        self::assertTrue($takeoffsByKey['finish.floor']['normalized_payload']['review_required'] ?? false);
+        self::assertSame('footprint_dimension_pair', $takeoffsByKey['finish.floor']['normalized_payload']['calculation_basis'] ?? null);
+        self::assertSame(14.845, $takeoffsByKey['finish.floor']['normalized_payload']['length_m'] ?? null);
+        self::assertSame(8.755, $takeoffsByKey['finish.floor']['normalized_payload']['width_m'] ?? null);
+        self::assertSame(3.0, $takeoffsByKey['rough.walls']['normalized_payload']['height_m'] ?? null);
+    }
+
     public function test_uses_nearby_dimension_pair_to_estimate_room_perimeter(): void
     {
         $recognition = new OcrRecognitionResult(
