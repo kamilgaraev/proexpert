@@ -12,6 +12,27 @@ use Tests\TestCase;
 
 class EstimateGenerationPipelineQualityTest extends TestCase
 {
+    public function test_zero_total_priced_work_is_marked_not_calculated(): void
+    {
+        $items = app(EstimatePricingService::class)->price([[
+            'key' => 'foundation.zero',
+            'item_type' => 'priced_work',
+            'name' => 'Foundation zero price',
+            'unit' => 'm3',
+            'quantity' => 1,
+            'materials' => [['total_price' => 0]],
+            'labor' => [],
+            'machinery' => [],
+            'pricing_status' => 'calculated',
+            'validation_flags' => [],
+        ]]);
+
+        $this->assertSame(0.0, $items[0]['total_cost']);
+        $this->assertSame('not_calculated', $items[0]['pricing_status']);
+        $this->assertSame('pricing_not_calculated', $items[0]['pricing_blocker']);
+        $this->assertContains('pricing_not_calculated', $items[0]['validation_flags']);
+    }
+
     public function test_generated_house_estimate_requires_normative_review_instead_of_market_prices(): void
     {
         $analysis = [

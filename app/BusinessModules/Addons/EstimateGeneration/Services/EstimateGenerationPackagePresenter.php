@@ -107,6 +107,17 @@ class EstimateGenerationPackagePresenter
             ? array_values($metadata['work_composition'])
             : [];
         $flags = $item->flags ?? [];
+        $pricingStatus = $metadata['pricing_status'] ?? $this->pricingStatus($item);
+        $pricingBlocker = $metadata['pricing_blocker'] ?? null;
+
+        if (
+            $item->item_type === 'priced_work'
+            && (float) ($item->total_cost ?? 0) <= 0
+            && in_array((string) $pricingStatus, ['calculated', 'calculated_review_required'], true)
+        ) {
+            $pricingStatus = 'not_calculated';
+            $pricingBlocker ??= 'pricing_not_calculated';
+        }
 
         return [
             'id' => $item->id,
@@ -120,8 +131,8 @@ class EstimateGenerationPackagePresenter
             'quantity' => $item->quantity,
             'quantity_basis' => $item->quantity_basis ?? [],
             'price_source' => $item->price_source,
-            'pricing_status' => $metadata['pricing_status'] ?? $this->pricingStatus($item),
-            'pricing_blocker' => $metadata['pricing_blocker'] ?? null,
+            'pricing_status' => $pricingStatus,
+            'pricing_blocker' => $pricingBlocker,
             'pricing_blocker_message' => $metadata['pricing_blocker_message'] ?? null,
             'normative_rate_code' => $metadata['normative_match']['code'] ?? null,
             'normative_match' => is_array($metadata['normative_match'] ?? null) ? $metadata['normative_match'] : null,

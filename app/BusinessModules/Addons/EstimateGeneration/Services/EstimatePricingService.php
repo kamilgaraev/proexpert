@@ -47,6 +47,15 @@ class EstimatePricingService
             $workItem['machinery_cost'] = round($machineryCost, 2);
             $workItem['labor_cost'] = round($laborCost, 2);
             $workItem['total_cost'] = $total;
+
+            if ($total <= 0) {
+                $workItem['pricing_status'] = 'not_calculated';
+                $workItem['pricing_blocker'] = $workItem['pricing_blocker'] ?? 'pricing_not_calculated';
+                $workItem['validation_flags'] = array_values(array_unique([
+                    ...(is_array($workItem['validation_flags'] ?? null) ? $workItem['validation_flags'] : []),
+                    'pricing_not_calculated',
+                ]));
+            }
         }
 
         return $workItems;

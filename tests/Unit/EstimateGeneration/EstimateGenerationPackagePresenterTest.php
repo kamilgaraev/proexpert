@@ -67,6 +67,34 @@ final class EstimateGenerationPackagePresenterTest extends TestCase
         self::assertSame('drawing', $payload['source_refs'][0]['type'] ?? null);
     }
 
+    public function test_zero_total_item_does_not_use_stale_calculated_metadata_status(): void
+    {
+        $item = new EstimateGenerationPackageItem([
+            'id' => 16,
+            'key' => 'foundation.zero',
+            'item_type' => 'priced_work',
+            'name' => 'Foundation zero price',
+            'unit' => 'm3',
+            'quantity' => 1,
+            'price_source' => null,
+            'unit_price' => 0,
+            'direct_cost' => 0,
+            'overhead_cost' => 0,
+            'profit_cost' => 0,
+            'total_cost' => 0,
+            'resources' => [],
+            'flags' => [],
+            'metadata' => [
+                'pricing_status' => 'calculated',
+            ],
+        ]);
+
+        $payload = (new EstimateGenerationPackagePresenter())->item($item);
+
+        self::assertSame('not_calculated', $payload['pricing_status']);
+        self::assertSame('pricing_not_calculated', $payload['pricing_blocker']);
+    }
+
     public function test_package_collection_counts_review_required_separately_from_ready(): void
     {
         $payload = (new EstimateGenerationPackagePresenter())->collection(new Collection([
