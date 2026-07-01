@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\Agent;
 
+use App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding;
 use App\BusinessModules\Features\AIAssistant\Services\AIPermissionChecker;
 use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportFileService;
 use App\Models\Organization;
 use App\Models\User;
@@ -18,11 +20,17 @@ final class AssistantAgentExecutor
         private readonly AIToolRegistry $toolRegistry,
         private readonly AIPermissionChecker $permissionChecker,
         private readonly AssistantArtifactNormalizer $artifactNormalizer,
-        private readonly ?AssistantReportFileService $reportFileService = null
+        private readonly ?AssistantReportFileService $reportFileService = null,
+        private readonly ?AssistantToolEligibilityPolicy $toolEligibilityPolicy = null
     ) {}
 
-    public function execute(string $toolName, array $arguments, ?User $user, Organization $organization): array
-    {
+    public function execute(
+        string $toolName,
+        array $arguments,
+        ?User $user,
+        Organization $organization,
+        AssistantRequestUnderstanding|array|null $requestUnderstanding = null
+    ): array {
         $startedAt = microtime(true);
         $tool = $this->toolRegistry->getTool($toolName);
 
@@ -31,6 +39,23 @@ final class AssistantAgentExecutor
                 'status' => 'error',
                 'message' => $this->assistantMessage('ai_assistant.tool_unavailable', 'Инструмент недоступен для выполнения.'),
             ]);
+        }
+
+        $understanding = $this->normalizeRequestUnderstanding($requestUnderstanding);
+        if ($understanding instanceof AssistantRequestUnderstanding) {
+            $eligibility = ($this->toolEligibilityPolicy ?? new AssistantToolEligibilityPolicy)
+                ->canExecuteTool($toolName, $understanding);
+
+            if (! $eligibility->allowed) {
+                return $this->errorResult($toolName, $arguments, [
+                    'status' => 'blocked_by_request_policy',
+                    'message' => $this->assistantMessage(
+                        'ai_assistant.tool_blocked_by_request_policy',
+                        'Инструмент не выполнен, потому что текущий запрос ограничивает формат ответа или действия.'
+                    ),
+                    'reason' => $eligibility->reason,
+                ]);
+            }
         }
 
         if ($user === null || ! $this->permissionChecker->canExecuteTool($user, $toolName, $arguments)) {
@@ -134,6 +159,17 @@ final class AssistantAgentExecutor
             'status' => $status,
             'message' => $this->assistantMessage('ai_assistant.tool_execute_failed', 'Не удалось выполнить инструмент.'),
         ];
+    }
+
+    private function normalizeRequestUnderstanding(AssistantRequestUnderstanding|array|null $requestUnderstanding): ?AssistantRequestUnderstanding
+    {
+        if ($requestUnderstanding instanceof AssistantRequestUnderstanding) {
+            return $requestUnderstanding;
+        }
+
+        return is_array($requestUnderstanding)
+            ? AssistantRequestUnderstanding::fromArray($requestUnderstanding)
+            : null;
     }
 
     private function assistantMessage(string $key, string $fallback): string

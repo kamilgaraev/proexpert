@@ -8,7 +8,10 @@ use App\BusinessModules\Features\AIAssistant\DTOs\Agent\AssistantAgentDecision;
 use App\BusinessModules\Features\AIAssistant\DTOs\Agent\AssistantResolvedPeriod;
 use App\BusinessModules\Features\AIAssistant\DTOs\Agent\AssistantTaskSlot;
 use App\BusinessModules\Features\AIAssistant\DTOs\Agent\AssistantTaskState;
+use App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding;
 use App\BusinessModules\Features\AIAssistant\DTOs\Reports\AssistantReportDefinition;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportIntentResolver;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportSlotResolver;
 use Illuminate\Support\Facades\Log;
@@ -20,14 +23,22 @@ final readonly class AssistantAgentPlanner
 
     private AssistantReportSlotResolver $reportSlotResolver;
 
+    private AssistantRequestUnderstandingResolver $requestUnderstandingResolver;
+
+    private AssistantToolEligibilityPolicy $toolEligibilityPolicy;
+
     public function __construct(
         private AssistantCapabilityCatalog $catalog,
         private AssistantPeriodResolver $periodResolver,
         ?AssistantReportIntentResolver $reportIntentResolver = null,
-        ?AssistantReportSlotResolver $reportSlotResolver = null
+        ?AssistantReportSlotResolver $reportSlotResolver = null,
+        ?AssistantRequestUnderstandingResolver $requestUnderstandingResolver = null,
+        ?AssistantToolEligibilityPolicy $toolEligibilityPolicy = null
     ) {
         $this->reportIntentResolver = $reportIntentResolver ?? new AssistantReportIntentResolver;
         $this->reportSlotResolver = $reportSlotResolver ?? new AssistantReportSlotResolver($periodResolver);
+        $this->requestUnderstandingResolver = $requestUnderstandingResolver ?? new AssistantRequestUnderstandingResolver;
+        $this->toolEligibilityPolicy = $toolEligibilityPolicy ?? new AssistantToolEligibilityPolicy;
     }
 
     /**
@@ -35,6 +46,11 @@ final readonly class AssistantAgentPlanner
      */
     public function decide(string $message, array $context, ?AssistantTaskState $pendingState = null): AssistantAgentDecision
     {
+        $requestUnderstanding = $this->requestUnderstandingResolver->resolve($message, $context);
+        if ($this->blocksReportPlanning($requestUnderstanding)) {
+            return new AssistantAgentDecision(type: 'answer');
+        }
+
         if ($pendingState instanceof AssistantTaskState && $pendingState->status === 'waiting_for_slots') {
             if ($pendingState->id === 'report.unspecified') {
                 return $this->continueUnspecifiedReport($message, $context, $pendingState);
@@ -132,6 +148,13 @@ final readonly class AssistantAgentPlanner
     private function matchTask(string $message, array $context): ?array
     {
         return $this->catalog->match($message, $context);
+    }
+
+    private function blocksReportPlanning(AssistantRequestUnderstanding $requestUnderstanding): bool
+    {
+        return ! $this->toolEligibilityPolicy
+            ->canExposeTool('generate_operational_pdf_report', $requestUnderstanding)
+            ->allowed;
     }
 
     /**

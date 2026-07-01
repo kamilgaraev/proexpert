@@ -119,6 +119,104 @@ class AIAssistantServiceBudgetTest extends TestCase
         $this->assertContains('generate_project_timelines_report', $toolNames);
     }
 
+    public function test_request_policy_filters_report_tools_before_llm(): void
+    {
+        $toolRegistry = new AIToolRegistry;
+        foreach ([
+            'get_project_snapshot',
+            'generate_operational_pdf_report',
+        ] as $toolName) {
+            $toolRegistry->registerTool($this->makeTool($toolName));
+        }
+
+        $service = $this->makeService($toolRegistry);
+
+        $tools = $service->exposeResolveToolDefinitions([
+            'task_type' => 'find',
+            'capability' => [
+                'id' => 'reports',
+            ],
+            'request' => [
+                'allow_actions' => false,
+                'context' => [],
+            ],
+            'request_understanding' => [
+                'primary_intent' => 'search_knowledge',
+                'output_format' => 'text',
+                'action_policy' => 'read_only',
+                'constraints' => ['no_file', 'no_pdf', 'no_report', 'text_only'],
+                'requested_entities' => ['project'],
+                'confidence' => 0.9,
+                'evidence' => [],
+            ],
+        ]);
+
+        $toolNames = array_map(
+            static fn (array $definition): string => (string) $definition['function']['name'],
+            $tools
+        );
+
+        $this->assertContains('get_project_snapshot', $toolNames);
+        $this->assertNotContains('generate_operational_pdf_report', $toolNames);
+    }
+
+    public function test_request_policy_blocks_forbidden_tool_call_before_execution(): void
+    {
+        $toolRegistry = new AIToolRegistry;
+        $tool = new class implements AIToolInterface
+        {
+            public bool $executed = false;
+
+            public function getName(): string
+            {
+                return 'generate_operational_pdf_report';
+            }
+
+            public function getDescription(): string
+            {
+                return 'Test report tool';
+            }
+
+            public function getParametersSchema(): array
+            {
+                return ['type' => 'object'];
+            }
+
+            public function execute(array $arguments, ?User $user, Organization $organization): array|string
+            {
+                $this->executed = true;
+
+                return ['status' => 'success'];
+            }
+        };
+        $toolRegistry->registerTool($tool);
+
+        $service = $this->makeService($toolRegistry);
+        $toolFailures = [];
+
+        $result = $service->exposeHandleToolCall([
+            'id' => 'call_report',
+            'function' => [
+                'name' => 'generate_operational_pdf_report',
+                'arguments' => '{"report_type":"projects_summary"}',
+            ],
+        ], [
+            'request_understanding' => [
+                'primary_intent' => 'search_knowledge',
+                'output_format' => 'text',
+                'action_policy' => 'read_only',
+                'constraints' => ['no_file', 'no_pdf', 'no_report', 'text_only'],
+                'requested_entities' => ['project'],
+                'confidence' => 0.9,
+                'evidence' => [],
+            ],
+        ], $toolFailures);
+
+        $this->assertSame('blocked_by_request_policy', $result['status']);
+        $this->assertFalse($tool->executed);
+        $this->assertNotSame([], $toolFailures);
+    }
+
     public function test_tool_registry_resolves_legacy_schedule_status_alias(): void
     {
         $registry = new AIToolRegistry;
@@ -686,5 +784,32 @@ class TestableAIAssistantService extends AIAssistantService
         array $requestPayload
     ): array {
         return $this->buildRagContext($query, $organizationId, $user, $taskPlan, $requestPayload);
+    }
+
+    public function exposeHandleToolCall(array $toolCall, array $taskPlan, array &$toolFailures): array|string
+    {
+        $executedAction = null;
+        $toolEvidence = [];
+        $proposedActions = [];
+        $trustedDownloadUrls = [];
+        $organization = new Organization;
+        $organization->id = 15;
+        $user = new User;
+        $user->id = 7;
+        $user->current_organization_id = 15;
+
+        return $this->handleToolCall(
+            $toolCall,
+            $organization,
+            $user,
+            15,
+            $taskPlan,
+            false,
+            $executedAction,
+            $toolEvidence,
+            $toolFailures,
+            $proposedActions,
+            $trustedDownloadUrls
+        );
     }
 }

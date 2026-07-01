@@ -75,6 +75,15 @@ final class AssistantReportIntentResolverTest extends TestCase
         $this->assertSame('not_report', $result['status']);
     }
 
+    #[DataProvider('negativeReportIntentProvider')]
+    public function test_negative_report_and_file_constraints_are_left_for_generic_flow(string $message): void
+    {
+        $result = (new AssistantReportIntentResolver)->resolve($message);
+
+        $this->assertSame('not_report', $result['status']);
+        $this->assertArrayNotHasKey('definition', $result);
+    }
+
     public function test_operational_report_term_without_report_marker_is_left_for_generic_flow(): void
     {
         $result = (new AssistantReportIntentResolver)->resolve('покажи потребность в закупках по объектам');
@@ -116,6 +125,19 @@ final class AssistantReportIntentResolverTest extends TestCase
             'project knowledge summary' => ['Что ты знаешь из базы знаний по текущим проектам? Дай краткую сводку и укажи источники'],
             'requests needing attention' => ['Какие заявки или проблемы требуют внимания по данным из базы знаний?'],
             'contracts in context' => ['Какие договоры и суммы есть в контексте?'],
+        ];
+    }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function negativeReportIntentProvider(): array
+    {
+        return [
+            'exact production bug' => ['По проекту «Кирпичный дом "Лесной двор"» перечисли 5 фактов из базы знаний. Только текст. Не создавай PDF, файл или отчет.'],
+            'no actions no report' => ['Найди в базе знаний 3-5 фактов по проекту. Не выполняй действий, не создавай отчет, просто перечисли факты.'],
+            'negative report word' => ['Без отчета расскажи, какие риски по проекту.'],
+            'negative file word' => ['Не нужен файл, просто напиши текстом.'],
         ];
     }
 

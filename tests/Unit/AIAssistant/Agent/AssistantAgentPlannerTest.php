@@ -191,6 +191,20 @@ class AssistantAgentPlannerTest extends TestCase
         $this->assertNull($decision->toolName);
     }
 
+    public function test_negative_pdf_report_request_uses_answer_flow_instead_of_report_tool(): void
+    {
+        $decision = $this->planner()->decide(
+            'По проекту «Кирпичный дом "Лесной двор"» перечисли 5 фактов из базы знаний. Только текст. Не создавай PDF, файл или отчет.',
+            $this->projectContext(),
+            null
+        );
+
+        $this->assertSame('answer', $decision->type);
+        $this->assertNull($decision->state);
+        $this->assertNull($decision->toolName);
+        $this->assertSame([], $decision->toolArguments);
+    }
+
     public function test_project_id_is_optional_for_schedule_report(): void
     {
         $decision = $this->planner()->decide(

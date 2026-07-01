@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
 use App\BusinessModules\Features\AIAssistant\DTOs\Agent\AssistantTaskState;
+use App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding;
 use App\BusinessModules\Features\AIAssistant\Models\Conversation;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentExecutor;
 use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantAgentPlanner;
@@ -13,6 +14,7 @@ use App\BusinessModules\Features\AIAssistant\Services\Agent\AssistantResponseVer
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagPromptContextBuilder;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagRetriever;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Logging\LoggingService;
@@ -88,6 +90,8 @@ class AIAssistantService
 
     protected RagPromptContextBuilder $ragPromptContextBuilder;
 
+    protected AssistantToolEligibilityPolicy $toolEligibilityPolicy;
+
     public function __construct(
         LLMProviderInterface $llmProvider,
         ConversationManager $conversationManager,
@@ -104,7 +108,8 @@ class AIAssistantService
         AssistantAgentExecutor $agentExecutor,
         AssistantResponseVerifier $responseVerifier,
         ?RagRetriever $ragRetriever = null,
-        ?RagPromptContextBuilder $ragPromptContextBuilder = null
+        ?RagPromptContextBuilder $ragPromptContextBuilder = null,
+        ?AssistantToolEligibilityPolicy $toolEligibilityPolicy = null
     ) {
         $this->llmProvider = $llmProvider;
         $this->conversationManager = $conversationManager;
@@ -122,6 +127,7 @@ class AIAssistantService
         $this->responseVerifier = $responseVerifier;
         $this->ragRetriever = $ragRetriever;
         $this->ragPromptContextBuilder = $ragPromptContextBuilder ?? new RagPromptContextBuilder;
+        $this->toolEligibilityPolicy = $toolEligibilityPolicy ?? new AssistantToolEligibilityPolicy;
     }
 
     public function ask(
@@ -149,6 +155,7 @@ class AIAssistantService
         $requestPayload = $this->mergeContinuationRequestPayload($query, $requestPayload, $conversation->context ?? []);
         $accessContext = $this->accessContextResolver->resolve($user, $organizationId);
         $taskPlan = $this->taskOrchestrator->plan($query, $requestPayload, $accessContext);
+        $this->logRequestUnderstanding($taskPlan, $organizationId, $user);
 
         $this->conversationManager->addMessage(
             $conversation,
@@ -263,6 +270,7 @@ class AIAssistantService
                         $organization,
                         $user,
                         $organizationId,
+                        $taskPlan,
                         (bool) ($taskPlan['request']['allow_actions'] ?? false),
                         $executedAction,
                         $toolEvidence,
@@ -437,6 +445,26 @@ class AIAssistantService
         return $desiredMode === 'grounded';
     }
 
+    private function logRequestUnderstanding(array $taskPlan, int $organizationId, User $user): void
+    {
+        $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
+        if (! $requestUnderstanding instanceof AssistantRequestUnderstanding) {
+            return;
+        }
+
+        $this->logging->technical('ai.assistant.request_understanding', [
+            'organization_id' => $organizationId,
+            'user_id' => $user->id,
+            'primary_intent' => $requestUnderstanding->primaryIntent,
+            'output_format' => $requestUnderstanding->outputFormat,
+            'action_policy' => $requestUnderstanding->actionPolicy,
+            'constraints' => $requestUnderstanding->constraints,
+            'requested_entities' => $requestUnderstanding->requestedEntities,
+            'confidence' => $requestUnderstanding->confidence,
+            'evidence' => array_slice($requestUnderstanding->evidence, 0, 12),
+        ]);
+    }
+
     protected function answerAgentClarification(
         Conversation $conversation,
         int $organizationId,
@@ -487,7 +515,13 @@ class AIAssistantService
         array $toolArguments
     ): array {
         $organization = $this->resolveOrganization($organizationId);
-        $toolResult = $this->agentExecutor->execute($toolName, $toolArguments, $user, $organization);
+        $toolResult = $this->agentExecutor->execute(
+            $toolName,
+            $toolArguments,
+            $user,
+            $organization,
+            $taskPlan['request_understanding'] ?? null
+        );
 
         $artifacts = $this->filterAgentArtifactsForOrganization($organizationId, array_values(array_filter(
             $toolResult['artifacts'] ?? [],
@@ -659,6 +693,7 @@ class AIAssistantService
         Organization $organization,
         User $user,
         int $organizationId,
+        array $taskPlan,
         bool $allowActions,
         ?array &$executedAction,
         array &$toolEvidence,
@@ -679,6 +714,30 @@ class AIAssistantService
         }
 
         try {
+            $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
+            if ($requestUnderstanding instanceof AssistantRequestUnderstanding) {
+                $eligibility = $this->toolEligibilityPolicy->canExposeTool($toolName, $requestUnderstanding);
+                if (! $eligibility->allowed) {
+                    $message = $this->toolBlockedMessage($eligibility->reason);
+                    $toolFailures[] = $message;
+
+                    $this->logging->technical('ai.tool.blocked_by_request_policy', [
+                        'tool' => $toolName,
+                        'organization_id' => $organizationId,
+                        'user_id' => $user->id,
+                        'category' => $eligibility->category,
+                        'reason' => $eligibility->reason,
+                        'request_understanding' => $requestUnderstanding->toArray(),
+                    ], 'warning');
+
+                    return [
+                        'status' => 'blocked_by_request_policy',
+                        'error' => $message,
+                        'tool_name' => $toolName,
+                    ];
+                }
+            }
+
             $isMutationTool = $this->permissionChecker->isMutationTool($toolName);
             $canExecuteTool = $this->permissionChecker->canExecuteTool($user, $toolName, $args);
 
@@ -1502,6 +1561,7 @@ class AIAssistantService
                     : 0,
                 'assistant_path' => $taskPlan['request']['context']['ui_state']['assistant_path'] ?? null,
             ],
+            'request_understanding' => $this->compactValueForLLM($taskPlan['request_understanding'] ?? []),
             'access_context' => [
                 'available_modules' => array_slice($taskPlan['access_context_public']['available_modules'] ?? [], 0, 6),
                 'permission_count' => $taskPlan['access_context_public']['permission_count'] ?? 0,
@@ -1522,7 +1582,8 @@ class AIAssistantService
             ."2. Если данных или прав не хватает, прямо скажи об ограничении.\n"
             ."3. Не придумывай технические причины отказа и обходные пути.\n"
             ."4. Отвечай коротко и по делу, затем предлагай конкретный следующий шаг.\n"
-            ."5. Если последняя реплика короткая и просит подробнее, продолжай предыдущий вопрос без повторного уточнения темы.\n";
+            ."5. Если последняя реплика короткая и просит подробнее, продолжай предыдущий вопрос без повторного уточнения темы.\n"
+            ."6. Соблюдай request_understanding: не создавай PDF, файл, отчет, навигацию или действие, если constraints/action_policy это запрещают.\n";
 
         return $this->truncateText(
             "=== STRUCTURED WORKSPACE CONTEXT ===\n"
@@ -1641,7 +1702,56 @@ class AIAssistantService
 
     protected function resolveToolDefinitions(array $taskPlan): array
     {
-        return $this->toolRegistry->getToolsDefinitions($this->resolveRelevantToolNames($taskPlan));
+        $toolNames = $this->resolveRelevantToolNames($taskPlan);
+        $requestUnderstanding = $this->requestUnderstandingFromPlan($taskPlan);
+
+        if (! $requestUnderstanding instanceof AssistantRequestUnderstanding) {
+            return $this->toolRegistry->getToolsDefinitions($toolNames);
+        }
+
+        $allowedToolNames = [];
+        $blockedTools = [];
+
+        foreach ($toolNames as $toolName) {
+            $eligibility = $this->toolEligibilityPolicy->canExposeTool($toolName, $requestUnderstanding);
+
+            if ($eligibility->allowed) {
+                $allowedToolNames[] = $toolName;
+                continue;
+            }
+
+            $blockedTools[] = [
+                'tool' => $toolName,
+                ...$eligibility->toArray(),
+            ];
+        }
+
+        $this->logging->technical('ai.assistant.tool_eligibility', [
+            'primary_intent' => $requestUnderstanding->primaryIntent,
+            'constraints' => $requestUnderstanding->constraints,
+            'action_policy' => $requestUnderstanding->actionPolicy,
+            'allowed_tools' => $allowedToolNames,
+            'blocked_tools' => array_slice($blockedTools, 0, 12),
+        ]);
+
+        return $this->toolRegistry->getToolsDefinitions($allowedToolNames);
+    }
+
+    private function requestUnderstandingFromPlan(array $taskPlan): ?AssistantRequestUnderstanding
+    {
+        return is_array($taskPlan['request_understanding'] ?? null)
+            ? AssistantRequestUnderstanding::fromArray($taskPlan['request_understanding'])
+            : null;
+    }
+
+    private function toolBlockedMessage(?string $reason): string
+    {
+        unset($reason);
+
+        return $this->assistantMessage(
+            'ai_assistant.tool_blocked_by_request_policy',
+            'Инструмент не выполнен, потому что текущий запрос ограничивает формат ответа или действия.'
+        );
     }
 
     protected function resolveRelevantToolNames(array $taskPlan): array

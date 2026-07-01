@@ -4,24 +4,39 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services;
 
+use App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantToolEligibilityPolicy;
+
 class AssistantTaskOrchestrator
 {
+    private readonly AssistantRequestUnderstandingResolver $requestUnderstandingResolver;
+
+    private readonly AssistantToolEligibilityPolicy $toolEligibilityPolicy;
+
     public function __construct(
         private readonly AssistantCapabilityRegistry $capabilityRegistry,
-        private readonly AssistantAccessContextResolver $accessContextResolver
-    ) {}
+        private readonly AssistantAccessContextResolver $accessContextResolver,
+        ?AssistantRequestUnderstandingResolver $requestUnderstandingResolver = null,
+        ?AssistantToolEligibilityPolicy $toolEligibilityPolicy = null
+    ) {
+        $this->requestUnderstandingResolver = $requestUnderstandingResolver ?? new AssistantRequestUnderstandingResolver;
+        $this->toolEligibilityPolicy = $toolEligibilityPolicy ?? new AssistantToolEligibilityPolicy;
+    }
 
     public function plan(string $query, array $requestPayload, array $accessContext): array
     {
         $request = $this->normalizeRequest($query, $requestPayload);
-        $taskType = $this->resolveTaskType($request);
+        $requestUnderstanding = $this->requestUnderstandingResolver->resolve($query, $request['context']);
+        $taskType = $this->resolveTaskType($request, $requestUnderstanding);
         $capability = $this->capabilityRegistry->match($query, $request['context'], $request['goal']);
         $navigationTarget = $this->resolveNavigationTarget($capability, $request['context']);
-        $nextActions = $this->buildNextActions($capability, $accessContext, $request, $navigationTarget);
+        $nextActions = $this->buildNextActions($capability, $accessContext, $request, $navigationTarget, $requestUnderstanding);
         $accessLimits = $this->buildAccessLimits($capability, $accessContext, $request, $nextActions);
 
         return [
             'request' => $request,
+            'request_understanding' => $requestUnderstanding->toArray(),
             'task_type' => $taskType,
             'capability' => $capability,
             'navigation_target' => $navigationTarget,
@@ -38,13 +53,15 @@ class AssistantTaskOrchestrator
     ): array {
         $ragContext = is_array($options['rag_context'] ?? null) ? $options['rag_context'] : null;
         $defaultMissingData = $this->hasRagContextEvidence($ragContext) ? [] : $this->defaultMissingData($plan);
-        $nextActions = array_values(array_merge(
+        $requestUnderstanding = $this->requestUnderstandingFromPlan($plan);
+        $nextActions = $this->filterPayloadActions(array_values(array_merge(
             $plan['next_actions'] ?? [],
             array_values(array_filter(
                 $options['proposed_actions'] ?? [],
                 static fn (mixed $action): bool => is_array($action)
             ))
-        ));
+        )), $requestUnderstanding);
+        $navigationTarget = $this->payloadNavigationTarget($plan['navigation_target'] ?? null, $requestUnderstanding);
 
         $missingData = array_values(array_unique(array_filter(array_merge(
             $defaultMissingData,
@@ -74,7 +91,7 @@ class AssistantTaskOrchestrator
             'evidence' => $this->buildEvidence($plan, $options),
             'missing_data' => $missingData,
             'next_actions' => $nextActions,
-            'navigation_target' => $plan['navigation_target'] ?? null,
+            'navigation_target' => $navigationTarget,
             'wizard' => $wizard,
             'executed_actions' => $executedActions,
             'agent_state' => is_array($options['agent_state'] ?? null) ? $options['agent_state'] : null,
@@ -94,6 +111,7 @@ class AssistantTaskOrchestrator
             'telemetry' => [
                 'selected_task' => $plan['task_type'] ?? 'summary',
                 'selected_capability' => $plan['capability']['id'] ?? null,
+                'request_understanding' => $requestUnderstanding?->toArray(),
                 'tool_failures' => array_values($options['tool_failures'] ?? []),
             ],
         ];
@@ -137,8 +155,20 @@ class AssistantTaskOrchestrator
         ];
     }
 
-    private function resolveTaskType(array $request): string
+    private function resolveTaskType(array $request, AssistantRequestUnderstanding $requestUnderstanding): string
     {
+        $understandingTaskType = match ($requestUnderstanding->primaryIntent) {
+            'search_knowledge' => 'find',
+            'analyze' => 'analyze',
+            'navigate' => 'navigate',
+            'create', 'update', 'approve' => 'act',
+            default => null,
+        };
+
+        if (is_string($understandingTaskType)) {
+            return $understandingTaskType;
+        }
+
         $goal = mb_strtolower(trim((string) ($request['goal'] ?? '')));
         if (in_array($goal, ['summary', 'find', 'analyze', 'navigate', 'wizard', 'act'], true)) {
             return $goal;
@@ -174,7 +204,13 @@ class AssistantTaskOrchestrator
         return 'summary';
     }
 
-    private function buildNextActions(?array $capability, array $accessContext, array $request, ?array $navigationTarget): array
+    private function buildNextActions(
+        ?array $capability,
+        array $accessContext,
+        array $request,
+        ?array $navigationTarget,
+        AssistantRequestUnderstanding $requestUnderstanding
+    ): array
     {
         if (! is_array($capability)) {
             return [];
@@ -198,7 +234,7 @@ class AssistantTaskOrchestrator
             $allowedByMode = ! $requiresConfirmation || (bool) ($request['allow_actions'] ?? false);
             $target = is_array($action['target'] ?? null) ? $action['target'] : $navigationTarget;
 
-            $actions[] = [
+            $nextAction = [
                 'id' => "{$capability['id']}-".count($actions),
                 'type' => $actionType,
                 'label' => (string) ($action['label'] ?? 'Открыть раздел'),
@@ -211,6 +247,17 @@ class AssistantTaskOrchestrator
                 'tool_name' => $action['tool_name'] ?? null,
                 'arguments' => is_array($action['arguments'] ?? null) ? $action['arguments'] : [],
             ];
+
+            $eligibility = $this->toolEligibilityPolicy->canExposeAction($nextAction, $requestUnderstanding);
+            if (! $eligibility->allowed) {
+                continue;
+            }
+
+            if ($eligibility->requiresConfirmation) {
+                $nextAction['requires_confirmation'] = true;
+            }
+
+            $actions[] = $nextAction;
         }
 
         return $actions;
@@ -482,5 +529,41 @@ class AssistantTaskOrchestrator
         }
 
         return false;
+    }
+
+    private function requestUnderstandingFromPlan(array $plan): ?AssistantRequestUnderstanding
+    {
+        return is_array($plan['request_understanding'] ?? null)
+            ? AssistantRequestUnderstanding::fromArray($plan['request_understanding'])
+            : null;
+    }
+
+    private function filterPayloadActions(array $actions, ?AssistantRequestUnderstanding $requestUnderstanding): array
+    {
+        if (! $requestUnderstanding instanceof AssistantRequestUnderstanding) {
+            return $actions;
+        }
+
+        return array_values(array_filter($actions, function (array $action) use ($requestUnderstanding): bool {
+            return $this->toolEligibilityPolicy->canExposeAction($action, $requestUnderstanding)->allowed;
+        }));
+    }
+
+    private function payloadNavigationTarget(mixed $navigationTarget, ?AssistantRequestUnderstanding $requestUnderstanding): ?array
+    {
+        if (! is_array($navigationTarget)) {
+            return null;
+        }
+
+        if (! $requestUnderstanding instanceof AssistantRequestUnderstanding) {
+            return $navigationTarget;
+        }
+
+        $eligibility = $this->toolEligibilityPolicy->canExposeAction([
+            'type' => 'navigate',
+            'target' => $navigationTarget,
+        ], $requestUnderstanding);
+
+        return $eligibility->allowed ? $navigationTarget : null;
     }
 }

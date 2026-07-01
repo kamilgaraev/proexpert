@@ -137,6 +137,47 @@ class AssistantTaskOrchestratorTest extends TestCase
         $this->assertSame([], $payload['missing_data']);
     }
 
+    public function test_plan_contains_request_understanding_for_text_only_rag_request(): void
+    {
+        $orchestrator = $this->makeOrchestratorWithRealRegistry();
+
+        $plan = $orchestrator->plan(
+            'По проекту «Кирпичный дом "Лесной двор"» перечисли 5 фактов из базы знаний. Только текст. Не создавай PDF, файл или отчет.',
+            [],
+            [
+                'organization_id' => 15,
+                'permissions_flat' => ['projects.view', 'reports.view'],
+            ]
+        );
+
+        $this->assertSame('search_knowledge', $plan['request_understanding']['primary_intent']);
+        $this->assertSame('text', $plan['request_understanding']['output_format']);
+        $this->assertSame('read_only', $plan['request_understanding']['action_policy']);
+        $this->assertContains('no_pdf', $plan['request_understanding']['constraints']);
+        $this->assertContains('no_report', $plan['request_understanding']['constraints']);
+    }
+
+    public function test_json_no_actions_payload_removes_navigation_and_next_actions(): void
+    {
+        $orchestrator = $this->makeOrchestratorWithRealRegistry();
+
+        $plan = $orchestrator->plan('Ответь строго JSON без markdown. Без действий и без навигации.', [
+            'context' => [
+                'source_route' => '/projects',
+            ],
+        ], [
+            'organization_id' => 15,
+            'permissions_flat' => ['projects.view'],
+        ]);
+
+        $payload = $orchestrator->buildPayload($plan, '{"ok":true}');
+
+        $this->assertSame('json', $plan['request_understanding']['output_format']);
+        $this->assertSame([], $payload['next_actions']);
+        $this->assertNull($payload['navigation_target']);
+        $this->assertFalse($payload['requires_confirmation']);
+    }
+
     public static function russianIntentProvider(): array
     {
         return [

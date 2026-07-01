@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\Reports;
 
+use App\BusinessModules\Features\AIAssistant\DTOs\RequestUnderstanding\AssistantRequestUnderstanding;
 use App\BusinessModules\Features\AIAssistant\DTOs\Reports\AssistantReportDefinition;
+use App\BusinessModules\Features\AIAssistant\Services\RequestUnderstanding\AssistantRequestUnderstandingResolver;
 
 final readonly class AssistantReportIntentResolver
 {
@@ -73,9 +75,14 @@ final readonly class AssistantReportIntentResolver
         'za',
     ];
 
+    private AssistantRequestUnderstandingResolver $requestUnderstandingResolver;
+
     public function __construct(
-        private AssistantReportCatalog $catalog = new AssistantReportCatalog
-    ) {}
+        private AssistantReportCatalog $catalog = new AssistantReportCatalog,
+        ?AssistantRequestUnderstandingResolver $requestUnderstandingResolver = null
+    ) {
+        $this->requestUnderstandingResolver = $requestUnderstandingResolver ?? new AssistantRequestUnderstandingResolver;
+    }
 
     public function defaultReportDefinition(): ?AssistantReportDefinition
     {
@@ -95,6 +102,14 @@ final readonly class AssistantReportIntentResolver
      */
     public function resolve(string $message, array $context = []): array
     {
+        $requestUnderstanding = $this->requestUnderstandingResolver->resolve($message, $context);
+        if ($this->blocksReportIntent($requestUnderstanding)) {
+            return [
+                'status' => 'not_report',
+                'candidates' => [],
+            ];
+        }
+
         $normalized = $this->normalize($message);
         $scores = $this->scoreDefinitions($normalized);
         $contextDefinition = $this->definitionFromContext($context);
@@ -158,6 +173,21 @@ final readonly class AssistantReportIntentResolver
             'status' => 'ambiguous',
             'candidates' => $topDefinitions,
         ];
+    }
+
+    private function blocksReportIntent(AssistantRequestUnderstanding $requestUnderstanding): bool
+    {
+        if ($requestUnderstanding->primaryIntent === 'generate_report') {
+            return false;
+        }
+
+        foreach (['no_file', 'no_pdf', 'no_report', 'text_only', 'json_only', 'no_actions'] as $constraint) {
+            if ($requestUnderstanding->hasConstraint($constraint)) {
+                return true;
+            }
+        }
+
+        return $requestUnderstanding->primaryIntent === 'search_knowledge';
     }
 
     private function requiresExplicitReportIntent(AssistantReportDefinition $definition): bool
