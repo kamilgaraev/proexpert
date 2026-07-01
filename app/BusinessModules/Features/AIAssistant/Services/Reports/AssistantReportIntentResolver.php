@@ -138,6 +138,18 @@ final readonly class AssistantReportIntentResolver
             ];
         }
 
+        if ($scores === [] && $this->isGenericFileReportRequest($requestUnderstanding, $isReportLike)) {
+            $definition = $this->catalog->findById('generic_rag');
+
+            if ($definition instanceof AssistantReportDefinition) {
+                return [
+                    'status' => 'matched',
+                    'definition' => $definition,
+                    'candidates' => [$definition],
+                ];
+            }
+        }
+
         if ($scores === []) {
             return [
                 'status' => $isReportLike ? 'missing_type' : 'not_report',
@@ -196,6 +208,13 @@ final readonly class AssistantReportIntentResolver
             'generate_operational_pdf_report',
             'generate_rag_pdf_report',
         ], true);
+    }
+
+    private function isGenericFileReportRequest(AssistantRequestUnderstanding $requestUnderstanding, bool $isReportLike): bool
+    {
+        return $isReportLike
+            && $requestUnderstanding->primaryIntent === 'generate_report'
+            && in_array($requestUnderstanding->outputFormat, ['file', 'pdf'], true);
     }
 
     /**

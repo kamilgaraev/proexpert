@@ -34,7 +34,7 @@ final class AssistantRequestUnderstandingResolver
     private function resolveConstraints(string $normalized): array
     {
         $constraints = [];
-        $negativeCreation = $this->containsAny($normalized, [
+        $negativeCreation = $this->containsAnyWholePhrase($normalized, [
             'не создавай',
             'не формируй',
             'не делай',
@@ -44,21 +44,21 @@ final class AssistantRequestUnderstandingResolver
         ]);
 
         if (
-            $this->containsAny($normalized, ['без pdf', 'не нужен pdf', 'не нужно pdf', 'не pdf', 'не файл pdf'])
+            $this->containsAnyWholePhrase($normalized, ['без pdf', 'не нужен pdf', 'не нужно pdf', 'не pdf', 'не файл pdf'])
             || ($negativeCreation && $this->hasPdfMarker($normalized))
         ) {
             $constraints[] = 'no_pdf';
         }
 
         if (
-            $this->containsAny($normalized, ['без файла', 'без файлов', 'не нужен файл', 'не нужны файлы', 'не файл', 'не файлы', 'не нужен никакой файл'])
+            $this->containsAnyWholePhrase($normalized, ['без файла', 'без файлов', 'не нужен файл', 'не нужны файлы', 'не файл', 'не файлы', 'не нужен никакой файл'])
             || ($negativeCreation && $this->hasFileMarker($normalized))
         ) {
             $constraints[] = 'no_file';
         }
 
         if (
-            $this->containsAny($normalized, ['без отчета', 'без отчетов', 'не нужен отчет', 'не нужны отчеты', 'не отчет', 'не создавай отчет'])
+            $this->containsAnyWholePhrase($normalized, ['без отчета', 'без отчетов', 'не нужен отчет', 'не нужны отчеты', 'не отчет', 'не создавай отчет'])
             || ($negativeCreation && $this->hasReportMarker($normalized))
         ) {
             $constraints[] = 'no_report';
@@ -285,22 +285,50 @@ final class AssistantRequestUnderstandingResolver
             return false;
         }
 
-        return $this->containsAny($normalized, [
+        if ($this->containsAnyWholePhrase($normalized, [
             'сформируй отчет',
             'сформируй pdf',
+            'сформируй файл',
+            'сформируй документ',
             'создай pdf',
             'создай отчет',
+            'создай файл',
+            'создай документ',
             'сделай отчет',
+            'сделай файл',
+            'сделай документ',
             'подготовь отчет',
             'подготовь файл',
+            'подготовь документ',
+            'собери файл',
+            'собери документ',
             'выгрузи файл',
             'выгрузи отчет',
             'выгрузи pdf',
             'скачай отчет',
+            'скачай файл',
             'нужен отчет',
             'нужен pdf',
+            'нужен файл',
+            'нужен документ',
             'покажи отчет',
-        ]);
+        ])) {
+            return true;
+        }
+
+        return $this->hasFileMarker($normalized)
+            && $this->containsAnyWholePhrase($normalized, [
+                'создай',
+                'сделай',
+                'собери',
+                'сформируй',
+                'подготовь',
+                'выгрузи',
+                'скачай',
+                'нужен',
+                'нужна',
+                'нужно',
+            ]);
     }
 
     private function isKnowledgeSearch(string $normalized): bool
@@ -377,7 +405,7 @@ final class AssistantRequestUnderstandingResolver
 
     private function hasFileMarker(string $normalized): bool
     {
-        return $this->containsAny($normalized, ['файл', 'файлы', 'файлов', 'выгруз']);
+        return $this->containsAny($normalized, ['файл', 'файлы', 'файлов', 'выгруз', 'документ']);
     }
 
     private function hasReportMarker(string $normalized): bool
@@ -400,6 +428,21 @@ final class AssistantRequestUnderstandingResolver
     {
         foreach ($needles as $needle) {
             if (is_string($needle) && $needle !== '' && str_contains($haystack, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function containsAnyWholePhrase(string $haystack, array $needles): bool
+    {
+        foreach ($needles as $needle) {
+            if (! is_string($needle) || $needle === '') {
+                continue;
+            }
+
+            if (preg_match('/(?:^| )'.preg_quote($needle, '/').'(?: |$)/u', $haystack) === 1) {
                 return true;
             }
         }
