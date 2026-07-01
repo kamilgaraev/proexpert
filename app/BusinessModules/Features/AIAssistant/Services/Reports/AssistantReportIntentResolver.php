@@ -192,7 +192,10 @@ final readonly class AssistantReportIntentResolver
 
     private function requiresExplicitReportIntent(AssistantReportDefinition $definition): bool
     {
-        return $definition->toolName === 'generate_operational_pdf_report';
+        return in_array($definition->toolName, [
+            'generate_operational_pdf_report',
+            'generate_rag_pdf_report',
+        ], true);
     }
 
     /**

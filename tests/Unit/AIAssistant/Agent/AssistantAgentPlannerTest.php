@@ -164,6 +164,20 @@ class AssistantAgentPlannerTest extends TestCase
         $this->assertSame([], $decision->toolArguments);
     }
 
+    public function test_text_summary_without_report_or_file_marker_does_not_generate_pdf_report(): void
+    {
+        $decision = $this->planner()->decide(
+            'Покажи краткую сводку по движению материалов за две недели',
+            $this->projectContext(),
+            null
+        );
+
+        $this->assertSame('answer', $decision->type);
+        $this->assertNull($decision->state);
+        $this->assertNull($decision->toolName);
+        $this->assertSame([], $decision->toolArguments);
+    }
+
     public function test_multi_domain_reconciliation_question_uses_answer_flow_instead_of_payment_report(): void
     {
         $decision = $this->planner()->decide(
@@ -228,6 +242,19 @@ class AssistantAgentPlannerTest extends TestCase
         $this->assertSame('report.unspecified', $decision->state?->id);
         $this->assertSame(['report_type'], $decision->state?->missingRequiredSlotNames());
         $this->assertStringContainsString('Какой отчет', (string) $decision->clarificationQuestion);
+    }
+
+    public function test_generic_rag_pdf_report_request_executes_with_source_query(): void
+    {
+        $message = 'Сформируй PDF-отчет по теме входной контроль качества из базы знаний';
+
+        $decision = $this->planner()->decide($message, $this->projectContext(), null);
+
+        $this->assertSame('execute_tool', $decision->type);
+        $this->assertSame('generate_rag_pdf_report', $decision->toolName);
+        $this->assertSame('generic_rag', $decision->toolArguments['report_type']);
+        $this->assertSame($message, $decision->toolArguments['query']);
+        $this->assertSame(56, $decision->toolArguments['project_id']);
     }
 
     public function test_report_type_follow_up_resumes_unspecified_report_request(): void

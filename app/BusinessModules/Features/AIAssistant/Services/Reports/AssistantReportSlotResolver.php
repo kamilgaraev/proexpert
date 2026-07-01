@@ -76,6 +76,10 @@ final readonly class AssistantReportSlotResolver
             }
         }
 
+        if (in_array($state->toolName, ['generate_operational_pdf_report', 'generate_rag_pdf_report'], true)) {
+            $arguments['query'] = $state->sourceMessage;
+        }
+
         foreach (['project_id', 'warehouse_id', 'contractor_id', 'user_id'] as $slotName) {
             $value = $state->slotValue($slotName);
             if ($value !== null && $value !== '') {

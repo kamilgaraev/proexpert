@@ -11,6 +11,7 @@ use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateMater
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateOperationalPdfReportTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateProfitabilityReportTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateProjectTimelinesReportTool;
+use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateRagPdfReportTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateTimeTrackingReportTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateWarehouseStockReportTool;
 use App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools\GenerateWorkCompletionReportTool;
@@ -48,6 +49,12 @@ use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\Proje
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseWarehouseFactSource;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseWorkFactSource;
 use App\BusinessModules\Features\DesignManagement\Services\DesignPulseFactSource;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantRagReportSourceRetriever;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportComposer;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportComposerInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportPdfWriterInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportSourceRetrieverInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\DompdfAssistantReportPdfWriter;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\OpenAIRagEmbeddingProvider;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
@@ -134,6 +141,9 @@ class AIAssistantServiceProvider extends ServiceProvider
         $this->app->singleton(RagIndexer::class);
         $this->app->singleton(RagRetriever::class);
         $this->app->singleton(RagPromptContextBuilder::class);
+        $this->app->singleton(AssistantReportSourceRetrieverInterface::class, AssistantRagReportSourceRetriever::class);
+        $this->app->singleton(AssistantReportComposerInterface::class, AssistantReportComposer::class);
+        $this->app->singleton(AssistantReportPdfWriterInterface::class, DompdfAssistantReportPdfWriter::class);
 
         $this->app->singleton(LLMProviderInterface::class, function ($app) {
             $provider = strtolower((string) config('ai-assistant.llm.provider', 'yandex'));
@@ -161,6 +171,7 @@ class AIAssistantServiceProvider extends ServiceProvider
             $registry->registerTool($app->make(GenerateContractPaymentsReportTool::class));
             $registry->registerTool($app->make(GenerateProjectTimelinesReportTool::class));
             $registry->registerTool($app->make(GenerateOperationalPdfReportTool::class));
+            $registry->registerTool($app->make(GenerateRagPdfReportTool::class));
             $registry->registerTool($app->make(GetProjectSnapshotTool::class));
             $registry->registerTool($app->make(GetProcurementSnapshotTool::class));
             $registry->registerTool($app->make(GetContractSnapshotTool::class));

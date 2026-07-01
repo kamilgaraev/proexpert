@@ -14,6 +14,10 @@ use InvalidArgumentException;
 
 final class AssistantOperationalReportService
 {
+    public function __construct(
+        private readonly AssistantOperationalReportQueryPolicy $queryPolicy = new AssistantOperationalReportQueryPolicy
+    ) {}
+
     /**
      * @return array<string, array<string, mixed>>
      */
@@ -197,9 +201,12 @@ final class AssistantOperationalReportService
 
         $query = DB::table($table)->where($organizationColumn, $organizationId);
         $dateColumn = $this->firstExistingColumn($table, ['created_at', 'date', 'occurred_at', 'received_at', 'shift_date', 'scanned_at', 'started_at']);
-        $projectColumn = $this->firstExistingColumn($table, ['project_id']);
+        $projectColumn = $this->queryPolicy->projectColumn(
+            $table,
+            fn (string $table, string $column): bool => Schema::hasColumn($table, $column)
+        );
 
-        if ($dateColumn !== null) {
+        if ($dateColumn !== null && $this->queryPolicy->shouldApplyPeriod($table, $projectId)) {
             $this->applyPeriod($query, $dateColumn, $dateFrom, $dateTo);
         }
 

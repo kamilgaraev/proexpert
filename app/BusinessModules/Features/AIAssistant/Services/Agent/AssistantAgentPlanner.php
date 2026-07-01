@@ -47,7 +47,7 @@ final readonly class AssistantAgentPlanner
     public function decide(string $message, array $context, ?AssistantTaskState $pendingState = null): AssistantAgentDecision
     {
         $requestUnderstanding = $this->requestUnderstandingResolver->resolve($message, $context);
-        if ($this->blocksReportPlanning($requestUnderstanding)) {
+        if ($this->blocksReportPlanning($requestUnderstanding, $pendingState)) {
             return new AssistantAgentDecision(type: 'answer');
         }
 
@@ -150,8 +150,19 @@ final readonly class AssistantAgentPlanner
         return $this->catalog->match($message, $context);
     }
 
-    private function blocksReportPlanning(AssistantRequestUnderstanding $requestUnderstanding): bool
-    {
+    private function blocksReportPlanning(
+        AssistantRequestUnderstanding $requestUnderstanding,
+        ?AssistantTaskState $pendingState
+    ): bool {
+        if (
+            $pendingState instanceof AssistantTaskState
+            && $pendingState->status === 'waiting_for_slots'
+            && str_starts_with($pendingState->id, 'report.')
+            && ! $requestUnderstanding->blocksFileGeneration()
+        ) {
+            return false;
+        }
+
         return ! $this->toolEligibilityPolicy
             ->canExposeTool('generate_operational_pdf_report', $requestUnderstanding)
             ->allowed;

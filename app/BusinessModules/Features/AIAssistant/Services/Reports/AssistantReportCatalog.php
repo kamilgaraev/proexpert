@@ -130,8 +130,8 @@ final class AssistantReportCatalog
                 id: 'projects_summary',
                 capability: 'projects',
                 label: 'сводка по проектам',
-                aliases: ['отчет по проектам', 'сводка по проектам', 'сводку по проектам', 'общий отчет по проектам', 'любой отчет', 'любые отчеты'],
-                matchTerms: ['сводка по проектам', 'сводку по проектам', 'проекты за период', 'портфель проектов', 'общий отчет', 'любой отчет']
+                aliases: ['отчет по проектам', 'отчет по проекту', 'pdf-отчет по проекту', 'pdf отчет по проекту', 'сводка по проектам', 'сводку по проектам', 'общий отчет по проектам', 'любой отчет', 'любые отчеты'],
+                matchTerms: ['сводка по проектам', 'сводку по проектам', 'проект за период', 'проекты за период', 'портфель проектов', 'общий отчет', 'любой отчет']
             ),
             $this->operationalReport(
                 id: 'procurement_requests',
@@ -195,6 +195,20 @@ final class AssistantReportCatalog
                 label: 'посещаемость сотрудников',
                 aliases: ['отчет по посещаемости сотрудников', 'посещаемость сотрудников', 'явка персонала'],
                 matchTerms: ['посещаемость сотрудников', 'явка персонала', 'табель посещаемости', 'пропуски сотрудников']
+            ),
+            new AssistantReportDefinition(
+                id: 'generic_rag',
+                capability: 'reports',
+                label: 'отчет из базы знаний',
+                toolName: 'generate_rag_pdf_report',
+                aliases: ['отчет из базы знаний', 'pdf отчет по теме', 'pdf-отчет по теме', 'отчет по теме из базы знаний', 'отчет с источниками из базы знаний'],
+                matchTerms: ['база знаний', 'из базы знаний', 'по теме', 'с источниками', 'rag'],
+                requiredSlots: [],
+                optionalSlots: [$this->periodSlot(), $this->slot('project_id', 'project'), $this->slot('query', 'text')],
+                permissions: ['reports.view', 'admin.reports.view'],
+                artifactType: 'pdf',
+                defaultFormat: 'pdf',
+                formats: ['pdf']
             ),
         ];
     }

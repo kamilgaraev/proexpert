@@ -37,6 +37,20 @@ final class AssistantToolEligibilityPolicyTest extends TestCase
         $this->assertTrue($policy->canExposeTool('search_projects', $understanding)->allowed);
     }
 
+    public function test_report_tools_are_blocked_without_explicit_report_generation_intent(): void
+    {
+        $understanding = (new AssistantRequestUnderstandingResolver)->resolve(
+            'Покажи краткую сводку по движению материалов за две недели.',
+            []
+        );
+        $policy = new AssistantToolEligibilityPolicy;
+
+        $eligibility = $policy->canExposeTool('generate_material_movements_report', $understanding);
+
+        $this->assertFalse($eligibility->allowed);
+        $this->assertSame('report', $eligibility->category);
+    }
+
     public function test_mutation_tools_are_blocked_for_no_actions_request(): void
     {
         $understanding = (new AssistantRequestUnderstandingResolver)->resolve(

@@ -134,6 +134,40 @@
             background: #f8fafc;
             color: #64748b;
         }
+
+        .narrative-block {
+            margin-top: 18px;
+            padding: 10px 12px;
+            border: 1px solid #dbe5f1;
+            background: #ffffff;
+            page-break-inside: avoid;
+        }
+
+        .narrative-title {
+            margin-bottom: 7px;
+            color: #0f172a;
+            font-size: 14px;
+            font-weight: 700;
+        }
+
+        .narrative-list {
+            margin: 6px 0 0 18px;
+            padding: 0;
+        }
+
+        .narrative-list li {
+            margin-bottom: 5px;
+        }
+
+        .source-title {
+            font-weight: 700;
+            color: #1f2937;
+        }
+
+        .source-excerpt {
+            margin-top: 3px;
+            color: #475569;
+        }
     </style>
 </head>
 <body>
@@ -226,6 +260,83 @@
             @endif
         </div>
     @endforeach
+
+    @php
+        $ragReport = is_array($report['rag_report'] ?? null) ? $report['rag_report'] : null;
+        $ragSections = is_array($ragReport['sections'] ?? null) ? $ragReport['sections'] : [];
+        $ragRisks = is_array($ragReport['risks'] ?? null) ? $ragReport['risks'] : [];
+        $ragNextActions = is_array($ragReport['next_actions'] ?? null) ? $ragReport['next_actions'] : [];
+        $sources = is_array($report['sources'] ?? null) ? $report['sources'] : [];
+        $limitations = is_array($report['limitations'] ?? null) ? $report['limitations'] : [];
+    @endphp
+
+    @if($ragReport && (!empty($ragReport['summary']) || !empty($ragSections)))
+        <div class="narrative-block">
+            <div class="narrative-title">Сводка по найденным данным</div>
+            @if(!empty($ragReport['summary']))
+                <p>{{ $ragReport['summary'] }}</p>
+            @endif
+            @foreach($ragSections as $ragSection)
+                @if(is_array($ragSection))
+                    <div class="source-title">{{ $ragSection['title'] ?? 'Источник' }}</div>
+                    @if(!empty($ragSection['items']) && is_array($ragSection['items']))
+                        <ul class="narrative-list">
+                            @foreach($ragSection['items'] as $item)
+                                <li>{{ $item }}</li>
+                            @endforeach
+                        </ul>
+                    @endif
+                @endif
+            @endforeach
+        </div>
+    @endif
+
+    @if(!empty($ragRisks))
+        <div class="narrative-block">
+            <div class="narrative-title">Риски</div>
+            <ul class="narrative-list">
+                @foreach($ragRisks as $risk)
+                    <li>{{ $risk }}</li>
+                @endforeach
+            </ul>
+        </div>
+    @endif
+
+    @if(!empty($ragNextActions))
+        <div class="narrative-block">
+            <div class="narrative-title">Следующие действия</div>
+            <ul class="narrative-list">
+                @foreach($ragNextActions as $action)
+                    <li>{{ $action }}</li>
+                @endforeach
+            </ul>
+        </div>
+    @endif
+
+    @if(!empty($sources))
+        <div class="narrative-block">
+            <div class="narrative-title">Источники</div>
+            @foreach($sources as $source)
+                @if(is_array($source))
+                    <div class="source-title">{{ $source['title'] ?? 'Источник' }}</div>
+                    @if(!empty($source['excerpt']))
+                        <div class="source-excerpt">{{ $source['excerpt'] }}</div>
+                    @endif
+                @endif
+            @endforeach
+        </div>
+    @endif
+
+    @if(!empty($limitations))
+        <div class="narrative-block">
+            <div class="narrative-title">Ограничения данных</div>
+            <ul class="narrative-list">
+                @foreach($limitations as $limitation)
+                    <li>{{ $limitation }}</li>
+                @endforeach
+            </ul>
+        </div>
+    @endif
 
     @include('pdf.partials.prohelper-brand-footer')
 </body>

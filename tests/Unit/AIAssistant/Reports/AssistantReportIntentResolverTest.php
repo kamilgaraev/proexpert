@@ -68,6 +68,26 @@ final class AssistantReportIntentResolverTest extends TestCase
         $this->assertGreaterThan(3, count($result['candidates']));
     }
 
+    public function test_generic_rag_report_request_matches_rag_pdf_report(): void
+    {
+        $result = (new AssistantReportIntentResolver)->resolve(
+            'Сформируй PDF-отчет по теме входной контроль качества из базы знаний'
+        );
+
+        $this->assertSame('matched', $result['status']);
+        $this->assertSame('generic_rag', $result['definition']->id);
+    }
+
+    public function test_project_pdf_report_uses_project_summary_definition(): void
+    {
+        $result = (new AssistantReportIntentResolver)->resolve(
+            'Сформируй PDF-отчет по проекту Кирпичный дом Лесной двор'
+        );
+
+        $this->assertSame('matched', $result['status']);
+        $this->assertSame('projects_summary', $result['definition']->id);
+    }
+
     public function test_non_report_request_is_left_for_generic_assistant_flow(): void
     {
         $result = (new AssistantReportIntentResolver)->resolve('расскажи что ты умеешь');

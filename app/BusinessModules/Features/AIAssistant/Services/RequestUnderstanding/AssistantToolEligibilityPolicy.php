@@ -64,6 +64,13 @@ final class AssistantToolEligibilityPolicy
             );
         }
 
+        if ($category === 'report' && $understanding->primaryIntent !== 'generate_report') {
+            return AssistantToolEligibility::block(
+                $category,
+                'Инструмент отчета доступен только при явном запросе на файл или отчет.'
+            );
+        }
+
         if ($category === 'file' && $understanding->blocksFileGeneration()) {
             return AssistantToolEligibility::block(
                 $category,

@@ -23,6 +23,7 @@ final class AssistantReportCatalogTest extends TestCase
             'generate_contract_payments_report',
             'generate_project_timelines_report',
             'generate_operational_pdf_report',
+            'generate_rag_pdf_report',
         ], $catalog->toolNames());
     }
 
@@ -30,7 +31,7 @@ final class AssistantReportCatalogTest extends TestCase
     {
         $catalog = new AssistantReportCatalog;
 
-        $this->assertCount(18, $catalog->all());
+        $this->assertCount(19, $catalog->all());
 
         foreach ([
             'projects_summary',
@@ -83,5 +84,15 @@ final class AssistantReportCatalogTest extends TestCase
         $this->assertSame('reports', $task['domain']);
         $this->assertSame('generate_project_timelines_report', $task['tool_name']);
         $this->assertSame(['type' => 'pdf'], $task['artifact']);
+    }
+
+    public function test_catalog_contains_generic_rag_report(): void
+    {
+        $definition = (new AssistantReportCatalog)->findById('generic_rag');
+
+        $this->assertNotNull($definition);
+        $this->assertSame('generate_rag_pdf_report', $definition->toolName);
+        $this->assertSame('pdf', $definition->artifactType);
+        $this->assertContains('отчет из базы знаний', $definition->aliases);
     }
 }

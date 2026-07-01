@@ -1762,7 +1762,7 @@ class AIAssistantService
         $capabilityTools = match ($capabilityId) {
             'projects' => ['get_project_snapshot', 'search_projects'],
             'contracts' => ['get_contract_snapshot', 'search_contractors'],
-            'reports' => ['get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot', 'generate_profitability_report', 'generate_work_completion_report', 'generate_material_movements_report', 'generate_contractor_settlements_report', 'generate_contract_payments_report', 'generate_project_timelines_report', 'generate_time_tracking_report', 'generate_warehouse_stock_report', 'generate_operational_pdf_report'],
+            'reports' => ['get_project_snapshot', 'get_procurement_snapshot', 'get_contract_snapshot', 'get_schedule_snapshot', 'generate_profitability_report', 'generate_work_completion_report', 'generate_material_movements_report', 'generate_contractor_settlements_report', 'generate_contract_payments_report', 'generate_project_timelines_report', 'generate_time_tracking_report', 'generate_warehouse_stock_report', 'generate_operational_pdf_report', 'generate_rag_pdf_report'],
             'warehouse' => ['search_warehouse', 'search_materials'],
             'payments' => ['get_contract_snapshot', 'get_project_snapshot', 'approve_payment_request', 'generate_contract_payments_report'],
             'schedules' => ['get_schedule_snapshot', 'search_projects', 'create_schedule_task', 'update_schedule_task_status'],

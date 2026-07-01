@@ -74,6 +74,7 @@ class AssistantCapabilityCatalogTest extends TestCase
             'generate_contract_payments_report',
             'generate_project_timelines_report',
             'generate_operational_pdf_report',
+            'generate_rag_pdf_report',
         ], array_values(array_unique(array_column($catalog->all(), 'tool_name'))));
     }
 

@@ -5,24 +5,28 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Actions\Reports\Tools;
 
 use App\BusinessModules\Features\AIAssistant\Contracts\AIToolInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantOperationalReportEnricher;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantOperationalReportService;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantOperationalReportPeriodFilter;
+use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportComposerInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Reports\AssistantReportCatalog;
 use App\Models\Organization;
 use App\Models\User;
-use App\Services\Storage\OrganizationStoragePath;
+use App\Services\Storage\FileService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Throwable;
 
 final class GenerateOperationalPdfReportTool implements AIToolInterface
 {
-    use ReportDateHelper;
-
     public function __construct(
         private readonly AssistantOperationalReportService $reportService,
-        private readonly AssistantReportCatalog $reportCatalog
+        private readonly AssistantReportCatalog $reportCatalog,
+        private readonly AssistantReportComposerInterface $reportComposer,
+        private readonly AssistantOperationalReportEnricher $reportEnricher,
+        private readonly FileService $fileService,
+        private readonly AssistantOperationalReportPeriodFilter $periodFilter = new AssistantOperationalReportPeriodFilter
     ) {}
 
     public function getName(): string
@@ -68,8 +72,7 @@ final class GenerateOperationalPdfReportTool implements AIToolInterface
     public function execute(array $arguments, ?User $user, Organization $organization): array|string
     {
         $reportType = $this->normalizeReportType($arguments['report_type'] ?? null);
-        $period = (string) ($arguments['period'] ?? 'за этот месяц');
-        $dates = $this->extractPeriodFromArguments($arguments, $period);
+        $period = $this->periodFilter->resolve($arguments);
 
         try {
             $definition = $this->reportCatalog->findById($reportType);
@@ -81,10 +84,14 @@ final class GenerateOperationalPdfReportTool implements AIToolInterface
             }
 
             $report = $this->reportService->build($reportType, $organization, $user, [
-                'date_from' => $dates['date_from'],
-                'date_to' => $dates['date_to'],
+                'date_from' => $period['date_from'],
+                'date_to' => $period['date_to'],
                 'project_id' => $arguments['project_id'] ?? null,
             ]);
+            $report = $this->reportEnricher->enrich(
+                $report,
+                $this->composeRagReport($arguments, $organization, $user, $reportType, $definition->label, $period)
+            );
 
             $pdf = Pdf::loadView('reports.operational-summary-pdf', [
                 'report' => $report,
@@ -97,20 +104,24 @@ final class GenerateOperationalPdfReportTool implements AIToolInterface
             ]);
 
             $filename = $reportType.'_report_'.time().'.pdf';
-            $path = OrganizationStoragePath::forOrganization($organization->id, "reports/{$filename}");
+            $path = $this->fileService->putContent($pdf->output(), 'reports', $filename, 'private', $organization);
 
-            if (Storage::disk('s3')->put($path, $pdf->output()) !== true) {
+            if (! is_string($path)) {
                 throw new \RuntimeException('Не удалось сохранить отчет.');
             }
 
             $expiresAt = now()->addHours(24);
-            $url = Storage::disk('s3')->temporaryUrl($path, $expiresAt);
+            $url = $this->fileService->temporaryUrl($path, 1440, $organization);
+
+            if (! is_string($url) || $url === '') {
+                throw new \RuntimeException('Не удалось сформировать ссылку на отчет.');
+            }
 
             return [
                 'status' => 'success',
                 'message' => 'Отчет «'.$definition->label.'» сформирован.',
                 'report_type' => $reportType,
-                'period' => $period,
+                'period' => $period['period'],
                 'pdf_url' => $url,
                 'filename' => $filename,
                 'storage_disk' => 's3',
@@ -137,5 +148,57 @@ final class GenerateOperationalPdfReportTool implements AIToolInterface
         }
 
         return Str::snake(trim($value));
+    }
+
+    /**
+     * @param array<string, mixed> $arguments
+     * @param array{period: string, date_from: string|null, date_to: string|null, is_explicit: bool} $period
+     * @return array<string, mixed>|null
+     */
+    private function composeRagReport(
+        array $arguments,
+        Organization $organization,
+        ?User $user,
+        string $reportType,
+        string $label,
+        array $period
+    ): ?array {
+        if (! $user instanceof User) {
+            return null;
+        }
+
+        try {
+            return $this->reportComposer->compose($organization, $user, array_filter([
+                'report_type' => $reportType,
+                'query' => $this->query($arguments, $label),
+                'period' => $period['period'],
+                'date_from' => $period['date_from'],
+                'date_to' => $period['date_to'],
+                'project_id' => is_numeric($arguments['project_id'] ?? null) ? (int) $arguments['project_id'] : null,
+            ], static fn (mixed $value): bool => $value !== null && $value !== ''));
+        } catch (Throwable $throwable) {
+            Log::warning('AI operational report RAG enrichment failed: '.$throwable->getMessage(), [
+                'report_type' => $reportType,
+                'organization_id' => $organization->id,
+                'exception_class' => $throwable::class,
+            ]);
+
+            return null;
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $arguments
+     */
+    private function query(array $arguments, string $label): string
+    {
+        foreach (['query', 'topic', 'source_query'] as $key) {
+            $value = $arguments[$key] ?? null;
+            if (is_scalar($value) && trim((string) $value) !== '') {
+                return trim((string) $value);
+            }
+        }
+
+        return 'Отчет «'.$label.'»';
     }
 }
