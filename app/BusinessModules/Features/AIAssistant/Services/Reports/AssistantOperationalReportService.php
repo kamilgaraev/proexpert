@@ -14,6 +14,111 @@ use InvalidArgumentException;
 
 final class AssistantOperationalReportService
 {
+    private const TABLE_COLUMN_VALUE_LABELS = [
+        'purchase_requests.status.draft' => 'Черновик',
+        'purchase_requests.status.pending' => 'На рассмотрении',
+        'purchase_requests.status.approved' => 'Одобрена',
+        'purchase_requests.status.rejected' => 'Отклонена',
+        'purchase_requests.status.cancelled' => 'Отменена',
+        'supplier_requests.status.draft' => 'Черновик',
+        'supplier_requests.status.sent' => 'Отправлен поставщику',
+        'supplier_requests.status.responded' => 'Ответ получен',
+        'supplier_requests.status.cancelled' => 'Отменен',
+        'supplier_requests.status.expired' => 'Срок истек',
+        'supplier_proposals.status.pending' => 'Ожидает решения',
+        'supplier_proposals.status.accepted' => 'Принято',
+        'supplier_proposals.status.rejected' => 'Отклонено',
+        'supplier_proposals.status.expired' => 'Срок истек',
+        'supplier_proposal_decisions.status.pending' => 'Ожидает решения',
+        'supplier_proposal_decisions.status.approved' => 'Одобрено',
+        'supplier_proposal_decisions.status.rejected' => 'Отклонено',
+        'supplier_proposal_decisions.status.cancelled' => 'Отменено',
+        'supplier_proposal_decisions.decision.approved' => 'Одобрено',
+        'supplier_proposal_decisions.decision.rejected' => 'Отклонено',
+        'supplier_proposal_decisions.decision.accepted' => 'Принято',
+        'purchase_orders.status.draft' => 'Черновик',
+        'purchase_orders.status.sent' => 'Отправлен поставщику',
+        'purchase_orders.status.confirmed' => 'Подтвержден поставщиком',
+        'purchase_orders.status.in_delivery' => 'В доставке',
+        'purchase_orders.status.partially_delivered' => 'Частично принят',
+        'purchase_orders.status.delivered' => 'Принят полностью',
+        'purchase_orders.status.cancelled' => 'Отменен',
+        'purchase_receipts.status.pending' => 'Ожидает приемки',
+        'purchase_receipts.status.accepted' => 'Принято',
+        'purchase_receipts.status.rejected' => 'Отклонено',
+    ];
+
+    private const COLUMN_VALUE_LABELS = [
+        'status' => [
+            'active' => 'Активно',
+            'approved' => 'Одобрено',
+            'accepted' => 'Принято',
+            'cancelled' => 'Отменено',
+            'canceled' => 'Отменено',
+            'closed' => 'Закрыто',
+            'completed' => 'Завершено',
+            'confirmed' => 'Подтверждено',
+            'delivered' => 'Доставлено',
+            'done' => 'Готово',
+            'draft' => 'Черновик',
+            'expired' => 'Срок истек',
+            'fixed' => 'Исправлено',
+            'in_delivery' => 'В доставке',
+            'in_progress' => 'В работе',
+            'inactive' => 'Неактивно',
+            'new' => 'Новая',
+            'open' => 'Открыто',
+            'overdue' => 'Просрочено',
+            'partially_delivered' => 'Частично доставлено',
+            'pending' => 'Ожидает',
+            'planned' => 'Запланировано',
+            'processing' => 'В обработке',
+            'rejected' => 'Отклонено',
+            'resolved' => 'Решено',
+            'responded' => 'Ответ получен',
+            'sent' => 'Отправлено',
+            'submitted' => 'Отправлено',
+        ],
+        'state' => [
+            'active' => 'Активно',
+            'closed' => 'Закрыто',
+            'completed' => 'Завершено',
+            'draft' => 'Черновик',
+            'in_progress' => 'В работе',
+            'open' => 'Открыто',
+            'pending' => 'Ожидает',
+        ],
+        'priority' => [
+            'critical' => 'Критический',
+            'high' => 'Высокий',
+            'low' => 'Низкий',
+            'medium' => 'Средний',
+            'normal' => 'Обычный',
+        ],
+        'severity' => [
+            'critical' => 'Критическая',
+            'high' => 'Высокая',
+            'low' => 'Низкая',
+            'major' => 'Высокая',
+            'medium' => 'Средняя',
+            'minor' => 'Низкая',
+        ],
+        'decision' => [
+            'accepted' => 'Принято',
+            'approved' => 'Одобрено',
+            'rejected' => 'Отклонено',
+            'selected' => 'Выбрано',
+        ],
+        'event_type' => [
+            'check_in' => 'Вход',
+            'check_out' => 'Выход',
+            'entry' => 'Вход',
+            'exit' => 'Выход',
+            'scan_in' => 'Вход',
+            'scan_out' => 'Выход',
+        ],
+    ];
+
     public function __construct(
         private readonly AssistantOperationalReportQueryPolicy $queryPolicy = new AssistantOperationalReportQueryPolicy
     ) {}
@@ -227,9 +332,9 @@ final class AssistantOperationalReportService
             'amount_total' => $amountTotal,
             'amount_label' => $amountColumn !== null ? 'Сумма' : null,
             'amount_value' => $amountColumn !== null ? $this->formatMoney($amountTotal) : null,
-            'status_breakdown' => $statusColumn !== null ? $this->statusBreakdown($query, $statusColumn) : [],
+            'status_breakdown' => $statusColumn !== null ? $this->statusBreakdown($query, $table, $statusColumn) : [],
             'headers' => array_values($columns),
-            'rows' => $this->latestRows($query, $columns, $orderColumn),
+            'rows' => $this->latestRows($query, $table, $columns, $orderColumn),
         ];
     }
 
@@ -299,7 +404,7 @@ final class AssistantOperationalReportService
     /**
      * @return array<int, array{label: string, count: int}>
      */
-    private function statusBreakdown(Builder $query, string $statusColumn): array
+    private function statusBreakdown(Builder $query, string $table, string $statusColumn): array
     {
         return (clone $query)
             ->select($statusColumn, DB::raw('count(*) as aggregate'))
@@ -308,7 +413,7 @@ final class AssistantOperationalReportService
             ->limit(8)
             ->get()
             ->map(fn (object $row): array => [
-                'label' => $this->formatValue($row->{$statusColumn} ?? null),
+                'label' => $this->formatValue($row->{$statusColumn} ?? null, $table, $statusColumn),
                 'count' => (int) ($row->aggregate ?? 0),
             ])
             ->values()
@@ -319,7 +424,7 @@ final class AssistantOperationalReportService
      * @param array<string, string> $columns
      * @return array<int, array<int, string>>
      */
-    private function latestRows(Builder $query, array $columns, ?string $orderColumn): array
+    private function latestRows(Builder $query, string $table, array $columns, ?string $orderColumn): array
     {
         if ($columns === []) {
             return [];
@@ -334,14 +439,14 @@ final class AssistantOperationalReportService
         return $rowQuery
             ->get()
             ->map(fn (object $row): array => array_values(array_map(
-                fn (string $column): string => $this->formatValue($row->{$column} ?? null),
+                fn (string $column): string => $this->formatValue($row->{$column} ?? null, $table, $column),
                 array_keys($columns)
             )))
             ->values()
             ->all();
     }
 
-    private function formatValue(mixed $value): string
+    private function formatValue(mixed $value, ?string $table = null, ?string $column = null): string
     {
         if ($value === null || $value === '') {
             return '—';
@@ -359,7 +464,38 @@ final class AssistantOperationalReportService
             return Carbon::parse($value)->format('d.m.Y');
         }
 
+        if (is_string($value)) {
+            $label = $this->machineValueLabel($value, $table, $column);
+
+            if ($label !== null) {
+                return $label;
+            }
+        }
+
         return mb_strimwidth((string) $value, 0, 80, '...');
+    }
+
+    private function machineValueLabel(string $value, ?string $table, ?string $column): ?string
+    {
+        $normalized = str_replace('-', '_', mb_strtolower(trim($value)));
+
+        if ($normalized === '') {
+            return null;
+        }
+
+        if ($table !== null && $column !== null) {
+            $tableColumnKey = $table.'.'.$column.'.'.$normalized;
+
+            if (isset(self::TABLE_COLUMN_VALUE_LABELS[$tableColumnKey])) {
+                return self::TABLE_COLUMN_VALUE_LABELS[$tableColumnKey];
+            }
+        }
+
+        if ($column !== null && isset(self::COLUMN_VALUE_LABELS[$column][$normalized])) {
+            return self::COLUMN_VALUE_LABELS[$column][$normalized];
+        }
+
+        return null;
     }
 
     private function formatMoney(float $amount): string
