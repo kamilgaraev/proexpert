@@ -112,7 +112,7 @@ final readonly class GenerateRagPdfReportTool implements AIToolInterface
     }
 
     /**
-     * @param array<string, mixed> $arguments
+     * @param  array<string, mixed>  $arguments
      * @return array<string, mixed>
      */
     private function input(array $arguments): array
@@ -131,13 +131,16 @@ final readonly class GenerateRagPdfReportTool implements AIToolInterface
     }
 
     /**
-     * @param array<string, mixed> $report
+     * @param  array<string, mixed>  $report
      * @return array<string, mixed>
      */
     private function pdfReport(array $report, Organization $organization, User $user): array
     {
         $sources = array_values(is_array($report['sources'] ?? null) ? $report['sources'] : []);
         $risks = array_values(is_array($report['risks'] ?? null) ? $report['risks'] : []);
+        $sections = array_values(is_array($report['sections'] ?? null) ? $report['sections'] : []);
+        $nextActions = array_values(is_array($report['next_actions'] ?? null) ? $report['next_actions'] : []);
+        $keyFindings = $this->stringList($report['key_findings'] ?? []);
 
         return [
             'title' => (string) ($report['title'] ?? 'Отчет по найденным источникам'),
@@ -148,10 +151,15 @@ final readonly class GenerateRagPdfReportTool implements AIToolInterface
             'generated_by' => (string) ($report['generated_by'] ?? $user->name ?? ''),
             'summary_cards' => [
                 ['label' => 'Источники', 'value' => (string) count($sources), 'hint' => 'найдено'],
+                ['label' => 'Факты', 'value' => (string) count($sections), 'hint' => 'в отчете'],
                 ['label' => 'Риски', 'value' => (string) count($risks), 'hint' => 'по источникам'],
+                ['label' => 'Действия', 'value' => (string) count($nextActions), 'hint' => 'рекомендовано'],
             ],
+            'key_findings' => $keyFindings !== [] ? $keyFindings : $this->fallbackKeyFindings($report),
             'sections' => [],
             'rag_report' => $report,
+            'rag_context_mode' => 'primary',
+            'has_structured_data' => false,
             'sources' => $sources,
             'limitations' => array_values(is_array($report['limitations'] ?? null) ? $report['limitations'] : []),
         ];
@@ -173,5 +181,31 @@ final readonly class GenerateRagPdfReportTool implements AIToolInterface
         $value = trim((string) $value);
 
         return $value !== '' ? $value : null;
+    }
+
+    /**
+     * @return string[]
+     */
+    private function stringList(mixed $values): array
+    {
+        if (! is_array($values)) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            array_map(static fn (mixed $value): string => is_scalar($value) ? trim((string) $value) : '', $values),
+            static fn (string $value): bool => $value !== ''
+        ));
+    }
+
+    /**
+     * @param  array<string, mixed>  $report
+     * @return string[]
+     */
+    private function fallbackKeyFindings(array $report): array
+    {
+        $summary = $this->stringArgument($report['summary'] ?? null);
+
+        return $summary !== null ? [$summary] : [];
     }
 }

@@ -52,14 +52,57 @@ final class AssistantReportComposerTest extends TestCase
         ]);
 
         $this->assertTrue($report['has_sufficient_data']);
+        $this->assertSame('Отчет по проекту Кирпичный дом Лесной двор', $report['title']);
+        $this->assertSame('по проекту Кирпичный дом Лесной двор', $report['topic']);
         $this->assertStringContainsString('Кирпичный дом Лесной двор', $report['title']);
         $this->assertStringContainsString('Кирпичный дом Лесной двор', $report['summary']);
         $this->assertNotSame([], $report['sections']);
+        $this->assertSame('Паспорт проекта Кирпичный дом Лесной двор', $report['sections'][0]['source_title']);
+        $this->assertStringContainsString('Проект Кирпичный дом Лесной двор находится в работе', $report['sections'][0]['fact']);
+        $this->assertContains('Тип: Проект', $report['sections'][0]['meta']);
+        $this->assertContains('Дата: 01.06.2026', $report['sections'][0]['meta']);
+        $this->assertContains('Релевантность: 91%', $report['sections'][0]['meta']);
+        $this->assertNotSame([], $report['key_findings']);
         $this->assertStringContainsString('риск задержки', $report['risks'][0]);
         $this->assertNotSame([], $report['next_actions']);
         $this->assertSame('Паспорт проекта Кирпичный дом Лесной двор', $report['sources'][0]['title']);
+        $this->assertSame('Паспорт проекта Кирпичный дом Лесной двор', $report['sources'][0]['display_title']);
+        $this->assertSame('91%', $report['sources'][0]['score_label']);
         $this->assertSame(88, $report['sources'][0]['project_id']);
         $this->assertSame([], $report['limitations']);
+    }
+
+    public function test_verbose_pdf_query_is_normalized_into_short_management_title(): void
+    {
+        $composer = new AssistantReportComposer(
+            new FakeAssistantReportSourceRetriever([
+                new RagSearchResult(
+                    sourceType: 'purchase_request',
+                    entityType: 'purchase_request',
+                    entityId: '901',
+                    projectId: 88,
+                    title: 'Заявка на закупку кирпича',
+                    excerpt: str_repeat('Есть риск задержки поставки кирпича из-за согласования лимита. ', 12),
+                    similarity: 0.78,
+                    metadata: [],
+                    updatedAt: new DateTimeImmutable('2026-06-03T12:00:00+03:00')
+                ),
+            ]),
+            new RagPromptContextBuilder
+        );
+
+        $report = $composer->compose($this->organization(), $this->user(), [
+            'report_type' => 'generic_rag',
+            'query' => 'Пожалуйста, сформируй PDF-отчет по теме рисков снабжения по проекту Кирпичный дом Лесной двор с максимально подробным описанием всех найденных документов и ссылок',
+        ]);
+
+        $this->assertStringStartsWith('Отчет: Рисков снабжения', $report['title']);
+        $this->assertStringNotContainsString('PDF', $report['title']);
+        $this->assertStringNotContainsString('сформируй', mb_strtolower($report['title']));
+        $this->assertLessThanOrEqual(93, mb_strlen($report['title']));
+        $this->assertLessThanOrEqual(423, mb_strlen($report['sections'][0]['fact']));
+        $this->assertLessThanOrEqual(183, mb_strlen($report['sources'][0]['reference_excerpt']));
+        $this->assertSame('Заявка на закупку', $report['sources'][0]['type_label']);
     }
 
     public function test_empty_sources_return_insufficient_data_report_without_file_content(): void
@@ -77,6 +120,8 @@ final class AssistantReportComposerTest extends TestCase
 
         $this->assertFalse($report['has_sufficient_data']);
         $this->assertStringContainsString('данных недостаточно', mb_strtolower($report['summary']));
+        $this->assertSame('Отчет по проекту Кирпичный дом Лесной двор', $report['title']);
+        $this->assertSame([], $report['key_findings']);
         $this->assertSame([], $report['sections']);
         $this->assertSame([], $report['risks']);
         $this->assertSame([], $report['next_actions']);
@@ -106,7 +151,7 @@ final class AssistantReportComposerTest extends TestCase
 final readonly class FakeAssistantReportSourceRetriever implements AssistantReportSourceRetrieverInterface
 {
     /**
-     * @param array<int, RagSearchResult> $results
+     * @param  array<int, RagSearchResult>  $results
      */
     public function __construct(
         private array $results

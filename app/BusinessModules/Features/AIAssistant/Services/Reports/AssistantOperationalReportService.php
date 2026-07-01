@@ -214,7 +214,7 @@ final class AssistantOperationalReportService
     }
 
     /**
-     * @param array<string, mixed> $filters
+     * @param  array<string, mixed>  $filters
      * @return array<string, mixed>
      */
     public function build(string $reportType, Organization $organization, ?User $user, array $filters = []): array
@@ -272,13 +272,14 @@ final class AssistantOperationalReportService
             'organization_name' => (string) ($organization->name ?? 'Организация'),
             'generated_by' => $user?->name,
             'summary_cards' => $summaryCards,
+            'key_findings' => $this->keyFindings($sections, $totalRecords, $totalAmount),
             'sections' => $sections,
         ];
     }
 
     /**
-     * @param array<string, string> $columns
-     * @param string[] $amountColumns
+     * @param  array<string, string>  $columns
+     * @param  string[]  $amountColumns
      * @return array<string, mixed>
      */
     private function section(string $key, string $title, string $table, array $columns, array $amountColumns): array
@@ -287,7 +288,7 @@ final class AssistantOperationalReportService
     }
 
     /**
-     * @param array<string, mixed> $config
+     * @param  array<string, mixed>  $config
      * @return array<string, mixed>
      */
     private function buildSection(array $config, int $organizationId, ?string $dateFrom, ?string $dateTo, ?int $projectId): array
@@ -367,7 +368,7 @@ final class AssistantOperationalReportService
     }
 
     /**
-     * @param string[] $candidates
+     * @param  string[]  $candidates
      */
     private function firstExistingColumn(string $table, array $candidates): ?string
     {
@@ -381,7 +382,7 @@ final class AssistantOperationalReportService
     }
 
     /**
-     * @param array<string, string> $columns
+     * @param  array<string, string>  $columns
      * @return array<string, string>
      */
     private function existingColumns(string $table, array $columns): array
@@ -421,7 +422,7 @@ final class AssistantOperationalReportService
     }
 
     /**
-     * @param array<string, string> $columns
+     * @param  array<string, string>  $columns
      * @return array<int, array<int, string>>
      */
     private function latestRows(Builder $query, string $table, array $columns, ?string $orderColumn): array
@@ -501,6 +502,42 @@ final class AssistantOperationalReportService
     private function formatMoney(float $amount): string
     {
         return number_format($amount, 2, ',', ' ').' ₽';
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $sections
+     * @return string[]
+     */
+    private function keyFindings(array $sections, int $totalRecords, float $totalAmount): array
+    {
+        if ($totalRecords === 0) {
+            return ['В структурированных разделах нет записей за выбранный период.'];
+        }
+
+        $findings = [
+            'Всего найдено записей: '.$totalRecords.'.',
+        ];
+
+        if ($totalAmount > 0) {
+            $findings[] = 'Сумма по доступным суммовым полям: '.$this->formatMoney($totalAmount).'.';
+        }
+
+        foreach ($sections as $section) {
+            $total = (int) ($section['total'] ?? 0);
+            if ($total <= 0) {
+                continue;
+            }
+
+            $title = (string) ($section['title'] ?? 'Раздел');
+            $amount = (string) ($section['amount_value'] ?? '');
+            $findings[] = $title.': '.$total.' записей'.($amount !== '' ? ', '.$amount : '').'.';
+
+            if (count($findings) >= 4) {
+                break;
+            }
+        }
+
+        return $findings;
     }
 
     private function dateString(mixed $value): ?string

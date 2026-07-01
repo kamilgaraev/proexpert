@@ -18,13 +18,27 @@ final class GenerateRagPdfReportToolTest extends TestCase
         $composer = new FakeAssistantReportComposer([
             'title' => 'Отчет: PDF-отчет по проекту Кирпичный дом Лесной двор',
             'summary' => 'По найденным источникам: проект в работе.',
+            'key_findings' => ['Проект находится в работе, есть риск задержки поставки.'],
             'sections' => [
-                ['title' => 'Паспорт проекта', 'items' => ['Проект в работе.']],
+                [
+                    'title' => 'Паспорт проекта',
+                    'source_title' => 'Паспорт проекта',
+                    'fact' => 'Проект в работе.',
+                    'items' => ['Проект в работе.'],
+                    'meta' => ['Тип: Проект', 'Релевантность: 91%'],
+                ],
             ],
             'risks' => ['Есть риск задержки поставки кирпича.'],
             'next_actions' => ['Проверить источник.'],
             'sources' => [
-                ['title' => 'Паспорт проекта', 'project_id' => 88, 'excerpt' => 'Проект в работе.'],
+                [
+                    'title' => 'Паспорт проекта',
+                    'display_title' => 'Паспорт проекта',
+                    'project_id' => 88,
+                    'excerpt' => 'Проект в работе.',
+                    'reference_excerpt' => 'Проект в работе.',
+                    'meta' => ['Тип: Проект', 'Релевантность: 91%'],
+                ],
             ],
             'limitations' => [],
             'has_sufficient_data' => true,
@@ -47,6 +61,11 @@ final class GenerateRagPdfReportToolTest extends TestCase
         $this->assertSame('PDF-отчет по проекту Кирпичный дом Лесной двор', $composer->lastInput['query']);
         $this->assertSame('reports.operational-summary-pdf', $writer->view);
         $this->assertSame('Паспорт проекта', $writer->data['report']['rag_report']['sources'][0]['title']);
+        $this->assertSame('primary', $writer->data['report']['rag_context_mode']);
+        $this->assertFalse($writer->data['report']['has_structured_data']);
+        $this->assertSame('Проект находится в работе, есть риск задержки поставки.', $writer->data['report']['key_findings'][0]);
+        $this->assertSame('Факты', $writer->data['report']['summary_cards'][1]['label']);
+        $this->assertSame('Действия', $writer->data['report']['summary_cards'][3]['label']);
         $this->assertSame('s3', $result['storage_disk']);
         $this->assertStringStartsWith('org-72/reports/', $result['storage_path']);
     }
@@ -102,7 +121,7 @@ final class FakeAssistantReportComposer implements AssistantReportComposerInterf
     public array $lastInput = [];
 
     /**
-     * @param array<string, mixed> $report
+     * @param  array<string, mixed>  $report
      */
     public function __construct(
         private readonly array $report

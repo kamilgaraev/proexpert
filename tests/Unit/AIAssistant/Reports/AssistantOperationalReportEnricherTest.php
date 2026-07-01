@@ -24,6 +24,9 @@ final class AssistantOperationalReportEnricherTest extends TestCase
 
         $this->assertSame('Паспорт проекта', $enriched['sources'][0]['title']);
         $this->assertSame('Есть риск задержки поставки кирпича.', $enriched['rag_report']['risks'][0]);
+        $this->assertFalse($enriched['has_structured_data']);
+        $this->assertSame('primary', $enriched['rag_context_mode']);
+        $this->assertSame('Проект находится в работе.', $enriched['key_findings'][0]);
         $this->assertNotSame([], $enriched['limitations']);
         $this->assertStringContainsString('структурированных разделах', $enriched['limitations'][0]);
     }
@@ -43,6 +46,8 @@ final class AssistantOperationalReportEnricherTest extends TestCase
 
         $this->assertSame(1, $enriched['sections'][0]['total']);
         $this->assertSame('Паспорт проекта', $enriched['sources'][0]['title']);
+        $this->assertTrue($enriched['has_structured_data']);
+        $this->assertSame('supporting', $enriched['rag_context_mode']);
         $this->assertSame([], $enriched['limitations']);
     }
 
@@ -74,8 +79,15 @@ final class AssistantOperationalReportEnricherTest extends TestCase
         return [
             'has_sufficient_data' => true,
             'summary' => 'По найденным источникам: проект в работе.',
+            'key_findings' => ['Проект находится в работе.'],
             'sections' => [
-                ['title' => 'Паспорт проекта', 'items' => ['Проект в работе.']],
+                [
+                    'title' => 'Паспорт проекта',
+                    'source_title' => 'Паспорт проекта',
+                    'fact' => 'Проект в работе.',
+                    'items' => ['Проект в работе.'],
+                    'meta' => ['Тип: Проект'],
+                ],
             ],
             'risks' => ['Есть риск задержки поставки кирпича.'],
             'next_actions' => ['Проверить источник.'],
