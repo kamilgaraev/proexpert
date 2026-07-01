@@ -11,6 +11,7 @@ use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
+use App\Models\Estimate;
 use App\Models\Organization;
 use App\Models\Project;
 use Illuminate\Queue\MaxAttemptsExceededException;
@@ -307,6 +308,62 @@ class AIAssistantRagBackfillCommandTest extends TestCase
                 && in_array($job->projectId, [$freshProject->id, $failedProject->id], true)
                 && $job->sourceType === 'estimate'
         );
+    }
+
+    public function test_scheduled_project_estimate_job_is_requeued_by_estimate(): void
+    {
+        Queue::fake();
+
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $firstEstimate = Estimate::factory()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+        ]);
+        $secondEstimate = Estimate::factory()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+        ]);
+        $indexer = new BackfillCommandRecordingRagIndexer(7);
+        $this->app->instance(RagIndexer::class, $indexer);
+
+        $run = RagIndexRun::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'source_type' => 'estimate',
+            'status' => RagIndexRun::STATUS_QUEUED,
+            'mode' => RagIndexRun::MODE_SCHEDULED,
+            'queued_at' => now()->subMinutes(5),
+        ]);
+
+        (new IndexRagSourceJob($organization->id, $project->id, 'estimate', $run->id))->handle(
+            $indexer,
+            app(\App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexingCoordinator::class)
+        );
+
+        $this->assertSame([], $indexer->calls);
+        Queue::assertPushed(IndexRagSourceJob::class, 2);
+        Queue::assertPushed(
+            IndexRagSourceJob::class,
+            static fn (IndexRagSourceJob $job): bool => $job->organizationId === $organization->id
+                && $job->projectId === $project->id
+                && $job->sourceType === 'estimate'
+                && $job->entityType === 'estimate'
+                && $job->entityId === $firstEstimate->id
+        );
+        Queue::assertPushed(
+            IndexRagSourceJob::class,
+            static fn (IndexRagSourceJob $job): bool => $job->organizationId === $organization->id
+                && $job->projectId === $project->id
+                && $job->sourceType === 'estimate'
+                && $job->entityType === 'estimate'
+                && $job->entityId === $secondEstimate->id
+        );
+        $this->assertDatabaseHas('ai_rag_index_runs', [
+            'id' => $run->id,
+            'status' => RagIndexRun::STATUS_SUCCEEDED,
+            'indexed_chunks' => 0,
+        ]);
     }
 
     public function test_legacy_org_wide_project_scoped_job_is_requeued_when_attempts_are_exceeded_before_handle(): void

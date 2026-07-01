@@ -105,6 +105,31 @@ class RagIndexer
         return $indexed;
     }
 
+    public function indexEntity(
+        int $organizationId,
+        ?string $sourceType,
+        string $entityType,
+        string|int $entityId
+    ): int {
+        if ($sourceType === null) {
+            return 0;
+        }
+
+        $collector = $this->sourceRegistry->collector($sourceType);
+        if (! $collector instanceof RagSourceCollectorInterface || ! $collector->enabled()) {
+            return 0;
+        }
+
+        $indexed = 0;
+
+        foreach ($collector->collectEntity($organizationId, $entityType, $entityId) as $chunk) {
+            $this->indexChunk($chunk);
+            $indexed++;
+        }
+
+        return $indexed;
+    }
+
     /**
      * @return array<string, RagSourceCollectorInterface>
      */

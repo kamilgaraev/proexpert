@@ -28,7 +28,9 @@ class IndexRagSourceJob implements ShouldQueue
         public int $organizationId,
         public ?int $projectId = null,
         public ?string $sourceType = null,
-        public ?int $runId = null
+        public ?int $runId = null,
+        public ?string $entityType = null,
+        public string|int|null $entityId = null
     ) {
         $this->onConnection($this->connectionName());
         $this->onQueue($this->queueName());
@@ -56,6 +58,7 @@ class IndexRagSourceJob implements ShouldQueue
             && $run->mode === RagIndexRun::MODE_SCHEDULED
             && $this->projectId === null
             && $this->sourceType !== null
+            && $this->entityType === null
             && ($coordinator ??= app(RagIndexingCoordinator::class))->shouldSplitOrganizationSourceByProjects($this->sourceType)
         ) {
             $coordinator->splitOrganizationSourceRunByProjects($this->runId, $this->organizationId, $this->sourceType);
@@ -63,7 +66,22 @@ class IndexRagSourceJob implements ShouldQueue
             return;
         }
 
-        $indexed = $indexer->indexOrganization($this->organizationId, $this->projectId, $this->sourceType);
+        if (
+            $run instanceof RagIndexRun
+            && $run->mode === RagIndexRun::MODE_SCHEDULED
+            && $this->projectId !== null
+            && $this->sourceType === 'estimate'
+            && $this->entityType === null
+        ) {
+            $coordinator ??= app(RagIndexingCoordinator::class);
+            if ($coordinator->splitProjectEstimateRunByEstimates($this->runId, $this->organizationId, $this->projectId) > 0) {
+                return;
+            }
+        }
+
+        $indexed = $this->entityType !== null && $this->entityId !== null
+            ? $indexer->indexEntity($this->organizationId, $this->sourceType, $this->entityType, $this->entityId)
+            : $indexer->indexOrganization($this->organizationId, $this->projectId, $this->sourceType);
 
         if ($this->runId !== null) {
             $coordinator ??= app(RagIndexingCoordinator::class);
@@ -102,6 +120,8 @@ class IndexRagSourceJob implements ShouldQueue
             'organization_id' => $this->organizationId,
             'project_id' => $this->projectId,
             'source_type' => $this->sourceType,
+            'entity_type' => $this->entityType,
+            'entity_id' => $this->entityId,
             'run_id' => $this->runId,
             'exception_class' => $throwable::class,
         ]);

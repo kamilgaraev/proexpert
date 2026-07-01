@@ -8,6 +8,7 @@ use App\BusinessModules\Features\AIAssistant\Jobs\IndexRagSourceJob;
 use App\BusinessModules\Features\AIAssistant\Models\RagChunk;
 use App\BusinessModules\Features\AIAssistant\Models\RagIndexRun;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
+use App\Models\Estimate;
 use App\Models\Organization;
 use App\Models\Project;
 use Illuminate\Database\Eloquent\Builder;
@@ -244,6 +245,29 @@ class RagIndexingCoordinator
         $this->splitOrganizationSourceRunByProjects($run->id, $run->organization_id, $run->source_type);
 
         return true;
+    }
+
+    public function splitProjectEstimateRunByEstimates(int $runId, int $organizationId, int $projectId): int
+    {
+        $queued = 0;
+
+        foreach ($this->estimateIdsForProject($organizationId, $projectId) as $estimateId) {
+            dispatch(new IndexRagSourceJob(
+                $organizationId,
+                $projectId,
+                'estimate',
+                null,
+                'estimate',
+                $estimateId
+            ));
+            $queued++;
+        }
+
+        if ($queued > 0) {
+            $this->markSucceeded($runId, 0);
+        }
+
+        return $queued;
     }
 
     public function indexOrganizationSync(
@@ -582,6 +606,20 @@ class RagIndexingCoordinator
             ->orderBy('id')
             ->pluck('id')
             ->map(static fn (int|string $projectId): int => (int) $projectId)
+            ->all();
+    }
+
+    /**
+     * @return array<int, int>
+     */
+    private function estimateIdsForProject(int $organizationId, int $projectId): array
+    {
+        return Estimate::query()
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->orderBy('id')
+            ->pluck('id')
+            ->map(static fn (int|string $estimateId): int => (int) $estimateId)
             ->all();
     }
 

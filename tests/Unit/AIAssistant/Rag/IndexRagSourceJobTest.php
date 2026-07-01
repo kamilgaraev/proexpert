@@ -79,6 +79,17 @@ class IndexRagSourceJobTest extends TestCase
         $this->assertSame([[30, 1]], $coordinator->markSucceededCalls);
         $this->assertSame([[10, null, 'estimate']], $indexer->calls);
     }
+
+    public function test_job_indexes_requested_entity_scope(): void
+    {
+        $job = new IndexRagSourceJob(10, 20, 'estimate', null, 'estimate', 30);
+        $indexer = new RecordingRagIndexer();
+
+        $job->handle($indexer);
+
+        $this->assertSame([], $indexer->calls);
+        $this->assertSame([[10, 'estimate', 'estimate', 30]], $indexer->entityCalls);
+    }
 }
 
 final class RecordingRagIndexer extends RagIndexer
@@ -88,6 +99,11 @@ final class RecordingRagIndexer extends RagIndexer
      */
     public array $calls = [];
 
+    /**
+     * @var array<int, array{0: int, 1: string|null, 2: string, 3: string|int}>
+     */
+    public array $entityCalls = [];
+
     public function __construct()
     {
     }
@@ -95,6 +111,17 @@ final class RecordingRagIndexer extends RagIndexer
     public function indexOrganization(int $organizationId, ?int $projectId = null, ?string $sourceType = null): int
     {
         $this->calls[] = [$organizationId, $projectId, $sourceType];
+
+        return 1;
+    }
+
+    public function indexEntity(
+        int $organizationId,
+        ?string $sourceType,
+        string $entityType,
+        string|int $entityId
+    ): int {
+        $this->entityCalls[] = [$organizationId, $sourceType, $entityType, $entityId];
 
         return 1;
     }
