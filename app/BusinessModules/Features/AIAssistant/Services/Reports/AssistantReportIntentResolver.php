@@ -138,7 +138,7 @@ final readonly class AssistantReportIntentResolver
             ];
         }
 
-        if ($scores === [] && $this->isGenericFileReportRequest($requestUnderstanding, $isReportLike)) {
+        if ($scores === [] && $this->isGenericRagReportRequest($requestUnderstanding, $normalized, $isReportLike)) {
             $definition = $this->catalog->findById('generic_rag');
 
             if ($definition instanceof AssistantReportDefinition) {
@@ -210,11 +210,34 @@ final readonly class AssistantReportIntentResolver
         ], true);
     }
 
-    private function isGenericFileReportRequest(AssistantRequestUnderstanding $requestUnderstanding, bool $isReportLike): bool
+    private function isGenericRagReportRequest(
+        AssistantRequestUnderstanding $requestUnderstanding,
+        string $normalized,
+        bool $isReportLike
+    ): bool
     {
-        return $isReportLike
-            && $requestUnderstanding->primaryIntent === 'generate_report'
-            && in_array($requestUnderstanding->outputFormat, ['file', 'pdf'], true);
+        if (! $isReportLike || $requestUnderstanding->primaryIntent !== 'generate_report') {
+            return false;
+        }
+
+        return in_array($requestUnderstanding->outputFormat, ['file', 'pdf'], true)
+            || $this->hasReportSubject($normalized);
+    }
+
+    private function hasReportSubject(string $normalized): bool
+    {
+        return $this->containsSubjectPreposition($normalized);
+    }
+
+    private function containsSubjectPreposition(string $normalized): bool
+    {
+        foreach ([' po ', ' pro ', ' na temu ', ' ob ', ' o '] as $marker) {
+            if (str_contains(' '.$normalized.' ', $marker)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

@@ -40,6 +40,8 @@ final class AssistantReportIntentResolverTest extends TestCase
             'contract payments' => ['сформируй платежи по договорам за текущий год', 'contract_payments'],
             'timelines' => ['сделай отчет по графику работ за май', 'project_timelines'],
             'projects summary' => ['сделай сводку по проектам за месяц', 'projects_summary'],
+            'procurement broad' => ['сделай отчет по закупкам для Лесного двора', 'procurement_requests'],
+            'procurement supply' => ['сформируй отчет по снабжению объекта', 'procurement_requests'],
             'procurement requests' => ['подготовь отчет по заявкам на закупку за неделю', 'procurement_requests'],
             'purchase orders' => ['сформируй отчет по заказам поставщикам за квартал', 'purchase_orders'],
             'supplier proposals' => ['покажи отчет по предложениям поставщиков за май', 'supplier_proposals'],
@@ -86,6 +88,23 @@ final class AssistantReportIntentResolverTest extends TestCase
 
         $this->assertSame('matched', $result['status']);
         $this->assertSame('generic_rag', $result['definition']->id);
+    }
+
+    public function test_unknown_thematic_report_request_matches_generic_rag_report(): void
+    {
+        $result = (new AssistantReportIntentResolver)->resolve(
+            'Сделай отчет по входному контролю кирпича для Лесного двора'
+        );
+
+        $this->assertSame('matched', $result['status']);
+        $this->assertSame('generic_rag', $result['definition']->id);
+    }
+
+    public function test_report_recipient_without_topic_still_asks_for_report_type(): void
+    {
+        $result = (new AssistantReportIntentResolver)->resolve('Сделай отчет для руководителя');
+
+        $this->assertSame('missing_type', $result['status']);
     }
 
     public function test_project_pdf_report_uses_project_summary_definition(): void

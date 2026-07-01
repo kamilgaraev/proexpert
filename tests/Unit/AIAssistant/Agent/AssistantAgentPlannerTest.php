@@ -257,6 +257,32 @@ class AssistantAgentPlannerTest extends TestCase
         $this->assertSame(56, $decision->toolArguments['project_id']);
     }
 
+    public function test_broad_procurement_report_request_executes_operational_procurement_report(): void
+    {
+        $message = 'Сделай отчет по закупкам для Лесного двора';
+
+        $decision = $this->planner()->decide($message, $this->projectContext(), null);
+
+        $this->assertSame('execute_tool', $decision->type);
+        $this->assertSame('generate_operational_pdf_report', $decision->toolName);
+        $this->assertSame('procurement_requests', $decision->toolArguments['report_type']);
+        $this->assertSame($message, $decision->toolArguments['query']);
+        $this->assertSame(56, $decision->toolArguments['project_id']);
+    }
+
+    public function test_unknown_thematic_report_request_executes_generic_rag_pdf_report(): void
+    {
+        $message = 'Сделай отчет по входному контролю кирпича для Лесного двора';
+
+        $decision = $this->planner()->decide($message, $this->projectContext(), null);
+
+        $this->assertSame('execute_tool', $decision->type);
+        $this->assertSame('generate_rag_pdf_report', $decision->toolName);
+        $this->assertSame('generic_rag', $decision->toolArguments['report_type']);
+        $this->assertSame($message, $decision->toolArguments['query']);
+        $this->assertSame(56, $decision->toolArguments['project_id']);
+    }
+
     public function test_human_file_request_executes_generic_rag_pdf_report(): void
     {
         $message = 'Сделай мне файл по Лесному двору, чтобы я мог быстро показать руководителю: текущее состояние, деньги, риски и ближайшие шаги.';
