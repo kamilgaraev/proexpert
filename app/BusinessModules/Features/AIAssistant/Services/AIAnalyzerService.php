@@ -31,7 +31,7 @@ class AIAnalyzerService
         ];
 
         try {
-            $response = $this->llmProvider->chat($messages, ['temperature' => 0.3]);
+            $response = $this->llmProvider->chat($messages, ['profile' => 'json', 'temperature' => 0.3]);
             return $this->parseBudgetResponse($response['content']);
         } catch (\Exception $e) {
             $this->logging->technical('ai.analysis.budget.error', ['error' => $e->getMessage()], 'error');
@@ -52,7 +52,7 @@ class AIAnalyzerService
         ];
 
         try {
-            $response = $this->llmProvider->chat($messages, ['temperature' => 0.3]);
+            $response = $this->llmProvider->chat($messages, ['profile' => 'json', 'temperature' => 0.3]);
             return $this->parseScheduleResponse($response['content']);
         } catch (\Exception $e) {
             $this->logging->technical('ai.analysis.schedule.error', ['error' => $e->getMessage()], 'error');
@@ -73,7 +73,7 @@ class AIAnalyzerService
         ];
 
         try {
-            $response = $this->llmProvider->chat($messages, ['temperature' => 0.3]);
+            $response = $this->llmProvider->chat($messages, ['profile' => 'json', 'temperature' => 0.3]);
             return $this->parseMaterialsResponse($response['content']);
         } catch (\Exception $e) {
             $this->logging->technical('ai.analysis.materials.error', ['error' => $e->getMessage()], 'error');
@@ -94,7 +94,7 @@ class AIAnalyzerService
         ];
 
         try {
-            $response = $this->llmProvider->chat($messages, ['temperature' => 0.3]);
+            $response = $this->llmProvider->chat($messages, ['profile' => 'json', 'temperature' => 0.3]);
             return $this->parseWorkersResponse($response['content']);
         } catch (\Exception $e) {
             $this->logging->technical('ai.analysis.workers.error', ['error' => $e->getMessage()], 'error');
@@ -115,7 +115,7 @@ class AIAnalyzerService
         ];
 
         try {
-            $response = $this->llmProvider->chat($messages, ['temperature' => 0.3]);
+            $response = $this->llmProvider->chat($messages, ['profile' => 'json', 'temperature' => 0.3]);
             return $this->parseContractsResponse($response['content']);
         } catch (\Exception $e) {
             $this->logging->technical('ai.analysis.contracts.error', ['error' => $e->getMessage()], 'error');
@@ -136,7 +136,7 @@ class AIAnalyzerService
         ];
 
         try {
-            $response = $this->llmProvider->chat($messages, ['temperature' => 0.4]);
+            $response = $this->llmProvider->chat($messages, ['profile' => 'json', 'temperature' => 0.4]);
             return $this->parseRisksResponse($response['content']);
         } catch (\Exception $e) {
             $this->logging->technical('ai.analysis.risks.error', ['error' => $e->getMessage()], 'error');
@@ -157,7 +157,7 @@ class AIAnalyzerService
         ];
 
         try {
-            $response = $this->llmProvider->chat($messages, ['temperature' => 0.3]);
+            $response = $this->llmProvider->chat($messages, ['profile' => 'json', 'temperature' => 0.3]);
             return $this->parsePerformanceResponse($response['content']);
         } catch (\Exception $e) {
             $this->logging->technical('ai.analysis.performance.error', ['error' => $e->getMessage()], 'error');
@@ -178,7 +178,7 @@ class AIAnalyzerService
         ];
 
         try {
-            $response = $this->llmProvider->chat($messages, ['temperature' => 0.5]);
+            $response = $this->llmProvider->chat($messages, ['profile' => 'json', 'temperature' => 0.5]);
             return $this->parseRecommendationsResponse($response['content']);
         } catch (\Exception $e) {
             $this->logging->technical('ai.analysis.recommendations.error', ['error' => $e->getMessage()], 'error');

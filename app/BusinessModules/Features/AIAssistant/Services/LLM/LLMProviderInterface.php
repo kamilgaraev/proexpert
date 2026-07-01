@@ -6,7 +6,7 @@ interface LLMProviderInterface
 {
     /**
      * @param array $messages
-     * @param array $options Can include 'tools' for function calling
+     * @param array $options Can include 'profile', 'tools', 'timeout', 'model' for routed providers
      */
     public function chat(array $messages, array $options = []): array;
     

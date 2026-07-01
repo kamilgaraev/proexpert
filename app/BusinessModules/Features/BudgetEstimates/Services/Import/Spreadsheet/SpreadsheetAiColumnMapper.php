@@ -60,6 +60,7 @@ final class SpreadsheetAiColumnMapper
 
         try {
             $response = $provider->chat($this->messages($headers, $sampleRows, $currentMapping), [
+                'profile' => 'json',
                 'temperature' => 0.05,
                 'max_tokens' => 700,
             ]);
@@ -107,6 +108,7 @@ final class SpreadsheetAiColumnMapper
 
         try {
             $response = $provider->chat($this->structureMessages($rowPayload, $currentDetection), [
+                'profile' => 'json',
                 'temperature' => 0.03,
                 'max_tokens' => 900,
             ]);

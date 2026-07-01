@@ -22,6 +22,15 @@ $configEnv = static function (string $key, mixed $default = null): mixed {
     return $value;
 };
 
+$csvEnv = static function (string $key, string $default = '') use ($configEnv): array {
+    $value = (string) $configEnv($key, $default);
+
+    return array_values(array_filter(array_map(
+        static fn (string $item): string => trim($item),
+        explode(',', $value)
+    )));
+};
+
 return [
     'enabled' => $configEnv('AI_ASSISTANT_ENABLED', true),
 
@@ -41,13 +50,16 @@ return [
             'max_tokens' => $configEnv('YANDEX_MAX_TOKENS', 2000),
             'temperature' => $configEnv('YANDEX_TEMPERATURE', 0.7),
             'use_async' => $configEnv('YANDEX_USE_ASYNC', false),
+            'timeout' => $configEnv('YANDEX_TIMEOUT', 60),
         ],
 
         'openai' => [
             'api_key' => $configEnv('OPENAI_API_KEY'),
+            'base_uri' => $configEnv('OPENAI_BASE_URI'),
             'model' => $configEnv('OPENAI_MODEL', 'gpt-4o-mini'),
             'max_tokens' => $configEnv('OPENAI_MAX_TOKENS', 2000),
             'temperature' => $configEnv('OPENAI_TEMPERATURE', 0.7),
+            'timeout' => $configEnv('OPENAI_TIMEOUT', 45),
         ],
 
         'deepseek' => [
@@ -55,6 +67,60 @@ return [
             'model' => $configEnv('DEEPSEEK_MODEL', 'deepseek-chat'),
             'max_tokens' => $configEnv('DEEPSEEK_MAX_TOKENS', 2000),
             'temperature' => $configEnv('DEEPSEEK_TEMPERATURE', 1),
+            'timeout' => $configEnv('DEEPSEEK_TIMEOUT', 45),
+        ],
+
+        'timeweb' => [
+            'api_key' => $configEnv('TIMEWEB_AI_API_KEY', $configEnv('TIMEWEB_API_KEY', $configEnv('TIMEWEB_AI_PROXY_KEY'))),
+            'base_uri' => $configEnv('TIMEWEB_AI_BASE_URI', 'https://api.timeweb.ai/v1'),
+            'model' => $configEnv('TIMEWEB_AI_MODEL', 'gemini/gemini-3.1-flash-lite'),
+            'max_tokens' => $configEnv('TIMEWEB_AI_MAX_TOKENS', 2000),
+            'temperature' => $configEnv('TIMEWEB_AI_TEMPERATURE', 0.7),
+            'timeout' => $configEnv('TIMEWEB_AI_TIMEOUT', 25),
+            'input_price_per_million' => $configEnv('TIMEWEB_AI_INPUT_PRICE_PER_MILLION'),
+            'output_price_per_million' => $configEnv('TIMEWEB_AI_OUTPUT_PRICE_PER_MILLION'),
+            'default_profile' => $configEnv('TIMEWEB_AI_DEFAULT_PROFILE', 'assistant'),
+            'profiles' => [
+                'assistant' => [
+                    'models' => $csvEnv(
+                        'TIMEWEB_AI_ASSISTANT_MODELS',
+                        (string) $configEnv(
+                            'TIMEWEB_AI_MODEL',
+                            'gemini/gemini-3.1-flash-lite,gemini/gemini-2.5-flash'
+                        )
+                    ),
+                    'timeout' => $configEnv('TIMEWEB_AI_ASSISTANT_TIMEOUT', $configEnv('TIMEWEB_AI_TIMEOUT', 25)),
+                    'max_tokens' => $configEnv('TIMEWEB_AI_ASSISTANT_MAX_TOKENS', $configEnv('TIMEWEB_AI_MAX_TOKENS', 2000)),
+                    'temperature' => $configEnv('TIMEWEB_AI_ASSISTANT_TEMPERATURE', $configEnv('TIMEWEB_AI_TEMPERATURE', 0.7)),
+                ],
+                'json' => [
+                    'models' => $csvEnv(
+                        'TIMEWEB_AI_JSON_MODELS',
+                        'gemini/gemini-3.1-flash-lite,gemini/gemini-2.5-flash-lite'
+                    ),
+                    'timeout' => $configEnv('TIMEWEB_AI_JSON_TIMEOUT', 20),
+                    'max_tokens' => $configEnv('TIMEWEB_AI_JSON_MAX_TOKENS', $configEnv('TIMEWEB_AI_MAX_TOKENS', 2000)),
+                    'temperature' => $configEnv('TIMEWEB_AI_JSON_TEMPERATURE', 0.1),
+                ],
+                'fast' => [
+                    'models' => $csvEnv(
+                        'TIMEWEB_AI_FAST_MODELS',
+                        'gemini/gemini-2.5-flash-lite,gemini/gemini-3.1-flash-lite'
+                    ),
+                    'timeout' => $configEnv('TIMEWEB_AI_FAST_TIMEOUT', 12),
+                    'max_tokens' => $configEnv('TIMEWEB_AI_FAST_MAX_TOKENS', 800),
+                    'temperature' => $configEnv('TIMEWEB_AI_FAST_TEMPERATURE', 0.2),
+                ],
+                'premium' => [
+                    'models' => $csvEnv(
+                        'TIMEWEB_AI_PREMIUM_MODELS',
+                        'anthropic/claude-4.6-sonnet,gemini/gemini-3.1-pro-preview'
+                    ),
+                    'timeout' => $configEnv('TIMEWEB_AI_PREMIUM_TIMEOUT', 35),
+                    'max_tokens' => $configEnv('TIMEWEB_AI_PREMIUM_MAX_TOKENS', $configEnv('TIMEWEB_AI_MAX_TOKENS', 2000)),
+                    'temperature' => $configEnv('TIMEWEB_AI_PREMIUM_TEMPERATURE', $configEnv('TIMEWEB_AI_TEMPERATURE', 0.7)),
+                ],
+            ],
         ],
     ],
 
@@ -65,7 +131,9 @@ return [
     'rag' => [
         'enabled' => true,
         'embedding_provider' => $configEnv('AI_RAG_EMBEDDING_PROVIDER', 'yandex'),
-        'embedding_model' => $configEnv('AI_RAG_EMBEDDING_MODEL', 'text-embedding-3-small'),
+        'embedding_api_key' => $configEnv('AI_RAG_EMBEDDING_API_KEY'),
+        'embedding_base_uri' => $configEnv('AI_RAG_EMBEDDING_BASE_URI'),
+        'embedding_model' => $configEnv('AI_RAG_EMBEDDING_MODEL', 'openai/text-embedding-3-large'),
         'embedding_document_model_uri' => $configEnv('AI_RAG_EMBEDDING_DOCUMENT_MODEL_URI'),
         'embedding_query_model_uri' => $configEnv('AI_RAG_EMBEDDING_QUERY_MODEL_URI'),
         'embedding_endpoint' => $configEnv(

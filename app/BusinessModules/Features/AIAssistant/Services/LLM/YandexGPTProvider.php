@@ -1,10 +1,11 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant\Services\LLM;
 
 use App\Services\Logging\LoggingService;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 
 class YandexGPTProvider implements LLMProviderInterface
 {
@@ -14,6 +15,7 @@ class YandexGPTProvider implements LLMProviderInterface
     protected string $modelUri;
     protected int $maxTokens;
     protected float $temperature;
+    protected float $timeout;
     protected string $endpoint = 'https://llm.api.cloud.yandex.net/foundationModels/v1/completion';
 
     public function __construct(LoggingService $logging)
@@ -24,6 +26,7 @@ class YandexGPTProvider implements LLMProviderInterface
         $this->modelUri = config('ai-assistant.llm.yandex.model_uri') ?? '';
         $this->maxTokens = config('ai-assistant.llm.yandex.max_tokens') ?? 2000;
         $this->temperature = config('ai-assistant.llm.yandex.temperature') ?? 0.7;
+        $this->timeout = (float) config('ai-assistant.llm.yandex.timeout', 60);
     }
 
     public function chat(array $messages, array $options = []): array
@@ -35,6 +38,7 @@ class YandexGPTProvider implements LLMProviderInterface
         $maxTokens = $options['max_tokens'] ?? $this->maxTokens;
         $temperature = $options['temperature'] ?? $this->temperature;
         $modelUri = $options['model_uri'] ?? $this->modelUri;
+        $timeout = $this->positiveFloat($options['timeout'] ?? $this->timeout, $this->timeout);
 
         // Конвертируем формат сообщений из OpenAI в YandexGPT
         $yandexMessages = $this->convertMessages($messages);
@@ -44,6 +48,7 @@ class YandexGPTProvider implements LLMProviderInterface
                 'model_uri' => $modelUri,
                 'messages_count' => count($yandexMessages),
                 'max_tokens' => $maxTokens,
+                'timeout' => $timeout,
             ]);
 
             $startTime = microtime(true);
@@ -67,7 +72,7 @@ class YandexGPTProvider implements LLMProviderInterface
                 'Authorization' => 'Api-Key ' . $this->apiKey,
                 'Content-Type' => 'application/json',
                 'x-folder-id' => $this->folderId,
-            ])->timeout(60)->post($this->endpoint, $requestPayload);
+            ])->timeout($timeout)->post($this->endpoint, $requestPayload);
 
             $duration = microtime(true) - $startTime;
 
@@ -197,6 +202,7 @@ class YandexGPTProvider implements LLMProviderInterface
             'input_tokens' => $inputTokens,
             'output_tokens' => $outputTokens,
             'model' => $data['result']['modelVersion'] ?? $this->modelUri,
+            'provider' => 'yandex',
             'finish_reason' => $alternative['status'] ?? 'ALTERNATIVE_STATUS_FINAL',
         ];
 
@@ -332,5 +338,16 @@ class YandexGPTProvider implements LLMProviderInterface
     public function getModel(): string
     {
         return $this->modelUri;
+    }
+
+    private function positiveFloat(mixed $value, float $default): float
+    {
+        if (!is_numeric($value)) {
+            return $default;
+        }
+
+        $normalized = (float) $value;
+
+        return $normalized > 0 ? $normalized : $default;
     }
 }

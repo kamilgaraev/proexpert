@@ -56,9 +56,10 @@ class ProjectPulseAiSynthesizer
                         'recommendations' => $ruleRecommendations->map->toArray()->values()->all(),
                     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                 ],
-            ], ['temperature' => 0.2]);
+            ], ['profile' => 'json', 'temperature' => 0.2]);
 
             $decoded = $this->decodeJson((string) ($response['content'] ?? ''));
+            $activeProvider = (string) ($response['provider'] ?? $provider);
             $recommendations = is_array($decoded['recommendations'] ?? null)
                 ? $this->normalizeAiRecommendations($decoded['recommendations'])
                 : [];
@@ -66,7 +67,7 @@ class ProjectPulseAiSynthesizer
             return [
                 'ai_mode' => [
                     'status' => 'active',
-                    'provider' => $provider,
+                    'provider' => $activeProvider,
                     'message' => 'Рекомендации усилены ИИ на основе фактов из системы.',
                 ],
                 'summary' => [

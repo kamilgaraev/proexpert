@@ -129,6 +129,7 @@ class AIStrategy implements ClassificationStrategyInterface
 
             // Calling the LLM provider directly
             $response = $this->llmProvider->chat($messages, [
+                'profile' => 'json',
                 'temperature' => 0.1, // Low temperature for deterministic results
                 'max_tokens' => 2000
             ]);

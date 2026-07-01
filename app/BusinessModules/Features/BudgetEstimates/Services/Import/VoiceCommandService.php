@@ -52,6 +52,7 @@ class VoiceCommandService
 
         try {
             $response = $this->llmProvider->chat($messages, [
+                'profile' => 'json',
                 'temperature' => 0.1,
                 'max_tokens'  => 200,
             ]);

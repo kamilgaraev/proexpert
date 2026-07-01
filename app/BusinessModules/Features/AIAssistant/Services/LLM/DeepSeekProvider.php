@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant\Services\LLM;
 
 use App\Services\Logging\LoggingService;
@@ -12,6 +14,7 @@ class DeepSeekProvider implements LLMProviderInterface
     protected string $model;
     protected int $maxTokens;
     protected float $temperature;
+    protected float $timeout;
     protected string $endpoint = 'https://api.deepseek.com/v1/chat/completions';
 
     public function __construct(LoggingService $logging)
@@ -21,6 +24,7 @@ class DeepSeekProvider implements LLMProviderInterface
         $this->model = config('ai-assistant.llm.deepseek.model', 'deepseek-chat');
         $this->maxTokens = config('ai-assistant.llm.deepseek.max_tokens', 2000);
         $this->temperature = config('ai-assistant.llm.deepseek.temperature', 0.7);
+        $this->timeout = (float) config('ai-assistant.llm.deepseek.timeout', 45);
     }
 
     public function chat(array $messages, array $options = []): array
@@ -32,12 +36,29 @@ class DeepSeekProvider implements LLMProviderInterface
         $model = $options['model'] ?? $this->model;
         $maxTokens = $options['max_tokens'] ?? $this->maxTokens;
         $temperature = $options['temperature'] ?? $this->temperature;
+        $timeout = $this->positiveFloat($options['timeout'] ?? $this->timeout, $this->timeout);
+
+        $requestPayload = [
+            'model' => $model,
+            'messages' => $messages,
+            'max_tokens' => $maxTokens,
+            'temperature' => $temperature,
+            'stream' => false,
+        ];
+
+        foreach (['tools', 'tool_choice', 'response_format'] as $optionKey) {
+            if (array_key_exists($optionKey, $options)) {
+                $requestPayload[$optionKey] = $options[$optionKey];
+            }
+        }
 
         try {
             $this->logging->technical('ai.deepseek.request', [
                 'model' => $model,
                 'messages_count' => count($messages),
                 'max_tokens' => $maxTokens,
+                'has_tools' => !empty($options['tools']),
+                'timeout' => $timeout,
             ]);
 
             $startTime = microtime(true);
@@ -45,13 +66,7 @@ class DeepSeekProvider implements LLMProviderInterface
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $this->apiKey,
                 'Content-Type' => 'application/json',
-            ])->timeout(60)->post($this->endpoint, [
-                'model' => $model,
-                'messages' => $messages,
-                'max_tokens' => $maxTokens,
-                'temperature' => $temperature,
-                'stream' => false,
-            ]);
+            ])->timeout($timeout)->post($this->endpoint, $requestPayload);
 
             $duration = microtime(true) - $startTime;
 
@@ -104,7 +119,7 @@ class DeepSeekProvider implements LLMProviderInterface
         $choice = $data['choices'][0];
         $message = $choice['message'] ?? [];
 
-        if (!isset($message['content'])) {
+        if (!isset($message['content']) && empty($message['tool_calls'])) {
             throw new \RuntimeException('Invalid DeepSeek response format: no content');
         }
 
@@ -124,17 +139,26 @@ class DeepSeekProvider implements LLMProviderInterface
             $promptCacheMissTokens = $promptTokens;
         }
 
-        return [
-            'content' => $message['content'],
+        $result = [
+            'content' => (string) ($message['content'] ?? ''),
             'role' => $message['role'] ?? 'assistant',
             'tokens_used' => $promptTokens + $completionTokens,
+            'input_tokens' => $promptTokens,
+            'output_tokens' => $completionTokens,
             'prompt_tokens' => $promptTokens,
             'completion_tokens' => $completionTokens,
             'prompt_cache_hit_tokens' => $promptCacheHitTokens,
             'prompt_cache_miss_tokens' => $promptCacheMissTokens,
             'model' => $data['model'] ?? $model,
+            'provider' => 'deepseek',
             'finish_reason' => $choice['finish_reason'] ?? 'stop',
         ];
+
+        if (!empty($message['tool_calls']) && is_array($message['tool_calls'])) {
+            $result['tool_calls'] = $message['tool_calls'];
+        }
+
+        return $result;
     }
 
     public function countTokens(string $text): int
@@ -152,6 +176,17 @@ class DeepSeekProvider implements LLMProviderInterface
     public function getModel(): string
     {
         return $this->model;
+    }
+
+    private function positiveFloat(mixed $value, float $default): float
+    {
+        if (!is_numeric($value)) {
+            return $default;
+        }
+
+        $normalized = (float) $value;
+
+        return $normalized > 0 ? $normalized : $default;
     }
 }
 

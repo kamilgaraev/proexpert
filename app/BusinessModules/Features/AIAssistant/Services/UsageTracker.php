@@ -86,10 +86,17 @@ class UsageTracker
      * @param bool $isAsync Использовать асинхронный режим для Yandex моделей
      * @return float Стоимость в рублях
      */
-    public function calculateCost(int $totalTokens, string $model, ?int $inputTokens = null, ?int $outputTokens = null, bool $isAsync = false): float
+    public function calculateCost(
+        int $totalTokens,
+        string $model,
+        ?int $inputTokens = null,
+        ?int $outputTokens = null,
+        bool $isAsync = false,
+        ?string $providerName = null
+    ): float
     {
         // Определяем провайдера по названию модели
-        $provider = $this->detectProvider($model);
+        $provider = $this->detectProvider($model, $providerName);
         
         // Если input/output токены не указаны, используем примерное соотношение 75/25
         $inputTokens = $inputTokens ?? (int) ($totalTokens * 0.75);
@@ -122,6 +129,13 @@ class UsageTracker
         }
         
         // Для DeepSeek используем специальный расчет (если переданы детальные данные)
+        if ($provider === 'timeweb') {
+            $pricing = $this->timewebPricing($model);
+
+            return ($inputTokens / 1000000 * $pricing['input']) +
+                   ($outputTokens / 1000000 * $pricing['output']);
+        }
+
         if ($provider === 'deepseek') {
             // DeepSeek цены в USD за 1M токенов
             $inputCacheMissPrice = 0.28;  // $0.28 за 1M (cache miss)
@@ -192,25 +206,87 @@ class UsageTracker
     /**
      * Определяет провайдера по названию модели
      */
-    protected function detectProvider(string $model): string
+    protected function detectProvider(string $model, ?string $providerName = null): string
     {
-        if (str_contains($model, 'deepseek')) {
+        if (is_string($providerName) && trim($providerName) !== '') {
+            return strtolower(trim($providerName));
+        }
+
+        $normalizedModel = strtolower($model);
+
+        if (str_contains($normalizedModel, 'deepseek')) {
             return 'deepseek';
         }
         
         // Yandex модели (включая Alice AI)
-        if (str_contains($model, 'yandexgpt') || 
-            str_contains($model, 'aliceai') || 
-            str_contains($model, 'gpt://')) {
+        if (str_contains($normalizedModel, 'yandexgpt') ||
+            str_contains($normalizedModel, 'aliceai') ||
+            str_contains($normalizedModel, 'gpt://')) {
             return 'yandex';
         }
-        
-        if (str_contains($model, 'gpt-') || str_contains($model, 'openai')) {
+
+        if (
+            str_contains($normalizedModel, 'gemini') ||
+            str_contains($normalizedModel, 'claude') ||
+            str_contains($normalizedModel, 'qwen') ||
+            str_contains($normalizedModel, 'grok')
+        ) {
+            return 'timeweb';
+        }
+
+        if (str_contains($normalizedModel, 'gpt-') || str_contains($normalizedModel, 'openai')) {
             return 'openai';
         }
         
         // По умолчанию проверяем текущий провайдер из конфига
-        return config('ai-assistant.llm.provider', 'deepseek');
+        return (string) config('ai-assistant.llm.provider', 'deepseek');
+    }
+
+    /**
+     * @return array{input: float, output: float}
+     */
+    protected function timewebPricing(string $model): array
+    {
+        $inputOverride = config('ai-assistant.llm.timeweb.input_price_per_million');
+        $outputOverride = config('ai-assistant.llm.timeweb.output_price_per_million');
+
+        if (is_numeric($inputOverride) && is_numeric($outputOverride)) {
+            return [
+                'input' => (float) $inputOverride,
+                'output' => (float) $outputOverride,
+            ];
+        }
+
+        $normalized = strtolower(str_replace(['_', ' ', '/', ':'], '-', $model));
+
+        $pricing = [
+            'gemini-3.1-flash-lite' => ['input' => 34.0, 'output' => 203.0],
+            'gemini-3-flash-preview' => ['input' => 68.0, 'output' => 405.0],
+            'gemini-3-pro-preview' => ['input' => 270.0, 'output' => 1620.0],
+            'gemini-3.1-pro-preview' => ['input' => 270.0, 'output' => 1620.0],
+            'gemini-2.5-flash-lite' => ['input' => 14.0, 'output' => 54.0],
+            'gemini-2.5-flash' => ['input' => 41.0, 'output' => 338.0],
+            'gemini-2.5-pro' => ['input' => 169.0, 'output' => 1350.0],
+            'deepseek-v4-flash-thinking' => ['input' => 18.9, 'output' => 37.8],
+            'deepseek-v3.2' => ['input' => 74.0, 'output' => 296.0],
+            'qwen-3.6-plus' => ['input' => 68.0, 'output' => 405.0],
+            'qwen-3.5-plus' => ['input' => 60.0, 'output' => 60.0],
+            'qwen-3.5-flash' => ['input' => 60.0, 'output' => 60.0],
+            'claude-4.6-sonnet' => ['input' => 405.0, 'output' => 2025.0],
+            'claude-4.5-sonnet' => ['input' => 405.0, 'output' => 2025.0],
+            'claude-4.5-haiku' => ['input' => 135.0, 'output' => 1080.0],
+            'gpt-5-mini' => ['input' => 34.0, 'output' => 270.0],
+            'gpt-5-nano' => ['input' => 7.0, 'output' => 54.0],
+            'gpt-5' => ['input' => 169.0, 'output' => 1350.0],
+            'gpt-4.1' => ['input' => 270.0, 'output' => 1080.0],
+        ];
+
+        foreach ($pricing as $modelKey => $prices) {
+            if (str_contains($normalized, $modelKey)) {
+                return $prices;
+            }
+        }
+
+        return ['input' => 34.0, 'output' => 203.0];
     }
 }
-

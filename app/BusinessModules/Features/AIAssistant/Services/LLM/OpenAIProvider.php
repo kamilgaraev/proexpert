@@ -1,29 +1,32 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\AIAssistant\Services\LLM;
 
-use OpenAI;
 use App\Services\Logging\LoggingService;
-use Illuminate\Support\Facades\Log;
+use GuzzleHttp\Client as GuzzleClient;
+use OpenAI;
 
 class OpenAIProvider implements LLMProviderInterface
 {
-    protected $client;
     protected LoggingService $logging;
+    protected string $apiKey;
+    protected ?string $baseUri;
     protected string $model;
     protected int $maxTokens;
+    protected float $temperature;
+    protected float $timeout;
 
     public function __construct(LoggingService $logging)
     {
         $this->logging = $logging;
-        $this->model = config('ai-assistant.openai_model', 'gpt-4o-mini');
-        $this->maxTokens = config('ai-assistant.max_tokens', 2000);
-        
-        $apiKey = config('ai-assistant.openai_api_key');
-        
-        if ($apiKey) {
-            $this->client = OpenAI::client($apiKey);
-        }
+        $this->apiKey = (string) config('ai-assistant.llm.openai.api_key', config('ai-assistant.openai_api_key', ''));
+        $this->baseUri = config('ai-assistant.llm.openai.base_uri');
+        $this->model = (string) config('ai-assistant.llm.openai.model', config('ai-assistant.openai_model', 'gpt-4o-mini'));
+        $this->maxTokens = (int) config('ai-assistant.llm.openai.max_tokens', config('ai-assistant.max_tokens', 2000));
+        $this->temperature = (float) config('ai-assistant.llm.openai.temperature', 0.7);
+        $this->timeout = (float) config('ai-assistant.llm.openai.timeout', 45);
     }
 
     public function chat(array $messages, array $options = []): array
@@ -34,7 +37,8 @@ class OpenAIProvider implements LLMProviderInterface
 
         $model = $options['model'] ?? $this->model;
         $maxTokens = $options['max_tokens'] ?? $this->maxTokens;
-        $temperature = $options['temperature'] ?? 0.7;
+        $temperature = $options['temperature'] ?? $this->temperature;
+        $timeout = $this->positiveFloat($options['timeout'] ?? $this->timeout, $this->timeout);
         
         $requestPayload = [
             'model' => $model,
@@ -49,6 +53,12 @@ class OpenAIProvider implements LLMProviderInterface
             // $requestPayload['tool_choice'] = 'auto'; 
         }
 
+        foreach (['tool_choice', 'response_format'] as $optionKey) {
+            if (array_key_exists($optionKey, $options)) {
+                $requestPayload[$optionKey] = $options[$optionKey];
+            }
+        }
+
         try {
             $this->logging->technical('ai.openai.request', [
                 'model' => $model,
@@ -59,7 +69,7 @@ class OpenAIProvider implements LLMProviderInterface
 
             $startTime = microtime(true);
 
-            $response = $this->client->chat()->create($requestPayload);
+            $response = $this->makeClient($timeout)->chat()->create($requestPayload);
 
             $duration = microtime(true) - $startTime;
             
@@ -72,6 +82,7 @@ class OpenAIProvider implements LLMProviderInterface
                 'input_tokens' => $response->usage->promptTokens ?? null,
                 'output_tokens' => $response->usage->completionTokens ?? null,
                 'model' => $response->model,
+                'provider' => 'openai',
                 'finish_reason' => $response->choices[0]->finishReason,
             ];
             
@@ -115,12 +126,39 @@ class OpenAIProvider implements LLMProviderInterface
 
     public function isAvailable(): bool
     {
-        return $this->client !== null && config('ai-assistant.openai_api_key') !== null;
+        return trim($this->apiKey) !== '';
     }
 
     public function getModel(): string
     {
         return $this->model;
+    }
+
+    private function makeClient(float $timeout): object
+    {
+        $factory = OpenAI::factory()
+            ->withApiKey($this->apiKey)
+            ->withHttpClient(new GuzzleClient([
+                'timeout' => $timeout,
+                'connect_timeout' => max(1.0, min(5.0, $timeout)),
+            ]));
+
+        if (is_string($this->baseUri) && trim($this->baseUri) !== '') {
+            $factory = $factory->withBaseUri($this->baseUri);
+        }
+
+        return $factory->make();
+    }
+
+    private function positiveFloat(mixed $value, float $default): float
+    {
+        if (!is_numeric($value)) {
+            return $default;
+        }
+
+        $normalized = (float) $value;
+
+        return $normalized > 0 ? $normalized : $default;
     }
 }
 

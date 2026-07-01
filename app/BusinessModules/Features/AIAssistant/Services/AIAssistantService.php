@@ -222,6 +222,7 @@ class AIAssistantService
 
         try {
             $options = [];
+            $options['profile'] = 'assistant';
             $tools = $this->resolveToolDefinitions($taskPlan);
             if (! empty($tools)) {
                 $options['tools'] = $tools;
@@ -334,7 +335,9 @@ class AIAssistantService
                 (int) ($response['tokens_used'] ?? 0),
                 (string) ($response['model'] ?? 'gpt-4o-mini'),
                 isset($response['input_tokens']) ? (int) $response['input_tokens'] : null,
-                isset($response['output_tokens']) ? (int) $response['output_tokens'] : null
+                isset($response['output_tokens']) ? (int) $response['output_tokens'] : null,
+                false,
+                isset($response['provider']) ? (string) $response['provider'] : null
             );
 
             $this->usageTracker->trackRequest(
@@ -350,6 +353,9 @@ class AIAssistantService
                 'conversation_id' => $conversation->id,
                 'tokens_used' => (int) ($response['tokens_used'] ?? 0),
                 'cost_rub' => $cost,
+                'provider' => $response['provider'] ?? null,
+                'model' => $response['model'] ?? null,
+                'profile' => $response['profile'] ?? null,
                 'task_type' => $taskPlan['task_type'],
                 'capability' => $taskPlan['capability']['id'] ?? null,
             ]);

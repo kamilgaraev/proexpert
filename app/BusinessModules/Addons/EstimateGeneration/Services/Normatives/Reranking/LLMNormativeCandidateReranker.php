@@ -35,6 +35,7 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
 
         try {
             $response = $this->llmProvider->chat($this->messages($workItem, $context, $candidates), [
+                'profile' => 'json',
                 'temperature' => 0,
                 'max_tokens' => 240,
             ]);

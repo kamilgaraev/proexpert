@@ -34,6 +34,7 @@ use App\BusinessModules\Features\AIAssistant\Services\AIToolRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\DeepSeekProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\OpenAIProvider;
+use App\BusinessModules\Features\AIAssistant\Services\LLM\TimewebProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\YandexGPTProvider;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\ProjectPulseFactSourceRegistry;
 use App\BusinessModules\Features\AIAssistant\Services\ProjectPulse\Sources\ProjectPulseContractFactSource;
@@ -91,11 +92,18 @@ class AIAssistantServiceProvider extends ServiceProvider
         $this->app->singleton(AssistantAgentExecutor::class);
         $this->app->singleton(AssistantResponseVerifier::class);
         $this->app->singleton(RagEmbeddingProviderInterface::class, function ($app): RagEmbeddingProviderInterface {
-            $provider = config('ai-assistant.rag.embedding_provider', 'yandex');
+            $provider = strtolower((string) config('ai-assistant.rag.embedding_provider', 'yandex'));
 
             return match ($provider) {
                 'yandex' => $app->make(YandexRagEmbeddingProvider::class),
                 'openai' => $app->make(OpenAIRagEmbeddingProvider::class),
+                'timeweb' => new OpenAIRagEmbeddingProvider(
+                    apiKey: config('ai-assistant.rag.embedding_api_key') ?: config('ai-assistant.llm.timeweb.api_key'),
+                    model: config('ai-assistant.rag.embedding_model', 'text-embedding-3-small'),
+                    dimensions: (int) config('ai-assistant.rag.embedding_dimensions', 256),
+                    baseUri: config('ai-assistant.rag.embedding_base_uri') ?: config('ai-assistant.llm.timeweb.base_uri'),
+                    providerName: 'timeweb'
+                ),
                 default => $app->make(YandexRagEmbeddingProvider::class),
             };
         });
@@ -128,12 +136,13 @@ class AIAssistantServiceProvider extends ServiceProvider
         $this->app->singleton(RagPromptContextBuilder::class);
 
         $this->app->singleton(LLMProviderInterface::class, function ($app) {
-            $provider = config('ai-assistant.llm.provider', 'yandex');
+            $provider = strtolower((string) config('ai-assistant.llm.provider', 'yandex'));
 
             return match ($provider) {
                 'yandex' => $app->make(YandexGPTProvider::class),
                 'openai' => $app->make(OpenAIProvider::class),
                 'deepseek' => $app->make(DeepSeekProvider::class),
+                'timeweb' => $app->make(TimewebProvider::class),
                 default => $app->make(YandexGPTProvider::class),
             };
         });
