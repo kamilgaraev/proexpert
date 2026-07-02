@@ -25,6 +25,7 @@ use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Logging\LoggingService;
+use Carbon\Carbon;
 use PHPUnit\Framework\TestCase;
 
 class AIAssistantServiceBudgetTest extends TestCase
@@ -618,6 +619,51 @@ class AIAssistantServiceBudgetTest extends TestCase
         $this->assertStringContainsString('Опирайся только на подтвержденные данные', $context);
         $this->assertSame(1, substr_count($context, '=== STRUCTURED WORKSPACE CONTEXT ==='));
         $this->assertStringNotContainsString("\u{0420}\u{045F}", $context);
+    }
+
+    public function test_structured_context_includes_current_runtime_date(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-07-02 22:54:00', 'Europe/Moscow'));
+
+        try {
+            $service = $this->makeService(new AIToolRegistry);
+
+            $context = $service->exposeFormatStructuredContextForLLM([
+                'task_type' => 'summary',
+                'capability' => [
+                    'label' => 'Графики',
+                ],
+                'request' => [
+                    'goal' => null,
+                    'desired_mode' => null,
+                    'allow_actions' => false,
+                    'context' => [
+                        'source_module' => 'ai-assistant',
+                        'entity_refs' => [],
+                        'period' => null,
+                        'filters' => [],
+                        'ui_state' => [],
+                    ],
+                ],
+                'access_context_public' => [
+                    'available_modules' => ['ai-assistant'],
+                    'permission_count' => 1,
+                    'is_read_only' => true,
+                    'allowed_action_types' => ['summary'],
+                ],
+                'navigation_target' => null,
+                'next_actions' => [],
+            ]);
+
+            $this->assertStringContainsString('runtime:', $context);
+            $this->assertStringContainsString('current_date: 2026-07-02', $context);
+            $this->assertStringContainsString('current_date_ru: 02.07.2026', $context);
+            $this->assertStringContainsString('current_date_human: 2 июля 2026', $context);
+            $this->assertStringContainsString('current_weekday: четверг', $context);
+            $this->assertStringContainsString('timezone: Europe/Moscow', $context);
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     public function test_rag_context_is_safely_unused_without_retriever(): void

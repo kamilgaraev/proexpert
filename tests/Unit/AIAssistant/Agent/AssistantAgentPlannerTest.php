@@ -128,6 +128,21 @@ class AssistantAgentPlannerTest extends TestCase
         $this->assertSame(56, $decision->toolArguments['project_id']);
     }
 
+    public function test_send_work_completion_report_without_period_asks_for_period(): void
+    {
+        $decision = $this->planner()->decide(
+            'Отправь отчет по выполненным работам',
+            $this->projectContext(),
+            null
+        );
+
+        $this->assertSame('ask_clarification', $decision->type);
+        $this->assertSame('report.work_completion', $decision->state?->id);
+        $this->assertSame(['period'], $decision->state?->missingRequiredSlotNames());
+        $this->assertSame(56, $decision->state?->slotValue('project_id'));
+        $this->assertSame('За какой период сформировать отчет?', $decision->clarificationQuestion);
+    }
+
     public function test_direct_request_with_period_executes_immediately(): void
     {
         $decision = $this->planner()->decide(

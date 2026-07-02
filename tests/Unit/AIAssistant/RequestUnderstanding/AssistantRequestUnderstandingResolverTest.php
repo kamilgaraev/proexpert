@@ -61,6 +61,19 @@ final class AssistantRequestUnderstandingResolverTest extends TestCase
         $this->assertContains('project', $result->requestedEntities);
     }
 
+    public function test_send_report_wording_allows_file_generation(): void
+    {
+        $result = (new AssistantRequestUnderstandingResolver)->resolve(
+            'Отправь отчет по выполненным работам.',
+            []
+        );
+
+        $this->assertSame('generate_report', $result->primaryIntent);
+        $this->assertSame('allow_file_generation', $result->actionPolicy);
+        $this->assertFalse($result->hasConstraint('no_report'));
+        $this->assertFalse($result->hasConstraint('no_file'));
+    }
+
     public function test_human_file_request_allows_file_generation(): void
     {
         $result = (new AssistantRequestUnderstandingResolver)->resolve(

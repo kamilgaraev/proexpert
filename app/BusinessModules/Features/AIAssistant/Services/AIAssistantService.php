@@ -1588,6 +1588,7 @@ class AIAssistantService
     protected function formatStructuredContextForLLM(array $taskPlan): string
     {
         $structuredContext = [
+            'runtime' => $this->buildRuntimeContextForLLM(),
             'task_type' => $taskPlan['task_type'] ?? 'summary',
             'capability' => $taskPlan['capability']['label'] ?? null,
             'request' => [
@@ -1627,7 +1628,8 @@ class AIAssistantService
             ."3. Не придумывай технические причины отказа и обходные пути.\n"
             ."4. Отвечай коротко и по делу, затем предлагай конкретный следующий шаг.\n"
             ."5. Если последняя реплика короткая и просит подробнее, продолжай предыдущий вопрос без повторного уточнения темы.\n"
-            ."6. Соблюдай request_understanding: не создавай PDF, файл, отчет, навигацию или действие, если constraints/action_policy это запрещают.\n";
+            ."6. Соблюдай request_understanding: не создавай PDF, файл, отчет, навигацию или действие, если constraints/action_policy это запрещают.\n"
+            ."7. Если пользователь спрашивает текущую дату, день недели или относительный период вроде \"сегодня\", используй только runtime.current_date_ru, runtime.current_date_human, runtime.current_weekday и timezone; не выводи дату из истории сообщений и не угадывай ее.\n";
 
         return $this->truncateText(
             "=== STRUCTURED WORKSPACE CONTEXT ===\n"
@@ -1637,6 +1639,54 @@ class AIAssistantService
             self::STRUCTURED_CONTEXT_CHARS
         );
 
+    }
+
+    protected function buildRuntimeContextForLLM(): array
+    {
+        $timezone = 'Europe/Moscow';
+        $currentDateTime = now($timezone);
+
+        return [
+            'current_date' => $currentDateTime->toDateString(),
+            'current_date_ru' => $currentDateTime->format('d.m.Y'),
+            'current_date_human' => $this->formatRussianDateForLLM($currentDateTime),
+            'current_weekday' => $this->formatRussianWeekdayForLLM($currentDateTime),
+            'current_time' => $currentDateTime->format('H:i'),
+            'timezone' => $timezone,
+        ];
+    }
+
+    protected function formatRussianDateForLLM(mixed $dateTime): string
+    {
+        $month = match ((int) $dateTime->format('n')) {
+            1 => 'января',
+            2 => 'февраля',
+            3 => 'марта',
+            4 => 'апреля',
+            5 => 'мая',
+            6 => 'июня',
+            7 => 'июля',
+            8 => 'августа',
+            9 => 'сентября',
+            10 => 'октября',
+            11 => 'ноября',
+            default => 'декабря',
+        };
+
+        return sprintf('%d %s %s', (int) $dateTime->format('j'), $month, $dateTime->format('Y'));
+    }
+
+    protected function formatRussianWeekdayForLLM(mixed $dateTime): string
+    {
+        return match ((int) $dateTime->format('N')) {
+            1 => 'понедельник',
+            2 => 'вторник',
+            3 => 'среда',
+            4 => 'четверг',
+            5 => 'пятница',
+            6 => 'суббота',
+            default => 'воскресенье',
+        };
     }
 
     protected function formatValueForLLM(mixed $value, int $depth = 0): string
