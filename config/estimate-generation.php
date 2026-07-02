@@ -29,6 +29,22 @@ return [
         'max_document_jobs_per_minute' => (int) env('ESTIMATE_GENERATION_OCR_MAX_DOCUMENT_JOBS_PER_MINUTE', 6),
         'pdf_text_layer_min_chars' => (int) env('ESTIMATE_GENERATION_OCR_PDF_TEXT_LAYER_MIN_CHARS', 20),
         'pdf_parser_memory_limit' => env('ESTIMATE_GENERATION_OCR_PDF_PARSER_MEMORY_LIMIT', '512M'),
+        'geometry' => [
+            'enabled' => (bool) env('ESTIMATE_GENERATION_PDF_GEOMETRY_ENABLED', true),
+            'python_binary' => env('ESTIMATE_GENERATION_PDF_GEOMETRY_PYTHON', 'python'),
+            'script_path' => env(
+                'ESTIMATE_GENERATION_PDF_GEOMETRY_SCRIPT',
+                base_path('app/BusinessModules/Addons/EstimateGeneration/bin/pdf_geometry_extract.py')
+            ),
+            'timeout_seconds' => (int) env('ESTIMATE_GENERATION_PDF_GEOMETRY_TIMEOUT', 45),
+            'max_pages' => (int) env('ESTIMATE_GENERATION_PDF_GEOMETRY_MAX_PAGES', 200),
+            'max_vector_elements' => (int) env('ESTIMATE_GENERATION_PDF_GEOMETRY_MAX_VECTOR_ELEMENTS', 5000),
+            'render_previews' => (bool) env('ESTIMATE_GENERATION_PDF_GEOMETRY_RENDER_PREVIEWS', false),
+            'preview_dir' => env(
+                'ESTIMATE_GENERATION_PDF_GEOMETRY_PREVIEW_DIR',
+                storage_path('app/estimate-generation/pdf-previews')
+            ),
+        ],
         'min_usable_quality_score' => 0.60,
         'min_good_quality_score' => 0.80,
         'queue' => env('REDIS_ESTIMATE_GENERATION_QUEUE', 'estimate-generation'),

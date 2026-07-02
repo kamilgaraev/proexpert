@@ -94,6 +94,8 @@ final class DocumentUnderstandingSummaryBuilder
                 'page_role' => (string) ($profile['page_role'] ?? 'technical_document'),
                 'confidence' => (float) ($profile['confidence'] ?? 0.5),
                 'signals' => array_values(array_map('strval', is_array($profile['signals'] ?? null) ? $profile['signals'] : [])),
+                'review_reasons' => array_values(array_map('strval', is_array($profile['review_reasons'] ?? null) ? $profile['review_reasons'] : [])),
+                'review_required' => (bool) ($profile['requires_review'] ?? false),
                 'role_for_estimation' => $this->pageRoleForEstimation((string) ($profile['page_role'] ?? 'technical_document')),
             ];
         }
@@ -107,7 +109,7 @@ final class DocumentUnderstandingSummaryBuilder
             return 'floor_plan';
         }
 
-        if (in_array($documentRole, ['work_volume_statement', 'specification', 'reference_estimate', 'technical_document'], true)) {
+        if (in_array($documentRole, ['work_volume_statement', 'specification', 'reference_estimate', 'technical_document', 'geometry_only', 'plan', 'detail', 'section'], true)) {
             return $documentRole;
         }
 
@@ -168,6 +170,11 @@ final class DocumentUnderstandingSummaryBuilder
         $dimensionCount = (int) ($drawingSummary['dimension_count'] ?? 0);
         $axisCount = (int) ($drawingSummary['axis_count'] ?? 0);
         $titleBlockCount = (int) ($drawingSummary['title_block_count'] ?? 0);
+        $geometryMetrics = is_array($drawingSummary['geometry_metrics'] ?? null) ? $drawingSummary['geometry_metrics'] : [];
+        $hasGeometry = (int) ($geometryMetrics['line_count'] ?? 0) > 0
+            || (int) ($geometryMetrics['rect_count'] ?? 0) > 0
+            || (int) ($geometryMetrics['curve_count'] ?? 0) > 0
+            || (int) ($geometryMetrics['vector_element_count'] ?? 0) > 0;
         $hasSpecificationMarkers = $classifiedType === 'specification'
             || preg_match('/спецификац|ведомость|количество|поз\./u', $text) === 1;
         $hasWorkVolumeStatementMarkers = $classifiedType === 'work_volume_statement'
@@ -179,6 +186,7 @@ final class DocumentUnderstandingSummaryBuilder
         $requiresManualReview = (bool) ($documentProfile['requires_manual_review'] ?? false)
             || $documentType === 'unknown'
             || ($documentType === 'floor_plan' && $takeoffsCount === 0)
+            || (in_array($documentType, ['geometry_only', 'plan', 'detail', 'section'], true) && $takeoffsCount === 0)
             || ($classifiedType === 'drawing_cad' && $takeoffsCount === 0)
             || (($factsSummary['conflicts'] ?? []) !== []);
 
@@ -187,6 +195,7 @@ final class DocumentUnderstandingSummaryBuilder
             'has_dimensions' => $dimensionCount > 0,
             'has_axes' => $axisCount > 0,
             'has_title_block' => $titleBlockCount > 0,
+            'has_pdf_geometry' => $hasGeometry,
             'has_quantity_takeoffs' => $takeoffsCount > 0,
             'has_work_volume_statement_markers' => $hasWorkVolumeStatementMarkers,
             'has_specification_markers' => $hasSpecificationMarkers,
@@ -244,7 +253,7 @@ final class DocumentUnderstandingSummaryBuilder
             return 'quantity_source';
         }
 
-        if ($documentType === 'floor_plan' || str_starts_with($classifiedType, 'drawing_')) {
+        if ($documentType === 'floor_plan' || in_array($documentType, ['geometry_only', 'plan', 'detail', 'section'], true) || str_starts_with($classifiedType, 'drawing_')) {
             return 'geometry_source';
         }
 
@@ -254,7 +263,8 @@ final class DocumentUnderstandingSummaryBuilder
     private function pageRoleForEstimation(string $pageRole): string
     {
         return match ($pageRole) {
-            'floor_plan' => 'geometry_source',
+            'floor_plan', 'plan', 'detail', 'section' => 'geometry_source',
+            'geometry_only' => 'needs_review',
             'work_volume_statement' => 'quantity_source',
             'specification' => 'quantity_source',
             'reference_estimate' => 'reference_estimate',

@@ -15,7 +15,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentUnd
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DrawingUnderstandingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrConfigurationException;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrProviderException;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\PdfGeometryExtractionException;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryExtractionResult;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryExtractor;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryRecognitionMerger;
 use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use App\Services\Storage\FileService;
 use Illuminate\Support\Facades\DB;
@@ -34,6 +39,8 @@ class OcrDocumentProcessor
         private readonly DocumentFactMerger $factMerger,
         private readonly SpreadsheetDocumentExtractor $spreadsheetExtractor,
         private readonly PdfTextLayerExtractor $pdfTextLayerExtractor,
+        private readonly PdfGeometryExtractor $pdfGeometryExtractor,
+        private readonly PdfGeometryRecognitionMerger $pdfGeometryRecognitionMerger,
         private readonly DrawingUnderstandingService $drawingUnderstandingService,
         private readonly DocumentUnderstandingSummaryBuilder $documentUnderstandingSummaryBuilder,
         private readonly EstimatorScopeInferenceService $scopeInferenceService,
@@ -143,14 +150,21 @@ class OcrDocumentProcessor
             return $this->cadPlaceholderRecognition($document);
         }
 
+        $pdfGeometry = null;
+
         if ($this->preflightService->isPdf($document)) {
+            $pdfGeometry = $this->extractPdfGeometry($content, $document->filename);
             $textLayerRecognition = $this->pdfTextLayerExtractor->extract($content, $document->filename);
 
             if ($textLayerRecognition instanceof OcrRecognitionResult) {
-                return $textLayerRecognition;
+                return $this->pdfGeometryRecognitionMerger->merge($textLayerRecognition, $pdfGeometry);
             }
 
             if ($pageCount === null) {
+                if ($pdfGeometry instanceof PdfGeometryExtractionResult && $pdfGeometry->pages !== []) {
+                    return $this->pdfGeometryRecognitionMerger->fromGeometry($pdfGeometry, $document->filename);
+                }
+
                 throw new OcrProviderException(
                     'estimate_generation.ocr_pdf_page_count_unavailable',
                     providerCode: 'pdf_page_count_unavailable',
@@ -160,12 +174,47 @@ class OcrDocumentProcessor
             $this->statusService->markProcessing($document, 'ocr_request', 45);
         }
 
-        return $this->ocrClient->recognize(new OcrDocumentInput(
-            content: $content,
-            mimeType: $document->mime_type ?? 'application/octet-stream',
-            filename: $document->filename,
-            pageCount: $pageCount,
-        ));
+        try {
+            $recognition = $this->ocrClient->recognize(new OcrDocumentInput(
+                content: $content,
+                mimeType: $document->mime_type ?? 'application/octet-stream',
+                filename: $document->filename,
+                pageCount: $pageCount,
+            ));
+        } catch (OcrConfigurationException $exception) {
+            if ($pdfGeometry instanceof PdfGeometryExtractionResult && $pdfGeometry->pages !== []) {
+                return $this->pdfGeometryRecognitionMerger->fromGeometry($pdfGeometry, $document->filename);
+            }
+
+            throw $exception;
+        } catch (OcrProviderException $exception) {
+            if ($pdfGeometry instanceof PdfGeometryExtractionResult && $pdfGeometry->pages !== []) {
+                return $this->pdfGeometryRecognitionMerger->fromGeometry($pdfGeometry, $document->filename);
+            }
+
+            throw $exception;
+        }
+
+        return $this->pdfGeometryRecognitionMerger->merge($recognition, $pdfGeometry);
+    }
+
+    private function extractPdfGeometry(string $content, ?string $filename): ?PdfGeometryExtractionResult
+    {
+        if (! (bool) config('estimate-generation.ocr.geometry.enabled', true)) {
+            return null;
+        }
+
+        try {
+            return $this->pdfGeometryExtractor->extract($content, $filename);
+        } catch (PdfGeometryExtractionException $exception) {
+            Log::info('[EstimateGeneration OCR] PDF geometry extraction skipped', [
+                'filename' => $filename,
+                'error' => $exception->getMessage(),
+                'context' => $exception->context,
+            ]);
+
+            return null;
+        }
     }
 
     private function recognitionStage(EstimateGenerationDocument $document): string
@@ -262,6 +311,22 @@ class OcrDocumentProcessor
     }
 
     /**
+     * @return array<string, mixed>
+     */
+    private function pageNormalizedPayload(OcrPageResult $page): array
+    {
+        $payload = [
+            'blocks' => $page->blocks,
+        ];
+
+        if (is_array($page->rawPayload['geometry'] ?? null)) {
+            $payload['geometry'] = $page->rawPayload['geometry'];
+        }
+
+        return $payload;
+    }
+
+    /**
      * @param  array<string, mixed>  $factsSummary
      */
     private function requiresDocumentReview(array $factsSummary): bool
@@ -311,9 +376,7 @@ class OcrDocumentProcessor
                     'text' => $page->text,
                     'text_hash' => $page->text !== '' ? hash('sha256', $page->text) : null,
                     'confidence' => $page->confidence,
-                    'normalized_payload' => [
-                        'blocks' => $page->blocks,
-                    ],
+                    'normalized_payload' => $this->pageNormalizedPayload($page),
                     'quality_flags' => [],
                 ]);
 
