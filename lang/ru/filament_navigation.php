@@ -23,4 +23,7 @@ return [
     'api_docs' => [
         'label' => 'API-документация',
     ],
+    'ai_usage' => [
+        'label' => 'Расходы ИИ',
+    ],
 ];

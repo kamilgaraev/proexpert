@@ -1,13 +1,12 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
-use Illuminate\Routing\Middleware\SubstituteBindings;
-use App\Support\Routing\AdminRouteStack;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AIAssistantController;
-use App\BusinessModules\Features\AIAssistant\Http\Controllers\AiReportsDownloadController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\AIAssistantRagController;
-use App\BusinessModules\Features\AIAssistant\Http\Controllers\AIUsageReportController;
+use App\BusinessModules\Features\AIAssistant\Http\Controllers\AiReportsDownloadController;
 use App\BusinessModules\Features\AIAssistant\Http\Controllers\ProjectPulseController;
+use App\Support\Routing\AdminRouteStack;
+use Illuminate\Routing\Middleware\SubstituteBindings;
+use Illuminate\Support\Facades\Route;
 
 // ==========================================
 // Роуты для Личного кабинета (ЛК)
@@ -39,9 +38,6 @@ Route::middleware(AdminRouteStack::middleware([SubstituteBindings::class]))
         Route::get('/conversations/{conversation}', [AIAssistantController::class, 'conversation'])->name('conversation');
         Route::delete('/conversations/{conversation}', [AIAssistantController::class, 'deleteConversation'])->name('deleteConversation');
         Route::get('/usage', [AIAssistantController::class, 'usage'])->name('usage');
-        Route::get('/usage-report', [AIUsageReportController::class, 'summary'])
-            ->middleware('authorize:admin.ai_assistant.usage.view')
-            ->name('usage-report.summary');
         Route::get('/rag/status', [AIAssistantRagController::class, 'status'])
             ->middleware('authorize:admin.ai_assistant.rag.view')
             ->name('rag.status');
