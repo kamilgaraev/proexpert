@@ -68,7 +68,7 @@
                             </div>
                         </div>
 
-                        <div class="rounded-xl bg-gray-50 p-2 ring-1 ring-gray-950/5 dark:bg-white/5 dark:ring-white/10">
+                        <div class="rounded-xl bg-gray-950/[0.04] p-2 ring-1 ring-gray-950/10">
                             <x-filament::icon :icon="$stat['icon']" class="h-5 w-5 {{ $stat['accent'] }}" />
                         </div>
                     </div>
@@ -148,9 +148,9 @@
             :heading="trans_message('filament_ai_usage.tables.organizations')"
             icon="heroicon-o-building-office-2"
         >
-            <div class="overflow-x-auto rounded-xl ring-1 ring-gray-950/5 dark:ring-white/10">
+            <div class="overflow-x-auto rounded-xl ring-1 ring-gray-950/10">
                 <table class="w-full divide-y divide-gray-950/5 text-sm dark:divide-white/10">
-                    <thead class="bg-gray-50 dark:bg-white/5">
+                    <thead class="bg-gray-950/[0.04]">
                         <tr class="text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                             <th class="px-4 py-3">{{ trans_message('filament_ai_usage.columns.organization') }}</th>
                             <th class="px-4 py-3 text-right">{{ trans_message('filament_ai_usage.columns.requests') }}</th>
@@ -162,7 +162,7 @@
                     </thead>
                     <tbody class="divide-y divide-gray-950/5 dark:divide-white/10">
                         @forelse ($organizations as $row)
-                            <tr class="hover:bg-gray-50 dark:hover:bg-white/5">
+                            <tr class="hover:bg-gray-950/[0.04]">
                                 <td class="px-4 py-3 font-medium text-gray-950 dark:text-white">{{ $row['organization_name'] ?? '' }}</td>
                                 <td class="px-4 py-3 text-right tabular-nums">{{ $this->formatTokens($row['requests_count'] ?? 0) }}</td>
                                 <td class="px-4 py-3 text-right tabular-nums">{{ $this->formatTokens($row['input_tokens'] ?? 0) }}</td>
@@ -187,9 +187,9 @@
                 :heading="trans_message('filament_ai_usage.tables.models')"
                 icon="heroicon-o-cpu-chip"
             >
-                <div class="overflow-x-auto rounded-xl ring-1 ring-gray-950/5 dark:ring-white/10">
+                <div class="overflow-x-auto rounded-xl ring-1 ring-gray-950/10">
                     <table class="w-full divide-y divide-gray-950/5 text-sm dark:divide-white/10">
-                        <thead class="bg-gray-50 dark:bg-white/5">
+                        <thead class="bg-gray-950/[0.04]">
                             <tr class="text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                                 <th class="px-4 py-3">{{ trans_message('filament_ai_usage.columns.provider') }}</th>
                                 <th class="px-4 py-3">{{ trans_message('filament_ai_usage.columns.model') }}</th>
@@ -199,7 +199,7 @@
                         </thead>
                         <tbody class="divide-y divide-gray-950/5 dark:divide-white/10">
                             @forelse ($models as $row)
-                                <tr class="hover:bg-gray-50 dark:hover:bg-white/5">
+                                <tr class="hover:bg-gray-950/[0.04]">
                                     <td class="px-4 py-3 text-gray-600 dark:text-gray-300">{{ $row['provider'] ?? '' }}</td>
                                     <td class="px-4 py-3 font-medium text-gray-950 dark:text-white">{{ $row['model'] ?? '' }}</td>
                                     <td class="px-4 py-3 text-right tabular-nums">{{ $this->formatTokens($row['requests_count'] ?? 0) }}</td>
@@ -221,9 +221,9 @@
                 :heading="trans_message('filament_ai_usage.tables.operations')"
                 icon="heroicon-o-squares-2x2"
             >
-                <div class="overflow-x-auto rounded-xl ring-1 ring-gray-950/5 dark:ring-white/10">
+                <div class="overflow-x-auto rounded-xl ring-1 ring-gray-950/10">
                     <table class="w-full divide-y divide-gray-950/5 text-sm dark:divide-white/10">
-                        <thead class="bg-gray-50 dark:bg-white/5">
+                        <thead class="bg-gray-950/[0.04]">
                             <tr class="text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                                 <th class="px-4 py-3">{{ trans_message('filament_ai_usage.columns.operation') }}</th>
                                 <th class="px-4 py-3 text-right">{{ trans_message('filament_ai_usage.columns.requests') }}</th>
@@ -233,7 +233,7 @@
                         </thead>
                         <tbody class="divide-y divide-gray-950/5 dark:divide-white/10">
                             @forelse ($operations as $row)
-                                <tr class="hover:bg-gray-50 dark:hover:bg-white/5">
+                                <tr class="hover:bg-gray-950/[0.04]">
                                     <td class="px-4 py-3 font-medium text-gray-950 dark:text-white">{{ $this->operationLabel($row['operation'] ?? '') }}</td>
                                     <td class="px-4 py-3 text-right tabular-nums">{{ $this->formatTokens($row['requests_count'] ?? 0) }}</td>
                                     <td class="px-4 py-3 text-right tabular-nums">{{ $this->formatTokens($row['total_tokens'] ?? 0) }}</td>
@@ -256,9 +256,9 @@
             :heading="trans_message('filament_ai_usage.tables.daily')"
             icon="heroicon-o-calendar-days"
         >
-            <div class="overflow-x-auto rounded-xl ring-1 ring-gray-950/5 dark:ring-white/10">
+            <div class="overflow-x-auto rounded-xl ring-1 ring-gray-950/10">
                 <table class="w-full divide-y divide-gray-950/5 text-sm dark:divide-white/10">
-                    <thead class="bg-gray-50 dark:bg-white/5">
+                    <thead class="bg-gray-950/[0.04]">
                         <tr class="text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                             <th class="px-4 py-3">{{ trans_message('filament_ai_usage.columns.date') }}</th>
                             <th class="px-4 py-3 text-right">{{ trans_message('filament_ai_usage.columns.requests') }}</th>
@@ -268,7 +268,7 @@
                     </thead>
                     <tbody class="divide-y divide-gray-950/5 dark:divide-white/10">
                         @forelse ($daily as $row)
-                            <tr class="hover:bg-gray-50 dark:hover:bg-white/5">
+                            <tr class="hover:bg-gray-950/[0.04]">
                                 <td class="px-4 py-3 font-medium text-gray-950 dark:text-white">{{ $row['date'] ?? '' }}</td>
                                 <td class="px-4 py-3 text-right tabular-nums">{{ $this->formatTokens($row['requests_count'] ?? 0) }}</td>
                                 <td class="px-4 py-3 text-right tabular-nums">{{ $this->formatTokens($row['total_tokens'] ?? 0) }}</td>
