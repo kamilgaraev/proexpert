@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\AIAssistant;
 
 use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
+use Illuminate\Support\Facades\Cache;
 use Tests\TestCase;
 
 class AIUsageTrackerTest extends TestCase
@@ -39,5 +40,15 @@ class AIUsageTrackerTest extends TestCase
                 providerName: 'timeweb'
             ), 2)
         );
+    }
+
+    public function test_monthly_usage_casts_cached_string_counter_to_integer(): void
+    {
+        $organizationId = 123456;
+        $cacheKey = "ai_usage:{$organizationId}:".now()->year.':'.now()->month;
+
+        Cache::put($cacheKey, '7', 600);
+
+        $this->assertSame(7, (new UsageTracker)->getMonthlyUsage($organizationId));
     }
 }

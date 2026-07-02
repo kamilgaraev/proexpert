@@ -36,13 +36,13 @@ class UsageTracker
 
         $cacheKey = "ai_usage:{$organizationId}:{$year}:{$month}";
 
-        return Cache::remember($cacheKey, 600, function () use ($organizationId, $year, $month) {
+        return (int) Cache::remember($cacheKey, 600, function () use ($organizationId, $year, $month): int {
             $stats = AIUsageStats::where('organization_id', $organizationId)
                 ->where('year', $year)
                 ->where('month', $month)
                 ->first();
 
-            return $stats ? $stats->requests_count : 0;
+            return $stats ? (int) $stats->requests_count : 0;
         });
     }
 
@@ -61,7 +61,7 @@ class UsageTracker
     public function getUsageStats(int $organizationId): array
     {
         $module = Module::where('slug', 'ai-assistant')->first();
-        $limit = $module->limits['max_ai_requests_per_month'] ?? 5000;
+        $limit = (int) ($module?->limits['max_ai_requests_per_month'] ?? 5000);
         $used = $this->getMonthlyUsage($organizationId);
 
         $year = now()->year;
