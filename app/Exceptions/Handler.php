@@ -635,7 +635,11 @@ class Handler extends ExceptionHandler
         }
         
         // Landing/LK API
-        if (str_starts_with($path, 'api/v1/lk/') || str_starts_with($path, 'api/landing/')) {
+        if (
+            str_starts_with($path, 'api/v1/landing/')
+            || str_starts_with($path, 'api/v1/lk/')
+            || str_starts_with($path, 'api/landing/')
+        ) {
             return LandingResponse::class;
         }
         
