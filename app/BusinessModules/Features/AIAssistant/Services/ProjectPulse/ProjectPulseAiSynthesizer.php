@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services\ProjectPulse;
 
 use App\BusinessModules\Features\AIAssistant\DTOs\ProjectPulse\ProjectPulseContext;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
+use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use Illuminate\Support\Collection;
 use Throwable;
 
@@ -14,8 +15,8 @@ class ProjectPulseAiSynthesizer
     public function __construct(
         private readonly LLMProviderInterface $llmProvider,
         private readonly ProjectPulseRuleEngine $ruleEngine,
-    ) {
-    }
+        private readonly ?UsageTracker $usageTracker = null,
+    ) {}
 
     public function synthesize(
         Collection $facts,
@@ -27,11 +28,11 @@ class ProjectPulseAiSynthesizer
     ): array {
         $provider = config('ai-assistant.llm.provider', 'yandex');
 
-        if (!$useAi || !config('ai-assistant.project_pulse.ai_enabled', true)) {
+        if (! $useAi || ! config('ai-assistant.project_pulse.ai_enabled', true)) {
             return $this->rulesOnly($facts, $ruleRecommendations);
         }
 
-        if (!$this->llmProvider->isAvailable()) {
+        if (! $this->llmProvider->isAvailable()) {
             return $this->unavailable($facts, $ruleRecommendations, $provider);
         }
 
@@ -58,6 +59,8 @@ class ProjectPulseAiSynthesizer
                 ],
             ], ['profile' => 'json', 'temperature' => 0.2]);
 
+            $this->recordUsage($response, $context);
+
             $decoded = $this->decodeJson((string) ($response['content'] ?? ''));
             $activeProvider = (string) ($response['provider'] ?? $provider);
             $recommendations = is_array($decoded['recommendations'] ?? null)
@@ -81,6 +84,33 @@ class ProjectPulseAiSynthesizer
         } catch (Throwable) {
             return $this->unavailable($facts, $ruleRecommendations, $provider);
         }
+    }
+
+    private function recordUsage(array $response, ?ProjectPulseContext $context): void
+    {
+        if (! $context instanceof ProjectPulseContext || $this->usageTracker === null) {
+            return;
+        }
+
+        $inputTokens = max(0, (int) ($response['input_tokens'] ?? 0));
+        $outputTokens = max(0, (int) ($response['output_tokens'] ?? 0));
+        $totalTokens = max(0, (int) ($response['tokens_used'] ?? ($inputTokens + $outputTokens)));
+
+        $this->usageTracker->recordUsage(
+            $context->organizationId,
+            $context->userId,
+            (string) ($response['provider'] ?? config('ai-assistant.llm.provider', 'unknown')),
+            (string) ($response['model'] ?? $this->llmProvider->getModel()),
+            'project_pulse',
+            $inputTokens,
+            $outputTokens,
+            $totalTokens,
+            [
+                'project_id' => $context->projectId,
+                'period' => $context->period,
+                'date' => $context->date->toDateString(),
+            ]
+        );
     }
 
     private function rulesOnly(Collection $facts, Collection $ruleRecommendations): array
@@ -114,11 +144,11 @@ class ProjectPulseAiSynthesizer
         $content = trim(preg_replace('/^```json\s*|\s*```$/m', '', $content) ?? $content);
         $decoded = json_decode($content, true);
 
-        if (!is_array($decoded) && preg_match('/\{.*\}/s', $content, $matches)) {
+        if (! is_array($decoded) && preg_match('/\{.*\}/s', $content, $matches)) {
             $decoded = json_decode($matches[0], true);
         }
 
-        if (!is_array($decoded)) {
+        if (! is_array($decoded)) {
             throw new \RuntimeException('Project Pulse AI response is not JSON.');
         }
 
@@ -130,7 +160,7 @@ class ProjectPulseAiSynthesizer
         return collect($recommendations)
             ->filter(fn ($item) => is_array($item))
             ->map(fn (array $item, int $index) => [
-                'id' => (string) ($item['id'] ?? 'ai:' . $index),
+                'id' => (string) ($item['id'] ?? 'ai:'.$index),
                 'priority' => (string) ($item['priority'] ?? 'medium'),
                 'title' => (string) ($item['title'] ?? 'Проверить рекомендацию'),
                 'action' => (string) ($item['action'] ?? ''),

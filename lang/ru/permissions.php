@@ -347,6 +347,7 @@ return [
         'act_reports.works' => 'Работы в актах',
         'act_reports' => 'Акты выполненных работ',
         'admin.ai_assistant.project_pulse' => 'Пульс проекта AI-ассистента',
+        'admin.ai_assistant.usage' => 'Расходы AI-ассистента',
         'admin.ai_assistant' => 'AI-ассистент',
         'admin.advance_accounts' => 'Подотчетные счета',
         'admin.catalogs' => 'Справочники',

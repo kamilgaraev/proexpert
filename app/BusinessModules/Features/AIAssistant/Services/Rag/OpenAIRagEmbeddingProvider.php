@@ -23,6 +23,15 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
 
     private string $providerName;
 
+    /**
+     * @var array{input_tokens: int, output_tokens: int, total_tokens: int}
+     */
+    private array $lastUsage = [
+        'input_tokens' => 0,
+        'output_tokens' => 0,
+        'total_tokens' => 0,
+    ];
+
     public function __construct(
         ?object $client = null,
         ?string $apiKey = null,
@@ -70,7 +79,14 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
             $parameters['dimensions'] = $this->dimensions;
         }
 
+        $this->lastUsage = [
+            'input_tokens' => 0,
+            'output_tokens' => 0,
+            'total_tokens' => 0,
+        ];
+
         $response = $embeddings->create($parameters);
+        $this->lastUsage = $this->usageFromResponse($response, $text);
 
         $embedding = $response->embeddings[0]->embedding ?? null;
         if (! is_array($embedding)) {
@@ -96,6 +112,14 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
     public function dimensions(): int
     {
         return $this->dimensions;
+    }
+
+    /**
+     * @return array{input_tokens: int, output_tokens: int, total_tokens: int}
+     */
+    public function lastUsage(): array
+    {
+        return $this->lastUsage;
     }
 
     private function makeClient(?string $apiKey, ?string $baseUri): ?object
@@ -147,5 +171,52 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
         } catch (Throwable) {
             return $fallback;
         }
+    }
+
+    /**
+     * @return array{input_tokens: int, output_tokens: int, total_tokens: int}
+     */
+    private function usageFromResponse(object $response, string $text): array
+    {
+        $usage = $response->usage ?? null;
+        $inputTokens = $this->usageInt($usage, ['promptTokens', 'prompt_tokens', 'inputTokens', 'input_tokens']);
+        $outputTokens = $this->usageInt($usage, ['completionTokens', 'completion_tokens', 'outputTokens', 'output_tokens']);
+        $totalTokens = $this->usageInt($usage, ['totalTokens', 'total_tokens']);
+
+        if ($inputTokens <= 0) {
+            $inputTokens = max(1, (int) ceil(mb_strlen($text, 'UTF-8') / 4));
+        }
+
+        if ($totalTokens <= 0) {
+            $totalTokens = $inputTokens + $outputTokens;
+        }
+
+        return [
+            'input_tokens' => $inputTokens,
+            'output_tokens' => $outputTokens,
+            'total_tokens' => $totalTokens,
+        ];
+    }
+
+    /**
+     * @param  array<int, string>  $keys
+     */
+    private function usageInt(mixed $usage, array $keys): int
+    {
+        if (! is_object($usage) && ! is_array($usage)) {
+            return 0;
+        }
+
+        foreach ($keys as $key) {
+            $value = is_array($usage)
+                ? ($usage[$key] ?? null)
+                : ($usage->{$key} ?? null);
+
+            if (is_numeric($value)) {
+                return max(0, (int) $value);
+            }
+        }
+
+        return 0;
     }
 }

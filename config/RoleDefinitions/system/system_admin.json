@@ -119,6 +119,7 @@
       "ai_assistant.analytics.view",
       "ai_assistant.settings.manage",
       "ai_assistant.usage.view",
+      "admin.ai_assistant.usage.view",
       "admin.ai_assistant.rag.view",
       "admin.ai_assistant.rag.manage",
       "admin.ai_assistant.project_pulse.view",

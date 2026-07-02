@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Rag;
 use App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagChunkData;
 use App\BusinessModules\Features\AIAssistant\Models\RagChunk;
 use App\BusinessModules\Features\AIAssistant\Models\RagSource;
+use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use BackedEnum;
 use DateTimeInterface;
 use Illuminate\Support\Facades\DB;
@@ -18,9 +19,9 @@ class RagIndexer
 {
     public function __construct(
         private readonly RagEmbeddingProviderInterface $embeddingProvider,
-        private readonly RagSourceRegistry $sourceRegistry
-    ) {
-    }
+        private readonly RagSourceRegistry $sourceRegistry,
+        private readonly ?UsageTracker $usageTracker = null
+    ) {}
 
     public function indexChunk(RagChunkData $chunk): void
     {
@@ -197,6 +198,8 @@ class RagIndexer
                 throw $throwable;
             }
 
+            $this->recordEmbeddingUsage($chunk, $content, $index);
+
             $embeddedChunks[] = [
                 'content' => $content,
                 'vector' => $this->vectorLiteral($embedding),
@@ -204,6 +207,80 @@ class RagIndexer
         }
 
         return $embeddedChunks;
+    }
+
+    private function recordEmbeddingUsage(RagChunkData $chunk, string $content, int $chunkIndex): void
+    {
+        try {
+            $usage = $this->embeddingUsage($content);
+            $tracker = $this->usageTracker ?? app(UsageTracker::class);
+
+            $tracker->recordUsage(
+                $chunk->organizationId,
+                null,
+                $this->embeddingProvider->provider(),
+                $this->embeddingProvider->model(),
+                'rag_index',
+                $usage['input_tokens'],
+                $usage['output_tokens'],
+                $usage['total_tokens'],
+                [
+                    'purpose' => RagEmbeddingProviderInterface::PURPOSE_DOCUMENT,
+                    'project_id' => $chunk->projectId,
+                    'source_type' => $chunk->sourceType,
+                    'entity_type' => $chunk->entityType,
+                    'entity_id' => (string) $chunk->entityId,
+                    'chunk_index' => $chunkIndex,
+                    'text_chars' => mb_strlen($content, 'UTF-8'),
+                ]
+            );
+        } catch (Throwable $throwable) {
+            Log::warning('ai_assistant.rag.usage_record_failed', [
+                'organization_id' => $chunk->organizationId,
+                'project_id' => $chunk->projectId,
+                'source_type' => $chunk->sourceType,
+                'entity_type' => $chunk->entityType,
+                'entity_id' => (string) $chunk->entityId,
+                'exception_class' => $throwable::class,
+            ]);
+        }
+    }
+
+    /**
+     * @return array{input_tokens: int, output_tokens: int, total_tokens: int}
+     */
+    private function embeddingUsage(string $content): array
+    {
+        $provider = $this->embeddingProvider;
+
+        if (method_exists($provider, 'lastUsage')) {
+            try {
+                $usage = $provider->lastUsage();
+
+                if (is_array($usage)) {
+                    $inputTokens = max(0, (int) ($usage['input_tokens'] ?? 0));
+                    $outputTokens = max(0, (int) ($usage['output_tokens'] ?? 0));
+                    $totalTokens = max(0, (int) ($usage['total_tokens'] ?? 0));
+
+                    if ($inputTokens > 0 || $totalTokens > 0) {
+                        return [
+                            'input_tokens' => $inputTokens > 0 ? $inputTokens : $totalTokens,
+                            'output_tokens' => $outputTokens,
+                            'total_tokens' => $totalTokens > 0 ? $totalTokens : $inputTokens + $outputTokens,
+                        ];
+                    }
+                }
+            } catch (Throwable) {
+            }
+        }
+
+        $inputTokens = max(1, (int) ceil(mb_strlen($content, 'UTF-8') / 4));
+
+        return [
+            'input_tokens' => $inputTokens,
+            'output_tokens' => 0,
+            'total_tokens' => $inputTokens,
+        ];
     }
 
     /**

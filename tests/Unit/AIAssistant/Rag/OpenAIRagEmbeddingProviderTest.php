@@ -37,6 +37,11 @@ class OpenAIRagEmbeddingProviderTest extends TestCase
         $this->assertSame('text-embedding-3-small', $provider->model());
         $this->assertSame(3, $provider->dimensions());
         $this->assertSame([
+            'input_tokens' => 14,
+            'output_tokens' => 0,
+            'total_tokens' => 14,
+        ], $provider->lastUsage());
+        $this->assertSame([
             'model' => 'text-embedding-3-small',
             'input' => 'Контекст проекта',
             'dimensions' => 3,
@@ -87,9 +92,7 @@ final class FakeRagEmbeddingProvider implements RagEmbeddingProviderInterface
     /**
      * @param  array<int, float>  $embedding
      */
-    public function __construct(private readonly array $embedding)
-    {
-    }
+    public function __construct(private readonly array $embedding) {}
 
     public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array
     {
@@ -140,9 +143,7 @@ final class FakeOpenAIEmbeddingsResource
     /**
      * @param  array<int, float>  $embedding
      */
-    public function __construct(private readonly array $embedding)
-    {
-    }
+    public function __construct(private readonly array $embedding) {}
 
     /**
      * @param  array<string, mixed>  $parameters
@@ -156,6 +157,10 @@ final class FakeOpenAIEmbeddingsResource
                 (object) [
                     'embedding' => $this->embedding,
                 ],
+            ],
+            'usage' => (object) [
+                'promptTokens' => 14,
+                'totalTokens' => 14,
             ],
         ];
     }

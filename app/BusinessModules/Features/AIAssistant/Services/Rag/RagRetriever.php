@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\Rag;
 
 use App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagSearchResult;
+use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use App\Models\User;
 use App\Services\Project\UserProjectAccessService;
 use Carbon\CarbonImmutable;
@@ -17,7 +18,8 @@ final class RagRetriever
 {
     public function __construct(
         private readonly RagEmbeddingProviderInterface $embeddingProvider,
-        private readonly UserProjectAccessService $projectAccessService
+        private readonly UserProjectAccessService $projectAccessService,
+        private readonly ?UsageTracker $usageTracker = null
     ) {}
 
     /**
@@ -60,6 +62,8 @@ final class RagRetriever
                 $includeOrganizationWideSources
             );
         }
+
+        $this->recordQueryEmbeddingUsage($query, $organizationId, $user, $requestProjectId);
 
         $results = [];
         foreach ($this->candidateRows($embedding, $organizationId, max($limit * 4, $limit), $preferredSourceTypes) as $row) {
@@ -112,6 +116,77 @@ final class RagRetriever
         }
 
         return $results;
+    }
+
+    private function recordQueryEmbeddingUsage(
+        string $query,
+        int $organizationId,
+        User $user,
+        ?int $requestProjectId
+    ): void {
+        try {
+            $usage = $this->embeddingUsage($query);
+            $tracker = $this->usageTracker ?? app(UsageTracker::class);
+
+            $tracker->recordUsage(
+                $organizationId,
+                $user->id,
+                $this->embeddingProvider->provider(),
+                $this->embeddingProvider->model(),
+                'rag_query',
+                $usage['input_tokens'],
+                $usage['output_tokens'],
+                $usage['total_tokens'],
+                [
+                    'purpose' => RagEmbeddingProviderInterface::PURPOSE_QUERY,
+                    'project_id' => $requestProjectId,
+                    'text_chars' => mb_strlen($query, 'UTF-8'),
+                ]
+            );
+        } catch (Throwable $throwable) {
+            Log::warning('ai_assistant.rag.query_usage_record_failed', [
+                'organization_id' => $organizationId,
+                'user_id' => $user->id,
+                'exception_class' => $throwable::class,
+            ]);
+        }
+    }
+
+    /**
+     * @return array{input_tokens: int, output_tokens: int, total_tokens: int}
+     */
+    private function embeddingUsage(string $content): array
+    {
+        $provider = $this->embeddingProvider;
+
+        if (method_exists($provider, 'lastUsage')) {
+            try {
+                $usage = $provider->lastUsage();
+
+                if (is_array($usage)) {
+                    $inputTokens = max(0, (int) ($usage['input_tokens'] ?? 0));
+                    $outputTokens = max(0, (int) ($usage['output_tokens'] ?? 0));
+                    $totalTokens = max(0, (int) ($usage['total_tokens'] ?? 0));
+
+                    if ($inputTokens > 0 || $totalTokens > 0) {
+                        return [
+                            'input_tokens' => $inputTokens > 0 ? $inputTokens : $totalTokens,
+                            'output_tokens' => $outputTokens,
+                            'total_tokens' => $totalTokens > 0 ? $totalTokens : $inputTokens + $outputTokens,
+                        ];
+                    }
+                }
+            } catch (Throwable) {
+            }
+        }
+
+        $inputTokens = max(1, (int) ceil(mb_strlen($content, 'UTF-8') / 4));
+
+        return [
+            'input_tokens' => $inputTokens,
+            'output_tokens' => 0,
+            'total_tokens' => $inputTokens,
+        ];
     }
 
     /**

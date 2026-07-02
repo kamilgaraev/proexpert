@@ -828,8 +828,11 @@ class AIAssistantService
         [$preparedMessages, $preparedOptions, $budgetDegraded] = $this->prepareProviderPayload($messages, $options, $organizationId, $user);
 
         try {
+            $response = $this->llmProvider->chat($preparedMessages, $preparedOptions);
+            $this->recordAssistantProviderUsage($response, $organizationId, $user, $preparedOptions, $budgetDegraded);
+
             return [
-                'response' => $this->llmProvider->chat($preparedMessages, $preparedOptions),
+                'response' => $response,
                 'degraded_mode' => $budgetDegraded,
                 'fallback_reason' => null,
             ];
@@ -847,11 +850,52 @@ class AIAssistantService
 
             unset($preparedOptions['tools']);
 
+            $response = $this->llmProvider->chat($preparedMessages, $preparedOptions);
+            $this->recordAssistantProviderUsage($response, $organizationId, $user, $preparedOptions, true);
+
             return [
-                'response' => $this->llmProvider->chat($preparedMessages, $preparedOptions),
+                'response' => $response,
                 'degraded_mode' => true,
                 'fallback_reason' => $this->assistantMessage('ai_assistant.tools_fallback', 'Часть инструментов оказалась недоступна, ответ сформирован в упрощенном режиме.'),
             ];
+        }
+    }
+
+    protected function recordAssistantProviderUsage(
+        array $response,
+        int $organizationId,
+        User $user,
+        array $options,
+        bool $degradedMode
+    ): void {
+        try {
+            $inputTokens = max(0, (int) ($response['input_tokens'] ?? 0));
+            $outputTokens = max(0, (int) ($response['output_tokens'] ?? 0));
+            $totalTokens = max(0, (int) ($response['tokens_used'] ?? ($inputTokens + $outputTokens)));
+
+            $this->usageTracker->recordUsage(
+                $organizationId,
+                $user->id,
+                (string) ($response['provider'] ?? config('ai-assistant.llm.provider', 'unknown')),
+                (string) ($response['model'] ?? $this->llmProvider->getModel()),
+                'assistant_chat',
+                $inputTokens,
+                $outputTokens,
+                $totalTokens,
+                [
+                    'profile' => $response['profile'] ?? ($options['profile'] ?? null),
+                    'route_attempt' => $response['route_attempt'] ?? null,
+                    'route_fallback' => (bool) ($response['route_fallback'] ?? false),
+                    'has_tools' => ! empty($options['tools']),
+                    'degraded_mode' => $degradedMode,
+                ]
+            );
+        } catch (Throwable $throwable) {
+            $this->logging->technical('ai.assistant.usage_record_failed', [
+                'organization_id' => $organizationId,
+                'user_id' => $user->id,
+                'exception_class' => $throwable::class,
+            ], 'warning');
         }
     }
 
@@ -1717,6 +1761,7 @@ class AIAssistantService
 
             if ($eligibility->allowed) {
                 $allowedToolNames[] = $toolName;
+
                 continue;
             }
 
