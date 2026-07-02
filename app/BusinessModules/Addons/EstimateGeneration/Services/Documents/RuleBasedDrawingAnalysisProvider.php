@@ -12,7 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderInterface
 {
     public function __construct(
-        private readonly QuantityStatementLineParser $quantityLineParser = new QuantityStatementLineParser(),
+        private readonly QuantityStatementLineParser $quantityLineParser = new QuantityStatementLineParser,
     ) {}
 
     public function analyze(int $documentId, string $filename, OcrRecognitionResult $recognition): DrawingAnalysisResultData
@@ -73,7 +73,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<int, array{text: string, bbox: array<string, float>|null, block_index: int|null, line_index: int|null, line_hash: string}> $lineRecords
+     * @param  array<int, array{text: string, bbox: array<string, float>|null, block_index: int|null, line_index: int|null, line_hash: string}>  $lineRecords
      * @return array<int, array<string, mixed>>
      */
     private function titleBlockElements(int $documentId, string $filename, OcrPageResult $page, array $lineRecords): array
@@ -100,7 +100,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             }
 
             if ($sheetMark === null && preg_match('/(?<![\p{L}\p{N}])(?<code>АР|АС|КР|КЖ|КМ|ОВ|ВК|НВК|ЭОМ|ЭО|ЭС|СС|ПС|ПТ|ГП|ТХ|AR|AS|KR|KJ|KM|OV|VK|EOM|EO|ES|SS|GP)\s*[-.]?\s*(?<number>\d+(?:[.\-]\d+)*)(?:\s+(?<name>[\p{L}\p{N}\s.,;:()\/\-]{3,120}))?/iu', $line, $match) === 1) {
-                $sheetMark = mb_strtoupper((string) $match['code']) . '-' . (string) $match['number'];
+                $sheetMark = mb_strtoupper((string) $match['code']).'-'.(string) $match['number'];
                 $sheetName = $this->cleanTitleBlockValue((string) ($match['name'] ?? '')) ?: null;
                 $sourceLines[] = $line;
             }
@@ -126,7 +126,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             }
         }
 
-        if ($sheetMark === null && $sheetName === null && !($stage !== null && $sheetNumber !== null)) {
+        if ($sheetMark === null && $sheetName === null && ! ($stage !== null && $sheetNumber !== null)) {
             return [];
         }
 
@@ -137,7 +137,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         return [[
             'type' => 'title_block',
             'label' => $sheetName ?? $sheetMark ?? 'Штамп листа',
-            'value_text' => $valueParts !== [] ? implode(' · ', $valueParts) : 'Лист ' . $sheetNumber,
+            'value_text' => $valueParts !== [] ? implode(' · ', $valueParts) : 'Лист '.$sheetNumber,
             'value_number' => null,
             'unit' => null,
             'bbox' => null,
@@ -198,7 +198,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         return array_map(
             fn (string $label): array => [
                 'type' => 'axis',
-                'label' => 'Ось ' . $label,
+                'label' => 'Ось '.$label,
                 'value_text' => $label,
                 'value_number' => is_numeric($label) ? (float) $label : null,
                 'unit' => null,
@@ -302,7 +302,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         return [[
             'type' => 'scale',
             'label' => 'Масштаб',
-            'value_text' => '1:' . $match['scale'],
+            'value_text' => '1:'.$match['scale'],
             'value_number' => (float) $match['scale'],
             'unit' => null,
             'bbox' => null,
@@ -325,7 +325,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         return [[
             'type' => 'height',
             'label' => 'Высота помещения',
-            'value_text' => $this->formatNumber($height) . ' м',
+            'value_text' => $this->formatNumber($height).' м',
             'value_number' => $height,
             'unit' => 'м',
             'bbox' => null,
@@ -376,8 +376,8 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         foreach ($this->roomAreaMatches($line) as $index => $match) {
             $elements[] = [
                 'type' => 'room',
-                'label' => $match['label'] !== '' ? $match['label'] : 'Помещение ' . ($index + 1),
-                'value_text' => $this->formatNumber($match['area']) . ' м2',
+                'label' => $match['label'] !== '' ? $match['label'] : 'Помещение '.($index + 1),
+                'value_text' => $this->formatNumber($match['area']).' м2',
                 'value_number' => $match['area'],
                 'unit' => 'м2',
                 'bbox' => null,
@@ -446,7 +446,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             return null;
         }
 
-        if (!$this->containsAny($normalized, [
+        if (! $this->containsAny($normalized, [
             'гостиная',
             'кухня',
             'санузел',
@@ -494,7 +494,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         return [[
             'type' => 'opening',
             'label' => $label,
-            'value_text' => $match['width'] . 'x' . $match['height'],
+            'value_text' => $match['width'].'x'.$match['height'],
             'value_number' => (float) ($match['count'] ?? 1),
             'unit' => 'шт',
             'bbox' => null,
@@ -520,7 +520,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         return [[
             'type' => 'engineering_route',
             'label' => trim($match['label']),
-            'value_text' => $this->formatNumber($this->number($match['length'])) . ' м',
+            'value_text' => $this->formatNumber($this->number($match['length'])).' м',
             'value_number' => $this->number($match['length']),
             'unit' => 'м',
             'bbox' => null,
@@ -544,7 +544,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             return [[
                 'type' => 'unmapped_specification_row',
                 'label' => $item['name'],
-                'value_text' => $this->formatNumber((float) $item['quantity']) . ' ' . $item['unit'],
+                'value_text' => $this->formatNumber((float) $item['quantity']).' '.$item['unit'],
                 'value_number' => $item['quantity'],
                 'unit' => $item['unit'],
                 'bbox' => null,
@@ -564,7 +564,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         return [[
             'type' => 'specification_item',
             'label' => $item['name'],
-            'value_text' => $this->formatNumber($item['quantity']) . ' ' . $item['unit'],
+            'value_text' => $this->formatNumber($item['quantity']).' '.$item['unit'],
             'value_number' => $item['quantity'],
             'unit' => $item['unit'],
             'bbox' => null,
@@ -590,7 +590,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             return [[
                 'type' => 'dimension',
                 'label' => 'Размер',
-                'value_text' => $match['length'] . 'x' . $match['width'],
+                'value_text' => $match['length'].'x'.$match['width'],
                 'value_number' => null,
                 'unit' => null,
                 'bbox' => null,
@@ -780,7 +780,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             'name' => $item['name'],
             'unit' => $item['unit'],
             'quantity' => $item['quantity'],
-            'formula' => $this->formatNumber($item['quantity']) . ' ' . $item['unit'],
+            'formula' => $this->formatNumber($item['quantity']).' '.$item['unit'],
             'confidence' => $this->confidence($page),
             'source_refs' => [$this->sourceRef($documentId, $filename, $page, $line)],
             'normalized_payload' => [
@@ -822,7 +822,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             return (float) $value;
         }
 
-        if (!is_string($value)) {
+        if (! is_string($value)) {
             return null;
         }
 
@@ -867,7 +867,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     {
         $normalized = mb_strtolower($line);
 
-        if (!$this->containsAny($normalized, ['двер', 'окн', 'ворот', 'дп-', 'ду-', 'ок-', 'проем', 'проём', 'door', 'window', 'gate'])) {
+        if (! $this->containsAny($normalized, ['двер', 'окн', 'ворот', 'дп-', 'ду-', 'ок-', 'проем', 'проём', 'door', 'window', 'gate'])) {
             return false;
         }
 
@@ -899,7 +899,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         $records = [];
 
         foreach ($page->blocks as $blockIndex => $block) {
-            if (!is_array($block)) {
+            if (! is_array($block)) {
                 continue;
             }
 
@@ -907,7 +907,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             $lines = is_array($block['lines'] ?? null) ? $block['lines'] : [];
 
             foreach ($lines as $lineIndex => $line) {
-                if (!is_array($line)) {
+                if (! is_array($line)) {
                     continue;
                 }
 
@@ -960,7 +960,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<string, mixed> $line
+     * @param  array<string, mixed>  $line
      */
     private function lineText(array $line): string
     {
@@ -990,7 +990,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<string, float>|null $bbox
+     * @param  array<string, float>|null  $bbox
      * @return array{text: string, bbox: array<string, float>|null, block_index: int|null, line_index: int|null, line_hash: string}
      */
     private function lineRecord(
@@ -1005,13 +1005,13 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             'bbox' => $bbox,
             'block_index' => $blockIndex,
             'line_index' => $lineIndex,
-            'line_hash' => sha1($pageNumber . '|' . ($blockIndex ?? 'text') . '|' . ($lineIndex ?? 'text') . '|' . $text),
+            'line_hash' => sha1($pageNumber.'|'.($blockIndex ?? 'text').'|'.($lineIndex ?? 'text').'|'.$text),
         ];
     }
 
     /**
-     * @param array<int, array<string, mixed>> $items
-     * @param array{text: string, bbox: array<string, float>|null, block_index: int|null, line_index: int|null, line_hash: string} $lineRecord
+     * @param  array<int, array<string, mixed>>  $items
+     * @param  array{text: string, bbox: array<string, float>|null, block_index: int|null, line_index: int|null, line_hash: string}  $lineRecord
      * @return array<int, array<string, mixed>>
      */
     private function withElementLineEvidence(array $items, array $lineRecord): array
@@ -1042,8 +1042,8 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<int, array<string, mixed>> $takeoffs
-     * @param array{text: string, bbox: array<string, float>|null, block_index: int|null, line_index: int|null, line_hash: string} $lineRecord
+     * @param  array<int, array<string, mixed>>  $takeoffs
+     * @param  array{text: string, bbox: array<string, float>|null, block_index: int|null, line_index: int|null, line_hash: string}  $lineRecord
      * @return array<int, array<string, mixed>>
      */
     private function withTakeoffLineEvidence(array $takeoffs, array $lineRecord): array
@@ -1074,8 +1074,8 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<string, mixed> $sourceRef
-     * @param array{text: string, bbox: array<string, float>|null, block_index: int|null, line_index: int|null, line_hash: string} $lineRecord
+     * @param  array<string, mixed>  $sourceRef
+     * @param  array{text: string, bbox: array<string, float>|null, block_index: int|null, line_index: int|null, line_hash: string}  $lineRecord
      * @return array<string, mixed>
      */
     private function withLineSourceEvidence(array $sourceRef, array $lineRecord): array
@@ -1095,7 +1095,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<int, mixed> $words
+     * @param  array<int, mixed>  $words
      * @return array<string, float>|null
      */
     private function wordsBbox(array $words): ?array
@@ -1103,7 +1103,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         $boxes = [];
 
         foreach ($words as $word) {
-            if (!is_array($word)) {
+            if (! is_array($word)) {
                 continue;
             }
 
@@ -1136,7 +1136,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
      */
     private function normalizedBbox(mixed $bbox): ?array
     {
-        if (!is_array($bbox)) {
+        if (! is_array($bbox)) {
             return null;
         }
 
@@ -1171,12 +1171,12 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<int, string> $keys
+     * @param  array<int, string>  $keys
      */
     private function hasNumericKeys(array $value, array $keys): bool
     {
         foreach ($keys as $key) {
-            if (!is_numeric($value[$key] ?? null)) {
+            if (! is_numeric($value[$key] ?? null)) {
                 return false;
             }
         }
@@ -1189,14 +1189,14 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
      */
     private function bboxFromPoints(mixed $points): ?array
     {
-        if (!is_array($points)) {
+        if (! is_array($points)) {
             return null;
         }
 
         $coordinates = [];
 
         foreach ($points as $point) {
-            if (!is_array($point)) {
+            if (! is_array($point)) {
                 continue;
             }
 
@@ -1263,6 +1263,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
 
             if ($area < 1 || $area > 500) {
                 $previousMatchEnd = $fullMatchEnd;
+
                 continue;
             }
 
@@ -1271,6 +1272,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
 
             if (str_contains($normalizedLine, 'масштаб') || str_contains($normalizedLine, 'период цен')) {
                 $previousMatchEnd = $fullMatchEnd;
+
                 continue;
             }
 
@@ -1308,7 +1310,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
 
     private function quantityLineSource(string $filename, string $line): string
     {
-        $text = mb_strtolower($filename . ' ' . $line);
+        $text = mb_strtolower($filename.' '.$line);
 
         return preg_match('/ведомость\s+(?:объемов|объёмов|работ)|объемы?\s+работ|объёмы?\s+работ|(?:^|[^\p{L}\p{N}])вор(?:$|[^\p{L}\p{N}])/u', $text) === 1
             ? 'work_volume_statement'
@@ -1316,7 +1318,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<int, array<string, mixed>> $elements
+     * @param  array<int, array<string, mixed>>  $elements
      * @return array<int, array<string, mixed>>
      */
     private function roomAreaTakeoffsFromDimensionLabels(array $elements): array
@@ -1356,7 +1358,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 'name' => $label,
                 'unit' => 'м2',
                 'quantity' => $quantity,
-                'formula' => $label . ': ' . $this->formatNumber((float) $geometry['length_m']) . ' x ' . $this->formatNumber((float) $geometry['width_m']) . ' = ' . $this->formatNumber($quantity) . ' м2',
+                'formula' => $label.': '.$this->formatNumber((float) $geometry['length_m']).' x '.$this->formatNumber((float) $geometry['width_m']).' = '.$this->formatNumber($quantity).' м2',
                 'confidence' => max((float) ($element['confidence'] ?? 0.72) - 0.12, 0.35),
                 'source_refs' => $sourceRefs,
                 'normalized_payload' => [
@@ -1380,8 +1382,8 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<int, array<string, mixed>> $roomTakeoffs
-     * @param array<int, array<string, mixed>> $elements
+     * @param  array<int, array<string, mixed>>  $roomTakeoffs
+     * @param  array<int, array<string, mixed>>  $elements
      * @return array<int, array<string, mixed>>
      */
     private function aggregateRoomTakeoffs(array $roomTakeoffs, array $elements): array
@@ -1513,19 +1515,19 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         $baseboardLength = round(max($grossBaseboardLength - $doorWidth, 0.0), 2);
         $wallArea = round(max($grossWallArea - $openingArea, 0.01), 2);
         $wallOpeningFormulaPart = $openingArea > 0
-            ? '; минус проемы ' . $this->formatNumber($openingArea) . ' м2'
+            ? '; минус проемы '.$this->formatNumber($openingArea).' м2'
             : '';
         $baseboardOpeningFormulaPart = $doorWidth > 0
-            ? '; минус дверные проемы ' . $this->formatNumber($doorWidth) . ' м'
+            ? '; минус дверные проемы '.$this->formatNumber($doorWidth).' м'
             : '';
-        $heightFormulaPart = ' x ' . $this->formatNumber($heightM) . ' м';
+        $heightFormulaPart = ' x '.$this->formatNumber($heightM).' м';
         $aggregates = [
             $this->aggregateTakeoff(
                 scopeKey: 'floor_finish_area',
                 quantityKey: 'finish.floor',
                 name: 'Площадь чистовой отделки пола по планировке',
                 quantity: $totalArea,
-                formula: 'Сумма площадей помещений: ' . $this->formatNumber($totalArea) . ' м2',
+                formula: 'Сумма площадей помещений: '.$this->formatNumber($totalArea).' м2',
                 confidence: $roomAreaReviewRequired ? max($confidence - 0.08, 0.35) : min($confidence + 0.03, 0.98),
                 sourceRefs: $roomAreaSourceRefs,
                 roomCount: $roomCount,
@@ -1537,7 +1539,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 quantityKey: 'rough.floor',
                 name: 'Площадь основания пола по планировке',
                 quantity: $totalArea,
-                formula: 'Сумма площадей помещений: ' . $this->formatNumber($totalArea) . ' м2',
+                formula: 'Сумма площадей помещений: '.$this->formatNumber($totalArea).' м2',
                 confidence: $roomAreaReviewRequired ? max($confidence - 0.08, 0.35) : min($confidence + 0.02, 0.98),
                 sourceRefs: $roomAreaSourceRefs,
                 roomCount: $roomCount,
@@ -1549,7 +1551,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 quantityKey: 'office.ceiling',
                 name: 'Площадь потолков по планировке',
                 quantity: $totalArea,
-                formula: 'Принято по площади помещений: ' . $this->formatNumber($totalArea) . ' м2',
+                formula: 'Принято по площади помещений: '.$this->formatNumber($totalArea).' м2',
                 confidence: max($confidence - 0.04, 0.35),
                 sourceRefs: $sourceRefs,
                 roomCount: $roomCount,
@@ -1560,7 +1562,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 quantityKey: 'rough.walls',
                 name: 'Расчетная площадь стен по планировке',
                 quantity: $wallArea,
-                formula: 'Ориентировочная площадь стен по комнатам: сумма 4 x sqrt(S)' . $heightFormulaPart . $wallOpeningFormulaPart . ' = ' . $this->formatNumber($wallArea) . ' м2',
+                formula: 'Ориентировочная площадь стен по комнатам: сумма 4 x sqrt(S)'.$heightFormulaPart.$wallOpeningFormulaPart.' = '.$this->formatNumber($wallArea).' м2',
                 confidence: max($confidence - 0.18, 0.35),
                 sourceRefs: $calculationSourceRefs,
                 roomCount: $roomCount,
@@ -1582,7 +1584,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 quantityKey: 'finish.paint',
                 name: 'Расчетная площадь окраски стен по планировке',
                 quantity: $wallArea,
-                formula: 'Ориентировочная площадь окраски принята по расчетной площади стен: ' . $this->formatNumber($grossWallArea) . ' м2' . $wallOpeningFormulaPart . ' = ' . $this->formatNumber($wallArea) . ' м2',
+                formula: 'Ориентировочная площадь окраски принята по расчетной площади стен: '.$this->formatNumber($grossWallArea).' м2'.$wallOpeningFormulaPart.' = '.$this->formatNumber($wallArea).' м2',
                 confidence: max($confidence - 0.22, 0.35),
                 sourceRefs: $calculationSourceRefs,
                 roomCount: $roomCount,
@@ -1604,7 +1606,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 quantityKey: 'finish.baseboard',
                 name: 'Расчетная длина плинтуса по планировке',
                 quantity: $baseboardLength,
-                formula: 'Ориентировочная длина плинтуса: сумма 4 x sqrt(S)' . $baseboardOpeningFormulaPart . ' = ' . $this->formatNumber($baseboardLength) . ' м',
+                formula: 'Ориентировочная длина плинтуса: сумма 4 x sqrt(S)'.$baseboardOpeningFormulaPart.' = '.$this->formatNumber($baseboardLength).' м',
                 confidence: max($confidence - 0.24, 0.35),
                 sourceRefs: $perimeterSourceRefs,
                 roomCount: $roomCount,
@@ -1629,7 +1631,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 quantityKey: 'sanitary.tile',
                 name: 'Расчетная площадь отделки мокрых зон по планировке',
                 quantity: $wetZoneTileArea,
-                formula: 'Мокрые зоны: пол ' . $this->formatNumber($wetRoomArea) . ' м2 + стены ' . $this->formatNumber($wetRoomWallArea) . ' м2',
+                formula: 'Мокрые зоны: пол '.$this->formatNumber($wetRoomArea).' м2 + стены '.$this->formatNumber($wetRoomWallArea).' м2',
                 confidence: max($confidence - 0.2, 0.35),
                 sourceRefs: $calculationSourceRefs,
                 roomCount: $roomCount,
@@ -1647,7 +1649,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<int, array<string, mixed>> $elements
+     * @param  array<int, array<string, mixed>>  $elements
      * @return array{review_required: bool, payload: array<string, mixed>, source_refs: array<int, array<string, mixed>>}
      */
     private function footprintCoverage(array $elements, float $roomArea): array
@@ -1691,12 +1693,12 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<int, array<string, mixed>> $elements
+     * @param  array<int, array<string, mixed>>  $elements
      * @return array<int, array<string, mixed>>
      */
     private function aggregateFootprintDimensionTakeoffs(string $filename, OcrRecognitionResult $recognition, array $elements): array
     {
-        if (!$this->hasFloorPlanTextSignal($filename, $recognition)) {
+        if (! $this->hasFloorPlanTextSignal($filename, $recognition)) {
             return [];
         }
 
@@ -1739,10 +1741,10 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             'openings_subtracted' => $openingArea > 0 || $doorWidth > 0,
         ];
         $wallOpeningFormulaPart = $openingArea > 0
-            ? '; минус проемы ' . $this->formatNumber($openingArea) . ' м2'
+            ? '; минус проемы '.$this->formatNumber($openingArea).' м2'
             : '';
         $baseboardOpeningFormulaPart = $doorWidth > 0
-            ? '; минус дверные проемы ' . $this->formatNumber($doorWidth) . ' м'
+            ? '; минус дверные проемы '.$this->formatNumber($doorWidth).' м'
             : '';
 
         return [
@@ -1751,7 +1753,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 quantityKey: 'finish.floor',
                 name: 'Площадь чистовой отделки пола по габаритам планировки',
                 quantity: $area,
-                formula: $this->formatNumber((float) $footprint['length_m']) . ' x ' . $this->formatNumber((float) $footprint['width_m']) . ' = ' . $this->formatNumber($area) . ' м2',
+                formula: $this->formatNumber((float) $footprint['length_m']).' x '.$this->formatNumber((float) $footprint['width_m']).' = '.$this->formatNumber($area).' м2',
                 confidence: $confidence,
                 sourceRefs: $sourceRefs,
                 roomCount: 0,
@@ -1763,7 +1765,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 quantityKey: 'rough.floor',
                 name: 'Площадь основания пола по габаритам планировки',
                 quantity: $area,
-                formula: $this->formatNumber((float) $footprint['length_m']) . ' x ' . $this->formatNumber((float) $footprint['width_m']) . ' = ' . $this->formatNumber($area) . ' м2',
+                formula: $this->formatNumber((float) $footprint['length_m']).' x '.$this->formatNumber((float) $footprint['width_m']).' = '.$this->formatNumber($area).' м2',
                 confidence: $confidence,
                 sourceRefs: $sourceRefs,
                 roomCount: 0,
@@ -1775,7 +1777,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 quantityKey: 'rough.walls',
                 name: 'Расчетная площадь стен по габаритам планировки',
                 quantity: $wallArea,
-                formula: 'Периметр ' . $this->formatNumber($perimeter) . ' м x высота ' . $this->formatNumber($heightM) . ' м' . $wallOpeningFormulaPart . ' = ' . $this->formatNumber($wallArea) . ' м2',
+                formula: 'Периметр '.$this->formatNumber($perimeter).' м x высота '.$this->formatNumber($heightM).' м'.$wallOpeningFormulaPart.' = '.$this->formatNumber($wallArea).' м2',
                 confidence: max($confidence - 0.06, 0.35),
                 sourceRefs: $calculationSourceRefs,
                 roomCount: 0,
@@ -1793,7 +1795,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 quantityKey: 'finish.paint',
                 name: 'Расчетная площадь окраски стен по габаритам планировки',
                 quantity: $wallArea,
-                formula: 'Периметр ' . $this->formatNumber($perimeter) . ' м x высота ' . $this->formatNumber($heightM) . ' м' . $wallOpeningFormulaPart . ' = ' . $this->formatNumber($wallArea) . ' м2',
+                formula: 'Периметр '.$this->formatNumber($perimeter).' м x высота '.$this->formatNumber($heightM).' м'.$wallOpeningFormulaPart.' = '.$this->formatNumber($wallArea).' м2',
                 confidence: max($confidence - 0.08, 0.35),
                 sourceRefs: $calculationSourceRefs,
                 roomCount: 0,
@@ -1811,7 +1813,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 quantityKey: 'finish.baseboard',
                 name: 'Расчетная длина плинтуса по габаритам планировки',
                 quantity: $baseboardLength,
-                formula: 'Периметр по габаритам ' . $this->formatNumber($perimeter) . ' м' . $baseboardOpeningFormulaPart . ' = ' . $this->formatNumber($baseboardLength) . ' м',
+                formula: 'Периметр по габаритам '.$this->formatNumber($perimeter).' м'.$baseboardOpeningFormulaPart.' = '.$this->formatNumber($baseboardLength).' м',
                 confidence: max($confidence - 0.1, 0.35),
                 sourceRefs: $sourceRefs,
                 roomCount: 0,
@@ -1828,7 +1830,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
 
     private function hasFloorPlanTextSignal(string $filename, OcrRecognitionResult $recognition): bool
     {
-        $text = mb_strtolower($filename . ' ' . implode(' ', array_map(
+        $text = mb_strtolower($filename.' '.implode(' ', array_map(
             static fn (OcrPageResult $page): string => $page->text,
             $recognition->pages
         )));
@@ -1837,7 +1839,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<int, array<string, mixed>> $elements
+     * @param  array<int, array<string, mixed>>  $elements
      * @return array{length_m: float, width_m: float, confidence: float, source_refs: array<int, array<string, mixed>>}|null
      */
     private function bestFootprintDimensionPair(array $elements): ?array
@@ -1881,7 +1883,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<int, array<string, mixed>> $elements
+     * @param  array<int, array<string, mixed>>  $elements
      * @return array{opening_area_m2: float, door_width_m: float, opening_count: int, source_refs: array<int, array<string, mixed>>}
      */
     private function openingAdjustment(array $elements): array
@@ -1937,7 +1939,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<int, array<string, mixed>> $sourceRefs
+     * @param  array<int, array<string, mixed>>  $sourceRefs
      * @return array<string, mixed>
      */
     private function aggregateTakeoff(
@@ -1984,7 +1986,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<int, array<string, mixed>> $elements
+     * @param  array<int, array<string, mixed>>  $elements
      * @return array<int, array<string, mixed>>
      */
     private function dimensionElementsForRooms(array $elements): array
@@ -1993,13 +1995,35 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             $elements,
             fn (array $element): bool => ($element['type'] ?? null) === 'dimension'
                 && ($this->dimensionPairMeters($element) !== null || $this->linearDimensionMeters($element) !== null)
-                && !$this->isOpeningDimensionElement($element)
+                && ! $this->isOpeningDimensionElement($element)
+                && ! $this->isMaterialSpecificationDimensionElement($element)
         ));
     }
 
+    private function isMaterialSpecificationDimensionElement(array $element): bool
+    {
+        $payload = is_array($element['normalized_payload'] ?? null) ? $element['normalized_payload'] : [];
+        $sourceRef = is_array($element['source_ref'] ?? null) ? $element['source_ref'] : [];
+        $text = mb_strtolower(trim(implode(' ', array_filter(array_map(
+            static fn (mixed $value): string => trim((string) $value),
+            [
+                $element['label'] ?? '',
+                $element['value_text'] ?? '',
+                $payload['line'] ?? '',
+                $sourceRef['excerpt'] ?? '',
+            ],
+        )))));
+
+        if ($text === '') {
+            return false;
+        }
+
+        return preg_match('/(?:гост|ту\s|труба|пластин|болт|гайк|шайб|арматур|профнастил|самонарез|фиксатор|панель\s+ограждения|стойка|прогон|балка|лист|шаг\s*\d|l\s*=|∅|ø)/iu', $text) === 1;
+    }
+
     /**
-     * @param array<string, mixed> $roomElement
-     * @param array<int, array<string, mixed>> $dimensionElements
+     * @param  array<string, mixed>  $roomElement
+     * @param  array<int, array<string, mixed>>  $dimensionElements
      * @return array{length_m: float, width_m: float, perimeter_m: float, basis: string, source_refs: array<int, array<string, mixed>>}|null
      */
     private function roomGeometryFromLabelElement(array $roomElement, array $dimensionElements): ?array
@@ -2022,8 +2046,8 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<string, mixed> $roomTakeoff
-     * @param array<int, array<string, mixed>> $dimensionElements
+     * @param  array<string, mixed>  $roomTakeoff
+     * @param  array<int, array<string, mixed>>  $dimensionElements
      * @return array{length_m: float, width_m: float, perimeter_m: float, basis: string, source_refs: array<int, array<string, mixed>>}|null
      */
     private function roomGeometryFromDimensions(array $roomTakeoff, array $dimensionElements, float $area): ?array
@@ -2055,8 +2079,8 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<int, array<string, mixed>> $dimensionElements
-     * @param array<string, float> $roomBbox
+     * @param  array<int, array<string, mixed>>  $dimensionElements
+     * @param  array<string, float>  $roomBbox
      * @return array{length_m: float, width_m: float, perimeter_m: float, basis: string, source_refs: array<int, array<string, mixed>>}|null
      */
     private function roomGeometryFromDimensionPairs(array $dimensionElements, ?float $area, array $roomBbox, ?int $roomPage): ?array
@@ -2066,7 +2090,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         foreach ($dimensionElements as $element) {
             $dimension = $this->dimensionPairMeters($element);
 
-            if ($dimension === null || !$this->isRoomDimensionCandidatePlausible($area, $dimension['length_m'], $dimension['width_m'])) {
+            if ($dimension === null || ! $this->isRoomDimensionCandidatePlausible($area, $dimension['length_m'], $dimension['width_m'])) {
                 continue;
             }
 
@@ -2119,8 +2143,8 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<int, array<string, mixed>> $dimensionElements
-     * @param array<string, float> $roomBbox
+     * @param  array<int, array<string, mixed>>  $dimensionElements
+     * @param  array<string, float>  $roomBbox
      * @return array{length_m: float, width_m: float, perimeter_m: float, basis: string, source_refs: array<int, array<string, mixed>>}|null
      */
     private function roomGeometryFromOrthogonalDimensions(array $dimensionElements, ?float $area, array $roomBbox, ?int $roomPage): ?array
@@ -2181,7 +2205,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 $lengthM = max((float) $horizontalDimension['length_m'], (float) $verticalDimension['length_m']);
                 $widthM = min((float) $horizontalDimension['length_m'], (float) $verticalDimension['length_m']);
 
-                if (!$this->isRoomDimensionCandidatePlausible($area, $lengthM, $widthM)) {
+                if (! $this->isRoomDimensionCandidatePlausible($area, $lengthM, $widthM)) {
                     continue;
                 }
 
@@ -2224,7 +2248,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
 
     private function firstSourceRefWithBbox(mixed $sourceRefs): ?array
     {
-        if (!is_array($sourceRefs)) {
+        if (! is_array($sourceRefs)) {
             return null;
         }
 
@@ -2238,7 +2262,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<string, mixed> $element
+     * @param  array<string, mixed>  $element
      * @return array{length_m: float, width_m: float}|null
      */
     private function dimensionPairMeters(array $element): ?array
@@ -2282,7 +2306,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<string, float> $bbox
+     * @param  array<string, float>  $bbox
      */
     private function dimensionOrientation(array $bbox): string
     {
@@ -2314,7 +2338,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<string, mixed> $element
+     * @param  array<string, mixed>  $element
      */
     private function isOpeningDimensionElement(array $element): bool
     {
@@ -2339,8 +2363,8 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<string, float> $left
-     * @param array<string, float> $right
+     * @param  array<string, float>  $left
+     * @param  array<string, float>  $right
      */
     private function bboxCenterDistance(array $left, array $right): float
     {
@@ -2353,8 +2377,8 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<string, float> $roomBbox
-     * @param array<string, float> $dimensionBbox
+     * @param  array<string, float>  $roomBbox
+     * @param  array<string, float>  $dimensionBbox
      */
     private function dimensionMatchDistanceLimit(array $roomBbox, array $dimensionBbox): float
     {
@@ -2369,8 +2393,8 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<string, float> $left
-     * @param array<string, float> $right
+     * @param  array<string, float>  $left
+     * @param  array<string, float>  $right
      */
     private function usesNormalizedCoordinateSpace(array $left, array $right): bool
     {
@@ -2394,7 +2418,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<int, array<string, mixed>> $elements
+     * @param  array<int, array<string, mixed>>  $elements
      * @return array{height_m: float, source: string, source_refs: array<int, array<string, mixed>>}
      */
     private function heightEvidence(array $elements): array
@@ -2452,9 +2476,9 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<int, OcrPageResult> $pages
-     * @param array<int, array<string, mixed>> $elements
-     * @param array<int, array<string, mixed>> $takeoffs
+     * @param  array<int, OcrPageResult>  $pages
+     * @param  array<int, array<string, mixed>>  $elements
+     * @param  array<int, array<string, mixed>>  $takeoffs
      * @return array<int, array<string, mixed>>
      */
     private function pageProfiles(string $filename, array $pages, array $elements, array $takeoffs): array
@@ -2503,7 +2527,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                     return ($payload['source'] ?? null) === 'work_volume_statement';
                 }
             ));
-            $text = mb_strtolower($page->text . ' ' . $filename);
+            $text = mb_strtolower($page->text.' '.$filename);
             $hasPlanSignal = preg_match('/план|планировка|экспликац/ui', $text) === 1;
             $hasWorkVolumeStatementSignal = $workVolumeStatementCount > 0
                 || preg_match('/ведомость\s+(?:объемов|объёмов|работ)|объемы?\s+работ|объёмы?\s+работ|вор\b/ui', $text) === 1;
@@ -2587,10 +2611,10 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<int, array<string, mixed>> $elements
-     * @param array<int, array<string, mixed>> $takeoffs
-     * @param array<int, array<string, mixed>> $roomTakeoffs
-     * @param array<int, array<string, mixed>> $pageProfiles
+     * @param  array<int, array<string, mixed>>  $elements
+     * @param  array<int, array<string, mixed>>  $takeoffs
+     * @param  array<int, array<string, mixed>>  $roomTakeoffs
+     * @param  array<int, array<string, mixed>>  $pageProfiles
      * @return array<string, mixed>
      */
     private function summary(
@@ -2645,7 +2669,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<int, array<string, mixed>> $takeoffs
+     * @param  array<int, array<string, mixed>>  $takeoffs
      * @return array<string, mixed>
      */
     private function evidenceGraph(array $takeoffs): array
@@ -2678,7 +2702,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             }
 
             $nodes[] = [
-                'id' => 'takeoff-' . ($index + 1),
+                'id' => 'takeoff-'.($index + 1),
                 'type' => 'quantity_takeoff',
                 'scope_key' => $takeoff['scope_key'] ?? null,
                 'quantity_key' => $payload['quantity_key'] ?? null,
@@ -2705,7 +2729,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<int, array<string, mixed>> $pageProfiles
+     * @param  array<int, array<string, mixed>>  $pageProfiles
      * @return array<string, mixed>
      */
     private function documentProfile(string $filename, array $pageProfiles, int $roomCount, int $dimensionCount, int $axisCount, int $titleBlockCount): array
@@ -2768,7 +2792,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
     }
 
     /**
-     * @param array<int, string> $needles
+     * @param  array<int, string>  $needles
      */
     private function containsAny(string $value, array $needles): bool
     {

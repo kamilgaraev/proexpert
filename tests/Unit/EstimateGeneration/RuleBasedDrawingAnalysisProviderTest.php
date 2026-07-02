@@ -31,7 +31,7 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
             ]
         );
 
-        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+        $result = (new RuleBasedDrawingAnalysisProvider)->analyze(
             documentId: 10,
             filename: 'АР-2.pdf',
             recognition: $recognition
@@ -76,7 +76,7 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
             ]
         );
 
-        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+        $result = (new RuleBasedDrawingAnalysisProvider)->analyze(
             documentId: 10,
             filename: 'АР-2.pdf',
             recognition: $recognition
@@ -121,7 +121,7 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
             ]
         );
 
-        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+        $result = (new RuleBasedDrawingAnalysisProvider)->analyze(
             documentId: 10,
             filename: 'АР-2.pdf',
             recognition: $recognition
@@ -162,7 +162,7 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
             ]
         );
 
-        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+        $result = (new RuleBasedDrawingAnalysisProvider)->analyze(
             documentId: 10,
             filename: 'АР-1.pdf',
             recognition: $recognition
@@ -232,7 +232,7 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
             ]
         );
 
-        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+        $result = (new RuleBasedDrawingAnalysisProvider)->analyze(
             documentId: 10,
             filename: 'flat-plan.png',
             recognition: $recognition
@@ -301,7 +301,7 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
             ]
         );
 
-        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+        $result = (new RuleBasedDrawingAnalysisProvider)->analyze(
             documentId: 10,
             filename: 'flat-plan.png',
             recognition: $recognition
@@ -385,7 +385,7 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
             ]
         );
 
-        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+        $result = (new RuleBasedDrawingAnalysisProvider)->analyze(
             documentId: 13,
             filename: 'floor-plan.jpg',
             recognition: $recognition
@@ -456,7 +456,7 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
             ]
         );
 
-        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+        $result = (new RuleBasedDrawingAnalysisProvider)->analyze(
             documentId: 13,
             filename: 'house-floor-plan.jpg',
             recognition: $recognition
@@ -482,6 +482,71 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
         self::assertSame(14.845, $takeoffsByKey['finish.floor']['normalized_payload']['length_m'] ?? null);
         self::assertSame(8.755, $takeoffsByKey['finish.floor']['normalized_payload']['width_m'] ?? null);
         self::assertSame(3.0, $takeoffsByKey['rough.walls']['normalized_payload']['height_m'] ?? null);
+    }
+
+    public function test_ignores_material_specification_dimensions_as_floor_plan_footprint(): void
+    {
+        $recognition = new OcrRecognitionResult(
+            provider: 'test',
+            model: 'pdf_text_layer',
+            pages: [
+                new OcrPageResult(
+                    pageNumber: 1,
+                    text: implode("\n", [
+                        'План размещения оборудования',
+                        'Пл1 ГОСТ 103-2006 Пластина 6х45х184 12 0.4',
+                        'Болт М12х60 5.8 48',
+                        'Труба 120х120х5 L=3430',
+                    ]),
+                    blocks: [[
+                        'text' => '',
+                        'lines' => [
+                            [
+                                'text' => 'План размещения оборудования',
+                                'bounding_box' => ['x' => 20, 'y' => 20, 'width' => 260, 'height' => 24],
+                                'words' => [],
+                            ],
+                            [
+                                'text' => 'Пл1 ГОСТ 103-2006 Пластина 6х45х184 12 0.4',
+                                'bounding_box' => ['x' => 40, 'y' => 100, 'width' => 420, 'height' => 18],
+                                'words' => [],
+                            ],
+                            [
+                                'text' => 'Болт М12х60 5.8 48',
+                                'bounding_box' => ['x' => 40, 'y' => 124, 'width' => 210, 'height' => 18],
+                                'words' => [],
+                            ],
+                            [
+                                'text' => 'Труба 120х120х5 L=3430',
+                                'bounding_box' => ['x' => 40, 'y' => 148, 'width' => 240, 'height' => 18],
+                                'words' => [],
+                            ],
+                        ],
+                    ]],
+                    width: 1200,
+                    height: 800,
+                    confidence: 0.93
+                ),
+            ]
+        );
+
+        $result = (new RuleBasedDrawingAnalysisProvider)->analyze(
+            documentId: 17,
+            filename: '11174-ПЗУ.АС(газ)изм.4.pdf',
+            recognition: $recognition
+        );
+        $takeoffsByKey = [];
+
+        foreach ($result->takeoffs as $takeoff) {
+            $payload = is_array($takeoff['normalized_payload'] ?? null) ? $takeoff['normalized_payload'] : [];
+            $takeoffsByKey[(string) ($payload['quantity_key'] ?? $takeoff['scope_key'] ?? '')] = $takeoff;
+        }
+
+        self::assertGreaterThan(0, $result->summary['dimension_count'] ?? 0);
+        self::assertArrayNotHasKey('finish.floor', $takeoffsByKey);
+        self::assertArrayNotHasKey('rough.floor', $takeoffsByKey);
+        self::assertArrayNotHasKey('rough.walls', $takeoffsByKey);
+        self::assertArrayNotHasKey('finish.baseboard', $takeoffsByKey);
     }
 
     public function test_marks_room_area_sum_for_review_when_overall_dimensions_show_incomplete_coverage(): void
@@ -542,7 +607,7 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
             ]
         );
 
-        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+        $result = (new RuleBasedDrawingAnalysisProvider)->analyze(
             documentId: 13,
             filename: 'house-floor-plan.jpg',
             recognition: $recognition
@@ -622,7 +687,7 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
             ]
         );
 
-        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+        $result = (new RuleBasedDrawingAnalysisProvider)->analyze(
             documentId: 10,
             filename: 'flat-plan.png',
             recognition: $recognition
@@ -682,7 +747,7 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
             ]
         );
 
-        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+        $result = (new RuleBasedDrawingAnalysisProvider)->analyze(
             documentId: 10,
             filename: 'flat-plan.png',
             recognition: $recognition
@@ -763,7 +828,7 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
             ]
         );
 
-        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+        $result = (new RuleBasedDrawingAnalysisProvider)->analyze(
             documentId: 10,
             filename: 'flat-plan.png',
             recognition: $recognition
@@ -810,7 +875,7 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
             ]
         );
 
-        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+        $result = (new RuleBasedDrawingAnalysisProvider)->analyze(
             documentId: 10,
             filename: 'flat-plan.png',
             recognition: $recognition
@@ -842,7 +907,7 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
             ]
         );
 
-        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+        $result = (new RuleBasedDrawingAnalysisProvider)->analyze(
             documentId: 10,
             filename: 'spec.xlsx',
             recognition: $recognition
@@ -885,7 +950,7 @@ final class RuleBasedDrawingAnalysisProviderTest extends TestCase
             ]
         );
 
-        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(
+        $result = (new RuleBasedDrawingAnalysisProvider)->analyze(
             documentId: 10,
             filename: 'Ведомость объемов работ.pdf',
             recognition: $recognition
