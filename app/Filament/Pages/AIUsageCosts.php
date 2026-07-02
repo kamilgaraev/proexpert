@@ -10,6 +10,7 @@ use App\Filament\Support\NavigationGroups;
 use App\Filament\Support\SystemAdminAccess;
 use Carbon\CarbonImmutable;
 use Filament\Pages\Page;
+use Filament\Support\Enums\Width;
 use Illuminate\Contracts\Support\Htmlable;
 
 use function trans_message;
@@ -24,7 +25,7 @@ class AIUsageCosts extends Page
 
     protected static ?string $slug = 'ai-usage-costs';
 
-    protected \Filament\Support\Enums\Width|string|null $maxContentWidth = 'full';
+    protected Width|string|null $maxContentWidth = Width::SevenExtraLarge;
 
     public string $dateFrom = '';
 
