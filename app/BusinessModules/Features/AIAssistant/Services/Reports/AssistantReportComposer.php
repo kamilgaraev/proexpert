@@ -22,6 +22,56 @@ final readonly class AssistantReportComposer implements AssistantReportComposerI
 
     private const RISK_LIMIT = 260;
 
+    private const MACHINE_FIELD_LABELS = [
+        'decision' => 'Решение',
+        'priority' => 'Приоритет',
+        'severity' => 'Критичность',
+        'state' => 'Состояние',
+        'status' => 'Статус',
+        'решение' => 'Решение',
+        'приоритет' => 'Приоритет',
+        'критичность' => 'Критичность',
+        'состояние' => 'Состояние',
+        'статус' => 'Статус',
+    ];
+
+    private const MACHINE_VALUE_LABELS = [
+        'accepted' => 'Принято',
+        'active' => 'Активно',
+        'approved' => 'Одобрено',
+        'cancelled' => 'Отменено',
+        'canceled' => 'Отменено',
+        'closed' => 'Закрыто',
+        'completed' => 'Завершено',
+        'confirmed' => 'Подтверждено',
+        'critical' => 'Критический',
+        'delivered' => 'Доставлено',
+        'done' => 'Готово',
+        'draft' => 'Черновик',
+        'expired' => 'Срок истек',
+        'fixed' => 'Исправлено',
+        'high' => 'Высокий',
+        'in_delivery' => 'В доставке',
+        'in_progress' => 'В работе',
+        'inactive' => 'Неактивно',
+        'low' => 'Низкий',
+        'medium' => 'Средний',
+        'new' => 'Новая',
+        'normal' => 'Обычный',
+        'open' => 'Открыто',
+        'overdue' => 'Просрочено',
+        'partially_delivered' => 'Частично доставлено',
+        'pending' => 'Ожидает',
+        'planned' => 'Запланировано',
+        'processing' => 'В обработке',
+        'rejected' => 'Отклонено',
+        'resolved' => 'Решено',
+        'responded' => 'Ответ получен',
+        'selected' => 'Выбрано',
+        'sent' => 'Отправлено',
+        'submitted' => 'Отправлено',
+    ];
+
     private AssistantReportTopicNormalizer $topicNormalizer;
 
     public function __construct(
@@ -389,6 +439,45 @@ final readonly class AssistantReportComposer implements AssistantReportComposerI
         $value = strip_tags($value);
         $value = preg_replace('/\s+/u', ' ', trim($value)) ?? $value;
 
-        return $value;
+        return $this->businessText($value);
+    }
+
+    private function businessText(string $value): string
+    {
+        $value = $this->normalizeMachinePairs($value);
+        $value = $this->normalizeIsoDates($value);
+
+        return preg_replace('/\s+/u', ' ', trim($value)) ?? $value;
+    }
+
+    private function normalizeMachinePairs(string $value): string
+    {
+        return preg_replace_callback(
+            '/\b(status|state|priority|severity|decision|статус|состояние|приоритет|критичность|решение):\s*([a-z][a-z0-9_-]*)\b/iu',
+            function (array $matches): string {
+                $labelKey = mb_strtolower((string) ($matches[1] ?? ''));
+                $valueKey = str_replace('-', '_', mb_strtolower((string) ($matches[2] ?? '')));
+                $label = self::MACHINE_FIELD_LABELS[$labelKey] ?? (string) ($matches[1] ?? 'Поле');
+                $translatedValue = self::MACHINE_VALUE_LABELS[$valueKey] ?? (string) ($matches[2] ?? '');
+
+                return $label.': '.$translatedValue;
+            },
+            $value
+        ) ?? $value;
+    }
+
+    private function normalizeIsoDates(string $value): string
+    {
+        return preg_replace_callback(
+            '/\b(\d{4}-\d{2}-\d{2})(?:[T ][0-9:.+-]+)?\b/u',
+            function (array $matches): string {
+                try {
+                    return CarbonImmutable::parse((string) ($matches[0] ?? ''))->format('d.m.Y');
+                } catch (Throwable) {
+                    return (string) ($matches[0] ?? '');
+                }
+            },
+            $value
+        ) ?? $value;
     }
 }

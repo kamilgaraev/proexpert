@@ -105,6 +105,41 @@ final class AssistantReportComposerTest extends TestCase
         $this->assertSame('Заявка на закупку', $report['sources'][0]['type_label']);
     }
 
+    public function test_rag_source_text_is_normalized_for_management_pdf(): void
+    {
+        $composer = new AssistantReportComposer(
+            new FakeAssistantReportSourceRetriever([
+                new RagSearchResult(
+                    sourceType: 'supplier_request',
+                    entityType: 'supplier_request',
+                    entityId: '303',
+                    projectId: 88,
+                    title: 'Запрос поставщику ЗП-ГП-ЛД-003',
+                    excerpt: 'Запрос поставщику: ЗП-ГП-ЛД-003 Проект: Кирпичный дом "Лесной двор" Status: responded Отправлен: 2026-06-10 Открыт: 2026-06-11 Ответ получен: 2026-06-11',
+                    similarity: 0.89,
+                    metadata: [],
+                    updatedAt: new DateTimeImmutable('2026-06-11T09:00:00+03:00')
+                ),
+            ]),
+            new RagPromptContextBuilder
+        );
+
+        $report = $composer->compose($this->organization(), $this->user(), [
+            'report_type' => 'generic_rag',
+            'query' => 'Сделай отчет по закупкам для Лесного двора',
+        ]);
+
+        $fact = (string) $report['sections'][0]['fact'];
+
+        $this->assertStringContainsString('Статус: Ответ получен', $fact);
+        $this->assertStringContainsString('Отправлен: 10.06.2026', $fact);
+        $this->assertStringContainsString('Открыт: 11.06.2026', $fact);
+        $this->assertStringNotContainsString('Status: responded', $fact);
+        $this->assertStringNotContainsString('2026-06-10', $fact);
+        $this->assertStringContainsString('Статус: Ответ получен', implode(' ', $report['key_findings']));
+        $this->assertStringContainsString('10.06.2026', $report['sources'][0]['reference_excerpt']);
+    }
+
     public function test_empty_sources_return_insufficient_data_report_without_file_content(): void
     {
         $composer = new AssistantReportComposer(

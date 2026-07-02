@@ -288,20 +288,29 @@ final class AssistantRequestUnderstandingResolver
         if ($this->containsAnyWholePhrase($normalized, [
             'сформируй отчет',
             'сформируй pdf',
+            'сформируй пдф',
             'сформируй файл',
             'сформируй документ',
             'создай pdf',
+            'создай пдф',
             'создай отчет',
             'создай файл',
             'создай документ',
+            'сделай pdf',
+            'сделай пдф',
             'сделай отчет',
             'сделай файл',
             'сделай документ',
+            'подготовь pdf',
+            'подготовь пдф',
             'подготовь отчет',
             'подготовь файл',
             'подготовь документ',
+            'собери pdf',
+            'собери пдф',
             'собери файл',
             'собери документ',
+            'выгрузи пдф',
             'выгрузи файл',
             'выгрузи отчет',
             'выгрузи pdf',
@@ -309,6 +318,7 @@ final class AssistantRequestUnderstandingResolver
             'скачай файл',
             'нужен отчет',
             'нужен pdf',
+            'нужен пдф',
             'нужен файл',
             'нужен документ',
             'покажи отчет',
@@ -316,7 +326,7 @@ final class AssistantRequestUnderstandingResolver
             return true;
         }
 
-        return $this->hasFileMarker($normalized)
+        return ($this->hasFileMarker($normalized) || $this->hasPdfMarker($normalized))
             && $this->containsAnyWholePhrase($normalized, [
                 'создай',
                 'сделай',

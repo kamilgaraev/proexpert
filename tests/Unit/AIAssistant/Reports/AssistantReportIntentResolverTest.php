@@ -90,6 +90,16 @@ final class AssistantReportIntentResolverTest extends TestCase
         $this->assertSame('generic_rag', $result['definition']->id);
     }
 
+    public function test_human_pdf_request_for_manager_matches_generic_rag_report(): void
+    {
+        $result = (new AssistantReportIntentResolver)->resolve(
+            'Сделай мне короткий PDF по Лесному двору для руководителя: что сейчас происходит, деньги, риски и ближайшие шаги.'
+        );
+
+        $this->assertSame('matched', $result['status']);
+        $this->assertSame('generic_rag', $result['definition']->id);
+    }
+
     public function test_unknown_thematic_report_request_matches_generic_rag_report(): void
     {
         $result = (new AssistantReportIntentResolver)->resolve(
