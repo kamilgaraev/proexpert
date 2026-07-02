@@ -16,15 +16,15 @@ final class MultiPagePdfOcrContractTest extends TestCase
         self::assertStringNotContainsString('ocr_pdf_text_layer_missing', $source);
     }
 
-    public function test_yandex_async_pdf_recognition_is_not_limited_to_single_page_pdf(): void
+    public function test_timeweb_pdf_recognition_is_not_limited_to_single_page_pdf(): void
     {
-        $source = (string) file_get_contents($this->projectPath('app/BusinessModules/Addons/EstimateGeneration/Services/Ocr/Clients/YandexCloudOcrClient.php'));
+        $source = (string) file_get_contents($this->projectPath('app/BusinessModules/Addons/EstimateGeneration/Services/Ocr/Clients/TimewebVisionOcrClient.php'));
 
         self::assertStringNotContainsString('$input->pageCount === 1', $source);
     }
 
     private function projectPath(string $path): string
     {
-        return dirname(__DIR__, 4) . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $path);
+        return dirname(__DIR__, 4).DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $path);
     }
 }

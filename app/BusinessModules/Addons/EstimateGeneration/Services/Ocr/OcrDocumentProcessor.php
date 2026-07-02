@@ -4,18 +4,19 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Ocr;
 
-use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\ExtractedDocumentFact;
+use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
-use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentFact;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentFact;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentUnderstandingSummaryBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DrawingUnderstandingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrProviderException;
+use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use App\Services\Storage\FileService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -36,6 +37,7 @@ class OcrDocumentProcessor
         private readonly DrawingUnderstandingService $drawingUnderstandingService,
         private readonly DocumentUnderstandingSummaryBuilder $documentUnderstandingSummaryBuilder,
         private readonly EstimatorScopeInferenceService $scopeInferenceService,
+        private readonly UsageTracker $usageTracker,
         private readonly OcrUsageLogger $usageLogger,
     ) {}
 
@@ -58,11 +60,12 @@ class OcrDocumentProcessor
                 ? SpreadsheetDocumentExtractor::PROVIDER
                 : ($this->preflightService->isCad($document)
                     ? 'cad_metadata'
-                    : (string) config('estimate-generation.ocr.provider', 'yandex_cloud_ocr'));
+                    : (string) config('estimate-generation.ocr.provider', 'timeweb'));
             $this->usageLogger->started($document, $provider);
 
             $this->statusService->markProcessing($document, $this->recognitionStage($document), 35);
             $recognition = $this->recognize($document, $content, $pageCount);
+            $this->recordRecognitionUsage($document, $recognition);
 
             $this->statusService->markProcessing($document, 'normalization', 75);
             $quality = $this->qualityAnalyzer->analyze($recognition);
@@ -223,8 +226,43 @@ class OcrDocumentProcessor
         return (int) round((microtime(true) - $startedAt) * 1000);
     }
 
+    private function recordRecognitionUsage(EstimateGenerationDocument $document, OcrRecognitionResult $recognition): void
+    {
+        if ($recognition->provider !== 'timeweb') {
+            return;
+        }
+
+        $usage = $recognition->metadata['usage'] ?? null;
+
+        if (! is_array($usage)) {
+            return;
+        }
+
+        $inputTokens = (int) ($usage['input_tokens'] ?? 0);
+        $outputTokens = (int) ($usage['output_tokens'] ?? 0);
+        $totalTokens = (int) ($usage['total_tokens'] ?? ($inputTokens + $outputTokens));
+
+        $this->usageTracker->recordUsage(
+            organizationId: $document->organization_id !== null ? (int) $document->organization_id : null,
+            userId: $document->user_id !== null ? (int) $document->user_id : null,
+            provider: $recognition->provider,
+            model: $recognition->model,
+            operation: 'estimate_generation_ocr',
+            inputTokens: $inputTokens,
+            outputTokens: $outputTokens,
+            totalTokens: $totalTokens,
+            metadata: [
+                'document_id' => $document->id,
+                'session_id' => $document->session_id,
+                'project_id' => $document->project_id,
+                'filename' => $document->filename,
+                'mime_type' => $document->mime_type,
+            ],
+        );
+    }
+
     /**
-     * @param array<string, mixed> $factsSummary
+     * @param  array<string, mixed>  $factsSummary
      */
     private function requiresDocumentReview(array $factsSummary): bool
     {
@@ -240,8 +278,8 @@ class OcrDocumentProcessor
     }
 
     /**
-     * @param array<int, ExtractedDocumentFact> $facts
-     * @param array<string, mixed> $factsSummary
+     * @param  array<int, ExtractedDocumentFact>  $facts
+     * @param  array<string, mixed>  $factsSummary
      * @return array<string, mixed>
      */
     private function persistRecognition(
@@ -249,8 +287,7 @@ class OcrDocumentProcessor
         OcrRecognitionResult $recognition,
         array $facts,
         array $factsSummary
-    ): array
-    {
+    ): array {
         return DB::transaction(function () use ($document, $recognition, $facts, $factsSummary): array {
             $document->facts()->delete();
             $document->drawingElements()->delete();
@@ -340,8 +377,8 @@ class OcrDocumentProcessor
     }
 
     /**
-     * @param array<int, EstimateGenerationDocumentPage> $pageModels
-     * @param array<string, mixed> $documentUnderstanding
+     * @param  array<int, EstimateGenerationDocumentPage>  $pageModels
+     * @param  array<string, mixed>  $documentUnderstanding
      */
     private function persistPageUnderstanding(array $pageModels, array $documentUnderstanding): void
     {
@@ -350,7 +387,7 @@ class OcrDocumentProcessor
         foreach ($pageUnderstanding as $pageNumber => $understanding) {
             $pageModel = $pageModels[$pageNumber] ?? null;
 
-            if (!$pageModel instanceof EstimateGenerationDocumentPage) {
+            if (! $pageModel instanceof EstimateGenerationDocumentPage) {
                 continue;
             }
 

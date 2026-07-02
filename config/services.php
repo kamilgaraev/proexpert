@@ -48,11 +48,6 @@ return [
         'model_uri' => env('YANDEX_MODEL_URI'),
     ],
 
-    'yandex_vision' => [
-        'api_key' => env('YANDEX_VISION_API_KEY'),
-        'folder_id' => env('YANDEX_VISION_FOLDER_ID'),
-    ],
-
     'video_monitoring' => [
         'driver' => env('VIDEO_MONITORING_MEDIA_DRIVER', 'none'),
         'timeout' => (int) env('VIDEO_MONITORING_MEDIA_TIMEOUT', 5),

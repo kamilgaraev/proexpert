@@ -2,15 +2,22 @@
 
 declare(strict_types=1);
 
+$envValue = static function (string $key, mixed $default = null): mixed {
+    $value = env($key);
+
+    return $value !== null && $value !== '' ? $value : $default;
+};
+
 return [
     'ocr' => [
-        'provider' => env('ESTIMATE_GENERATION_OCR_PROVIDER', 'yandex_cloud_ocr'),
+        'provider' => env('ESTIMATE_GENERATION_OCR_PROVIDER', 'timeweb'),
         'enabled' => (bool) env('ESTIMATE_GENERATION_OCR_ENABLED', true),
         'languages' => ['ru', 'en'],
-        'model' => env('ESTIMATE_GENERATION_OCR_MODEL', 'page'),
+        'model' => env('ESTIMATE_GENERATION_OCR_MODEL', 'gemini/gemini-3.1-flash-lite'),
         'timeout_seconds' => (int) env('ESTIMATE_GENERATION_OCR_TIMEOUT', 60),
         'retry_attempts' => (int) env('ESTIMATE_GENERATION_OCR_RETRY_ATTEMPTS', 3),
         'retry_delay_ms' => (int) env('ESTIMATE_GENERATION_OCR_RETRY_DELAY_MS', 250),
+        'max_tokens' => (int) env('ESTIMATE_GENERATION_OCR_MAX_TOKENS', 4096),
         'max_sync_file_bytes' => 10 * 1024 * 1024,
         'max_pdf_file_bytes' => (int) env('ESTIMATE_GENERATION_OCR_MAX_PDF_FILE_BYTES', 200 * 1024 * 1024),
         'max_cad_file_bytes' => (int) env('ESTIMATE_GENERATION_OCR_MAX_CAD_FILE_BYTES', 200 * 1024 * 1024),
@@ -25,18 +32,12 @@ return [
         'min_usable_quality_score' => 0.60,
         'min_good_quality_score' => 0.80,
         'queue' => env('REDIS_ESTIMATE_GENERATION_QUEUE', 'estimate-generation'),
-        'yandex' => [
-            'endpoint' => env('YANDEX_OCR_ENDPOINT', 'https://ocr.api.cloud.yandex.net/ocr/v1/recognizeText'),
-            'async_endpoint' => env('YANDEX_OCR_ASYNC_ENDPOINT', 'https://ocr.api.cloud.yandex.net/ocr/v1/recognizeTextAsync'),
-            'operations_endpoint' => env('YANDEX_OCR_OPERATIONS_ENDPOINT', 'https://operation.api.cloud.yandex.net/operations'),
-            'get_recognition_endpoint' => env('YANDEX_OCR_GET_RECOGNITION_ENDPOINT', 'https://ocr.api.cloud.yandex.net/ocr/v1/getRecognition'),
-            'async_pdf_enabled' => (bool) env('YANDEX_OCR_ASYNC_PDF_ENABLED', false),
-            'async_max_wait_seconds' => (int) env('YANDEX_OCR_ASYNC_MAX_WAIT_SECONDS', 540),
-            'async_poll_interval_ms' => (int) env('YANDEX_OCR_ASYNC_POLL_INTERVAL_MS', 1000),
-            'folder_id' => env('YANDEX_VISION_FOLDER_ID'),
-            'api_key' => env('YANDEX_VISION_API_KEY'),
-            'iam_token' => env('YANDEX_OCR_IAM_TOKEN'),
-            'auth_mode' => env('YANDEX_OCR_AUTH_MODE', 'api_key'),
+        'timeweb' => [
+            'api_key' => $envValue('ESTIMATE_GENERATION_OCR_API_KEY', $envValue('TIMEWEB_AI_API_KEY')),
+            'base_uri' => $envValue('ESTIMATE_GENERATION_OCR_BASE_URI', $envValue('TIMEWEB_AI_BASE_URI', 'https://api.timeweb.ai/v1')),
+            'models' => $envValue('ESTIMATE_GENERATION_OCR_MODELS', $envValue('ESTIMATE_GENERATION_OCR_MODEL', 'gemini/gemini-3.1-flash-lite').',gemini/gemini-3.1-flash,openai/gpt-5-mini'),
+            'pdf_models' => $envValue('ESTIMATE_GENERATION_OCR_PDF_MODELS', 'openai/gpt-5-mini,openai/gpt-5-nano'),
+            'image_detail' => $envValue('ESTIMATE_GENERATION_OCR_IMAGE_DETAIL', 'high'),
         ],
     ],
     'normative_matching' => [

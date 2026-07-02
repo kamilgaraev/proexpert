@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Ocr;
 
+use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
+use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentDetailResource;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentResource;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionResource;
-use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
-use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentFact;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage;
@@ -149,8 +149,8 @@ class EstimateGenerationDocumentResourceTest extends TestCase
     public function test_ocr_result_array_hides_raw_payload_by_default(): void
     {
         $result = new OcrRecognitionResult(
-            provider: 'yandex_cloud_ocr',
-            model: 'page',
+            provider: 'timeweb',
+            model: 'gemini/gemini-3.1-flash-lite',
             pages: [
                 new OcrPageResult(
                     pageNumber: 1,
