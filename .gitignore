@@ -53,6 +53,7 @@ app/Console/Commands/Authorization/AssignOwnerRolesCommand.php
 *.bat
 *.docx
 *.py
+!app/BusinessModules/Addons/EstimateGeneration/bin/pdf_geometry_extract.py
 *.png
 .cursor
 *.txt

@@ -30,6 +30,12 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
                 'text_hash' => $page->text_hash,
                 'confidence' => $page->confidence,
                 'normalized_payload' => $page->normalized_payload ?? [],
+                'page_role' => self::pageRole($page),
+                'role_for_estimation' => self::roleForEstimation($page),
+                'review' => self::reviewPayload($page),
+                'geometry' => self::geometryPayload($page),
+                'visual_metrics' => self::visualMetrics($page),
+                'overlay' => self::overlayPayload($page),
                 'quality_flags' => $page->quality_flags ?? [],
             ])->all();
         }, []);
@@ -101,5 +107,88 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
         }, []);
 
         return $payload;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function normalizedPayload(mixed $page): array
+    {
+        return is_array($page->normalized_payload) ? $page->normalized_payload : [];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function geometryPayload(mixed $page): array
+    {
+        $payload = self::normalizedPayload($page);
+
+        return is_array($payload['geometry'] ?? null) ? $payload['geometry'] : [];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function pageUnderstanding(mixed $page): array
+    {
+        $payload = self::normalizedPayload($page);
+
+        return is_array($payload['page_understanding'] ?? null) ? $payload['page_understanding'] : [];
+    }
+
+    private static function pageRole(mixed $page): string
+    {
+        $understanding = self::pageUnderstanding($page);
+        $geometry = self::geometryPayload($page);
+
+        return (string) ($understanding['page_role'] ?? $geometry['page_role'] ?? 'technical_document');
+    }
+
+    private static function roleForEstimation(mixed $page): string
+    {
+        $understanding = self::pageUnderstanding($page);
+
+        return (string) ($understanding['role_for_estimation'] ?? 'context_document');
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function reviewPayload(mixed $page): array
+    {
+        $understanding = self::pageUnderstanding($page);
+        $reasons = array_values(array_map(
+            'strval',
+            is_array($understanding['review_reasons'] ?? null) ? $understanding['review_reasons'] : []
+        ));
+
+        return [
+            'required' => (bool) ($understanding['review_required'] ?? ($reasons !== [])),
+            'reasons' => $reasons,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function visualMetrics(mixed $page): array
+    {
+        $geometry = self::geometryPayload($page);
+
+        return is_array($geometry['visual_metrics'] ?? null) ? $geometry['visual_metrics'] : [];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private static function overlayPayload(mixed $page): array
+    {
+        $geometry = self::geometryPayload($page);
+
+        return array_values(array_filter(
+            is_array($geometry['overlay'] ?? null) ? $geometry['overlay'] : [],
+            'is_array'
+        ));
     }
 }

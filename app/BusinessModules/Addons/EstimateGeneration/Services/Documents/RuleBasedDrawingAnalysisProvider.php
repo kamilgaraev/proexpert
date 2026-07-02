@@ -13,12 +13,15 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
 {
     public function __construct(
         private readonly QuantityStatementLineParser $quantityLineParser = new QuantityStatementLineParser,
+        private readonly DrawingGeometryAnalyzer $geometryAnalyzer = new DrawingGeometryAnalyzer,
     ) {}
 
     public function analyze(int $documentId, string $filename, OcrRecognitionResult $recognition): DrawingAnalysisResultData
     {
         $elements = [];
         $takeoffs = [];
+        $geometryAnalysis = $this->geometryAnalyzer->analyze($documentId, $filename, $recognition);
+        array_push($elements, ...$geometryAnalysis['elements']);
 
         foreach ($recognition->pages as $page) {
             $pageLineRecords = $this->lineRecords($page);
@@ -63,7 +66,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         }
 
         $pageProfiles = $this->pageProfiles($filename, $recognition->pages, $elements, $takeoffs);
-        $summary = $this->summary($filename, $recognition, $elements, $takeoffs, $roomTakeoffs, $pageProfiles);
+        $summary = $this->summary($filename, $recognition, $elements, $takeoffs, $roomTakeoffs, $pageProfiles, $geometryAnalysis);
 
         return new DrawingAnalysisResultData(
             elements: $this->unique($elements, ['type', 'label', 'value_text', 'page_number']),
@@ -2527,6 +2530,17 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                     return ($payload['source'] ?? null) === 'work_volume_statement';
                 }
             ));
+            $geometry = $this->pageGeometryPayload($page);
+            $geometryMetrics = $this->pageGeometryMetrics($geometry);
+            $geometrySignals = $this->pageGeometrySignals($geometry);
+            $geometryRole = $this->pageGeometryRole($geometry);
+            $geometryLineCount = (int) ($geometryMetrics['line_count'] ?? 0);
+            $geometryVectorCount = (int) ($geometryMetrics['vector_element_count'] ?? $geometryLineCount);
+            $hasGeometrySignal = $geometryVectorCount > 0
+                || (int) ($geometryMetrics['rect_count'] ?? 0) > 0
+                || (int) ($geometryMetrics['curve_count'] ?? 0) > 0
+                || in_array('vector_geometry', $geometrySignals, true);
+            $geometryReviewReasons = $this->pageGeometryReviewReasons($page, $hasGeometrySignal, $geometrySignals, $geometryRole);
             $text = mb_strtolower($page->text.' '.$filename);
             $hasPlanSignal = preg_match('/план|планировка|экспликац/ui', $text) === 1;
             $hasWorkVolumeStatementSignal = $workVolumeStatementCount > 0
@@ -2535,34 +2549,130 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             $hasEstimateSignal = preg_match('/(?:гэсн|фер|тер)?\s*\d{2}-\d{2}-\d{3}-\d{2,3}|смет/ui', $text) === 1;
             $role = $this->pageRole($hasPlanSignal, $hasWorkVolumeStatementSignal, $hasSpecificationSignal, $hasEstimateSignal, $roomCount, $dimensionCount);
 
+            if (
+                $hasGeometrySignal
+                && ! $hasWorkVolumeStatementSignal
+                && ! $hasSpecificationSignal
+                && ! $hasEstimateSignal
+                && in_array($geometryRole, ['plan', 'geometry_only', 'detail', 'section'], true)
+            ) {
+                $role = $geometryRole;
+            }
+
             $profiles[] = [
                 'page_number' => $pageNumber,
                 'page_role' => $role,
-                'confidence' => $this->pageRoleConfidence($page, $role, $hasPlanSignal, $roomCount, $dimensionCount),
-                'signals' => array_values(array_filter([
+                'confidence' => $this->pageRoleConfidence($page, $role, $hasPlanSignal || $hasGeometrySignal, $roomCount, $dimensionCount + $geometryLineCount),
+                'signals' => array_values(array_unique(array_filter([
                     $hasPlanSignal ? 'plan_keywords' : null,
                     $hasWorkVolumeStatementSignal ? 'work_volume_statement_keywords' : null,
                     $hasSpecificationSignal ? 'specification_keywords' : null,
                     $hasEstimateSignal ? 'estimate_or_norm_keywords' : null,
+                    $hasGeometrySignal ? 'vector_geometry' : null,
                     $titleBlockCount > 0 ? 'title_block' : null,
                     $roomCount > 0 ? 'room_areas' : null,
-                    $dimensionCount > 0 ? 'dimensions' : null,
+                    ($dimensionCount > 0 || $geometryLineCount > 0) ? 'dimensions' : null,
                     $axisCount > 0 ? 'axes' : null,
                     $heightCount > 0 ? 'height' : null,
                     $workVolumeStatementCount > 0 ? 'work_volume_statement_quantities' : null,
                     $specificationCount > 0 ? 'specification_quantities' : null,
-                ])),
+                    ...$geometrySignals,
+                ]))),
                 'room_area_count' => $roomCount,
-                'dimension_count' => $dimensionCount,
+                'dimension_count' => $dimensionCount + $geometryLineCount,
                 'axis_count' => $axisCount,
                 'height_count' => $heightCount,
                 'title_block_count' => $titleBlockCount,
                 'work_volume_statement_quantity_count' => $workVolumeStatementCount,
                 'specification_quantity_count' => $specificationCount,
+                'geometry_metrics' => $geometryMetrics,
+                'review_reasons' => $geometryReviewReasons,
+                'requires_review' => $geometryReviewReasons !== [],
             ];
         }
 
         return $profiles;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function pageGeometryPayload(OcrPageResult $page): array
+    {
+        return is_array($page->rawPayload['geometry'] ?? null) ? $page->rawPayload['geometry'] : [];
+    }
+
+    /**
+     * @param array<string, mixed> $geometry
+     * @return array<string, int|float>
+     */
+    private function pageGeometryMetrics(array $geometry): array
+    {
+        $metrics = is_array($geometry['visual_metrics'] ?? null) ? $geometry['visual_metrics'] : [];
+        $result = [];
+
+        foreach ($metrics as $key => $value) {
+            if (is_numeric($value)) {
+                $result[(string) $key] = str_contains((string) $value, '.') ? (float) $value : (int) $value;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param array<string, mixed> $geometry
+     * @return array<int, string>
+     */
+    private function pageGeometrySignals(array $geometry): array
+    {
+        return array_values(array_unique(array_filter(array_map(
+            static fn (mixed $signal): string => trim((string) $signal),
+            is_array($geometry['signals'] ?? null) ? $geometry['signals'] : []
+        ))));
+    }
+
+    /**
+     * @param array<string, mixed> $geometry
+     */
+    private function pageGeometryRole(array $geometry): ?string
+    {
+        $role = trim((string) ($geometry['page_role'] ?? ''));
+
+        return in_array($role, ['plan', 'specification', 'title', 'detail', 'section', 'empty', 'geometry_only'], true)
+            ? $role
+            : null;
+    }
+
+    /**
+     * @param array<int, string> $geometrySignals
+     * @return array<int, string>
+     */
+    private function pageGeometryReviewReasons(
+        OcrPageResult $page,
+        bool $hasGeometrySignal,
+        array $geometrySignals,
+        ?string $geometryRole
+    ): array {
+        if (! $hasGeometrySignal) {
+            return [];
+        }
+
+        $reasons = ['geometry_requires_review'];
+
+        if (trim($page->text) === '') {
+            $reasons[] = 'text_layer_empty_with_geometry';
+        }
+
+        if (in_array($geometryRole, ['geometry_only', 'plan', 'detail', 'section'], true)) {
+            $reasons[] = 'geometry_without_linked_dimensions';
+        }
+
+        if (! in_array('scale_detected', $geometrySignals, true)) {
+            $reasons[] = 'geometry_without_scale';
+        }
+
+        return array_values(array_unique($reasons));
     }
 
     private function pageRole(
@@ -2623,7 +2733,8 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
         array $elements,
         array $takeoffs,
         array $roomTakeoffs,
-        array $pageProfiles
+        array $pageProfiles,
+        array $geometryAnalysis
     ): array {
         $roomAreaTotal = round(array_reduce(
             $roomTakeoffs,
@@ -2648,7 +2759,24 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             $elements,
             static fn (array $element): bool => ($element['type'] ?? null) === 'title_block'
         ));
-        $documentProfile = $this->documentProfile($filename, $pageProfiles, count($roomTakeoffs), $dimensionCount, $axisCount, $titleBlockCount);
+        $geometryMetrics = is_array($geometryAnalysis['metrics'] ?? null) ? $geometryAnalysis['metrics'] : [];
+        $geometryReviewReasons = array_values(array_map(
+            'strval',
+            is_array($geometryAnalysis['review_reasons'] ?? null) ? $geometryAnalysis['review_reasons'] : []
+        ));
+        $geometryReviewRequiredPages = array_values(array_map(
+            'intval',
+            is_array($geometryAnalysis['review_required_pages'] ?? null) ? $geometryAnalysis['review_required_pages'] : []
+        ));
+        $documentProfile = $this->documentProfile(
+            $filename,
+            $pageProfiles,
+            count($roomTakeoffs),
+            $dimensionCount,
+            $axisCount,
+            $titleBlockCount,
+            $geometryReviewReasons
+        );
 
         return [
             'pages_count' => count($recognition->pages),
@@ -2664,7 +2792,10 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             'height_count' => $heightCount,
             'title_block_count' => $titleBlockCount,
             'detected_height_m' => $detectedHeight,
-            'evidence_graph' => $this->evidenceGraph($takeoffs),
+            'geometry_metrics' => $geometryMetrics,
+            'review_reasons' => $geometryReviewReasons,
+            'review_required_pages' => $geometryReviewRequiredPages,
+            'evidence_graph' => $this->evidenceGraph($takeoffs, $geometryReviewReasons),
         ];
     }
 
@@ -2672,10 +2803,11 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
      * @param  array<int, array<string, mixed>>  $takeoffs
      * @return array<string, mixed>
      */
-    private function evidenceGraph(array $takeoffs): array
+    private function evidenceGraph(array $takeoffs, array $externalReviewReasons = []): array
     {
         $nodes = [];
-        $reviewRequiredCount = 0;
+        $externalReviewReasons = array_values(array_unique(array_filter(array_map('strval', $externalReviewReasons))));
+        $reviewRequiredCount = $externalReviewReasons !== [] ? 1 : 0;
         $lowConfidenceCount = 0;
         $missingSourceRefsCount = 0;
 
@@ -2722,6 +2854,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             'review_required_count' => $reviewRequiredCount,
             'low_confidence_count' => $lowConfidenceCount,
             'missing_source_refs_count' => $missingSourceRefsCount,
+            'review_reasons' => $externalReviewReasons,
             'quality_level' => $reviewRequiredCount > 0 || $lowConfidenceCount > 0 || $missingSourceRefsCount > 0
                 ? 'review_required'
                 : 'ready',
@@ -2732,8 +2865,15 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
      * @param  array<int, array<string, mixed>>  $pageProfiles
      * @return array<string, mixed>
      */
-    private function documentProfile(string $filename, array $pageProfiles, int $roomCount, int $dimensionCount, int $axisCount, int $titleBlockCount): array
-    {
+    private function documentProfile(
+        string $filename,
+        array $pageProfiles,
+        int $roomCount,
+        int $dimensionCount,
+        int $axisCount,
+        int $titleBlockCount,
+        array $geometryReviewReasons = []
+    ): array {
         $roles = array_count_values(array_map(
             static fn (array $profile): string => (string) ($profile['page_role'] ?? 'technical_document'),
             $pageProfiles
@@ -2750,16 +2890,20 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             $confidence = max($confidence, 0.72);
         }
 
+        $geometryReviewRequired = $geometryReviewReasons !== []
+            || in_array($role, ['geometry_only', 'plan', 'detail', 'section'], true);
+
         return [
             'document_role' => $role,
             'source_format' => $this->sourceFormat($filename),
             'confidence' => round(min(max($confidence, 0.35), 0.98), 4),
-            'requires_manual_review' => $role === 'floor_plan' && $roomCount === 0,
+            'requires_manual_review' => ($role === 'floor_plan' && $roomCount === 0) || $geometryReviewRequired,
             'signals' => [
                 'room_count' => $roomCount,
                 'dimension_count' => $dimensionCount,
                 'axis_count' => $axisCount,
                 'title_block_count' => $titleBlockCount,
+                'geometry_review_reasons' => array_values(array_unique(array_map('strval', $geometryReviewReasons))),
             ],
         ];
     }
