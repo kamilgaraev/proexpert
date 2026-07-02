@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Rera
 
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\NormativeRerankResultData;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
+use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use Throwable;
 
 final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerInterface
@@ -14,6 +15,7 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
         private readonly LLMProviderInterface $llmProvider,
         private readonly RuleBasedNormativeCandidateReranker $fallback,
         private readonly ?bool $enabled = null,
+        private readonly ?UsageTracker $usageTracker = null,
     ) {}
 
     /**
@@ -39,6 +41,7 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
                 'temperature' => 0,
                 'max_tokens' => 240,
             ]);
+            $this->recordUsage($response, $context, count($candidates));
         } catch (Throwable) {
             return $this->fallback->rerank($workItem, $context, $candidates)
                 ->withWarnings(['llm_reranker_failed']);
@@ -143,6 +146,39 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
         } catch (Throwable) {
             return 8;
         }
+    }
+
+    /**
+     * @param array<string, mixed> $response
+     * @param array<string, mixed> $context
+     */
+    private function recordUsage(array $response, array $context, int $candidateCount): void
+    {
+        $inputTokens = max(0, (int) ($response['input_tokens'] ?? 0));
+        $outputTokens = max(0, (int) ($response['output_tokens'] ?? 0));
+        $totalTokens = max(0, (int) ($response['tokens_used'] ?? ($inputTokens + $outputTokens)));
+
+        if ($totalTokens <= 0 && $inputTokens <= 0 && $outputTokens <= 0) {
+            return;
+        }
+
+        ($this->usageTracker ?? app(UsageTracker::class))->recordUsage(
+            isset($context['organization_id']) ? (int) $context['organization_id'] : null,
+            isset($context['user_id']) ? (int) $context['user_id'] : null,
+            (string) ($response['provider'] ?? config('ai-assistant.llm.provider', 'unknown')),
+            (string) ($response['model'] ?? $this->llmProvider->getModel()),
+            'estimate_generation_rerank',
+            $inputTokens,
+            $outputTokens,
+            $totalTokens,
+            [
+                'project_id' => isset($context['project_id']) ? (int) $context['project_id'] : null,
+                'scope_type' => $context['scope_type'] ?? null,
+                'local_estimate_title' => $context['local_estimate_title'] ?? null,
+                'section_title' => $context['section_title'] ?? null,
+                'candidate_count' => $candidateCount,
+            ]
+        );
     }
 
     /**

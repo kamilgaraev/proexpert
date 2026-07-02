@@ -16,6 +16,9 @@ return [
     'reset' => 'Сбросить',
     'summary' => [
         'requests' => 'Запросы',
+        'user_requests' => 'Пользовательские вопросы',
+        'provider_operations' => 'Операции провайдера',
+        'estimate_generation_cost' => 'Генерация смет',
         'input_tokens' => 'Входные токены',
         'output_tokens' => 'Выходные токены',
         'total_tokens' => 'Всего токенов',
@@ -23,6 +26,7 @@ return [
     ],
     'tables' => [
         'organizations' => 'По организациям',
+        'estimate_generation' => 'Генерация смет',
         'models' => 'По моделям',
         'operations' => 'По сценариям',
         'daily' => 'По дням',
@@ -34,6 +38,8 @@ return [
         'operation' => 'Сценарий',
         'date' => 'Дата',
         'requests' => 'Запросы',
+        'user_requests' => 'Пользовательские вопросы',
+        'provider_operations' => 'Операции провайдера',
         'input_tokens' => 'Вход',
         'output_tokens' => 'Выход',
         'total_tokens' => 'Токены',
@@ -42,6 +48,7 @@ return [
     'empty' => 'За выбранный период расходов не найдено.',
     'operations' => [
         'assistant_chat' => 'Ассистент',
+        'estimate_generation_rerank' => 'Генерация смет',
         'rag_index' => 'Индексация RAG',
         'rag_query' => 'Поиск RAG',
         'project_pulse' => 'Пульс проекта',

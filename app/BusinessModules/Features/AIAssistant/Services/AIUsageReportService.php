@@ -11,6 +11,10 @@ use Illuminate\Support\Facades\Schema;
 
 class AIUsageReportService
 {
+    private const USER_REQUEST_OPERATION = 'assistant_chat';
+
+    private const ESTIMATE_GENERATION_OPERATION_PREFIX = 'estimate_generation';
+
     /**
      * @param  array<string, mixed>  $filters
      * @return array<string, mixed>
@@ -32,6 +36,7 @@ class AIUsageReportService
                 'to' => $to->toDateString(),
             ],
             'summary' => $summary,
+            'estimate_generation' => $this->estimateGeneration(clone $baseQuery),
             'organizations' => $this->organizations(clone $baseQuery),
             'models' => $this->models(clone $baseQuery),
             'operations' => $this->operations(clone $baseQuery),
@@ -96,6 +101,10 @@ class AIUsageReportService
     {
         $row = $query
             ->selectRaw('COUNT(*) as requests_count')
+            ->selectRaw(
+                'COALESCE(SUM(CASE WHEN u.operation = ? THEN 1 ELSE 0 END), 0) as user_requests_count',
+                [self::USER_REQUEST_OPERATION]
+            )
             ->selectRaw('COALESCE(SUM(u.input_tokens), 0) as input_tokens')
             ->selectRaw('COALESCE(SUM(u.output_tokens), 0) as output_tokens')
             ->selectRaw('COALESCE(SUM(u.total_tokens), 0) as total_tokens')
@@ -106,6 +115,7 @@ class AIUsageReportService
 
         return [
             'requests_count' => (int) ($row->requests_count ?? 0),
+            'user_requests_count' => (int) ($row->user_requests_count ?? 0),
             'input_tokens' => (int) ($row->input_tokens ?? 0),
             'output_tokens' => (int) ($row->output_tokens ?? 0),
             'total_tokens' => (int) ($row->total_tokens ?? 0),
@@ -113,6 +123,28 @@ class AIUsageReportService
             'output_cost_rub' => $this->money($row->output_cost_rub ?? 0),
             'total_cost_rub' => $this->money($row->total_cost_rub ?? 0),
             'currency' => 'RUB',
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function estimateGeneration(Builder $query): array
+    {
+        $row = $this->onlyEstimateGeneration($query)
+            ->selectRaw('COUNT(*) as requests_count')
+            ->selectRaw('COALESCE(SUM(u.input_tokens), 0) as input_tokens')
+            ->selectRaw('COALESCE(SUM(u.output_tokens), 0) as output_tokens')
+            ->selectRaw('COALESCE(SUM(u.total_tokens), 0) as total_tokens')
+            ->selectRaw('COALESCE(SUM(u.total_cost_rub), 0) as total_cost_rub')
+            ->first();
+
+        return [
+            'requests_count' => (int) ($row->requests_count ?? 0),
+            'input_tokens' => (int) ($row->input_tokens ?? 0),
+            'output_tokens' => (int) ($row->output_tokens ?? 0),
+            'total_tokens' => (int) ($row->total_tokens ?? 0),
+            'total_cost_rub' => $this->money($row->total_cost_rub ?? 0),
         ];
     }
 
@@ -130,6 +162,10 @@ class AIUsageReportService
             ->selectRaw('COALESCE(SUM(u.output_tokens), 0) as output_tokens')
             ->selectRaw('COALESCE(SUM(u.total_tokens), 0) as total_tokens')
             ->selectRaw('COALESCE(SUM(u.total_cost_rub), 0) as total_cost_rub')
+            ->selectRaw(
+                'COALESCE(SUM(CASE WHEN u.operation = ? THEN 1 ELSE 0 END), 0) as user_requests_count',
+                [self::USER_REQUEST_OPERATION]
+            )
             ->groupBy('u.organization_id', 'o.name')
             ->orderByRaw('COALESCE(SUM(u.total_cost_rub), 0) DESC')
             ->limit(100)
@@ -138,6 +174,7 @@ class AIUsageReportService
                 'organization_id' => $row->organization_id !== null ? (int) $row->organization_id : null,
                 'organization_name' => (string) $row->organization_name,
                 'requests_count' => (int) $row->requests_count,
+                'user_requests_count' => (int) $row->user_requests_count,
                 'input_tokens' => (int) $row->input_tokens,
                 'output_tokens' => (int) $row->output_tokens,
                 'total_tokens' => (int) $row->total_tokens,
@@ -211,6 +248,10 @@ class AIUsageReportService
         return $query
             ->selectRaw('DATE(u.occurred_at) as usage_date')
             ->selectRaw('COUNT(*) as requests_count')
+            ->selectRaw(
+                'COALESCE(SUM(CASE WHEN u.operation = ? THEN 1 ELSE 0 END), 0) as user_requests_count',
+                [self::USER_REQUEST_OPERATION]
+            )
             ->selectRaw('COALESCE(SUM(u.total_tokens), 0) as total_tokens')
             ->selectRaw('COALESCE(SUM(u.total_cost_rub), 0) as total_cost_rub')
             ->groupByRaw('DATE(u.occurred_at)')
@@ -219,6 +260,7 @@ class AIUsageReportService
             ->map(fn (object $row): array => [
                 'date' => (string) $row->usage_date,
                 'requests_count' => (int) $row->requests_count,
+                'user_requests_count' => (int) $row->user_requests_count,
                 'total_tokens' => (int) $row->total_tokens,
                 'total_cost_rub' => $this->money($row->total_cost_rub),
             ])
@@ -238,6 +280,7 @@ class AIUsageReportService
             ],
             'summary' => [
                 'requests_count' => 0,
+                'user_requests_count' => 0,
                 'input_tokens' => 0,
                 'output_tokens' => 0,
                 'total_tokens' => 0,
@@ -246,11 +289,23 @@ class AIUsageReportService
                 'total_cost_rub' => '0.000000',
                 'currency' => 'RUB',
             ],
+            'estimate_generation' => [
+                'requests_count' => 0,
+                'input_tokens' => 0,
+                'output_tokens' => 0,
+                'total_tokens' => 0,
+                'total_cost_rub' => '0.000000',
+            ],
             'organizations' => [],
             'models' => [],
             'operations' => [],
             'daily' => [],
         ];
+    }
+
+    private function onlyEstimateGeneration(Builder $query): Builder
+    {
+        return $query->where('u.operation', 'like', self::ESTIMATE_GENERATION_OPERATION_PREFIX.'%');
     }
 
     private function money(mixed $value): string

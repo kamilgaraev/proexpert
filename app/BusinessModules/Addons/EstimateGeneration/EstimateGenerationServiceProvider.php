@@ -71,6 +71,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorRead
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\ExcelEstimateBuilder;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
+use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
@@ -117,7 +118,9 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(RuleBasedNormativeCandidateReranker::class);
         $this->app->singleton(LLMNormativeCandidateReranker::class, fn ($app) => new LLMNormativeCandidateReranker(
             $app->make(LLMProviderInterface::class),
-            $app->make(RuleBasedNormativeCandidateReranker::class)
+            $app->make(RuleBasedNormativeCandidateReranker::class),
+            null,
+            $app->make(UsageTracker::class)
         ));
         $this->app->singleton(NormativeCandidateRerankerInterface::class, function ($app): NormativeCandidateRerankerInterface {
             $provider = (string) config('estimate-generation.normative_matching.reranker.provider', 'rule_based');

@@ -1,6 +1,7 @@
 <x-filament-panels::page>
     @php
         $summary = $report['summary'] ?? [];
+        $estimateGeneration = $report['estimate_generation'] ?? [];
         $organizations = $report['organizations'] ?? [];
         $models = $report['models'] ?? [];
         $operations = $report['operations'] ?? [];
@@ -15,7 +16,21 @@
                 'featured' => true,
             ],
             [
-                'label' => trans_message('filament_ai_usage.summary.requests'),
+                'label' => trans_message('filament_ai_usage.summary.estimate_generation_cost'),
+                'value' => $this->formatMoney($estimateGeneration['total_cost_rub'] ?? 0),
+                'icon' => 'heroicon-o-calculator',
+                'accent' => 'text-gray-500 dark:text-gray-400',
+                'featured' => false,
+            ],
+            [
+                'label' => trans_message('filament_ai_usage.summary.user_requests'),
+                'value' => $this->formatTokens($summary['user_requests_count'] ?? 0),
+                'icon' => 'heroicon-o-chat-bubble-left-right',
+                'accent' => 'text-gray-500 dark:text-gray-400',
+                'featured' => false,
+            ],
+            [
+                'label' => trans_message('filament_ai_usage.summary.provider_operations'),
                 'value' => $this->formatTokens($summary['requests_count'] ?? 0),
                 'icon' => 'heroicon-o-paper-airplane',
                 'accent' => 'text-gray-500 dark:text-gray-400',
@@ -145,6 +160,50 @@
         </x-filament::section>
 
         <x-filament::section
+            :heading="trans_message('filament_ai_usage.tables.estimate_generation')"
+            icon="heroicon-o-calculator"
+            :compact="true"
+        >
+            <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <div>
+                    <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
+                        {{ trans_message('filament_ai_usage.columns.cost') }}
+                    </div>
+                    <div class="mt-1 text-2xl font-semibold tracking-tight text-gray-950 dark:text-white">
+                        {{ $this->formatMoney($estimateGeneration['total_cost_rub'] ?? 0) }}
+                    </div>
+                </div>
+
+                <div>
+                    <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
+                        {{ trans_message('filament_ai_usage.columns.provider_operations') }}
+                    </div>
+                    <div class="mt-1 text-2xl font-semibold tracking-tight text-gray-950 dark:text-white">
+                        {{ $this->formatTokens($estimateGeneration['requests_count'] ?? 0) }}
+                    </div>
+                </div>
+
+                <div>
+                    <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
+                        {{ trans_message('filament_ai_usage.columns.input_tokens') }}
+                    </div>
+                    <div class="mt-1 text-2xl font-semibold tracking-tight text-gray-950 dark:text-white">
+                        {{ $this->formatTokens($estimateGeneration['input_tokens'] ?? 0) }}
+                    </div>
+                </div>
+
+                <div>
+                    <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
+                        {{ trans_message('filament_ai_usage.columns.output_tokens') }}
+                    </div>
+                    <div class="mt-1 text-2xl font-semibold tracking-tight text-gray-950 dark:text-white">
+                        {{ $this->formatTokens($estimateGeneration['output_tokens'] ?? 0) }}
+                    </div>
+                </div>
+            </div>
+        </x-filament::section>
+
+        <x-filament::section
             :heading="trans_message('filament_ai_usage.tables.organizations')"
             icon="heroicon-o-building-office-2"
         >
@@ -153,7 +212,8 @@
                     <thead class="bg-gray-950/[0.04]">
                         <tr class="text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                             <th class="px-4 py-3">{{ trans_message('filament_ai_usage.columns.organization') }}</th>
-                            <th class="px-4 py-3 text-right">{{ trans_message('filament_ai_usage.columns.requests') }}</th>
+                            <th class="px-4 py-3 text-right">{{ trans_message('filament_ai_usage.columns.user_requests') }}</th>
+                            <th class="px-4 py-3 text-right">{{ trans_message('filament_ai_usage.columns.provider_operations') }}</th>
                             <th class="px-4 py-3 text-right">{{ trans_message('filament_ai_usage.columns.input_tokens') }}</th>
                             <th class="px-4 py-3 text-right">{{ trans_message('filament_ai_usage.columns.output_tokens') }}</th>
                             <th class="px-4 py-3 text-right">{{ trans_message('filament_ai_usage.columns.total_tokens') }}</th>
@@ -164,6 +224,7 @@
                         @forelse ($organizations as $row)
                             <tr class="hover:bg-gray-950/[0.04]">
                                 <td class="px-4 py-3 font-medium text-gray-950 dark:text-white">{{ $row['organization_name'] ?? '' }}</td>
+                                <td class="px-4 py-3 text-right tabular-nums">{{ $this->formatTokens($row['user_requests_count'] ?? 0) }}</td>
                                 <td class="px-4 py-3 text-right tabular-nums">{{ $this->formatTokens($row['requests_count'] ?? 0) }}</td>
                                 <td class="px-4 py-3 text-right tabular-nums">{{ $this->formatTokens($row['input_tokens'] ?? 0) }}</td>
                                 <td class="px-4 py-3 text-right tabular-nums">{{ $this->formatTokens($row['output_tokens'] ?? 0) }}</td>
@@ -172,7 +233,7 @@
                             </tr>
                         @empty
                             <tr>
-                                <td class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400" colspan="6">
+                                <td class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400" colspan="7">
                                     {{ trans_message('filament_ai_usage.empty') }}
                                 </td>
                             </tr>
@@ -193,7 +254,7 @@
                             <tr class="text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                                 <th class="px-4 py-3">{{ trans_message('filament_ai_usage.columns.provider') }}</th>
                                 <th class="px-4 py-3">{{ trans_message('filament_ai_usage.columns.model') }}</th>
-                                <th class="px-4 py-3 text-right">{{ trans_message('filament_ai_usage.columns.requests') }}</th>
+                                <th class="px-4 py-3 text-right">{{ trans_message('filament_ai_usage.columns.provider_operations') }}</th>
                                 <th class="px-4 py-3 text-right">{{ trans_message('filament_ai_usage.columns.cost') }}</th>
                             </tr>
                         </thead>
@@ -226,7 +287,7 @@
                         <thead class="bg-gray-950/[0.04]">
                             <tr class="text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                                 <th class="px-4 py-3">{{ trans_message('filament_ai_usage.columns.operation') }}</th>
-                                <th class="px-4 py-3 text-right">{{ trans_message('filament_ai_usage.columns.requests') }}</th>
+                                <th class="px-4 py-3 text-right">{{ trans_message('filament_ai_usage.columns.provider_operations') }}</th>
                                 <th class="px-4 py-3 text-right">{{ trans_message('filament_ai_usage.columns.total_tokens') }}</th>
                                 <th class="px-4 py-3 text-right">{{ trans_message('filament_ai_usage.columns.cost') }}</th>
                             </tr>
@@ -261,7 +322,8 @@
                     <thead class="bg-gray-950/[0.04]">
                         <tr class="text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                             <th class="px-4 py-3">{{ trans_message('filament_ai_usage.columns.date') }}</th>
-                            <th class="px-4 py-3 text-right">{{ trans_message('filament_ai_usage.columns.requests') }}</th>
+                            <th class="px-4 py-3 text-right">{{ trans_message('filament_ai_usage.columns.user_requests') }}</th>
+                            <th class="px-4 py-3 text-right">{{ trans_message('filament_ai_usage.columns.provider_operations') }}</th>
                             <th class="px-4 py-3 text-right">{{ trans_message('filament_ai_usage.columns.total_tokens') }}</th>
                             <th class="px-4 py-3 text-right">{{ trans_message('filament_ai_usage.columns.cost') }}</th>
                         </tr>
@@ -270,13 +332,14 @@
                         @forelse ($daily as $row)
                             <tr class="hover:bg-gray-950/[0.04]">
                                 <td class="px-4 py-3 font-medium text-gray-950 dark:text-white">{{ $row['date'] ?? '' }}</td>
+                                <td class="px-4 py-3 text-right tabular-nums">{{ $this->formatTokens($row['user_requests_count'] ?? 0) }}</td>
                                 <td class="px-4 py-3 text-right tabular-nums">{{ $this->formatTokens($row['requests_count'] ?? 0) }}</td>
                                 <td class="px-4 py-3 text-right tabular-nums">{{ $this->formatTokens($row['total_tokens'] ?? 0) }}</td>
                                 <td class="px-4 py-3 text-right font-semibold tabular-nums text-gray-950 dark:text-white">{{ $this->formatMoney($row['total_cost_rub'] ?? 0) }}</td>
                             </tr>
                         @empty
                             <tr>
-                                <td class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400" colspan="4">
+                                <td class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400" colspan="5">
                                     {{ trans_message('filament_ai_usage.empty') }}
                                 </td>
                             </tr>
