@@ -96,6 +96,42 @@ class UserManagementControllerTest extends TestCase
         $this->assertNotContains('Foreign Foreman', collect($response->json('data'))->pluck('name')->all());
     }
 
+    public function test_options_returns_current_organization_users_without_user_management_permission(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $this->allowAdminAccessWithoutUserManagement($context->user->id);
+        $ownForeman = $this->createOrganizationUser($context->organization, 'foreman', [
+            'name' => 'Options Foreman',
+            'email' => 'options-foreman@example.test',
+        ]);
+        $ownAccountant = $this->createOrganizationUser($context->organization, 'accountant', [
+            'name' => 'Options Accountant',
+            'email' => 'options-accountant@example.test',
+        ]);
+        $this->createOrganizationUser(Organization::factory()->verified()->create(), 'foreman', [
+            'name' => 'Options Foreign Foreman',
+            'email' => 'options-foreign-foreman@example.test',
+        ]);
+
+        $optionsResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/users/options?per_page=10&is_active=true&sort_by=name&sort_direction=asc');
+
+        $optionsResponse->assertOk();
+        $optionsResponse->assertJsonPath('success', true);
+        $optionsResponse->assertJsonMissingPath('data.data.0.project_access');
+
+        $ids = collect($optionsResponse->json('data.data'))->pluck('id')->all();
+
+        $this->assertContains($ownForeman->id, $ids);
+        $this->assertContains($ownAccountant->id, $ids);
+        $this->assertNotContains('Options Foreign Foreman', collect($optionsResponse->json('data.data'))->pluck('name')->all());
+
+        $indexResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/users?include_all_types=1&per_page=10');
+
+        $indexResponse->assertForbidden();
+    }
+
     public function test_show_hides_user_from_another_organization(): void
     {
         $context = AdminApiTestContext::create();
@@ -181,6 +217,20 @@ class UserManagementControllerTest extends TestCase
                         ->when($context !== null, static fn ($query) => $query->where('context_id', $context->id))
                         ->get();
                 }
+            );
+        });
+    }
+
+    private function allowAdminAccessWithoutUserManagement(int $adminUserId): void
+    {
+        $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($adminUserId): void {
+            $mock->shouldReceive('canAccessInterface')->andReturnUsing(
+                static fn (User $user, string $interface, ?AuthorizationContext $context = null): bool =>
+                    $user->id === $adminUserId && $interface === 'admin'
+            );
+            $mock->shouldReceive('can')->andReturnUsing(
+                static fn (User $user, string $permission, ?array $context = null): bool =>
+                    $user->id === $adminUserId && $permission === 'admin.access'
             );
         });
     }

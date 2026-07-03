@@ -62,6 +62,14 @@ interface UserRepositoryInterface extends BaseRepositoryInterface // Новое 
         string $sortDirection = 'asc'
     ): LengthAwarePaginator;
 
+    public function paginateOptionsInOrganization(
+        int $organizationId,
+        int $perPage = 100,
+        array $filters = [],
+        string $sortBy = 'name',
+        string $sortDirection = 'asc'
+    ): LengthAwarePaginator;
+
     /**
      * Получить данные по активности прорабов (из логов).
      *

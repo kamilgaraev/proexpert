@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Admin\UserManagement\StoreForemanRequest;
 use App\Http\Requests\Api\V1\Admin\UserManagement\UpdateForemanRequest;
 use App\Http\Resources\Api\V1\Admin\User\ForemanUserResource;
+use App\Http\Resources\Api\V1\Admin\User\UserOptionResource;
 use App\Http\Responses\AdminResponse;
 use App\Services\User\UserService;
 use Illuminate\Http\JsonResponse;
@@ -38,6 +39,26 @@ class UserManagementController extends Controller
             return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in UserManagementController@index', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return AdminResponse::error(trans_message('user.list_error'), 500);
+        }
+    }
+
+    public function options(Request $request): JsonResponse
+    {
+        try {
+            $perPage = (int) $request->query('per_page', 100);
+            $usersPaginator = $this->userService->getUserOptionsForCurrentOrg($request, $perPage);
+
+            return AdminResponse::success(UserOptionResource::collection($usersPaginator));
+        } catch (BusinessLogicException $e) {
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('Error in UserManagementController@options', [
                 'message' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),

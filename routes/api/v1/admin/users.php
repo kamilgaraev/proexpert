@@ -17,6 +17,8 @@ use App\Http\Controllers\Api\V1\Admin\UserProjectAccessController;
 // Группа уже защищена middleware в RouteServiceProvider
 
 // User Management (Foremen) - с детальными правами
+Route::get('users/options', [UserManagementController::class, 'options'])
+    ->name('users.options');
 Route::get('users', [UserManagementController::class, 'index'])
     ->middleware('authorize:admin.users.view')
     ->name('users.index');

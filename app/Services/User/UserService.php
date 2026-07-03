@@ -10,6 +10,9 @@ use App\Enums\Activity\ActivitySeverityEnum;
 use App\Models\User;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 // Интеграция с новой системой авторизации
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\OrganizationCustomRole;
+use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Helpers\AdminPanelAccessHelper;
 use App\Services\Activity\ActivityEventRecorder;
@@ -77,6 +80,35 @@ class UserService
         return $this->userRepository->paginateInOrganization(
             (int) $organizationId,
             $perPage,
+            $filters,
+            $sortBy,
+            $sortDirection
+        );
+    }
+
+    public function getUserOptionsForCurrentOrg(Request $request, int $perPage = 100): LengthAwarePaginator
+    {
+        $user = $request->user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+
+        if (!$user || !$organizationId) {
+            throw new BusinessLogicException(trans_message('permissions.invalid_organization_context'), 403);
+        }
+
+        $filters = [
+            'name' => $request->query('name'),
+            'email' => $request->query('email'),
+            'is_active' => $request->query('is_active'),
+            'role' => $request->query('role'),
+        ];
+        $filters = array_filter($filters, fn($value) => !is_null($value) && $value !== '');
+
+        $sortBy = $request->query('sort_by', 'name');
+        $sortDirection = $request->query('sort_direction', 'asc');
+
+        return $this->userRepository->paginateOptionsInOrganization(
+            (int) $organizationId,
+            max(1, min($perPage, 1000)),
             $filters,
             $sortBy,
             $sortDirection
@@ -1078,13 +1110,21 @@ class UserService
 
         $userData['password'] = Hash::make($userData['password']);
         $userData['current_organization_id'] = $intOrganizationId;
+        $roleType = $this->resolveOrganizationRoleType($roleSlug, $intOrganizationId);
+        $assignedBy = $request->user();
 
         try {
-            $newUser = DB::transaction(function () use ($userData, $intOrganizationId, $roleSlug): User {
+            $newUser = DB::transaction(function () use ($userData, $intOrganizationId, $roleSlug, $roleType, $assignedBy): User {
                 $newUser = $this->userRepository->create($userData);
                 $this->userRepository->attachToOrganization($newUser->id, $intOrganizationId, false, true);
                 $this->ensureOrganizationMembershipProjectAccessMode($newUser, $intOrganizationId, $roleSlug);
-                $this->userRepository->assignRoleToUser($newUser->id, $roleSlug, $intOrganizationId);
+                $this->authorizationService->assignRole(
+                    $newUser,
+                    $roleSlug,
+                    AuthorizationContext::getOrganizationContext($intOrganizationId),
+                    $roleType,
+                    $assignedBy instanceof User ? $assignedBy : null
+                );
 
                 return $newUser->refresh();
             });
@@ -1112,6 +1152,17 @@ class UserService
         }
 
         return $newUser;
+    }
+
+    private function resolveOrganizationRoleType(string $roleSlug, int $organizationId): string
+    {
+        return OrganizationCustomRole::query()
+            ->where('organization_id', $organizationId)
+            ->where('slug', $roleSlug)
+            ->where('is_active', true)
+            ->exists()
+            ? UserRoleAssignment::TYPE_CUSTOM
+            : UserRoleAssignment::TYPE_SYSTEM;
     }
 
     private function isEmailUniqueViolation(QueryException $exception): bool
