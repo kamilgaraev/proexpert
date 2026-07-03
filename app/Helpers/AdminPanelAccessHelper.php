@@ -157,6 +157,10 @@ class AdminPanelAccessHelper
     protected function getCustomRolesByInterface(int $organizationId, string $currentInterface): array
     {
         $allowedInterfaces = $this->getAllowedInterfaces($currentInterface);
+        if ($currentInterface === 'lk') {
+            $allowedInterfaces[] = 'lk';
+            $allowedInterfaces = array_values(array_unique($allowedInterfaces));
+        }
         
         if (empty($allowedInterfaces)) {
             return [];

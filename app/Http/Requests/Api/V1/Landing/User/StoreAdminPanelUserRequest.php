@@ -48,7 +48,9 @@ class StoreAdminPanelUserRequest extends FormRequest
      */
     public function rules(): array
     {
-        $organizationId = $this->route('organization_id') ?? $this->user()?->current_organization_id;
+        $organizationId = $this->attributes->get('current_organization_id')
+            ?? $this->route('organization_id')
+            ?? $this->user()?->current_organization_id;
         $currentInterface = $this->input('current_interface', 'lk'); // Из middleware или параметра
         $allowedRoles = $this->adminPanelHelper->getAdminPanelRoles(
             $organizationId ? (int) $organizationId : null,
