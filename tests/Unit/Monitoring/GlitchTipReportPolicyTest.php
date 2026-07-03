@@ -22,6 +22,7 @@ use Illuminate\Queue\MaxAttemptsExceededException;
 use Illuminate\Queue\TimeoutExceededException;
 use Illuminate\Support\MessageBag;
 use Illuminate\Validation\ValidationException;
+use Laminas\Diactoros\Exception\UploadedFileErrorException;
 use PDOException;
 use Predis\Command\CommandInterface;
 use Predis\Connection\ConnectionException;
@@ -182,6 +183,9 @@ class GlitchTipReportPolicyTest extends TestCase
             'authorization' => [fn () => new AuthorizationException()],
             'not found' => [fn () => new NotFoundHttpException()],
             'rate limit' => [fn () => new TooManyRequestsHttpException()],
+            'upload stream error' => [fn () => UploadedFileErrorException::dueToStreamUploadError(
+                'A PHP extension stopped the file upload.'
+            )],
             'balance' => [fn () => new InsufficientBalanceException('not enough')],
             'business logic by default' => [fn () => new BusinessLogicException('expected workflow guard', 409)],
             'ai quota' => [fn () => new AIQuotaExceededException('quota')],
@@ -214,6 +218,7 @@ class GlitchTipReportPolicyTest extends TestCase
                     AuthorizationException::class,
                     NotFoundHttpException::class,
                     TooManyRequestsHttpException::class,
+                    UploadedFileErrorException::class,
                     InsufficientBalanceException::class,
                     AIQuotaExceededException::class,
                 ],
