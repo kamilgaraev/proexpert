@@ -58,7 +58,12 @@ class CustomUserManagementController extends Controller
                 function (string $attribute, mixed $value, \Closure $fail): void {
                     $email = Str::lower(trim((string) $value));
 
-                    if (DB::table('users')->whereRaw('LOWER(email) = ?', [$email])->exists()) {
+                    if (
+                        DB::table('users')
+                            ->whereRaw('LOWER(email) = ?', [$email])
+                            ->whereNull('deleted_at')
+                            ->exists()
+                    ) {
                         $fail(trans_message('landing_users.admin_panel_email_exists'));
                     }
                 },
@@ -176,6 +181,7 @@ class CustomUserManagementController extends Controller
             && (
                 str_contains($message, 'users_email_unique')
                 || str_contains($message, 'users_email_lower_unique')
+                || str_contains($message, 'users_email_lower_active_unique')
                 || str_contains($message, 'users.email')
             );
     }

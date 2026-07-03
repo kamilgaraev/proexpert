@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Http\Requests\Api\V1\Customer\Auth;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 use function trans_message;
 
@@ -15,11 +17,37 @@ class RegisterRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('email')) {
+            $this->merge([
+                'email' => Str::lower(trim((string) $this->input('email'))),
+            ]);
+        }
+    }
+
     public function rules(): array
     {
         return [
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
+            'email' => [
+                'required',
+                'string',
+                'email',
+                'max:255',
+                function (string $attribute, mixed $value, \Closure $fail): void {
+                    $email = Str::lower(trim((string) $value));
+
+                    if (
+                        DB::table('users')
+                            ->whereRaw('LOWER(email) = ?', [$email])
+                            ->whereNull('deleted_at')
+                            ->exists()
+                    ) {
+                        $fail(trans_message('customer.auth.validation.email_taken'));
+                    }
+                },
+            ],
             'password' => [
                 'required',
                 'string',

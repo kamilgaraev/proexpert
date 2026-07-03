@@ -15,6 +15,7 @@ use App\Services\PerformanceMonitor;
 use App\Services\Auth\UserAuthSessionService;
 use App\Interfaces\Billing\BalanceServiceInterface;
 use Illuminate\Auth\Events\PasswordReset;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
@@ -629,6 +630,27 @@ class JwtAuthService
                     'user_id' => $user->id ?? 'Failed to get ID',
                     'email' => $user->email ?? 'N/A'
                 ]);
+            } catch (QueryException $e) {
+                if ($this->isEmailUniqueViolation($e)) {
+                    Log::warning('[JwtAuthService] Duplicate email detected in database', [
+                        'email' => $userData['email'] ?? 'unknown',
+                        'error' => $e->getMessage(),
+                    ]);
+
+                    DB::rollBack();
+
+                    return [
+                        'success' => false,
+                        'message' => trans_message('auth.registration_user_exists'),
+                        'status_code' => 422,
+                    ];
+                }
+
+                Log::error('[JwtAuthService] Failed to create user', [
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+                throw $e;
             } catch (\Exception $e) {
                 Log::error('[JwtAuthService] Failed to create user', [
                     'error' => $e->getMessage(),
@@ -957,6 +979,20 @@ class JwtAuthService
                 'status_code' => 500
             ];
         }
+    }
+
+    private function isEmailUniqueViolation(QueryException $exception): bool
+    {
+        $sqlState = (string) ($exception->errorInfo[0] ?? '');
+        $message = $exception->getMessage();
+
+        return in_array($sqlState, ['23505', '23000'], true)
+            && (
+                str_contains($message, 'users_email_unique')
+                || str_contains($message, 'users_email_lower_unique')
+                || str_contains($message, 'users_email_lower_active_unique')
+                || str_contains($message, 'users.email')
+            );
     }
 
     private function resolveLoginOrganizationId(User $user, string $guard): ?int

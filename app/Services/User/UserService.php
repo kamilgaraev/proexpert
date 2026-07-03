@@ -1123,6 +1123,7 @@ class UserService
             && (
                 str_contains($message, 'users_email_unique')
                 || str_contains($message, 'users_email_lower_unique')
+                || str_contains($message, 'users_email_lower_active_unique')
                 || str_contains($message, 'users.email')
             );
     }

@@ -16,6 +16,7 @@ use App\Services\Auth\JwtAuthService;
 use App\Services\Customer\CustomerPortalService;
 use App\Services\Project\ProjectParticipantInvitationService;
 use Illuminate\Auth\Events\PasswordReset;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -110,32 +111,49 @@ class CustomerAuthService
     {
         $stats = ['accepted' => 0, 'skipped' => 0, 'conflicted' => 0];
 
-        /** @var array{user: User, organization: Organization} $result */
-        $result = DB::transaction(function () use ($registerDTO): array {
-            /** @var User $user */
-            $user = $this->userRepository->create($registerDTO->getUserData());
-            /** @var Organization $organization */
-            $organization = $this->organizationRepository->create($registerDTO->getOrganizationData());
+        try {
+            /** @var array{user: User, organization: Organization} $result */
+            $result = DB::transaction(function () use ($registerDTO): array {
+                /** @var User $user */
+                $user = $this->userRepository->create($registerDTO->getUserData());
+                /** @var Organization $organization */
+                $organization = $this->organizationRepository->create($registerDTO->getOrganizationData());
 
-            $this->userRepository->attachToOrganization($user->id, $organization->id, true, true);
+                $this->userRepository->attachToOrganization($user->id, $organization->id, true, true);
 
-            try {
-                $this->userRepository->assignRoleToUser($user->id, 'customer_owner', $organization->id);
-            } catch (\Throwable $exception) {
-                Log::warning('customer.auth.register.role_assignment_failed', [
-                    'user_id' => $user->id,
-                    'organization_id' => $organization->id,
-                    'error' => $exception->getMessage(),
-                ]);
+                try {
+                    $this->userRepository->assignRoleToUser($user->id, 'customer_owner', $organization->id);
+                } catch (\Throwable $exception) {
+                    Log::warning('customer.auth.register.role_assignment_failed', [
+                        'user_id' => $user->id,
+                        'organization_id' => $organization->id,
+                        'error' => $exception->getMessage(),
+                    ]);
+                }
+
+                $this->syncCurrentOrganization($user, $organization);
+
+                return [
+                    'user' => $user->fresh(),
+                    'organization' => $organization->fresh(),
+                ];
+            });
+        } catch (QueryException $exception) {
+            if (!$this->isEmailUniqueViolation($exception)) {
+                throw $exception;
             }
 
-            $this->syncCurrentOrganization($user, $organization);
+            Log::warning('customer.auth.register.email_duplicate', [
+                'email' => $registerDTO->getEmail(),
+                'error' => $exception->getMessage(),
+            ]);
 
             return [
-                'user' => $user->fresh(),
-                'organization' => $organization->fresh(),
+                'success' => false,
+                'status_code' => 422,
+                'message' => trans_message('customer.auth.validation.email_taken'),
             ];
-        });
+        }
 
         try {
             $stats = $this->invitationService->acceptMatchingForOrganization($result['user'], $result['organization']);
@@ -430,6 +448,20 @@ class CustomerAuthService
                 'error' => $exception->getMessage(),
             ]);
         }
+    }
+
+    private function isEmailUniqueViolation(QueryException $exception): bool
+    {
+        $sqlState = (string) ($exception->errorInfo[0] ?? '');
+        $message = $exception->getMessage();
+
+        return in_array($sqlState, ['23505', '23000'], true)
+            && (
+                str_contains($message, 'users_email_unique')
+                || str_contains($message, 'users_email_lower_unique')
+                || str_contains($message, 'users_email_lower_active_unique')
+                || str_contains($message, 'users.email')
+            );
     }
 
     private function resolveActiveOrganization(User $user): ?Organization

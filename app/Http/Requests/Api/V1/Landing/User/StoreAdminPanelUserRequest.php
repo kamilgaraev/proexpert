@@ -73,7 +73,12 @@ class StoreAdminPanelUserRequest extends FormRequest
                 function (string $attribute, mixed $value, \Closure $fail): void {
                     $email = Str::lower(trim((string) $value));
 
-                    if (DB::table('users')->whereRaw('LOWER(email) = ?', [$email])->exists()) {
+                    if (
+                        DB::table('users')
+                            ->whereRaw('LOWER(email) = ?', [$email])
+                            ->whereNull('deleted_at')
+                            ->exists()
+                    ) {
                         $fail(trans_message('landing_users.admin_panel_email_exists'));
                     }
                 },
