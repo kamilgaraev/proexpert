@@ -1,11 +1,19 @@
 @php
     $mostGeneratedAt = $documentGeneratedAt
         ?? ($generated_at ?? now()->format('d.m.Y H:i'));
+    $mostMarkPath = public_path('most-icon.png');
+    $mostMarkDataUri = is_file($mostMarkPath)
+        ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($mostMarkPath))
+        : null;
 @endphp
 <table class="most-brand-card">
     <tr>
         <td style="width: 42px;">
-            <div class="most-brand-mark">М</div>
+            <div class="most-brand-mark">
+                @if ($mostMarkDataUri)
+                    <img src="{{ $mostMarkDataUri }}" alt="МОСТ">
+                @endif
+            </div>
         </td>
         <td>
             <div class="most-brand-name">МОСТ</div>
