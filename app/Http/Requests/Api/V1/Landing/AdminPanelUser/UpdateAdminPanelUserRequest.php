@@ -43,6 +43,7 @@ class UpdateAdminPanelUserRequest extends FormRequest
         return [
             'name' => 'sometimes|required|string|max:255',
             'password' => 'sometimes|required|string|min:8|confirmed',
+            'is_active' => 'sometimes|boolean',
             // Email не включаем, так как его изменение может быть рискованным
         ];
     }
@@ -60,4 +61,4 @@ class UpdateAdminPanelUserRequest extends FormRequest
             'password.confirmed' => 'Подтверждение пароля не совпадает с паролем',
         ];
     }
-} 
+}

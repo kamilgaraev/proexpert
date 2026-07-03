@@ -35,6 +35,7 @@ return [
     'owner_target_not_found' => 'Пользователь не найден.',
     'owner_target_not_in_organization' => 'Пользователь не найден в этой организации.',
     'owner_target_inactive' => 'Сначала активируйте пользователя в организации.',
+    'self_deactivate_forbidden' => 'Вы не можете отключить самого себя.',
     'validation' => [
         'email_required' => 'Укажите email.',
         'email_invalid' => 'Укажите корректный email.',

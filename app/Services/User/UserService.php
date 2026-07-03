@@ -1190,7 +1190,7 @@ class UserService
      * @return User|null
      * @throws BusinessLogicException
      */
-    public function findAdminPanelUserById(int $targetUserId, Request $request, array $allowedRoles = ['web_admin', 'accountant']): ?User
+    public function findAdminPanelUserById(int $targetUserId, Request $request, ?array $allowedRoles = null): ?User
     {
         $this->ensureUserIsAdmin($request); // Проверяем права запрашивающего
         $organizationId = $request->attributes->get('current_organization_id');
@@ -1198,6 +1198,9 @@ class UserService
             throw new BusinessLogicException('Контекст организации не определен.', 500);
         }
         $intOrganizationId = (int) $organizationId;
+        $contextId = $this->getOrganizationContextId($intOrganizationId);
+        $currentInterface = $request->input('current_interface', 'lk');
+        $allowedRoles = $allowedRoles ?? $this->adminPanelHelper->getAdminPanelRoles($intOrganizationId, $currentInterface);
 
         $user = $this->userRepository->find($targetUserId);
 
@@ -1210,7 +1213,7 @@ class UserService
         $hasAllowedRole = false;
         $userRoles = [];
         foreach ($allowedRoles as $roleSlug) {
-            $hasRole = $this->authorizationService->hasRole($user, $roleSlug, $intOrganizationId);
+            $hasRole = $this->authorizationService->hasRole($user, $roleSlug, $contextId);
             $userRoles[$roleSlug] = $hasRole;
             if ($hasRole) {
                 $hasAllowedRole = true;
@@ -1240,11 +1243,11 @@ class UserService
      * @param int $targetUserId ID пользователя для обновления
      * @param array $data (Validated data: name, password [optional])
      * @param Request $request Текущий запрос
-     * @param array $allowedRoles Roles that the target user must have (e.g., ['web_admin', 'accountant'])
+     * @param array|null $allowedRoles Roles that the target user must have (e.g., ['web_admin', 'accountant'])
      * @return User Обновленный пользователь
      * @throws BusinessLogicException
      */
-    public function updateAdminPanelUser(int $targetUserId, array $data, Request $request, array $allowedRoles = ['web_admin', 'accountant']): User
+    public function updateAdminPanelUser(int $targetUserId, array $data, Request $request, ?array $allowedRoles = null): User
     {
         $this->ensureUserIsAdmin($request); // Проверяем права запрашивающего
         $organizationId = $request->attributes->get('current_organization_id');
@@ -1272,6 +1275,13 @@ class UserService
         }
         if (!empty($data['password'])) {
             $updateData['password'] = Hash::make($data['password']);
+        }
+        if (array_key_exists('is_active', $data)) {
+            if ((bool) $data['is_active'] === false && $targetUserId === $request->user()?->id) {
+                throw new BusinessLogicException(trans_message('landing_users.self_deactivate_forbidden'), 403);
+            }
+
+            $updateData['is_active'] = (bool) $data['is_active'];
         }
 
         if (empty($updateData)) {
