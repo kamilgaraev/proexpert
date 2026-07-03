@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Tests\Unit\AIAssistant\Rag;
 
+use App\BusinessModules\Features\AIAssistant\Exceptions\RagEmbeddingUnavailableException;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\OpenAIRagEmbeddingProvider;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderInterface;
 use Illuminate\Support\Facades\Lang;
 use RuntimeException;
+use Throwable;
 use Tests\TestCase;
 
 class OpenAIRagEmbeddingProviderTest extends TestCase
@@ -85,6 +87,29 @@ class OpenAIRagEmbeddingProviderTest extends TestCase
 
         $provider->embed('Контекст проекта');
     }
+
+    public function test_openai_provider_converts_client_failure_to_unavailable_exception(): void
+    {
+        Lang::addLines([
+            'ai_assistant.rag_embedding_unavailable' => 'Переведенное сообщение о недоступности подготовки контекста.',
+        ], 'ru');
+
+        $clientException = new RuntimeException('temporary provider failure');
+        $provider = new OpenAIRagEmbeddingProvider(
+            client: new FakeOpenAIEmbeddingClient([0.4], $clientException),
+            apiKey: 'test-key',
+            model: 'text-embedding-3-small',
+            dimensions: 3
+        );
+
+        try {
+            $provider->embed('project context');
+            $this->fail('Expected RAG embedding unavailable exception.');
+        } catch (RagEmbeddingUnavailableException $exception) {
+            $this->assertSame('Переведенное сообщение о недоступности подготовки контекста.', $exception->getMessage());
+            $this->assertSame($clientException, $exception->getPrevious());
+        }
+    }
 }
 
 final class FakeRagEmbeddingProvider implements RagEmbeddingProviderInterface
@@ -122,9 +147,9 @@ final class FakeOpenAIEmbeddingClient
     /**
      * @param  array<int, float>  $embedding
      */
-    public function __construct(array $embedding)
+    public function __construct(array $embedding, ?Throwable $exception = null)
     {
-        $this->embeddings = new FakeOpenAIEmbeddingsResource($embedding);
+        $this->embeddings = new FakeOpenAIEmbeddingsResource($embedding, $exception);
     }
 
     public function embeddings(): FakeOpenAIEmbeddingsResource
@@ -143,7 +168,10 @@ final class FakeOpenAIEmbeddingsResource
     /**
      * @param  array<int, float>  $embedding
      */
-    public function __construct(private readonly array $embedding) {}
+    public function __construct(
+        private readonly array $embedding,
+        private readonly ?Throwable $exception = null
+    ) {}
 
     /**
      * @param  array<string, mixed>  $parameters
@@ -151,6 +179,10 @@ final class FakeOpenAIEmbeddingsResource
     public function create(array $parameters): object
     {
         $this->lastParameters = $parameters;
+
+        if ($this->exception !== null) {
+            throw $this->exception;
+        }
 
         return (object) [
             'embeddings' => [

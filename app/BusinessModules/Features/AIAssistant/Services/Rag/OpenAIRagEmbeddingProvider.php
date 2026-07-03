@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\AIAssistant\Services\Rag;
 
+use App\BusinessModules\Features\AIAssistant\Exceptions\RagEmbeddingUnavailableException;
 use GuzzleHttp\Client as GuzzleClient;
 use OpenAI;
 use RuntimeException;
@@ -85,7 +86,15 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
             'total_tokens' => 0,
         ];
 
-        $response = $embeddings->create($parameters);
+        try {
+            $response = $embeddings->create($parameters);
+        } catch (Throwable $exception) {
+            throw new RagEmbeddingUnavailableException($this->assistantMessage(
+                'ai_assistant.rag_embedding_unavailable',
+                'Сервис подготовки контекста временно недоступен.'
+            ), 0, $exception);
+        }
+
         $this->lastUsage = $this->usageFromResponse($response, $text);
 
         $embedding = $response->embeddings[0]->embedding ?? null;
