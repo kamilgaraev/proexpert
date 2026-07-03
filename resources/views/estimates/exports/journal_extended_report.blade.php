@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <title>Расширенный отчет по журналу работ</title>
     <style>
-        @include('pdf.partials.prohelper-brand-styles')
+        @include('pdf.partials.most-brand-styles')
         @page { margin: 12mm; }
         body {
             font-family: DejaVu Sans, sans-serif;
@@ -66,7 +66,7 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.prohelper-brand-header')
+    @include('pdf.partials.most-brand-header')
     <h1>РАСШИРЕННЫЙ ОТЧЕТ ПО ЖУРНАЛУ РАБОТ</h1>
 
     <div class="meta">
@@ -177,6 +177,6 @@
             @endforelse
         </tbody>
     </table>
-    @include('pdf.partials.prohelper-brand-footer')
+    @include('pdf.partials.most-brand-footer')
 </body>
 </html>

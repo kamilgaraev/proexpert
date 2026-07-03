@@ -158,7 +158,7 @@ return [
             'tap' => [EnsureLogFailuresAreNonFatal::class],
         ],
 
-        // ProHelper Structured Logging Channels
+        // МОСТ Structured Logging Channels
         'audit' => [
             'driver' => 'daily',
             'path' => storage_path('logs/audit/audit.log'),

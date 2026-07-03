@@ -1,4 +1,4 @@
-x-json-logging: &json-logging
+﻿x-json-logging: &json-logging
   driver: "json-file"
   options:
     max-size: "10m"
@@ -7,7 +7,7 @@ x-json-logging: &json-logging
 services:
   # --- BACKEND SERVICES ---
   api:
-    image: ghcr.io/kamilgaraev/proexpert/prohelper:${PROHELPER_IMAGE_TAG:-latest}
+    image: ghcr.io/kamilgaraev/proexpert/prohelper:${MOST_IMAGE_TAG:-latest}
     container_name: prohelper-api
     restart: unless-stopped
     command: "php -d memory_limit=1G artisan octane:start --server=roadrunner --host=0.0.0.0 --port=8000 --workers=4 --max-requests=1000"
@@ -26,7 +26,7 @@ services:
     logging: *json-logging
 
   websockets:
-    image: ghcr.io/kamilgaraev/proexpert/prohelper:${PROHELPER_IMAGE_TAG:-latest}
+    image: ghcr.io/kamilgaraev/proexpert/prohelper:${MOST_IMAGE_TAG:-latest}
     container_name: prohelper-websockets
     restart: unless-stopped
     command: "php artisan reverb:start --host=0.0.0.0 --port=8080"
@@ -40,7 +40,7 @@ services:
     logging: *json-logging
 
   horizon:
-    image: ghcr.io/kamilgaraev/proexpert/prohelper:${PROHELPER_IMAGE_TAG:-latest}
+    image: ghcr.io/kamilgaraev/proexpert/prohelper:${MOST_IMAGE_TAG:-latest}
     container_name: prohelper-horizon
     restart: unless-stopped
     command: "php artisan horizon"
@@ -57,7 +57,7 @@ services:
     logging: *json-logging
 
   worker-heavy:
-    image: ghcr.io/kamilgaraev/proexpert/prohelper:${PROHELPER_IMAGE_TAG:-latest}
+    image: ghcr.io/kamilgaraev/proexpert/prohelper:${MOST_IMAGE_TAG:-latest}
     container_name: prohelper-worker-heavy
     restart: unless-stopped
     command: "php artisan queue:work redis --queue=heavy-imports --memory=2048 --timeout=3600"
@@ -73,7 +73,7 @@ services:
           memory: 2.5G
 
   worker-ifc:
-    image: ghcr.io/kamilgaraev/proexpert/prohelper:${PROHELPER_IMAGE_TAG:-latest}
+    image: ghcr.io/kamilgaraev/proexpert/prohelper:${MOST_IMAGE_TAG:-latest}
     container_name: prohelper-worker-ifc
     restart: unless-stopped
     command: "php -d memory_limit=3072M artisan queue:work redis --queue=ifc-processing --memory=3072 --timeout=7200 --tries=1"
@@ -89,7 +89,7 @@ services:
           memory: 3.5G
 
   scheduler:
-    image: ghcr.io/kamilgaraev/proexpert/prohelper:${PROHELPER_IMAGE_TAG:-latest}
+    image: ghcr.io/kamilgaraev/proexpert/prohelper:${MOST_IMAGE_TAG:-latest}
     container_name: prohelper-scheduler
     restart: unless-stopped
     command: "php artisan schedule:work"

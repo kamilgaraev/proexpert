@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: Advanced Dashboard API
   description: |
-    API для модуля "Продвинутый дашборд" ProHelper.
+    API для модуля "Продвинутый дашборд" МОСТ.
     
     Предоставляет доступ к:
     - Финансовой аналитике (Cash Flow, P&L, ROI)
@@ -25,7 +25,7 @@ info:
     100 запросов в минуту на организацию
   version: 1.0.0
   contact:
-    name: ProHelper Support
+    name: МОСТ Support
     email: support@prohelper.ru
   license:
     name: Proprietary

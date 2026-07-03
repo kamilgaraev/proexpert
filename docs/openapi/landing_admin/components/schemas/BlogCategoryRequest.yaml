@@ -23,7 +23,7 @@ properties:
     type: string
     maxLength: 60
     nullable: true
-    example: "SEO и Маркетинг | ProHelper Blog"
+    example: "SEO и Маркетинг | МОСТ Blog"
     description: "Meta title для SEO"
   meta_description:
     type: string

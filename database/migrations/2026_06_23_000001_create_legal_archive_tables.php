@@ -20,7 +20,7 @@ return new class extends Migration
             $table->string('document_type', 64);
             $table->string('status', 64)->default('draft');
             $table->string('direction', 64)->default('internal');
-            $table->string('source_system', 64)->default('prohelper');
+            $table->string('source_system', 64)->default('most');
             $table->string('counterparty_name')->nullable();
             $table->date('document_date')->nullable();
             $table->date('effective_from')->nullable();

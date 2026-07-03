@@ -76,10 +76,10 @@ class GanttExcelExportService
         $spreadsheet = new Spreadsheet();
         $spreadsheet->getProperties()
             ->setTitle($schedule->name)
-            ->setSubject('График работ ProHelper')
-            ->setCreator('ProHelper')
-            ->setCompany('ProHelper')
-            ->setDescription('Экспорт графика работ из системы ProHelper');
+            ->setSubject('График работ МОСТ')
+            ->setCreator('МОСТ')
+            ->setCompany('МОСТ')
+            ->setDescription('Экспорт графика работ из системы МОСТ');
 
         $this->buildGanttSheet($spreadsheet->getActiveSheet(), $schedule, $tasks, 'month');
         $this->buildGanttSheet($spreadsheet->createSheet(), $schedule, $tasks, 'week');
@@ -392,7 +392,7 @@ class GanttExcelExportService
             $sheet->mergeCells($r4Range);
         }
 
-        $sheet->setCellValue("{$startCol}{$row1}", 'ProHelper — Диаграмма Ганта');
+        $sheet->setCellValue("{$startCol}{$row1}", 'МОСТ — Диаграмма Ганта');
         $sheet->getStyle($r1Range)->applyFromArray([
             'fill'      => ['fillType' => Fill::FILL_SOLID, 'color' => ['argb' => 'FF' . self::BRAND_DARK]],
             'font'      => ['bold' => true, 'size' => 14, 'color' => ['argb' => 'FFFFFFFF']],
@@ -460,7 +460,7 @@ class GanttExcelExportService
         ]);
 
         $sheet->mergeCells('A4:C5');
-        $sheet->setCellValue('A4', '  ' . strtoupper('ProHelper — Управление проектами'));
+        $sheet->setCellValue('A4', '  ' . strtoupper('МОСТ — Управление проектами'));
         $sheet->getStyle('A4:C5')->applyFromArray([
             'fill' => ['fillType' => Fill::FILL_SOLID, 'color' => ['argb' => 'FF' . self::BRAND_DARK]],
             'font' => ['bold' => true, 'size' => 18, 'color' => ['argb' => 'FFFFFFFF']],

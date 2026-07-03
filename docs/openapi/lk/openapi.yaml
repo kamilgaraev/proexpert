@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: "ProHelper LK API"
+  title: "МОСТ LK API"
   description: |
     Спецификация API личного кабинета (Landing). Добавляйте детали по мере готовности.
   version: "1.0.0"

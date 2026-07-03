@@ -136,7 +136,7 @@ class EstimateImportController extends Controller
                 'type_description' => $detectionDTO->getTypeDescription(),
                 'confidence' => $detectionDTO->confidence,
                 'is_high_confidence' => $detectionDTO->isHighConfidence(0.9),
-                'is_template' => $detectionDTO->detectedType === 'prohelper_template'
+                'is_template' => $detectionDTO->detectedType === 'most_template'
                     || (bool) ($metadata['is_template'] ?? false),
                 'format_slug' => $metadata['format_slug'] ?? null,
                 'label' => $metadata['label'] ?? null,

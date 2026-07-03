@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "ProHelper Landing Admin API",
+    "title": "МОСТ Landing Admin API",
     "description": "Спецификация API админ-панели (Landing Admin). Добавляйте пути через `$ref` в папку `paths/`.\n",
     "version": "1.0.0"
   },
@@ -1658,7 +1658,7 @@
           "meta_title": {
             "type": "string",
             "nullable": true,
-            "example": "Как создать SEO-оптимизированный блог | ProHelper"
+            "example": "Как создать SEO-оптимизированный блог | МОСТ"
           },
           "meta_description": {
             "type": "string",
@@ -1882,7 +1882,7 @@
             "type": "string",
             "maxLength": 60,
             "nullable": true,
-            "example": "Как создать SEO-оптимизированный блог | ProHelper",
+            "example": "Как создать SEO-оптимизированный блог | МОСТ",
             "description": "Meta title для SEO (до 60 символов)"
           },
           "meta_description": {
@@ -2052,7 +2052,7 @@
             "type": "string",
             "maxLength": 60,
             "nullable": true,
-            "example": "Как создать SEO-оптимизированный блог | ProHelper",
+            "example": "Как создать SEO-оптимизированный блог | МОСТ",
             "description": "Meta title для SEO (до 60 символов)"
           },
           "meta_description": {
@@ -2191,7 +2191,7 @@
           "meta_title": {
             "type": "string",
             "nullable": true,
-            "example": "SEO и Маркетинг | ProHelper Blog"
+            "example": "SEO и Маркетинг | МОСТ Blog"
           },
           "meta_description": {
             "type": "string",
@@ -2268,7 +2268,7 @@
             "type": "string",
             "maxLength": 60,
             "nullable": true,
-            "example": "SEO и Маркетинг | ProHelper Blog",
+            "example": "SEO и Маркетинг | МОСТ Blog",
             "description": "Meta title для SEO"
           },
           "meta_description": {
@@ -2537,7 +2537,7 @@
           },
           "site_name": {
             "type": "string",
-            "example": "ProHelper Blog",
+            "example": "МОСТ Blog",
             "description": "Название сайта"
           },
           "site_description": {

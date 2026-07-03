@@ -35,7 +35,7 @@ class RagPromptContextBuilderTest extends TestCase
 
         $context = $builder->build('what is blocked', [$result]);
 
-        $this->assertStringContainsString('ProHelper', $context['prompt']);
+        $this->assertStringContainsString('МОСТ', $context['prompt']);
         $this->assertStringContainsString('Проблема — что не так — что сделать', $context['prompt']);
         $this->assertStringContainsString('расхождений и рисков', $context['prompt']);
         $this->assertStringContainsString('не подменяй их проектными сметами', $context['prompt']);

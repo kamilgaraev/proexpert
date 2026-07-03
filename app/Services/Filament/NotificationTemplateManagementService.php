@@ -285,7 +285,7 @@ class NotificationTemplateManagementService
             ],
             'organization' => [
                 'id' => $organization?->id ?? 1,
-                'name' => $organization?->name ?? 'ProHelper Demo',
+                'name' => $organization?->name ?? 'МОСТ Demo',
             ],
             'project' => [
                 'id' => 1,

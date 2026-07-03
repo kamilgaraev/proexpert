@@ -74,7 +74,7 @@ final class AIAssistantRagContextTest extends TestCase
             ->filter(static fn (mixed $content): bool => is_string($content))
             ->implode("\n");
 
-        self::assertStringContainsString('ProHelper context:', $prompt);
+        self::assertStringContainsString('МОСТ context:', $prompt);
         self::assertStringContainsString('Delayed materials block facade works.', $prompt);
         self::assertStringContainsString('[1] Letter A risk memo', $prompt);
     }
@@ -131,7 +131,7 @@ final class AIAssistantRagContextTest extends TestCase
             ->filter(static fn (mixed $content): bool => is_string($content))
             ->implode("\n");
 
-        self::assertStringContainsString('ProHelper context:', $prompt);
+        self::assertStringContainsString('МОСТ context:', $prompt);
         self::assertStringContainsString('Delayed materials block facade works.', $prompt);
     }
 
@@ -252,7 +252,7 @@ final class AIAssistantRagContextTest extends TestCase
 
         $prompt = $this->promptFromProvider($llmProvider);
 
-        self::assertStringNotContainsString('ProHelper context:', $prompt);
+        self::assertStringNotContainsString('МОСТ context:', $prompt);
         self::assertStringNotContainsString('Blocked project hidden schedule issue must not leak.', $prompt);
     }
 

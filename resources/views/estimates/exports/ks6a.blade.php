@@ -60,7 +60,7 @@
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
     <title>КС-6а № {{ $contract->number ?? $contract->id ?? '' }}</title>
     <style>
-        @include('pdf.partials.prohelper-brand-styles')
+        @include('pdf.partials.most-brand-styles')
         @page {
             size: A4 landscape;
             margin: 6mm 7mm 7mm;
@@ -293,7 +293,7 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.prohelper-brand-header')
+    @include('pdf.partials.most-brand-header')
     <div class="header-area">
         <div class="top-note">
             <div>Унифицированная форма № КС-6а</div>
@@ -544,6 +544,6 @@
             </tr>
         </tbody>
     </table>
-    @include('pdf.partials.prohelper-brand-footer')
+    @include('pdf.partials.most-brand-footer')
 </body>
 </html>

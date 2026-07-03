@@ -28,7 +28,7 @@ final class OneCExchangeConflict extends Model
         'description',
         'source_hash',
         'payload_hash',
-        'prohelper_values',
+        'most_values',
         'one_c_values',
         'safe_payload_preview',
         'resolution',
@@ -42,7 +42,7 @@ final class OneCExchangeConflict extends Model
     ];
 
     protected $casts = [
-        'prohelper_values' => 'array',
+        'most_values' => 'array',
         'one_c_values' => 'array',
         'safe_payload_preview' => 'array',
         'resolution' => 'array',

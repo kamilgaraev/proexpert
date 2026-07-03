@@ -54,7 +54,7 @@ final class OneCConnectionCheckServiceTest extends TestCase
         self::assertSame('2.4.1', $profile->connector_version);
 
         Http::assertSent(static fn (Request $request): bool => $request->url() === 'https://one-c.example/exchange/metadata'
-            && $request->hasHeader('X-ProHelper-Connection-Check', 'read-only')
+            && $request->hasHeader('X-Most-Connection-Check', 'read-only')
             && $request->hasHeader('Authorization', 'Bearer plain-secret-token'));
 
         $audit = OneCProfileAuditEvent::query()->latest('id')->first();

@@ -168,7 +168,7 @@ final class AssistantReportComposerTest extends TestCase
     {
         $organization = new Organization;
         $organization->id = 72;
-        $organization->name = 'ПроХелпер';
+        $organization->name = 'МОСТ';
 
         return $organization;
     }

@@ -133,7 +133,7 @@ class SecurityLogger
     }
 
     /**
-     * Специальные методы для событий безопасности ProHelper
+     * Специальные методы для событий безопасности МОСТ
      */
 
     public function loginAttempt(bool $success, ?string $email = null, ?string $reason = null): void

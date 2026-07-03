@@ -61,7 +61,7 @@ final class RagPromptContextBuilder
     private function prompt(array $sources): string
     {
         $lines = [
-            'ProHelper context:',
+            'МОСТ context:',
             'Answer guidance:',
             '- Отвечай на русском и опирайся только на источники ниже.',
             '- Если запрос о проблемах, рисках, заявках или внимании, дай компактный рабочий список в формате: Проблема — что не так — что сделать.',

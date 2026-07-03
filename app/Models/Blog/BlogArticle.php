@@ -258,7 +258,7 @@ class BlogArticle extends Model
     {
         return $this->systemAuthor?->name
             ?? $this->author?->name
-            ?? 'ProHelper Team';
+            ?? 'МОСТ Team';
     }
 
     public function getAuthorEmailAttribute(): ?string

@@ -116,7 +116,7 @@ class BusinessLogger
     }
 
     /**
-     * Специальные методы для ключевых бизнес-событий ProHelper
+     * Специальные методы для ключевых бизнес-событий МОСТ
      */
 
     public function userRegistration(int $userId, string $registrationType = 'standard'): void

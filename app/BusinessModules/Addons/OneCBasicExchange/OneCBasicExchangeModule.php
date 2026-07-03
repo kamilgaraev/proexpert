@@ -29,7 +29,7 @@ final class OneCBasicExchangeModule implements ModuleInterface, ConfigurableInte
 
     public function getDescription(): string
     {
-        return 'Бесплатный ручной обмен справочниками и документами между ProHelper и 1C.';
+        return 'Бесплатный ручной обмен справочниками и документами между МОСТ и 1C.';
     }
 
     public function getType(): ModuleType

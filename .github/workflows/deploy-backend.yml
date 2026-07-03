@@ -1,4 +1,4 @@
-name: Deploy Backend to Production
+﻿name: Deploy Backend to Production
 
 concurrency:
   group: prod-backend-deploy
@@ -84,10 +84,10 @@ jobs:
             git reset --hard origin/main
 
             echo "Updating deploy metadata for backend release ${SHORT_RELEASE}"
-            if grep -q '^PROHELPER_IMAGE_TAG=' .env; then
-              sed -i "s/^PROHELPER_IMAGE_TAG=.*/PROHELPER_IMAGE_TAG=${SHORT_RELEASE}/" .env
+            if grep -q '^MOST_IMAGE_TAG=' .env; then
+              sed -i "s/^MOST_IMAGE_TAG=.*/MOST_IMAGE_TAG=${SHORT_RELEASE}/" .env
             else
-              printf '\nPROHELPER_IMAGE_TAG=%s\n' "${SHORT_RELEASE}" >> .env
+              printf '\nMOST_IMAGE_TAG=%s\n' "${SHORT_RELEASE}" >> .env
             fi
 
             if grep -q '^SENTRY_RELEASE=' .env; then

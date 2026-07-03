@@ -54,7 +54,7 @@ class GeocodingService
             $response = Http::timeout($this->timeout)
                 ->retry($this->retryTimes, 1000)
                 ->withHeaders([
-                    'User-Agent' => 'ProHelper/1.0 (Laravel Application)',
+                    'User-Agent' => 'МОСТ/1.0 (Laravel Application)',
                 ])
                 ->get('https://nominatim.openstreetmap.org/search', [
                     'q' => $address,
@@ -118,7 +118,7 @@ class GeocodingService
                 
                 $response = Http::timeout($this->timeout)
                     ->withHeaders([
-                        'User-Agent' => 'ProHelper/1.0 (Laravel Application)',
+                        'User-Agent' => 'МОСТ/1.0 (Laravel Application)',
                     ])
                     ->get('https://nominatim.openstreetmap.org/search', [
                         'q' => $query . ', Россия',
@@ -201,7 +201,7 @@ class GeocodingService
             $response = Http::timeout($this->timeout)
                 ->retry($this->retryTimes, 1000)
                 ->withHeaders([
-                    'User-Agent' => 'ProHelper/1.0 (Laravel Application)',
+                    'User-Agent' => 'МОСТ/1.0 (Laravel Application)',
                 ])
                 ->get('https://nominatim.openstreetmap.org/reverse', [
                     'lat' => $latitude,

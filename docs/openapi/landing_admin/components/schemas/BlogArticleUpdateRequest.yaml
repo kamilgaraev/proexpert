@@ -43,7 +43,7 @@ properties:
     type: string
     maxLength: 60
     nullable: true
-    example: "Как создать SEO-оптимизированный блог | ProHelper"
+    example: "Как создать SEO-оптимизированный блог | МОСТ"
     description: "Meta title для SEO (до 60 символов)"
   meta_description:
     type: string

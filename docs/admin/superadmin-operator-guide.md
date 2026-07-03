@@ -1,6 +1,6 @@
 # Операторский гайд Filament-суперадминки
 
-Гайд описывает ежедневную работу в Filament-суперадминке ProHelper. Панель находится на `/admin`, использует guard `system_admin` и роли из `config/RoleDefinitions/system_admin`.
+Гайд описывает ежедневную работу в Filament-суперадминке МОСТ. Панель находится на `/admin`, использует guard `system_admin` и роли из `config/RoleDefinitions/system_admin`.
 
 ## Ролевая матрица
 

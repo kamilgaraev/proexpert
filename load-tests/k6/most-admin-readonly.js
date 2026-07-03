@@ -589,7 +589,7 @@ function buildSummary(data) {
 
   return [
     '',
-    'ProHelper k6 summary',
+    'МОСТ k6 summary',
     `profile: ${PROFILE}`,
     `requests: ${formatNumber(requests)}`,
     `iterations: ${formatNumber(iterations)}`,

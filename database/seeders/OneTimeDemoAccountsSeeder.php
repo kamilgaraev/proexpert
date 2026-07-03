@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\Hash;
 
 class OneTimeDemoAccountsSeeder extends Seeder
 {
-    private const PASSWORD = 'ProhelperDemo123!';
+    private const PASSWORD = 'MostDemo123!';
 
     public function run(): void
     {

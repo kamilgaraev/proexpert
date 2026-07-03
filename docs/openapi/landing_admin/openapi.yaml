@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: "ProHelper Landing Admin API"
+  title: "МОСТ Landing Admin API"
   description: |
     Спецификация API админ-панели (Landing Admin). Добавляйте пути через `$ref` в папку `paths/`.
   version: "1.0.0"

@@ -86,6 +86,26 @@ final class MobileDashboardTest extends TestCase
         $this->assertNotContains('safety_management', $slugs);
     }
 
+    public function test_mobile_dashboard_keeps_available_widgets_when_one_widget_fails(): void
+    {
+        $this->mockDashboardPermissions(
+            [
+                'project-management' => ['projects.view'],
+                'site-requests' => ['site_requests.view', 'site_requests.approve'],
+            ],
+            failingAccessSlug: 'site-requests',
+        );
+
+        $dashboard = $this->service()->build($this->user());
+
+        $this->assertSame(['project_overview'], array_column($dashboard['widgets'], 'slug'));
+        $this->assertTrue($dashboard['meta']['partial']);
+        $this->assertSame(
+            ['site_requests', 'site_request_approvals'],
+            $dashboard['meta']['unavailable_widgets'],
+        );
+    }
+
     public function test_mobile_dashboard_requires_current_organization(): void
     {
         $this->expectException(DomainException::class);
@@ -100,8 +120,11 @@ final class MobileDashboardTest extends TestCase
      * @param array<string, list<string>> $permissions
      * @param list<string>|null $accessibleSlugs
      */
-    private function mockDashboardPermissions(array $permissions, ?array $accessibleSlugs = null): void
-    {
+    private function mockDashboardPermissions(
+        array $permissions,
+        ?array $accessibleSlugs = null,
+        ?string $failingAccessSlug = null
+    ): void {
         $this->mock(AuthorizationService::class, function (MockInterface $mock) use ($permissions): void {
             $mock->shouldReceive('getUserPermissionsStructured')->andReturn([
                 'system' => [],
@@ -114,9 +137,15 @@ final class MobileDashboardTest extends TestCase
 
         $accessible = $accessibleSlugs ?? array_keys($permissions);
 
-        $this->mock(AccessController::class, function (MockInterface $mock) use ($accessible): void {
+        $this->mock(AccessController::class, function (MockInterface $mock) use ($accessible, $failingAccessSlug): void {
             $mock->shouldReceive('hasModuleAccess')->andReturnUsing(
-                static fn (int $organizationId, string $moduleSlug): bool => in_array($moduleSlug, $accessible, true),
+                static function (int $organizationId, string $moduleSlug) use ($accessible, $failingAccessSlug): bool {
+                    if ($moduleSlug === $failingAccessSlug) {
+                        throw new \RuntimeException('Dashboard module unavailable');
+                    }
+
+                    return in_array($moduleSlug, $accessible, true);
+                },
             );
         });
     }

@@ -36,7 +36,7 @@ final class GenerateOperationalPdfReportTool implements AIToolInterface
 
     public function getDescription(): string
     {
-        return 'Генерирует PDF для дополнительных операционных отчетов ProHelper: проекты, закупки, заказы поставщикам, предложения поставщиков, заявки со стройплощадки, сметы, качество, безопасность, техника и посещаемость.';
+        return 'Генерирует PDF для дополнительных операционных отчетов МОСТ: проекты, закупки, заказы поставщикам, предложения поставщиков, заявки со стройплощадки, сметы, качество, безопасность, техника и посещаемость.';
     }
 
     public function getParametersSchema(): array

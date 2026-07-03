@@ -38,6 +38,8 @@ use App\Models\User;
 use App\Modules\Core\AccessController;
 use DomainException;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class MobileDashboardService
 {
@@ -68,98 +70,253 @@ class MobileDashboardService
             ->all();
         $modules = is_array($permissions['modules'] ?? null) ? $permissions['modules'] : [];
         $widgets = [];
+        $unavailableWidgets = [];
 
-        if ($this->canShowProjectOverview($modules, $organizationId)) {
-            $widgets[] = $this->buildProjectOverviewWidget($modules, $roles);
-        }
-
-        if ($this->canShowSiteRequests($modules, $organizationId)) {
-            $widgets[] = $this->buildSiteRequestsWidget($organizationId, (int) $user->id);
-        }
-
-        if ($this->canShowApprovals($modules, $organizationId)) {
-            $widgets[] = $this->buildApprovalsWidget($organizationId);
-        }
-
-        if ($this->canShowModule($modules, $organizationId, 'basic-warehouse', [
-            'warehouse.view',
-            'warehouse.receipts',
-            'warehouse.manage_stock',
-            'warehouse.advanced.view',
-        ])) {
-            $widgets[] = $this->buildWarehouseWidget($organizationId);
-        }
-
-        if ($this->canShowModule($modules, $organizationId, 'schedule-management', [
-            'schedule-management.view',
-            'schedule-management.notifications',
-            'schedule-management.approve',
-            'schedule.view',
-            'schedule.notifications',
-            'schedule.approve',
-        ])) {
-            $widgets[] = $this->buildScheduleWidget($organizationId);
-        }
-
-        if ($this->canShowModule($modules, $organizationId, 'ai-assistant')) {
-            $widgets[] = $this->buildAiAssistantWidget($organizationId, (int) $user->id);
-        }
-
-        if ($this->canShowModule(
-            $modules,
+        $this->appendWidget(
+            $widgets,
+            $unavailableWidgets,
+            'project_overview',
             $organizationId,
-            'budget-estimates',
-            ['construction-journal.view', 'construction-journal.create', 'construction-journal.approve'],
-            'budget-estimates'
-        )) {
-            $widgets[] = $this->buildConstructionJournalWidget($organizationId);
-        }
+            (int) $user->id,
+            function () use ($modules, $organizationId, $roles): ?array {
+                if (!$this->canShowProjectOverview($modules, $organizationId)) {
+                    return null;
+                }
 
-        if ($this->canShowModule($modules, $organizationId, 'quality-control', [
-            'quality-control.view',
-            'quality-control.defects.view',
-        ])) {
-            $widgets[] = $this->buildQualityControlWidget($organizationId);
-        }
+                return $this->buildProjectOverviewWidget($modules, $roles);
+            }
+        );
 
-        if ($this->canShowModule($modules, $organizationId, 'safety-management', [
-            'safety-management.view',
-        ])) {
-            $widgets[] = $this->buildSafetyManagementWidget($organizationId);
-        }
+        $this->appendWidget(
+            $widgets,
+            $unavailableWidgets,
+            'site_requests',
+            $organizationId,
+            (int) $user->id,
+            function () use ($modules, $organizationId, $user): ?array {
+                if (!$this->canShowSiteRequests($modules, $organizationId)) {
+                    return null;
+                }
 
-        if ($this->canShowModule($modules, $organizationId, 'machinery-operations', [
-            'machinery-operations.view',
-        ])) {
-            $widgets[] = $this->buildMachineryOperationsWidget($organizationId);
-        }
+                return $this->buildSiteRequestsWidget($organizationId, (int) $user->id);
+            }
+        );
 
-        if ($this->canShowModule($modules, $organizationId, 'production-labor', [
-            'production-labor.view',
-        ])) {
-            $widgets[] = $this->buildProductionLaborWidget($organizationId);
-        }
+        $this->appendWidget(
+            $widgets,
+            $unavailableWidgets,
+            'site_request_approvals',
+            $organizationId,
+            (int) $user->id,
+            function () use ($modules, $organizationId): ?array {
+                if (!$this->canShowApprovals($modules, $organizationId)) {
+                    return null;
+                }
 
-        if ($this->canShowModule($modules, $organizationId, 'workforce-management', [
-            'workforce.view',
-        ])) {
-            $widgets[] = $this->buildWorkforceManagementWidget($organizationId);
-        }
+                return $this->buildApprovalsWidget($organizationId);
+            }
+        );
 
-        if ($this->canShowModule($modules, $organizationId, 'handover-acceptance', [
-            'handover-acceptance.view',
-        ])) {
-            $widgets[] = $this->buildHandoverAcceptanceWidget($organizationId);
-        }
+        $this->appendWidget(
+            $widgets,
+            $unavailableWidgets,
+            'warehouse',
+            $organizationId,
+            (int) $user->id,
+            function () use ($modules, $organizationId): ?array {
+                if (!$this->canShowModule($modules, $organizationId, 'basic-warehouse', [
+                    'warehouse.view',
+                    'warehouse.receipts',
+                    'warehouse.manage_stock',
+                    'warehouse.advanced.view',
+                ])) {
+                    return null;
+                }
 
-        if ($this->canShowModule($modules, $organizationId, 'procurement', [
-            'procurement.view',
-            'procurement.purchase_requests.view',
-            'procurement.purchase_orders.view',
-            'procurement.approvals.view',
-        ])) {
-            $widgets[] = $this->buildProcurementWidget($organizationId);
-        }
+                return $this->buildWarehouseWidget($organizationId);
+            }
+        );
+
+        $this->appendWidget(
+            $widgets,
+            $unavailableWidgets,
+            'schedule',
+            $organizationId,
+            (int) $user->id,
+            function () use ($modules, $organizationId): ?array {
+                if (!$this->canShowModule($modules, $organizationId, 'schedule-management', [
+                    'schedule-management.view',
+                    'schedule-management.notifications',
+                    'schedule-management.approve',
+                    'schedule.view',
+                    'schedule.notifications',
+                    'schedule.approve',
+                ])) {
+                    return null;
+                }
+
+                return $this->buildScheduleWidget($organizationId);
+            }
+        );
+
+        $this->appendWidget(
+            $widgets,
+            $unavailableWidgets,
+            'ai_assistant',
+            $organizationId,
+            (int) $user->id,
+            function () use ($modules, $organizationId, $user): ?array {
+                if (!$this->canShowModule($modules, $organizationId, 'ai-assistant')) {
+                    return null;
+                }
+
+                return $this->buildAiAssistantWidget($organizationId, (int) $user->id);
+            }
+        );
+
+        $this->appendWidget(
+            $widgets,
+            $unavailableWidgets,
+            'construction_journal',
+            $organizationId,
+            (int) $user->id,
+            function () use ($modules, $organizationId): ?array {
+                if (!$this->canShowModule(
+                    $modules,
+                    $organizationId,
+                    'budget-estimates',
+                    ['construction-journal.view', 'construction-journal.create', 'construction-journal.approve'],
+                    'budget-estimates'
+                )) {
+                    return null;
+                }
+
+                return $this->buildConstructionJournalWidget($organizationId);
+            }
+        );
+
+        $this->appendWidget(
+            $widgets,
+            $unavailableWidgets,
+            'quality_control',
+            $organizationId,
+            (int) $user->id,
+            function () use ($modules, $organizationId): ?array {
+                if (!$this->canShowModule($modules, $organizationId, 'quality-control', [
+                    'quality-control.view',
+                    'quality-control.defects.view',
+                ])) {
+                    return null;
+                }
+
+                return $this->buildQualityControlWidget($organizationId);
+            }
+        );
+
+        $this->appendWidget(
+            $widgets,
+            $unavailableWidgets,
+            'safety_management',
+            $organizationId,
+            (int) $user->id,
+            function () use ($modules, $organizationId): ?array {
+                if (!$this->canShowModule($modules, $organizationId, 'safety-management', [
+                    'safety-management.view',
+                ])) {
+                    return null;
+                }
+
+                return $this->buildSafetyManagementWidget($organizationId);
+            }
+        );
+
+        $this->appendWidget(
+            $widgets,
+            $unavailableWidgets,
+            'machinery_operations',
+            $organizationId,
+            (int) $user->id,
+            function () use ($modules, $organizationId): ?array {
+                if (!$this->canShowModule($modules, $organizationId, 'machinery-operations', [
+                    'machinery-operations.view',
+                ])) {
+                    return null;
+                }
+
+                return $this->buildMachineryOperationsWidget($organizationId);
+            }
+        );
+
+        $this->appendWidget(
+            $widgets,
+            $unavailableWidgets,
+            'production_labor',
+            $organizationId,
+            (int) $user->id,
+            function () use ($modules, $organizationId): ?array {
+                if (!$this->canShowModule($modules, $organizationId, 'production-labor', [
+                    'production-labor.view',
+                ])) {
+                    return null;
+                }
+
+                return $this->buildProductionLaborWidget($organizationId);
+            }
+        );
+
+        $this->appendWidget(
+            $widgets,
+            $unavailableWidgets,
+            'workforce_management',
+            $organizationId,
+            (int) $user->id,
+            function () use ($modules, $organizationId): ?array {
+                if (!$this->canShowModule($modules, $organizationId, 'workforce-management', [
+                    'workforce.view',
+                ])) {
+                    return null;
+                }
+
+                return $this->buildWorkforceManagementWidget($organizationId);
+            }
+        );
+
+        $this->appendWidget(
+            $widgets,
+            $unavailableWidgets,
+            'handover_acceptance',
+            $organizationId,
+            (int) $user->id,
+            function () use ($modules, $organizationId): ?array {
+                if (!$this->canShowModule($modules, $organizationId, 'handover-acceptance', [
+                    'handover-acceptance.view',
+                ])) {
+                    return null;
+                }
+
+                return $this->buildHandoverAcceptanceWidget($organizationId);
+            }
+        );
+
+        $this->appendWidget(
+            $widgets,
+            $unavailableWidgets,
+            'procurement',
+            $organizationId,
+            (int) $user->id,
+            function () use ($modules, $organizationId): ?array {
+                if (!$this->canShowModule($modules, $organizationId, 'procurement', [
+                    'procurement.view',
+                    'procurement.purchase_requests.view',
+                    'procurement.purchase_orders.view',
+                    'procurement.approvals.view',
+                ])) {
+                    return null;
+                }
+
+                return $this->buildProcurementWidget($organizationId);
+            }
+        );
 
         return [
             'widgets' => $widgets,
@@ -167,6 +324,8 @@ class MobileDashboardService
                 'organization_id' => $organizationId,
                 'roles' => $roles,
                 'modules' => array_keys($modules),
+                'partial' => $unavailableWidgets !== [],
+                'unavailable_widgets' => $unavailableWidgets,
                 'generated_at' => now()->toIso8601String(),
             ],
         ];
@@ -587,6 +746,38 @@ class MobileDashboardService
             'label' => trans_message('mobile_dashboard.metrics.' . $key),
             'value' => $value,
         ];
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $widgets
+     * @param list<string> $unavailableWidgets
+     * @param callable(): array<string, mixed>|null $builder
+     */
+    private function appendWidget(
+        array &$widgets,
+        array &$unavailableWidgets,
+        string $slug,
+        int $organizationId,
+        int $userId,
+        callable $builder
+    ): void {
+        try {
+            $widget = $builder();
+
+            if ($widget !== null) {
+                $widgets[] = $widget;
+            }
+        } catch (Throwable $exception) {
+            $unavailableWidgets[] = $slug;
+
+            Log::warning('mobile.dashboard.widget_unavailable', [
+                'widget' => $slug,
+                'organization_id' => $organizationId,
+                'user_id' => $userId,
+                'error' => $exception->getMessage(),
+                'exception' => $exception::class,
+            ]);
+        }
     }
 
     private function hasAnyPermission(array $grantedPermissions, array $expectedPermissions): bool

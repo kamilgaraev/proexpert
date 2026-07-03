@@ -44,7 +44,7 @@ class NominatimProvider implements GeocodeProviderInterface
 
         try {
             $response = Http::withHeaders([
-                'User-Agent' => $this->config['user_agent'] ?? 'ProHelper',
+                'User-Agent' => $this->config['user_agent'] ?? 'МОСТ',
             ])
             ->timeout($this->config['timeout'] ?? 10)
             ->get($this->config['url'], [
@@ -110,7 +110,7 @@ class NominatimProvider implements GeocodeProviderInterface
 
         try {
             $response = Http::withHeaders([
-                'User-Agent' => $this->config['user_agent'] ?? 'ProHelper',
+                'User-Agent' => $this->config['user_agent'] ?? 'МОСТ',
             ])
             ->timeout($this->config['timeout'] ?? 10)
             ->get('https://nominatim.openstreetmap.org/reverse', [

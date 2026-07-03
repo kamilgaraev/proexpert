@@ -425,7 +425,7 @@ class SiteRequestCalendarService
 
         $ical = "BEGIN:VCALENDAR\r\n";
         $ical .= "VERSION:2.0\r\n";
-        $ical .= "PRODID:-//ProHelper//Site Requests//RU\r\n";
+        $ical .= "PRODID:-//МОСТ//Site Requests//RU\r\n";
         $ical .= "CALSCALE:GREGORIAN\r\n";
         $ical .= "METHOD:PUBLISH\r\n";
         $ical .= "X-WR-CALNAME:Заявки с объекта\r\n";

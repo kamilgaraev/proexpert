@@ -16,7 +16,7 @@ properties:
   meta_title:
     type: string
     nullable: true
-    example: "SEO и Маркетинг | ProHelper Blog"
+    example: "SEO и Маркетинг | МОСТ Blog"
   meta_description:
     type: string
     nullable: true

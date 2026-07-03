@@ -1,5 +1,6 @@
 /.phpunit.cache
 /.phpstan
+/.tmp
 /node_modules
 /public/build/*
 !/public/build/manifest.json

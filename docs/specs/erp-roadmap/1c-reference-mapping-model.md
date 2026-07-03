@@ -1,4 +1,4 @@
-# Модель маппингов справочников ProHelper и 1С
+# Модель маппингов справочников МОСТ и 1С
 
 Дата: 2026-06-07
 Задача: PHERP-68
@@ -6,29 +6,29 @@
 
 ## Контекст
 
-Документ описывает целевую модель сопоставления справочников ProHelper и 1С. Текущий `OneCBasicExchange` уже имеет базовые mappings по `organization`, `scope`, `external_id`, `local_type`, `local_id`, но production-контур требует confidence score, статусы, историю, duplicate detection, роли владельцев данных и UI-процесс ручного сопоставления.
+Документ описывает целевую модель сопоставления справочников МОСТ и 1С. Текущий `OneCBasicExchange` уже имеет базовые mappings по `organization`, `scope`, `external_id`, `local_type`, `local_id`, но production-контур требует confidence score, статусы, историю, duplicate detection, роли владельцев данных и UI-процесс ручного сопоставления.
 
 Границы:
 
-- ProHelper остается операционным source of truth по строительным объектам, управленческим справочникам, MDM и workflow.
+- МОСТ остается операционным source of truth по строительным объектам, управленческим справочникам, MDM и workflow.
 - 1С остается бухгалтерским и налоговым source of truth по регламентированным реквизитам, учетным кодам и юридически значимым статусам.
-- Операционные статусы ProHelper не равны учетным статусам 1С.
-- ProHelper не становится бухгалтерским ядром.
+- Операционные статусы МОСТ не равны учетным статусам 1С.
+- МОСТ не становится бухгалтерским ядром.
 - Raw payload, stack trace, токены и секреты нельзя показывать пользователям.
 
 ## Области маппинга
 
-| Scope | Local object ProHelper | External object 1С | Source of truth |
+| Scope | Local object МОСТ | External object 1С | Source of truth |
 | --- | --- | --- | --- |
-| `organizations` | организация/юридическое лицо ProHelper | организация 1С | юридические и налоговые реквизиты - 1С, операционные настройки - ProHelper |
-| `counterparties` | contractor, supplier, party snapshot | контрагент 1С | MDM/ProHelper для операционных связей, 1С для учетных реквизитов |
-| `projects` | project/object | проект, объект или аналитика затрат 1С | ProHelper по lifecycle объекта, 1С по учетному коду |
-| `contracts` | contract reference link | договор 1С | ProHelper по операционному договору, 1С по учетной карточке |
-| `materials` | material, nomenclature | номенклатура 1С | MDM/ProHelper для стройки, 1С для учетной номенклатуры |
-| `warehouses` | warehouse, zone/cell при необходимости | склад 1С | ProHelper по площадке, 1С по учетному складу |
-| `budget_articles` | cost category, estimate position category | статья затрат/номенклатурная группа 1С | ProHelper для бюджета, 1С для учета затрат |
+| `organizations` | организация/юридическое лицо МОСТ | организация 1С | юридические и налоговые реквизиты - 1С, операционные настройки - МОСТ |
+| `counterparties` | contractor, supplier, party snapshot | контрагент 1С | MDM/МОСТ для операционных связей, 1С для учетных реквизитов |
+| `projects` | project/object | проект, объект или аналитика затрат 1С | МОСТ по lifecycle объекта, 1С по учетному коду |
+| `contracts` | contract reference link | договор 1С | МОСТ по операционному договору, 1С по учетной карточке |
+| `materials` | material, nomenclature | номенклатура 1С | MDM/МОСТ для стройки, 1С для учетной номенклатуры |
+| `warehouses` | warehouse, zone/cell при необходимости | склад 1С | МОСТ по площадке, 1С по учетному складу |
+| `budget_articles` | cost category, estimate position category | статья затрат/номенклатурная группа 1С | МОСТ для бюджета, 1С для учета затрат |
 | `cfo` | ЦФО/подразделение/аналитика проекта | ЦФО или подразделение 1С | определяется внедрением |
-| `employees` | workforce employee, external payroll ref | сотрудник/физлицо/табельный номер 1С/ЗУП | ProHelper по явке и выработке, 1С/ЗУП по кадровому и зарплатному учету |
+| `employees` | workforce employee, external payroll ref | сотрудник/физлицо/табельный номер 1С/ЗУП | МОСТ по явке и выработке, 1С/ЗУП по кадровому и зарплатному учету |
 
 Договоры включены как reference link, потому что документы актов, платежей и закупок часто требуют внешний id договора. При этом договор остается документом со своим lifecycle, а не обычным справочником.
 
@@ -37,10 +37,10 @@
 | Поле | Назначение |
 | --- | --- |
 | `id` | Идентификатор маппинга |
-| `organization_id` | Организация ProHelper |
+| `organization_id` | Организация МОСТ |
 | `one_c_base_id` | База 1С |
 | `scope` | Контур маппинга |
-| `local_object_type`, `local_object_id` | Объект ProHelper |
+| `local_object_type`, `local_object_id` | Объект МОСТ |
 | `local_display_name` | Безопасное имя для UI |
 | `external_object_type`, `external_id` | Объект 1С |
 | `external_code`, `external_display_name` | Код и имя 1С |

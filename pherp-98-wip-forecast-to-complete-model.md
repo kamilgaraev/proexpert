@@ -2,15 +2,15 @@
 
 ## 1. Назначение
 
-Документ фиксирует управленческую модель WIP/FTC для строительной ERP ProHelper. После него PHERP-99 должен быть реализуем без дополнительных уточнений бизнес-логики: backend service, хранение forecast versions, ручные корректировки, audit trail, API, UI и контрактные тесты.
+Документ фиксирует управленческую модель WIP/FTC для строительной ERP МОСТ. После него PHERP-99 должен быть реализуем без дополнительных уточнений бизнес-логики: backend service, хранение forecast versions, ручные корректировки, audit trail, API, UI и контрактные тесты.
 
 Модель относится к управленческому учету проекта. Она не заменяет 1С, банк, ЭДО, налоговый учет, бухгалтерские проводки, регламентированную отчетность, официальный складской учет и юридически значимый payroll.
 
 ## 2. Границы и решения модели
 
-### 2.1. Что считает ProHelper
+### 2.1. Что считает МОСТ
 
-ProHelper является source of truth для:
+МОСТ является source of truth для:
 
 - управленческого бюджета, сценариев и forecast versions;
 - структуры проекта, этапов, графика, задач и связей со сметой;
@@ -26,9 +26,9 @@ ProHelper является source of truth для:
 - 1С подтверждает отражение договоров, актов, платежных документов и складских операций в бухгалтерском/налоговом контуре;
 - банк подтверждает фактическое движение денег;
 - ЭДО подтверждает юридически значимый статус подписания актов и документов;
-- payroll/зарплатный контур подтверждает юридически значимые начисления, но ProHelper использует только управленческую стоимость труда.
+- payroll/зарплатный контур подтверждает юридически значимые начисления, но МОСТ использует только управленческую стоимость труда.
 
-ProHelper не дублирует:
+МОСТ не дублирует:
 
 - бухгалтерские проводки и план счетов;
 - НДС, налоговые регистры и регламентированную отчетность;
@@ -45,7 +45,7 @@ ProHelper не дублирует:
 
 ## 3. Текущие доменные источники
 
-| Контур | Сущности ProHelper | Роль в WIP/FTC |
+| Контур | Сущности МОСТ | Роль в WIP/FTC |
 | --- | --- | --- |
 | Проект | `Project` | Корень расчета, организация, статус, даты, базовый бюджет, внешний код для сверки |
 | Управленческий бюджет | `BudgetVersion`, `BudgetLine`, `BudgetAmount` | Плановая база BAC, forecast budget, сценарии, закрытые периоды |
@@ -68,9 +68,9 @@ ProHelper не дублирует:
 | Бюджет, forecast version, план-факт | до 4 рабочих часов после изменения | старше 4 рабочих часов: `attention`; старше 1 рабочего дня: `stale_budget` |
 | График и задачи | до 1 рабочего часа после изменения | старше 1 рабочего дня: `stale_schedule` |
 | Прогресс работ | не реже одного раза в 3 рабочих дня | старше 3 рабочих дней: `stale_progress`; старше 7 рабочих дней: high severity |
-| Акты ProHelper | до 1 рабочего часа после согласования | старше 1 рабочего дня: `stale_acts` |
+| Акты МОСТ | до 1 рабочего часа после согласования | старше 1 рабочего дня: `stale_acts` |
 | ЭДО/1С подтверждение актов | до 4 рабочих часов после внешнего события | старше 24 часов: critical для сверки, но не блокирует управленческий расчет |
-| Платежные документы ProHelper | до 1 рабочего часа после изменения | старше 1 рабочего дня: `stale_payment_documents` |
+| Платежные документы МОСТ | до 1 рабочего часа после изменения | старше 1 рабочего дня: `stale_payment_documents` |
 | Банк | текущий операционный статус, сверка до 1 банковского дня | старше 1 банковского дня: `bank_match_pending` или `stale_bank_confirmation` |
 | Складские движения | до 1 рабочего часа после проведения управленческого движения | старше 1 рабочего дня: `stale_warehouse_movements` |
 | Трудозатраты и производственный выпуск | до 1 рабочего часа после утверждения | старше 3 рабочих дней: `stale_labor_output` |
@@ -82,7 +82,7 @@ ProHelper не дублирует:
 | --- | --- | --- |
 | Денежная сумма | `max(1 RUB, 0.1% суммы строки)` или эквивалент в валюте | В пределах допуска: `reconciled_with_tolerance`; выше допуска: `reconciliation_mismatch` |
 | Количество/объем | `max(0.0001 единицы, 0.1% объема строки)` | Выше допуска: `quantity_mismatch` |
-| Дата банка | до 1 банковского дня между ProHelper и банковской датой | Выше допуска: `bank_date_mismatch` |
+| Дата банка | до 1 банковского дня между МОСТ и банковской датой | Выше допуска: `bank_date_mismatch` |
 | Период закрытого управленческого учета | расхождение не допускается | Требуется новая forecast version или корректировка в открытом периоде |
 | Валюта | расхождение не допускается | `currency_mismatch`, строка не попадает в достоверный итог |
 | Внешний идентификатор документа | расхождение не допускается | `duplicate_external_reference` или `missing_external_reference` |
@@ -124,9 +124,9 @@ BAC = sum(active_schedule_tasks.estimated_cost)
 
 **Входные данные:** active/approved `BudgetVersion`, `BudgetLine`, `BudgetAmount`, approved `Estimate`, `EstimateItem`, active `ProjectSchedule`, `ScheduleTask`.
 
-**Source of truth:** ProHelper budget version. Смета и график являются fallback-источниками для предварительной оценки.
+**Source of truth:** МОСТ budget version. Смета и график являются fallback-источниками для предварительной оценки.
 
-**Сверка:** 1С может подтверждать отражение договоров и документов, но BAC остается управленческим бюджетом ProHelper.
+**Сверка:** 1С может подтверждать отражение договоров и документов, но BAC остается управленческим бюджетом МОСТ.
 
 **Freshness SLA:** до 4 рабочих часов после изменения бюджета или сметы.
 
@@ -170,7 +170,7 @@ quantity_percent_i = completed_quantity_i / planned_quantity_i * 100
 
 **Входные данные:** `ContractPerformanceAct`, `PerformanceActLine`, `CompletedWork`, `JournalWorkVolume`, `ProductionLaborOutputEntry`, `ScheduleTask`, `EstimateItem`, manual progress adjustments.
 
-**Source of truth:** ProHelper operational progress. ЭДО подтверждает юридический статус актов, но не является источником процента выполнения до загрузки в ProHelper.
+**Source of truth:** МОСТ operational progress. ЭДО подтверждает юридический статус актов, но не является источником процента выполнения до загрузки в МОСТ.
 
 **Сверка:** 1С/ЭДО сверяются по актам и статусам подписания; банк не участвует в percent complete.
 
@@ -198,7 +198,7 @@ EV = BAC * percent_complete / 100
 
 **Входные данные:** BAC, percent complete по строкам, budget/estimate/schedule weights.
 
-**Source of truth:** ProHelper budget baseline плюс ProHelper progress sources.
+**Source of truth:** МОСТ budget baseline плюс МОСТ progress sources.
 
 **Сверка:** 1С не является источником EV; акты из ЭДО/1С только подтверждают актовый progress layer.
 
@@ -227,7 +227,7 @@ PV = sum(baseline_cost_i * planned_fraction_i(as_of_date))
 
 **Входные данные:** `ProjectSchedule`, `ScheduleTask`, baseline dates, planned dates, task weights, milestones.
 
-**Source of truth:** ProHelper active baseline schedule.
+**Source of truth:** МОСТ active baseline schedule.
 
 **Сверка:** внешняя сверка не требуется; 1С/банк/ЭДО не определяют плановую кривую выполнения.
 
@@ -262,7 +262,7 @@ AC = supplier_accrual_cost
 
 **Входные данные:** approved outgoing `PaymentDocument` с затратной природой, contractor/supplier acts, `WarehouseMovement` типов списания/производственного использования, approved `TimeEntry`, accepted labor output, approved management payroll accrual, approved expense reports, manual adjustments.
 
-**Source of truth:** ProHelper management accrual and operational consumption records.
+**Source of truth:** МОСТ management accrual and operational consumption records.
 
 **Сверка:** банк подтверждает оплату, 1С подтверждает бухгалтерское отражение, складской внешний контур подтверждает официальный учет остатков; они не заменяют управленческий AC.
 
@@ -296,7 +296,7 @@ total_management_wip = performed_not_acted_wip
 
 **Входные данные:** EV by scope, approved/signed acts, act lines, act-completed-work pivot, ЭДО/1С confirmation status.
 
-**Source of truth:** ProHelper for management WIP; ЭДО и 1С только подтверждают внешний статус акта.
+**Source of truth:** МОСТ for management WIP; ЭДО и 1С только подтверждают внешний статус акта.
 
 **Сверка:** ЭДО сверяет подписание; 1С сверяет бухгалтерское отражение акта; банк не закрывает WIP.
 
@@ -324,7 +324,7 @@ CTC = sum(max(baseline_cost_i - earned_value_i, 0))
 
 **Входные данные:** BAC, EV.
 
-**Source of truth:** ProHelper baseline и progress.
+**Source of truth:** МОСТ baseline и progress.
 
 **Сверка:** внешние системы не являются источником CTC.
 
@@ -363,7 +363,7 @@ CPI применим только если `AC > 0`, `EV > 0`, progress coverage
 
 **Входные данные:** remaining quantities, текущие expected unit costs, procurement quotes, approved supplier rates, labor rates, BAC, EV, AC, CTC.
 
-**Source of truth:** ProHelper operational cost model и budget/estimate lines.
+**Source of truth:** МОСТ operational cost model и budget/estimate lines.
 
 **Сверка:** внешние счета, банк, 1С и ЭДО подтверждают факты и цены, но не определяют управленческий ETC.
 
@@ -404,9 +404,9 @@ preliminary_FTC = ETC
 
 **Входные данные:** ETC, forecast version lines, manual adjustments, risk reserve, change orders, excluded scope, assumptions.
 
-**Source of truth:** ProHelper forecast version.
+**Source of truth:** МОСТ forecast version.
 
-**Сверка:** внешние источники подтверждают отдельные факты и документы; FTC является управленческим прогнозом ProHelper.
+**Сверка:** внешние источники подтверждают отдельные факты и документы; FTC является управленческим прогнозом МОСТ.
 
 **Freshness SLA:** active forecast должен пересчитываться до 1 рабочего часа после изменения входных данных; регулярный reforecast не реже cadence из раздела 7.4.
 
@@ -440,7 +440,7 @@ EAC_evm = BAC / CPI
 
 **Входные данные:** AC, FTC, ETC, CPI для сравнения.
 
-**Source of truth:** ProHelper actual cost и ProHelper active forecast version.
+**Source of truth:** МОСТ actual cost и МОСТ active forecast version.
 
 **Сверка:** 1С и банк подтверждают факты AC; EAC как прогноз остается управленческим.
 
@@ -468,7 +468,7 @@ Pending claims включаются только если scenario явно ра
 
 **Входные данные:** `Contract.total_amount`, `ContractProjectAllocation`, active specifications/additional agreements, approved acts for actual revenue, change orders, claims, manual revenue adjustments.
 
-**Source of truth:** ProHelper contracts and forecast version.
+**Source of truth:** МОСТ contracts and forecast version.
 
 **Сверка:** ЭДО и 1С подтверждают договоры/акты; банк подтверждает cash collection, но не forecast revenue.
 
@@ -496,7 +496,7 @@ forecast_margin_percent = forecast_gross_margin / forecast_revenue_at_completion
 
 **Входные данные:** forecast revenue at completion, EAC.
 
-**Source of truth:** ProHelper contracts, forecast version, actual cost.
+**Source of truth:** МОСТ contracts, forecast version, actual cost.
 
 **Сверка:** внешние системы подтверждают договоры, акты и платежи; margin остается управленческим KPI.
 
@@ -886,7 +886,7 @@ GET  /api/v1/admin/budgeting/wip-forecast/versions/{version}/audit
   },
   "meta": {
     "source_of_truth": {
-      "management": "ProHelper",
+      "management": "МОСТ",
       "accounting": "1C external confirmation only",
       "bank": "bank confirmation only",
       "edo": "legal signing confirmation only"

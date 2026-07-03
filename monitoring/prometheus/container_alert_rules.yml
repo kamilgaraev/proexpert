@@ -41,7 +41,7 @@ groups:
           summary: "Horizon близок к лимиту памяти"
           description: "Horizon использует больше 220 MB памяти дольше 5 минут. Это ранний сигнал перед повторным падением."
 
-      - alert: ProhelperApiContainerMissing
+      - alert: MostApiContainerMissing
         expr: absent(container_last_seen{container_label_com_docker_compose_service="api"})
         for: 2m
         labels:
@@ -51,7 +51,7 @@ groups:
           summary: "API контейнер не найден"
           description: "Контейнер API отсутствует в метриках cAdvisor дольше 2 минут."
 
-      - alert: ProhelperApiContainerRestartLoop
+      - alert: MostApiContainerRestartLoop
         expr: changes(container_start_time_seconds{container_label_com_docker_compose_service="api"}[30m]) >= 2
         for: 1m
         labels:

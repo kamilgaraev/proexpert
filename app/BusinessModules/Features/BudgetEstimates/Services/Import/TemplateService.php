@@ -13,7 +13,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class TemplateService
 {
-    private const TEMPLATE_MARKER = 'PROHELPER_TEMPLATE_V1';
+    private const TEMPLATE_MARKER = 'MOST_TEMPLATE_V1';
 
     public function generate(): StreamedResponse
     {
@@ -24,8 +24,8 @@ class TemplateService
         // Скрытый маркер в ячейке A1, сама ячейка будет заголовком, но мы можем использовать метаданные или скрытую строку
         // Давайте запишем маркер в метаданные документа для надежности
         $spreadsheet->getProperties()
-            ->setCreator('Prohelper')
-            ->setLastModifiedBy('Prohelper')
+            ->setCreator('МОСТ')
+            ->setLastModifiedBy('МОСТ')
             ->setTitle('Estimate Import Template')
             ->setSubject('Estimate Import Template')
             ->setDescription(self::TEMPLATE_MARKER);
@@ -92,7 +92,7 @@ class TemplateService
             $writer->save('php://output');
         }, 200, [
             'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'Content-Disposition' => 'attachment; filename="prohelper_estimate_template.xlsx"',
+            'Content-Disposition' => 'attachment; filename="most_estimate_template.xlsx"',
             'Cache-Control' => 'max-age=0',
         ]);
     }

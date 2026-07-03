@@ -18,7 +18,7 @@ use RuntimeException;
 
 class ProductionLoadTestSeeder extends Seeder
 {
-    private const CONFIRM_ENV = 'PROHELPER_LOAD_TEST_SEEDER_CONFIRM';
+    private const CONFIRM_ENV = 'MOST_LOAD_TEST_SEEDER_CONFIRM';
     private const CONFIRM_VALUE = 'yes';
     private const PASSWORD = 'LoadTest123!';
 
@@ -39,13 +39,13 @@ class ProductionLoadTestSeeder extends Seeder
         $this->now = now();
 
         $settings = [
-            'organizations' => $this->envInt('PROHELPER_LOAD_TEST_ORGS', 6, 1, 20),
-            'users_per_organization' => $this->envInt('PROHELPER_LOAD_TEST_USERS_PER_ORG', 5, 1, 20),
-            'projects_per_organization' => $this->envInt('PROHELPER_LOAD_TEST_PROJECTS_PER_ORG', 3, 1, 20),
-            'materials_per_organization' => $this->envInt('PROHELPER_LOAD_TEST_MATERIALS_PER_ORG', 24, 1, 100),
-            'site_requests_per_organization' => $this->envInt('PROHELPER_LOAD_TEST_SITE_REQUESTS_PER_ORG', 60, 0, 500),
-            'schedule_tasks_per_project' => $this->envInt('PROHELPER_LOAD_TEST_TASKS_PER_PROJECT', 24, 0, 200),
-            'payments_per_organization' => $this->envInt('PROHELPER_LOAD_TEST_PAYMENTS_PER_ORG', 18, 0, 200),
+            'organizations' => $this->envInt('MOST_LOAD_TEST_ORGS', 6, 1, 20),
+            'users_per_organization' => $this->envInt('MOST_LOAD_TEST_USERS_PER_ORG', 5, 1, 20),
+            'projects_per_organization' => $this->envInt('MOST_LOAD_TEST_PROJECTS_PER_ORG', 3, 1, 20),
+            'materials_per_organization' => $this->envInt('MOST_LOAD_TEST_MATERIALS_PER_ORG', 24, 1, 100),
+            'site_requests_per_organization' => $this->envInt('MOST_LOAD_TEST_SITE_REQUESTS_PER_ORG', 60, 0, 500),
+            'schedule_tasks_per_project' => $this->envInt('MOST_LOAD_TEST_TASKS_PER_PROJECT', 24, 0, 200),
+            'payments_per_organization' => $this->envInt('MOST_LOAD_TEST_PAYMENTS_PER_ORG', 18, 0, 200),
         ];
 
         $result = DB::transaction(function () use ($settings): array {

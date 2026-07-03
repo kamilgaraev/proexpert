@@ -516,7 +516,7 @@ final class EpmDataMartHealthService
         return [
             'primary' => [
                 'code' => 'prohelper',
-                'label' => 'ProHelper',
+                'label' => 'МОСТ',
                 'role' => trans_message('epm_data_mart.health.source_of_truth.primary_role'),
             ],
             'external_confirmation' => [

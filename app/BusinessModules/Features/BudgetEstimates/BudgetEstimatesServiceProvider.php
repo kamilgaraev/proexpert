@@ -20,7 +20,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\Excel\C
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\Fer\FerHandler;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\GrandSmeta\GrandSmetaHandler;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\Pdf\PdfEstimateHandler;
-use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\Prohelper\ProhelperTemplateHandler;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\Most\MostTemplateHandler;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\Rik\RikHandler;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\SmartSmeta\SmartSmetaHandler;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Formats\Xml\UniversalXmlHandler;
@@ -136,7 +136,7 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
 
         $this->app->singleton(GrandSmetaHandler::class);
         $this->app->singleton(GrandSmetaRuntimeBridge::class);
-        $this->app->singleton(ProhelperTemplateHandler::class);
+        $this->app->singleton(MostTemplateHandler::class);
         $this->app->singleton(RikHandler::class);
         $this->app->singleton(FerHandler::class);
         $this->app->singleton(SmartSmetaHandler::class);
@@ -151,7 +151,7 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
         $this->app->singleton(ImportFormatRegistry::class, function ($app) {
             return new ImportFormatRegistry([
                 $app->make(GrandSmetaRuntimeBridge::class),
-                $app->make(ProhelperTemplateHandler::class),
+                $app->make(MostTemplateHandler::class),
                 $app->make(RikHandler::class),
                 $app->make(FerHandler::class),
                 $app->make(SmartSmetaHandler::class),

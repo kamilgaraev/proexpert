@@ -5,7 +5,7 @@
   "type": "addon",
   "billing_model": "free",
   "category": "integrations",
-  "description": "Бесплатный ручной обмен справочниками и документами между ProHelper и 1C.",
+  "description": "Бесплатный ручной обмен справочниками и документами между МОСТ и 1C.",
   "class_name": "App\\BusinessModules\\Addons\\OneCBasicExchange\\OneCBasicExchangeModule",
   "service_provider": "App\\BusinessModules\\Addons\\OneCBasicExchange\\OneCBasicExchangeServiceProvider",
   "pricing": {

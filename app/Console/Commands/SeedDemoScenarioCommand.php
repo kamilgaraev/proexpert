@@ -18,7 +18,7 @@ final class SeedDemoScenarioCommand extends Command
         {--verify : Проверить демо-контур после операции}
         {--force : Разрешить удаление в production}';
 
-    protected $description = 'Seed, refresh, verify or delete ProHelper demo scenario data';
+    protected $description = 'Seed, refresh, verify or delete МОСТ demo scenario data';
 
     public function __construct(
         private readonly BrickHouseDemoScenarioService $scenarioService

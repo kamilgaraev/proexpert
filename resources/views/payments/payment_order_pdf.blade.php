@@ -4,7 +4,7 @@
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
     <title>Платежное поручение № {{ $document->document_number }}</title>
     <style>
-        @include('pdf.partials.prohelper-brand-styles')
+        @include('pdf.partials.most-brand-styles')
         body {
             font-family: 'DejaVu Sans', sans-serif;
             font-size: 10px;
@@ -48,7 +48,7 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.prohelper-brand-header')
+    @include('pdf.partials.most-brand-header')
 
     <table class="header-table mb-10">
         <tr>
@@ -185,7 +185,7 @@
         </table>
     </div>
 
-    @include('pdf.partials.prohelper-brand-footer')
+    @include('pdf.partials.most-brand-footer')
 </body>
 </html>
 

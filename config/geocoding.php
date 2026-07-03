@@ -44,7 +44,7 @@ return [
         'nominatim' => [
             'enabled' => env('NOMINATIM_ENABLED', true),
             'url' => 'https://nominatim.openstreetmap.org/search',
-            'user_agent' => env('APP_NAME', 'ProHelper').' Geocoding Service',
+            'user_agent' => env('APP_NAME', 'МОСТ').' Geocoding Service',
             'timeout' => 10,
             'priority' => 3, // Fallback option
             'rate_limit' => 1, // Max 1 request per second

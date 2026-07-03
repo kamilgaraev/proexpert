@@ -92,7 +92,7 @@ final class EpmDataMartPayloadProjector
     {
         return [
             'report_scope' => $scope->reportScope,
-            'management_source_of_truth' => 'prohelper',
+            'management_source_of_truth' => 'most',
             'external_confirmation' => [
                 '1c' => [
                     'role' => 'freshness_confirmation_only',

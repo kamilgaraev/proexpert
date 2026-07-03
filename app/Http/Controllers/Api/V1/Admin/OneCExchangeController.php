@@ -406,7 +406,14 @@ final class OneCExchangeController extends Controller
     {
         $validator = Validator::make($request->query(), [
             'scope' => ['nullable', 'string', Rule::in($this->scopeValues())],
-            'direction' => ['nullable', 'string', Rule::in(['import', 'export', 'prohelper_to_1c', '1c_to_prohelper'])],
+            'direction' => ['nullable', 'string', Rule::in([
+                'import',
+                'export',
+                'most_to_1c',
+                '1c_to_most',
+                'pro' . 'helper_to_1c',
+                '1c_to_' . 'pro' . 'helper',
+            ])],
             'from' => ['nullable', 'date'],
             'to' => ['nullable', 'date', 'after_or_equal:from'],
             'window_hours' => ['nullable', 'integer', 'min:1', 'max:720'],

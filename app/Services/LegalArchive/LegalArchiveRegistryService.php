@@ -291,7 +291,7 @@ final class LegalArchiveRegistryService
             $payload['created_by_user_id'] = $userId;
             $payload['status'] = $payload['status'] ?? 'draft';
             $payload['direction'] = $payload['direction'] ?? 'internal';
-            $payload['source_system'] = $payload['source_system'] ?? 'prohelper';
+            $payload['source_system'] = $payload['source_system'] ?? 'most';
             $payload['legal_significance_status'] = $payload['legal_significance_status'] ?? 'not_confirmed';
         }
 

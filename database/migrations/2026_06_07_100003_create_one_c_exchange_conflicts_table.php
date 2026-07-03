@@ -29,7 +29,7 @@ return new class extends Migration
             $table->text('description')->nullable();
             $table->string('source_hash', 128)->nullable();
             $table->string('payload_hash', 128)->nullable();
-            $table->jsonb('prohelper_values')->nullable();
+            $table->jsonb('most_values')->nullable();
             $table->jsonb('one_c_values')->nullable();
             $table->jsonb('safe_payload_preview')->nullable();
             $table->jsonb('resolution')->nullable();

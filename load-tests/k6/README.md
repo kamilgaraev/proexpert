@@ -1,7 +1,7 @@
-# ProHelper k6 load tests
+# МОСТ k6 load tests
 
 Набор предназначен для аккуратной проверки production API после запуска `ProductionLoadTestSeeder`.
-Сценарий `prohelper-admin-readonly.js` делает только логин и read-only запросы к admin API.
+Сценарий `most-admin-readonly.js` делает только логин и read-only запросы к admin API.
 
 ## Что проверяет
 
@@ -22,7 +22,7 @@ $env:PROFILE = "smoke"
 $env:K6_SUMMARY_JSON = "load-tests/k6/results/prod-smoke.json"
 
 New-Item -ItemType Directory -Force load-tests/k6/results | Out-Null
-k6 run .\load-tests\k6\prohelper-admin-readonly.js
+k6 run .\load-tests\k6\most-admin-readonly.js
 ```
 
 После `smoke` можно запускать рабочий профиль:
@@ -30,7 +30,7 @@ k6 run .\load-tests\k6\prohelper-admin-readonly.js
 ```powershell
 $env:PROFILE = "baseline"
 $env:K6_SUMMARY_JSON = "load-tests/k6/results/prod-baseline.json"
-k6 run .\load-tests\k6\prohelper-admin-readonly.js
+k6 run .\load-tests\k6\most-admin-readonly.js
 ```
 
 ## Профили

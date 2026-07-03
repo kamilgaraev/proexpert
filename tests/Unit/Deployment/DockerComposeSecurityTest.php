@@ -72,6 +72,6 @@ final class DockerComposeSecurityTest extends TestCase
         self::assertStringContainsString('HorizonContainerRestartLoop', $rules);
         self::assertStringContainsString('HorizonContainerHighMemory', $rules);
         self::assertStringContainsString('container_label_com_docker_compose_service="horizon"', $rules);
-        self::assertStringContainsString('ProhelperApiContainerRestartLoop', $rules);
+        self::assertStringContainsString('MostApiContainerRestartLoop', $rules);
     }
 }

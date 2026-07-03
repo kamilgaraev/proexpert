@@ -49,7 +49,7 @@ class BlogSeoSettings extends Model
         return self::firstOrCreate(
             ['blog_context' => $context->value],
             [
-                'site_name' => 'Блог ProHelper',
+                'site_name' => 'Блог МОСТ',
                 'auto_generate_meta_description' => true,
                 'meta_description_length' => 160,
                 'enable_breadcrumbs' => true,

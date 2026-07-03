@@ -20,7 +20,7 @@ class BlogSeoPreviewServiceTest extends TestCase
             'excerpt' => 'Короткое описание для карточек.',
             'canonical_url' => 'https://canonical.example.test/project-control',
             'meta_title' => 'Управление строительными проектами без потери контроля',
-            'meta_description' => 'Практический разбор управления строительными проектами, сроками, подрядчиками и коммуникациями в ProHelper.',
+            'meta_description' => 'Практический разбор управления строительными проектами, сроками, подрядчиками и коммуникациями в МОСТ.',
         ]);
 
         $this->assertSame('Управление строительными проектами без потери контроля', $preview['title']);
@@ -59,14 +59,14 @@ class BlogSeoPreviewServiceTest extends TestCase
         $article = new BlogArticle([
             'title' => 'Гайд по платформе',
             'slug' => 'platform-guide',
-            'meta_title' => 'Гайд по платформе ProHelper',
-            'meta_description' => 'Подробный обзор возможностей платформы ProHelper для операционной команды.',
+            'meta_title' => 'Гайд по платформе МОСТ',
+            'meta_description' => 'Подробный обзор возможностей платформы МОСТ для операционной команды.',
             'featured_image' => 'https://cdn.example.test/blog/platform.jpg',
         ]);
 
         $preview = app(BlogSeoPreviewService::class)->preview($article);
 
-        $this->assertSame('Гайд по платформе ProHelper', $preview['title']);
+        $this->assertSame('Гайд по платформе МОСТ', $preview['title']);
         $this->assertSame('https://front.example.test/blog/platform-guide', $preview['url']);
         $this->assertSame('https://cdn.example.test/blog/platform.jpg', $preview['og_image']);
     }

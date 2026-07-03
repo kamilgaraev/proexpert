@@ -153,7 +153,7 @@ class OfficialMaterialReportTest extends TestCase
                     'project_address' => $this->project->address,
                 ],
                 'organizations' => [
-                    'contractor' => 'ПроХелпер',
+                    'contractor' => 'МОСТ',
                     'customer' => 'Заказчик',
                     'contractor_director' => 'Директор',
                     'contract_number' => 'Д-1',

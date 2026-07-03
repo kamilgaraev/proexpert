@@ -20,7 +20,7 @@ function createPublicBlogSeoArticle(array $attributes = []): BlogArticle
     ]);
 
     $author = LandingAdmin::query()->create([
-        'name' => 'ProHelper',
+        'name' => 'МОСТ',
         'email' => fake()->unique()->safeEmail(),
         'password' => 'password',
     ]);
@@ -47,6 +47,7 @@ function createPublicBlogSeoArticle(array $attributes = []): BlogArticle
 }
 
 it('returns only published indexable marketing articles for sitemap automation', function (): void {
+    /** @var \Tests\TestCase $this */
     $indexable = createPublicBlogSeoArticle([
         'slug' => 'published-indexable',
         'updated_at' => Carbon::parse('2026-05-21 12:00:00'),
@@ -79,6 +80,7 @@ it('returns only published indexable marketing articles for sitemap automation',
 });
 
 it('does not increment article views when SSR disables tracking', function (): void {
+    /** @var \Tests\TestCase $this */
     $article = createPublicBlogSeoArticle([
         'slug' => 'ssr-view-test',
         'views_count' => 7,
@@ -97,6 +99,7 @@ it('does not increment article views when SSR disables tracking', function (): v
 });
 
 it('returns png marketing OG images in public article responses', function (): void {
+    /** @var \Tests\TestCase $this */
     $article = createPublicBlogSeoArticle([
         'slug' => 'contractor-control',
         'og_image' => 'https://prohelper.pro/og/contractor-control.svg',

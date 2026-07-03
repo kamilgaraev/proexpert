@@ -60,7 +60,7 @@ final class WipForecastCalculator
                 'forecast_version' => $forecastVersion,
                 'scenario' => $scenario,
                 'source_of_truth' => [
-                    'management_budget' => 'prohelper',
+                    'management_budget' => 'most',
                     'management_actual_cost' => 'accrual_sources',
                     'cash_payments' => 'reconciliation_only',
                     'bank_1c_edo' => 'confirmation_only',

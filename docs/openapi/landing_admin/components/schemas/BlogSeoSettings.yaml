@@ -5,7 +5,7 @@ properties:
     example: 1
   site_name:
     type: string
-    example: "ProHelper Blog"
+    example: "МОСТ Blog"
     description: "Название сайта"
   site_description:
     type: string

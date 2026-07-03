@@ -37,13 +37,13 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>{{ $report['title'] ?? 'Отчет ProHelper' }}</title>
+    <title>{{ $report['title'] ?? 'Отчет МОСТ' }}</title>
     <style>
         @@page {
             margin: 18mm 16mm 20mm 16mm;
         }
 
-        @include('pdf.partials.prohelper-brand-styles')
+        @include('pdf.partials.most-brand-styles')
 
         body {
             margin: 0;
@@ -289,9 +289,9 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.prohelper-brand-header', ['generated_at' => $report['generated_at'] ?? null])
+    @include('pdf.partials.most-brand-header', ['generated_at' => $report['generated_at'] ?? null])
 
-    <h1 class="report-title">{{ $report['title'] ?? 'Отчет ProHelper' }}</h1>
+    <h1 class="report-title">{{ $report['title'] ?? 'Отчет МОСТ' }}</h1>
     @if($description !== '')
         <p class="report-description">{{ $description }}</p>
     @endif
@@ -307,7 +307,7 @@
         </tr>
         <tr>
             <td class="meta-label">Сформировано</td>
-            <td>{{ $report['generated_at'] ?? '' }} в ProHelper</td>
+            <td>{{ $report['generated_at'] ?? '' }} в МОСТ</td>
         </tr>
         @if(!empty($report['generated_by']))
             <tr>
@@ -496,6 +496,6 @@
         </div>
     @endif
 
-    @include('pdf.partials.prohelper-brand-footer', ['generated_at' => $report['generated_at'] ?? null])
+    @include('pdf.partials.most-brand-footer', ['generated_at' => $report['generated_at'] ?? null])
 </body>
 </html>

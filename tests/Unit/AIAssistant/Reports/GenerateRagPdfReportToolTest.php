@@ -43,7 +43,7 @@ final class GenerateRagPdfReportToolTest extends TestCase
             'limitations' => [],
             'has_sufficient_data' => true,
             'period_label' => 'весь доступный период',
-            'organization_name' => 'ПроХелпер',
+            'organization_name' => 'МОСТ',
             'generated_by' => 'Инженер',
         ]);
         $writer = new FakeAssistantReportPdfWriter;
@@ -98,7 +98,7 @@ final class GenerateRagPdfReportToolTest extends TestCase
     {
         $organization = new Organization;
         $organization->id = 72;
-        $organization->name = 'ПроХелпер';
+        $organization->name = 'МОСТ';
 
         return $organization;
     }

@@ -5,7 +5,7 @@
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
     <title>Смета {{ $estimate['number'] ?? '' }}</title>
     <style>
-        @include('pdf.partials.prohelper-brand-styles')
+        @include('pdf.partials.most-brand-styles')
         @page {
             margin: 12mm 15mm;
         }
@@ -322,10 +322,10 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.prohelper-brand-header')
-    {{-- Header with Prohelper branding --}}
+    @include('pdf.partials.most-brand-header')
+    {{-- Header with МОСТ branding --}}
     <div class="header">
-        <div>PROHELPER</div>
+        <div>MOST</div>
         <div class="header-subtitle">Система управления проектами и смет</div>
     </div>
 
@@ -484,9 +484,9 @@
 
     {{-- Footer --}}
     <footer>
-        <strong>Prohelper</strong> - Профессиональная система управления строительством | 
+        <strong>МОСТ</strong> - Профессиональная система управления строительством |
         Экспорт: {{ $metadata['export_date'] ? \Carbon\Carbon::parse($metadata['export_date'])->format('d.m.Y H:i') : '' }}
     </footer>
-    @include('pdf.partials.prohelper-brand-footer')
+    @include('pdf.partials.most-brand-footer')
 </body>
 </html>

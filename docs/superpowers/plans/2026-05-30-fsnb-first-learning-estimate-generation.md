@@ -57,7 +57,7 @@ The implementation is successful only when these cases are impossible to price a
 
 ## Product Architecture: Estimate Memory + FSNB RAG
 
-This plan is not about trying to "teach one neural network estimates" once. The target product architecture is a learning normative system: ProHelper accumulates estimate experience from real imports and user corrections, then uses that evidence to improve FSNB selection while backend guardrails keep every generated draft safe.
+This plan is not about trying to "teach one neural network estimates" once. The target product architecture is a learning normative system: МОСТ accumulates estimate experience from real imports and user corrections, then uses that evidence to improve FSNB selection while backend guardrails keep every generated draft safe.
 
 ### Core Learning Loop
 
@@ -184,7 +184,7 @@ The valuable asset becomes the accumulated graph:
 work text -> construction context -> FSNB norm -> unit conversion -> quantity pattern -> resources -> price period -> region -> user correction
 ```
 
-This is why the product should evolve into a learning normative system, not a one-off AI generator. More real estimates through ProHelper should directly improve future FSNB matching quality.
+This is why the product should evolve into a learning normative system, not a one-off AI generator. More real estimates through МОСТ should directly improve future FSNB matching quality.
 
 ## File Map
 

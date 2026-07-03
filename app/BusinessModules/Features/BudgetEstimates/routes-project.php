@@ -123,7 +123,7 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
             
             // Экспорт смет
             Route::prefix('{estimate}/export')->name('export.')->group(function () {
-                // Экспорт сметы в форматах Prohelper
+                // Экспорт сметы в форматах МОСТ
                 Route::get('/excel', [EstimateExportController::class, 'exportEstimateToExcel'])->name('excel');
                 Route::get('/pdf', [EstimateExportController::class, 'exportEstimateToPdf'])->name('pdf');
                 

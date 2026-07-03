@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <title>Заказ поставщику №{{ $order->order_number }}</title>
     <style>
-        @include('pdf.partials.prohelper-brand-styles')
+        @include('pdf.partials.most-brand-styles')
         @page {
             margin: 1cm;
             size: A4 landscape;
@@ -141,7 +141,7 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.prohelper-brand-header')
+    @include('pdf.partials.most-brand-header')
     <div class="header">
         <h1>Заказ поставщику № {{ $order->order_number }} от {{ $date_formatted }}</h1>
     </div>
@@ -222,6 +222,6 @@
             </td>
         </tr>
     </table>
-    @include('pdf.partials.prohelper-brand-footer')
+    @include('pdf.partials.most-brand-footer')
 </body>
 </html>

@@ -27,7 +27,7 @@ Add a production-ready operational reaction layer for 1C exchange failures: inci
 
 - Add a dense operational block: "Инциденты и инструкция".
 - Show active incidents first: severity, owner, deadline, operation identifier, next action, and supported actions.
-- Show runbook scenarios with signals, ProHelper checks, handoff to 1C specialist, retry guidance, manual review trigger, and escalation trigger.
+- Show runbook scenarios with signals, МОСТ checks, handoff to 1C specialist, retry guidance, manual review trigger, and escalation trigger.
 - Preserve loading, error, empty, and populated states.
 
 ## Verification

@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <title>{{ $title }}</title>
     <style>
-        @include('pdf.partials.prohelper-brand-styles')
+        @include('pdf.partials.most-brand-styles')
         body {
             font-family: 'DejaVu Sans', 'Arial Unicode MS', Arial, sans-serif;
             font-size: 10px;
@@ -98,7 +98,7 @@
         .status-pending { background-color: #fff3cd; color: #856404; }
         .status-rejected { background-color: #f8d7da; color: #721c24; }
         .status-draft { background-color: #e2e3e5; color: #383d41; }
-        
+
         .footer {
             margin-top: 30px;
             text-align: center;
@@ -113,11 +113,11 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.prohelper-brand-header')
+    @include('pdf.partials.most-brand-header')
     <div class="header">
         <div class="report-title">{{ $title }}</div>
         <div class="metadata">
-            Период: {{ $filters['date_from'] ?? '...' }} — {{ $filters['date_to'] ?? '...' }} | 
+            Период: {{ $filters['date_from'] ?? '...' }} — {{ $filters['date_to'] ?? '...' }} |
             Сформирован: {{ $generated_at }}
         </div>
     </div>
@@ -177,9 +177,9 @@
     </table>
 
     <div class="footer">
-        Документ сформирован автоматически в системе ProHelper. 
+        Документ сформирован автоматически в системе МОСТ.
         <span class="page-number"></span>
     </div>
-    @include('pdf.partials.prohelper-brand-footer')
+    @include('pdf.partials.most-brand-footer')
 </body>
 </html>

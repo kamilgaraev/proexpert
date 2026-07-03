@@ -30,7 +30,7 @@ class TrialExpiredNotification extends Notification implements ShouldQueue
         $lkUrl = config('app.frontend_url', config('app.url'));
 
         return (new MailMessage)
-            ->subject("Триальный период модуля «{$moduleName}» завершён — ProHelper")
+            ->subject("Триальный период модуля «{$moduleName}» завершён — МОСТ")
             ->markdown('emails.trial_expired', [
                 'moduleName' => $moduleName,
                 'organizationName' => $organizationName,

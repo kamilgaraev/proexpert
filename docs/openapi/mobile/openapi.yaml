@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: "ProHelper Mobile API"
+  title: "МОСТ Mobile API"
   description: |
     Спецификация активного API мобильного приложения `/api/v1/mobile`.
     Контракт зафиксирован по фактическому Laravel route-list и использует единый MobileResponse envelope.

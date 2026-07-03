@@ -20,7 +20,7 @@ class UserWelcomeMail extends Mailable
 
     public function build(): self
     {
-        return $this->subject('Добро пожаловать в ProHelper')
+        return $this->subject('Добро пожаловать в МОСТ')
             ->markdown('emails.user_welcome', [
                 'user' => $this->user,
             ]);

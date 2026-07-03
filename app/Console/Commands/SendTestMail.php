@@ -15,7 +15,7 @@ class SendTestMail extends Command
     {
         $to = $this->argument('email');
 
-        Mail::raw('Тестовая отправка из ProHelper через Resend SMTP', function ($m) use ($to) {
+        Mail::raw('Тестовая отправка из МОСТ через Resend SMTP', function ($m) use ($to) {
             $m->to($to)->subject('Проверка SMTP Resend');
         });
 

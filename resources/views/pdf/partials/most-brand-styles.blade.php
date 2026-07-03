@@ -1,4 +1,4 @@
-.prohelper-brand-card {
+.most-brand-card {
     width: 100%;
     border-collapse: separate;
     border-spacing: 0;
@@ -6,12 +6,12 @@
     border: 1px solid #c9d8f3;
     background-color: #f6f9ff;
 }
-.prohelper-brand-card td {
+.most-brand-card td {
     border: none;
     padding: 10px 12px;
     vertical-align: middle;
 }
-.prohelper-brand-mark {
+.most-brand-mark {
     width: 36px;
     height: 36px;
     line-height: 36px;
@@ -22,20 +22,20 @@
     font-size: 13px;
     font-weight: bold;
 }
-.prohelper-brand-name {
+.most-brand-name {
     color: #1e3a8a;
     font-size: 14px;
     line-height: 18px;
     font-weight: bold;
     letter-spacing: 0.4px;
 }
-.prohelper-brand-subtitle {
+.most-brand-subtitle {
     color: #475569;
     font-size: 8px;
     line-height: 12px;
     margin-top: 2px;
 }
-.prohelper-brand-badge {
+.most-brand-badge {
     display: inline-block;
     padding: 4px 8px 5px 8px;
     background-color: #e8f1ff;
@@ -47,13 +47,13 @@
     text-transform: uppercase;
     white-space: nowrap;
 }
-.prohelper-brand-date {
+.most-brand-date {
     color: #64748b;
     font-size: 8px;
     line-height: 12px;
     margin-top: 5px;
 }
-.prohelper-document-note {
+.most-document-note {
     margin-top: 14px;
     padding: 8px 10px;
     border-top: 1px solid #dbe5f6;
@@ -61,7 +61,7 @@
     font-size: 8px;
     text-align: center;
 }
-.prohelper-fixed-footer {
+.most-fixed-footer {
     position: fixed;
     left: 0;
     right: 0;

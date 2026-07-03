@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: "ProHelper Admin API"
+  title: "МОСТ Admin API"
   description: |
     Базовая спецификация Admin API. Добавляйте пути через `$ref` в папку `paths/`.
   version: "1.0.0"

@@ -91,7 +91,7 @@ final class CashGapForecastService
                 'included_items' => $includedItems,
                 'excluded_items' => max(0, count($items) - $includedItems),
                 'source_of_truth' => [
-                    'management_budget' => 'prohelper',
+                    'management_budget' => 'most',
                     'accounting' => '1c',
                 ],
                 'scenario_policy' => $this->scenarioPolicy($context),

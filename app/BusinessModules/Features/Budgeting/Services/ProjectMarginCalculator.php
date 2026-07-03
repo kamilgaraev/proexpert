@@ -44,7 +44,7 @@ final class ProjectMarginCalculator
                 'budget_version' => $budgetVersion,
                 'scenario' => $scenario,
                 'source_of_truth' => [
-                    'management' => 'prohelper',
+                    'management' => 'most',
                     'plan' => 'budget_amounts',
                     'actual_revenue' => 'contract_performance_acts_and_completed_works',
                     'actual_cost' => 'payment_documents_warehouse_movements_time_entries',

@@ -30,8 +30,8 @@ class OrganizationRequestAndResourceTest extends TestCase
     public function test_organization_summary_resource_exposes_only_list_fields(): void
     {
         $organization = new Organization([
-            'name' => 'ПроХелпер',
-            'legal_name' => 'ООО ПроХелпер',
+            'name' => 'МОСТ',
+            'legal_name' => 'ООО МОСТ',
             'tax_number' => '1234567890',
             'email' => 'company@example.test',
             'is_active' => true,
@@ -44,7 +44,7 @@ class OrganizationRequestAndResourceTest extends TestCase
 
         $this->assertSame([
             'id' => 15,
-            'name' => 'ПроХелпер',
+            'name' => 'МОСТ',
             'is_active' => true,
             'verification_status' => 'verified',
         ], $payload);

@@ -8,6 +8,6 @@ enum OneCExchangeDirection: string
 {
     case Import = 'import';
     case Export = 'export';
-    case ProhelperToOneC = 'prohelper_to_1c';
-    case OneCToProhelper = '1c_to_prohelper';
+    case MostToOneC = 'most_to_1c';
+    case OneCToMost = '1c_to_most';
 }

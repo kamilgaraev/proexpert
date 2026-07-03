@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>ProHelper API Documentation</title>
+    <title>МОСТ API Documentation</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * {
@@ -200,8 +200,8 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>ProHelper API</h1>
-            <p>Полная документация по всем API системы ProHelper</p>
+            <h1>МОСТ API</h1>
+            <p>Полная документация по всем API системы МОСТ</p>
         </div>
 
         <div class="apis-grid">
@@ -224,7 +224,7 @@
         </div>
 
         <div class="footer">
-            <p>Создано с ❤️ командой ProHelper</p>
+            <p>Создано с ❤️ командой МОСТ</p>
             <p>Версия системы: 1.0.0 | <a href="https://prohelper.pro" target="_blank">prohelper.pro</a></p>
         </div>
     </div>

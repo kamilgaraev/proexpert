@@ -261,5 +261,5 @@ $contract = $contractService->createFromOrder($order);
 
 ## Лицензия
 
-Proprietary - ProHelper Platform
+Proprietary - МОСТ Platform
 

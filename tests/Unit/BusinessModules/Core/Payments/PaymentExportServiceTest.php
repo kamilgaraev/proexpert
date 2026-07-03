@@ -28,7 +28,7 @@ class PaymentExportServiceTest extends TestCase
         ]);
 
         $document->setRelation('payerOrganization', new Organization([
-            'name' => 'ООО ПроХелпер',
+            'name' => 'ООО МОСТ',
             'tax_number' => '7701234567',
             'registration_number' => '770101001',
         ]));
@@ -51,7 +51,7 @@ class PaymentExportServiceTest extends TestCase
             $this->assertStringContainsString('1CClientBankExchange', $decoded);
             $this->assertStringContainsString('Кодировка=Windows', $decoded);
             $this->assertStringContainsString('СекцияДокумент=Платежное поручение', $decoded);
-            $this->assertStringContainsString('Плательщик=ООО ПроХелпер', $decoded);
+            $this->assertStringContainsString('Плательщик=ООО МОСТ', $decoded);
             $this->assertStringContainsString('ПлательщикИНН=7701234567', $decoded);
             $this->assertStringContainsString('Получатель=МТМ СТРОЙ', $decoded);
             $this->assertStringContainsString('ПолучательИНН=7812345678', $decoded);

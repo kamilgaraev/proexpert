@@ -25,7 +25,7 @@ use RuntimeException;
 
 class BrickHouseDemoSeeder extends Seeder
 {
-    private const PASSWORD = 'ProhelperDemo123!';
+    private const PASSWORD = 'MostDemo123!';
 
     private Carbon $now;
 
@@ -865,7 +865,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'role_name' => 'Руководитель проекта генподряда',
                 'role_description' => 'Отвечает за сроки, бюджет, участников, договоры и ключевые согласования по объекту.',
                 'name' => 'Мария Орлова',
-                'email' => 'demo.gp.project-manager@prohelper.test',
+                'email' => 'demo.gp.project-manager@most.test',
                 'phone' => '+7 916 210-45-01',
                 'position' => 'Руководитель проекта',
                 'project_role' => 'project_manager',
@@ -891,7 +891,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'role_name' => 'Инженер ПТО генподряда',
                 'role_description' => 'Ведет сметы, общий журнал работ, объемы, акты и исполнительную документацию.',
                 'name' => 'Сергей Волков',
-                'email' => 'demo.gp.pto@prohelper.test',
+                'email' => 'demo.gp.pto@most.test',
                 'phone' => '+7 916 210-45-02',
                 'position' => 'Ведущий инженер ПТО',
                 'project_role' => 'site_engineer',
@@ -915,7 +915,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'role_name' => 'Прораб участка генподряда',
                 'role_description' => 'Создает заявки с объекта, заполняет журнал работ и фиксирует фактические объемы.',
                 'name' => 'Илья Смирнов',
-                'email' => 'demo.gp.foreman@prohelper.test',
+                'email' => 'demo.gp.foreman@most.test',
                 'phone' => '+7 916 210-45-03',
                 'position' => 'Прораб участка',
                 'project_role' => 'foreman',
@@ -942,7 +942,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'role_name' => 'Снабженец генподряда',
                 'role_description' => 'Отвечает за склад, резервы, поставки материалов и обработку заявок с объекта.',
                 'name' => 'Наталья Белова',
-                'email' => 'demo.gp.supply@prohelper.test',
+                'email' => 'demo.gp.supply@most.test',
                 'phone' => '+7 916 210-45-04',
                 'position' => 'Руководитель снабжения',
                 'project_role' => 'supply_manager',
@@ -963,7 +963,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'role_name' => 'Бухгалтер проекта генподряда',
                 'role_description' => 'Ведет платежные документы, оплаты подрядчику, сверку и финансовые отчеты.',
                 'name' => 'Оксана Лебедева',
-                'email' => 'demo.gp.accountant@prohelper.test',
+                'email' => 'demo.gp.accountant@most.test',
                 'phone' => '+7 916 210-45-05',
                 'position' => 'Бухгалтер проекта',
                 'project_role' => 'accountant',
@@ -995,7 +995,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'role_name' => 'Руководитель работ подрядчика',
                 'role_description' => 'Координирует договор, график, бригады, акты и коммуникацию с генподрядчиком.',
                 'name' => 'Дмитрий Захаров',
-                'email' => 'demo.sub.work-manager@prohelper.test',
+                'email' => 'demo.sub.work-manager@most.test',
                 'phone' => '+7 916 210-46-01',
                 'position' => 'Руководитель работ',
                 'project_role' => 'contractor_manager',
@@ -1020,7 +1020,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'role_name' => 'Инженер ПТО подрядчика',
                 'role_description' => 'Готовит исполнительные объемы, акты подрядчика и подтверждает записи журнала.',
                 'name' => 'Анна Егорова',
-                'email' => 'demo.sub.pto@prohelper.test',
+                'email' => 'demo.sub.pto@most.test',
                 'phone' => '+7 916 210-46-02',
                 'position' => 'Инженер ПТО',
                 'project_role' => 'site_engineer',
@@ -1044,7 +1044,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'role_name' => 'Прораб кладочных работ',
                 'role_description' => 'Заполняет журнал подрядчика, создает заявки и фиксирует сменные объемы кладки.',
                 'name' => 'Андрей Кузнецов',
-                'email' => 'demo.sub.foreman@prohelper.test',
+                'email' => 'demo.sub.foreman@most.test',
                 'phone' => '+7 916 210-46-03',
                 'position' => 'Прораб кладочных работ',
                 'project_role' => 'foreman',
@@ -1071,7 +1071,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'role_name' => 'Кладовщик объекта подрядчика',
                 'role_description' => 'Принимает материалы, ведет остатки, резервы и выдачу на бригады.',
                 'name' => 'Роман Федоров',
-                'email' => 'demo.sub.storekeeper@prohelper.test',
+                'email' => 'demo.sub.storekeeper@most.test',
                 'phone' => '+7 916 210-46-04',
                 'position' => 'Кладовщик объекта',
                 'project_role' => 'storekeeper',
@@ -1091,7 +1091,7 @@ class BrickHouseDemoSeeder extends Seeder
                 'role_name' => 'Бухгалтер подрядчика',
                 'role_description' => 'Выставляет счета, подтверждает поступления и контролирует оплату актов.',
                 'name' => 'Елена Морозова',
-                'email' => 'demo.sub.accountant@prohelper.test',
+                'email' => 'demo.sub.accountant@most.test',
                 'phone' => '+7 916 210-46-05',
                 'position' => 'Бухгалтер подрядчика',
                 'project_role' => 'accountant',
@@ -3780,12 +3780,12 @@ class BrickHouseDemoSeeder extends Seeder
     private function generalWorkforceEmployees(): array
     {
         return [
-            ['key' => 'project_manager', 'user_key' => 'project_manager', 'personnel_number' => 'BH-GP-001', 'external_payroll_ref' => 'BH-GP-PAY-001', 'last_name' => 'Орлова', 'first_name' => 'Мария', 'middle_name' => 'Викторовна', 'department_code' => 'BH-GP-PMO', 'department_name' => 'Проектный офис', 'position_code' => 'BH-GP-PM', 'position_name' => 'Руководитель проекта', 'category' => 'management', 'headcount' => 1, 'base_salary' => 210000, 'hour_rate' => 1450, 'phone' => '+7 916 210-45-01', 'email' => 'demo.gp.project-manager@prohelper.test'],
-            ['key' => 'pto_engineer', 'user_key' => 'pto_engineer', 'personnel_number' => 'BH-GP-002', 'external_payroll_ref' => 'BH-GP-PAY-002', 'last_name' => 'Волков', 'first_name' => 'Сергей', 'middle_name' => 'Игоревич', 'department_code' => 'BH-GP-PTO', 'department_name' => 'Производственно-технический отдел', 'position_code' => 'BH-GP-PTO', 'position_name' => 'Ведущий инженер ПТО', 'category' => 'engineering', 'headcount' => 2, 'base_salary' => 165000, 'hour_rate' => 1180, 'phone' => '+7 916 210-45-02', 'email' => 'demo.gp.pto@prohelper.test'],
-            ['key' => 'foreman', 'user_key' => 'foreman', 'personnel_number' => 'BH-GP-003', 'external_payroll_ref' => 'BH-GP-PAY-003', 'last_name' => 'Смирнов', 'first_name' => 'Илья', 'middle_name' => 'Павлович', 'department_code' => 'BH-GP-SITE', 'department_name' => 'Участок коробки здания', 'position_code' => 'BH-GP-FOREMAN', 'position_name' => 'Прораб участка', 'category' => 'site', 'headcount' => 2, 'base_salary' => 150000, 'hour_rate' => 1090, 'phone' => '+7 916 210-45-03', 'email' => 'demo.gp.foreman@prohelper.test'],
-            ['key' => 'supply_manager', 'user_key' => 'supply_manager', 'personnel_number' => 'BH-GP-004', 'external_payroll_ref' => 'BH-GP-PAY-004', 'last_name' => 'Белова', 'first_name' => 'Наталья', 'middle_name' => 'Олеговна', 'department_code' => 'BH-GP-SUPPLY', 'department_name' => 'Снабжение и склад', 'position_code' => 'BH-GP-SUPPLY', 'position_name' => 'Руководитель снабжения', 'category' => 'supply', 'headcount' => 1, 'base_salary' => 142000, 'hour_rate' => 980, 'phone' => '+7 916 210-45-04', 'email' => 'demo.gp.supply@prohelper.test'],
-            ['key' => 'safety_engineer', 'personnel_number' => 'BH-GP-005', 'external_payroll_ref' => 'BH-GP-PAY-005', 'last_name' => 'Тарасов', 'first_name' => 'Павел', 'middle_name' => 'Андреевич', 'department_code' => 'BH-GP-SITE', 'department_name' => 'Участок коробки здания', 'position_code' => 'BH-GP-HSE', 'position_name' => 'Инженер по охране труда', 'category' => 'safety', 'headcount' => 1, 'base_salary' => 138000, 'hour_rate' => 940, 'phone' => '+7 916 210-45-06', 'email' => 'hse.gp@prohelper.test'],
-            ['key' => 'laborer', 'personnel_number' => 'BH-GP-006', 'external_payroll_ref' => 'BH-GP-PAY-006', 'last_name' => 'Ковалев', 'first_name' => 'Никита', 'middle_name' => 'Сергеевич', 'department_code' => 'BH-GP-SITE', 'department_name' => 'Участок коробки здания', 'position_code' => 'BH-GP-LABOR', 'position_name' => 'Подсобный рабочий', 'category' => 'worker', 'headcount' => 6, 'base_salary' => 92000, 'hour_rate' => 620, 'phone' => '+7 916 210-45-07', 'email' => 'worker.gp@prohelper.test'],
+            ['key' => 'project_manager', 'user_key' => 'project_manager', 'personnel_number' => 'BH-GP-001', 'external_payroll_ref' => 'BH-GP-PAY-001', 'last_name' => 'Орлова', 'first_name' => 'Мария', 'middle_name' => 'Викторовна', 'department_code' => 'BH-GP-PMO', 'department_name' => 'Проектный офис', 'position_code' => 'BH-GP-PM', 'position_name' => 'Руководитель проекта', 'category' => 'management', 'headcount' => 1, 'base_salary' => 210000, 'hour_rate' => 1450, 'phone' => '+7 916 210-45-01', 'email' => 'demo.gp.project-manager@most.test'],
+            ['key' => 'pto_engineer', 'user_key' => 'pto_engineer', 'personnel_number' => 'BH-GP-002', 'external_payroll_ref' => 'BH-GP-PAY-002', 'last_name' => 'Волков', 'first_name' => 'Сергей', 'middle_name' => 'Игоревич', 'department_code' => 'BH-GP-PTO', 'department_name' => 'Производственно-технический отдел', 'position_code' => 'BH-GP-PTO', 'position_name' => 'Ведущий инженер ПТО', 'category' => 'engineering', 'headcount' => 2, 'base_salary' => 165000, 'hour_rate' => 1180, 'phone' => '+7 916 210-45-02', 'email' => 'demo.gp.pto@most.test'],
+            ['key' => 'foreman', 'user_key' => 'foreman', 'personnel_number' => 'BH-GP-003', 'external_payroll_ref' => 'BH-GP-PAY-003', 'last_name' => 'Смирнов', 'first_name' => 'Илья', 'middle_name' => 'Павлович', 'department_code' => 'BH-GP-SITE', 'department_name' => 'Участок коробки здания', 'position_code' => 'BH-GP-FOREMAN', 'position_name' => 'Прораб участка', 'category' => 'site', 'headcount' => 2, 'base_salary' => 150000, 'hour_rate' => 1090, 'phone' => '+7 916 210-45-03', 'email' => 'demo.gp.foreman@most.test'],
+            ['key' => 'supply_manager', 'user_key' => 'supply_manager', 'personnel_number' => 'BH-GP-004', 'external_payroll_ref' => 'BH-GP-PAY-004', 'last_name' => 'Белова', 'first_name' => 'Наталья', 'middle_name' => 'Олеговна', 'department_code' => 'BH-GP-SUPPLY', 'department_name' => 'Снабжение и склад', 'position_code' => 'BH-GP-SUPPLY', 'position_name' => 'Руководитель снабжения', 'category' => 'supply', 'headcount' => 1, 'base_salary' => 142000, 'hour_rate' => 980, 'phone' => '+7 916 210-45-04', 'email' => 'demo.gp.supply@most.test'],
+            ['key' => 'safety_engineer', 'personnel_number' => 'BH-GP-005', 'external_payroll_ref' => 'BH-GP-PAY-005', 'last_name' => 'Тарасов', 'first_name' => 'Павел', 'middle_name' => 'Андреевич', 'department_code' => 'BH-GP-SITE', 'department_name' => 'Участок коробки здания', 'position_code' => 'BH-GP-HSE', 'position_name' => 'Инженер по охране труда', 'category' => 'safety', 'headcount' => 1, 'base_salary' => 138000, 'hour_rate' => 940, 'phone' => '+7 916 210-45-06', 'email' => 'hse.gp@most.test'],
+            ['key' => 'laborer', 'personnel_number' => 'BH-GP-006', 'external_payroll_ref' => 'BH-GP-PAY-006', 'last_name' => 'Ковалев', 'first_name' => 'Никита', 'middle_name' => 'Сергеевич', 'department_code' => 'BH-GP-SITE', 'department_name' => 'Участок коробки здания', 'position_code' => 'BH-GP-LABOR', 'position_name' => 'Подсобный рабочий', 'category' => 'worker', 'headcount' => 6, 'base_salary' => 92000, 'hour_rate' => 620, 'phone' => '+7 916 210-45-07', 'email' => 'worker.gp@most.test'],
         ];
     }
 
@@ -3795,12 +3795,12 @@ class BrickHouseDemoSeeder extends Seeder
     private function contractorWorkforceEmployees(): array
     {
         return [
-            ['key' => 'work_manager', 'user_key' => 'work_manager', 'personnel_number' => 'BH-SUB-001', 'external_payroll_ref' => 'BH-SUB-PAY-001', 'last_name' => 'Захаров', 'first_name' => 'Дмитрий', 'middle_name' => 'Романович', 'department_code' => 'BH-SUB-MGMT', 'department_name' => 'Управление кладочными работами', 'position_code' => 'BH-SUB-WM', 'position_name' => 'Руководитель работ', 'category' => 'management', 'headcount' => 1, 'base_salary' => 172000, 'hour_rate' => 1220, 'phone' => '+7 916 210-46-01', 'email' => 'demo.sub.work-manager@prohelper.test'],
-            ['key' => 'pto_engineer', 'user_key' => 'pto_engineer', 'personnel_number' => 'BH-SUB-002', 'external_payroll_ref' => 'BH-SUB-PAY-002', 'last_name' => 'Егорова', 'first_name' => 'Анна', 'middle_name' => 'Владимировна', 'department_code' => 'BH-SUB-PTO', 'department_name' => 'ПТО подрядчика', 'position_code' => 'BH-SUB-PTO', 'position_name' => 'Инженер ПТО', 'category' => 'engineering', 'headcount' => 1, 'base_salary' => 138000, 'hour_rate' => 980, 'phone' => '+7 916 210-46-02', 'email' => 'demo.sub.pto@prohelper.test'],
-            ['key' => 'foreman', 'user_key' => 'foreman', 'personnel_number' => 'BH-SUB-003', 'external_payroll_ref' => 'BH-SUB-PAY-003', 'last_name' => 'Кузнецов', 'first_name' => 'Андрей', 'middle_name' => 'Николаевич', 'department_code' => 'BH-SUB-SITE', 'department_name' => 'Бригада кладки', 'position_code' => 'BH-SUB-FOREMAN', 'position_name' => 'Прораб кладочных работ', 'category' => 'site', 'headcount' => 1, 'base_salary' => 146000, 'hour_rate' => 1050, 'phone' => '+7 916 210-46-03', 'email' => 'demo.sub.foreman@prohelper.test'],
-            ['key' => 'mason_1', 'personnel_number' => 'BH-SUB-004', 'external_payroll_ref' => 'BH-SUB-PAY-004', 'last_name' => 'Громов', 'first_name' => 'Василий', 'middle_name' => 'Петрович', 'department_code' => 'BH-SUB-SITE', 'department_name' => 'Бригада кладки', 'position_code' => 'BH-SUB-MASON', 'position_name' => 'Каменщик 5 разряда', 'category' => 'worker', 'headcount' => 8, 'base_salary' => 128000, 'hour_rate' => 890, 'phone' => '+7 916 210-46-06', 'email' => 'mason1.sub@prohelper.test'],
-            ['key' => 'mason_2', 'personnel_number' => 'BH-SUB-005', 'external_payroll_ref' => 'BH-SUB-PAY-005', 'last_name' => 'Лазарев', 'first_name' => 'Олег', 'middle_name' => 'Ильич', 'department_code' => 'BH-SUB-SITE', 'department_name' => 'Бригада кладки', 'position_code' => 'BH-SUB-MASON', 'position_name' => 'Каменщик 5 разряда', 'category' => 'worker', 'headcount' => 8, 'base_salary' => 126000, 'hour_rate' => 875, 'phone' => '+7 916 210-46-07', 'email' => 'mason2.sub@prohelper.test'],
-            ['key' => 'helper', 'personnel_number' => 'BH-SUB-006', 'external_payroll_ref' => 'BH-SUB-PAY-006', 'last_name' => 'Фомин', 'first_name' => 'Кирилл', 'middle_name' => 'Денисович', 'department_code' => 'BH-SUB-SITE', 'department_name' => 'Бригада кладки', 'position_code' => 'BH-SUB-HELPER', 'position_name' => 'Подсобный рабочий кладочной бригады', 'category' => 'worker', 'headcount' => 4, 'base_salary' => 88000, 'hour_rate' => 590, 'phone' => '+7 916 210-46-08', 'email' => 'helper.sub@prohelper.test'],
+            ['key' => 'work_manager', 'user_key' => 'work_manager', 'personnel_number' => 'BH-SUB-001', 'external_payroll_ref' => 'BH-SUB-PAY-001', 'last_name' => 'Захаров', 'first_name' => 'Дмитрий', 'middle_name' => 'Романович', 'department_code' => 'BH-SUB-MGMT', 'department_name' => 'Управление кладочными работами', 'position_code' => 'BH-SUB-WM', 'position_name' => 'Руководитель работ', 'category' => 'management', 'headcount' => 1, 'base_salary' => 172000, 'hour_rate' => 1220, 'phone' => '+7 916 210-46-01', 'email' => 'demo.sub.work-manager@most.test'],
+            ['key' => 'pto_engineer', 'user_key' => 'pto_engineer', 'personnel_number' => 'BH-SUB-002', 'external_payroll_ref' => 'BH-SUB-PAY-002', 'last_name' => 'Егорова', 'first_name' => 'Анна', 'middle_name' => 'Владимировна', 'department_code' => 'BH-SUB-PTO', 'department_name' => 'ПТО подрядчика', 'position_code' => 'BH-SUB-PTO', 'position_name' => 'Инженер ПТО', 'category' => 'engineering', 'headcount' => 1, 'base_salary' => 138000, 'hour_rate' => 980, 'phone' => '+7 916 210-46-02', 'email' => 'demo.sub.pto@most.test'],
+            ['key' => 'foreman', 'user_key' => 'foreman', 'personnel_number' => 'BH-SUB-003', 'external_payroll_ref' => 'BH-SUB-PAY-003', 'last_name' => 'Кузнецов', 'first_name' => 'Андрей', 'middle_name' => 'Николаевич', 'department_code' => 'BH-SUB-SITE', 'department_name' => 'Бригада кладки', 'position_code' => 'BH-SUB-FOREMAN', 'position_name' => 'Прораб кладочных работ', 'category' => 'site', 'headcount' => 1, 'base_salary' => 146000, 'hour_rate' => 1050, 'phone' => '+7 916 210-46-03', 'email' => 'demo.sub.foreman@most.test'],
+            ['key' => 'mason_1', 'personnel_number' => 'BH-SUB-004', 'external_payroll_ref' => 'BH-SUB-PAY-004', 'last_name' => 'Громов', 'first_name' => 'Василий', 'middle_name' => 'Петрович', 'department_code' => 'BH-SUB-SITE', 'department_name' => 'Бригада кладки', 'position_code' => 'BH-SUB-MASON', 'position_name' => 'Каменщик 5 разряда', 'category' => 'worker', 'headcount' => 8, 'base_salary' => 128000, 'hour_rate' => 890, 'phone' => '+7 916 210-46-06', 'email' => 'mason1.sub@most.test'],
+            ['key' => 'mason_2', 'personnel_number' => 'BH-SUB-005', 'external_payroll_ref' => 'BH-SUB-PAY-005', 'last_name' => 'Лазарев', 'first_name' => 'Олег', 'middle_name' => 'Ильич', 'department_code' => 'BH-SUB-SITE', 'department_name' => 'Бригада кладки', 'position_code' => 'BH-SUB-MASON', 'position_name' => 'Каменщик 5 разряда', 'category' => 'worker', 'headcount' => 8, 'base_salary' => 126000, 'hour_rate' => 875, 'phone' => '+7 916 210-46-07', 'email' => 'mason2.sub@most.test'],
+            ['key' => 'helper', 'personnel_number' => 'BH-SUB-006', 'external_payroll_ref' => 'BH-SUB-PAY-006', 'last_name' => 'Фомин', 'first_name' => 'Кирилл', 'middle_name' => 'Денисович', 'department_code' => 'BH-SUB-SITE', 'department_name' => 'Бригада кладки', 'position_code' => 'BH-SUB-HELPER', 'position_name' => 'Подсобный рабочий кладочной бригады', 'category' => 'worker', 'headcount' => 4, 'base_salary' => 88000, 'hour_rate' => 590, 'phone' => '+7 916 210-46-08', 'email' => 'helper.sub@most.test'],
         ];
     }
 
@@ -6874,14 +6874,14 @@ class BrickHouseDemoSeeder extends Seeder
     {
         return [
             'contour' => 'general_contractor',
-            'email' => 'demo.general-contractor@prohelper.test',
+            'email' => 'demo.general-contractor@most.test',
             'name' => 'Алексей Мельников',
             'position' => 'Руководитель проекта генподряда',
             'organization_name' => 'Демо Генподряд "Кирпичный квартал"',
             'legal_name' => 'ООО "Кирпичный квартал Генподряд"',
             'tax_number' => '7701000001',
             'registration_number' => '1027701000001',
-            'organization_email' => 'office.gp@prohelper.test',
+            'organization_email' => 'office.gp@most.test',
             'phone' => '+7 495 210-44-01',
             'user_phone' => '+7 916 210-44-01',
             'address' => 'Москва, ул. Строителей, 22',
@@ -6905,14 +6905,14 @@ class BrickHouseDemoSeeder extends Seeder
     {
         return [
             'contour' => 'contractor',
-            'email' => 'demo.contractor@prohelper.test',
+            'email' => 'demo.contractor@most.test',
             'name' => 'Ирина Соколова',
             'position' => 'Директор подрядной организации',
             'organization_name' => 'Демо Подряд "МастерКлад"',
             'legal_name' => 'ООО "МастерКлад Подряд"',
             'tax_number' => '7701000002',
             'registration_number' => '1027701000002',
-            'organization_email' => 'office.sub@prohelper.test',
+            'organization_email' => 'office.sub@most.test',
             'phone' => '+7 495 210-44-02',
             'user_phone' => '+7 916 210-44-02',
             'address' => 'Москва, ул. Каменщиков, 14',

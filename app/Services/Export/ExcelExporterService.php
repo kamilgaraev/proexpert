@@ -642,7 +642,7 @@ class ExcelExporterService
                     $currentRow += 2;
                     
                     // ОРГАНИЗАЦИИ
-                    $contractor = $reportData['organizations']['contractor'] ?? 'ПроХелпер';
+                    $contractor = $reportData['organizations']['contractor'] ?? 'МОСТ';
                     $customer = $reportData['organizations']['customer'] ?? 'Заказчик';
                     $contractorDirector = $reportData['organizations']['contractor_director'] ?? 'Директор';
                     $contractNumber = $reportData['organizations']['contract_number'] ?? 'Б/Н';

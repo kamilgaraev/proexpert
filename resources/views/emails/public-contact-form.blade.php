@@ -2,10 +2,10 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Новая заявка с сайта ProHelper</title>
+    <title>Новая заявка с сайта МОСТ</title>
 </head>
 <body>
-    <h1>Новая заявка с сайта ProHelper</h1>
+    <h1>Новая заявка с сайта МОСТ</h1>
 
     <p><strong>Имя:</strong> {{ $contactForm->name }}</p>
     <p><strong>Email:</strong> {{ $contactForm->email }}</p>

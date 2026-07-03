@@ -31,7 +31,7 @@ properties:
   meta_title:
     type: string
     nullable: true
-    example: "Как создать SEO-оптимизированный блог | ProHelper"
+    example: "Как создать SEO-оптимизированный блог | МОСТ"
   meta_description:
     type: string
     nullable: true

@@ -3,7 +3,7 @@
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>ProHelper - Система управления строительными проектами</title>
+        <title>МОСТ - Система управления строительными проектами</title>
         <link rel="preconnect" href="https://fonts.bunny.net">
         <link href="https://fonts.bunny.net/css?family=inter:400,500,600,700&display=swap" rel="stylesheet" />
         <style>
@@ -254,7 +254,7 @@
             <header class="header">
                 <a href="/" class="logo">
                     <img src="/logo-white.svg" alt="" class="logo-icon">
-                    ProHelper
+                    МОСТ
                 </a>
                 
                 @if (Route::has('login'))
@@ -272,7 +272,7 @@
             </header>
 
             <main class="main-content">
-                <h1 class="hero-title">ProHelper</h1>
+                <h1 class="hero-title">МОСТ</h1>
                 <p class="hero-subtitle">
                     Комплексная система управления строительными проектами. 
                     Управляйте подрядчиками, контролируйте выполнение работ и ведите документооборот в одном месте.
@@ -296,7 +296,7 @@
             </main>
 
             <footer class="footer">
-                ProHelper v1.0.0 | Laravel v{{ Illuminate\Foundation\Application::VERSION }} (PHP v{{ PHP_VERSION }})
+                МОСТ v1.0.0 | Laravel v{{ Illuminate\Foundation\Application::VERSION }} (PHP v{{ PHP_VERSION }})
             </footer>
         </div>
     </body>

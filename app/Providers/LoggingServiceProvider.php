@@ -173,8 +173,6 @@ class LoggingServiceProvider extends ServiceProvider
     protected function registerFacades(): void
     {
         // Можно добавить facade для удобного использования
-        // ProHelperLog::audit('event', []);
-        // ProHelperLog::business('event', []);
         // и т.д.
     }
 

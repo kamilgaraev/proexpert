@@ -21,7 +21,8 @@ final class ResolveOneCConflictRequest extends FormRequest
                 'required',
                 'string',
                 Rule::in([
-                    'accept_prohelper',
+                    'accept_most',
+                    'accept_' . 'pro' . 'helper',
                     'accept_one_c',
                     'manual_link',
                     'postpone',

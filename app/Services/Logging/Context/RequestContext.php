@@ -76,7 +76,7 @@ class RequestContext
                 'is_json' => $request->expectsJson(),
             ];
 
-            // Добавить специфичные заголовки ProHelper
+            // Добавить специфичные заголовки МОСТ
             if ($request->hasHeader('X-Organization-Id')) {
                 $this->metadata['organization_header'] = $request->header('X-Organization-Id');
             }

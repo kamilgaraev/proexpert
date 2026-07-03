@@ -63,7 +63,7 @@ class ExcelEstimateBuilder
     {
         $row = 1;
 
-        // Header with Prohelper branding
+        // Header with МОСТ branding
         $row = $this->buildHeader($sheet, $row, $data);
 
         // Estimate info section
@@ -83,12 +83,12 @@ class ExcelEstimateBuilder
     }
 
     /**
-     * Построить шапку с брендингом Prohelper
+     * Построить шапку с брендингом МОСТ
      */
     protected function buildHeader(Worksheet $sheet, int $row, array $data): int
     {
-        // Prohelper branding - основной заголовок
-        $sheet->setCellValue("A{$row}", 'PROHELPER');
+        // МОСТ branding - основной заголовок
+        $sheet->setCellValue("A{$row}", 'MOST');
         $sheet->mergeCells("A{$row}:H{$row}");
         $sheet->getStyle("A{$row}")->applyFromArray([
             'font' => [

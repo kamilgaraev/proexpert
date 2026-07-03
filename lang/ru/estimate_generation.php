@@ -166,7 +166,7 @@ return [
     'training_upload_failed' => 'Не удалось прочитать загруженный файл.',
     'training_format_not_detected' => 'Не удалось определить формат эталонной сметы.',
     'training_source_grandsmeta' => 'Гранд-Смета',
-    'training_source_prohelper' => 'ProHelper',
+    'training_source_prohelper' => 'МОСТ',
     'training_source_manual' => 'Ручной эталон',
     'training_status_uploaded' => 'Загружено',
     'training_status_queued' => 'В очереди',

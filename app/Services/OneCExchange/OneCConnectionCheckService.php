@@ -360,8 +360,8 @@ final class OneCConnectionCheckService
             ->timeout(max(1, min(120, (int) $base->timeout_seconds)))
             ->connectTimeout(max(1, min(30, (int) $base->connect_timeout_seconds)))
             ->withHeaders([
-                'X-ProHelper-Connection-Check' => 'read-only',
-                'X-ProHelper-Integration-Profile' => (string) $profile->id,
+                'X-Most-Connection-Check' => 'read-only',
+                'X-Most-Integration-Profile' => (string) $profile->id,
             ]);
 
         if ($profile->auth_type === 'basic' && $secret instanceof OneCProfileSecret) {

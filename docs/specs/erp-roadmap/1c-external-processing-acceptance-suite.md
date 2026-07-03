@@ -1,24 +1,24 @@
-# Acceptance-suite для внешней обработки 1С ProHelper
+# Acceptance-suite для внешней обработки 1С МОСТ
 
 Дата: 2026-06-07
 Задача: PHERP-79, `[ERP-01][PHERP-20] Сформировать acceptance-suite для подрядчика 1С`
-Статус документа: приемочный пакет для 1С-подрядчика, backend/admin ProHelper и приемочной команды
+Статус документа: приемочный пакет для 1С-подрядчика, backend/admin МОСТ и приемочной команды
 
 ## 1. Назначение acceptance-suite
 
-Документ задает приемочный набор проверок для внешней обработки 1С, расширения 1С или HTTP-сервиса 1С, который реализуется по ТЗ PHERP-78. По этому набору подрядчик 1С должен подтвердить, что обработка принимает сообщения ProHelper, возвращает безопасные статусы, защищает от дублей, поддерживает mapping/reconciliation и не нарушает accounting/tax boundaries.
+Документ задает приемочный набор проверок для внешней обработки 1С, расширения 1С или HTTP-сервиса 1С, который реализуется по ТЗ PHERP-78. По этому набору подрядчик 1С должен подтвердить, что обработка принимает сообщения МОСТ, возвращает безопасные статусы, защищает от дублей, поддерживает mapping/reconciliation и не нарушает accounting/tax boundaries.
 
 Для кого:
 
 - 1С-подрядчик - реализует обработку и прикладывает доказательства прохождения тестов.
-- ProHelper backend/admin - проверяет контракт, безопасные ответы, audit/journal, retry и dead-letter поведение.
+- МОСТ backend/admin - проверяет контракт, безопасные ответы, audit/journal, retry и dead-letter поведение.
 - Приемочная команда - принимает результат без устных уточнений и фиксирует отклонения.
 
 Что проверяем:
 
 - read-only `metadata` smoke-check;
-- доставку ProHelper -> 1С;
-- callbacks/events 1С -> ProHelper;
+- доставку МОСТ -> 1С;
+- callbacks/events 1С -> МОСТ;
 - scopes `counterparties`, `contracts`, `acts`, `payment_documents`, `procurement_documents`, `warehouse_movements`, `payroll_source`;
 - `idempotency_key`, `correlation_id`, `payload_hash`, `source_hash`;
 - safe error model, retry, dead-letter, mapping и reconciliation;
@@ -26,10 +26,10 @@
 
 Границы source of truth:
 
-- ProHelper остается construction ERP / operational source of truth.
+- МОСТ остается construction ERP / operational source of truth.
 - 1С остается бухгалтерским и налоговым source of truth.
-- ProHelper не создает бухгалтерские проводки, налоговый учет, регламентированную отчетность, официальный payroll и официальный складской стоимостной учет.
-- 1С не перезаписывает операционные workflow-статусы ProHelper. Учетные статусы 1С хранятся отдельно как accounting status.
+- МОСТ не создает бухгалтерские проводки, налоговый учет, регламентированную отчетность, официальный payroll и официальный складской стоимостной учет.
+- 1С не перезаписывает операционные workflow-статусы МОСТ. Учетные статусы 1С хранятся отдельно как accounting status.
 
 Context7 не использовался: задача полностью документная и опирается на локальные specs/code/YouTrack. Актуальная внешняя документация по библиотекам, SDK, CLI или сторонним API не требуется.
 
@@ -44,13 +44,13 @@ Context7 не использовался: задача полностью док
 - база 1С: `one_c_base_id` или `base_code`;
 - `metadata_path`, по умолчанию `/metadata`;
 - auth mode: `bearer_token`, `basic` или `none` для изолированного стенда;
-- список required scopes в ProHelper profile;
+- список required scopes в МОСТ profile;
 - список `supported_scopes`, который возвращает 1С;
 - безопасный тестовый набор данных без настоящих секретов, банковских ключей и персональных данных сверх минимума.
 
 ### 2.2. Compatibility payload backend-а
 
-Текущий backend-контур доставки ProHelper отправляет в 1С минимальный compatibility payload:
+Текущий backend-контур доставки МОСТ отправляет в 1С минимальный compatibility payload:
 
 ```json
 {
@@ -110,7 +110,7 @@ Context7 не использовался: задача полностью док
 
 ## 3. Матрица приемки
 
-| ID теста | Сценарий | Scope | Входные данные | Ожидаемый ответ 1С | Ожидаемый статус ProHelper | Retry policy | Audit/journal expectation | Критерий Pass/Fail |
+| ID теста | Сценарий | Scope | Входные данные | Ожидаемый ответ 1С | Ожидаемый статус МОСТ | Retry policy | Audit/journal expectation | Критерий Pass/Fail |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | META-01 | Happy path metadata | metadata | GET `/metadata`, валидный auth, required scopes | HTTP 200, `status=ok`, `protocol_version=1.0`, `supported_scopes` | connection check `ok` | no retry | audit `connection_check_run`, steps ok, endpoint fingerprint | Pass, если smoke read-only и все scopes подтверждены |
 | META-02 | Unauthorized metadata | metadata | Нет auth или неверный auth | HTTP 401/403, safe error `unauthorized` | connection check `unauthorized` | no retry до исправления секрета | audit без Authorization и secret values | Pass, если секреты не раскрыты |
@@ -119,7 +119,7 @@ Context7 не использовался: задача полностью док
 | META-05 | Unconfigured | metadata | Пустой endpoint, нет active secret или обработка не настроена | HTTP 503/422, safe error `unconfigured` | connection check `unconfigured` или `secret_missing` | no auto retry | audit содержит safe reason | Pass, если пользователь видит понятную причину |
 | META-06 | Timeout/transport error | metadata | endpoint недоступен или задержка выше timeout | HTTP 408 или transport failure | connection check `timeout`/`transport_error` | ограниченный technical retry только по правилу стенда | audit фиксирует duration and code | Pass, если нет дублей и нет raw diagnostics |
 | DEL-01 | Accepted document | `payment_documents` | payment document с mapping и hash | HTTP 200, `accepted=true`, `status=accepted`, `external_id` | operation `accepted`/`delivered`, accounting status `accepted` | no retry | 1С journal содержит `correlation_id`, `idempotency_key`, `payload_hash` | Pass, если external id сохранен и дубль не создан |
-| DEL-02 | Posted document | `acts` | act с разрешенным accounting posting | HTTP 200, `accepted=true`, `status=posted`, `external_id` | operation `posted`, accounting status `posted` | no retry | journal содержит `posted_at` | Pass, если ProHelper не меняет операционный статус акта |
+| DEL-02 | Posted document | `acts` | act с разрешенным accounting posting | HTTP 200, `accepted=true`, `status=posted`, `external_id` | operation `posted`, accounting status `posted` | no retry | journal содержит `posted_at` | Pass, если МОСТ не меняет операционный статус акта |
 | DEL-03 | Rejected by business rule | `procurement_documents` | документ с бизнес-ошибкой 1С | HTTP 422, `status=rejected`, safe error `business_rejected` | operation `rejected`, conflict/review if needed | no auto retry | journal содержит safe next action | Pass, если причина безопасна и без stack trace |
 | DEL-04 | Duplicate delivery same hash | любой документный scope | тот же `idempotency_key` и тот же `payload_hash` | HTTP 200, `status=duplicate` или `accepted`, existing `external_id` | no new object, status unchanged/accepted | no retry | journal содержит новый attempt и existing external id | Pass, если в 1С один учетный объект |
 | DEL-05 | Duplicate conflict different hash | любой документный scope | тот же `idempotency_key`, другой `payload_hash` | HTTP 409, safe error `payload_hash_mismatch` | operation `conflict`/`dead_letter` after limit | no auto retry | conflict event, no silent overwrite | Pass, если перезапись запрещена |
@@ -148,8 +148,8 @@ Endpoint 1С: `GET {configured_endpoint}/{metadata_path}`. По умолчани
 | Header | Значение |
 | --- | --- |
 | `Authorization` | Bearer или Basic credentials, кроме изолированного стенда `auth_type=none` |
-| `X-ProHelper-Connection-Check` | `read-only` |
-| `X-ProHelper-Integration-Profile` | ID профиля ProHelper |
+| `X-МОСТ-Connection-Check` | `read-only` |
+| `X-МОСТ-Integration-Profile` | ID профиля МОСТ |
 
 ### META-01: happy path metadata
 
@@ -161,8 +161,8 @@ Request:
   "path": "/metadata",
   "headers": {
     "Authorization": "Bearer test-token",
-    "X-ProHelper-Connection-Check": "read-only",
-    "X-ProHelper-Integration-Profile": "44"
+    "X-МОСТ-Connection-Check": "read-only",
+    "X-МОСТ-Integration-Profile": "44"
   },
   "body": null
 }
@@ -203,8 +203,8 @@ Request:
   "path": "/metadata",
   "headers": {
     "Authorization": "Bearer invalid-token",
-    "X-ProHelper-Connection-Check": "read-only",
-    "X-ProHelper-Integration-Profile": "44"
+    "X-МОСТ-Connection-Check": "read-only",
+    "X-МОСТ-Integration-Profile": "44"
   },
   "body": null
 }
@@ -233,8 +233,8 @@ Request:
   "path": "/metadata",
   "headers": {
     "Authorization": "Bearer test-token",
-    "X-ProHelper-Connection-Check": "read-only",
-    "X-ProHelper-Integration-Profile": "44"
+    "X-МОСТ-Connection-Check": "read-only",
+    "X-МОСТ-Integration-Profile": "44"
   },
   "required_scopes": [
     "payment_documents",
@@ -274,8 +274,8 @@ Request:
   "path": "/metadata",
   "headers": {
     "Authorization": "Bearer test-token",
-    "X-ProHelper-Connection-Check": "read-only",
-    "X-ProHelper-Integration-Profile": "44"
+    "X-МОСТ-Connection-Check": "read-only",
+    "X-МОСТ-Integration-Profile": "44"
   },
   "expected_protocol_versions": [
     "1.0"
@@ -311,8 +311,8 @@ Request:
   "path": "/metadata",
   "headers": {
     "Authorization": "Bearer test-token",
-    "X-ProHelper-Connection-Check": "read-only",
-    "X-ProHelper-Integration-Profile": "44"
+    "X-МОСТ-Connection-Check": "read-only",
+    "X-МОСТ-Integration-Profile": "44"
   },
   "body": null
 }
@@ -345,8 +345,8 @@ Request:
   "path": "/metadata",
   "headers": {
     "Authorization": "Bearer test-token",
-    "X-ProHelper-Connection-Check": "read-only",
-    "X-ProHelper-Integration-Profile": "44"
+    "X-МОСТ-Connection-Check": "read-only",
+    "X-МОСТ-Integration-Profile": "44"
   },
   "timeout_seconds": 15
 }
@@ -363,11 +363,11 @@ Response HTTP 408:
 }
 ```
 
-If no HTTP response is received, ProHelper records safe code `transport_error` or `timeout` depending on transport diagnostics. In both cases the user must not see endpoint secrets, Authorization header, stack trace or raw transport exception.
+If no HTTP response is received, МОСТ records safe code `transport_error` or `timeout` depending on transport diagnostics. In both cases the user must not see endpoint secrets, Authorization header, stack trace or raw transport exception.
 
 Expected safe code: `timeout` or `transport_error`.
 
-## 5. Delivery ProHelper -> 1С
+## 5. Delivery МОСТ -> 1С
 
 ### DEL-01: accepted document
 
@@ -415,7 +415,7 @@ Response HTTP 200:
 }
 ```
 
-Expected ProHelper status: `accepted` or `delivered`, accounting status `accepted`.
+Expected МОСТ status: `accepted` or `delivered`, accounting status `accepted`.
 
 ### DEL-02: posted document
 
@@ -458,7 +458,7 @@ Response HTTP 200:
 }
 ```
 
-Expected ProHelper status: operation `posted`, accounting status `posted`; operational status акта не меняется автоматически.
+Expected МОСТ status: operation `posted`, accounting status `posted`; operational status акта не меняется автоматически.
 
 ### DEL-03: rejected document по бизнес-правилу
 
@@ -500,7 +500,7 @@ Response HTTP 422:
 }
 ```
 
-Expected ProHelper status: `rejected`; automatic retry запрещен.
+Expected МОСТ status: `rejected`; automatic retry запрещен.
 
 ### DEL-04: duplicate delivery с тем же idempotency_key и payload_hash
 
@@ -539,7 +539,7 @@ Response HTTP 200:
 }
 ```
 
-Expected ProHelper status: successful duplicate acknowledgement; в 1С один учетный объект.
+Expected МОСТ status: successful duplicate acknowledgement; в 1С один учетный объект.
 
 ### DEL-05: duplicate/conflict с тем же idempotency_key, но другим payload_hash
 
@@ -579,7 +579,7 @@ Response HTTP 409:
 }
 ```
 
-Expected ProHelper status: `conflict` или manual review; silent overwrite запрещен.
+Expected МОСТ status: `conflict` или manual review; silent overwrite запрещен.
 
 ### DEL-06: source_outdated
 
@@ -618,7 +618,7 @@ Response HTTP 409:
 }
 ```
 
-Expected ProHelper status: `conflict`, `dead_letter` или review; retry с устаревшим source запрещен.
+Expected МОСТ status: `conflict`, `dead_letter` или review; retry с устаревшим source запрещен.
 
 ### DEL-07: timeout с последующей проверкой idempotency
 
@@ -665,7 +665,7 @@ Status lookup response HTTP 200:
 }
 ```
 
-Expected ProHelper status: first attempt `retry_scheduled`, final state accepted if lookup confirms existing object; if lookup unsupported or ambiguous, manual review/dead-letter after limit.
+Expected МОСТ status: first attempt `retry_scheduled`, final state accepted if lookup confirms existing object; if lookup unsupported or ambiguous, manual review/dead-letter after limit.
 
 ### DEL-08: temporary_unavailable с retry
 
@@ -684,13 +684,13 @@ Response HTTP 503:
 }
 ```
 
-Expected ProHelper status: `retry_scheduled`, same `idempotency_key`, backoff 1 min -> 5 min -> 15 min -> 1 hour -> 3 hours, then `dead_letter`.
+Expected МОСТ status: `retry_scheduled`, same `idempotency_key`, backoff 1 min -> 5 min -> 15 min -> 1 hour -> 3 hours, then `dead_letter`.
 
-## 6. 1С -> ProHelper callbacks/events
+## 6. 1С -> МОСТ callbacks/events
 
 Callbacks от 1С должны быть идемпотентными и должны содержать минимум: `event_id`, `event_type`, `correlation_id`, `idempotency_key`, `scope`, `entity_type`, `entity_id`, `external_id`, `source_hash`, `payload_hash` или callback hash, `accounting_status`, safe error fields when needed.
 
-| ID | Сценарий | Request 1С -> ProHelper | Expected ProHelper response | Pass/Fail |
+| ID | Сценарий | Request 1С -> МОСТ | Expected МОСТ response | Pass/Fail |
 | --- | --- | --- | --- | --- |
 | CB-01 | Accounting status accepted | `accounting_status=accepted`, existing `external_id` | HTTP 200, ack accepted | Pass, если accounting status обновлен отдельно от операционного workflow |
 | CB-02 | Accounting status posted | `accounting_status=posted`, posted timestamp | HTTP 200, ack posted | Pass, если posted принят только от 1С |
@@ -794,15 +794,15 @@ Example reconciliation mismatch callback:
 
 ## 7. Scopes
 
-| Scope | Minimal required fields | Mapping dependencies | Forbidden duplication boundary | Expected 1С ownership | Expected ProHelper ownership |
+| Scope | Minimal required fields | Mapping dependencies | Forbidden duplication boundary | Expected 1С ownership | Expected МОСТ ownership |
 | --- | --- | --- | --- | --- | --- |
-| `counterparties` | local id, type, normalized name, INN/KPP or stable identifier, status, organization | organization, legal entity, existing 1С counterparty candidates | ProHelper не становится единственным владельцем юридических реквизитов для первички | учетный контрагент, юридические реквизиты, accounting code | MDM quality, операционные роли, контакты, supplier/contractor workflow |
-| `contracts` | contract id, number, date, counterparty, amount/currency, project, subject, status/version | counterparty, organization, project/cost analytics | `active` в ProHelper не равен accounting posted в 1С | учетная карточка договора, external id, accounting status | lifecycle договора, workflow, проектные связи, версии |
+| `counterparties` | local id, type, normalized name, INN/KPP or stable identifier, status, organization | organization, legal entity, existing 1С counterparty candidates | МОСТ не становится единственным владельцем юридических реквизитов для первички | учетный контрагент, юридические реквизиты, accounting code | MDM quality, операционные роли, контакты, supplier/contractor workflow |
+| `contracts` | contract id, number, date, counterparty, amount/currency, project, subject, status/version | counterparty, organization, project/cost analytics | `active` в МОСТ не равен accounting posted в 1С | учетная карточка договора, external id, accounting status | lifecycle договора, workflow, проектные связи, версии |
 | `acts` | act id, number, date, period, contract, amount, VAT flag if applicable, work lines summary | contract, counterparty, project, cost category | `approved`/`signed` не равны бухгалтерскому проведению | accepted/posted/rejected accounting status | выполнение работ, операционная приемка, связи с нарядами/сметой |
-| `payment_documents` | payment id, date, amount, currency, payer/payee, masked bank requisites, purpose, due date, basis | counterparty, contract/act, legal entity, bank account mapping | `paid` в ProHelper не равен бухгалтерскому проведению или банковскому факту | учетное отражение платежа, payment accounting status | approval, priority, payment calendar, связи с заявками |
+| `payment_documents` | payment id, date, amount, currency, payer/payee, masked bank requisites, purpose, due date, basis | counterparty, contract/act, legal entity, bank account mapping | `paid` в МОСТ не равен бухгалтерскому проведению или банковскому факту | учетное отражение платежа, payment accounting status | approval, priority, payment calendar, связи с заявками |
 | `procurement_documents` | order/receipt id, supplier, date, amount, lines, project, warehouse/material summary | supplier, material, warehouse, contract if exists | confirmed/delivered не равны учетному поступлению | заказ/поступление/счет в 1С, accounting status | выбор поставщика, закупочный workflow, операционная поставка |
 | `warehouse_movements` | movement id, movement type, warehouse, material, quantity, unit, date, project, source document | warehouse, material, project/cost analytics | оперативный склад не равен официальному складскому стоимостному учету | официальный складской документ, партии/стоимость, если включены | физическое движение, резервы, mobile scan, инвентаризация площадки |
-| `payroll_source` | period id, package id, rows count, employee external refs, work dates/hours, source_hash, amount summary | employee/payroll ref, project/work order, legal entity | ProHelper не рассчитывает юридическую зарплату, НДФЛ, взносы и отчетность | payroll acceptance/rejection, ЗУП/1С расчет и налоги | явка, выработка, source rows, package lock and export status |
+| `payroll_source` | period id, package id, rows count, employee external refs, work dates/hours, source_hash, amount summary | employee/payroll ref, project/work order, legal entity | МОСТ не рассчитывает юридическую зарплату, НДФЛ, взносы и отчетность | payroll acceptance/rejection, ЗУП/1С расчет и налоги | явка, выработка, source rows, package lock and export status |
 
 Acceptance cases по scopes:
 
@@ -818,7 +818,7 @@ Acceptance cases по scopes:
 
 ## 8. Mapping/reconciliation
 
-| ID | Сценарий | Входные данные | Ожидаемое поведение 1С | Ожидаемое поведение ProHelper | Pass/Fail |
+| ID | Сценарий | Входные данные | Ожидаемое поведение 1С | Ожидаемое поведение МОСТ | Pass/Fail |
 | --- | --- | --- | --- | --- | --- |
 | MAP-01 | `mapping_missing` | Документ требует counterparty/contract/material mapping, active mapping отсутствует | `status=requires_mapping`, safe error `mapping_missing` | message `requires_mapping`, auto retry off | Pass, если документ не создан без mapping |
 | MAP-02 | `duplicate_mapping` | Один local object связан с двумя external objects или наоборот | `status=conflict`, safe error `duplicate_mapping` | conflict queue, manual decision | Pass, если candidates безопасны |
@@ -827,7 +827,7 @@ Acceptance cases по scopes:
 | REC-01 | Mismatch by amount | В 1С сумма отличается | `accounting_conflict` | reconciliation event and conflict | Pass, если сумма не перезаписана |
 | REC-02 | Mismatch by date | В 1С дата отличается | `accounting_conflict` | review queue | Pass, если есть comparison fields |
 | REC-03 | Mismatch by counterparty | external counterparty отличается | `accounting_conflict` или `duplicate_mapping` | conflict queue | Pass, если нужен manual resolution |
-| REC-04 | Silent overwrite forbidden | 1С вернула новые critical fields | response accepted only as review signal | ProHelper не меняет owner fields автоматически | Pass, если field ownership соблюден |
+| REC-04 | Silent overwrite forbidden | 1С вернула новые critical fields | response accepted only as review signal | МОСТ не меняет owner fields автоматически | Pass, если field ownership соблюден |
 
 Mapping response example:
 
@@ -866,7 +866,7 @@ Mapping response example:
 | `mapping_missing` | no auto, yes after mapping | yes | Создать/подтвердить mapping, затем safe requeue |
 | `duplicate_mapping` | no | yes | Разобрать candidates, выбрать active mapping или закрыть дубль |
 | `duplicate_delivery` | no | no, если hash совпал | Вернуть existing result, не создавать новый объект |
-| `validation_error` | no | yes | Исправить данные ProHelper или mapping, создать новую версию при изменении payload |
+| `validation_error` | no | yes | Исправить данные МОСТ или mapping, создать новую версию при изменении payload |
 | `business_rejected` | no | yes | Передать владельцу документа безопасную причину и next action |
 | `timeout` | limited | yes after ambiguity | Проверить состояние по `idempotency_key`/external id, затем retry same key или review |
 | `transport_error` | yes | yes after retry limit | Автоматический retry с backoff, затем dead-letter |
@@ -1197,8 +1197,8 @@ Retry acceptance:
 ### 12.1. Какие тесты должны пройти
 
 - META-01 - META-06 по metadata smoke-check.
-- DEL-01 - DEL-08 по доставке ProHelper -> 1С.
-- CB-01 - CB-07 по callbacks/events 1С -> ProHelper, если callback mode входит в поставку.
+- DEL-01 - DEL-08 по доставке МОСТ -> 1С.
+- CB-01 - CB-07 по callbacks/events 1С -> МОСТ, если callback mode входит в поставку.
 - SCOPE-01 - SCOPE-07 по scope-specific acceptance.
 - MAP-01 - MAP-04 и REC-01 - REC-04.
 - Все safe error codes из раздела 9.
@@ -1239,11 +1239,11 @@ Retry acceptance:
 | Поле | Что указывать |
 | --- | --- |
 | Test ID | ID из acceptance-suite |
-| Expected | Ожидаемый ответ 1С, статус ProHelper, retry policy, audit expectation |
+| Expected | Ожидаемый ответ 1С, статус МОСТ, retry policy, audit expectation |
 | Actual | Фактический безопасный результат |
 | Impact | Блокирует production, блокирует scope, minor issue |
 | Evidence | Safe screenshot/log/hash/correlation id |
-| Owner | 1С-подрядчик, ProHelper backend/admin, приемочная команда |
+| Owner | 1С-подрядчик, МОСТ backend/admin, приемочная команда |
 | Next action | Исправить, уточнить open question, принять ограничение |
 
 ## 13. Open questions
@@ -1275,4 +1275,4 @@ Retry acceptance:
 - retry/dead-letter policy соответствует safe error table;
 - no raw payload, no stack trace, no secrets подтверждено артефактами;
 - payroll_source не раскрывает персональные и юридически значимые payroll details;
-- accounting/tax boundaries соблюдены: ProHelper не дублирует бухгалтерский и налоговый source of truth 1С.
+- accounting/tax boundaries соблюдены: МОСТ не дублирует бухгалтерский и налоговый source of truth 1С.

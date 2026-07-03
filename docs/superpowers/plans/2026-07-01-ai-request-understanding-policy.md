@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Добавить серверный слой Request Understanding / Intent Policy для ProHelper AI Assistant, чтобы отрицательные ограничения пользователя управляли доступностью tools, agent flow и payload.
+**Goal:** Добавить серверный слой Request Understanding / Intent Policy для МОСТ AI Assistant, чтобы отрицательные ограничения пользователя управляли доступностью tools, agent flow и payload.
 
 **Architecture:** Запрос разбирается один раз в `AssistantRequestUnderstandingResolver`, затем результат хранится в `taskPlan['request_understanding']`. `AssistantToolEligibilityPolicy` применяет этот результат перед передачей tools в LLM, перед фактическим выполнением tool call, перед agent executor и перед добавлением navigation/proposed actions в payload.
 

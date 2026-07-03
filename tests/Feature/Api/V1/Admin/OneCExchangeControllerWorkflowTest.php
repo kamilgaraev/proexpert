@@ -473,12 +473,12 @@ final class OneCExchangeControllerWorkflowTest extends TestCase
                 'field_differences' => [
                     [
                         'field' => 'amount',
-                        'prohelper_value' => 125000,
+                        'most_value' => 125000,
                         'one_c_value' => 120000,
                     ],
                     [
                         'field' => 'contractor',
-                        'prohelper_value' => 'ООО Строй',
+                        'most_value' => 'ООО Строй',
                         'one_c_value' => 'ООО Строй',
                     ],
                 ],
@@ -491,9 +491,9 @@ final class OneCExchangeControllerWorkflowTest extends TestCase
         $listResponse->assertOk()
             ->assertJsonPath('success', true)
             ->assertJsonPath('data.0.operation_key', 'conflict-payment-100')
-            ->assertJsonPath('data.0.title', 'Значения ProHelper и 1C не совпадают')
+            ->assertJsonPath('data.0.title', 'Значения МОСТ и 1C не совпадают')
             ->assertJsonPath('data.0.comparison_fields.0.field', 'amount')
-            ->assertJsonPath('data.0.comparison_fields.0.prohelper_value', 125000)
+            ->assertJsonPath('data.0.comparison_fields.0.most_value', 125000)
             ->assertJsonPath('data.0.comparison_fields.0.one_c_value', 120000)
             ->assertJsonMissing(['token' => 'plain-secret-token'])
             ->assertJsonMissing(['stack_trace' => 'hidden stack']);
@@ -507,21 +507,21 @@ final class OneCExchangeControllerWorkflowTest extends TestCase
         $detailResponse->assertOk()
             ->assertJsonPath('data.id', $conflictId)
             ->assertJsonPath('data.history.0.action', 'created')
-            ->assertJsonPath('data.available_actions.0.type', 'accept_prohelper');
+            ->assertJsonPath('data.available_actions.0.type', 'accept_most');
 
         $resolveResponse = $this->withHeaders($context->authHeaders())
             ->postJson("/api/v1/admin/one-c-exchange/conflicts/{$conflictId}/actions", [
-                'action' => 'accept_prohelper',
+                'action' => 'accept_most',
                 'expected_version' => $version,
-                'comment' => 'Оставляем оперативные данные ProHelper, 1C обновит сумму после повторной доставки.',
+                'comment' => 'Оставляем оперативные данные МОСТ, 1C обновит сумму после повторной доставки.',
             ]);
 
         $resolveResponse->assertOk()
             ->assertJsonPath('success', true)
             ->assertJsonPath('data.status', 'resolved')
-            ->assertJsonPath('data.resolution.decision', 'prohelper')
-            ->assertJsonPath('data.history.0.action', 'accept_prohelper')
-            ->assertJsonPath('data.history.0.comment', 'Оставляем оперативные данные ProHelper, 1C обновит сумму после повторной доставки.');
+            ->assertJsonPath('data.resolution.decision', 'most')
+            ->assertJsonPath('data.history.0.action', 'accept_most')
+            ->assertJsonPath('data.history.0.comment', 'Оставляем оперативные данные МОСТ, 1C обновит сумму после повторной доставки.');
 
         $this->assertDatabaseHas('one_c_exchange_operations', [
             'id' => $operation->id,

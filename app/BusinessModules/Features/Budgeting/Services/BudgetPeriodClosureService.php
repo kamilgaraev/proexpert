@@ -506,7 +506,7 @@ final class BudgetPeriodClosureService
     public function managementSourceOfTruth(): array
     {
         return [
-            'management_budgeting' => 'prohelper',
+            'management_budgeting' => 'most',
             'regulated_accounting' => '1c',
         ];
     }

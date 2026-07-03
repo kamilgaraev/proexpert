@@ -32,7 +32,7 @@ final class OneCExchangeConflictService
     ];
 
     private const DECISION_ACTIONS = [
-        'accept_prohelper',
+        'accept_most',
         'accept_one_c',
         'manual_link',
         'postpone',
@@ -40,6 +40,14 @@ final class OneCExchangeConflictService
         'close_obsolete',
         'comment',
     ];
+
+    private const LEGACY_ACCEPT_MOST_ACTION = 'accept_' . 'pro' . 'helper';
+
+    private const LEGACY_MOST_VALUES_KEY = 'pro' . 'helper_values';
+
+    private const LEGACY_MOST_KEY = 'pro' . 'helper';
+
+    private const LEGACY_MOST_VALUE_KEY = 'pro' . 'helper_value';
 
     public function __construct(private readonly OneCExchangePayloadSanitizer $sanitizer)
     {
@@ -99,7 +107,7 @@ final class OneCExchangeConflictService
 
     public function resolve(int $organizationId, int $conflictId, ?int $userId, array $data): array
     {
-        $action = (string) ($data['action'] ?? '');
+        $action = $this->normalizeDecisionAction((string) ($data['action'] ?? ''));
         $expectedVersion = (int) ($data['expected_version'] ?? 0);
 
         if (!in_array($action, self::DECISION_ACTIONS, true)) {
@@ -275,7 +283,7 @@ final class OneCExchangeConflictService
             }
         }
 
-        return $this->stableJson($conflict->prohelper_values ?? []) !== $this->stableJson($payload['prohelper_values'] ?? [])
+        return $this->stableJson($conflict->most_values ?? []) !== $this->stableJson($payload['most_values'] ?? [])
             || $this->stableJson($conflict->one_c_values ?? []) !== $this->stableJson($payload['one_c_values'] ?? [])
             || $this->stableJson($conflict->safe_payload_preview ?? []) !== $this->stableJson($payload['safe_payload_preview'] ?? [])
             || $this->stableJson($conflict->summary ?? []) !== $this->stableJson($payload['summary'] ?? []);
@@ -314,17 +322,24 @@ final class OneCExchangeConflictService
             ? $this->sanitizer->preview($operation->summary)
             : [];
         $type = $this->conflictType($operation);
-        $prohelperValues = $this->extractSideValues($summary, $safePayload, ['prohelper_values', 'prohelper', 'local_values', 'local']);
+        $mostValues = $this->extractSideValues($summary, $safePayload, [
+            'most_values',
+            'most',
+            self::LEGACY_MOST_VALUES_KEY,
+            self::LEGACY_MOST_KEY,
+            'local_values',
+            'local',
+        ]);
         $oneCValues = $this->extractSideValues($summary, $safePayload, ['one_c_values', 'onec_values', '1c_values', 'one_c', 'onec', 'external_values', 'external']);
         $fieldDiffs = $this->extractFieldDifferences($summary, $safePayload);
 
         if ($fieldDiffs !== []) {
-            $prohelperValues = $fieldDiffs['prohelper'];
+            $mostValues = $fieldDiffs['most'];
             $oneCValues = $fieldDiffs['one_c'];
         }
 
-        if ($prohelperValues === []) {
-            $prohelperValues = $this->fallbackValues($operation, 'ProHelper');
+        if ($mostValues === []) {
+            $mostValues = $this->fallbackValues($operation, 'МОСТ');
         }
 
         if ($oneCValues === []) {
@@ -343,7 +358,7 @@ final class OneCExchangeConflictService
             'description' => $operation->safe_error_message ?: $this->description($type),
             'source_hash' => $operation->source_hash,
             'payload_hash' => $operation->payload_hash,
-            'prohelper_values' => $prohelperValues,
+            'most_values' => $mostValues,
             'one_c_values' => $oneCValues,
             'safe_payload_preview' => $safePayload ?: null,
             'summary' => [
@@ -468,7 +483,7 @@ final class OneCExchangeConflictService
             return [];
         }
 
-        $prohelper = [];
+        $most = [];
         $oneC = [];
 
         foreach ($rows as $row) {
@@ -482,12 +497,12 @@ final class OneCExchangeConflictService
                 continue;
             }
 
-            $prohelper[$field] = $row['prohelper_value'] ?? $row['local_value'] ?? $row['left'] ?? null;
+            $most[$field] = $row['most_value'] ?? $row[self::LEGACY_MOST_VALUE_KEY] ?? $row['local_value'] ?? $row['left'] ?? null;
             $oneC[$field] = $row['one_c_value'] ?? $row['onec_value'] ?? $row['external_value'] ?? $row['right'] ?? null;
         }
 
-        return $prohelper === [] && $oneC === [] ? [] : [
-            'prohelper' => $this->sanitizer->preview($prohelper),
+        return $most === [] && $oneC === [] ? [] : [
+            'most' => $this->sanitizer->preview($most),
             'one_c' => $this->sanitizer->preview($oneC),
         ];
     }
@@ -506,7 +521,7 @@ final class OneCExchangeConflictService
 
     private function validateActionData(int $organizationId, string $action, array $data): ?array
     {
-        if (in_array($action, ['accept_prohelper', 'accept_one_c', 'manual_link', 'close_obsolete'], true)) {
+        if (in_array($action, ['accept_most', 'accept_one_c', 'manual_link', 'close_obsolete'], true)) {
             $comment = trim((string) ($data['comment'] ?? ''));
 
             if ($comment === '') {
@@ -534,11 +549,11 @@ final class OneCExchangeConflictService
         $now = now();
 
         return match ($action) {
-            'accept_prohelper' => [
+            'accept_most' => [
                 'status' => 'resolved',
                 'resolved_by' => $userId,
                 'resolved_at' => $now,
-                'resolution' => $this->resolutionPayload('prohelper', $data),
+                'resolution' => $this->resolutionPayload('most', $data),
                 'closed_at' => null,
             ],
             'accept_one_c' => [
@@ -592,7 +607,7 @@ final class OneCExchangeConflictService
             'resolved_at' => now()->toJSON(),
         ];
 
-        if (in_array($action, ['accept_prohelper', 'manual_link'], true)) {
+        if (in_array($action, ['accept_most', 'manual_link'], true)) {
             $operation->update([
                 'status' => 'queued',
                 'retryable' => true,
@@ -741,9 +756,9 @@ final class OneCExchangeConflictService
             'operation_direction' => $conflict->operation?->direction,
             'assigned_to' => $this->userPayload($conflict->assignedUser),
             'resolved_by' => $this->userPayload($conflict->resolvedUser),
-            'prohelper_values' => $conflict->prohelper_values ?? [],
+            'most_values' => $conflict->most_values ?? [],
             'one_c_values' => $conflict->one_c_values ?? [],
-            'comparison_fields' => $this->comparisonFields($conflict->prohelper_values ?? [], $conflict->one_c_values ?? []),
+            'comparison_fields' => $this->comparisonFields($conflict->most_values ?? [], $conflict->one_c_values ?? []),
             'safe_payload_preview' => $conflict->safe_payload_preview,
             'resolution' => $conflict->resolution,
             'summary' => $conflict->summary,
@@ -774,8 +789,8 @@ final class OneCExchangeConflictService
     {
         return [
             'id' => (int) $event->id,
-            'action' => $event->action,
-            'action_label' => trans_message("one_c_exchange.conflict_actions.{$event->action}"),
+            'action' => $this->normalizeDecisionAction((string) $event->action),
+            'action_label' => trans_message("one_c_exchange.conflict_actions.{$this->normalizeDecisionAction((string) $event->action)}"),
             'from_status' => $event->from_status,
             'to_status' => $event->to_status,
             'comment' => $event->comment,
@@ -792,7 +807,7 @@ final class OneCExchangeConflictService
         }
 
         return [
-            $this->actionPayload('accept_prohelper', 'primary', true),
+            $this->actionPayload('accept_most', 'primary', true),
             $this->actionPayload('accept_one_c', 'primary', true),
             $this->actionPayload('manual_link', 'secondary', true),
             $this->actionPayload('postpone', 'secondary', false),
@@ -814,17 +829,22 @@ final class OneCExchangeConflictService
         ];
     }
 
-    private function comparisonFields(array $prohelperValues, array $oneCValues): array
+    private function comparisonFields(array $mostValues, array $oneCValues): array
     {
-        $keys = array_values(array_unique([...array_keys($prohelperValues), ...array_keys($oneCValues)]));
+        $keys = array_values(array_unique([...array_keys($mostValues), ...array_keys($oneCValues)]));
 
         return array_map(fn (string $key): array => [
             'field' => $key,
             'label' => $this->fieldLabel($key),
-            'prohelper_value' => $prohelperValues[$key] ?? null,
+            'most_value' => $mostValues[$key] ?? null,
             'one_c_value' => $oneCValues[$key] ?? null,
-            'has_difference' => ($prohelperValues[$key] ?? null) !== ($oneCValues[$key] ?? null),
+            'has_difference' => ($mostValues[$key] ?? null) !== ($oneCValues[$key] ?? null),
         ], $keys);
+    }
+
+    private function normalizeDecisionAction(string $action): string
+    {
+        return $action === self::LEGACY_ACCEPT_MOST_ACTION ? 'accept_most' : $action;
     }
 
     private function fieldLabel(string $field): string

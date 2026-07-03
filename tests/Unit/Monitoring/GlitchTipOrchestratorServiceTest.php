@@ -87,7 +87,7 @@ class GlitchTipOrchestratorServiceTest extends TestCase
         $issues = $service->summarizeIssues([
             [
                 'id' => '1',
-                'shortId' => 'PROHELPER-1',
+                'shortId' => 'MOST-1',
                 'title' => 'Database timeout',
                 'status' => 'unresolved',
                 'count' => '5',
@@ -96,7 +96,7 @@ class GlitchTipOrchestratorServiceTest extends TestCase
         ]);
 
         self::assertCount(1, $issues);
-        self::assertSame('PROHELPER-1', $issues[0]['short_id']);
+        self::assertSame('MOST-1', $issues[0]['short_id']);
         self::assertSame('Database timeout', $issues[0]['title']);
         self::assertSame('unresolved', $issues[0]['status']);
     }

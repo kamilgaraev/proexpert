@@ -24,7 +24,7 @@ class EmailVerificationNotification extends VerifyEmail
         $verificationUrl = $this->verificationUrl($notifiable);
 
         return (new MailMessage())
-            ->subject('Подтверждение email в ProHelper')
+            ->subject('Подтверждение email в МОСТ')
             ->markdown('emails.email_verification', [
                 'user' => $notifiable,
                 'verificationUrl' => $verificationUrl,

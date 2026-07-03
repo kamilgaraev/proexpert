@@ -143,7 +143,7 @@ final class EpmDataMartFreshnessServiceTest extends TestCase
             'formula_version' => $formulaVersion,
             'source_hash' => str_repeat('a', 64),
             'source_refs' => json_encode([
-                'management_source_of_truth' => 'prohelper',
+                'management_source_of_truth' => 'most',
                 'external_confirmation' => [
                     '1c' => [
                         'role' => 'freshness_confirmation_only',

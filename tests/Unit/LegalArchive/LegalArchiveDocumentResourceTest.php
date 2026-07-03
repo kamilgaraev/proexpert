@@ -60,7 +60,7 @@ final class LegalArchiveDocumentResourceTest extends TestCase
             'document_type' => 'contract',
             'status' => 'active',
             'direction' => 'incoming',
-            'source_system' => 'prohelper',
+            'source_system' => 'most',
             'counterparty_name' => 'ООО Строй',
             'legal_significance_status' => 'not_confirmed',
             'retention_policy' => 'default_5y',

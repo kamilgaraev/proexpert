@@ -12,7 +12,7 @@ return [
         'user_id_label' => 'ID пользователя:',
         'request_subject_label' => 'Тема:',
         'reply_subject' => 'Ответ поддержки: :subject',
-        'reply_title' => 'Ответ поддержки ProHelper',
+        'reply_title' => 'Ответ поддержки МОСТ',
         'reply_greeting' => 'Здравствуйте, :name.',
         'reply_signature' => 'С уважением, :operator.',
     ],

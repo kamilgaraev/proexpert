@@ -99,7 +99,7 @@ class TechnicalLogger
     }
 
     /**
-     * Специальные методы для технических событий ProHelper
+     * Специальные методы для технических событий МОСТ
      */
 
     public function databaseError(\Throwable $exception, ?string $query = null): void

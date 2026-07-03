@@ -143,12 +143,12 @@ class BlogCmsEditorWorkflowTest extends TestCase
         $article = app(BlogCmsService::class)->createDraft([
             'author_id' => $landingAdmin->id,
             'category_id' => $category->id,
-            'title' => 'Big ProHelper Release',
+            'title' => 'Big МОСТ Release',
             'excerpt' => 'Короткое описание релиза.',
             'editor_document' => $this->documentFixture(),
             'featured_image' => 'https://cdn.example.test/blog/release.jpg',
-            'meta_title' => 'Big ProHelper Release',
-            'meta_description' => 'Что изменилось в ProHelper для команд.',
+            'meta_title' => 'Big МОСТ Release',
+            'meta_description' => 'Что изменилось в МОСТ для команд.',
         ], $admin);
 
         $this->assertSame('big-prohelper-release', $article->slug);
@@ -330,7 +330,7 @@ class BlogCmsEditorWorkflowTest extends TestCase
             'public_url' => $coverUrl,
             'mime_type' => 'image/jpeg',
             'file_size' => 120000,
-            'alt_text' => 'Скриншот редактора статьи ProHelper',
+            'alt_text' => 'Скриншот редактора статьи МОСТ',
         ]);
 
         return BlogArticle::query()->create([

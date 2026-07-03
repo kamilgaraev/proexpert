@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <title>{{ $title }}</title>
     <style>
-        @include('pdf.partials.prohelper-brand-styles')
+        @include('pdf.partials.most-brand-styles')
         body {
             font-family: 'DejaVu Sans', 'Arial Unicode MS', Arial, sans-serif;
             font-size: 8px;
@@ -77,7 +77,7 @@
     </style>
 </head>
 <body>
-    @include('pdf.partials.prohelper-brand-header')
+    @include('pdf.partials.most-brand-header')
     <div class="header">
         <div class="report-title">{{ $title }}</div>
         <div class="metadata">
@@ -133,6 +133,6 @@
             @endforelse
         </tbody>
     </table>
-    @include('pdf.partials.prohelper-brand-footer')
+    @include('pdf.partials.most-brand-footer')
 </body>
 </html>

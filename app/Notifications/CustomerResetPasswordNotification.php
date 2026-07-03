@@ -25,7 +25,7 @@ class CustomerResetPasswordNotification extends Notification
     public function toMail(object $notifiable): MailMessage
     {
         return (new MailMessage())
-            ->subject('Восстановление доступа к кабинету заказчика ProHelper')
+            ->subject('Восстановление доступа к кабинету заказчика МОСТ')
             ->greeting('Здравствуйте!')
             ->line('Мы получили запрос на смену пароля для кабинета заказчика.')
             ->action('Сменить пароль', $this->url)

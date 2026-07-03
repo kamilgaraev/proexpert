@@ -66,14 +66,14 @@ class CodexDemoScreenshotSeeder extends Seeder
     private function prepareAccount(User $user, Organization $organization): void
     {
         $this->updateModel($organization, [
-            'name' => 'ProHelper Demo Construction',
-            'legal_name' => 'ООО "ПроХелпер Демо"',
+            'name' => 'МОСТ Demo Construction',
+            'legal_name' => 'ООО "МОСТ Демо"',
             'phone' => '+7 495 120-45-77',
             'email' => 'office@prohelper-demo.ru',
             'address' => 'Москва, Ленинградский проспект, 37',
             'city' => 'Москва',
             'country' => 'Россия',
-            'description' => 'Демонстрационная строительная организация для скриншотов ProHelper.',
+            'description' => 'Демонстрационная строительная организация для скриншотов МОСТ.',
             'is_active' => true,
             'is_verified' => true,
             'is_onboarding_demo' => true,

@@ -240,7 +240,7 @@ class PaymentExportService
         $lines[] = "1CClientBankExchange";
         $lines[] = "ВерсияФормата=1.03";
         $lines[] = "Кодировка=Windows";
-        $lines[] = "Отправитель=ProHelper";
+        $lines[] = "Отправитель=МОСТ";
         $lines[] = "ДатаСоздания=" . now()->format('d.m.Y');
         $lines[] = "ВремяСоздания=" . now()->format('H:i:s');
         $lines[] = "";

@@ -41,7 +41,7 @@ class BlogEditorialChecklistServiceTest extends TestCase
     {
         $admin = SystemAdmin::factory()->role('content_manager')->create();
         $category = $this->categoryFixture('checklist-ready');
-        $media = $this->mediaFixture('cover-ready.jpg', 'Интерфейс ProHelper на экране ноутбука');
+        $media = $this->mediaFixture('cover-ready.jpg', 'Интерфейс МОСТ на экране ноутбука');
         $article = $this->articleFixture($admin, $category, $media->public_url, $this->readyDocument(), [
             'canonical_url' => 'https://prohelper.pro/blog/checklist-ready',
             'scheduled_at' => now()->addDay(),

@@ -37,6 +37,6 @@ return [
     'section_rebuild_error' => 'Не удалось пересобрать блок сметы.',
     'feedback_saved' => 'Обратная связь по генерации сохранена.',
     'feedback_error' => 'Не удалось сохранить обратную связь.',
-    'export_completed' => 'Файл сметы подготовлен в формате ProHelper Excel.',
+    'export_completed' => 'Файл сметы подготовлен в формате МОСТ Excel.',
     'export_error' => 'Не удалось подготовить файл сметы.',
 ];
