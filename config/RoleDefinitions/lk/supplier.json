@@ -6,6 +6,10 @@
   "interface": "lk",
   "description": "Управление складом, закупками и снабжением",
   "system_permissions": [
+    "admin.access",
+    "admin.dashboard.view",
+    "admin.materials.view",
+    "admin.materials.edit",
     "organization.view",
     "profile.view",
     "profile.edit"
@@ -55,6 +59,30 @@
       "system-logs.filter",
       "system-logs.search"
     ],
+    "procurement": [
+      "procurement.view",
+      "procurement.chain.view",
+      "procurement.audit.view",
+      "procurement.purchase_requests.view",
+      "procurement.purchase_requests.create",
+      "procurement.purchase_requests.edit",
+      "procurement.supplier_requests.view",
+      "procurement.supplier_requests.create",
+      "procurement.supplier_requests.send",
+      "procurement.supplier_requests.cancel",
+      "procurement.purchase_orders.view",
+      "procurement.purchase_orders.create",
+      "procurement.purchase_orders.send",
+      "procurement.purchase_orders.confirm",
+      "procurement.purchase_orders.mark_delivery",
+      "procurement.purchase_orders.receive",
+      "procurement.supplier_proposals.view",
+      "procurement.supplier_proposals.create",
+      "procurement.proposal_decisions.view",
+      "procurement.proposal_decisions.select",
+      "procurement.dashboard.view",
+      "procurement.statistics.view"
+    ],
     "report-templates": [
       "report_templates.view"
     ],
@@ -83,7 +111,8 @@
     ]
   },
   "interface_access": [
-    "lk"
+    "lk",
+    "admin"
   ],
   "hierarchy": {
     "can_manage_roles": [],

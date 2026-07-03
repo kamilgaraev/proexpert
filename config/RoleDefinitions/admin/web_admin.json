@@ -5,6 +5,7 @@
   "context": "organization",
   "interface": "admin",
   "description": "Администратор веб-панели с полными правами в рамках организации",
+  "assignable": false,
   "system_permissions": [
     "admin.access",
     "admin.dashboard.view",

@@ -5,6 +5,7 @@
   "context": "system",
   "interface": "admin",
   "description": "Служба технической поддержки пользователей",
+  "assignable": false,
   "system_permissions": [
     "support.view_tickets",
     "support.manage_tickets",

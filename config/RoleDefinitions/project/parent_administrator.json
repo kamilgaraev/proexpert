@@ -5,6 +5,7 @@
   "context": "project",
   "interface": "admin",
   "description": "Головная организация холдинга автоматически добавляется с этой ролью при создании проектов дочерними организациями. Полный контроль и видимость.",
+  "assignable": false,
   
   "system_permissions": [
     "admin.access",

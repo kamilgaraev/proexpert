@@ -5,6 +5,7 @@
   "context": "organization",
   "interface": "admin",
   "description": "Модерация карточек бригад, документов и публикации в каталоге",
+  "assignable": false,
   "system_permissions": [
     "admin.access",
     "admin.dashboard.view",

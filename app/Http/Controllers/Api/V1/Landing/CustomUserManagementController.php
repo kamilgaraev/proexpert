@@ -13,6 +13,7 @@ use App\Domain\Authorization\Services\RoleScanner;
 use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\LandingResponse;
+use App\Helpers\AdminPanelAccessHelper;
 use App\Models\User;
 use App\Repositories\UserRepository;
 use App\Services\Billing\SubscriptionLimitsService;
@@ -35,6 +36,7 @@ class CustomUserManagementController extends Controller
         protected AuthorizationService $authService,
         protected RoleScanner $roleScanner,
         protected RolePayloadFormatter $rolePayloadFormatter,
+        protected AdminPanelAccessHelper $adminPanelAccessHelper,
         protected UserRepository $userRepository,
         protected SubscriptionLimitsService $subscriptionLimitsService,
         protected UserService $userService
@@ -86,6 +88,22 @@ class CustomUserManagementController extends Controller
 
         if (in_array('organization_owner', $data['roles'] ?? [], true)) {
             return LandingResponse::error(trans_message('landing_users.owner_generic_assignment_forbidden'), 422);
+        }
+
+        $invalidRoles = collect($data['roles'] ?? [])
+            ->filter(function (string $roleSlug): bool {
+                $role = $this->roleScanner->getRole($roleSlug);
+
+                return !$role || !$this->rolePayloadFormatter->isAssignableSystemRole($role);
+            })
+            ->values();
+
+        if ($invalidRoles->isNotEmpty()) {
+            return LandingResponse::error(
+                trans_message('landing_users.validation.role_invalid'),
+                422,
+                ['roles' => [trans_message('landing_users.validation.role_invalid')]]
+            );
         }
 
         try {
@@ -195,9 +213,21 @@ class CustomUserManagementController extends Controller
         }
 
         try {
+            $adminPanelOnly = $this->isAdminPanelRoleScope($request);
+            $adminPanelRoleSlugs = [];
+
+            if ($adminPanelOnly) {
+                $adminPanelRoleSlugs = array_flip($this->adminPanelAccessHelper->getAdminPanelRoles(
+                    (int) $organizationId,
+                    (string) $request->query('current_interface', 'lk'),
+                    true
+                ));
+            }
+
             $systemRoles = $this->roleScanner->getAllRoles()
                 ->reject(fn (array $role, string $slug): bool => $slug === 'organization_owner')
                 ->filter(fn (array $role): bool => $this->rolePayloadFormatter->isAssignableSystemRole($role))
+                ->filter(fn (array $role, string $slug): bool => !$adminPanelOnly || isset($adminPanelRoleSlugs[$slug]))
                 ->map(fn (array $role, string $slug): array => $this->rolePayloadFormatter->formatSystemRole($slug, $role))
                 ->sortBy('name', SORT_NATURAL)
                 ->values()
@@ -208,6 +238,12 @@ class CustomUserManagementController extends Controller
                 $customRoles = $this->customRoleService->getOrganizationRoles($organizationId);
             } catch (\Throwable $e) {
                 Log::warning('Custom roles not available yet', ['error' => $e->getMessage()]);
+            }
+
+            if ($adminPanelOnly) {
+                $customRoles = $customRoles
+                    ->filter(fn ($role): bool => isset($adminPanelRoleSlugs[$role->slug]))
+                    ->values();
             }
 
             return LandingResponse::success([
@@ -226,6 +262,11 @@ class CustomUserManagementController extends Controller
 
             return LandingResponse::error(trans_message('landing.custom_users.roles_load_error'), 500);
         }
+    }
+
+    private function isAdminPanelRoleScope(Request $request): bool
+    {
+        return $request->query('scope') === 'admin_panel' || $request->boolean('admin_panel');
     }
 
     public function updateUserCustomRoles(Request $request, int $userId): JsonResponse

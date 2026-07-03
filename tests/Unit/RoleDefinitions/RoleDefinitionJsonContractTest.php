@@ -106,6 +106,43 @@ class RoleDefinitionJsonContractTest extends TestCase
         }
     }
 
+    public function test_supplier_role_has_admin_panel_procurement_and_warehouse_access(): void
+    {
+        $role = $this->roleDefinition('lk/supplier.json');
+
+        $this->assertContains('admin.access', $role['system_permissions']);
+        $this->assertContains('admin', $role['interface_access']);
+        $this->assertContains('procurement.view', $role['module_permissions']['procurement'] ?? []);
+        $this->assertContains('procurement.purchase_orders.receive', $role['module_permissions']['procurement'] ?? []);
+        $this->assertContains('warehouse.manage_stock', $role['module_permissions']['basic-warehouse'] ?? []);
+    }
+
+    public function test_duplicate_and_internal_roles_are_not_assignable(): void
+    {
+        $rolePaths = [
+            'system/super_admin.json',
+            'system/system_admin.json',
+            'system/support.json',
+            'admin/web_admin.json',
+            'admin/admin_viewer.json',
+            'admin/brigade_catalog_moderator.json',
+            'project/parent_administrator.json',
+            'project/project_viewer.json',
+            'mobile/observer.json',
+            'lk/brigade_manager.json',
+            'lk/brigade_representative.json',
+        ];
+
+        foreach ($rolePaths as $rolePath) {
+            $role = $this->roleDefinition($rolePath);
+
+            $this->assertFalse(
+                $role['assignable'] ?? true,
+                sprintf('Role %s must not be shown in assignable role catalogs', $role['slug'] ?? $rolePath),
+            );
+        }
+    }
+
     /**
      * @return list<string>
      */
@@ -128,6 +165,16 @@ class RoleDefinitionJsonContractTest extends TestCase
         }
 
         return $files;
+    }
+
+    private function roleDefinition(string $relativePath): array
+    {
+        return json_decode(
+            (string) file_get_contents($this->basePath . '/config/RoleDefinitions/' . $relativePath),
+            true,
+            512,
+            JSON_THROW_ON_ERROR,
+        );
     }
 
     /**

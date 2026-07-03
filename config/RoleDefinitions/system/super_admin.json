@@ -5,6 +5,7 @@
   "context": "system",
   "interface": "admin",
   "description": "Полный контроль над системой и всеми организациями",
+  "assignable": false,
   "system_permissions": [
     "*"
   ],

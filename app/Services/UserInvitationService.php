@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Helpers\AdminPanelAccessHelper;
 use App\Mail\UserInvitationMail;
 use App\Models\UserInvitation;
 use App\Models\User;
@@ -22,11 +23,16 @@ class UserInvitationService
 {
     protected SubscriptionLimitsService $subscriptionLimitsService;
     protected LoggingService $logging;
+    protected AdminPanelAccessHelper $adminPanelHelper;
 
-    public function __construct(SubscriptionLimitsService $subscriptionLimitsService, LoggingService $logging)
-    {
+    public function __construct(
+        SubscriptionLimitsService $subscriptionLimitsService,
+        LoggingService $logging,
+        AdminPanelAccessHelper $adminPanelHelper
+    ) {
         $this->subscriptionLimitsService = $subscriptionLimitsService;
         $this->logging = $logging;
+        $this->adminPanelHelper = $adminPanelHelper;
     }
 
     public function createInvitation(array $data, int $organizationId, User $invitedBy): UserInvitation
@@ -457,7 +463,7 @@ class UserInvitationService
             throw new BusinessLogicException('Необходимо указать роли для пользователя');
         }
 
-        $validRoles = ['organization_admin', 'foreman', 'web_admin', 'accountant'];
+        $validRoles = $this->adminPanelHelper->getAdminPanelRoles(null, 'lk', true);
         $invalidRoles = array_diff($data['role_slugs'], $validRoles);
         
         if (!empty($invalidRoles)) {

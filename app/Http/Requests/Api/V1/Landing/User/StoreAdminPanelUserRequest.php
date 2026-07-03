@@ -51,7 +51,11 @@ class StoreAdminPanelUserRequest extends FormRequest
     {
         $organizationId = $this->route('organization_id') ?? $this->user()?->current_organization_id;
         $currentInterface = $this->input('current_interface', 'lk'); // Из middleware или параметра
-        $allowedRoles = $this->adminPanelHelper->getAdminPanelRoles($organizationId, $currentInterface);
+        $allowedRoles = $this->adminPanelHelper->getAdminPanelRoles(
+            $organizationId ? (int) $organizationId : null,
+            (string) $currentInterface,
+            true
+        );
         
         Log::info('[StoreAdminPanelUserRequest] Validating role', [
             'organization_id' => $organizationId,

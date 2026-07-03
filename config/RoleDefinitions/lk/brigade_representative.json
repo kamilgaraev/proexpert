@@ -5,6 +5,7 @@
   "context": "organization",
   "interface": "lk",
   "description": "Базовый доступ к кабинету бригады и управлению профилем",
+  "assignable": false,
   "system_permissions": [
     "profile.view",
     "profile.edit"

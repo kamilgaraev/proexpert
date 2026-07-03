@@ -5,6 +5,7 @@
   "context": "project",
   "interface": "mobile",
   "description": "Контроль и мониторинг работ на объекте",
+  "assignable": false,
   
   "system_permissions": [
     "profile.view",

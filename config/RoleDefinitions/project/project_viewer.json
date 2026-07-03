@@ -5,6 +5,7 @@
   "context": "project",
   "interface": "admin",
   "description": "Только просмотр данных проекта без права редактирования",
+  "assignable": false,
   
   "system_permissions": [
     "admin.access",

@@ -2,7 +2,9 @@
 
 namespace App\Http\Requests\Api\V1\Landing\UserInvitation;
 
+use App\Helpers\AdminPanelAccessHelper;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class StoreUserInvitationRequest extends FormRequest
 {
@@ -49,7 +51,7 @@ class StoreUserInvitationRequest extends FormRequest
             'role_slugs' => ['required', 'array', 'min:1'],
             'role_slugs.*' => [
                 'string',
-                'in:organization_admin,foreman,web_admin,accountant'
+                Rule::in(app(AdminPanelAccessHelper::class)->getAdminPanelRoles(null, 'lk', true)),
             ],
             'metadata' => ['nullable', 'array'],
             'metadata.welcome_message' => ['nullable', 'string', 'max:1000'],
