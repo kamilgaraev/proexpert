@@ -46,7 +46,7 @@ final class DrawingGeometryAnalyzer
             $signals = $this->signals($geometry);
             $role = $this->pageRole($geometry);
             $pageNumber = $page->pageNumber;
-            $pageReasons = $this->reviewReasons($page, $role, $metrics, $signals);
+            $pageReasons = [];
 
             $totals['page_count']++;
 
@@ -134,38 +134,6 @@ final class DrawingGeometryAnalyzer
         return in_array($role, ['plan', 'specification', 'title', 'detail', 'section', 'empty', 'geometry_only'], true)
             ? $role
             : 'geometry_only';
-    }
-
-    /**
-     * @param array<string, int|float> $metrics
-     * @param array<int, string> $signals
-     * @return array<int, string>
-     */
-    private function reviewReasons(OcrPageResult $page, string $role, array $metrics, array $signals): array
-    {
-        $reasons = [];
-        $hasGeometry = (int) ($metrics['line_count'] ?? 0) > 0
-            || (int) ($metrics['curve_count'] ?? 0) > 0
-            || (int) ($metrics['rect_count'] ?? 0) > 0
-            || (int) ($metrics['vector_element_count'] ?? 0) > 0;
-
-        if ($hasGeometry) {
-            $reasons[] = 'geometry_requires_review';
-        }
-
-        if ($hasGeometry && trim($page->text) === '') {
-            $reasons[] = 'text_layer_empty_with_geometry';
-        }
-
-        if ($hasGeometry && in_array($role, ['geometry_only', 'plan', 'detail', 'section'], true)) {
-            $reasons[] = 'geometry_without_linked_dimensions';
-        }
-
-        if ($hasGeometry && ! in_array('scale_detected', $signals, true)) {
-            $reasons[] = 'geometry_without_scale';
-        }
-
-        return array_values(array_unique($reasons));
     }
 
     /**

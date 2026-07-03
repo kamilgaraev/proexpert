@@ -114,15 +114,15 @@ class EstimateGenerationDocumentResourceTest extends TestCase
         $this->assertSame(1, $payload['facts'][0]['source_ref']['page_number']);
     }
 
-    public function test_detail_resource_exposes_geometry_review_and_overlay_payload(): void
+    public function test_detail_resource_exposes_geometry_source_and_overlay_payload(): void
     {
         $document = new EstimateGenerationDocument([
             'filename' => 'drawing.pdf',
             'mime_type' => 'application/pdf',
             'facts_summary' => [
                 'drawing_understanding' => [
-                    'review_required_pages' => [5],
-                    'review_reasons' => ['geometry_without_linked_dimensions'],
+                    'review_required_pages' => [],
+                    'review_reasons' => [],
                 ],
             ],
         ]);
@@ -140,9 +140,10 @@ class EstimateGenerationDocumentResourceTest extends TestCase
                     ]],
                 ],
                 'page_understanding' => [
-                    'page_role' => 'geometry_only',
-                    'role_for_estimation' => 'needs_review',
-                    'review_reasons' => ['geometry_without_linked_dimensions'],
+                    'page_role' => 'plan',
+                    'role_for_estimation' => 'geometry_source',
+                    'review_reasons' => [],
+                    'review_required' => false,
                 ],
             ],
         ]);
@@ -152,12 +153,12 @@ class EstimateGenerationDocumentResourceTest extends TestCase
 
         $payload = (new EstimateGenerationDocumentDetailResource($document))->resolve();
 
-        $this->assertSame('geometry_only', $payload['pages'][0]['page_role']);
-        $this->assertSame('needs_review', $payload['pages'][0]['role_for_estimation']);
+        $this->assertSame('plan', $payload['pages'][0]['page_role']);
+        $this->assertSame('geometry_source', $payload['pages'][0]['role_for_estimation']);
         $this->assertSame('geometry_only', $payload['pages'][0]['geometry']['page_role']);
         $this->assertSame(100, $payload['pages'][0]['visual_metrics']['line_count']);
-        $this->assertSame(['geometry_without_linked_dimensions'], $payload['pages'][0]['review']['reasons']);
-        $this->assertTrue($payload['pages'][0]['review']['required']);
+        $this->assertSame([], $payload['pages'][0]['review']['reasons']);
+        $this->assertFalse($payload['pages'][0]['review']['required']);
         $this->assertNotEmpty($payload['pages'][0]['overlay']);
     }
 

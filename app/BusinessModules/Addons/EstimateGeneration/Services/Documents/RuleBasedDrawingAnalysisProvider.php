@@ -2540,14 +2540,15 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 || (int) ($geometryMetrics['rect_count'] ?? 0) > 0
                 || (int) ($geometryMetrics['curve_count'] ?? 0) > 0
                 || in_array('vector_geometry', $geometrySignals, true);
-            $geometryReviewReasons = $this->pageGeometryReviewReasons($page, $hasGeometrySignal, $geometrySignals, $geometryRole);
+            $geometryReviewReasons = [];
             $text = mb_strtolower($page->text.' '.$filename);
-            $hasPlanSignal = preg_match('/план|планировка|экспликац/ui', $text) === 1;
+            $hasFloorPlanSignal = $this->hasFloorPlanPageSignal($text);
+            $hasPlanSignal = $hasFloorPlanSignal || $this->hasDrawingPlanPageSignal($text);
             $hasWorkVolumeStatementSignal = $workVolumeStatementCount > 0
                 || preg_match('/ведомость\s+(?:объемов|объёмов|работ)|объемы?\s+работ|объёмы?\s+работ|вор\b/ui', $text) === 1;
             $hasSpecificationSignal = $specificationCount > 0 || preg_match('/спецификац|ведомость|экспликац/ui', $text) === 1;
             $hasEstimateSignal = preg_match('/(?:гэсн|фер|тер)?\s*\d{2}-\d{2}-\d{3}-\d{2,3}|смет/ui', $text) === 1;
-            $role = $this->pageRole($hasPlanSignal, $hasWorkVolumeStatementSignal, $hasSpecificationSignal, $hasEstimateSignal, $roomCount, $dimensionCount);
+            $role = $this->pageRole($hasPlanSignal, $hasFloorPlanSignal, $hasWorkVolumeStatementSignal, $hasSpecificationSignal, $hasEstimateSignal, $roomCount, $dimensionCount);
 
             if (
                 $hasGeometrySignal
@@ -2564,7 +2565,7 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
                 'page_role' => $role,
                 'confidence' => $this->pageRoleConfidence($page, $role, $hasPlanSignal || $hasGeometrySignal, $roomCount, $dimensionCount + $geometryLineCount),
                 'signals' => array_values(array_unique(array_filter([
-                    $hasPlanSignal ? 'plan_keywords' : null,
+                    $hasFloorPlanSignal ? 'floor_plan_keywords' : ($hasPlanSignal ? 'plan_keywords' : null),
                     $hasWorkVolumeStatementSignal ? 'work_volume_statement_keywords' : null,
                     $hasSpecificationSignal ? 'specification_keywords' : null,
                     $hasEstimateSignal ? 'estimate_or_norm_keywords' : null,
@@ -2644,62 +2645,46 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             : null;
     }
 
-    /**
-     * @param array<int, string> $geometrySignals
-     * @return array<int, string>
-     */
-    private function pageGeometryReviewReasons(
-        OcrPageResult $page,
-        bool $hasGeometrySignal,
-        array $geometrySignals,
-        ?string $geometryRole
-    ): array {
-        if (! $hasGeometrySignal) {
-            return [];
-        }
-
-        $reasons = ['geometry_requires_review'];
-
-        if (trim($page->text) === '') {
-            $reasons[] = 'text_layer_empty_with_geometry';
-        }
-
-        if (in_array($geometryRole, ['geometry_only', 'plan', 'detail', 'section'], true)) {
-            $reasons[] = 'geometry_without_linked_dimensions';
-        }
-
-        if (! in_array('scale_detected', $geometrySignals, true)) {
-            $reasons[] = 'geometry_without_scale';
-        }
-
-        return array_values(array_unique($reasons));
-    }
-
     private function pageRole(
         bool $hasPlanSignal,
+        bool $hasFloorPlanSignal,
         bool $hasWorkVolumeStatementSignal,
         bool $hasSpecificationSignal,
         bool $hasEstimateSignal,
         int $roomCount,
         int $dimensionCount
     ): string {
-        if (($hasPlanSignal && ($roomCount > 0 || $dimensionCount > 0)) || $roomCount >= 2) {
-            return 'floor_plan';
-        }
-
         if ($hasWorkVolumeStatementSignal) {
             return 'work_volume_statement';
-        }
-
-        if ($hasSpecificationSignal) {
-            return 'specification';
         }
 
         if ($hasEstimateSignal) {
             return 'reference_estimate';
         }
 
+        if (($hasFloorPlanSignal && ($roomCount > 0 || $dimensionCount > 0)) || $roomCount >= 2) {
+            return 'floor_plan';
+        }
+
+        if ($hasSpecificationSignal) {
+            return 'specification';
+        }
+
+        if ($hasPlanSignal && $dimensionCount > 0) {
+            return 'plan';
+        }
+
         return 'technical_document';
+    }
+
+    private function hasFloorPlanPageSignal(string $text): bool
+    {
+        return preg_match('/планировк|помещен|помещён|комнат|квартир|экспликац|floor[-_\s]*plan|layout/ui', $text) === 1;
+    }
+
+    private function hasDrawingPlanPageSignal(string $text): bool
+    {
+        return preg_match('/план|схема|разрез|сечение|узел|деталь|плита|армат|чертеж|чертёж|plan|section|detail/ui', $text) === 1;
     }
 
     private function pageRoleConfidence(
@@ -2886,18 +2871,17 @@ final class RuleBasedDrawingAnalysisProvider implements DrawingAnalysisProviderI
             : 0.5;
 
         if ($role === 'technical_document' && ($roomCount >= 2 || $dimensionCount >= 2)) {
-            $role = 'floor_plan';
+            $role = $roomCount >= 2 ? 'floor_plan' : 'plan';
             $confidence = max($confidence, 0.72);
         }
 
-        $geometryReviewRequired = $geometryReviewReasons !== []
-            || in_array($role, ['geometry_only', 'plan', 'detail', 'section'], true);
+        $geometryReviewRequired = $geometryReviewReasons !== [];
 
         return [
             'document_role' => $role,
             'source_format' => $this->sourceFormat($filename),
             'confidence' => round(min(max($confidence, 0.35), 0.98), 4),
-            'requires_manual_review' => ($role === 'floor_plan' && $roomCount === 0) || $geometryReviewRequired,
+            'requires_manual_review' => $geometryReviewRequired,
             'signals' => [
                 'room_count' => $roomCount,
                 'dimension_count' => $dimensionCount,

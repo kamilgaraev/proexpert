@@ -23,9 +23,9 @@ use function trans_message;
 
 class EstimateGenerationDocumentController extends Controller
 {
-    private const RETRYABLE_STATUSES = ['failed', 'needs_review', 'ignored'];
+    private const RETRYABLE_STATUSES = ['ready', 'failed', 'needs_review', 'ignored'];
 
-    private const IGNORABLE_STATUSES = ['failed', 'needs_review'];
+    private const IGNORABLE_STATUSES = ['ready', 'failed', 'needs_review'];
 
     public function __construct(
         private readonly DocumentGenerationReadinessService $readinessService,

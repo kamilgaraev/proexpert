@@ -222,6 +222,47 @@ final class DocumentUnderstandingSummaryBuilderTest extends TestCase
         self::assertTrue($summary['extracted_capabilities']['requires_manual_review']);
     }
 
+    public function test_recognized_pdf_drawing_without_takeoffs_stays_geometry_source(): void
+    {
+        $summary = $this->builder()->build(
+            $this->document('11174-PZU_AS_gaz_izm_4.pdf', 'application/pdf'),
+            $this->recognition(''),
+            [
+                'source_format' => 'pdf',
+                'takeoffs_count' => 0,
+                'room_count' => 0,
+                'dimension_count' => 122901,
+                'geometry_metrics' => [
+                    'line_count' => 122901,
+                    'curve_count' => 5635,
+                    'rect_count' => 97,
+                    'vector_element_count' => 128633,
+                ],
+                'document_profile' => [
+                    'document_role' => 'plan',
+                    'confidence' => 0.86,
+                    'requires_manual_review' => false,
+                ],
+                'page_profiles' => [
+                    [
+                        'page_number' => 5,
+                        'page_role' => 'plan',
+                        'confidence' => 0.86,
+                        'signals' => ['vector_geometry', 'plan_candidate'],
+                        'review_reasons' => [],
+                        'requires_review' => false,
+                    ],
+                ],
+            ],
+            []
+        );
+
+        self::assertSame('plan', $summary['document_type']);
+        self::assertSame('geometry_source', $summary['role_for_estimation']);
+        self::assertFalse($summary['extracted_capabilities']['requires_manual_review']);
+        self::assertSame('geometry_source', $this->builder()->pageUnderstandingByNumber($summary)[5]['role_for_estimation']);
+    }
+
     public function test_uncertain_floor_plan_requires_review_before_generation(): void
     {
         $summary = $this->builder()->build(

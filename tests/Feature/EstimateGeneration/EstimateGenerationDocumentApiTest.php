@@ -98,10 +98,29 @@ class EstimateGenerationDocumentApiTest extends TestCase
         );
     }
 
-    public function test_ignore_is_allowed_only_for_failed_or_review_documents(): void
+    public function test_retry_is_allowed_for_ready_document(): void
+    {
+        Queue::fake();
+
+        [$user, $project, $session] = $this->makeSession();
+        $document = $this->makeDocument($session, 'ready');
+        $request = RetryEstimateGenerationDocumentRequest::create('/retry', 'POST', ['reason' => 'Повторить']);
+        $request->setUserResolver(static fn (): User => $user);
+
+        $response = app(EstimateGenerationDocumentController::class)->retry($request, $project, $session, $document);
+        $payload = json_decode($response->getContent(), true, 512, JSON_THROW_ON_ERROR);
+
+        $this->assertTrue($payload['success']);
+        $this->assertSame('queued', $payload['data']['document']['status']);
+        $this->assertSame(1, $payload['data']['documents_summary']['pending_count']);
+        Queue::assertPushed(ProcessEstimateGenerationDocumentJob::class);
+    }
+
+    public function test_ignore_is_allowed_for_ready_failed_or_review_documents(): void
     {
         [$user, $project, $session] = $this->makeSession();
         $processing = $this->makeDocument($session, 'processing');
+        $ready = $this->makeDocument($session, 'ready');
         $failed = $this->makeDocument($session, 'failed');
         $request = IgnoreEstimateGenerationDocumentRequest::create('/ignore', 'POST', ['reason' => 'Не учитывать']);
         $request->setUserResolver(static fn (): User => $user);
@@ -112,13 +131,19 @@ class EstimateGenerationDocumentApiTest extends TestCase
         $this->assertSame(422, $notAllowed->getStatusCode());
         $this->assertFalse($notAllowedPayload['success']);
 
+        $readyAllowed = app(EstimateGenerationDocumentController::class)->ignore($request, $project, $session, $ready);
+        $readyPayload = json_decode($readyAllowed->getContent(), true, 512, JSON_THROW_ON_ERROR);
+
+        $this->assertTrue($readyPayload['success']);
+        $this->assertSame('ignored', $readyPayload['data']['document']['status']);
+
         $allowed = app(EstimateGenerationDocumentController::class)->ignore($request, $project, $session, $failed);
         $allowedPayload = json_decode($allowed->getContent(), true, 512, JSON_THROW_ON_ERROR);
 
         $this->assertTrue($allowedPayload['success']);
         $this->assertSame('ignored', $allowedPayload['data']['document']['status']);
         $this->assertSame('completed', $allowedPayload['data']['document']['processing_stage']);
-        $this->assertSame(1, $allowedPayload['data']['documents_summary']['ignored_count']);
+        $this->assertSame(2, $allowedPayload['data']['documents_summary']['ignored_count']);
         $this->assertDatabaseHas('estimate_generation_documents', [
             'id' => $failed->id,
             'status' => 'ignored',

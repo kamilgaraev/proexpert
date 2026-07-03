@@ -37,7 +37,7 @@ final class GeometryQuantityGuardTest extends TestCase
             $result->takeoffs,
             static fn (array $takeoff): bool => in_array($takeoff['scope_key'] ?? null, ['floor_finish_area', 'rough_floor_area', 'wall_finish_area'], true)
         ));
-        self::assertTrue($result->summary['document_profile']['requires_manual_review']);
-        self::assertContains('geometry_without_linked_dimensions', $result->summary['review_reasons']);
+        self::assertFalse($result->summary['document_profile']['requires_manual_review']);
+        self::assertSame([], $result->summary['review_reasons']);
     }
 }

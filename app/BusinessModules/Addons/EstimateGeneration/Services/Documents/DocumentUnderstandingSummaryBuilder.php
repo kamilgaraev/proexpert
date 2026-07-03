@@ -185,8 +185,6 @@ final class DocumentUnderstandingSummaryBuilder
             || preg_match('/локальная смета|гранд-смет|гэсн|фер|фсбц|обоснование/u', $text) === 1;
         $requiresManualReview = (bool) ($documentProfile['requires_manual_review'] ?? false)
             || $documentType === 'unknown'
-            || ($documentType === 'floor_plan' && $takeoffsCount === 0)
-            || (in_array($documentType, ['geometry_only', 'plan', 'detail', 'section'], true) && $takeoffsCount === 0)
             || ($classifiedType === 'drawing_cad' && $takeoffsCount === 0)
             || (($factsSummary['conflicts'] ?? []) !== []);
 
@@ -263,8 +261,7 @@ final class DocumentUnderstandingSummaryBuilder
     private function pageRoleForEstimation(string $pageRole): string
     {
         return match ($pageRole) {
-            'floor_plan', 'plan', 'detail', 'section' => 'geometry_source',
-            'geometry_only' => 'needs_review',
+            'floor_plan', 'plan', 'detail', 'section', 'geometry_only' => 'geometry_source',
             'work_volume_statement' => 'quantity_source',
             'specification' => 'quantity_source',
             'reference_estimate' => 'reference_estimate',

@@ -315,7 +315,8 @@ def classify_page(text_blocks: list[dict[str, Any]], elements: list[dict[str, An
     elif "title_block_candidate" in signals and metrics["line_count"] < 30:
         role = "title"
     elif metrics["line_count"] > 0 or metrics["rect_count"] > 0 or metrics["curve_count"] > 0:
-        role = "geometry_only" if text == "" else "plan"
+        has_drawing_geometry = metrics["line_count"] >= 20 or metrics["rect_count"] >= 2 or metrics["curve_count"] > 0 or contours > 0
+        role = "plan" if has_drawing_geometry else "geometry_only"
     else:
         role = "empty"
 
