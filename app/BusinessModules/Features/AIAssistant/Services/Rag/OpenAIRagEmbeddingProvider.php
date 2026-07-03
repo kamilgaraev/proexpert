@@ -91,7 +91,7 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
         } catch (Throwable $exception) {
             throw new RagEmbeddingUnavailableException($this->assistantMessage(
                 'ai_assistant.rag_embedding_unavailable',
-                'РЎРµСЂРІРёСЃ РїРѕРґРіРѕС‚РѕРІРєРё РєРѕРЅС‚РµРєСЃС‚Р° РІСЂРµРјРµРЅРЅРѕ РЅРµРґРѕСЃС‚СѓРїРµРЅ.'
+                'Сервис подготовки контекста временно недоступен.'
             ), 0, $exception);
         }
 

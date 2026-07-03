@@ -90,6 +90,10 @@ class OpenAIRagEmbeddingProviderTest extends TestCase
 
     public function test_openai_provider_converts_client_failure_to_unavailable_exception(): void
     {
+        Lang::addLines([
+            'ai_assistant.rag_embedding_unavailable' => 'Переведенное сообщение о недоступности подготовки контекста.',
+        ], 'ru');
+
         $clientException = new RuntimeException('temporary provider failure');
         $provider = new OpenAIRagEmbeddingProvider(
             client: new FakeOpenAIEmbeddingClient([0.4], $clientException),
@@ -102,6 +106,7 @@ class OpenAIRagEmbeddingProviderTest extends TestCase
             $provider->embed('project context');
             $this->fail('Expected RAG embedding unavailable exception.');
         } catch (RagEmbeddingUnavailableException $exception) {
+            $this->assertSame('Переведенное сообщение о недоступности подготовки контекста.', $exception->getMessage());
             $this->assertSame($clientException, $exception->getPrevious());
         }
     }
