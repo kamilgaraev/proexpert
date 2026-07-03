@@ -1103,27 +1103,63 @@ class UserService
         $this->validateRoleExists($roleSlug, $intOrganizationId);
 
         $userData['email'] = Str::lower(trim((string) $userData['email']));
+        $authContext = AuthorizationContext::getOrganizationContext($intOrganizationId);
+        $roleType = $this->resolveOrganizationRoleType($roleSlug, $intOrganizationId);
+        $assignedBy = $request->user();
+        $assigner = $assignedBy instanceof User ? $assignedBy : null;
 
-        if ($this->userRepository->findByEmail($userData['email'])) {
-            throw new BusinessLogicException(trans_message('landing_users.admin_panel_email_exists'), 409);
+        $existingUser = $this->userRepository->findByEmail($userData['email']);
+
+        if ($existingUser instanceof User) {
+            if ($this->authorizationService->hasRole($existingUser, $roleSlug, $authContext->id)) {
+                throw new BusinessLogicException(trans_message('landing_users.admin_panel_email_exists'), 409);
+            }
+
+            return DB::transaction(function () use (
+                $existingUser,
+                $userData,
+                $intOrganizationId,
+                $roleSlug,
+                $authContext,
+                $roleType,
+                $assigner
+            ): User {
+                $this->userRepository->attachToOrganization($existingUser->id, $intOrganizationId, false, true);
+                $this->ensureOrganizationMembershipProjectAccessMode($existingUser, $intOrganizationId, $roleSlug);
+                $this->assignOrReactivateOrganizationRole(
+                    $existingUser,
+                    $roleSlug,
+                    $authContext,
+                    $roleType,
+                    $assigner
+                );
+                $this->userRepository->update($existingUser->id, ['name' => $userData['name']]);
+
+                return $this->userRepository->find($existingUser->id) ?? $existingUser->refresh();
+            });
         }
 
         $userData['password'] = Hash::make($userData['password']);
         $userData['current_organization_id'] = $intOrganizationId;
-        $roleType = $this->resolveOrganizationRoleType($roleSlug, $intOrganizationId);
-        $assignedBy = $request->user();
 
         try {
-            $newUser = DB::transaction(function () use ($userData, $intOrganizationId, $roleSlug, $roleType, $assignedBy): User {
+            $newUser = DB::transaction(function () use (
+                $userData,
+                $intOrganizationId,
+                $roleSlug,
+                $authContext,
+                $roleType,
+                $assigner
+            ): User {
                 $newUser = $this->userRepository->create($userData);
                 $this->userRepository->attachToOrganization($newUser->id, $intOrganizationId, false, true);
                 $this->ensureOrganizationMembershipProjectAccessMode($newUser, $intOrganizationId, $roleSlug);
                 $this->authorizationService->assignRole(
                     $newUser,
                     $roleSlug,
-                    AuthorizationContext::getOrganizationContext($intOrganizationId),
+                    $authContext,
                     $roleType,
-                    $assignedBy instanceof User ? $assignedBy : null
+                    $assigner
                 );
 
                 return $newUser->refresh();
@@ -1152,6 +1188,40 @@ class UserService
         }
 
         return $newUser;
+    }
+
+    private function assignOrReactivateOrganizationRole(
+        User $user,
+        string $roleSlug,
+        AuthorizationContext $context,
+        string $roleType,
+        ?User $assignedBy
+    ): void
+    {
+        $assignment = UserRoleAssignment::query()
+            ->where('user_id', $user->id)
+            ->where('role_slug', $roleSlug)
+            ->where('context_id', $context->id)
+            ->first();
+
+        if ($assignment instanceof UserRoleAssignment) {
+            $assignment->update([
+                'role_type' => $roleType,
+                'assigned_by' => $assignedBy?->id,
+                'expires_at' => null,
+                'is_active' => true,
+            ]);
+
+            return;
+        }
+
+        $this->authorizationService->assignRole(
+            $user,
+            $roleSlug,
+            $context,
+            $roleType,
+            $assignedBy
+        );
     }
 
     private function resolveOrganizationRoleType(string $roleSlug, int $organizationId): string

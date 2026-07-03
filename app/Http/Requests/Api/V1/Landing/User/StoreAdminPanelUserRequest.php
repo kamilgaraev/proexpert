@@ -6,7 +6,6 @@ namespace App\Http\Requests\Api\V1\Landing\User;
 
 use App\Helpers\AdminPanelAccessHelper;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -74,18 +73,6 @@ class StoreAdminPanelUserRequest extends FormRequest
                 'string',
                 'email',
                 'max:255',
-                function (string $attribute, mixed $value, \Closure $fail): void {
-                    $email = Str::lower(trim((string) $value));
-
-                    if (
-                        DB::table('users')
-                            ->whereRaw('LOWER(email) = ?', [$email])
-                            ->whereNull('deleted_at')
-                            ->exists()
-                    ) {
-                        $fail(trans_message('landing_users.admin_panel_email_exists'));
-                    }
-                },
             ],
             'password' => 'required|string|min:8|confirmed',
             'role_slug' => [
