@@ -110,6 +110,23 @@ class OpenAIRagEmbeddingProviderTest extends TestCase
             $this->assertSame($clientException, $exception->getPrevious());
         }
     }
+
+    public function test_openai_provider_retries_transient_embedding_failure(): void
+    {
+        $client = new FakeOpenAIEmbeddingClient(
+            [0.7, 0.8, 0.9],
+            [new RuntimeException('Operation timed out after 45003 milliseconds')]
+        );
+        $provider = new OpenAIRagEmbeddingProvider(
+            client: $client,
+            apiKey: 'test-key',
+            model: 'text-embedding-3-small',
+            dimensions: 3
+        );
+
+        $this->assertSame([0.7, 0.8, 0.9], $provider->embed('project context'));
+        $this->assertSame(2, $client->embeddings->attempts);
+    }
 }
 
 final class FakeRagEmbeddingProvider implements RagEmbeddingProviderInterface
@@ -146,8 +163,9 @@ final class FakeOpenAIEmbeddingClient
 
     /**
      * @param  array<int, float>  $embedding
+     * @param  Throwable|array<int, Throwable>|null  $exception
      */
-    public function __construct(array $embedding, ?Throwable $exception = null)
+    public function __construct(array $embedding, Throwable|array|null $exception = null)
     {
         $this->embeddings = new FakeOpenAIEmbeddingsResource($embedding, $exception);
     }
@@ -165,23 +183,36 @@ final class FakeOpenAIEmbeddingsResource
      */
     public array $lastParameters = [];
 
+    public int $attempts = 0;
+
     /**
      * @param  array<int, float>  $embedding
+     * @param  Throwable|array<int, Throwable>|null  $exception
      */
     public function __construct(
         private readonly array $embedding,
-        private readonly ?Throwable $exception = null
-    ) {}
+        Throwable|array|null $exception = null
+    ) {
+        $this->exceptions = is_array($exception)
+            ? array_values($exception)
+            : ($exception !== null ? [$exception] : []);
+    }
+
+    /**
+     * @var array<int, Throwable>
+     */
+    private array $exceptions;
 
     /**
      * @param  array<string, mixed>  $parameters
      */
     public function create(array $parameters): object
     {
+        $this->attempts++;
         $this->lastParameters = $parameters;
 
-        if ($this->exception !== null) {
-            throw $this->exception;
+        if ($this->exceptions !== []) {
+            throw array_shift($this->exceptions);
         }
 
         return (object) [

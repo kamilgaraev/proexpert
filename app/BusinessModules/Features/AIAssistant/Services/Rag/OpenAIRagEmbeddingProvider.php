@@ -6,12 +6,20 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Rag;
 
 use App\BusinessModules\Features\AIAssistant\Exceptions\RagEmbeddingUnavailableException;
 use GuzzleHttp\Client as GuzzleClient;
+use Illuminate\Support\Facades\Log;
 use OpenAI;
+use OpenAI\Exceptions\ErrorException as OpenAIErrorException;
+use OpenAI\Exceptions\RateLimitException;
+use OpenAI\Exceptions\TransporterException;
 use RuntimeException;
 use Throwable;
 
 final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
 {
+    private const RETRY_ATTEMPTS = 3;
+    private const RETRY_BASE_DELAY_MS = 500;
+    private const RETRY_MAX_DELAY_MS = 3000;
+
     private ?object $client;
 
     private ?string $apiKey;
@@ -87,7 +95,7 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
         ];
 
         try {
-            $response = $embeddings->create($parameters);
+            $response = $this->createEmbeddingWithRetry($embeddings, $parameters);
         } catch (Throwable $exception) {
             throw new RagEmbeddingUnavailableException($this->assistantMessage(
                 'ai_assistant.rag_embedding_unavailable',
@@ -106,6 +114,80 @@ final class OpenAIRagEmbeddingProvider implements RagEmbeddingProviderInterface
         }
 
         return array_map(static fn (mixed $value): float => (float) $value, array_values($embedding));
+    }
+
+    /**
+     * @param  array<string, mixed>  $parameters
+     */
+    private function createEmbeddingWithRetry(object $embeddings, array $parameters): object
+    {
+        $lastException = null;
+
+        for ($attempt = 1; $attempt <= self::RETRY_ATTEMPTS; $attempt++) {
+            try {
+                return $embeddings->create($parameters);
+            } catch (Throwable $exception) {
+                $lastException = $exception;
+
+                if ($attempt >= self::RETRY_ATTEMPTS || ! $this->shouldRetry($exception)) {
+                    throw $exception;
+                }
+
+                Log::warning('ai_assistant.rag.openai_embedding_retry', [
+                    'attempt' => $attempt,
+                    'max_attempts' => self::RETRY_ATTEMPTS,
+                    'provider' => $this->providerName,
+                    'model' => $this->model,
+                    'exception' => $exception::class,
+                    'status' => $this->exceptionStatus($exception),
+                ]);
+
+                usleep($this->retryDelayMs($attempt) * 1000);
+            }
+        }
+
+        throw $lastException;
+    }
+
+    private function shouldRetry(Throwable $exception): bool
+    {
+        if ($exception instanceof RateLimitException || $exception instanceof TransporterException) {
+            return true;
+        }
+
+        if ($exception instanceof OpenAIErrorException) {
+            $status = $exception->getStatusCode();
+
+            return $status === 429 || $status >= 500;
+        }
+
+        $message = mb_strtolower($exception->getMessage(), 'UTF-8');
+
+        return str_contains($message, 'timed out')
+            || str_contains($message, 'timeout')
+            || str_contains($message, 'temporarily')
+            || str_contains($message, 'try again later')
+            || str_contains($message, 'connection');
+    }
+
+    private function retryDelayMs(int $attempt): int
+    {
+        $delay = self::RETRY_BASE_DELAY_MS * (2 ** max(0, $attempt - 1));
+
+        return min($delay, self::RETRY_MAX_DELAY_MS);
+    }
+
+    private function exceptionStatus(Throwable $exception): ?int
+    {
+        if ($exception instanceof OpenAIErrorException) {
+            return $exception->getStatusCode();
+        }
+
+        if ($exception instanceof RateLimitException) {
+            return $exception->response->getStatusCode();
+        }
+
+        return null;
     }
 
     public function provider(): string
