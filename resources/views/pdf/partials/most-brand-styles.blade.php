@@ -18,7 +18,7 @@
     background-color: #ffffff;
     border: 1px solid #d9e3f2;
 }
-.most-brand-mark img {
+.most-brand-mark svg {
     display: block;
     width: 28px;
     height: 28px;
