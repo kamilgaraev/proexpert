@@ -16,7 +16,6 @@ use App\Models\Project;
 use App\Repositories\Interfaces\ContractRepositoryInterface;
 use App\Services\Contractor\SelfExecutionService;
 use App\Services\Logging\LoggingService;
-use App\Services\Project\ProjectCustomerResolverService;
 use Exception;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -30,9 +29,9 @@ class ContractSideMutationService
         private readonly ContractAccessService $contractAccessService,
         private readonly LoggingService $logging,
         private readonly ContractorSharingInterface $contractorSharing,
-        private readonly ProjectCustomerResolverService $projectCustomerResolverService,
         private readonly SelfExecutionService $selfExecutionService,
         private readonly ContractStateEventService $stateEventService,
+        private readonly ContractPartySnapshotService $contractPartySnapshotService,
     ) {
     }
 
@@ -84,6 +83,7 @@ class ContractSideMutationService
             $contract = $this->contractRepository->create($contractData);
 
             $this->syncProjects($contract, $contractDTO, $projectIds, $targetOrganizationId);
+            $this->contractPartySnapshotService->syncParties($contract->refresh(), true);
 
             if (is_array($advancePayments)) {
                 foreach ($advancePayments as $advance) {
@@ -173,6 +173,7 @@ class ContractSideMutationService
         ]);
 
         $previousTotalAmount = (float) ($contract->total_amount ?? 0);
+        $shouldRefreshParties = $this->shouldRefreshContractParties($contract, $contractDTO);
         $updateData = $contractDTO->toArray();
         $updateData['organization_id'] = $targetOrganizationId;
         $projectIds = $updateData['project_ids'] ?? null;
@@ -187,6 +188,7 @@ class ContractSideMutationService
 
             $contract->update($updateData);
             $this->syncProjects($contract, $contractDTO, $projectIds, $targetOrganizationId);
+            $this->contractPartySnapshotService->syncParties($contract->refresh(), $shouldRefreshParties);
 
             DB::commit();
 
@@ -317,6 +319,7 @@ class ContractSideMutationService
 
         $contract->update($payload);
         $contract->refresh();
+        $this->contractPartySnapshotService->syncParties($contract, true);
 
         $this->logging->business('contract.side_review.resolved', [
             'organization_id' => $targetOrganizationId,
@@ -354,6 +357,22 @@ class ContractSideMutationService
 
         $this->assertProjectsAvailableForContract($projectIdsToSync, $targetOrganizationId, $contractDTO->contract_side_type);
         $contract->syncProjects($projectIdsToSync);
+    }
+
+    private function shouldRefreshContractParties(Contract $contract, ContractDTO $contractDTO): bool
+    {
+        if (!$contract->parties()->exists()) {
+            return true;
+        }
+
+        $currentSideType = $contract->contract_side_type instanceof ContractSideTypeEnum
+            ? $contract->contract_side_type
+            : ($contract->contract_side_type ? ContractSideTypeEnum::tryFrom((string) $contract->contract_side_type) : null);
+
+        return $currentSideType !== $contractDTO->contract_side_type
+            || (int) ($contract->project_id ?? 0) !== (int) ($contractDTO->project_id ?? 0)
+            || (int) ($contract->contractor_id ?? 0) !== (int) ($contractDTO->contractor_id ?? 0)
+            || (int) ($contract->supplier_id ?? 0) !== (int) ($contractDTO->supplier_id ?? 0);
     }
 
     private function assertFixedAmountContractIsValid(ContractDTO $contractDTO): void
@@ -426,40 +445,14 @@ class ContractSideMutationService
 
         if ($sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR) {
             $supplierId = null;
-            $customerOrganizationId = $this->resolveProjectCustomerOrganizationId($contractDTO);
-
-            if (
-                $projectContext instanceof ProjectContext
-                && $projectContext->organizationId !== $customerOrganizationId
-            ) {
-                $contractor = Contractor::firstOrCreate(
-                    [
-                        'organization_id' => $customerOrganizationId,
-                        'source_organization_id' => $projectContext->organizationId,
-                    ],
-                    [
-                        'name' => $projectContext->organizationName ?? 'Исполнитель по договору',
-                        'contractor_type' => Contractor::TYPE_INVITED_ORGANIZATION,
-                        'connected_at' => now(),
-                    ]
-                );
-
-                $contractorId = $contractor->id;
-            }
-
-            if (!$contractorId) {
-                throw new Exception('Для договора между заказчиком и генподрядчиком нужно выбрать исполнителя.');
-            }
+            $contractorId = null;
+            $this->assertProjectCustomerCounterpartyIsConfigured($contractDTO);
         }
 
         if ($contractorId !== null) {
-            $targetOrganizationId = $sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
-                ? $this->resolveProjectCustomerOrganizationId($contractDTO)
-                : $organizationId;
-
             $contractorId = $this->resolveAccessibleContractorId(
                 $contractorId,
-                $targetOrganizationId,
+                $organizationId,
                 $contractDTO,
                 $sideType
             );
@@ -502,27 +495,20 @@ class ContractSideMutationService
 
     private function resolveOwnerOrganizationId(int $organizationId, ContractDTO $contractDTO): int
     {
-        return $contractDTO->contract_side_type === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
-            ? $this->resolveProjectCustomerOrganizationId($contractDTO)
-            : $organizationId;
+        return $organizationId;
     }
 
-    private function resolveProjectCustomerOrganizationId(ContractDTO $contractDTO): int
+    private function assertProjectCustomerCounterpartyIsConfigured(ContractDTO $contractDTO): void
     {
         $project = $this->resolvePrimaryProject($contractDTO);
 
         if (!$project) {
-            throw new Exception('Для этого типа договора нужен проект с определенным заказчиком.');
+            throw new Exception(trans_message('contract.customer_counterparty_required'));
         }
 
-        $project->loadMissing('organizations');
-        $resolvedCustomerId = $this->projectCustomerResolverService->resolveOrganizationId($project);
-
-        if ($resolvedCustomerId === null) {
-            throw new Exception('Не удалось определить заказчика проекта для выбранного типа договора.');
+        if ($project->customer_counterparty_id === null) {
+            throw new Exception(trans_message('contract.customer_counterparty_required'));
         }
-
-        return (int) $resolvedCustomerId;
     }
 
     private function resolvePrimaryProject(ContractDTO $contractDTO): ?Project
@@ -687,16 +673,23 @@ class ContractSideMutationService
 
         foreach ($projects as $project) {
             if ($sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR) {
-                $resolvedCustomerId = $this->projectCustomerResolverService->resolveOrganizationId($project);
-
-                if ((int) $resolvedCustomerId !== $targetOrganizationId) {
-                    throw new Exception('Выбранный проект не связан с заказчиком, который должен быть стороной договора.');
+                if ($project->customer_counterparty_id === null) {
+                    throw new Exception(trans_message('contract.customer_counterparty_required'));
                 }
 
+                if ((int) $project->organization_id === $targetOrganizationId) {
+                    continue;
+                }
+            } elseif ((int) $project->organization_id === $targetOrganizationId) {
                 continue;
             }
 
-            if ((int) $project->organization_id !== $targetOrganizationId) {
+            $isActiveParticipant = $project->organizations()
+                ->where('organizations.id', $targetOrganizationId)
+                ->wherePivot('is_active', true)
+                ->exists();
+
+            if (!$isActiveParticipant) {
                 throw new Exception('Некоторые проекты не принадлежат организации-владельцу договора.');
             }
         }

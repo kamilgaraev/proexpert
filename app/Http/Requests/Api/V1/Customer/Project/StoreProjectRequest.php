@@ -69,6 +69,7 @@ class StoreProjectRequest extends FormRequest
             longitude: null,
             description: isset($validated['description']) ? (string) $validated['description'] : null,
             customer: isset($validated['customer']) ? (string) $validated['customer'] : null,
+            customer_counterparty_id: null,
             designer: isset($validated['designer']) ? (string) $validated['designer'] : null,
             budget_amount: isset($validated['budget_amount']) ? (float) $validated['budget_amount'] : null,
             site_area_m2: isset($validated['site_area_m2']) ? (float) $validated['site_area_m2'] : null,

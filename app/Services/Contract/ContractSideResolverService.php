@@ -6,6 +6,7 @@ namespace App\Services\Contract;
 
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Models\Contract;
+use App\Models\ContractParty;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Services\Project\ProjectCustomerResolverService;
@@ -24,11 +25,30 @@ class ContractSideResolverService
             'project.organizations',
             'contractor.sourceOrganization',
             'supplier',
+            'firstParty',
+            'secondParty',
         ]);
 
         $sideType = $contract->contract_side_type instanceof ContractSideTypeEnum
             ? $contract->contract_side_type
             : ($contract->contract_side_type ? ContractSideTypeEnum::tryFrom((string) $contract->contract_side_type) : null);
+
+        if ($contract->firstParty instanceof ContractParty && $contract->secondParty instanceof ContractParty) {
+            return [
+                'type' => $sideType?->value,
+                'display_label' => $sideType?->label() ?? 'Стороны договора не определены',
+                'first_party' => $this->mapContractPartySnapshot($contract->firstParty),
+                'second_party' => $this->mapContractPartySnapshot($contract->secondParty),
+                'first_party_role_label' => $contract->firstParty->role?->label(),
+                'second_party_role_label' => $contract->secondParty->role?->label(),
+                'customer_organization' => $sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+                    ? $this->mapContractPartySnapshot($contract->firstParty)
+                    : null,
+                'executor_organization' => $sideType === ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR
+                    ? $this->mapContractPartySnapshot($contract->secondParty)
+                    : null,
+            ];
+        }
 
         $ownerParty = $this->mapOrganizationParty($contract->organization);
         $projectCustomerParty = $contract->project instanceof Project
@@ -130,7 +150,7 @@ class ContractSideResolverService
 
     private function mapResolvedCustomerParty(Project $project): ?array
     {
-        $resolvedCustomer = $this->projectCustomerResolverService->resolve($project);
+        $resolvedCustomer = $this->projectCustomerResolverService->resolveLegalCustomer($project);
 
         if ($resolvedCustomer['id'] === null || $resolvedCustomer['name'] === null) {
             return null;
@@ -139,8 +159,34 @@ class ContractSideResolverService
         return [
             'id' => (int) $resolvedCustomer['id'],
             'name' => (string) $resolvedCustomer['name'],
-            'entity_type' => 'organization',
+            'entity_type' => $resolvedCustomer['entity_type'] ?? 'organization',
             'source' => $resolvedCustomer['source'],
+            'counterparty_id' => $resolvedCustomer['counterparty_id'] ?? null,
+            'linked_organization_id' => $resolvedCustomer['linked_organization_id'] ?? null,
+            'inn' => $resolvedCustomer['inn'] ?? null,
+            'kpp' => $resolvedCustomer['kpp'] ?? null,
+        ];
+    }
+
+    private function mapContractPartySnapshot(ContractParty $party): array
+    {
+        return [
+            'contract_party_id' => $party->id,
+            'id' => $party->counterparty_id ?? $party->linked_organization_id ?? $party->id,
+            'counterparty_id' => $party->counterparty_id,
+            'organization_id' => $party->linked_organization_id,
+            'name' => $party->name,
+            'legal_name' => $party->legal_name,
+            'inn' => $party->inn,
+            'kpp' => $party->kpp,
+            'ogrn' => $party->ogrn,
+            'legal_address' => $party->legal_address,
+            'email' => $party->email,
+            'phone' => $party->phone,
+            'role' => $party->role?->value,
+            'role_label' => $party->role?->label(),
+            'entity_type' => $party->counterparty_id ? 'counterparty' : 'organization',
+            'source' => 'contract_party_snapshot',
         ];
     }
 

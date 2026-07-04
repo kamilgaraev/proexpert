@@ -269,7 +269,10 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
         $query->with([
             'contractor:id,name', 
             'supplier:id,name',
-            'project:id,name,organization_id',
+            'firstParty',
+            'secondParty',
+            'project:id,name,organization_id,customer_counterparty_id',
+            'project.customerCounterparty',
             'project.organization:id,name',
             'project.organizations:id,name',
             'projects:id,name', // Для мультипроектных контрактов

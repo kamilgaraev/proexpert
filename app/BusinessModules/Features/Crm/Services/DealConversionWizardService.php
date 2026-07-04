@@ -294,6 +294,7 @@ final class DealConversionWizardService
             longitude: null,
             description: $fields['description'] ?? null,
             customer: $fields['customer'] ?? null,
+            customer_counterparty_id: null,
             designer: null,
             budget_amount: $this->nullableFloat($fields['budget_amount'] ?? null),
             site_area_m2: null,

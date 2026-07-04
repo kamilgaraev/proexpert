@@ -40,6 +40,12 @@ class UpdateProjectRequest extends FormRequest
             'longitude' => ['nullable', 'numeric', 'between:-180,180'],
             'description' => ['nullable', 'string', 'max:2000'],
             'customer' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'customer_counterparty_id' => [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('counterparties', 'id')->where('organization_id', $this->currentOrganizationId()),
+            ],
             'designer' => ['sometimes', 'nullable', 'string', 'max:255'],
             'start_date' => ['nullable', 'date'],
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
@@ -100,6 +106,9 @@ class UpdateProjectRequest extends FormRequest
                 : $this->nullableFloat($currentProject->longitude),
             description: $validated['description'] ?? $currentProject->description,
             customer: $validated['customer'] ?? $currentProject->customer,
+            customer_counterparty_id: array_key_exists('customer_counterparty_id', $validated)
+                ? ($validated['customer_counterparty_id'] !== null ? (int) $validated['customer_counterparty_id'] : null)
+                : $currentProject->customer_counterparty_id,
             designer: $validated['designer'] ?? $currentProject->designer,
             budget_amount: array_key_exists('budget_amount', $validated)
                 ? ($validated['budget_amount'] !== null ? (float) $validated['budget_amount'] : null)
@@ -129,5 +138,14 @@ class UpdateProjectRequest extends FormRequest
     private function nullableFloat(mixed $value): ?float
     {
         return $value !== null ? (float) $value : null;
+    }
+
+    private function currentOrganizationId(): int
+    {
+        return (int) (
+            $this->attributes->get('current_organization_id')
+            ?? $this->user()?->current_organization_id
+            ?? 0
+        );
     }
 }

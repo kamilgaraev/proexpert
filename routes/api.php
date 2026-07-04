@@ -265,6 +265,7 @@ Route::prefix('v1/admin')->middleware('admin.response')->name('admin.')->group(f
         require __DIR__ . '/api/v1/admin/advance_settings.php';
         // Подключаем маршруты для учета времени
         require __DIR__ . '/api/v1/admin/time_tracking.php';
+        require __DIR__ . '/api/v1/admin/counterparties.php';
         require __DIR__ . '/api/v1/admin/contractors.php';
         require __DIR__ . '/api/v1/admin/contractor_invitations.php';
         require __DIR__ . '/api/v1/admin/contractor_marketplace.php';

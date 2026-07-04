@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Project;
 
 use App\Enums\ProjectOrganizationRole;
+use App\Models\Counterparty;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\ProjectOrganization;
@@ -70,6 +71,45 @@ class ProjectCustomerResolverService
             'is_fallback_owner' => true,
             'organization' => $owner,
         ];
+    }
+
+    public function resolveLegalCustomer(Project $project): array
+    {
+        $project->loadMissing('customerCounterparty.linkedOrganization');
+
+        if ($project->customerCounterparty instanceof Counterparty) {
+            return [
+                'id' => $project->customerCounterparty->id,
+                'name' => $project->customerCounterparty->name,
+                'source' => 'project_customer_counterparty',
+                'role' => ProjectOrganizationRole::CUSTOMER->value,
+                'is_fallback_owner' => false,
+                'entity_type' => 'counterparty',
+                'counterparty_id' => $project->customerCounterparty->id,
+                'linked_organization_id' => $project->customerCounterparty->linked_organization_id,
+                'legal_name' => $project->customerCounterparty->legal_name,
+                'inn' => $project->customerCounterparty->inn,
+                'kpp' => $project->customerCounterparty->kpp,
+            ];
+        }
+
+        $resolved = $this->resolve($project);
+        $resolved['entity_type'] = 'organization';
+        $resolved['counterparty_id'] = null;
+        $resolved['linked_organization_id'] = $resolved['id'];
+
+        unset($resolved['organization']);
+
+        return $resolved;
+    }
+
+    public function resolveCustomerCounterparty(Project $project): ?Counterparty
+    {
+        $project->loadMissing('customerCounterparty');
+
+        return $project->customerCounterparty instanceof Counterparty
+            ? $project->customerCounterparty
+            : null;
     }
 
     public function isResolvedCustomer(Project $project, int $organizationId): bool

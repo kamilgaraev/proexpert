@@ -13,6 +13,7 @@ use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Models\Estimate;
+use App\Enums\Contract\ContractPartySideEnum;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
@@ -137,6 +138,21 @@ class Contract extends Model
     public function contractor(): BelongsTo
     {
         return $this->belongsTo(Contractor::class);
+    }
+
+    public function parties(): HasMany
+    {
+        return $this->hasMany(ContractParty::class);
+    }
+
+    public function firstParty(): HasOne
+    {
+        return $this->hasOne(ContractParty::class)->where('side', ContractPartySideEnum::FIRST->value);
+    }
+
+    public function secondParty(): HasOne
+    {
+        return $this->hasOne(ContractParty::class)->where('side', ContractPartySideEnum::SECOND->value);
     }
 
     /**

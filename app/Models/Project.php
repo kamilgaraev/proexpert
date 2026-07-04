@@ -51,6 +51,7 @@ class Project extends Model
         'geocoding_status',
         'description',
         'customer',
+        'customer_counterparty_id',
         'designer',
         'budget_amount',
         'site_area_m2',
@@ -94,6 +95,11 @@ class Project extends Model
     public function organization(): BelongsTo
     {
         return $this->belongsTo(Organization::class);
+    }
+
+    public function customerCounterparty(): BelongsTo
+    {
+        return $this->belongsTo(Counterparty::class, 'customer_counterparty_id');
     }
 
     /**

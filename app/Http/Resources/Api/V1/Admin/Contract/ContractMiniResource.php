@@ -27,16 +27,18 @@ class ContractMiniResource extends JsonResource
             return null;
         }
 
-        $resolved = app(ProjectCustomerResolverService::class)->resolve($this->project);
+        $resolved = app(ProjectCustomerResolverService::class)->resolveLegalCustomer($this->project);
 
         if ($resolved === null) {
             return null;
         }
 
         return [
-            'id' => $resolved['organization']->id,
-            'name' => $resolved['organization']->name,
+            'id' => $resolved['id'],
+            'name' => $resolved['name'],
             'source' => $resolved['source'],
+            'entity_type' => $resolved['entity_type'] ?? 'organization',
+            'counterparty_id' => $resolved['counterparty_id'] ?? null,
         ];
     }
 } 

@@ -94,6 +94,7 @@ class ProjectController extends Controller
             return AdminResponse::success(new ProjectResource($project->load([
                 'users' => fn ($query) => $query->wherePivot('is_active', true),
                 'costCategory',
+                'customerCounterparty',
             ])));
         } catch (BusinessLogicException $e) {
             return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);

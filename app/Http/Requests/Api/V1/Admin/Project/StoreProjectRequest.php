@@ -38,6 +38,11 @@ class StoreProjectRequest extends FormRequest
             'longitude' => ['nullable', 'numeric', 'between:-180,180'],
             'description' => ['nullable', 'string', 'max:2000'],
             'customer' => ['nullable', 'string', 'max:255'],
+            'customer_counterparty_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('counterparties', 'id')->where('organization_id', $this->currentOrganizationId()),
+            ],
             'designer' => ['nullable', 'string', 'max:255'],
             'start_date' => ['nullable', 'date'],
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
@@ -88,6 +93,9 @@ class StoreProjectRequest extends FormRequest
             longitude: isset($validated['longitude']) ? (float) $validated['longitude'] : null,
             description: $validated['description'] ?? null,
             customer: $validated['customer'] ?? null,
+            customer_counterparty_id: isset($validated['customer_counterparty_id'])
+                ? (int) $validated['customer_counterparty_id']
+                : null,
             designer: $validated['designer'] ?? null,
             budget_amount: isset($validated['budget_amount']) ? (float) $validated['budget_amount'] : null,
             site_area_m2: isset($validated['site_area_m2']) ? (float) $validated['site_area_m2'] : null,
@@ -101,6 +109,15 @@ class StoreProjectRequest extends FormRequest
             cost_category_id: isset($validated['cost_category_id']) ? (int) $validated['cost_category_id'] : null,
             accounting_data: $validated['accounting_data'] ?? null,
             use_in_accounting_reports: $validated['use_in_accounting_reports'] ?? false
+        );
+    }
+
+    private function currentOrganizationId(): int
+    {
+        return (int) (
+            $this->attributes->get('current_organization_id')
+            ?? $this->user()?->current_organization_id
+            ?? 0
         );
     }
 }
