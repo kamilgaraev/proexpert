@@ -2,6 +2,7 @@
 
 namespace App\Http\Responses\Auth;
 
+use App\Http\Resources\Api\V1\UserResource;
 use App\Http\Responses\ApiResponse;
 use App\Models\User;
 use Symfony\Component\HttpFoundation\Response;
@@ -17,9 +18,7 @@ class ProfileResponse extends ApiResponse
      */
     public static function userProfile(User $user, ?string $message = null): self
     {
-        // Возможно, пользователя нужно обернуть в UserResource?
-        // $data = new \App\Http\Resources\UserResource($user);
-        $data = ['user' => $user]; // Пока оставляем так
+        $data = ['user' => new UserResource($user)];
 
         return new self(
             data: $data,

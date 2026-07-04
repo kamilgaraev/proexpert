@@ -18,6 +18,7 @@ class UserResource extends JsonResource
             'id' => $this->id,
             'name' => $this->name,
             'email' => $this->email,
+            'email_verified_at' => $this->email_verified_at?->toIso8601String(),
             'phone' => $this->phone,
             'position' => $this->position,
             'avatar_url' => $this->avatar_url, // Кешированный accessor (55 минут)
@@ -31,4 +32,4 @@ class UserResource extends JsonResource
             // Можно добавить другие необходимые поля или отношения
         ];
     }
-} 
+}
