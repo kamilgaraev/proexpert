@@ -1,25 +1,12 @@
 @php
     $mostGeneratedAt = $documentGeneratedAt
         ?? ($generated_at ?? now()->format('d.m.Y H:i'));
-    $mostMarkPath = public_path('most-icon.svg');
-    $mostMarkSvgSource = is_file($mostMarkPath)
-        ? (string) file_get_contents($mostMarkPath)
-        : '';
-    $mostMarkSvg = $mostMarkSvgSource !== ''
-        ? (preg_replace([
-            '/<title\b[^>]*>.*?<\/title>/is',
-            '/<desc\b[^>]*>.*?<\/desc>/is',
-            '/\s(?:role|aria-labelledby)="[^"]*"/i',
-        ], '', $mostMarkSvgSource) ?? '')
-        : '';
 @endphp
 <table class="most-brand-card">
     <tr>
         <td style="width: 42px;">
             <div class="most-brand-mark">
-                @if ($mostMarkSvg !== '')
-                    {!! $mostMarkSvg !!}
-                @endif
+                М
             </div>
         </td>
         <td>

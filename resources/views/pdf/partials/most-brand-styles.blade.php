@@ -14,15 +14,14 @@
 .most-brand-mark {
     width: 36px;
     height: 36px;
+    line-height: 36px;
     text-align: center;
     background-color: #ffffff;
     border: 1px solid #d9e3f2;
-}
-.most-brand-mark svg {
-    display: block;
-    width: 28px;
-    height: 28px;
-    margin: 4px auto 0 auto;
+    color: #1e3a8a;
+    font-family: 'DejaVu Sans', Arial, sans-serif;
+    font-size: 23px;
+    font-weight: bold;
 }
 .most-brand-name {
     color: #1e3a8a;
