@@ -101,6 +101,49 @@ final class AssistantAgentFlowServiceTest extends TestCase
         $this->assertSame('completed', $conversation->context['agent_state']['status']);
     }
 
+    public function test_report_period_follow_up_uses_saved_agent_state_when_current_message_is_not_report_intent(): void
+    {
+        $conversation = new AgentFlowConversation(212, [
+            'agent_state' => $this->pendingContractPaymentsReportState()->toArray(),
+        ]);
+        $conversationManager = new AgentFlowConversationManager($conversation);
+        $toolRegistry = new AIToolRegistry;
+        $toolRegistry->registerTool(new AgentFlowTool('generate_contract_payments_report', [
+            'status' => 'success',
+            'pdf_url' => 'https://storage.example.test/org-15/reports/contract-payments.pdf',
+            'filename' => 'contract-payments.pdf',
+            'storage_disk' => 's3',
+            'storage_path' => 'org-15/reports/contract-payments.pdf',
+        ]));
+
+        $taskPlan = $this->taskPlan();
+        $taskPlan['request_understanding'] = [
+            'primary_intent' => 'unknown',
+            'output_format' => 'any',
+            'action_policy' => 'read_only',
+            'constraints' => [],
+            'requested_entities' => [],
+            'confidence' => 0.45,
+            'evidence' => [],
+        ];
+
+        $service = $this->makeService($conversationManager, $toolRegistry, $taskPlan);
+
+        $result = $service->ask('за год', 15, $this->makeUser(), 212, [
+            'context' => [
+                'source_module' => 'ai-assistant',
+            ],
+        ]);
+
+        $metadata = $conversationManager->assistantMessages()[0]->metadata;
+
+        $this->assertSame('Отчет сформирован. Файл доступен ниже.', $result['message']['content']);
+        $this->assertSame('generate_contract_payments_report', $metadata['tool_result']['tool_name']);
+        $this->assertSame('success', $metadata['tool_result']['status']);
+        $this->assertSame('completed', $metadata['agent_state']['status']);
+        $this->assertSame('https://storage.example.test/org-15/reports/contract-payments.pdf', $metadata['artifacts'][0]['url']);
+    }
+
     public function test_executor_success_without_artifacts_returns_failure_without_fake_link(): void
     {
         $conversation = new AgentFlowConversation(303, [
@@ -251,7 +294,8 @@ final class AssistantAgentFlowServiceTest extends TestCase
 
     private function makeService(
         AgentFlowConversationManager $conversationManager,
-        AIToolRegistry $toolRegistry
+        AIToolRegistry $toolRegistry,
+        ?array $taskPlan = null
     ): AgentFlowAIAssistantService {
         $llmProvider = $this->createMock(LLMProviderInterface::class);
         $llmProvider->expects($this->never())->method('chat');
@@ -274,7 +318,7 @@ final class AssistantAgentFlowServiceTest extends TestCase
         $accessContextResolver->method('resolve')->willReturn([]);
 
         $taskOrchestrator = $this->createMock(AssistantTaskOrchestrator::class);
-        $taskOrchestrator->method('plan')->willReturn($this->taskPlan());
+        $taskOrchestrator->method('plan')->willReturn($taskPlan ?? $this->taskPlan());
         $taskOrchestrator->method('buildPayload')->willReturnCallback(
             static function (array $plan, string $answer, array $options = []): array {
                 return [
@@ -369,6 +413,22 @@ final class AssistantAgentFlowServiceTest extends TestCase
                 new AssistantTaskSlot('project_id', false, 56, 'Строительство склада Литер А'),
             ],
             sourceMessage: 'Сделай отчет по графику работ'
+        );
+    }
+
+    private function pendingContractPaymentsReportState(): AssistantTaskState
+    {
+        return new AssistantTaskState(
+            id: 'report.contract_payments',
+            domain: 'reports',
+            capability: 'payments',
+            toolName: 'generate_contract_payments_report',
+            status: 'waiting_for_slots',
+            slots: [
+                new AssistantTaskSlot('period', true),
+                new AssistantTaskSlot('project_id', false, 56, 'Строительство склада Литер А'),
+            ],
+            sourceMessage: 'Платежи по договорам'
         );
     }
 

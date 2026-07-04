@@ -13,7 +13,7 @@ use PHPUnit\Framework\TestCase;
 class AssistantPeriodResolverTest extends TestCase
 {
     #[DataProvider('periodProvider')]
-    public function test_resolves_russian_periods(string $text, string $from, string $to, string $label): void
+    public function test_resolves_russian_periods(string $text, ?string $from, ?string $to, string $label): void
     {
         $resolver = new AssistantPeriodResolver(CarbonImmutable::parse('2026-05-04 02:09:00', 'Europe/Moscow'));
         $period = $resolver->resolve($text);
@@ -22,7 +22,7 @@ class AssistantPeriodResolverTest extends TestCase
     }
 
     /**
-     * @return array<string, array{0: string, 1: string, 2: string, 3: string}>
+     * @return array<string, array{0: string, 1: string|null, 2: string|null, 3: string}>
      */
     public static function periodProvider(): array
     {
@@ -44,6 +44,8 @@ class AssistantPeriodResolverTest extends TestCase
             'previous month' => ['за прошлый месяц', '2026-04-01', '2026-04-30', 'Прошлый месяц'],
             'current year' => ['за текущий год', '2026-01-01', '2026-05-04', 'Текущий год'],
             'previous year' => ['за прошлый год', '2025-01-01', '2025-12-31', 'Прошлый год'],
+            'project start through today' => ['с начала проекта по сегодняшний день', null, '2026-05-04', 'С начала проекта по текущий день'],
+            'all available period' => ['за весь доступный период', null, null, 'Весь доступный период'],
         ];
     }
 
@@ -113,8 +115,8 @@ class AssistantPeriodResolverTest extends TestCase
 
     private function assertPeriod(
         ?AssistantResolvedPeriod $period,
-        string $dateFrom,
-        string $dateTo,
+        ?string $dateFrom,
+        ?string $dateTo,
         string $label,
         string $sourceText
     ): void {

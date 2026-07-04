@@ -1537,12 +1537,15 @@ class ReportService
         $organizationId = $this->getCurrentOrgId($request);
         $format = $request->query('format', 'json');
 
+        $dateFromInput = $request->query('date_from', $request->query('start_date'));
+        $dateToInput = $request->query('date_to', $request->query('end_date'));
+
         try {
-            $dateFrom = $request->query('date_from')
-                ? Carbon::parse($request->query('date_from'))->startOfDay()
+            $dateFrom = $dateFromInput
+                ? Carbon::parse($dateFromInput)->startOfDay()
                 : now()->startOfMonth();
-            $dateTo = $request->query('date_to')
-                ? Carbon::parse($request->query('date_to'))->endOfDay()
+            $dateTo = $dateToInput
+                ? Carbon::parse($dateToInput)->endOfDay()
                 : now()->endOfDay();
         } catch (\Throwable $e) {
             $dateFrom = now()->startOfMonth();
@@ -1557,9 +1560,12 @@ class ReportService
             'worker_type',
             'worker_name',
             'is_billable',
+            'billable',
             'group_by',
             'date_from',
             'date_to',
+            'start_date',
+            'end_date',
         ]);
 
         $this->logging->business('report.time_tracking.requested', [
@@ -1617,8 +1623,10 @@ class ReportService
             $query->forWorkerName((string) $request->query('worker_name'));
         }
 
-        if ($request->query('is_billable') !== null && $request->query('is_billable') !== '') {
-            $query->billable($request->boolean('is_billable'));
+        $billableInput = $request->query('is_billable', $request->query('billable'));
+
+        if ($billableInput !== null && $billableInput !== '') {
+            $query->billable(filter_var($billableInput, FILTER_VALIDATE_BOOLEAN));
         }
 
         /** @var \Illuminate\Support\Collection<int, TimeEntry> $entries */
@@ -1720,18 +1728,16 @@ class ReportService
         }
 
         if ($format === 'pdf') {
-            return $this->pdfExporter->download(
+            return $this->pdfExporter->streamDownload(
                 'reports.time-tracking-pdf',
                 [
                     'title' => 'Отчет по учету времени',
-                    'date_from' => $dateFrom->format('d.m.Y'),
-                    'date_to' => $dateTo->format('d.m.Y'),
-                    'entries' => $data,
-                    'summary' => [
-                        'total_hours' => $totals['total_hours'],
-                        'total_cost' => $totals['total_cost'],
-                        'total_entries' => $totals['total_entries'],
-                    ],
+                    'data' => $data,
+                    'totals' => $totals,
+                    'filters' => array_merge($filters, [
+                        'date_from' => $dateFrom->format('d.m.Y'),
+                        'date_to' => $dateTo->format('d.m.Y'),
+                    ]),
                     'generated_at' => Carbon::now()->format('d.m.Y H:i'),
                 ],
                 'time_tracking_report.pdf'

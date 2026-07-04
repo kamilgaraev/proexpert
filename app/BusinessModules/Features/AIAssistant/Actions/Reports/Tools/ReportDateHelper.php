@@ -17,14 +17,24 @@ trait ReportDateHelper
      */
     protected function extractPeriodFromArguments(array $arguments, string $defaultPeriod): array
     {
+        $hasDateFromArgument = $this->hasDateArgument($arguments, 'date_from');
+        $hasDateToArgument = $this->hasDateArgument($arguments, 'date_to');
         $dateFrom = $this->normalizeDateArgument($arguments['date_from'] ?? null);
         $dateTo = $this->normalizeDateArgument($arguments['date_to'] ?? null, true);
 
-        if ($dateFrom !== null && $dateTo !== null) {
-            $from = $this->carbonFromDateTimeString($dateFrom);
-            $to = $this->carbonFromDateTimeString($dateTo);
+        if (($hasDateFromArgument && $dateFrom === null) || ($hasDateToArgument && $dateTo === null)) {
+            return $this->extractPeriod((string) ($arguments['period'] ?? $defaultPeriod));
+        }
 
-            if ($from === null || $to === null || $from->greaterThan($to)) {
+        if ($dateFrom !== null || $dateTo !== null) {
+            $from = $dateFrom !== null ? $this->carbonFromDateTimeString($dateFrom) : null;
+            $to = $dateTo !== null ? $this->carbonFromDateTimeString($dateTo) : null;
+
+            if (($dateFrom !== null && $from === null) || ($dateTo !== null && $to === null)) {
+                return $this->extractPeriod((string) ($arguments['period'] ?? $defaultPeriod));
+            }
+
+            if ($from !== null && $to !== null && $from->greaterThan($to)) {
                 return $this->extractPeriod((string) ($arguments['period'] ?? $defaultPeriod));
             }
 
@@ -44,6 +54,13 @@ trait ReportDateHelper
     {
         $query = mb_strtolower($query);
         $now = Carbon::now();
+
+        if (preg_match('/\b(?:с|от)\s+начала\s+(?:проекта|объекта|работ|строительства)\b/ui', $query)) {
+            return [
+                'date_from' => null,
+                'date_to' => $now->copy()->endOfDay()->toDateTimeString(),
+            ];
+        }
 
         if (preg_match('/(последн|прошл).* месяц/ui', $query)) {
             return [
@@ -110,6 +127,17 @@ trait ReportDateHelper
             'date_from' => $now->copy()->startOfMonth()->toDateTimeString(),
             'date_to' => $now->copy()->endOfMonth()->toDateTimeString(),
         ];
+    }
+
+    private function hasDateArgument(array $arguments, string $key): bool
+    {
+        if (! array_key_exists($key, $arguments)) {
+            return false;
+        }
+
+        $value = $arguments[$key];
+
+        return $value !== null && $value !== '';
     }
 
     private function normalizeDateArgument(mixed $value, bool $endOfDay = false): ?string

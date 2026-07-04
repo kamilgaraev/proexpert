@@ -103,6 +103,8 @@ final class AssistantPeriodResolver
         $now = ($this->now ?? CarbonImmutable::now('Europe/Moscow'))->startOfDay();
 
         return $this->resolveExplicitDateRange($normalized, $sourceText)
+            ?? $this->resolveProjectStartPeriod($normalized, $sourceText, $now)
+            ?? $this->resolveAllAvailablePeriod($normalized, $sourceText)
             ?? $this->resolveRelativeMonth($normalized, $sourceText, $now)
             ?? $this->resolveRelativeYear($normalized, $sourceText, $now)
             ?? $this->resolveWeeksAgo($normalized, $sourceText, $now)
@@ -116,17 +118,25 @@ final class AssistantPeriodResolver
      */
     private function resolveArray(array $input): ?AssistantResolvedPeriod
     {
-        $dateFrom = $this->stringValue($input['date_from'] ?? null);
-        $dateTo = $this->stringValue($input['date_to'] ?? null);
-
-        if ($dateFrom === '' || $dateTo === '') {
+        if ($this->hasInvalidDateInput($input, 'date_from') || $this->hasInvalidDateInput($input, 'date_to')) {
             return null;
         }
 
-        $parsedFrom = $this->dateFromString($dateFrom);
-        $parsedTo = $this->dateFromString($dateTo);
+        $dateFrom = $this->stringValue($input['date_from'] ?? null);
+        $dateTo = $this->stringValue($input['date_to'] ?? null);
 
-        if ($parsedFrom === null || $parsedTo === null || $parsedFrom->greaterThan($parsedTo)) {
+        if ($dateFrom === '' && $dateTo === '') {
+            return null;
+        }
+
+        $parsedFrom = $dateFrom !== '' ? $this->dateFromString($dateFrom) : null;
+        $parsedTo = $dateTo !== '' ? $this->dateFromString($dateTo) : null;
+
+        if (($dateFrom !== '' && $parsedFrom === null) || ($dateTo !== '' && $parsedTo === null)) {
+            return null;
+        }
+
+        if ($parsedFrom !== null && $parsedTo !== null && $parsedFrom->greaterThan($parsedTo)) {
             return null;
         }
 
@@ -135,11 +145,11 @@ final class AssistantPeriodResolver
 
         $label = $inputLabel !== ''
             ? $inputLabel
-            : "{$parsedFrom->toDateString()} - {$parsedTo->toDateString()}";
+            : $this->openPeriodLabel($parsedFrom, $parsedTo);
 
         return new AssistantResolvedPeriod(
-            dateFrom: $parsedFrom->toDateString(),
-            dateTo: $parsedTo->toDateString(),
+            dateFrom: $parsedFrom?->toDateString(),
+            dateTo: $parsedTo?->toDateString(),
             label: $label,
             sourceText: $sourceText
         );
@@ -159,6 +169,44 @@ final class AssistantPeriodResolver
         }
 
         return $this->period($dateFrom, $dateTo, 'Указанный период', $sourceText);
+    }
+
+    private function resolveProjectStartPeriod(
+        string $normalized,
+        string $sourceText,
+        CarbonImmutable $now
+    ): ?AssistantResolvedPeriod
+    {
+        if (
+            ! str_contains($normalized, 'начала')
+            || ! $this->containsAny($normalized, ['проект', 'объект', 'работ', 'строительств'])
+        ) {
+            return null;
+        }
+
+        return new AssistantResolvedPeriod(
+            dateFrom: null,
+            dateTo: $now->toDateString(),
+            label: 'С начала проекта по текущий день',
+            sourceText: $sourceText
+        );
+    }
+
+    private function resolveAllAvailablePeriod(string $normalized, string $sourceText): ?AssistantResolvedPeriod
+    {
+        if (
+            ! $this->containsAny($normalized, ['весь', 'все', 'всё'])
+            || ! $this->containsAny($normalized, ['период', 'время'])
+        ) {
+            return null;
+        }
+
+        return new AssistantResolvedPeriod(
+            dateFrom: null,
+            dateTo: null,
+            label: 'Весь доступный период',
+            sourceText: $sourceText
+        );
     }
 
     private function resolveRelativeMonth(string $normalized, string $sourceText, CarbonImmutable $now): ?AssistantResolvedPeriod
@@ -299,6 +347,23 @@ final class AssistantPeriodResolver
         );
     }
 
+    private function openPeriodLabel(?CarbonImmutable $dateFrom, ?CarbonImmutable $dateTo): string
+    {
+        if ($dateFrom !== null && $dateTo !== null) {
+            return "{$dateFrom->toDateString()} - {$dateTo->toDateString()}";
+        }
+
+        if ($dateFrom !== null) {
+            return "с {$dateFrom->toDateString()}";
+        }
+
+        if ($dateTo !== null) {
+            return "по {$dateTo->toDateString()}";
+        }
+
+        return 'Весь доступный период';
+    }
+
     private function dateFromParts(int $year, int $month, int $day): ?CarbonImmutable
     {
         try {
@@ -379,5 +444,30 @@ final class AssistantPeriodResolver
         }
 
         return '';
+    }
+
+    private function hasInvalidDateInput(array $input, string $key): bool
+    {
+        if (! array_key_exists($key, $input)) {
+            return false;
+        }
+
+        $value = $input[$key];
+
+        return $value !== null && $value !== '' && ! is_string($value) && ! is_numeric($value);
+    }
+
+    /**
+     * @param  string[]  $needles
+     */
+    private function containsAny(string $haystack, array $needles): bool
+    {
+        foreach ($needles as $needle) {
+            if ($needle !== '' && str_contains($haystack, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

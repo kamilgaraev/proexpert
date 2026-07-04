@@ -147,21 +147,39 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
 
     public function getTeamSummary(int $organizationId): array
     {
-        // Используем новую систему авторизации с user_role_assignments
-        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
-        
-        $usersQuery = DB::table('users')
-            ->join('user_role_assignments', 'users.id', '=', 'user_role_assignments.user_id')
-            ->where('user_role_assignments.context_id', $context->id)
-            ->where('user_role_assignments.is_active', true)
+        $activeUsersQuery = DB::table('users')
+            ->join('organization_user', 'users.id', '=', 'organization_user.user_id')
+            ->where('organization_user.organization_id', $organizationId)
+            ->where('organization_user.is_active', true)
             ->whereNull('users.deleted_at');
 
-        $rolesCount = $usersQuery->select('user_role_assignments.role_slug', DB::raw('COUNT(*) as cnt'))
+        $total = (int) (clone $activeUsersQuery)
+            ->distinct()
+            ->count('users.id');
+
+        $contextId = DB::table('authorization_contexts')
+            ->where('type', 'organization')
+            ->where('resource_id', $organizationId)
+            ->value('id');
+
+        if (!$contextId) {
+            return [
+                'total' => $total,
+                'by_roles' => [],
+            ];
+        }
+
+        $rolesCount = (clone $activeUsersQuery)
+            ->join('user_role_assignments', function ($join) use ($contextId) {
+                $join->on('users.id', '=', 'user_role_assignments.user_id')
+                    ->where('user_role_assignments.context_id', '=', $contextId)
+                    ->where('user_role_assignments.is_active', '=', true);
+            })
+            ->select('user_role_assignments.role_slug', DB::raw('COUNT(DISTINCT users.id) as cnt'))
             ->groupBy('user_role_assignments.role_slug')
             ->pluck('cnt', 'user_role_assignments.role_slug')
+            ->map(fn ($count): int => (int) $count)
             ->toArray();
-
-        $total = array_sum($rolesCount);
 
         return [
             'total' => $total,

@@ -7,14 +7,14 @@ namespace App\BusinessModules\Features\AIAssistant\DTOs\Agent;
 final readonly class AssistantResolvedPeriod
 {
     public function __construct(
-        public string $dateFrom,
-        public string $dateTo,
+        public ?string $dateFrom,
+        public ?string $dateTo,
         public string $label,
         public string $sourceText
     ) {}
 
     /**
-     * @return array{date_from: string, date_to: string, label: string, source_text: string}
+     * @return array{date_from: string|null, date_to: string|null, label: string, source_text: string}
      */
     public function toArray(): array
     {

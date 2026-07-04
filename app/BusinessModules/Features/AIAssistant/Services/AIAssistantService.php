@@ -520,7 +520,7 @@ class AIAssistantService
             $toolArguments,
             $user,
             $organization,
-            $taskPlan['request_understanding'] ?? null
+            $this->requestUnderstandingForAgentTool($taskPlan, $state, $toolName)
         );
 
         $artifacts = $this->filterAgentArtifactsForOrganization($organizationId, array_values(array_filter(
@@ -576,6 +576,46 @@ class AIAssistantService
         return str_starts_with($state->id, 'report.')
             && str_starts_with($toolName, 'generate_')
             && str_ends_with($toolName, '_report');
+    }
+
+    protected function requestUnderstandingForAgentTool(
+        array $taskPlan,
+        AssistantTaskState $state,
+        string $toolName
+    ): AssistantRequestUnderstanding|array|null
+    {
+        $understanding = $this->requestUnderstandingFromPlan($taskPlan);
+
+        if (! $this->canAgentExecuteTool($state, $toolName)) {
+            return $understanding ?? ($taskPlan['request_understanding'] ?? null);
+        }
+
+        if ($understanding instanceof AssistantRequestUnderstanding && $understanding->blocksFileGeneration()) {
+            return $understanding;
+        }
+
+        $requestedEntities = $understanding instanceof AssistantRequestUnderstanding
+            ? $understanding->requestedEntities
+            : [];
+
+        return new AssistantRequestUnderstanding(
+            primaryIntent: 'generate_report',
+            outputFormat: 'pdf',
+            actionPolicy: 'allow_file_generation',
+            constraints: [],
+            requestedEntities: $requestedEntities,
+            confidence: max(0.7, $understanding?->confidence ?? 0.7),
+            evidence: [
+                [
+                    'type' => 'agent_state',
+                    'value' => $state->id,
+                ],
+                [
+                    'type' => 'tool',
+                    'value' => $toolName,
+                ],
+            ],
+        );
     }
 
     protected function isReportAgentState(AssistantTaskState $state): bool

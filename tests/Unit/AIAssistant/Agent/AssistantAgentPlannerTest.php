@@ -113,6 +113,39 @@ class AssistantAgentPlannerTest extends TestCase
         $this->assertSame(56, $decision->toolArguments['project_id']);
     }
 
+    public function test_project_start_period_reply_continues_pending_contract_payments_report(): void
+    {
+        $decision = $this->planner()->decide(
+            'с начала проекта по сегодняшний день',
+            [],
+            $this->pendingContractPaymentsState()
+        );
+
+        $this->assertSame('execute_tool', $decision->type);
+        $this->assertSame('ready_to_execute', $decision->state?->status);
+        $this->assertSame('generate_contract_payments_report', $decision->toolName);
+        $this->assertSame('с начала проекта по сегодняшний день', $decision->toolArguments['period']);
+        $this->assertArrayNotHasKey('date_from', $decision->toolArguments);
+        $this->assertSame('2026-05-04', $decision->toolArguments['date_to']);
+        $this->assertSame(56, $decision->toolArguments['project_id']);
+    }
+
+    public function test_short_year_period_reply_continues_pending_contract_payments_report(): void
+    {
+        $decision = $this->planner()->decide(
+            'за год',
+            [],
+            $this->pendingContractPaymentsState()
+        );
+
+        $this->assertSame('execute_tool', $decision->type);
+        $this->assertSame('generate_contract_payments_report', $decision->toolName);
+        $this->assertSame('за год', $decision->toolArguments['period']);
+        $this->assertSame('2025-05-04', $decision->toolArguments['date_from']);
+        $this->assertSame('2026-05-04', $decision->toolArguments['date_to']);
+        $this->assertSame(56, $decision->toolArguments['project_id']);
+    }
+
     public function test_direct_work_completion_request_with_flexible_phrase_executes_immediately(): void
     {
         $decision = $this->planner()->decide(
@@ -405,6 +438,22 @@ class AssistantAgentPlannerTest extends TestCase
                 new AssistantTaskSlot('project_id', false, 56, 'Строительство склада Литер А'),
             ],
             sourceMessage: 'Сделай отчет по графику работ'
+        );
+    }
+
+    private function pendingContractPaymentsState(): AssistantTaskState
+    {
+        return new AssistantTaskState(
+            id: 'report.contract_payments',
+            domain: 'reports',
+            capability: 'payments',
+            toolName: 'generate_contract_payments_report',
+            status: 'waiting_for_slots',
+            slots: [
+                new AssistantTaskSlot('period', true),
+                new AssistantTaskSlot('project_id', false, 56, 'Строительство склада Литер А'),
+            ],
+            sourceMessage: 'Платежи по договорам'
         );
     }
 }
