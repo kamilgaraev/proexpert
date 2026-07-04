@@ -12,6 +12,7 @@ use App\Domain\Authorization\Services\RolePayloadFormatter;
 use App\Domain\Authorization\Services\RoleScanner;
 use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
+use App\Http\Resources\Api\V1\Landing\AdminPanelUserResource;
 use App\Http\Responses\LandingResponse;
 use App\Helpers\AdminPanelAccessHelper;
 use App\Models\User;
@@ -25,6 +26,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
 
 use function trans_message;
@@ -272,8 +274,16 @@ class CustomUserManagementController extends Controller
     public function updateUserCustomRoles(Request $request, int $userId): JsonResponse
     {
         $data = $request->validate([
-            'custom_role_ids' => 'required|array',
-            'custom_role_ids.*' => 'integer|exists:organization_custom_roles,id',
+            'action' => 'sometimes|string|in:replace,add,remove',
+            'scope' => 'sometimes|string|in:all,admin_panel',
+            'system_roles' => 'sometimes|array',
+            'system_roles.*' => 'string',
+            'custom_roles' => 'sometimes|array',
+            'custom_roles.*' => 'integer',
+            'custom_role_ids' => 'sometimes|array',
+            'custom_role_ids.*' => 'integer',
+            'role_slugs' => 'sometimes|array',
+            'role_slugs.*' => 'string',
         ]);
 
         $organizationId = $request->attributes->get('current_organization_id');
@@ -293,17 +303,60 @@ class CustomUserManagementController extends Controller
                 return LandingResponse::error(trans_message('landing.custom_users.user_not_in_organization'), 403);
             }
 
+            $organizationId = (int) $organizationId;
             $authContext = AuthorizationContext::getOrganizationContext($organizationId);
             $actor = $request->user();
-
-            $this->customRoleService->syncUserRoles(
-                $user,
-                $data['custom_role_ids'],
-                $authContext,
-                $actor instanceof User ? $actor : null
+            $action = (string) ($data['action'] ?? 'replace');
+            $scope = (string) ($data['scope'] ?? $request->query('scope', 'all'));
+            $adminPanelOnly = $scope === 'admin_panel' || $request->boolean('admin_panel');
+            $currentInterface = (string) $request->input('current_interface', 'lk');
+            $allowedSystemRoles = $this->resolveAssignableSystemRoleSlugs(
+                $organizationId,
+                $adminPanelOnly,
+                $currentInterface
+            );
+            $allowedCustomRoles = $this->resolveAssignableCustomRoles(
+                $organizationId,
+                $adminPanelOnly,
+                $currentInterface
             );
 
-            return LandingResponse::success(null, trans_message('landing.custom_users.roles_updated'));
+            [$systemRoleSlugs, $customRoleSlugs] = $this->resolveRequestedRoleAssignments(
+                $data,
+                $allowedSystemRoles,
+                $allowedCustomRoles
+            );
+
+            if ($adminPanelOnly && $action === 'replace' && $systemRoleSlugs === [] && $customRoleSlugs === []) {
+                return LandingResponse::error(
+                    trans_message('landing_users.validation.role_required'),
+                    422,
+                    ['roles' => [trans_message('landing_users.validation.role_required')]]
+                );
+            }
+
+            $updatedUser = $this->userService->syncOrganizationRoleAssignments(
+                $user,
+                $authContext,
+                $systemRoleSlugs,
+                $customRoleSlugs,
+                $allowedSystemRoles,
+                $allowedCustomRoles->pluck('slug')->values()->all(),
+                $action,
+                $actor instanceof User ? $actor : null
+            );
+            $updatedUser->load('roleAssignments');
+
+            return LandingResponse::success(
+                new AdminPanelUserResource($updatedUser),
+                trans_message('landing.custom_users.roles_updated')
+            );
+        } catch (ValidationException $e) {
+            return LandingResponse::error(
+                trans_message('landing.validation_error'),
+                422,
+                $e->errors()
+            );
         } catch (\Throwable $e) {
             Log::error('Error updating user custom roles', [
                 'user_id' => $userId,
@@ -313,6 +366,145 @@ class CustomUserManagementController extends Controller
 
             return LandingResponse::error(trans_message('landing.custom_users.roles_update_error'), 500);
         }
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function resolveAssignableSystemRoleSlugs(
+        int $organizationId,
+        bool $adminPanelOnly,
+        string $currentInterface
+    ): array
+    {
+        $roles = $this->roleScanner->getAllRoles()
+            ->reject(fn (array $role, string $slug): bool => $slug === 'organization_owner')
+            ->filter(fn (array $role): bool => $this->rolePayloadFormatter->isAssignableSystemRole($role));
+
+        if ($adminPanelOnly) {
+            $adminPanelRoleSlugs = array_flip($this->adminPanelAccessHelper->getAdminPanelRoles(
+                $organizationId,
+                $currentInterface,
+                true
+            ));
+
+            $roles = $roles->filter(fn (array $role, string $slug): bool => isset($adminPanelRoleSlugs[$slug]));
+        }
+
+        return $roles->keys()->values()->all();
+    }
+
+    private function resolveAssignableCustomRoles(
+        int $organizationId,
+        bool $adminPanelOnly,
+        string $currentInterface
+    ): Collection
+    {
+        $customRoles = OrganizationCustomRole::query()
+            ->where('organization_id', $organizationId)
+            ->where('is_active', true)
+            ->get();
+
+        if (!$adminPanelOnly) {
+            return $customRoles;
+        }
+
+        $adminPanelRoleSlugs = array_flip($this->adminPanelAccessHelper->getAdminPanelRoles(
+            $organizationId,
+            $currentInterface,
+            true
+        ));
+
+        return $customRoles
+            ->filter(fn (OrganizationCustomRole $role): bool => isset($adminPanelRoleSlugs[$role->slug]))
+            ->values();
+    }
+
+    /**
+     * @return array{0: array<int, string>, 1: array<int, string>}
+     */
+    private function resolveRequestedRoleAssignments(
+        array $data,
+        array $allowedSystemRoles,
+        Collection $allowedCustomRoles
+    ): array
+    {
+        $allowedSystemLookup = array_flip($allowedSystemRoles);
+        $customRolesById = $allowedCustomRoles->keyBy('id');
+        $customRolesBySlug = $allowedCustomRoles->keyBy('slug');
+        $systemRoleSlugs = $this->uniqueStringList($data['system_roles'] ?? []);
+        $customRoleIds = collect($data['custom_roles'] ?? [])
+            ->merge($data['custom_role_ids'] ?? [])
+            ->map(static fn (mixed $roleId): int => (int) $roleId)
+            ->filter(static fn (int $roleId): bool => $roleId > 0)
+            ->unique()
+            ->values()
+            ->all();
+        $customRoleSlugs = [];
+        $invalidRoles = [];
+
+        foreach ($systemRoleSlugs as $roleSlug) {
+            if (!isset($allowedSystemLookup[$roleSlug])) {
+                $invalidRoles[] = $roleSlug;
+            }
+        }
+
+        foreach ($customRoleIds as $roleId) {
+            $role = $customRolesById->get($roleId);
+
+            if (!$role instanceof OrganizationCustomRole) {
+                $invalidRoles[] = (string) $roleId;
+                continue;
+            }
+
+            $customRoleSlugs[] = $role->slug;
+        }
+
+        foreach ($this->uniqueStringList($data['role_slugs'] ?? []) as $roleSlug) {
+            if (isset($allowedSystemLookup[$roleSlug])) {
+                $systemRoleSlugs[] = $roleSlug;
+                continue;
+            }
+
+            $customRole = $customRolesBySlug->get($roleSlug);
+
+            if ($customRole instanceof OrganizationCustomRole) {
+                $customRoleSlugs[] = $customRole->slug;
+                continue;
+            }
+
+            $invalidRoles[] = $roleSlug;
+        }
+
+        if (in_array('organization_owner', $systemRoleSlugs, true) || in_array('organization_owner', $customRoleSlugs, true)) {
+            throw ValidationException::withMessages([
+                'roles' => [trans_message('landing_users.owner_generic_assignment_forbidden')],
+            ]);
+        }
+
+        if ($invalidRoles !== []) {
+            throw ValidationException::withMessages([
+                'roles' => [trans_message('landing_users.validation.role_invalid')],
+            ]);
+        }
+
+        return [
+            $this->uniqueStringList($systemRoleSlugs),
+            $this->uniqueStringList($customRoleSlugs),
+        ];
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function uniqueStringList(array $items): array
+    {
+        return array_values(array_unique(array_filter(
+            array_map(
+                static fn (mixed $item): ?string => is_string($item) && trim($item) !== '' ? trim($item) : null,
+                $items
+            )
+        )));
     }
 
     public function grantOrganizationOwner(Request $request, int $userId): JsonResponse

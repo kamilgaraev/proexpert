@@ -10,6 +10,7 @@ use App\Http\Requests\Api\V1\Landing\AdminPanelUser\UpdateAdminPanelUserRequest;
 use App\Http\Requests\Api\V1\Landing\User\StoreAdminPanelUserRequest;
 use App\Http\Resources\Api\V1\Landing\AdminPanelUserResource;
 use App\Http\Responses\LandingResponse;
+use App\Models\User;
 use App\Services\User\UserService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -47,10 +48,26 @@ class AdminPanelUserController extends Controller
     {
         try {
             $validatedData = $request->validated();
-            $roleSlug = (string) $validatedData['role_slug'];
-            unset($validatedData['role_slug']);
+            $roleSlugs = $this->normalizeRoleSlugs($validatedData['role_slugs'] ?? [$validatedData['role_slug']]);
+            $roleSlug = (string) $roleSlugs[0];
+            unset($validatedData['role_slug'], $validatedData['role_slugs']);
 
             $user = $this->userService->createAdminPanelUser($validatedData, $roleSlug, $request);
+            if (count($roleSlugs) > 1) {
+                $organizationId = $request->attributes->get('current_organization_id');
+                $actor = $request->user();
+
+                if ($organizationId) {
+                    $user = $this->userService->syncAdminPanelUserRoles(
+                        $user,
+                        (int) $organizationId,
+                        $roleSlugs,
+                        $actor instanceof User ? $actor : null,
+                        (string) $request->input('current_interface', 'lk')
+                    );
+                }
+            }
+
             $user->load('roleAssignments');
 
             return LandingResponse::success(
@@ -97,6 +114,7 @@ class AdminPanelUserController extends Controller
     {
         try {
             $user = $this->userService->updateAdminPanelUser($userId, $request->validated(), $request);
+            $user->load('roleAssignments');
 
             return LandingResponse::success(
                 new AdminPanelUserResource($user),
@@ -180,6 +198,19 @@ class AdminPanelUserController extends Controller
             $users->load('roleAssignments');
         } catch (Throwable) {
         }
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function normalizeRoleSlugs(array $roleSlugs): array
+    {
+        return array_values(array_unique(array_filter(
+            array_map(
+                static fn (mixed $roleSlug): ?string => is_string($roleSlug) && trim($roleSlug) !== '' ? trim($roleSlug) : null,
+                $roleSlugs
+            )
+        )));
     }
 
     private function businessError(BusinessLogicException $exception, string $messageKey, Request $request): JsonResponse

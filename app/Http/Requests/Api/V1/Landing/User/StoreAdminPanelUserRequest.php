@@ -78,7 +78,16 @@ class StoreAdminPanelUserRequest extends FormRequest
             ],
             'password' => 'required|string|min:8|confirmed',
             'role_slug' => [
-                'required',
+                'required_without:role_slugs',
+                'string',
+                Rule::in($allowedRoles),
+            ],
+            'role_slugs' => [
+                'sometimes',
+                'array',
+                'min:1',
+            ],
+            'role_slugs.*' => [
                 'string',
                 Rule::in($allowedRoles),
             ],
@@ -94,7 +103,10 @@ class StoreAdminPanelUserRequest extends FormRequest
     {
         return [
             'role_slug.required' => trans_message('landing_users.validation.role_required'),
+            'role_slug.required_without' => trans_message('landing_users.validation.role_required'),
             'role_slug.in' => trans_message('landing_users.validation.role_invalid'),
+            'role_slugs.min' => trans_message('landing_users.validation.role_required'),
+            'role_slugs.*.in' => trans_message('landing_users.validation.role_invalid'),
             'email.email' => trans_message('landing_users.validation.email_invalid'),
             'email.required' => trans_message('landing_users.validation.email_required'),
             'password.confirmed' => trans_message('landing_users.validation.password_confirmed'),

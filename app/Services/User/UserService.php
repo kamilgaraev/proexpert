@@ -1201,6 +1201,7 @@ class UserService
         $assignment = UserRoleAssignment::query()
             ->where('user_id', $user->id)
             ->where('role_slug', $roleSlug)
+            ->where('role_type', $roleType)
             ->where('context_id', $context->id)
             ->first();
 
@@ -1222,6 +1223,40 @@ class UserService
             $roleType,
             $assignedBy
         );
+    }
+
+    private function deactivateOrganizationRoleAssignments(
+        User $user,
+        AuthorizationContext $context,
+        string $roleType,
+        array $roleSlugs
+    ): void
+    {
+        $roleSlugs = $this->uniqueStringList($roleSlugs);
+
+        if ($roleSlugs === []) {
+            return;
+        }
+
+        UserRoleAssignment::query()
+            ->where('user_id', $user->id)
+            ->where('context_id', $context->id)
+            ->where('role_type', $roleType)
+            ->whereIn('role_slug', $roleSlugs)
+            ->update(['is_active' => false]);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function uniqueStringList(array $items): array
+    {
+        return array_values(array_unique(array_filter(
+            array_map(
+                static fn (mixed $item): ?string => is_string($item) && trim($item) !== '' ? trim($item) : null,
+                $items
+            )
+        )));
     }
 
     private function resolveOrganizationRoleType(string $roleSlug, int $organizationId): string
@@ -1389,6 +1424,9 @@ class UserService
             throw new BusinessLogicException('Владельца организации нельзя изменять через этот интерфейс.', 403);
         }
 
+        $roleSlugs = array_key_exists('role_slugs', $data) ? (array) $data['role_slugs'] : null;
+        unset($data['role_slugs']);
+
         // Подготовка данных (только name и password)
         $updateData = [];
         if (isset($data['name'])) {
@@ -1405,14 +1443,183 @@ class UserService
             $updateData['is_active'] = (bool) $data['is_active'];
         }
 
-        if (empty($updateData)) {
+        if (empty($updateData) && $roleSlugs === null) {
              // Ничего не передано для обновления
              return $targetUser; // Возвращаем как есть
         }
 
-        $this->userRepository->update($targetUserId, $updateData);
+        return DB::transaction(function () use (
+            $targetUser,
+            $targetUserId,
+            $updateData,
+            $roleSlugs,
+            $intOrganizationId,
+            $request
+        ): User {
+            if (!empty($updateData)) {
+                $this->userRepository->update($targetUserId, $updateData);
+            }
 
-        return $this->userRepository->find($targetUserId); // Возвращаем обновленного пользователя
+            if ($roleSlugs !== null) {
+                $currentInterface = $request->input('current_interface', 'lk');
+                $actor = $request->user();
+                $this->syncAdminPanelUserRoles(
+                    $targetUser,
+                    $intOrganizationId,
+                    $roleSlugs,
+                    $actor instanceof User ? $actor : null,
+                    (string) $currentInterface
+                );
+            }
+
+            return $this->userRepository->find($targetUserId) ?? $targetUser->refresh();
+        });
+    }
+
+    public function syncAdminPanelUserRoles(
+        User $user,
+        int $organizationId,
+        array $roleSlugs,
+        ?User $assignedBy = null,
+        string $currentInterface = 'lk'
+    ): User
+    {
+        $roleSlugs = $this->uniqueStringList($roleSlugs);
+
+        if ($roleSlugs === []) {
+            throw new BusinessLogicException(trans_message('landing_users.validation.role_required'), 422);
+        }
+
+        if (in_array('organization_owner', $roleSlugs, true)) {
+            throw new BusinessLogicException(trans_message('landing_users.owner_generic_assignment_forbidden'), 422);
+        }
+
+        $allowedRoleSlugs = $this->adminPanelHelper->getAdminPanelRoles($organizationId, $currentInterface, true);
+        $allowedRoleLookup = array_flip($allowedRoleSlugs);
+        $invalidRoleSlugs = array_values(array_filter(
+            $roleSlugs,
+            static fn (string $roleSlug): bool => !isset($allowedRoleLookup[$roleSlug])
+        ));
+
+        if ($invalidRoleSlugs !== []) {
+            throw new BusinessLogicException(trans_message('landing_users.validation.role_invalid'), 422);
+        }
+
+        $customRoles = OrganizationCustomRole::query()
+            ->where('organization_id', $organizationId)
+            ->where('is_active', true)
+            ->whereIn('slug', $allowedRoleSlugs)
+            ->get()
+            ->keyBy('slug');
+
+        $systemRoleSlugs = [];
+        $customRoleSlugs = [];
+
+        foreach ($roleSlugs as $roleSlug) {
+            if ($customRoles->has($roleSlug)) {
+                $customRoleSlugs[] = $roleSlug;
+                continue;
+            }
+
+            $systemRoleSlugs[] = $roleSlug;
+        }
+
+        $editableCustomRoleSlugs = $customRoles->keys()->values()->all();
+        $editableSystemRoleSlugs = array_values(array_diff($allowedRoleSlugs, $editableCustomRoleSlugs));
+        $context = AuthorizationContext::getOrganizationContext($organizationId);
+
+        return $this->syncOrganizationRoleAssignments(
+            $user,
+            $context,
+            $systemRoleSlugs,
+            $customRoleSlugs,
+            $editableSystemRoleSlugs,
+            $editableCustomRoleSlugs,
+            'replace',
+            $assignedBy
+        );
+    }
+
+    public function syncOrganizationRoleAssignments(
+        User $user,
+        AuthorizationContext $context,
+        array $systemRoleSlugs,
+        array $customRoleSlugs,
+        array $editableSystemRoleSlugs,
+        array $editableCustomRoleSlugs,
+        string $action = 'replace',
+        ?User $assignedBy = null
+    ): User
+    {
+        $systemRoleSlugs = $this->uniqueStringList($systemRoleSlugs);
+        $customRoleSlugs = $this->uniqueStringList($customRoleSlugs);
+        $editableSystemRoleSlugs = $this->uniqueStringList($editableSystemRoleSlugs);
+        $editableCustomRoleSlugs = $this->uniqueStringList($editableCustomRoleSlugs);
+
+        return DB::transaction(function () use (
+            $user,
+            $context,
+            $systemRoleSlugs,
+            $customRoleSlugs,
+            $editableSystemRoleSlugs,
+            $editableCustomRoleSlugs,
+            $action,
+            $assignedBy
+        ): User {
+            if ($action === 'replace') {
+                $this->deactivateOrganizationRoleAssignments(
+                    $user,
+                    $context,
+                    UserRoleAssignment::TYPE_SYSTEM,
+                    array_values(array_diff($editableSystemRoleSlugs, $systemRoleSlugs))
+                );
+                $this->deactivateOrganizationRoleAssignments(
+                    $user,
+                    $context,
+                    UserRoleAssignment::TYPE_CUSTOM,
+                    array_values(array_diff($editableCustomRoleSlugs, $customRoleSlugs))
+                );
+            }
+
+            if ($action === 'remove') {
+                $this->deactivateOrganizationRoleAssignments(
+                    $user,
+                    $context,
+                    UserRoleAssignment::TYPE_SYSTEM,
+                    $systemRoleSlugs
+                );
+                $this->deactivateOrganizationRoleAssignments(
+                    $user,
+                    $context,
+                    UserRoleAssignment::TYPE_CUSTOM,
+                    $customRoleSlugs
+                );
+
+                return $this->userRepository->find($user->id) ?? $user->refresh();
+            }
+
+            foreach ($systemRoleSlugs as $roleSlug) {
+                $this->assignOrReactivateOrganizationRole(
+                    $user,
+                    $roleSlug,
+                    $context,
+                    UserRoleAssignment::TYPE_SYSTEM,
+                    $assignedBy
+                );
+            }
+
+            foreach ($customRoleSlugs as $roleSlug) {
+                $this->assignOrReactivateOrganizationRole(
+                    $user,
+                    $roleSlug,
+                    $context,
+                    UserRoleAssignment::TYPE_CUSTOM,
+                    $assignedBy
+                );
+            }
+
+            return $this->userRepository->find($user->id) ?? $user->refresh();
+        });
     }
 
     /**

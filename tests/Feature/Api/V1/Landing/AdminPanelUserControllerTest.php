@@ -139,6 +139,105 @@ final class AdminPanelUserControllerTest extends TestCase
         ]);
     }
 
+    public function test_owner_can_replace_admin_panel_user_roles(): void
+    {
+        $organization = Organization::factory()->verified()->create();
+        $owner = User::factory()->create([
+            'current_organization_id' => $organization->id,
+        ]);
+        $member = User::factory()->create([
+            'current_organization_id' => $organization->id,
+            'is_active' => true,
+        ]);
+
+        $organization->users()->attach($owner->id, [
+            'is_owner' => true,
+            'is_active' => true,
+        ]);
+        $organization->users()->attach($member->id, [
+            'is_owner' => false,
+            'is_active' => true,
+        ]);
+
+        $context = AuthorizationContext::getOrganizationContext($organization->id);
+        UserRoleAssignment::assignRole($owner, 'organization_owner', $context);
+        UserRoleAssignment::assignRole($member, 'supplier', $context);
+
+        $oldCustomRole = OrganizationCustomRole::createRole(
+            $organization->id,
+            'Old custom role',
+            ['organization.view'],
+            [],
+            ['lk'],
+            null,
+            null,
+            $owner
+        );
+        $newCustomRole = OrganizationCustomRole::createRole(
+            $organization->id,
+            'New custom role',
+            ['organization.view'],
+            [],
+            ['lk'],
+            null,
+            null,
+            $owner
+        );
+        UserRoleAssignment::assignRole($member, $oldCustomRole->slug, $context, UserRoleAssignment::TYPE_CUSTOM);
+
+        $response = $this
+            ->withHeaders($this->landingHeaders($owner, $organization))
+            ->patchJson("/api/v1/landing/adminPanelUsers/{$member->id}", [
+                'name' => $member->name,
+                'role_slugs' => [
+                    'organization_admin',
+                    $newCustomRole->slug,
+                ],
+            ]);
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('success', true);
+        $response->assertJsonFragment([
+            'slug' => 'organization_admin',
+            'type' => UserRoleAssignment::TYPE_SYSTEM,
+        ]);
+        $response->assertJsonFragment([
+            'name' => 'New custom role',
+            'slug' => $newCustomRole->slug,
+            'type' => UserRoleAssignment::TYPE_CUSTOM,
+        ]);
+
+        $this->assertDatabaseHas('user_role_assignments', [
+            'user_id' => $member->id,
+            'role_slug' => 'supplier',
+            'role_type' => UserRoleAssignment::TYPE_SYSTEM,
+            'context_id' => $context->id,
+            'is_active' => false,
+        ]);
+        $this->assertDatabaseHas('user_role_assignments', [
+            'user_id' => $member->id,
+            'role_slug' => $oldCustomRole->slug,
+            'role_type' => UserRoleAssignment::TYPE_CUSTOM,
+            'context_id' => $context->id,
+            'is_active' => false,
+        ]);
+        $this->assertDatabaseHas('user_role_assignments', [
+            'user_id' => $member->id,
+            'role_slug' => 'organization_admin',
+            'role_type' => UserRoleAssignment::TYPE_SYSTEM,
+            'context_id' => $context->id,
+            'is_active' => true,
+        ]);
+        $this->assertDatabaseHas('user_role_assignments', [
+            'user_id' => $member->id,
+            'role_slug' => $newCustomRole->slug,
+            'role_type' => UserRoleAssignment::TYPE_CUSTOM,
+            'context_id' => $context->id,
+            'is_active' => true,
+        ]);
+    }
+
     /**
      * @return array<string, string>
      */

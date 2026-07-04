@@ -25,7 +25,9 @@ class AdminPanelUserResource extends JsonResource
     public function toArray(Request $request): array
     {
         // Получаем id текущей организации из запроса (через middleware organization.context)
-        $organizationId = $request->attributes->get('current_organization_id');
+        $organizationId = $request->attributes->get('current_organization_id')
+            ?? $request->route('organization_id')
+            ?? $request->user()?->current_organization_id;
         $roleSlug = null;
         $roleItems = [];
 

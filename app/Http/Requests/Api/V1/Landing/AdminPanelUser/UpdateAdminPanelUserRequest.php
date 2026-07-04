@@ -44,6 +44,8 @@ class UpdateAdminPanelUserRequest extends FormRequest
             'name' => 'sometimes|required|string|max:255',
             'password' => 'sometimes|required|string|min:8|confirmed',
             'is_active' => 'sometimes|boolean',
+            'role_slugs' => 'sometimes|array|min:1',
+            'role_slugs.*' => 'string',
             // Email не включаем, так как его изменение может быть рискованным
         ];
     }
