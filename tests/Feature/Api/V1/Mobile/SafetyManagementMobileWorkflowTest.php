@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Mobile;
 
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyInspection;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyInspectionFinding;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyRequirementMatrix;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermit;
+use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
@@ -62,6 +66,50 @@ final class SafetyManagementMobileTest extends TestCase
             ->getJson('/api/v1/mobile/safety-management/work-permits?status=not-a-status')
             ->assertStatus(422)
             ->assertJsonPath('errors.status.0', trans_message('safety_management.validation.status_invalid'));
+    }
+
+    public function test_mobile_dashboard_and_my_admission_are_available_for_current_user(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $employee = WorkforceEmployee::query()->create([
+            'organization_id' => $context->organization->id,
+            'user_id' => $context->user->id,
+            'personnel_number' => 'SAFE-MOB-001',
+            'last_name' => 'Полевой',
+            'first_name' => 'Пользователь',
+            'employment_status' => 'active',
+            'hire_date' => now()->subMonth()->toDateString(),
+        ]);
+        SafetyRequirementMatrix::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'work_category' => 'height_work',
+            'risk_level' => 'high',
+            'requirements' => [
+                ['type' => 'medical_exam', 'code' => 'default', 'label' => 'Медосмотр', 'required' => true],
+            ],
+            'is_active' => true,
+            'effective_from' => now()->subDay()->toDateString(),
+        ]);
+        $permit = $this->createPermit($context, $project, $context->user, 'active');
+
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/mobile/safety-management/dashboard?project_id={$project->id}")
+            ->assertOk()
+            ->assertJsonPath('data.mine.employee_id', $employee->id)
+            ->assertJsonPath('data.mine.open_permits', 1);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/mobile/safety-management/my-admission?project_id={$project->id}&work_category=height_work")
+            ->assertOk()
+            ->assertJsonPath('data.employee_id', $employee->id)
+            ->assertJsonPath('data.status', 'not_admitted');
+
+        $permit->delete();
     }
 
     public function test_mobile_permit_lifecycle_actions_require_real_action_data(): void
@@ -259,6 +307,101 @@ final class SafetyManagementMobileTest extends TestCase
         $response->assertStatus(422)
             ->assertJsonPath('message', trans_message('safety_management.errors.validation_failed'))
             ->assertJsonPath('errors.severity.0', trans_message('safety_management.validation.severity_required'));
+    }
+
+    public function test_mobile_user_can_view_inspections_and_create_assigned_inspection_finding(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $foreignContext = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $foreignProject = Project::factory()->create(['organization_id' => $foreignContext->organization->id]);
+        $otherUser = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $context->organization->users()->attach($otherUser->id, [
+            'is_owner' => false,
+            'is_active' => true,
+            'settings' => null,
+        ]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $inspection = SafetyInspection::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'conducted_by_user_id' => $context->user->id,
+            'inspection_number' => 'HSE-CHK-MOB-1',
+            'title' => 'Site walk',
+            'inspection_type' => 'site_walk',
+            'location_name' => 'Block A',
+            'risk_level' => 'medium',
+            'status' => 'planned',
+            'planned_at' => now()->addHour(),
+        ]);
+        $foreignInspection = SafetyInspection::query()->create([
+            'organization_id' => $foreignContext->organization->id,
+            'project_id' => $foreignProject->id,
+            'conducted_by_user_id' => $foreignContext->user->id,
+            'inspection_number' => 'HSE-CHK-MOB-2',
+            'title' => 'Foreign site walk',
+            'inspection_type' => 'site_walk',
+            'risk_level' => 'medium',
+            'status' => 'planned',
+        ]);
+
+        $inspectionsResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/mobile/safety-management/inspections?status=planned');
+
+        $inspectionsResponse->assertOk();
+        $inspectionIds = collect($inspectionsResponse->json('data.data'))->pluck('id')->all();
+        $this->assertContains($inspection->id, $inspectionIds);
+        $this->assertNotContains($foreignInspection->id, $inspectionIds);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/mobile/safety-management/inspections?status=not-a-status')
+            ->assertStatus(422)
+            ->assertJsonPath('errors.status.0', trans_message('safety_management.validation.status_invalid'));
+
+        $findingResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/mobile/safety-management/inspection-findings', [
+                'project_id' => $project->id,
+                'inspection_id' => $inspection->id,
+                'title' => 'Missing guard rail',
+                'description' => 'Temporary guard rail is missing',
+                'severity' => 'high',
+                'due_date' => now()->addDay()->toDateString(),
+            ]);
+
+        $findingResponse->assertCreated()
+            ->assertJsonPath('data.status', 'open')
+            ->assertJsonPath('data.assigned_to_user_id', $context->user->id);
+        $findingId = (int) $findingResponse->json('data.id');
+
+        SafetyInspectionFinding::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'inspection_id' => $inspection->id,
+            'assigned_to_user_id' => $otherUser->id,
+            'created_by_user_id' => $context->user->id,
+            'finding_number' => 'HSE-F-MOB-2',
+            'title' => 'Other user finding',
+            'severity' => 'major',
+            'status' => 'open',
+        ]);
+
+        $findingsResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/mobile/safety-management/inspection-findings?status=open');
+
+        $findingsResponse->assertOk();
+        $findingIds = collect($findingsResponse->json('data.data'))->pluck('id')->all();
+        $this->assertContains($findingId, $findingIds);
+        $this->assertNotContains('HSE-F-MOB-2', collect($findingsResponse->json('data.data'))->pluck('finding_number')->all());
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/mobile/safety-management/inspection-findings', [
+                'project_id' => $foreignProject->id,
+                'title' => 'Foreign project finding',
+                'severity' => 'minor',
+            ])
+            ->assertStatus(422);
     }
 
     private function allowModuleAccess(): void

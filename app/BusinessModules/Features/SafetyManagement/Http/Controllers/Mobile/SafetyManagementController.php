@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\SafetyManagement\Http\Controllers\Mobile;
 
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyIncidentResource;
+use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyComplianceResultResource;
+use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyInspectionFindingResource;
+use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyInspectionResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyViolationResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyWorkPermitResource;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermit;
@@ -47,9 +50,90 @@ final class SafetyManagementController extends Controller
         'closed',
     ];
 
+    private const INSPECTION_STATUSES = [
+        'planned',
+        'in_progress',
+        'completed',
+        'cancelled',
+    ];
+
+    private const FINDING_STATUSES = [
+        'open',
+        'resolved',
+        'closed',
+    ];
+
     public function __construct(
         private readonly SafetyManagementService $service,
     ) {
+    }
+
+    public function dashboard(Request $request): JsonResponse
+    {
+        try {
+            $filters = $this->validated($request, [
+                'project_id' => ['nullable', 'integer'],
+            ]);
+
+            return MobileResponse::success($this->service->mobileDashboardForUser(
+                (int) $request->attributes->get('current_organization_id'),
+                (int) $request->user()?->id,
+                $filters
+            ));
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(
+                trans_message('safety_management.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
+        } catch (\Throwable $exception) {
+            Log::error('safety_management.mobile.dashboard.error', [
+                'user_id' => $request->user()?->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return MobileResponse::error(trans_message('safety_management.errors.index_failed'), 500);
+        }
+    }
+
+    public function myAdmission(Request $request): JsonResponse
+    {
+        try {
+            $filters = $this->validated($request, [
+                'project_id' => ['nullable', 'integer'],
+                'work_type_id' => ['nullable', 'integer'],
+                'position_name' => ['nullable', 'string', 'max:255'],
+                'work_category' => ['nullable', 'string', 'max:80'],
+                'work_date' => ['nullable', 'date'],
+            ]);
+
+            $result = $this->service->mobileAdmissionForUser(
+                (int) $request->attributes->get('current_organization_id'),
+                (int) $request->user()?->id,
+                $filters
+            );
+
+            if ($result === null) {
+                return MobileResponse::error(trans_message('safety_management.errors.employee_not_found'), 404);
+            }
+
+            return MobileResponse::success(new SafetyComplianceResultResource($result));
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(
+                trans_message('safety_management.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            Log::error('safety_management.mobile.my_admission.error', [
+                'user_id' => $request->user()?->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return MobileResponse::error(trans_message('safety_management.errors.admission_check_failed'), 500);
+        }
     }
 
     public function permits(Request $request): JsonResponse
@@ -176,6 +260,77 @@ final class SafetyManagementController extends Controller
         }
     }
 
+    public function inspections(Request $request): JsonResponse
+    {
+        try {
+            $filters = $this->validated($request, [
+                'project_id' => ['nullable', 'integer'],
+                'status' => ['nullable', 'string', Rule::in(self::INSPECTION_STATUSES)],
+                'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+            ]);
+
+            $inspections = $this->service->paginateInspections(
+                (int) $request->attributes->get('current_organization_id'),
+                (int) ($filters['per_page'] ?? 20),
+                [
+                    'project_id' => $filters['project_id'] ?? null,
+                    'status' => $filters['status'] ?? null,
+                ]
+            );
+
+            return MobileResponse::success(SafetyInspectionResource::collection($inspections->getCollection()));
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(
+                trans_message('safety_management.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
+        } catch (\Throwable $exception) {
+            Log::error('safety_management.mobile.inspections.index.error', [
+                'user_id' => $request->user()?->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return MobileResponse::error(trans_message('safety_management.errors.index_failed'), 500);
+        }
+    }
+
+    public function inspectionFindings(Request $request): JsonResponse
+    {
+        try {
+            $filters = $this->validated($request, [
+                'project_id' => ['nullable', 'integer'],
+                'status' => ['nullable', 'string', Rule::in(self::FINDING_STATUSES)],
+                'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+            ]);
+
+            $findings = $this->service->paginateInspectionFindings(
+                (int) $request->attributes->get('current_organization_id'),
+                (int) ($filters['per_page'] ?? 20),
+                [
+                    'project_id' => $filters['project_id'] ?? null,
+                    'status' => $filters['status'] ?? null,
+                    'assigned_to_user_id' => (int) $request->user()?->id,
+                ]
+            );
+
+            return MobileResponse::success(SafetyInspectionFindingResource::collection($findings->getCollection()));
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(
+                trans_message('safety_management.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
+        } catch (\Throwable $exception) {
+            Log::error('safety_management.mobile.inspection_findings.index.error', [
+                'user_id' => $request->user()?->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return MobileResponse::error(trans_message('safety_management.errors.index_failed'), 500);
+        }
+    }
+
     public function storeIncident(Request $request): JsonResponse
     {
         try {
@@ -258,6 +413,50 @@ final class SafetyManagementController extends Controller
             return MobileResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {
             Log::error('safety_management.mobile.violations.store.error', [
+                'user_id' => $request->user()?->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return MobileResponse::error(trans_message('safety_management.errors.store_failed'), 500);
+        }
+    }
+
+    public function storeInspectionFinding(Request $request): JsonResponse
+    {
+        try {
+            $validated = $this->validated($request, [
+                'project_id' => ['required', 'integer'],
+                'inspection_id' => ['nullable', 'integer'],
+                'inspection_item_id' => ['nullable', 'integer'],
+                'assigned_to_user_id' => ['nullable', 'integer'],
+                'title' => ['required', 'string', 'max:255'],
+                'description' => ['nullable', 'string', 'max:5000'],
+                'severity' => ['nullable', 'string', Rule::in(['minor', 'major', 'high', 'critical'])],
+                'due_date' => ['nullable', 'date'],
+                'evidence_files' => ['nullable', 'array'],
+                'metadata' => ['nullable', 'array'],
+            ]);
+            $validated['assigned_to_user_id'] = $validated['assigned_to_user_id'] ?? (int) $request->user()?->id;
+
+            return MobileResponse::success(
+                new SafetyInspectionFindingResource($this->service->createInspectionFinding(
+                    (int) $request->attributes->get('current_organization_id'),
+                    (int) $request->user()?->id,
+                    $validated
+                )),
+                trans_message('safety_management.messages.inspection_finding_created'),
+                201
+            );
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(
+                trans_message('safety_management.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            Log::error('safety_management.mobile.inspection_findings.store.error', [
                 'user_id' => $request->user()?->id,
                 'error' => $exception->getMessage(),
             ]);

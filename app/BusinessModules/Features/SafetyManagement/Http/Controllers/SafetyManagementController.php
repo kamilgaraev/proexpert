@@ -4,14 +4,27 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\SafetyManagement\Http\Controllers;
 
+use App\BusinessModules\Features\SafetyManagement\DTOs\SafetyComplianceContext;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyBriefingResource;
+use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyComplianceResultResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyCorrectiveActionResource;
+use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyEmployeeRequirementResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyIncidentResource;
+use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyInspectionFindingResource;
+use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyInspectionResource;
+use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyInspectionTemplateResource;
+use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyMedicalExamResource;
+use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyPpeIssueResource;
+use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyRequirementMatrixResource;
+use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyTrainingRecordResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyViolationResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyWorkPermitResource;
+use App\BusinessModules\Features\SafetyManagement\Services\SafetyComplianceService;
+use App\BusinessModules\Features\SafetyManagement\Services\SafetyDocumentDraftService;
 use App\BusinessModules\Features\SafetyManagement\Services\SafetyManagementService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -24,7 +37,55 @@ final class SafetyManagementController extends Controller
 {
     public function __construct(
         private readonly SafetyManagementService $service,
+        private readonly SafetyComplianceService $complianceService,
+        private readonly SafetyDocumentDraftService $documentDraftService,
     ) {
+    }
+
+    public function checkAdmission(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'employee_id' => ['required', 'integer'],
+                'project_id' => ['nullable', 'integer'],
+                'work_type_id' => ['nullable', 'integer'],
+                'position_name' => ['nullable', 'string', 'max:255'],
+                'work_category' => ['required', 'string', 'max:80'],
+                'work_date' => ['nullable', 'date'],
+                'permit_id' => ['nullable', 'integer'],
+                'work_order_line_id' => ['nullable', 'integer'],
+            ], [
+                'employee_id.required' => trans_message('safety_management.validation.employee_required'),
+                'work_category.required' => trans_message('safety_management.validation.work_category_required'),
+            ]);
+
+            $result = $this->complianceService->check(new SafetyComplianceContext(
+                organizationId: (int) $request->attributes->get('current_organization_id'),
+                employeeId: (int) $validated['employee_id'],
+                userId: $request->user()?->id === null ? null : (int) $request->user()->id,
+                projectId: isset($validated['project_id']) ? (int) $validated['project_id'] : null,
+                workTypeId: isset($validated['work_type_id']) ? (int) $validated['work_type_id'] : null,
+                workCategory: (string) $validated['work_category'],
+                date: isset($validated['work_date']) ? CarbonImmutable::parse((string) $validated['work_date']) : CarbonImmutable::today(),
+                positionName: $validated['position_name'] ?? null,
+                permitId: isset($validated['permit_id']) ? (int) $validated['permit_id'] : null,
+                workOrderLineId: isset($validated['work_order_line_id']) ? (int) $validated['work_order_line_id'] : null,
+            ));
+
+            return AdminResponse::success(new SafetyComplianceResultResource($result));
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            Log::error('safety_management.admission.check.error', [
+                'user_id' => $request->user()?->id,
+                'employee_id' => $request->input('employee_id'),
+                'error' => $exception->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('safety_management.errors.admission_check_failed'), 500);
+        }
     }
 
     public function permits(Request $request): JsonResponse
@@ -37,6 +98,310 @@ final class SafetyManagementController extends Controller
             ), SafetyWorkPermitResource::class);
         } catch (\Throwable $exception) {
             return $this->failedIndex($request, $exception, 'permits');
+        }
+    }
+
+    public function dashboard(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'project_id' => ['nullable', 'integer'],
+            ]);
+
+            return AdminResponse::success($this->service->dashboard(
+                (int) $request->attributes->get('current_organization_id'),
+                $validated
+            ));
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (\Throwable $exception) {
+            return $this->failedIndex($request, $exception, 'dashboard');
+        }
+    }
+
+    public function requirementMatrices(Request $request): JsonResponse
+    {
+        try {
+            return $this->paginatedResponse($this->service->paginateRequirementMatrices(
+                (int) $request->attributes->get('current_organization_id'),
+                min((int) $request->input('per_page', 20), 100),
+                $request->only(['project_id', 'work_type_id', 'work_category', 'risk_level', 'is_active'])
+            ), SafetyRequirementMatrixResource::class);
+        } catch (\Throwable $exception) {
+            return $this->failedIndex($request, $exception, 'requirement_matrices');
+        }
+    }
+
+    public function storeRequirementMatrix(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate($this->requirementMatrixRules(), $this->recordValidationMessages());
+
+            return AdminResponse::success(
+                new SafetyRequirementMatrixResource($this->service->createRequirementMatrix(
+                    (int) $request->attributes->get('current_organization_id'),
+                    $validated
+                )),
+                trans_message('safety_management.messages.requirement_matrix_created'),
+                201
+            );
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failedStore($request, $exception, 'requirement_matrices');
+        }
+    }
+
+    public function updateRequirementMatrix(Request $request, int $id): JsonResponse
+    {
+        try {
+            $matrix = $this->service->findRequirementMatrix((int) $request->attributes->get('current_organization_id'), $id);
+
+            if ($matrix === null) {
+                return AdminResponse::error(trans_message('safety_management.errors.requirement_matrix_not_found'), 404);
+            }
+
+            $validated = $request->validate($this->requirementMatrixRules(required: false), $this->recordValidationMessages());
+
+            return AdminResponse::success(
+                new SafetyRequirementMatrixResource($this->service->updateRequirementMatrix($matrix, $validated)),
+                trans_message('safety_management.messages.record_updated')
+            );
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failedAction($request, $exception);
+        }
+    }
+
+    public function destroyRequirementMatrix(Request $request, int $id): JsonResponse
+    {
+        try {
+            $matrix = $this->service->findRequirementMatrix((int) $request->attributes->get('current_organization_id'), $id);
+
+            if ($matrix === null) {
+                return AdminResponse::error(trans_message('safety_management.errors.requirement_matrix_not_found'), 404);
+            }
+
+            $this->service->deleteRequirementMatrix($matrix);
+
+            return AdminResponse::success(null, trans_message('safety_management.messages.record_deleted'));
+        } catch (\Throwable $exception) {
+            return $this->failedAction($request, $exception);
+        }
+    }
+
+    public function inspectionTemplates(Request $request): JsonResponse
+    {
+        try {
+            return $this->paginatedResponse($this->service->paginateInspectionTemplates(
+                (int) $request->attributes->get('current_organization_id'),
+                min((int) $request->input('per_page', 20), 100),
+                $request->only(['inspection_type', 'is_active'])
+            ), SafetyInspectionTemplateResource::class);
+        } catch (\Throwable $exception) {
+            return $this->failedIndex($request, $exception, 'inspection_templates');
+        }
+    }
+
+    public function storeInspectionTemplate(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'name' => ['required', 'string', 'max:255'],
+                'inspection_type' => ['required', 'string', 'max:80'],
+                'checklist_items' => ['required', 'array', 'min:1'],
+                'checklist_items.*.code' => ['nullable', 'string', 'max:120'],
+                'checklist_items.*.title' => ['required', 'string', 'max:255'],
+                'checklist_items.*.requirement_text' => ['nullable', 'string', 'max:5000'],
+                'checklist_items.*.severity' => ['nullable', 'string', Rule::in(['minor', 'major', 'high', 'critical'])],
+                'is_active' => ['nullable', 'boolean'],
+                'metadata' => ['nullable', 'array'],
+            ]);
+
+            return AdminResponse::success(
+                new SafetyInspectionTemplateResource($this->service->createInspectionTemplate(
+                    (int) $request->attributes->get('current_organization_id'),
+                    $validated
+                )),
+                trans_message('safety_management.messages.inspection_template_created'),
+                201
+            );
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failedStore($request, $exception, 'inspection_templates');
+        }
+    }
+
+    public function inspections(Request $request): JsonResponse
+    {
+        try {
+            return $this->paginatedResponse($this->service->paginateInspections(
+                (int) $request->attributes->get('current_organization_id'),
+                min((int) $request->input('per_page', 20), 100),
+                $request->only(['project_id', 'status', 'inspection_type'])
+            ), SafetyInspectionResource::class);
+        } catch (\Throwable $exception) {
+            return $this->failedIndex($request, $exception, 'inspections');
+        }
+    }
+
+    public function storeInspection(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'project_id' => ['required', 'integer'],
+                'template_id' => ['nullable', 'integer'],
+                'permit_id' => ['nullable', 'integer'],
+                'conducted_by_user_id' => ['nullable', 'integer'],
+                'title' => ['required', 'string', 'max:255'],
+                'inspection_type' => ['nullable', 'string', 'max:80'],
+                'location_name' => ['nullable', 'string', 'max:255'],
+                'risk_level' => ['nullable', 'string', Rule::in(['low', 'medium', 'high', 'critical'])],
+                'status' => ['nullable', 'string', Rule::in(['planned', 'in_progress'])],
+                'planned_at' => ['nullable', 'date'],
+                'conducted_at' => ['nullable', 'date'],
+                'items' => ['nullable', 'array'],
+                'items.*.code' => ['nullable', 'string', 'max:120'],
+                'items.*.title' => ['required_with:items', 'string', 'max:255'],
+                'items.*.requirement_text' => ['nullable', 'string', 'max:5000'],
+                'items.*.severity' => ['nullable', 'string', Rule::in(['minor', 'major', 'high', 'critical'])],
+                'metadata' => ['nullable', 'array'],
+            ]);
+
+            return AdminResponse::success(
+                new SafetyInspectionResource($this->service->createInspection(
+                    (int) $request->attributes->get('current_organization_id'),
+                    (int) $request->user()?->id,
+                    $validated
+                )),
+                trans_message('safety_management.messages.inspection_created'),
+                201
+            );
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failedStore($request, $exception, 'inspections');
+        }
+    }
+
+    public function completeInspection(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'conducted_at' => ['nullable', 'date'],
+                'result' => ['nullable', 'string', Rule::in(['passed', 'failed', 'passed_with_findings'])],
+                'summary' => ['nullable', 'string', 'max:5000'],
+                'items' => ['required', 'array', 'min:1'],
+                'items.*.id' => ['nullable', 'integer'],
+                'items.*.item_code' => ['nullable', 'string', 'max:120'],
+                'items.*.status' => ['required', 'string', Rule::in(['compliant', 'non_compliant', 'not_applicable', 'not_checked'])],
+                'items.*.comment' => ['nullable', 'string', 'max:5000'],
+                'items.*.evidence_files' => ['nullable', 'array'],
+                'items.*.assigned_to_user_id' => ['nullable', 'integer'],
+                'items.*.due_date' => ['nullable', 'date'],
+                'items.*.finding_title' => ['nullable', 'string', 'max:255'],
+                'items.*.finding_description' => ['nullable', 'string', 'max:5000'],
+                'items.*.metadata' => ['nullable', 'array'],
+            ]);
+
+            $inspection = $this->service->findInspection((int) $request->attributes->get('current_organization_id'), $id);
+
+            if ($inspection === null) {
+                return AdminResponse::error(trans_message('safety_management.errors.inspection_not_found'), 404);
+            }
+
+            return AdminResponse::success(new SafetyInspectionResource($this->service->completeInspection(
+                $inspection,
+                (int) $request->user()?->id,
+                $validated
+            )));
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failedAction($request, $exception);
+        }
+    }
+
+    public function inspectionFindings(Request $request): JsonResponse
+    {
+        try {
+            return $this->paginatedResponse($this->service->paginateInspectionFindings(
+                (int) $request->attributes->get('current_organization_id'),
+                min((int) $request->input('per_page', 20), 100),
+                $request->only(['project_id', 'status', 'assigned_to_user_id'])
+            ), SafetyInspectionFindingResource::class);
+        } catch (\Throwable $exception) {
+            return $this->failedIndex($request, $exception, 'inspection_findings');
+        }
+    }
+
+    public function storeInspectionFinding(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'project_id' => ['required', 'integer'],
+                'inspection_id' => ['nullable', 'integer'],
+                'inspection_item_id' => ['nullable', 'integer'],
+                'assigned_to_user_id' => ['nullable', 'integer'],
+                'title' => ['required', 'string', 'max:255'],
+                'description' => ['nullable', 'string', 'max:5000'],
+                'severity' => ['nullable', 'string', Rule::in(['minor', 'major', 'high', 'critical'])],
+                'due_date' => ['nullable', 'date'],
+                'evidence_files' => ['nullable', 'array'],
+                'metadata' => ['nullable', 'array'],
+            ]);
+
+            return AdminResponse::success(
+                new SafetyInspectionFindingResource($this->service->createInspectionFinding(
+                    (int) $request->attributes->get('current_organization_id'),
+                    (int) $request->user()?->id,
+                    $validated
+                )),
+                trans_message('safety_management.messages.inspection_finding_created'),
+                201
+            );
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failedStore($request, $exception, 'inspection_findings');
+        }
+    }
+
+    public function resolveInspectionFinding(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validate(['resolution_comment' => ['required', 'string', 'max:1000']]);
+            $finding = $this->service->findInspectionFinding((int) $request->attributes->get('current_organization_id'), $id);
+
+            if ($finding === null) {
+                return AdminResponse::error(trans_message('safety_management.errors.finding_not_found'), 404);
+            }
+
+            return AdminResponse::success(new SafetyInspectionFindingResource($this->service->resolveInspectionFinding(
+                $finding,
+                (int) $request->user()?->id,
+                $validated['resolution_comment']
+            )));
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failedAction($request, $exception);
         }
     }
 
@@ -92,6 +457,449 @@ final class SafetyManagementController extends Controller
         }
     }
 
+    public function employeeRequirements(Request $request): JsonResponse
+    {
+        try {
+            return $this->paginatedResponse($this->service->paginateEmployeeRequirements(
+                (int) $request->attributes->get('current_organization_id'),
+                min((int) $request->input('per_page', 20), 100),
+                $request->only(['employee_id', 'project_id', 'work_category', 'status'])
+            ), SafetyEmployeeRequirementResource::class);
+        } catch (\Throwable $exception) {
+            return $this->failedIndex($request, $exception, 'employee_requirements');
+        }
+    }
+
+    public function storeEmployeeRequirement(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'employee_id' => ['required', 'integer'],
+                'user_id' => ['nullable', 'integer'],
+                'project_id' => ['nullable', 'integer'],
+                'work_type_id' => ['nullable', 'integer'],
+                'work_category' => ['required', 'string', 'max:120'],
+                'requirement_code' => ['required', 'string', 'max:120'],
+                'requirement_type' => ['required', 'string', 'max:80'],
+                'source_type' => ['nullable', 'string', 'max:80'],
+                'source_id' => ['nullable', 'integer'],
+                'valid_from' => ['nullable', 'date'],
+                'valid_until' => ['nullable', 'date'],
+                'status' => ['nullable', 'string', Rule::in(['valid', 'expired', 'revoked', 'waived'])],
+                'metadata' => ['nullable', 'array'],
+            ], $this->recordValidationMessages());
+
+            return AdminResponse::success(
+                new SafetyEmployeeRequirementResource($this->service->createEmployeeRequirement(
+                    (int) $request->attributes->get('current_organization_id'),
+                    $validated
+                )),
+                trans_message('safety_management.messages.employee_requirement_created'),
+                201
+            );
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failedStore($request, $exception, 'employee_requirements');
+        }
+    }
+
+    public function updateEmployeeRequirement(Request $request, int $id): JsonResponse
+    {
+        try {
+            $record = $this->service->findEmployeeRequirement((int) $request->attributes->get('current_organization_id'), $id);
+
+            if ($record === null) {
+                return AdminResponse::error(trans_message('safety_management.errors.employee_requirement_not_found'), 404);
+            }
+
+            $validated = $request->validate([
+                'employee_id' => ['sometimes', 'integer'],
+                'user_id' => ['nullable', 'integer'],
+                'project_id' => ['nullable', 'integer'],
+                'work_type_id' => ['nullable', 'integer'],
+                'work_category' => ['sometimes', 'string', 'max:120'],
+                'requirement_code' => ['sometimes', 'string', 'max:120'],
+                'requirement_type' => ['sometimes', 'string', 'max:80'],
+                'source_type' => ['nullable', 'string', 'max:80'],
+                'source_id' => ['nullable', 'integer'],
+                'valid_from' => ['nullable', 'date'],
+                'valid_until' => ['nullable', 'date'],
+                'status' => ['nullable', 'string', Rule::in(['valid', 'expired', 'revoked', 'waived'])],
+                'metadata' => ['nullable', 'array'],
+            ], $this->recordValidationMessages());
+
+            return AdminResponse::success(
+                new SafetyEmployeeRequirementResource($this->service->updateEmployeeRequirement($record, $validated)),
+                trans_message('safety_management.messages.record_updated')
+            );
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failedAction($request, $exception);
+        }
+    }
+
+    public function destroyEmployeeRequirement(Request $request, int $id): JsonResponse
+    {
+        $record = $this->service->findEmployeeRequirement((int) $request->attributes->get('current_organization_id'), $id);
+
+        if ($record === null) {
+            return AdminResponse::error(trans_message('safety_management.errors.employee_requirement_not_found'), 404);
+        }
+
+        $this->service->deleteEmployeeRequirement($record);
+
+        return AdminResponse::success(null, trans_message('safety_management.messages.record_deleted'));
+    }
+
+    public function trainingRecords(Request $request): JsonResponse
+    {
+        try {
+            return $this->paginatedResponse($this->service->paginateTrainingRecords(
+                (int) $request->attributes->get('current_organization_id'),
+                min((int) $request->input('per_page', 20), 100),
+                $request->only(['employee_id', 'program_code', 'result'])
+            ), SafetyTrainingRecordResource::class);
+        } catch (\Throwable $exception) {
+            return $this->failedIndex($request, $exception, 'training_records');
+        }
+    }
+
+    public function storeTrainingRecord(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'employee_id' => ['required', 'integer'],
+                'user_id' => ['nullable', 'integer'],
+                'program_code' => ['required', 'string', 'max:120'],
+                'program_name' => ['required', 'string', 'max:255'],
+                'training_type' => ['required', 'string', 'max:80'],
+                'completed_at' => ['required', 'date'],
+                'valid_until' => ['nullable', 'date'],
+                'result' => ['nullable', 'string', Rule::in(['passed', 'failed', 'pending'])],
+                'document_number' => ['nullable', 'string', 'max:120'],
+                'protocol_number' => ['nullable', 'string', 'max:120'],
+                'metadata' => ['nullable', 'array'],
+            ], $this->recordValidationMessages());
+
+            return AdminResponse::success(
+                new SafetyTrainingRecordResource($this->service->createTrainingRecord(
+                    (int) $request->attributes->get('current_organization_id'),
+                    $validated
+                )),
+                trans_message('safety_management.messages.training_record_created'),
+                201
+            );
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failedStore($request, $exception, 'training_records');
+        }
+    }
+
+    public function updateTrainingRecord(Request $request, int $id): JsonResponse
+    {
+        try {
+            $record = $this->service->findTrainingRecord((int) $request->attributes->get('current_organization_id'), $id);
+
+            if ($record === null) {
+                return AdminResponse::error(trans_message('safety_management.errors.training_record_not_found'), 404);
+            }
+
+            $validated = $request->validate([
+                'employee_id' => ['sometimes', 'integer'],
+                'user_id' => ['nullable', 'integer'],
+                'program_code' => ['sometimes', 'string', 'max:120'],
+                'program_name' => ['sometimes', 'string', 'max:255'],
+                'training_type' => ['sometimes', 'string', 'max:80'],
+                'completed_at' => ['sometimes', 'date'],
+                'valid_until' => ['nullable', 'date'],
+                'result' => ['nullable', 'string', Rule::in(['passed', 'failed', 'pending'])],
+                'document_number' => ['nullable', 'string', 'max:120'],
+                'protocol_number' => ['nullable', 'string', 'max:120'],
+                'metadata' => ['nullable', 'array'],
+            ], $this->recordValidationMessages());
+
+            return AdminResponse::success(
+                new SafetyTrainingRecordResource($this->service->updateTrainingRecord($record, $validated)),
+                trans_message('safety_management.messages.record_updated')
+            );
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failedAction($request, $exception);
+        }
+    }
+
+    public function destroyTrainingRecord(Request $request, int $id): JsonResponse
+    {
+        $record = $this->service->findTrainingRecord((int) $request->attributes->get('current_organization_id'), $id);
+
+        if ($record === null) {
+            return AdminResponse::error(trans_message('safety_management.errors.training_record_not_found'), 404);
+        }
+
+        $this->service->deleteTrainingRecord($record);
+
+        return AdminResponse::success(null, trans_message('safety_management.messages.record_deleted'));
+    }
+
+    public function medicalExams(Request $request): JsonResponse
+    {
+        try {
+            return $this->paginatedResponse($this->service->paginateMedicalExams(
+                (int) $request->attributes->get('current_organization_id'),
+                min((int) $request->input('per_page', 20), 100),
+                $request->only(['employee_id', 'exam_type', 'result'])
+            ), SafetyMedicalExamResource::class);
+        } catch (\Throwable $exception) {
+            return $this->failedIndex($request, $exception, 'medical_exams');
+        }
+    }
+
+    public function storeMedicalExam(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'employee_id' => ['required', 'integer'],
+                'exam_type' => ['required', 'string', 'max:80'],
+                'completed_at' => ['required', 'date'],
+                'valid_until' => ['nullable', 'date'],
+                'result' => ['nullable', 'string', Rule::in(['fit', 'fit_with_restrictions', 'not_fit'])],
+                'restrictions' => ['nullable', 'string', 'max:5000'],
+                'file_id' => ['nullable', 'integer'],
+                'metadata' => ['nullable', 'array'],
+            ], $this->recordValidationMessages());
+
+            return AdminResponse::success(
+                new SafetyMedicalExamResource($this->service->createMedicalExam(
+                    (int) $request->attributes->get('current_organization_id'),
+                    $validated
+                )),
+                trans_message('safety_management.messages.medical_exam_created'),
+                201
+            );
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failedStore($request, $exception, 'medical_exams');
+        }
+    }
+
+    public function updateMedicalExam(Request $request, int $id): JsonResponse
+    {
+        try {
+            $record = $this->service->findMedicalExam((int) $request->attributes->get('current_organization_id'), $id);
+
+            if ($record === null) {
+                return AdminResponse::error(trans_message('safety_management.errors.medical_exam_not_found'), 404);
+            }
+
+            $validated = $request->validate([
+                'employee_id' => ['sometimes', 'integer'],
+                'exam_type' => ['sometimes', 'string', 'max:80'],
+                'completed_at' => ['sometimes', 'date'],
+                'valid_until' => ['nullable', 'date'],
+                'result' => ['nullable', 'string', Rule::in(['fit', 'fit_with_restrictions', 'not_fit'])],
+                'restrictions' => ['nullable', 'string', 'max:5000'],
+                'file_id' => ['nullable', 'integer'],
+                'metadata' => ['nullable', 'array'],
+            ], $this->recordValidationMessages());
+
+            return AdminResponse::success(
+                new SafetyMedicalExamResource($this->service->updateMedicalExam($record, $validated)),
+                trans_message('safety_management.messages.record_updated')
+            );
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failedAction($request, $exception);
+        }
+    }
+
+    public function destroyMedicalExam(Request $request, int $id): JsonResponse
+    {
+        $record = $this->service->findMedicalExam((int) $request->attributes->get('current_organization_id'), $id);
+
+        if ($record === null) {
+            return AdminResponse::error(trans_message('safety_management.errors.medical_exam_not_found'), 404);
+        }
+
+        $this->service->deleteMedicalExam($record);
+
+        return AdminResponse::success(null, trans_message('safety_management.messages.record_deleted'));
+    }
+
+    public function ppeIssues(Request $request): JsonResponse
+    {
+        try {
+            return $this->paginatedResponse($this->service->paginatePpeIssues(
+                (int) $request->attributes->get('current_organization_id'),
+                min((int) $request->input('per_page', 20), 100),
+                $request->only(['employee_id', 'ppe_code', 'status'])
+            ), SafetyPpeIssueResource::class);
+        } catch (\Throwable $exception) {
+            return $this->failedIndex($request, $exception, 'ppe_issues');
+        }
+    }
+
+    public function storePpeIssue(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'employee_id' => ['required', 'integer'],
+                'ppe_code' => ['required', 'string', 'max:120'],
+                'ppe_name' => ['required', 'string', 'max:255'],
+                'issued_at' => ['required', 'date'],
+                'valid_until' => ['nullable', 'date'],
+                'quantity' => ['nullable', 'numeric', 'min:0.001'],
+                'status' => ['nullable', 'string', Rule::in(['issued', 'returned', 'lost', 'damaged', 'expired'])],
+                'warehouse_operation_id' => ['nullable', 'integer'],
+                'metadata' => ['nullable', 'array'],
+            ], $this->recordValidationMessages());
+
+            return AdminResponse::success(
+                new SafetyPpeIssueResource($this->service->createPpeIssue(
+                    (int) $request->attributes->get('current_organization_id'),
+                    $validated
+                )),
+                trans_message('safety_management.messages.ppe_issue_created'),
+                201
+            );
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failedStore($request, $exception, 'ppe_issues');
+        }
+    }
+
+    public function updatePpeIssue(Request $request, int $id): JsonResponse
+    {
+        try {
+            $record = $this->service->findPpeIssue((int) $request->attributes->get('current_organization_id'), $id);
+
+            if ($record === null) {
+                return AdminResponse::error(trans_message('safety_management.errors.ppe_issue_not_found'), 404);
+            }
+
+            $validated = $request->validate([
+                'employee_id' => ['sometimes', 'integer'],
+                'ppe_code' => ['sometimes', 'string', 'max:120'],
+                'ppe_name' => ['sometimes', 'string', 'max:255'],
+                'issued_at' => ['sometimes', 'date'],
+                'valid_until' => ['nullable', 'date'],
+                'quantity' => ['nullable', 'numeric', 'min:0.001'],
+                'status' => ['nullable', 'string', Rule::in(['issued', 'returned', 'lost', 'damaged', 'expired'])],
+                'warehouse_operation_id' => ['nullable', 'integer'],
+                'metadata' => ['nullable', 'array'],
+            ], $this->recordValidationMessages());
+
+            return AdminResponse::success(
+                new SafetyPpeIssueResource($this->service->updatePpeIssue($record, $validated)),
+                trans_message('safety_management.messages.record_updated')
+            );
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failedAction($request, $exception);
+        }
+    }
+
+    public function destroyPpeIssue(Request $request, int $id): JsonResponse
+    {
+        $record = $this->service->findPpeIssue((int) $request->attributes->get('current_organization_id'), $id);
+
+        if ($record === null) {
+            return AdminResponse::error(trans_message('safety_management.errors.ppe_issue_not_found'), 404);
+        }
+
+        $this->service->deletePpeIssue($record);
+
+        return AdminResponse::success(null, trans_message('safety_management.messages.record_deleted'));
+    }
+
+    public function draftBriefingJournal(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'project_id' => ['nullable', 'integer'],
+                'date_from' => ['nullable', 'date'],
+                'date_until' => ['nullable', 'date'],
+            ]);
+
+            return AdminResponse::success($this->documentDraftService->briefingJournal(
+                (int) $request->attributes->get('current_organization_id'),
+                $validated
+            ));
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failedAction($request, $exception);
+        }
+    }
+
+    public function draftPpeCard(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'employee_id' => ['required', 'integer'],
+            ], [
+                'employee_id.required' => trans_message('safety_management.validation.employee_required'),
+            ]);
+
+            return AdminResponse::success($this->documentDraftService->ppeCard(
+                (int) $request->attributes->get('current_organization_id'),
+                (int) $validated['employee_id']
+            ));
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failedAction($request, $exception);
+        }
+    }
+
+    public function draftViolationAct(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'violation_id' => ['nullable', 'integer'],
+                'finding_id' => ['nullable', 'integer'],
+            ]);
+
+            return AdminResponse::success($this->documentDraftService->violationAct(
+                (int) $request->attributes->get('current_organization_id'),
+                $validated
+            ));
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failedAction($request, $exception);
+        }
+    }
+
     public function storePermit(Request $request): JsonResponse
     {
         try {
@@ -106,6 +914,15 @@ final class SafetyManagementController extends Controller
                 'risk_level' => ['nullable', 'string', Rule::in(['low', 'medium', 'high', 'critical'])],
                 'required_controls' => ['nullable', 'array'],
                 'required_controls.*' => ['string', 'max:120'],
+                'participants' => ['nullable', 'array'],
+                'participants.*.employee_id' => ['nullable', 'integer'],
+                'participants.*.user_id' => ['nullable', 'integer'],
+                'participants.*.external_name' => ['nullable', 'string', 'max:255'],
+                'participants.*.company_name' => ['nullable', 'string', 'max:255'],
+                'participants.*.role_name' => ['nullable', 'string', 'max:255'],
+                'participants.*.position_name' => ['nullable', 'string', 'max:255'],
+                'participants.*.work_category' => ['nullable', 'string', 'max:80'],
+                'participants.*.metadata' => ['nullable', 'array'],
                 'metadata' => ['nullable', 'array'],
             ]);
 
@@ -130,6 +947,31 @@ final class SafetyManagementController extends Controller
     public function submitPermit(Request $request, int $id): JsonResponse
     {
         return $this->permitAction($request, $id, fn ($permit) => $this->service->submitPermit($permit));
+    }
+
+    public function syncPermitParticipants(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'participants' => ['required', 'array'],
+                'participants.*.employee_id' => ['nullable', 'integer'],
+                'participants.*.user_id' => ['nullable', 'integer'],
+                'participants.*.external_name' => ['nullable', 'string', 'max:255'],
+                'participants.*.company_name' => ['nullable', 'string', 'max:255'],
+                'participants.*.role_name' => ['nullable', 'string', 'max:255'],
+                'participants.*.position_name' => ['nullable', 'string', 'max:255'],
+                'participants.*.work_category' => ['nullable', 'string', 'max:80'],
+                'participants.*.metadata' => ['nullable', 'array'],
+            ]);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        }
+
+        return $this->permitAction(
+            $request,
+            $id,
+            fn ($permit) => $this->service->syncPermitParticipants($permit, $validated['participants'])
+        );
     }
 
     public function approvePermit(Request $request, int $id): JsonResponse
@@ -592,5 +1434,44 @@ final class SafetyManagementController extends Controller
         ]);
 
         return AdminResponse::error(trans_message('safety_management.errors.action_failed'), 500);
+    }
+
+    private function requirementMatrixRules(bool $required = true): array
+    {
+        $presence = $required ? 'required' : 'sometimes';
+
+        return [
+            'project_id' => ['nullable', 'integer'],
+            'work_type_id' => ['nullable', 'integer'],
+            'position_name' => ['nullable', 'string', 'max:255'],
+            'work_category' => [$presence, 'string', 'max:80'],
+            'risk_level' => ['nullable', 'string', Rule::in(['low', 'medium', 'high', 'critical'])],
+            'requirements' => [$presence, 'array', 'min:1'],
+            'is_active' => ['nullable', 'boolean'],
+            'effective_from' => ['nullable', 'date'],
+            'effective_until' => ['nullable', 'date', 'after_or_equal:effective_from'],
+        ];
+    }
+
+    private function recordValidationMessages(): array
+    {
+        return [
+            'employee_id.required' => trans_message('safety_management.validation.employee_required'),
+            'work_category.required' => trans_message('safety_management.validation.work_category_required'),
+            'requirements.required' => trans_message('safety_management.validation.requirements_required'),
+            'requirements.min' => trans_message('safety_management.validation.requirements_required'),
+            'requirement_code.required' => trans_message('safety_management.validation.requirement_code_required'),
+            'requirement_type.required' => trans_message('safety_management.validation.requirement_type_required'),
+            'program_code.required' => trans_message('safety_management.validation.program_code_required'),
+            'program_name.required' => trans_message('safety_management.validation.program_name_required'),
+            'training_type.required' => trans_message('safety_management.validation.training_type_required'),
+            'completed_at.required' => trans_message('safety_management.validation.completed_at_required'),
+            'exam_type.required' => trans_message('safety_management.validation.exam_type_required'),
+            'ppe_code.required' => trans_message('safety_management.validation.ppe_code_required'),
+            'ppe_name.required' => trans_message('safety_management.validation.ppe_name_required'),
+            'issued_at.required' => trans_message('safety_management.validation.issued_at_required'),
+            'status.in' => trans_message('safety_management.validation.status_invalid'),
+            'result.in' => trans_message('safety_management.validation.status_invalid'),
+        ];
     }
 }

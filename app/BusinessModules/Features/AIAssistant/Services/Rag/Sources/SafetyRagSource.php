@@ -9,6 +9,8 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceCollectorInte
 use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\Concerns\FormatsRagSourceContent;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyBriefing;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyCorrectiveAction;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyInspection;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyInspectionFinding;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyIncident;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyViolation;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermit;
@@ -49,6 +51,14 @@ final class SafetyRagSource implements RagSourceCollectorInterface
         foreach ($this->correctiveActions($organizationId, $projectId) as $action) {
             yield $this->correctiveActionChunk($action);
         }
+
+        foreach ($this->inspections($organizationId, $projectId) as $inspection) {
+            yield $this->inspectionChunk($inspection);
+        }
+
+        foreach ($this->inspectionFindings($organizationId, $projectId) as $finding) {
+            yield $this->inspectionFindingChunk($finding);
+        }
     }
 
     public function collectEntity(int $organizationId, string $entityType, string|int $entityId): iterable
@@ -59,6 +69,8 @@ final class SafetyRagSource implements RagSourceCollectorInterface
             'safety_work_permit' => $this->singlePermit($organizationId, $entityId),
             'safety_briefing' => $this->singleBriefing($organizationId, $entityId),
             'safety_corrective_action' => $this->singleCorrectiveAction($organizationId, $entityId),
+            'safety_inspection' => $this->singleInspection($organizationId, $entityId),
+            'safety_inspection_finding' => $this->singleInspectionFinding($organizationId, $entityId),
             default => [],
         };
     }
@@ -235,6 +247,77 @@ final class SafetyRagSource implements RagSourceCollectorInterface
         );
     }
 
+    private function inspectionChunk(SafetyInspection $inspection): RagChunkData
+    {
+        $content = $this->lines([
+            'Проверка охраны труда: '.$this->stringValue($inspection->inspection_number),
+            'Проект: '.$this->stringValue($inspection->project?->name),
+            'Название: '.$this->stringValue($inspection->title),
+            'Тип: '.$this->stringValue($inspection->inspection_type),
+            'Статус: '.$this->stringValue($inspection->status),
+            'Результат: '.$this->stringValue($inspection->result),
+            'Риск: '.$this->stringValue($inspection->risk_level),
+            'Локация: '.$this->stringValue($inspection->location_name),
+            'Плановая дата: '.$this->dateTimeValue($inspection->planned_at),
+            'Дата проведения: '.$this->dateTimeValue($inspection->conducted_at),
+            'Проводил: '.$this->stringValue($inspection->conductedByUser?->name),
+            'Пункты чек-листа: '.$this->numberValue($inspection->items_count ?? 0, 0),
+            'Замечания: '.$this->numberValue($inspection->findings_count ?? 0, 0),
+            'Итог: '.$this->stringValue($inspection->summary),
+        ]);
+
+        return $this->chunk(
+            $inspection->organization_id,
+            $inspection->project_id,
+            'safety_inspection',
+            $inspection->id,
+            'Проверка ОТ: '.$this->stringValue($inspection->inspection_number),
+            $content,
+            [
+                'status' => $this->scalarValue($inspection->status),
+                'result' => $this->scalarValue($inspection->result),
+                'inspection_type' => $this->scalarValue($inspection->inspection_type),
+                'project_id' => $inspection->project_id,
+                'conducted_at' => $this->dateTimeValue($inspection->conducted_at),
+                'findings_count' => (int) ($inspection->findings_count ?? 0),
+            ],
+            $inspection->updated_at
+        );
+    }
+
+    private function inspectionFindingChunk(SafetyInspectionFinding $finding): RagChunkData
+    {
+        $content = $this->lines([
+            'Замечание проверки охраны труда: '.$this->stringValue($finding->finding_number),
+            'Проект: '.$this->stringValue($finding->project?->name),
+            'Проверка: '.$this->stringValue($finding->inspection?->inspection_number),
+            'Название: '.$this->stringValue($finding->title),
+            'Серьезность: '.$this->stringValue($finding->severity),
+            'Статус: '.$this->stringValue($finding->status),
+            'Срок устранения: '.$this->dateValue($finding->due_date),
+            'Ответственный: '.$this->stringValue($finding->assignedUser?->name),
+            'Описание: '.$this->stringValue($finding->description),
+            'Решение: '.$this->stringValue($finding->resolution_comment),
+        ]);
+
+        return $this->chunk(
+            $finding->organization_id,
+            $finding->project_id,
+            'safety_inspection_finding',
+            $finding->id,
+            'Замечание ОТ: '.$this->stringValue($finding->finding_number),
+            $content,
+            [
+                'status' => $this->scalarValue($finding->status),
+                'severity' => $this->scalarValue($finding->severity),
+                'project_id' => $finding->project_id,
+                'inspection_id' => $finding->inspection_id,
+                'due_date' => $this->dateValue($finding->due_date),
+            ],
+            $finding->updated_at
+        );
+    }
+
     private function incidents(int $organizationId, ?int $projectId): iterable
     {
         return SafetyIncident::query()
@@ -280,6 +363,27 @@ final class SafetyRagSource implements RagSourceCollectorInterface
     {
         return SafetyCorrectiveAction::query()
             ->with(['project', 'incident', 'violation', 'assignedUser'])
+            ->forOrganization($organizationId)
+            ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
+            ->orderBy('id')
+            ->cursor();
+    }
+
+    private function inspections(int $organizationId, ?int $projectId): iterable
+    {
+        return SafetyInspection::query()
+            ->with(['project', 'conductedByUser'])
+            ->withCount(['items', 'findings'])
+            ->forOrganization($organizationId)
+            ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
+            ->orderBy('id')
+            ->cursor();
+    }
+
+    private function inspectionFindings(int $organizationId, ?int $projectId): iterable
+    {
+        return SafetyInspectionFinding::query()
+            ->with(['project', 'inspection', 'assignedUser'])
             ->forOrganization($organizationId)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id')
@@ -340,6 +444,29 @@ final class SafetyRagSource implements RagSourceCollectorInterface
             ->first();
 
         return $action instanceof SafetyCorrectiveAction ? [$this->correctiveActionChunk($action)] : [];
+    }
+
+    private function singleInspection(int $organizationId, string|int $entityId): array
+    {
+        $inspection = SafetyInspection::query()
+            ->with(['project', 'conductedByUser'])
+            ->withCount(['items', 'findings'])
+            ->forOrganization($organizationId)
+            ->where('id', $entityId)
+            ->first();
+
+        return $inspection instanceof SafetyInspection ? [$this->inspectionChunk($inspection)] : [];
+    }
+
+    private function singleInspectionFinding(int $organizationId, string|int $entityId): array
+    {
+        $finding = SafetyInspectionFinding::query()
+            ->with(['project', 'inspection', 'assignedUser'])
+            ->forOrganization($organizationId)
+            ->where('id', $entityId)
+            ->first();
+
+        return $finding instanceof SafetyInspectionFinding ? [$this->inspectionFindingChunk($finding)] : [];
     }
 
     private function chunk(

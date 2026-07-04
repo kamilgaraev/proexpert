@@ -284,7 +284,8 @@ final class ProductionLaborService
                         $organizationId,
                         (int) $workOrder->project_id,
                         $payload['shift_date'],
-                        $safetyPermitReference
+                        $safetyPermitReference,
+                        $employee
                     );
                 }
 
@@ -433,19 +434,35 @@ final class ProductionLaborService
         }
     }
 
-    private function assertActiveSafetyPermit(int $organizationId, int $projectId, string $shiftDate, string $permitNumber): void
-    {
-        $exists = SafetyWorkPermit::query()
+    private function assertActiveSafetyPermit(
+        int $organizationId,
+        int $projectId,
+        string $shiftDate,
+        string $permitNumber,
+        ?WorkforceEmployee $employee = null
+    ): void {
+        $permit = SafetyWorkPermit::query()
+            ->with('participants')
             ->where('organization_id', $organizationId)
             ->where('project_id', $projectId)
             ->where('permit_number', $permitNumber)
             ->where('status', 'active')
             ->whereDate('valid_from', '<=', $shiftDate)
             ->whereDate('valid_until', '>=', $shiftDate)
-            ->exists();
+            ->first();
 
-        if (!$exists) {
+        if (!$permit instanceof SafetyWorkPermit) {
             throw new DomainException(trans_message('production_labor.errors.safety_permit_required'));
+        }
+
+        if ($employee === null || $permit->participants->isEmpty()) {
+            return;
+        }
+
+        $participant = $permit->participants->firstWhere('employee_id', $employee->id);
+
+        if ($participant === null || !in_array($participant->admission_status, ['admitted', 'partial'], true)) {
+            throw new DomainException(trans_message('production_labor.errors.safety_permit_employee_not_admitted'));
         }
     }
 

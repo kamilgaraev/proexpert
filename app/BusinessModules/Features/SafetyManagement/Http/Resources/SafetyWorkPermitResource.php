@@ -75,6 +75,27 @@ final class SafetyWorkPermitResource extends JsonResource
                 'name' => $permit->responsibleUser->name,
             ] : null),
             'metadata' => $permit->metadata,
+            'participants' => $this->whenLoaded('participants', fn () => $permit->participants->map(
+                static fn ($participant): array => [
+                    'id' => $participant->id,
+                    'employee_id' => $participant->employee_id,
+                    'user_id' => $participant->user_id,
+                    'external_name' => $participant->external_name,
+                    'company_name' => $participant->company_name,
+                    'role_name' => $participant->role_name,
+                    'position_name' => $participant->position_name,
+                    'work_category' => $participant->work_category,
+                    'admission_status' => $participant->admission_status,
+                    'admission_checked_at' => $participant->admission_checked_at?->toIso8601String(),
+                    'admission_blockers' => $participant->admission_blockers ?? [],
+                    'admission_warnings' => $participant->admission_warnings ?? [],
+                    'employee' => $participant->employee ? [
+                        'id' => $participant->employee->id,
+                        'full_name' => $participant->employee->full_name,
+                    ] : null,
+                ]
+            )->values()->all()),
+            'admission_summary' => $this->admissionSummary($permit),
             'created_at' => $permit->created_at?->toIso8601String(),
             'updated_at' => $permit->updated_at?->toIso8601String(),
         ];
@@ -82,14 +103,45 @@ final class SafetyWorkPermitResource extends JsonResource
 
     private function problemFlags(SafetyWorkPermit $permit): array
     {
+        $flags = [];
+
         if ($permit->status !== 'closed' && $permit->valid_until->isPast()) {
-            return [[
+            $flags[] = [
                 'code' => 'permit_expired',
                 'severity' => 'critical',
                 'message' => trans_message('safety_management.problem_flags.permit_expired'),
-            ]];
+            ];
         }
 
-        return [];
+        if ($permit->relationLoaded('participants') && $permit->participants->contains('admission_status', 'not_admitted')) {
+            $flags[] = [
+                'code' => 'permit_participant_not_admitted',
+                'severity' => 'critical',
+                'message' => trans_message('safety_management.problem_flags.permit_participant_not_admitted'),
+            ];
+        }
+
+        return $flags;
+    }
+
+    private function admissionSummary(SafetyWorkPermit $permit): array
+    {
+        if (!$permit->relationLoaded('participants')) {
+            return [
+                'total' => 0,
+                'admitted' => 0,
+                'not_admitted' => 0,
+                'pending' => 0,
+                'warnings' => 0,
+            ];
+        }
+
+        return [
+            'total' => $permit->participants->count(),
+            'admitted' => $permit->participants->where('admission_status', 'admitted')->count(),
+            'not_admitted' => $permit->participants->where('admission_status', 'not_admitted')->count(),
+            'pending' => $permit->participants->where('admission_status', 'pending')->count(),
+            'warnings' => $permit->participants->where('admission_status', 'partial')->count(),
+        ];
     }
 }

@@ -12,6 +12,8 @@ final class SafetyManagementServiceProvider extends ServiceProvider
     {
         $this->app->singleton(SafetyManagementModule::class);
         $this->app->singleton(Services\SafetyManagementService::class);
+        $this->app->singleton(Services\SafetyComplianceService::class);
+        $this->app->singleton(Services\SafetyDocumentDraftService::class);
     }
 
     public function boot(): void

@@ -17,6 +17,11 @@ final class ProductionLaborWorkOrderLineResource extends JsonResource
         $line = $this->resource;
         $planned = (float) $line->planned_quantity;
         $accepted = (float) $line->accepted_quantity;
+        $metadata = is_array($line->metadata) ? $line->metadata : [];
+        $safetySummary = $metadata['safety_requirements_summary'] ?? null;
+        $safetyBlockersCount = is_array($safetySummary)
+            ? count($safetySummary['blockers'] ?? [])
+            : (int) ($metadata['safety_blockers_count'] ?? 0);
 
         return [
             'id' => $line->id,
@@ -34,6 +39,10 @@ final class ProductionLaborWorkOrderLineResource extends JsonResource
             'hour_rate' => (float) $line->hour_rate,
             'pay_basis' => $line->pay_basis,
             'requires_safety_permit' => $line->requires_safety_permit,
+            'work_category' => $metadata['work_category'] ?? $metadata['safety_work_category'] ?? null,
+            'safety_admission_status' => $metadata['safety_admission_status'] ?? null,
+            'safety_blockers_count' => $safetyBlockersCount,
+            'safety_requirements_summary' => $safetySummary,
             'metadata' => $line->metadata,
         ];
     }
