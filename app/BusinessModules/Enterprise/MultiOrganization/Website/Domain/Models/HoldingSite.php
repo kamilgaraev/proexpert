@@ -194,13 +194,13 @@ class HoldingSite extends Model
 
     public function getDomain(): string
     {
-        $domain = $this->domain ?: ($this->organizationGroup->slug . '.prohelper.pro');
+        $domain = $this->domain ?: ($this->organizationGroup->slug . '.1мост.рф');
 
         if (str_contains($domain, '.')) {
             return $domain;
         }
 
-        return $domain . '.prohelper.pro';
+        return $domain . '.1мост.рф';
     }
 
     public function getUrl(): string

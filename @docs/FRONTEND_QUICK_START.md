@@ -377,7 +377,7 @@ xl: 1200px  - 4 cols
 **OpenAPI:** `docs/openapi/advanced-dashboard.yaml`  
 **Permissions:** `@docs/PERMISSIONS_ADVANCED_DASHBOARD.md`  
 
-**Support:** support@prohelper.ru
+**Support:** support@xn--1-xtbgmf.xn--p1ai
 
 ---
 

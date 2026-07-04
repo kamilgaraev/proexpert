@@ -106,7 +106,7 @@ final class RefreshMarketingSeoArticlesCommand extends Command
     private function getAuthor(): LandingAdmin
     {
         return LandingAdmin::query()->firstOrCreate(
-            ['email' => 'blog@prohelper.pro'],
+            ['email' => 'blog@1мост.рф'],
             [
                 'name' => 'Команда МОСТ',
                 'password' => Hash::make(Str::random(48)),
@@ -223,11 +223,11 @@ final class RefreshMarketingSeoArticlesCommand extends Command
             'publisher' => [
                 '@type' => 'Organization',
                 'name' => 'МОСТ',
-                'url' => 'https://prohelper.pro',
+                'url' => 'https://1мост.рф',
             ],
             'mainEntityOfPage' => [
                 '@type' => 'WebPage',
-                '@id' => 'https://prohelper.pro/blog/' . $articleData['slug'],
+                '@id' => 'https://1мост.рф/blog/' . $articleData['slug'],
             ],
         ];
     }
@@ -377,7 +377,7 @@ HTML,
                 'meta_keywords' => ['программа для прораба', 'контроль строительного объекта', 'заявки с объекта', 'учет работ на объекте', 'управление стройкой'],
                 'og_title' => 'Как прорабу держать объект под контролем без хаоса',
                 'og_description' => 'Разбираем, как собрать задачи, заявки, сроки и фотофиксацию объекта в понятный ежедневный порядок.',
-                'og_image' => 'https://prohelper.pro/og/foreman-software.svg',
+                'og_image' => 'https://1мост.рф/og/foreman-software.svg',
                 'sort_order' => 100,
                 'tags' => [
                     ['name' => 'прораб', 'slug' => 'prorab', 'description' => 'Материалы для прорабов и руководителей участков.', 'color' => '#ea580c'],
@@ -479,7 +479,7 @@ HTML,
                 'meta_keywords' => ['ПТО в строительстве', 'исполнительная документация', 'акты в строительстве', 'документы стройки', 'согласование документов'],
                 'og_title' => 'Что должно быть у ПТО в одной системе',
                 'og_description' => 'Почему документы не должны догонять стройку и как связать ПТО с фактами на объекте.',
-                'og_image' => 'https://prohelper.pro/og/construction-erp.svg',
+                'og_image' => 'https://1мост.рф/og/construction-erp.svg',
                 'sort_order' => 90,
                 'tags' => [
                     ['name' => 'ПТО', 'slug' => 'pto', 'description' => 'Материалы для производственно-технических отделов.', 'color' => '#2563eb'],
@@ -580,7 +580,7 @@ HTML,
                 'meta_keywords' => ['учет материалов в строительстве', 'заявки на материалы', 'снабжение стройки', 'строительный склад', 'управление поставками'],
                 'og_title' => 'Как снабженцу перестать собирать заявки из чатов',
                 'og_description' => 'Какие заявки теряются, почему склад без связи с объектом не спасает и как выстроить нормальный маршрут поставки.',
-                'og_image' => 'https://prohelper.pro/og/material-accounting.svg',
+                'og_image' => 'https://1мост.рф/og/material-accounting.svg',
                 'sort_order' => 80,
                 'tags' => [
                     ['name' => 'снабжение', 'slug' => 'snabzhenie', 'description' => 'Организация заявок, закупок и поставок на стройке.', 'color' => '#16a34a'],
@@ -682,7 +682,7 @@ HTML,
                 'meta_keywords' => ['контроль бюджета стройки', 'управление строительством', 'руководитель строительства', 'ERP для строительства', 'контроль объектов'],
                 'og_title' => 'Что руководитель строительства должен видеть каждое утро',
                 'og_description' => 'Не отчет ради отчета, а утренняя картина по срокам, заявкам, подрядчикам, деньгам и рискам.',
-                'og_image' => 'https://prohelper.pro/og/construction-budget-control.svg',
+                'og_image' => 'https://1мост.рф/og/construction-budget-control.svg',
                 'sort_order' => 70,
                 'tags' => [
                     ['name' => 'руководитель строительства', 'slug' => 'rukovoditel-stroitelstva', 'description' => 'Материалы для руководителей строительных компаний и проектов.', 'color' => '#7c3aed'],
@@ -786,7 +786,7 @@ HTML,
                 'meta_keywords' => ['контроль подрядчиков', 'контроль субподрядчиков', 'управление подрядчиками', 'строительный контроль', 'замечания подрядчикам'],
                 'og_title' => 'Как контролировать подрядчиков на объекте без ежедневных разборок',
                 'og_description' => 'Как фиксировать задачи, объемы, замечания, сроки и документы по подрядчикам так, чтобы разговоры были предметными.',
-                'og_image' => 'https://prohelper.pro/og/contractor-control.svg',
+                'og_image' => 'https://1мост.рф/og/contractor-control.svg',
                 'sort_order' => 60,
                 'tags' => [
                     ['name' => 'подрядчики', 'slug' => 'podryadchiki', 'description' => 'Контроль подрядчиков и субподрядчиков на объектах.', 'color' => '#dc2626'],

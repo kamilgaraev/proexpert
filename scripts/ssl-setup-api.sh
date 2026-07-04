@@ -41,11 +41,11 @@ certbot certonly \
     --email your-email@example.com \
     --agree-tos \
     --no-eff-email \
-    -d "*.prohelper.pro" \
-    -d "prohelper.pro"
+    -d "*.1мост.рф" \
+    -d "1мост.рф"
 
 # Проверяем что сертификат был получен
-if [ ! -f "/etc/letsencrypt/live/prohelper.pro/fullchain.pem" ]; then
+if [ ! -f "/etc/letsencrypt/live/1мост.рф/fullchain.pem" ]; then
     echo "❌ Сертификат не был получен. Проверьте DNS записи и попробуйте снова."
     echo "🔄 Запускаем Nginx без SSL..."
     systemctl start nginx
@@ -83,7 +83,7 @@ systemctl start certbot-renew.timer
 
 # Обновляем конфигурацию nginx для использования правильного пути к сертификату
 echo "⚙️ Обновление конфигурации Nginx..."
-sed -i 's|/etc/letsencrypt/live/api.prohelper.pro/|/etc/letsencrypt/live/prohelper.pro/|g' /etc/nginx/sites-available/prohelper-api
+sed -i 's|/etc/letsencrypt/live/api.1мост.рф/|/etc/letsencrypt/live/1мост.рф/|g' /etc/nginx/sites-available/prohelper-api
 
 # Тестируем конфигурацию nginx
 echo "🧪 Тестирование конфигурации Nginx..."
@@ -94,13 +94,13 @@ if [ $? -eq 0 ]; then
     echo "🚀 Запуск Nginx..."
     systemctl start nginx
     systemctl enable nginx
-    
+
     echo ""
     echo "🎉 SSL успешно настроен!"
     echo "📋 Ваши домены теперь доступны по HTTPS:"
-    echo "   • https://prohelper.pro"
-    echo "   • https://api.prohelper.pro" 
-    echo "   • https://любой-холдинг.prohelper.pro"
+    echo "   • https://1мост.рф"
+    echo "   • https://api.1мост.рф"
+    echo "   • https://любой-холдинг.1мост.рф"
     echo ""
     echo "🔄 Автообновление настроено и будет выполняться ежедневно"
     echo "📊 Проверить статус: systemctl status certbot-renew.timer"
@@ -109,4 +109,4 @@ else
     echo "🔍 Проверьте конфигурацию: nginx -t"
     echo "📝 Лог ошибок: tail -f /var/log/nginx/error.log"
     exit 1
-fi 
+fi

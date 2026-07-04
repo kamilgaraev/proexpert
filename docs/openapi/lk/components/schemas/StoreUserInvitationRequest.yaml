@@ -31,8 +31,8 @@ properties:
       
       **Влияние на ссылку приглашения:**
       - `foreman` → мобильное приложение (APK загрузка)
-      - `organization_admin`, `accountant`, `web_admin` → admin.prohelper.pro
-      - `organization_owner` или пустой массив → prohelper.pro (основной ЛК)
+      - `organization_admin`, `accountant`, `web_admin` → admin.1мост.рф
+      - `organization_owner` или пустой массив → 1мост.рф (основной ЛК)
       
       Если массив пустой, пользователь получит базовые права.
     example: ["foreman"]

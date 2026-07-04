@@ -43,7 +43,7 @@ class BlogEditorialChecklistServiceTest extends TestCase
         $category = $this->categoryFixture('checklist-ready');
         $media = $this->mediaFixture('cover-ready.jpg', 'Интерфейс МОСТ на экране ноутбука');
         $article = $this->articleFixture($admin, $category, $media->public_url, $this->readyDocument(), [
-            'canonical_url' => 'https://prohelper.pro/blog/checklist-ready',
+            'canonical_url' => 'https://1мост.рф/blog/checklist-ready',
             'scheduled_at' => now()->addDay(),
             'status' => BlogArticleStatusEnum::SCHEDULED->value,
         ]);

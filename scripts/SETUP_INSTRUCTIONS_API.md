@@ -2,11 +2,11 @@
 
 ## 🏗️ **АРХИТЕКТУРА СИСТЕМЫ**
 
-- `lk.prohelper.pro` - Личный кабинет (существующий сервер)
-- `api.prohelper.pro` - Laravel API (ваш сервер 89.111.153.146)
-- `admin.prohelper.pro` - Админка Laravel (тот же сервер)
-- `company1.prohelper.pro` - Холдинг 1 (тот же сервер)
-- `company2.prohelper.pro` - Холдинг 2 (тот же сервер)
+- `lk.1мост.рф` - Личный кабинет (существующий сервер)
+- `api.1мост.рф` - Laravel API (ваш сервер 89.111.153.146)
+- `admin.1мост.рф` - Админка Laravel (тот же сервер)
+- `company1.1мост.рф` - Холдинг 1 (тот же сервер)
+- `company2.1мост.рф` - Холдинг 2 (тот же сервер)
 
 ## 🔧 **ЧТО НУЖНО СДЕЛАТЬ**
 
@@ -14,7 +14,7 @@
 
 #### Зайдите в панель reg.ru:
 - Откройте https://www.reg.ru/user/account
-- Найдите домен `prohelper.pro`
+- Найдите домен `1мост.рф`
 - Перейдите в "DNS-серверы и управление зоной" → "Редактировать зону"
 
 #### Добавьте DNS записи для API сервера:
@@ -30,7 +30,7 @@ TTL: 300
 **Админка поддомен:**
 ```
 Тип: A
-Имя: admin  
+Имя: admin
 Значение: 89.111.153.146
 TTL: 300
 ```
@@ -44,7 +44,7 @@ TTL: 300
 ```
 
 #### ⚠️ ВАЖНО: Личный кабинет
-Убедитесь что запись для `lk.prohelper.pro` указывает на ваш существующий сервер личного кабинета!
+Убедитесь что запись для `lk.1мост.рф` указывает на ваш существующий сервер личного кабинета!
 
 ### 2️⃣ **Настройка SSL на API сервере (20 минут)**
 
@@ -73,21 +73,21 @@ sudo ./ssl-setup-api.sh
 #### При запросе TXT записей Certbot'ом:
 Certbot попросит добавить несколько TXT записей для каждого домена:
 
-1. Для `api.prohelper.pro`:
+1. Для `api.1мост.рф`:
    ```
    Тип: TXT
    Имя: _acme-challenge.api
    Значение: (значение от Certbot)
    ```
 
-2. Для `admin.prohelper.pro`:
+2. Для `admin.1мост.рф`:
    ```
    Тип: TXT
    Имя: _acme-challenge.admin
    Значение: (значение от Certbot)
    ```
 
-3. Для `*.prohelper.pro`:
+3. Для `*.1мост.рф`:
    ```
    Тип: TXT
    Имя: _acme-challenge
@@ -98,44 +98,44 @@ Certbot попросит добавить несколько TXT записей 
 
 Добавьте в файл `.env`:
 ```env
-APP_DOMAIN=prohelper.pro
-APP_URL=https://api.prohelper.pro
+APP_DOMAIN=1мост.рф
+APP_URL=https://api.1мост.рф
 ```
 
 ### 4️⃣ **Тестирование системы**
 
 #### Проверьте DNS:
 ```bash
-nslookup api.prohelper.pro      # -> 89.111.153.146
-nslookup admin.prohelper.pro    # -> 89.111.153.146  
-nslookup test.prohelper.pro     # -> 89.111.153.146
-nslookup lk.prohelper.pro       # -> ваш ЛК сервер
+nslookup api.1мост.рф      # -> 89.111.153.146
+nslookup admin.1мост.рф    # -> 89.111.153.146
+nslookup test.1мост.рф     # -> 89.111.153.146
+nslookup lk.1мост.рф       # -> ваш ЛК сервер
 ```
 
 #### Проверьте доступность:
-- `https://api.prohelper.pro` - должен отвечать Laravel API
-- `https://admin.prohelper.pro` - должна быть доступна админка
-- `https://lk.prohelper.pro` - должен работать существующий ЛК
+- `https://api.1мост.рф` - должен отвечать Laravel API
+- `https://admin.1мост.рф` - должна быть доступна админка
+- `https://lk.1мост.рф` - должен работать существующий ЛК
 
 ## 🎯 **РЕЗУЛЬТАТ**
 
 После настройки получите полноценную микросервисную архитектуру:
 
 ### API Сервер (89.111.153.146):
-- ✅ `api.prohelper.pro` - REST API для всех сервисов
-- ✅ `admin.prohelper.pro` - админка управления
-- ✅ `company1.prohelper.pro` - интерфейс холдинга 1  
-- ✅ `company2.prohelper.pro` - интерфейс холдинга 2
+- ✅ `api.1мост.рф` - REST API для всех сервисов
+- ✅ `admin.1мост.рф` - админка управления
+- ✅ `company1.1мост.рф` - интерфейс холдинга 1
+- ✅ `company2.1мост.рф` - интерфейс холдинга 2
 
 ### ЛК Сервер (существующий):
-- ✅ `lk.prohelper.pro` - личный кабинет организаций
+- ✅ `lk.1мост.рф` - личный кабинет организаций
 
 ## 🔄 **Интеграция между сервисами**
 
 ### Из ЛК в API:
 ```javascript
 // В личном кабинете для вызова API
-const response = await fetch('https://api.prohelper.pro/api/v1/organizations', {
+const response = await fetch('https://api.1мост.рф/api/v1/organizations', {
     headers: {
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json'
@@ -144,8 +144,8 @@ const response = await fetch('https://api.prohelper.pro/api/v1/organizations', {
 ```
 
 ### Переходы между сервисами:
-- ЛК → Холдинг: `https://company1.prohelper.pro`
-- ЛК → Админка: `https://admin.prohelper.pro`
+- ЛК → Холдинг: `https://company1.1мост.рф`
+- ЛК → Админка: `https://admin.1мост.рф`
 
 ## 🆘 **Troubleshooting**
 
@@ -159,8 +159,8 @@ const response = await fetch('https://api.prohelper.pro/api/v1/organizations', {
 
 **CORS ошибки:**
 - Настройте CORS в Laravel для домена ЛК
-- Добавьте `lk.prohelper.pro` в `config/cors.php`
+- Добавьте `lk.1мост.рф` в `config/cors.php`
 
 ## 📞 **ГОТОВО!**
 
-После настройки у вас будет полноценная система с разделением ответственности между сервисами! 
+После настройки у вас будет полноценная система с разделением ответственности между сервисами!

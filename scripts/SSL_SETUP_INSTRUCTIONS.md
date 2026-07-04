@@ -38,7 +38,7 @@ sudo nginx -t
 ```
 Тип    Имя    Значение           TTL
 A      @      89.111.153.146     3600
-A      api    89.111.153.146     3600  
+A      api    89.111.153.146     3600
 A      lk     89.111.152.112     3600
 A      admin  89.104.68.13       3600
 A      *      89.111.153.146     3600
@@ -46,9 +46,9 @@ A      *      89.111.153.146     3600
 
 **Проверьте DNS перед продолжением:**
 ```bash
-nslookup prohelper.pro
-nslookup api.prohelper.pro  
-nslookup test.prohelper.pro
+nslookup 1мост.рф
+nslookup api.1мост.рф
+nslookup test.1мост.рф
 ```
 
 ### 4. Запуск SSL скрипта
@@ -70,7 +70,7 @@ Certbot покажет что-то вроде:
 
 ```
 Please deploy a DNS TXT record under the name
-_acme-challenge.prohelper.pro with the following value:
+_acme-challenge.1мост.рф with the following value:
 
 ABC123DEF456...
 
@@ -84,7 +84,7 @@ Before continuing, verify the record is deployed.
    - Значение: `ABC123DEF456...` (точно как показал Certbot)
    - TTL: 300 (5 минут)
 3. Подождите 2-3 минуты
-4. Проверьте: `nslookup -type=TXT _acme-challenge.prohelper.pro`
+4. Проверьте: `nslookup -type=TXT _acme-challenge.1мост.рф`
 5. Нажмите Enter в консоли
 
 ### 6. Проверка результата
@@ -108,9 +108,9 @@ sudo nginx -t
 ### 7. Проверка в браузере
 
 Откройте:
-- https://prohelper.pro
-- https://api.prohelper.pro
-- https://test.prohelper.pro (любой поддомен)
+- https://1мост.рф
+- https://api.1мост.рф
+- https://test.1мост.рф (любой поддомен)
 
 Все должны работать с валидным SSL сертификатом.
 
@@ -122,21 +122,21 @@ sudo nginx -t
 sudo nginx -t
 
 # Проверьте существует ли сертификат
-ls -la /etc/letsencrypt/live/prohelper.pro/
+ls -la /etc/letsencrypt/live/1мост.рф/
 
 # Если сертификата нет, запустите Nginx без SSL
 sudo systemctl start nginx
 ```
 
 ### Ошибка "Domain is redundant with wildcard"
-Это означает что в запросе есть конфликт между `api.prohelper.pro` и `*.prohelper.pro`. 
+Это означает что в запросе есть конфликт между `api.1мост.рф` и `*.1мост.рф`.
 Обновленный скрипт исправляет эту проблему.
 
 ### DNS записи не распространились
 ```bash
 # Проверьте DNS
-nslookup prohelper.pro 8.8.8.8
-nslookup api.prohelper.pro 8.8.8.8
+nslookup 1мост.рф 8.8.8.8
+nslookup api.1мост.рф 8.8.8.8
 
 # Очистите DNS кэш (если нужно)
 sudo systemd-resolve --flush-caches
@@ -145,7 +145,7 @@ sudo systemd-resolve --flush-caches
 ### Ошибка в TXT записи
 ```bash
 # Проверьте TXT запись
-nslookup -type=TXT _acme-challenge.prohelper.pro
+nslookup -type=TXT _acme-challenge.1мост.рф
 
 # Если нет результата, подождите еще 2-3 минуты
 # TTL записи в reg.ru может быть 300-600 секунд
@@ -176,4 +176,4 @@ sudo certbot renew --force-renewal
 
 # Запустить Nginx
 sudo systemctl start nginx
-``` 
+```

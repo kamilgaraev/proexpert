@@ -15,7 +15,7 @@ class KnowledgeHubContentSanitizerTest extends TestCase
             '<h2 onclick="alert(1)" id="safe title">Раздел</h2>'
             .'<p>Текст<script>alert(1)</script></p>'
             .'<a href="javascript:alert(1)" onclick="alert(2)">опасная ссылка</a>'
-            .'<a href="https://prohelper.pro/help" target="_blank">безопасная ссылка</a>'
+            .'<a href="https://1мост.рф/help" target="_blank">безопасная ссылка</a>'
             .'<iframe src="https://example.com"></iframe>',
         );
 
@@ -23,7 +23,7 @@ class KnowledgeHubContentSanitizerTest extends TestCase
         self::assertStringContainsString('<p>Текст</p>', $clean);
         self::assertStringContainsString('<a>опасная ссылка</a>', $clean);
         self::assertStringContainsString(
-            '<a href="https://prohelper.pro/help" target="_blank" rel="noopener noreferrer">безопасная ссылка</a>',
+            '<a href="https://1мост.рф/help" target="_blank" rel="noopener noreferrer">безопасная ссылка</a>',
             $clean,
         );
         self::assertStringNotContainsString('script', $clean);

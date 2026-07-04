@@ -251,7 +251,7 @@ months=6
 
 ## 📞 Поддержка
 
-Email: support@prohelper.ru  
+Email: support@xn--1-xtbgmf.xn--p1ai  
 Docs: https://docs.prohelper.ru
 
 ---

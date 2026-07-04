@@ -1684,6 +1684,6 @@ A: PDF до 50MB, Excel до 100MB.
 **Дата:** 4 октября 2025  
 **Статус:** Production Ready ✅  
 
-**Поддержка:** support@prohelper.ru  
+**Поддержка:** support@xn--1-xtbgmf.xn--p1ai  
 **Docs:** https://docs.prohelper.ru
 

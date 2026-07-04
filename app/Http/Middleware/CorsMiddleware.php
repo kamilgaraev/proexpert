@@ -92,9 +92,17 @@ class CorsMiddleware
                     $allowCredentials = 'true';
                     $originMatched = true;
                 } else {
-                    // В продакшене для prohelper.pro доменов разрешаем
-                    if ($origin && (strpos($origin, '.prohelper.pro') !== false || $origin === 'https://prohelper.pro')) {
-                        // SECURITY: Разрешение prohelper.pro домена не из списка
+                    // В продакшене для доменов МОСТ разрешаем unicode и punycode варианты IDN.
+                    if (
+                        $origin
+                        && (
+                            strpos($origin, '.1мост.рф') !== false
+                            || strpos($origin, '.xn--1-xtbgmf.xn--p1ai') !== false
+                            || $origin === 'https://1мост.рф'
+                            || $origin === 'https://xn--1-xtbgmf.xn--p1ai'
+                        )
+                    ) {
+                        // SECURITY: Разрешение домена МОСТ не из списка
                         $this->logging->security('cors.origin.allowed.prohelper', [
                             'origin' => $origin,
                             'uri' => $request->getRequestUri(),

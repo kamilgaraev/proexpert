@@ -102,14 +102,14 @@ it('returns png marketing OG images in public article responses', function (): v
     /** @var \Tests\TestCase $this */
     $article = createPublicBlogSeoArticle([
         'slug' => 'contractor-control',
-        'og_image' => 'https://prohelper.pro/og/contractor-control.svg',
+        'og_image' => 'https://1мост.рф/og/contractor-control.svg',
     ]);
 
     $this->getJson('/api/v1/blog/articles?per_page=20')
         ->assertOk()
-        ->assertJsonPath('data.data.0.og_image', 'https://prohelper.pro/og/contractor-control.png');
+        ->assertJsonPath('data.data.0.og_image', 'https://1мост.рф/og/contractor-control.png');
 
     $this->getJson('/api/v1/blog/articles/' . $article->slug . '?track_view=0')
         ->assertOk()
-        ->assertJsonPath('data.og_image', 'https://prohelper.pro/og/contractor-control.png');
+        ->assertJsonPath('data.og_image', 'https://1мост.рф/og/contractor-control.png');
 });

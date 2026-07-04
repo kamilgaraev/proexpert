@@ -51,7 +51,7 @@ class SiteManagementService
         return DB::transaction(function () use ($organizationGroup, $data, $creator) {
             $site = HoldingSite::create([
                 'organization_group_id' => $organizationGroup->id,
-                'domain' => $this->normalizeDomain($data['domain'] ?? ($organizationGroup->slug . '.prohelper.pro')),
+                'domain' => $this->normalizeDomain($data['domain'] ?? ($organizationGroup->slug . '.1мост.рф')),
                 'default_locale' => $data['default_locale'] ?? 'ru',
                 'enabled_locales' => $data['enabled_locales'] ?? ['ru'],
                 'title' => $data['title'] ?? $organizationGroup->name,
@@ -141,7 +141,7 @@ class SiteManagementService
             ->first();
 
         if (!$site) {
-            $slug = str_replace('.prohelper.pro', '', $normalizedDomain);
+            $slug = str_replace(['.1мост.рф', '.xn--1-xtbgmf.xn--p1ai'], '', $normalizedDomain);
 
             $site = HoldingSite::query()
                 ->whereHas('organizationGroup', function ($query) use ($slug) {
@@ -247,7 +247,7 @@ class SiteManagementService
         $domain = trim($domain, '/');
 
         if (!str_contains($domain, '.')) {
-            $domain .= '.prohelper.pro';
+            $domain .= '.1мост.рф';
         }
 
         return $domain;

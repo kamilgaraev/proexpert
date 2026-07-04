@@ -225,7 +225,7 @@
 
         <div class="footer">
             <p>Создано с ❤️ командой МОСТ</p>
-            <p>Версия системы: 1.0.0 | <a href="https://prohelper.pro" target="_blank">prohelper.pro</a></p>
+            <p>Версия системы: 1.0.0 | <a href="https://1мост.рф" target="_blank">1мост.рф</a></p>
         </div>
     </div>
 </body>

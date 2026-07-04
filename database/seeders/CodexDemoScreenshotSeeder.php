@@ -28,7 +28,7 @@ class CodexDemoScreenshotSeeder extends Seeder
         }
 
         $this->now = now();
-        $email = $this->envString('CODEX_DEMO_USER_EMAIL', 'codex-demo@prohelper.pro');
+        $email = $this->envString('CODEX_DEMO_USER_EMAIL', 'codex-demo@1мост.рф');
         $organizationId = $this->envInt('CODEX_DEMO_ORGANIZATION_ID', 48);
 
         $result = DB::transaction(function () use ($email, $organizationId): array {

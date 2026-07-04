@@ -224,7 +224,7 @@ return [
     |
     */
 
-    'domain' => env('APP_DOMAIN', 'prohelper.pro'),
+    'domain' => env('APP_DOMAIN', 'xn--1-xtbgmf.xn--p1ai'),
 
     /*
     |--------------------------------------------------------------------------
@@ -235,8 +235,8 @@ return [
     |
     */
 
-    'frontend_url' => env('FRONTEND_URL', 'https://lk.prohelper.pro'),
+    'frontend_url' => env('FRONTEND_URL', 'https://lk.1мост.рф'),
 
-    'customer_frontend_url' => env('CUSTOMER_FRONTEND_URL', 'https://customer.prohelper.pro'),
+    'customer_frontend_url' => env('CUSTOMER_FRONTEND_URL', 'https://customer.1мост.рф'),
 
 ];
