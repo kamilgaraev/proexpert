@@ -58,6 +58,7 @@ return [
                 \Symfony\Component\HttpKernel\Exception\MethodNotAllowedHttpException::class,
                 \Symfony\Component\HttpKernel\Exception\TooManyRequestsHttpException::class,
                 \Illuminate\Database\Eloquent\ModelNotFoundException::class,
+                \Laminas\Diactoros\Exception\UploadedFileErrorException::class,
                 \App\Exceptions\Billing\InsufficientBalanceException::class,
                 \App\Exceptions\AI\AIQuotaExceededException::class,
             ],
