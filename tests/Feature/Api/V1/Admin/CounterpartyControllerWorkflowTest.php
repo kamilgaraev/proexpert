@@ -47,7 +47,7 @@ class CounterpartyControllerWorkflowTest extends TestCase
         $counterpartyId = (int) $createResponse->json('data.id');
 
         $searchResponse = $this->withHeaders($context->authHeaders())
-            ->getJson('/api/v1/admin/counterparties/search?role=customer&q=Northern&limit=10');
+            ->getJson('/api/v1/admin/counterparties/search?role=customer&q=Northern&is_active=true&limit=10');
 
         $searchResponse->assertOk();
         $searchResponse->assertJsonPath('success', true);

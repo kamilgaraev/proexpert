@@ -23,8 +23,19 @@ class SearchCounterpartyRequest extends FormRequest
             'name' => ['nullable', 'string', 'max:255'],
             'inn' => ['nullable', 'string', 'max:12'],
             'role' => ['nullable', new Enum(CounterpartyRoleEnum::class)],
-            'is_active' => ['nullable', 'boolean'],
             'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ];
+    }
+
+    public function attributes(): array
+    {
+        return [
+            'q' => 'поисковая строка',
+            'search' => 'поисковая строка',
+            'name' => 'название контрагента',
+            'inn' => 'ИНН',
+            'role' => 'роль контрагента',
+            'limit' => 'лимит выдачи',
         ];
     }
 }
