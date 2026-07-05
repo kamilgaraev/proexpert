@@ -10,6 +10,7 @@ use App\BusinessModules\Features\SafetyManagement\Models\SafetyPpeIssue;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyViolation;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use DomainException;
+use Illuminate\Support\Facades\Lang;
 
 final class SafetyDocumentDraftService
 {
@@ -18,6 +19,7 @@ final class SafetyDocumentDraftService
         $briefings = SafetyBriefing::forOrganization($organizationId)
             ->with(['project:id,name', 'conductedByUser:id,name', 'participants.user:id,name'])
             ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(!empty($filters['briefing_type']), fn ($query) => $query->where('briefing_type', (string) $filters['briefing_type']))
             ->when(!empty($filters['date_from']), fn ($query) => $query->whereDate('conducted_at', '>=', (string) $filters['date_from']))
             ->when(!empty($filters['date_until']), fn ($query) => $query->whereDate('conducted_at', '<=', (string) $filters['date_until']))
             ->orderByDesc('conducted_at')
@@ -30,19 +32,34 @@ final class SafetyDocumentDraftService
             'generated_at' => now()->toIso8601String(),
             'source' => [
                 'project_id' => $filters['project_id'] ?? null,
+                'briefing_type' => $filters['briefing_type'] ?? null,
+                'briefing_type_label' => self::briefingTypeLabel($filters['briefing_type'] ?? null),
                 'date_from' => $filters['date_from'] ?? null,
                 'date_until' => $filters['date_until'] ?? null,
+                'entries_count' => $briefings->count(),
+                'limit' => 200,
             ],
             'sections' => [[
                 'title' => trans_message('safety_management.documents.sections.briefings'),
                 'rows' => $briefings->map(static fn (SafetyBriefing $briefing): array => [
                     'briefing_number' => $briefing->briefing_number,
                     'briefing_type' => $briefing->briefing_type,
-                    'topic' => $briefing->topic,
+                    'briefing_type_label' => self::briefingTypeLabel($briefing->briefing_type),
+                    'title' => $briefing->title,
+                    'topic' => implode(', ', array_filter($briefing->topics ?? [])) ?: $briefing->title,
+                    'topics' => array_values(array_filter($briefing->topics ?? [])),
                     'project' => $briefing->project?->name,
+                    'location_name' => $briefing->location_name,
                     'conducted_by' => $briefing->conductedByUser?->name,
                     'conducted_at' => $briefing->conducted_at?->toIso8601String(),
                     'participants_count' => $briefing->participants->count(),
+                    'participants' => $briefing->participants->map(static fn ($participant): array => [
+                        'name' => $participant->user?->name ?? $participant->external_name,
+                        'company_name' => $participant->company_name,
+                        'role_name' => $participant->role_name,
+                        'signed_at' => $participant->signed_at?->toIso8601String(),
+                    ])->values()->all(),
+                    'notes' => $briefing->notes,
                 ])->values()->all(),
             ]],
         ];
@@ -141,5 +158,16 @@ final class SafetyDocumentDraftService
                 ]],
             ]],
         ];
+    }
+
+    private static function briefingTypeLabel(?string $briefingType): ?string
+    {
+        if ($briefingType === null || $briefingType === '') {
+            return null;
+        }
+
+        $translationKey = "safety_management.briefing_types.{$briefingType}";
+
+        return Lang::has($translationKey) ? trans_message($translationKey) : $briefingType;
     }
 }

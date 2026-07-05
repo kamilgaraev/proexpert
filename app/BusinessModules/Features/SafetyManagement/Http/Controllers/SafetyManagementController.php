@@ -840,6 +840,7 @@ final class SafetyManagementController extends Controller
         try {
             $validated = $request->validate([
                 'project_id' => ['nullable', 'integer'],
+                'briefing_type' => ['nullable', 'string', 'max:80'],
                 'date_from' => ['nullable', 'date'],
                 'date_until' => ['nullable', 'date'],
             ]);

@@ -198,6 +198,21 @@ final class SafetyManagementWorkflowTest extends TestCase
         $this->assertTrue($briefingParticipants->contains('user_id', $assignee->id));
         $this->assertTrue($briefingParticipants->contains('external_name', 'Ivan Petrov'));
 
+        $journalResponse = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/safety-management/documents/briefing-journal/draft', [
+                'project_id' => $project->id,
+                'briefing_type' => 'toolbox',
+            ]);
+        $journalResponse->assertOk()
+            ->assertJsonPath('data.document_type', 'briefing_journal')
+            ->assertJsonPath('data.source.briefing_type', 'toolbox')
+            ->assertJsonPath('data.source.briefing_type_label', 'Пятиминутка перед работами')
+            ->assertJsonPath('data.sections.0.rows.0.title', 'Toolbox talk before hot works')
+            ->assertJsonPath('data.sections.0.rows.0.briefing_type_label', 'Пятиминутка перед работами');
+        $journalParticipantNames = collect($journalResponse->json('data.sections.0.rows.0.participants'))->pluck('name');
+        $this->assertTrue($journalParticipantNames->contains($assignee->name));
+        $this->assertTrue($journalParticipantNames->contains('Ivan Petrov'));
+
         $violationResponse = $this->withHeaders($context->authHeaders())
             ->postJson('/api/v1/admin/safety-management/violations', [
                 'project_id' => $project->id,
