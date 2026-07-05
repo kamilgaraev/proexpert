@@ -137,6 +137,30 @@ final class MarketplaceProfileControllerTest extends TestCase
         $response->assertJsonPath('data.portfolio_items.0.title', 'Монолит корпуса 1');
     }
 
+    public function test_profile_update_rejects_duplicate_categories_before_sync(): void
+    {
+        $this->allowPermission();
+        [$organization, $user] = $this->createLandingContext();
+        $category = MarketplaceWorkCategory::query()->where('slug', 'monolith')->firstOrFail();
+
+        $response = $this->withHeaders($this->landingHeaders($user, $organization))
+            ->putJson('/api/v1/landing/contractor-marketplace/profile', [
+                'display_name' => 'Монолит Профиль',
+                'base_city' => 'Казань',
+                'availability_status' => 'available',
+                'categories' => [
+                    ['category_id' => $category->id, 'is_primary' => true],
+                    ['category_id' => $category->id, 'is_primary' => false],
+                ],
+            ]);
+
+        $response->assertStatus(422);
+        $response->assertJsonValidationErrors(['categories.1.category_id']);
+        $this->assertDatabaseMissing('marketplace_contractor_categories', [
+            'category_id' => $category->id,
+        ]);
+    }
+
     public function test_profile_document_upload_and_delete_uses_organization_s3_path(): void
     {
         Storage::fake('s3');
