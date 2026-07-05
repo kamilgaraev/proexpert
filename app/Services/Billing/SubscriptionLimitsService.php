@@ -69,7 +69,7 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
             'has_subscription' => false,
             'subscription' => null,
             'limits' => [
-                'foremen' => ['limit' => 1, 'used' => 0, 'remaining' => 1, 'percentage_used' => 0, 'is_unlimited' => false],
+                'users' => ['limit' => 3, 'used' => 0, 'remaining' => 3, 'percentage_used' => 0, 'is_unlimited' => false],
                 'projects' => ['limit' => 1, 'used' => 0, 'remaining' => 1, 'percentage_used' => 0, 'is_unlimited' => false],
                 'storage' => ['limit_gb' => 0.1, 'used_gb' => 0, 'used_mb' => 0, 'remaining_gb' => 0.1, 'percentage_used' => 0, 'is_unlimited' => false],
             ],
@@ -89,7 +89,7 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
             'has_subscription' => false,
             'subscription' => null,
             'limits' => [
-                'foremen' => $this->formatLimitData($defaultLimits['max_users'] ?? 1, $currentUsage['foremen']),
+                'users' => $this->formatLimitData($defaultLimits['max_users'] ?? 1, $currentUsage['users']),
                 'projects' => $this->formatLimitData($defaultLimits['max_projects'] ?? 1, $currentUsage['projects']),
                 'storage' => $this->formatStorageLimitData(
                     round(($defaultLimits['max_storage_mb'] ?? 100) / 1024, 2),
@@ -157,24 +157,12 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
         
         return Cache::remember($cacheKey, 300, function () use ($organizationId) {
             return [
-                'foremen' => $this->getForemenCount($organizationId),
                 'projects' => $this->getProjectsCount($organizationId),
                 'users' => $this->getUsersCount($organizationId),
                 'storage_mb' => $this->getStorageUsage($organizationId),
                 'contractor_invitations' => $this->getContractorInvitationsUsage($organizationId),
             ];
         });
-    }
-
-    private function getForemenCount(int $organizationId): int
-    {
-        // Используем новую систему авторизации
-        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
-        
-        return \App\Domain\Authorization\Models\UserRoleAssignment::where('context_id', $context->id)
-            ->where('role_slug', 'foreman')
-            ->where('is_active', true)
-            ->count();
     }
 
     private function getProjectsCount(int $organizationId): int
@@ -230,20 +218,6 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
         return $userLimit['is_unlimited'] || $userLimit['used'] < $userLimit['limit'];
     }
 
-    public function canCreateForeman(User $user): bool
-    {
-        $limitsData = $this->getUserLimitsData($user);
-        
-        if (!$limitsData['has_subscription']) {
-            $defaultLimits = config('billing.default_limits');
-            $currentUsage = $this->getCurrentUsage($user);
-            return $currentUsage['foremen'] < ($defaultLimits['max_foremen'] ?? 1);
-        }
-        
-        $foremanLimit = $limitsData['limits']['foremen'];
-        return $foremanLimit['is_unlimited'] || $foremanLimit['used'] < $foremanLimit['limit'];
-    }
-
     public function canCreateProject(User $user): bool
     {
         $limitsData = $this->getUserLimitsData($user);
@@ -262,13 +236,13 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
     {
         $warnings = [];
         
-        if ($plan->max_foremen && $currentUsage['foremen'] >= $plan->max_foremen * 0.8) {
+        if ($plan->max_users && $currentUsage['users'] >= $plan->max_users * 0.8) {
             $warnings[] = [
-                'type' => 'foremen',
-                'level' => $currentUsage['foremen'] >= $plan->max_foremen ? 'critical' : 'warning',
-                'message' => $currentUsage['foremen'] >= $plan->max_foremen 
-                    ? 'Достигнут лимит количества прорабов'
-                    : 'Приближаетесь к лимиту количества прорабов',
+                'type' => 'users',
+                'level' => $currentUsage['users'] >= $plan->max_users ? 'critical' : 'warning',
+                'message' => $currentUsage['users'] >= $plan->max_users
+                    ? 'Достигнут лимит количества пользователей'
+                    : 'Приближаетесь к лимиту количества пользователей',
             ];
         }
         
@@ -300,11 +274,11 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
     {
         $warnings = [];
         
-        if ($currentUsage['foremen'] >= ($defaultLimits['max_users'] ?? 1)) {
+        if ($currentUsage['users'] >= ($defaultLimits['max_users'] ?? 1)) {
             $warnings[] = [
-                'type' => 'foremen',
+                'type' => 'users',
                 'level' => 'critical',
-                'message' => 'Достигнут лимит бесплатного тарифа. Оформите подписку для добавления прорабов.',
+                'message' => 'Достигнут лимит бесплатного тарифа. Оформите подписку для добавления пользователей.',
             ];
         }
         
@@ -435,18 +409,34 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
         }
         
         // Предупреждение о скором окончании подписки
-        $daysLeft = now()->diffInDays($subscription->ends_at, false);
+        $daysLeft = (int) ceil(now()->diffInDays($subscription->ends_at, false));
         if ($daysLeft <= 7 && $daysLeft > 0 && !$subscription->isCanceled()) {
+            $daysUnit = $this->formatDaysUnit($daysLeft);
             $warnings[] = [
                 'type' => 'subscription_expiring',
                 'level' => $daysLeft <= 3 ? 'critical' : 'warning',
                 'message' => $daysLeft <= 3 
-                    ? "Подписка заканчивается через {$daysLeft} дн. Пополните баланс для автопродления."
-                    : "Подписка заканчивается через {$daysLeft} дн.",
+                    ? "Подписка заканчивается через {$daysLeft} {$daysUnit}. Пополните баланс для автопродления."
+                    : "Подписка заканчивается через {$daysLeft} {$daysUnit}.",
             ];
         }
         
         return $warnings;
+    }
+
+    private function formatDaysUnit(int $days): string
+    {
+        $mod100 = $days % 100;
+
+        if ($mod100 >= 11 && $mod100 <= 14) {
+            return 'дней';
+        }
+
+        return match ($days % 10) {
+            1 => 'день',
+            2, 3, 4 => 'дня',
+            default => 'дней',
+        };
     }
 
     private function getOrganizationLimitsData(User $user, OrganizationSubscription $subscription): array
@@ -454,7 +444,6 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
         $plan = $subscription->plan;
         $currentUsage = $this->getCurrentUsage($user);
         $constructorLimits = $this->getEnterpriseConstructorLimits($subscription);
-        $maxForemen = $constructorLimits['foremen'] ?? $plan->max_foremen;
         $maxProjects = $constructorLimits['projects'] ?? $plan->max_projects;
         $maxUsers = $constructorLimits['users'] ?? $plan->max_users;
         $maxStorageGb = $constructorLimits['storage_gb'] ?? $plan->max_storage_gb;
@@ -478,9 +467,8 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
                 'upgrade_required' => false,
             ],
             'limits' => [
-                'foremen' => $this->formatLimitData($maxForemen, $currentUsage['foremen']),
-                'projects' => $this->formatLimitData($maxProjects, $currentUsage['projects']),
                 'users' => $this->formatLimitData($maxUsers, $currentUsage['users']),
+                'projects' => $this->formatLimitData($maxProjects, $currentUsage['projects']),
                 'storage' => $this->formatStorageLimitData($maxStorageGb, $currentUsage['storage_mb']),
                 'contractor_invitations' => $this->formatLimitData(
                     $maxContractorInvitations,
@@ -509,7 +497,6 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
 
         return array_filter([
             'users' => isset($limits['users']) ? (int) $limits['users'] : null,
-            'foremen' => isset($limits['foremen']) ? (int) $limits['foremen'] : null,
             'projects' => isset($limits['projects']) ? (int) $limits['projects'] : null,
             'storage_gb' => isset($limits['storage_gb']) ? (int) $limits['storage_gb'] : null,
             'contractor_invitations' => isset($limits['contractor_invitations'])

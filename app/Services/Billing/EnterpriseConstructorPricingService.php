@@ -89,7 +89,6 @@ final class EnterpriseConstructorPricingService
             'price_label' => $this->formatPrice($price),
             'limits' => [
                 'users' => $calculatedUsers,
-                'foremen' => (int) ($base['foremen'] ?? $calculatedUsers),
                 'projects' => (int) $base['projects'],
                 'organizations' => (int) ($base['organizations'] ?? 1) + $selection->additionalOrganizations,
                 'storage_gb' => (int) $base['storage_gb'] + ($selection->extraStorageUnits * 100),

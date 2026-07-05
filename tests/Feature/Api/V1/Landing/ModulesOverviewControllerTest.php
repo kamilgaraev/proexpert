@@ -163,7 +163,6 @@ class ModulesOverviewControllerTest extends TestCase
             $table->decimal('price', 10, 2)->default(0);
             $table->string('currency')->default('RUB');
             $table->integer('duration_in_days')->default(30);
-            $table->integer('max_foremen')->nullable();
             $table->integer('max_projects')->nullable();
             $table->integer('max_storage_gb')->nullable();
             $table->integer('max_users')->nullable();

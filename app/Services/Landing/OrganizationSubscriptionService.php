@@ -456,7 +456,6 @@ class OrganizationSubscriptionService
             'starts_at' => $now->format('Y-m-d H:i:s'),
             'ends_at' => $now->copy()->addDays($newPlan->duration_in_days)->format('Y-m-d H:i:s'),
             'limits' => [
-                'max_foremen' => $newPlan->max_foremen,
                 'max_projects' => $newPlan->max_projects,
                 'max_users' => $newPlan->max_users,
                 'max_storage_gb' => $newPlan->max_storage_gb,

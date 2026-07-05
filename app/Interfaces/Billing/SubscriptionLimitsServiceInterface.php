@@ -22,11 +22,6 @@ interface SubscriptionLimitsServiceInterface
     public function clearUserUsageCache(User $user): void;
 
     /**
-     * Проверить, может ли пользователь создать нового прораба
-     */
-    public function canCreateForeman(User $user): bool;
-
-    /**
      * Проверить, может ли пользователь создать новый проект
      */
     public function canCreateProject(User $user): bool;

@@ -107,9 +107,6 @@ class SubscriptionPlanResource extends Resource
                         Forms\Components\TextInput::make('max_storage_gb')
                             ->label(trans_message('widgets.subscription_plans.max_storage_gb'))
                             ->numeric(),
-                        Forms\Components\TextInput::make('max_foremen')
-                            ->label(trans_message('widgets.subscription_plans.max_foremen'))
-                            ->numeric(),
                         Forms\Components\TextInput::make('max_contractor_invitations')
                             ->label(trans_message('widgets.subscription_plans.max_contractor_invitations'))
                             ->numeric(),
@@ -160,9 +157,6 @@ class SubscriptionPlanResource extends Resource
                             ->placeholder(trans_message('widgets.common.empty_value')),
                         Infolists\Components\TextEntry::make('max_storage_gb')
                             ->label(trans_message('widgets.subscription_plans.max_storage_gb'))
-                            ->placeholder(trans_message('widgets.common.empty_value')),
-                        Infolists\Components\TextEntry::make('max_foremen')
-                            ->label(trans_message('widgets.subscription_plans.max_foremen'))
                             ->placeholder(trans_message('widgets.common.empty_value')),
                         Infolists\Components\TextEntry::make('max_contractor_invitations')
                             ->label(trans_message('widgets.subscription_plans.max_contractor_invitations'))

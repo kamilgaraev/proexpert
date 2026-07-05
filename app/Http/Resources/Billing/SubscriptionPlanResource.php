@@ -19,7 +19,6 @@ use Illuminate\Http\Resources\Json\JsonResource;
  *     @OA\Property(property="price", type="number", format="float", example=499.00),
  *     @OA\Property(property="currency", type="string", example="RUB"),
  *     @OA\Property(property="duration_in_days", type="integer", example=30),
- *     @OA\Property(property="max_foremen", type="integer", nullable=true, example=1),
  *     @OA\Property(property="max_projects", type="integer", nullable=true, example=1),
  *     @OA\Property(property="max_users", type="integer", nullable=true, example=5),
  *     @OA\Property(property="max_storage_gb", type="integer", nullable=true, example=1),
@@ -45,7 +44,6 @@ class SubscriptionPlanResource extends JsonResource
             'price' => (float)$this->price, // Убедимся, что это float
             'currency' => $this->currency,
             'duration_in_days' => $this->duration_in_days,
-            'max_foremen' => $this->max_foremen,
             'max_projects' => $this->max_projects,
             'max_users' => $this->max_users,
             'max_storage_gb' => $this->max_storage_gb,

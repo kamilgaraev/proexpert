@@ -45,7 +45,6 @@ class CheckSubscriptionLimitsMiddleware
     private function checkUserLimit($user, string $limitType): bool
     {
         return match ($limitType) {
-            'max_foremen' => $this->limitsService->canCreateForeman($user),
             'max_projects' => $this->limitsService->canCreateProject($user),
             'max_users' => $this->limitsService->canCreateUser($user),
             'max_contractor_invitations' => $this->limitsService->canCreateContractorInvitation($user),
@@ -56,7 +55,6 @@ class CheckSubscriptionLimitsMiddleware
     private function getLimitExceededMessage(string $limitType): string
     {
         return match ($limitType) {
-            'max_foremen' => trans_message('billing.limits.max_foremen'),
             'max_projects' => trans_message('billing.limits.max_projects'),
             'max_storage_mb' => trans_message('billing.limits.max_storage_mb'),
             default => trans_message('billing.limits.default'),

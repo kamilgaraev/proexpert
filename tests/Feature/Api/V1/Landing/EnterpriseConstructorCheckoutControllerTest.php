@@ -50,7 +50,7 @@ final class EnterpriseConstructorCheckoutControllerTest extends TestCase
 
         self::assertSame('active', $subscription->status);
         self::assertSame(250, $subscription->enterprise_constructor_config['limits']['users']);
-        self::assertSame(100, $subscription->enterprise_constructor_config['limits']['foremen']);
+        self::assertArrayNotHasKey('foremen', $subscription->enterprise_constructor_config['limits']);
 
         $this->assertDatabaseHas('organization_balances', [
             'organization_id' => $organization->id,
@@ -143,7 +143,6 @@ final class EnterpriseConstructorCheckoutControllerTest extends TestCase
             'currency' => 'RUB',
             'duration_in_days' => 30,
             'max_users' => 100,
-            'max_foremen' => 100,
             'max_projects' => 100,
             'max_storage_gb' => 50,
             'max_contractor_invitations' => 500,

@@ -13,14 +13,6 @@ class SubscriptionLimitsResource extends JsonResource
             'has_subscription' => $this->resource['has_subscription'],
             'subscription' => $this->resource['subscription'],
             'limits' => [
-                'foremen' => [
-                    'limit' => $this->resource['limits']['foremen']['limit'],
-                    'used' => $this->resource['limits']['foremen']['used'],
-                    'remaining' => $this->resource['limits']['foremen']['remaining'],
-                    'percentage_used' => $this->resource['limits']['foremen']['percentage_used'],
-                    'is_unlimited' => $this->resource['limits']['foremen']['is_unlimited'],
-                    'status' => $this->getLimitStatus($this->resource['limits']['foremen']),
-                ],
                 'projects' => [
                     'limit' => $this->resource['limits']['projects']['limit'],
                     'used' => $this->resource['limits']['projects']['used'],
@@ -70,4 +62,4 @@ class SubscriptionLimitsResource extends JsonResource
             return 'normal';
         }
     }
-} 
+}

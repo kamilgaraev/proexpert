@@ -60,7 +60,6 @@ return [
         'max_users' => 'Пользователей',
         'max_projects' => 'Проектов',
         'max_storage_gb' => 'Хранилище, ГБ',
-        'max_foremen' => 'Прорабов',
         'max_contractor_invitations' => 'Приглашений подрядчиков',
         'features' => 'Список возможностей',
         'feature_name' => 'Название функции',

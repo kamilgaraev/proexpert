@@ -3,7 +3,6 @@
 return [
     'default_limits' => [
         'max_users' => 3,
-        'max_foremen' => 1,
         'max_projects' => 1,
         'max_storage_mb' => 100,
         'max_contractor_invitations' => 3,
@@ -14,7 +13,6 @@ return [
         'base' => [
             'price' => 99000,
             'users' => 100,
-            'foremen' => 100,
             'projects' => 100,
             'storage_gb' => 50,
             'ai_requests' => 2000,

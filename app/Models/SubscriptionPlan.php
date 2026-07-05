@@ -21,7 +21,6 @@ class SubscriptionPlan extends Model
         'billing_cycle',
         'duration_in_days',
         'trial_days',
-        'max_foremen',
         'max_projects',
         'max_storage_gb',
         'max_users',
@@ -38,7 +37,6 @@ class SubscriptionPlan extends Model
         'included_packages' => 'array',
         'features' => AsArrayObject::class, // Для удобной работы с JSON-полем
         'is_active' => 'boolean',
-        'max_foremen' => 'integer',
         'max_projects' => 'integer',
         'max_storage_gb' => 'integer',
         'max_users' => 'integer',
