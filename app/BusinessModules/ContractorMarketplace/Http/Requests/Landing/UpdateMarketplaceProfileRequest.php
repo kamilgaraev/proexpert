@@ -34,7 +34,7 @@ class UpdateMarketplaceProfileRequest extends FormRequest
             'verification_level' => ['nullable', Rule::in(['none', 'basic', 'documents', 'verified'])],
             'metadata' => ['nullable', 'array', 'max:20'],
             'categories' => ['nullable', 'array', 'max:50'],
-            'categories.*.category_id' => ['required_with:categories', 'integer', 'exists:marketplace_work_categories,id'],
+            'categories.*.category_id' => ['required_with:categories', 'integer', 'distinct', 'exists:marketplace_work_categories,id'],
             'categories.*.is_primary' => ['nullable', 'boolean'],
             'categories.*.experience_years' => ['nullable', 'integer', 'min:0', 'max:200'],
             'categories.*.team_capacity' => ['nullable', 'integer', 'min:1', 'max:100000'],
@@ -60,6 +60,7 @@ class UpdateMarketplaceProfileRequest extends FormRequest
     {
         return [
             'team_size_max.gte' => trans_message('contractor_marketplace.team_size_invalid'),
+            'categories.*.category_id.distinct' => trans_message('contractor_marketplace.category_duplicate'),
             'categories.*.category_id.exists' => trans_message('contractor_marketplace.category_not_found'),
             'portfolio_items.*.category_id.exists' => trans_message('contractor_marketplace.category_not_found'),
             'portfolio_items.*.title.required_with' => trans_message('contractor_marketplace.portfolio_title_required'),
