@@ -2,10 +2,10 @@
 
 namespace App\Domain\Authorization\Services;
 
-use App\Models\User;
-use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Models\UserRoleAssignment;
+use App\Models\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -16,7 +16,9 @@ use Illuminate\Validation\ValidationException;
 class CustomRoleService
 {
     protected RoleScanner $roleScanner;
+
     protected ModulePermissionChecker $moduleChecker;
+
     protected AuthorizationService $authService;
 
     public function __construct(
@@ -43,15 +45,16 @@ class CustomRoleService
         ?User $createdBy = null
     ): OrganizationCustomRole {
         $systemPermissions = RolePermissionNormalizer::normalizeSystemPermissions($systemPermissions, $interfaceAccess);
+        $modulePermissions = RolePermissionNormalizer::normalizeModulePermissions($modulePermissions);
 
         // Валидируем права
         $this->validatePermissions($organizationId, $systemPermissions, $modulePermissions);
-        
+
         // Валидируем интерфейсы
         $this->validateInterfaceAccess($interfaceAccess);
 
         return DB::transaction(function () use (
-            $organizationId, $name, $systemPermissions, $modulePermissions, 
+            $organizationId, $name, $systemPermissions, $modulePermissions,
             $interfaceAccess, $conditions, $description, $createdBy
         ) {
             return OrganizationCustomRole::createRole(
@@ -76,7 +79,13 @@ class CustomRoleService
         ?User $updatedBy = null
     ): bool {
         // Валидируем новые права, если они переданы
-        if (isset($data['system_permissions']) || isset($data['module_permissions'])) {
+        $shouldValidatePermissions = isset($data['system_permissions'])
+            || isset($data['module_permissions'])
+            || isset($data['interface_access']);
+        $shouldValidateInterfaceAccess = isset($data['interface_access']);
+        $data = $this->normalizeRoleData($role, $data);
+
+        if ($shouldValidatePermissions) {
             $this->validatePermissions(
                 $role->organization_id,
                 $data['system_permissions'] ?? $role->system_permissions,
@@ -84,11 +93,9 @@ class CustomRoleService
             );
         }
 
-        if (isset($data['interface_access'])) {
+        if ($shouldValidateInterfaceAccess) {
             $this->validateInterfaceAccess($data['interface_access']);
         }
-
-        $data = $this->normalizeRoleData($role, $data);
 
         return DB::transaction(function () use ($role, $data) {
             return $role->update($data);
@@ -103,7 +110,7 @@ class CustomRoleService
         return DB::transaction(function () use ($role) {
             // Деактивируем все назначения этой роли
             $role->assignments()->update(['is_active' => false]);
-            
+
             // Удаляем роль
             return $role->delete();
         });
@@ -118,8 +125,8 @@ class CustomRoleService
         ?string $newName = null,
         ?User $createdBy = null
     ): OrganizationCustomRole {
-        $name = $newName ?? ($sourceRole->name . ' (копия)');
-        
+        $name = $newName ?? ($sourceRole->name.' (копия)');
+
         return $this->createRole(
             $targetOrganizationId,
             $name,
@@ -138,11 +145,11 @@ class CustomRoleService
     public function getOrganizationRoles(int $organizationId, bool $activeOnly = true): Collection
     {
         $query = OrganizationCustomRole::forOrganization($organizationId);
-        
+
         if ($activeOnly) {
             $query->active();
         }
-        
+
         return $query->orderBy('name')->get();
     }
 
@@ -156,7 +163,7 @@ class CustomRoleService
         ?User $assignedBy = null,
         ?\Carbon\Carbon $expiresAt = null
     ): UserRoleAssignment {
-        if (!$role->is_active) {
+        if (! $role->is_active) {
             throw new \InvalidArgumentException('Нельзя назначить неактивную роль');
         }
 
@@ -183,7 +190,7 @@ class CustomRoleService
         AuthorizationContext $context,
         ?User $assignedBy = null
     ): Collection {
-        if ($context->type !== AuthorizationContext::TYPE_ORGANIZATION || !$context->resource_id) {
+        if ($context->type !== AuthorizationContext::TYPE_ORGANIZATION || ! $context->resource_id) {
             throw ValidationException::withMessages([
                 'context' => trans_message('permissions.invalid_organization_context'),
             ]);
@@ -225,7 +232,7 @@ class CustomRoleService
                 ->all();
 
             foreach ($roles as $role) {
-                if (!in_array($role->slug, $activeAssignments, true)) {
+                if (! in_array($role->slug, $activeAssignments, true)) {
                     $this->assignRoleToUser($role, $user, $context, $assignedBy);
                 }
             }
@@ -257,8 +264,9 @@ class CustomRoleService
     public function canCreateRoles(User $user, int $organizationId): bool
     {
         $context = AuthorizationContext::getOrganizationContext($organizationId);
+
         return $this->authService->can($user, 'roles.create_custom', [
-            'organization_id' => $organizationId
+            'organization_id' => $organizationId,
         ]);
     }
 
@@ -268,8 +276,9 @@ class CustomRoleService
     public function canManageRole(User $user, OrganizationCustomRole $role): bool
     {
         $context = AuthorizationContext::getOrganizationContext($role->organization_id);
+
         return $this->authService->can($user, 'roles.manage_custom', [
-            'organization_id' => $role->organization_id
+            'organization_id' => $role->organization_id,
         ]);
     }
 
@@ -300,14 +309,14 @@ class CustomRoleService
         // Берем активные модули из AccessController (учитывает системные модули)
         $activeModules = $this->moduleChecker->getActiveModules($organizationId);
         $availablePermissions = [];
-        
+
         foreach ($activeModules as $moduleSlug) {
             // Нормализуем слаг, если он приходит с дефисами
             $normalized = str_replace('-', '_', $moduleSlug);
             $permissions = $this->moduleChecker->getModulePermissions($moduleSlug);
             $availablePermissions[$normalized] = $permissions;
         }
-        
+
         return $availablePermissions;
     }
 
@@ -317,37 +326,59 @@ class CustomRoleService
     protected function validatePermissions(int $organizationId, array $systemPermissions, array $modulePermissions): void
     {
         // Валидируем системные права (если переданы)
-        if (!empty($systemPermissions)) {
+        if (! empty($systemPermissions)) {
             $availableSystemPermissions = array_keys($this->getAvailableSystemPermissions($organizationId));
             foreach ($systemPermissions as $permission) {
-                if ($permission !== '*' && !in_array($permission, $availableSystemPermissions)) {
+                if ($permission !== '*' && ! in_array($permission, $availableSystemPermissions)) {
                     throw ValidationException::withMessages([
-                        'system_permissions' => "Недопустимое системное право: $permission"
+                        'system_permissions' => "Недопустимое системное право: $permission",
                     ]);
                 }
             }
         }
 
         // Валидируем модульные права (если переданы)
-        if (!empty($modulePermissions)) {
+        if (! empty($modulePermissions)) {
             $availableModulePermissions = $this->getAvailableModulePermissions($organizationId);
             foreach ($modulePermissions as $module => $permissions) {
-                if (!isset($availableModulePermissions[$module])) {
+                $availableModuleKey = $this->resolveAvailableModuleKey($availableModulePermissions, (string) $module);
+
+                if ($availableModuleKey === null) {
                     throw ValidationException::withMessages([
-                        'module_permissions' => "Модуль '$module' не активирован для организации"
+                        'module_permissions' => "Модуль '$module' не активирован для организации",
                     ]);
                 }
-                
-                $moduleAvailablePermissions = $availableModulePermissions[$module];
+
+                $moduleAvailablePermissions = $availableModulePermissions[$availableModuleKey];
                 foreach ($permissions as $permission) {
-                    if ($permission !== '*' && !in_array($permission, $moduleAvailablePermissions)) {
+                    if ($permission !== '*' && ! in_array($permission, $moduleAvailablePermissions)) {
                         throw ValidationException::withMessages([
-                            'module_permissions' => "Недопустимое право '$permission' для модуля '$module'"
+                            'module_permissions' => "Недопустимое право '$permission' для модуля '$module'",
                         ]);
                     }
                 }
             }
         }
+    }
+
+    private function resolveAvailableModuleKey(array $availableModulePermissions, string $module): ?string
+    {
+        foreach ($this->moduleKeyVariants($module) as $moduleKey) {
+            if (isset($availableModulePermissions[$moduleKey])) {
+                return $moduleKey;
+            }
+        }
+
+        return null;
+    }
+
+    private function moduleKeyVariants(string $module): array
+    {
+        return array_values(array_unique([
+            $module,
+            str_replace('-', '_', $module),
+            str_replace('_', '-', $module),
+        ]));
     }
 
     /**
@@ -356,11 +387,11 @@ class CustomRoleService
     protected function validateInterfaceAccess(array $interfaceAccess): void
     {
         $allowedInterfaces = ['lk', 'admin', 'mobile'];
-        
+
         foreach ($interfaceAccess as $interface) {
-            if (!in_array($interface, $allowedInterfaces)) {
+            if (! in_array($interface, $allowedInterfaces)) {
                 throw ValidationException::withMessages([
-                    'interface_access' => "Недопустимый интерфейс: $interface"
+                    'interface_access' => "Недопустимый интерфейс: $interface",
                 ]);
             }
         }
@@ -370,11 +401,13 @@ class CustomRoleService
     {
         $interfaceAccess = $data['interface_access'] ?? ($role->interface_access ?? []);
         $systemPermissions = $data['system_permissions'] ?? ($role->system_permissions ?? []);
+        $modulePermissions = $data['module_permissions'] ?? ($role->module_permissions ?? []);
 
         $data['system_permissions'] = RolePermissionNormalizer::normalizeSystemPermissions(
             $systemPermissions,
             $interfaceAccess
         );
+        $data['module_permissions'] = RolePermissionNormalizer::normalizeModulePermissions($modulePermissions);
 
         return $data;
     }

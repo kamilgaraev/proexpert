@@ -3,17 +3,17 @@
 namespace App\Domain\Authorization\Models;
 
 use App\Domain\Authorization\Services\RolePermissionNormalizer;
-use App\Models\User;
 use App\Models\Organization;
+use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Str;
 
 /**
  * Модель кастомной роли организации
- * 
+ *
  * @property int $id
  * @property int $organization_id
  * @property string $name Название роли
@@ -38,7 +38,7 @@ class OrganizationCustomRole extends Model
         'interface_access',
         'conditions',
         'is_active',
-        'created_by'
+        'created_by',
     ];
 
     protected $casts = [
@@ -46,7 +46,7 @@ class OrganizationCustomRole extends Model
         'module_permissions' => 'array',
         'interface_access' => 'array',
         'conditions' => 'array',
-        'is_active' => 'boolean'
+        'is_active' => 'boolean',
     ];
 
     /**
@@ -108,6 +108,9 @@ class OrganizationCustomRole extends Model
                 $role->system_permissions ?? [],
                 $role->interface_access ?? []
             );
+            $role->module_permissions = RolePermissionNormalizer::normalizeModulePermissions(
+                $role->module_permissions ?? []
+            );
         });
     }
 
@@ -121,9 +124,9 @@ class OrganizationCustomRole extends Model
         $counter = 1;
 
         while (static::where('organization_id', $organizationId)
-                    ->where('slug', $slug)
-                    ->exists()) {
-            $slug = $baseSlug . '_' . $counter;
+            ->where('slug', $slug)
+            ->exists()) {
+            $slug = $baseSlug.'_'.$counter;
             $counter++;
         }
 
@@ -144,10 +147,10 @@ class OrganizationCustomRole extends Model
     public function hasModulePermission(string $module, string $permission): bool
     {
         $modulePermissions = $this->module_permissions[$module] ?? [];
-        
+
         // Проверяем точное совпадение или wildcard
-        return in_array($permission, $modulePermissions) || 
-               in_array($module . '.*', $modulePermissions) ||
+        return in_array($permission, $modulePermissions) ||
+               in_array($module.'.*', $modulePermissions) ||
                in_array('*', $modulePermissions);
     }
 
@@ -165,13 +168,13 @@ class OrganizationCustomRole extends Model
     public function getAllPermissions(): array
     {
         $permissions = $this->system_permissions ?? [];
-        
+
         foreach ($this->module_permissions ?? [] as $module => $modulePerms) {
             foreach ($modulePerms as $perm) {
-                $permissions[] = $module . '.' . $perm;
+                $permissions[] = $module.'.'.$perm;
             }
         }
-        
+
         return array_unique($permissions);
     }
 
@@ -189,6 +192,7 @@ class OrganizationCustomRole extends Model
         ?User $createdBy = null
     ): self {
         $systemPermissions = RolePermissionNormalizer::normalizeSystemPermissions($systemPermissions, $interfaceAccess);
+        $modulePermissions = RolePermissionNormalizer::normalizeModulePermissions($modulePermissions);
 
         return static::create([
             'organization_id' => $organizationId,
@@ -199,7 +203,7 @@ class OrganizationCustomRole extends Model
             'interface_access' => $interfaceAccess,
             'conditions' => $conditions,
             'created_by' => $createdBy?->id,
-            'is_active' => true
+            'is_active' => true,
         ]);
     }
 
@@ -217,7 +221,7 @@ class OrganizationCustomRole extends Model
             'interface_access' => $this->interface_access,
             'conditions' => $this->conditions,
             'created_by' => $createdBy?->id ?? $this->created_by,
-            'is_active' => true
+            'is_active' => true,
         ]);
     }
 
@@ -228,7 +232,7 @@ class OrganizationCustomRole extends Model
     {
         // Деактивируем все назначения этой роли
         $this->assignments()->update(['is_active' => false]);
-        
+
         return $this->update(['is_active' => false]);
     }
 }

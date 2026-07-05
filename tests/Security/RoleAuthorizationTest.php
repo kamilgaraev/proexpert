@@ -12,6 +12,7 @@ use App\Models\User;
 use App\Modules\Core\AccessController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Mockery\MockInterface;
 
 uses(RefreshDatabase::class);
@@ -191,4 +192,51 @@ it('custom role in organization A does not grant access in organization B', func
 
     expect($canInOrgA)->toBeTrue()
         ->and($canInOrgB)->toBeFalse();
+});
+
+it('legacy custom role with site requests view can access dashboard statistics', function () {
+    $this->mock(AccessController::class, function (MockInterface $mock): void {
+        $mock->shouldReceive('hasModuleAccess')
+            ->andReturnUsing(static fn (int $organizationId, string $moduleSlug): bool => $moduleSlug === 'site-requests');
+    });
+    app()->forgetInstance(ModulePermissionChecker::class);
+    app()->forgetInstance(PermissionResolver::class);
+    app()->forgetInstance(AuthorizationService::class);
+
+    $org = Organization::factory()->create();
+    $user = User::factory()->create(['current_organization_id' => $org->id]);
+    $context = AuthorizationContext::getOrganizationContext($org->id);
+
+    DB::table('organization_custom_roles')->insert([
+        'organization_id' => $org->id,
+        'name' => 'Legacy site requests supplier',
+        'slug' => 'legacy_site_requests_supplier',
+        'description' => null,
+        'system_permissions' => json_encode(['admin.access', 'admin.view', 'dashboard.view']),
+        'module_permissions' => json_encode([
+            'site_requests' => [
+                'site_requests.view',
+                'site_requests.edit',
+            ],
+        ]),
+        'interface_access' => json_encode(['admin']),
+        'conditions' => null,
+        'is_active' => true,
+        'created_by' => $user->id,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    UserRoleAssignment::create([
+        'user_id' => $user->id,
+        'context_id' => $context->id,
+        'role_slug' => 'legacy_site_requests_supplier',
+        'role_type' => UserRoleAssignment::TYPE_CUSTOM,
+        'is_active' => true,
+    ]);
+
+    $authService = app(AuthorizationService::class);
+
+    expect($authService->can($user, 'site_requests.view', ['organization_id' => $org->id]))->toBeTrue()
+        ->and($authService->can($user, 'site_requests.statistics', ['organization_id' => $org->id]))->toBeTrue();
 });

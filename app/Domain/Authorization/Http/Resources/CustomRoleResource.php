@@ -19,7 +19,7 @@ class CustomRoleResource extends JsonResource
             $this->system_permissions ?? [],
             $this->interface_access ?? []
         );
-        $modulePermissions = $this->module_permissions ?? [];
+        $modulePermissions = RolePermissionNormalizer::normalizeModulePermissions($this->module_permissions ?? []);
 
         return [
             'id' => $this->id,

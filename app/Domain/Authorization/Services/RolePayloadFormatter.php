@@ -13,8 +13,7 @@ final class RolePayloadFormatter
 {
     public function __construct(
         private readonly PermissionTranslationService $permissionTranslator
-    ) {
-    }
+    ) {}
 
     public function formatSystemRole(string $roleSlug, array $roleData): array
     {
@@ -53,7 +52,9 @@ final class RolePayloadFormatter
             $role->system_permissions ?? [],
             $role->interface_access ?? []
         );
-        $modulePermissions = is_array($role->module_permissions) ? $role->module_permissions : [];
+        $modulePermissions = RolePermissionNormalizer::normalizeModulePermissions(
+            is_array($role->module_permissions) ? $role->module_permissions : []
+        );
         $permissions = $this->translatePermissions(
             $systemPermissions,
             $modulePermissions,
@@ -116,7 +117,7 @@ final class RolePayloadFormatter
     {
         $groups = [];
 
-        if (!empty($permissions['interface_access']) && is_array($permissions['interface_access'])) {
+        if (! empty($permissions['interface_access']) && is_array($permissions['interface_access'])) {
             $groups[] = [
                 'slug' => 'interfaces',
                 'name' => 'Доступ к интерфейсам',
@@ -124,7 +125,7 @@ final class RolePayloadFormatter
             ];
         }
 
-        if (!empty($permissions['system_permissions']) && is_array($permissions['system_permissions'])) {
+        if (! empty($permissions['system_permissions']) && is_array($permissions['system_permissions'])) {
             $groups[] = [
                 'slug' => 'system',
                 'name' => 'Системные права',
@@ -137,7 +138,7 @@ final class RolePayloadFormatter
 
         if (is_array($modulePermissions)) {
             foreach ($modulePermissions as $module => $modulePermissionList) {
-                if (!is_array($modulePermissionList)) {
+                if (! is_array($modulePermissionList)) {
                     continue;
                 }
 
@@ -153,7 +154,7 @@ final class RolePayloadFormatter
 
         return array_values(array_filter(
             $groups,
-            static fn (array $group): bool => !empty($group['permissions'])
+            static fn (array $group): bool => ! empty($group['permissions'])
         ));
     }
 
@@ -210,7 +211,9 @@ final class RolePayloadFormatter
 
     private function modulePermissions(array $roleData): array
     {
-        return is_array($roleData['module_permissions'] ?? null) ? $roleData['module_permissions'] : [];
+        return RolePermissionNormalizer::normalizeModulePermissions(
+            is_array($roleData['module_permissions'] ?? null) ? $roleData['module_permissions'] : []
+        );
     }
 
     private function permissionItems(array $permissions): array
@@ -218,7 +221,7 @@ final class RolePayloadFormatter
         $items = [];
 
         foreach ($permissions as $slug => $name) {
-            if (!is_string($slug) || !is_string($name)) {
+            if (! is_string($slug) || ! is_string($name)) {
                 continue;
             }
 

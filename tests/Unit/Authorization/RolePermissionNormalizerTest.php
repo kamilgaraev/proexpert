@@ -34,4 +34,33 @@ class RolePermissionNormalizerTest extends TestCase
         $this->assertNotContains('admin.access', $permissions);
         $this->assertNotContains('admin.view', $permissions);
     }
+
+    public function test_site_requests_view_adds_dashboard_statistics_permission(): void
+    {
+        $permissions = RolePermissionNormalizer::normalizeModulePermissions([
+            'site_requests' => [
+                'site_requests.view',
+            ],
+        ]);
+
+        $this->assertContains('site_requests.view', $permissions['site_requests']);
+        $this->assertContains('site_requests.statistics', $permissions['site_requests']);
+    }
+
+    public function test_site_requests_action_permissions_add_required_read_permissions(): void
+    {
+        $permissions = RolePermissionNormalizer::normalizeModulePermissions([
+            'site-requests' => [
+                'site_requests.files.upload',
+                'site_requests.templates.manage',
+                'site_requests.calendar.export',
+            ],
+        ]);
+
+        $this->assertContains('site_requests.edit', $permissions['site-requests']);
+        $this->assertContains('site_requests.view', $permissions['site-requests']);
+        $this->assertContains('site_requests.statistics', $permissions['site-requests']);
+        $this->assertContains('site_requests.templates.view', $permissions['site-requests']);
+        $this->assertContains('site_requests.calendar.view', $permissions['site-requests']);
+    }
 }

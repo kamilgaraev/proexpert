@@ -2,10 +2,8 @@
 
 namespace App\Domain\Authorization\Services;
 
-use App\Models\Module;
-use App\Models\OrganizationModuleActivation;
-use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Models\OrganizationCustomRole;
+use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Services\Logging\LoggingService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -18,7 +16,9 @@ class PermissionResolver
     private const CACHE_SCHEMA_VERSION = 'v2';
 
     protected RoleScanner $roleScanner;
+
     protected ModulePermissionChecker $moduleChecker;
+
     protected LoggingService $logging;
 
     public function __construct(
@@ -38,86 +38,90 @@ class PermissionResolver
     {
         static $depthCounter = 0;
         $maxDepth = 50;
-        
+
         if ($depthCounter >= $maxDepth) {
             $this->logging->security('permission.max_depth_exceeded', [
                 'user_id' => $assignment->user_id,
                 'permission' => $permission,
-                'max_depth' => $maxDepth
+                'max_depth' => $maxDepth,
             ], 'error');
+
             return false;
         }
-        
+
         $depthCounter++;
-        
+
         try {
             $startTime = microtime(true);
-            
+
             $cacheKey = $this->getVersionedCacheKey($assignment->user_id, $assignment->role_slug, $permission, $context);
             $cachedResult = Cache::get($cacheKey);
-            
+
             if ($cachedResult !== null) {
                 return $cachedResult;
             }
-            
+
             $timeout = 5.0;
             if ((microtime(true) - $startTime) > $timeout) {
                 $this->logging->security('permission.resolve.timeout', [
                     'user_id' => $assignment->user_id,
                     'permission' => $permission,
-                    'timeout_seconds' => $timeout
+                    'timeout_seconds' => $timeout,
                 ], 'error');
+
                 return false;
             }
-            
+
             $userAgent = request()->userAgent() ?? '';
-            if (!str_contains($userAgent, 'Prometheus')) {
+            if (! str_contains($userAgent, 'Prometheus')) {
                 $this->logging->security('permission.resolve.start', [
                     'user_id' => $assignment->user_id,
                     'role_slug' => $assignment->role_slug,
                     'role_type' => $assignment->role_type,
                     'permission' => $permission,
                     'context' => $context,
-                    'depth' => $depthCounter
+                    'depth' => $depthCounter,
                 ]);
             }
 
             $hasSystemPerm = $this->hasSystemPermission($assignment, $permission);
-            
+
             if ($hasSystemPerm) {
                 Cache::put($cacheKey, true, 300);
-                
-                if (!str_contains($userAgent, 'Prometheus')) {
+
+                if (! str_contains($userAgent, 'Prometheus')) {
                     $this->logging->security('permission.granted.system', [
                         'user_id' => $assignment->user_id,
                         'role_slug' => $assignment->role_slug,
                         'permission' => $permission,
-                        'resolve_duration_ms' => round((microtime(true) - $startTime) * 1000, 2)
+                        'resolve_duration_ms' => round((microtime(true) - $startTime) * 1000, 2),
                     ]);
                 }
+
                 return true;
             }
 
             $hasModulePerm = $this->hasModulePermission($assignment, $permission, $context);
-            
+
             if ($hasModulePerm) {
                 Cache::put($cacheKey, true, 300);
-                
-                if (!str_contains($userAgent, 'Prometheus')) {
+
+                if (! str_contains($userAgent, 'Prometheus')) {
                     $this->logging->security('permission.granted.module', [
                         'user_id' => $assignment->user_id,
                         'role_slug' => $assignment->role_slug,
                         'permission' => $permission,
                         'context' => $context,
-                        'resolve_duration_ms' => round((microtime(true) - $startTime) * 1000, 2)
+                        'resolve_duration_ms' => round((microtime(true) - $startTime) * 1000, 2),
                     ]);
                 }
+
                 return true;
             }
 
             Cache::put($cacheKey, false, 300);
-            
-            if (!str_contains($userAgent, 'Prometheus')) {
+
+            if (! str_contains($userAgent, 'Prometheus')) {
                 $this->logging->security('permission.denied.complete', [
                     'user_id' => $assignment->user_id,
                     'role_slug' => $assignment->role_slug,
@@ -126,7 +130,7 @@ class PermissionResolver
                     'context' => $context,
                     'checked_system' => true,
                     'checked_modules' => true,
-                    'resolve_duration_ms' => round((microtime(true) - $startTime) * 1000, 2)
+                    'resolve_duration_ms' => round((microtime(true) - $startTime) * 1000, 2),
                 ], 'info');
             }
 
@@ -143,7 +147,7 @@ class PermissionResolver
     {
         $systemPermissions = $this->getSystemPermissions($assignment);
         $permissionVariants = $this->expandSystemPermissionVariants($permission);
-        
+
         // Проверяем точное совпадение
         foreach ($permissionVariants as $permissionVariant) {
             if (in_array($permissionVariant, $systemPermissions, true)) {
@@ -178,13 +182,14 @@ class PermissionResolver
             'role_slug' => $assignment->role_slug,
             'role_type' => $assignment->role_type,
         ]);
-        
+
         $organizationId = $this->extractOrganizationId($assignment, $context);
-        
-        if (!$organizationId) {
+
+        if (! $organizationId) {
             $this->logging->technical('permission.module.denied.no_org', [
                 'permission' => $permission,
             ]);
+
             return false;
         }
 
@@ -193,43 +198,44 @@ class PermissionResolver
             $this->logging->technical('permission.module.denied.invalid_format', [
                 'permission' => $permission,
             ]);
+
             return false;
         }
 
         [$module, $action] = $this->normalizeAdminModulePermissionParts($parts[0], $parts[1]);
-        
+
         $modulesToCheck = $this->expandModuleVariants($module);
-        
+
         $this->logging->technical('permission.module.parsed', [
             'module' => $module,
             'action' => $action,
             'organization_id' => $organizationId,
             'modules_to_check' => $modulesToCheck,
         ]);
-        
+
         $modulePermissions = $this->getModulePermissions($assignment);
-        
+
         // Проверяем каждый модуль из списка
         foreach ($modulesToCheck as $moduleToCheck) {
-            $cacheKey = "module_active_".self::CACHE_SCHEMA_VERSION."_{$moduleToCheck}_{$organizationId}";
+            $cacheKey = 'module_active_'.self::CACHE_SCHEMA_VERSION."_{$moduleToCheck}_{$organizationId}";
             $isActive = Cache::remember($cacheKey, 300, function () use ($moduleToCheck, $organizationId) {
                 return $this->moduleChecker->isModuleActive($moduleToCheck, $organizationId);
             });
-            
+
             Log::debug('permission.module.active_check', [
                 'module' => $moduleToCheck,
                 'is_active' => $isActive,
             ]);
-            
-            if (!$isActive) {
+
+            if (! $isActive) {
                 continue;
             }
-            
+
             if ($this->checkModulePermission($modulePermissions, $moduleToCheck, $module, $action, $permission)) {
                 return true;
             }
         }
-        
+
         return false;
     }
 
@@ -288,8 +294,8 @@ class PermissionResolver
     public function getSystemPermissions(UserRoleAssignment $assignment): array
     {
         $organizationId = $this->extractOrganizationId($assignment);
-        $cacheKey = "system_perms_{$assignment->role_type}_{$assignment->role_slug}_" . ($organizationId ?? 'global');
-        
+        $cacheKey = "system_perms_{$assignment->role_type}_{$assignment->role_slug}_".($organizationId ?? 'global');
+
         return Cache::remember($cacheKey, 600, function () use ($assignment, $organizationId) {
             $perms = [];
             $interfaceAccess = [];
@@ -315,19 +321,22 @@ class PermissionResolver
     public function getModulePermissions(UserRoleAssignment $assignment): array
     {
         $organizationId = $this->extractOrganizationId($assignment);
-        $cacheKey = "module_perms_{$assignment->role_type}_{$assignment->role_slug}_" . ($organizationId ?? 'global');
-        
+        $cacheKey = "module_perms_{$assignment->role_type}_{$assignment->role_slug}_".($organizationId ?? 'global');
+
         return Cache::remember($cacheKey, 600, function () use ($assignment, $organizationId) {
             // 1. Пробуем из файлов
             $perms = $this->roleScanner->getModulePermissions($assignment->role_slug);
-            
+
             // 2. Если в файлах пусто — ищем в БД
             if (empty($perms)) {
                 $customRole = $this->getCustomRole($assignment->role_slug, $organizationId);
-                return $customRole ? ($customRole->module_permissions ?? []) : [];
+
+                return RolePermissionNormalizer::normalizeModulePermissions(
+                    $customRole ? ($customRole->module_permissions ?? []) : []
+                );
             }
-            
-            return $perms;
+
+            return RolePermissionNormalizer::normalizeModulePermissions($perms);
         });
     }
 
@@ -337,10 +346,12 @@ class PermissionResolver
     public function getSystemRolePermissions(string $roleSlug): array
     {
         $systemPermissions = $this->roleScanner->getSystemPermissions($roleSlug);
-        $modulePermissions = $this->roleScanner->getModulePermissions($roleSlug);
-        
+        $modulePermissions = RolePermissionNormalizer::normalizeModulePermissions(
+            $this->roleScanner->getModulePermissions($roleSlug)
+        );
+
         $allPermissions = $systemPermissions;
-        
+
         // Преобразуем модульные права в полные права
         foreach ($modulePermissions as $module => $permissions) {
             foreach ($permissions as $permission) {
@@ -351,7 +362,7 @@ class PermissionResolver
                 }
             }
         }
-        
+
         return array_unique($allPermissions);
     }
 
@@ -361,15 +372,17 @@ class PermissionResolver
     public function getCustomRolePermissions(string $roleSlug, ?int $organizationId = null): array
     {
         $customRole = $this->getCustomRole($roleSlug, $organizationId);
-        
-        if (!$customRole) {
+
+        if (! $customRole) {
             return [];
         }
-        
+
         $allPermissions = $customRole->system_permissions ?? [];
-        
+
         // Преобразуем модульные права в полные права
-        foreach ($customRole->module_permissions ?? [] as $module => $permissions) {
+        $modulePermissions = RolePermissionNormalizer::normalizeModulePermissions($customRole->module_permissions ?? []);
+
+        foreach ($modulePermissions as $module => $permissions) {
             foreach ($permissions as $permission) {
                 if ($permission === '*') {
                     $allPermissions[] = "$module.*";
@@ -378,10 +391,9 @@ class PermissionResolver
                 }
             }
         }
-        
+
         return array_unique($allPermissions);
     }
-
 
     /**
      * Проверить модульное право
@@ -392,32 +404,38 @@ class PermissionResolver
         string $requestedModule,
         string $action,
         string $requestedPermission
-    ): bool
-    {
+    ): bool {
+        $modulePermissionKey = $this->resolveModulePermissionKey($modulePermissions, $module, $requestedModule);
+
         $this->logging->technical('permission.module.check_permissions', [
             'module' => $module,
+            'module_permission_key' => $modulePermissionKey,
             'action' => $action,
             'available_modules' => array_keys($modulePermissions),
-            'module_exists' => isset($modulePermissions[$module]),
-            'permissions_for_module' => $modulePermissions[$module] ?? 'NOT_FOUND',
+            'module_exists' => $modulePermissionKey !== null,
+            'permissions_for_module' => $modulePermissionKey !== null
+                ? ($modulePermissions[$modulePermissionKey] ?? 'NOT_FOUND')
+                : 'NOT_FOUND',
         ]);
-        
-        if (!isset($modulePermissions[$module])) {
+
+        if ($modulePermissionKey === null) {
             $this->logging->technical('permission.module.denied.module_not_found', [
                 'module' => $module,
             ]);
+
             return false;
         }
 
-        $permissions = $modulePermissions[$module];
+        $permissions = $modulePermissions[$modulePermissionKey];
         $permissionVariants = $this->buildPermissionVariants($requestedModule, $module, $action);
-        
+
         // Проверяем точное совпадение
         if (in_array($action, $permissions)) {
             $this->logging->technical('permission.module.granted.exact_match', [
                 'module' => $module,
                 'action' => $action,
             ]);
+
             return true;
         }
 
@@ -427,6 +445,7 @@ class PermissionResolver
                 'module' => $module,
                 'action' => $action,
             ]);
+
             return true;
         }
 
@@ -437,6 +456,7 @@ class PermissionResolver
                 'action' => $action,
                 'requested_permission' => $requestedPermission,
             ]);
+
             return true;
         }
 
@@ -447,6 +467,7 @@ class PermissionResolver
                     'action' => $action,
                     'pattern' => $permission,
                 ]);
+
                 return true;
             }
 
@@ -458,6 +479,7 @@ class PermissionResolver
                         'pattern' => $permission,
                         'requested_permission' => $permissionVariant,
                     ]);
+
                     return true;
                 }
             }
@@ -467,12 +489,39 @@ class PermissionResolver
             'module' => $module,
             'action' => $action,
         ]);
+
         return false;
     }
 
     /**
      * Извлечь ID организации из назначения или контекста
      */
+    protected function resolveModulePermissionKey(array $modulePermissions, string $module, string $requestedModule): ?string
+    {
+        foreach ($this->modulePermissionKeyVariants($module, $requestedModule) as $moduleKey) {
+            if (isset($modulePermissions[$moduleKey]) && is_array($modulePermissions[$moduleKey])) {
+                return $moduleKey;
+            }
+        }
+
+        return null;
+    }
+
+    protected function modulePermissionKeyVariants(string $module, string $requestedModule): array
+    {
+        $variants = [];
+
+        foreach ([$module, $requestedModule] as $moduleCandidate) {
+            foreach ($this->expandModuleVariants($moduleCandidate) as $variant) {
+                $variants[] = $variant;
+                $variants[] = str_replace('-', '_', $variant);
+                $variants[] = str_replace('_', '-', $variant);
+            }
+        }
+
+        return array_values(array_unique($variants));
+    }
+
     public function extractOrganizationId(UserRoleAssignment $assignment, ?array $context = null): ?int
     {
         // Сначала пробуем из контекста
@@ -481,18 +530,18 @@ class PermissionResolver
         }
 
         // Затем из контекста назначения (с eager loading)
-        $authContext = $assignment->relationLoaded('context') 
-            ? $assignment->context 
+        $authContext = $assignment->relationLoaded('context')
+            ? $assignment->context
             : $assignment->load('context.parentContext')->context;
-        
+
         if ($authContext && $authContext->type === 'organization') {
             return $authContext->resource_id;
         }
 
         if ($authContext && $authContext->type === 'project') {
             // Нужно получить организацию проекта через родительский контекст
-            $parentContext = $authContext->relationLoaded('parentContext') 
-                ? $authContext->parentContext 
+            $parentContext = $authContext->relationLoaded('parentContext')
+                ? $authContext->parentContext
                 : $authContext->load('parentContext')->parentContext;
             if ($parentContext && $parentContext->type === 'organization') {
                 return $parentContext->resource_id;
@@ -507,15 +556,15 @@ class PermissionResolver
      */
     protected function getCustomRole(string $roleSlug, ?int $organizationId = null): ?OrganizationCustomRole
     {
-        $cacheKey = "custom_role_{$roleSlug}_" . ($organizationId ?? 'global');
-        
+        $cacheKey = "custom_role_{$roleSlug}_".($organizationId ?? 'global');
+
         return Cache::remember($cacheKey, 300, function () use ($roleSlug, $organizationId) {
             $query = OrganizationCustomRole::where('slug', $roleSlug);
-            
+
             if ($organizationId) {
                 $query->where('organization_id', $organizationId);
             }
-            
+
             return $query->first();
         });
     }
@@ -527,7 +576,7 @@ class PermissionResolver
     {
         // Простое решение - используем тег кеша или версионирование
         Cache::forget("user_permission_version_{$userId}");
-        
+
         // Для более сложной очистки можно использовать версионирование кеша
         $currentVersion = Cache::get("user_permission_version_{$userId}", 0);
         Cache::put("user_permission_version_{$userId}", $currentVersion + 1, 3600);
@@ -538,8 +587,8 @@ class PermissionResolver
      */
     public function clearAllPermissionCache(): void
     {
-        $currentVersion = Cache::get("permission_global_version", 0);
-        Cache::put("permission_global_version", $currentVersion + 1, 3600);
+        $currentVersion = Cache::get('permission_global_version', 0);
+        Cache::put('permission_global_version', $currentVersion + 1, 3600);
     }
 
     /**
@@ -548,17 +597,18 @@ class PermissionResolver
     protected function getVersionedCacheKey(int $userId, string $roleSlug, string $permission, ?array $context = null): string
     {
         $userVersion = Cache::get("user_permission_version_{$userId}", 0);
-        $globalVersion = Cache::get("permission_global_version", 0);
-        
-        $baseKey = "permission_".self::CACHE_SCHEMA_VERSION."_{$userId}_{$roleSlug}_{$permission}_" . md5(json_encode($context));
+        $globalVersion = Cache::get('permission_global_version', 0);
+
+        $baseKey = 'permission_'.self::CACHE_SCHEMA_VERSION."_{$userId}_{$roleSlug}_{$permission}_".md5(json_encode($context));
+
         return "{$baseKey}_v{$userVersion}_{$globalVersion}";
     }
 
     /**
      * Проверить соответствие wildcard шаблону
-     * 
-     * @param string $permission Проверяемое право (например: admin.access)
-     * @param string $pattern Wildcard шаблон (например: admin.*, *.view, admin.*.edit)
+     *
+     * @param  string  $permission  Проверяемое право (например: admin.access)
+     * @param  string  $pattern  Wildcard шаблон (например: admin.*, *.view, admin.*.edit)
      * @return bool
      */
     protected function expandModuleVariants(string $module): array
@@ -663,25 +713,25 @@ class PermissionResolver
         if (strpos($pattern, '*') === false) {
             return $permission === $pattern;
         }
-        
+
         // Полный wildcard
         if ($pattern === '*') {
             return true;
         }
-        
+
         // ПРАВИЛЬНЫЙ АЛГОРИТМ: сначала * → плейсхолдер, потом экранируем, потом плейсхолдер → .*
         // 1. Заменяем * на уникальный плейсхолдер
         $placeholder = '___WILDCARD_PLACEHOLDER___';
         $withPlaceholder = str_replace('*', $placeholder, $pattern);
-        
-        // 2. Экранируем все regex спецсимволы 
+
+        // 2. Экранируем все regex спецсимволы
         $escaped = preg_quote($withPlaceholder, '/');
-        
+
         // 3. Заменяем плейсхолдер на .*
-        $regexPattern = '/^' . str_replace($placeholder, '.*', $escaped) . '$/';
-        
+        $regexPattern = '/^'.str_replace($placeholder, '.*', $escaped).'$/';
+
         $result = preg_match($regexPattern, $permission) === 1;
-        
+
         return $result;
     }
 }
