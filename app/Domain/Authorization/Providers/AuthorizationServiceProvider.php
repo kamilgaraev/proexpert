@@ -53,7 +53,8 @@ class AuthorizationServiceProvider extends ServiceProvider
             return new CustomRoleService(
                 $app->make(RoleScanner::class),
                 $app->make(ModulePermissionChecker::class),
-                $app->make(AuthorizationService::class)
+                $app->make(AuthorizationService::class),
+                $app->make(PermissionResolver::class)
             );
         });
 

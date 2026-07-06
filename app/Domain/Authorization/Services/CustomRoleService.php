@@ -21,14 +21,18 @@ class CustomRoleService
 
     protected AuthorizationService $authService;
 
+    protected PermissionResolver $permissionResolver;
+
     public function __construct(
         RoleScanner $roleScanner,
         ModulePermissionChecker $moduleChecker,
-        AuthorizationService $authService
+        AuthorizationService $authService,
+        PermissionResolver $permissionResolver
     ) {
         $this->roleScanner = $roleScanner;
         $this->moduleChecker = $moduleChecker;
         $this->authService = $authService;
+        $this->permissionResolver = $permissionResolver;
     }
 
     /**
@@ -97,9 +101,17 @@ class CustomRoleService
             $this->validateInterfaceAccess($data['interface_access']);
         }
 
-        return DB::transaction(function () use ($role, $data) {
+        $userIds = $this->roleAssignmentUserIds($role);
+
+        $updated = DB::transaction(function () use ($role, $data) {
             return $role->update($data);
         });
+
+        if ($updated) {
+            $this->clearCustomRolePermissionCache($role, $userIds);
+        }
+
+        return $updated;
     }
 
     /**
@@ -107,13 +119,21 @@ class CustomRoleService
      */
     public function deleteRole(OrganizationCustomRole $role): bool
     {
-        return DB::transaction(function () use ($role) {
+        $userIds = $this->roleAssignmentUserIds($role);
+
+        $deleted = DB::transaction(function () use ($role) {
             // Деактивируем все назначения этой роли
             $role->assignments()->update(['is_active' => false]);
 
             // Удаляем роль
             return $role->delete();
         });
+
+        if ($deleted) {
+            $this->clearCustomRolePermissionCache($role, $userIds);
+        }
+
+        return $deleted;
     }
 
     /**
@@ -174,7 +194,7 @@ class CustomRoleService
             throw new \InvalidArgumentException(trans_message('permissions.invalid_organization_context'));
         }
 
-        return $this->authService->assignRole(
+        $assignment = $this->authService->assignRole(
             $user,
             $role->slug,
             $context,
@@ -182,6 +202,10 @@ class CustomRoleService
             $assignedBy,
             $expiresAt
         );
+
+        $this->permissionResolver->clearUserPermissionCache($user->id);
+
+        return $assignment;
     }
 
     public function syncUserRoles(
@@ -213,7 +237,7 @@ class CustomRoleService
             ]);
         }
 
-        return DB::transaction(function () use ($user, $roles, $context, $assignedBy): Collection {
+        $assignments = DB::transaction(function () use ($user, $roles, $context, $assignedBy): Collection {
             $roleSlugs = $roles->pluck('slug')->all();
 
             UserRoleAssignment::query()
@@ -244,6 +268,10 @@ class CustomRoleService
                 ->active()
                 ->get();
         });
+
+        $this->permissionResolver->clearUserPermissionCache($user->id);
+
+        return $assignments;
     }
 
     /**
@@ -318,6 +346,31 @@ class CustomRoleService
         }
 
         return $availablePermissions;
+    }
+
+    private function clearCustomRolePermissionCache(OrganizationCustomRole $role, array $userIds = []): void
+    {
+        $this->permissionResolver->clearRolePermissionCache(
+            $role->slug,
+            UserRoleAssignment::TYPE_CUSTOM,
+            (int) $role->organization_id,
+            $userIds
+        );
+    }
+
+    private function roleAssignmentUserIds(OrganizationCustomRole $role): array
+    {
+        return UserRoleAssignment::query()
+            ->where('role_slug', $role->slug)
+            ->where('role_type', UserRoleAssignment::TYPE_CUSTOM)
+            ->whereHas('context', function ($query) use ($role): void {
+                $query->where('type', AuthorizationContext::TYPE_ORGANIZATION)
+                    ->where('resource_id', $role->organization_id);
+            })
+            ->pluck('user_id')
+            ->unique()
+            ->values()
+            ->all();
     }
 
     /**

@@ -575,11 +575,34 @@ class PermissionResolver
     public function clearUserPermissionCache(int $userId): void
     {
         // Простое решение - используем тег кеша или версионирование
-        Cache::forget("user_permission_version_{$userId}");
-
         // Для более сложной очистки можно использовать версионирование кеша
         $currentVersion = Cache::get("user_permission_version_{$userId}", 0);
         Cache::put("user_permission_version_{$userId}", $currentVersion + 1, 3600);
+    }
+
+    public function clearRolePermissionCache(
+        string $roleSlug,
+        string $roleType = UserRoleAssignment::TYPE_CUSTOM,
+        ?int $organizationId = null,
+        iterable $userIds = []
+    ): void {
+        $scopeKeys = ['global'];
+
+        if ($organizationId !== null) {
+            $scopeKeys[] = (string) $organizationId;
+        }
+
+        foreach (array_unique($scopeKeys) as $scopeKey) {
+            Cache::forget("custom_role_{$roleSlug}_{$scopeKey}");
+            Cache::forget("system_perms_{$roleType}_{$roleSlug}_{$scopeKey}");
+            Cache::forget("module_perms_{$roleType}_{$roleSlug}_{$scopeKey}");
+        }
+
+        foreach ($userIds as $userId) {
+            if (is_numeric($userId)) {
+                $this->clearUserPermissionCache((int) $userId);
+            }
+        }
     }
 
     /**
