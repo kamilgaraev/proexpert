@@ -22,6 +22,7 @@ use App\Http\Middleware\ProjectContextMiddleware;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Exception;
@@ -172,6 +173,14 @@ class ContractController extends Controller
             $contract = $this->contractService->createContract($organizationId, $contractDTO, $projectContext);
             
             return AdminResponse::success(new ContractResource($contract), null, Response::HTTP_CREATED);
+        } catch (QueryException $e) {
+            Log::error('contract.store.query_failed', [
+                'organization_id' => $organizationId,
+                'user_id' => $user?->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('contract.create_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         } catch (Exception $e) {
             return AdminResponse::error(trans_message('contract.create_error') . ': ' . $e->getMessage(), Response::HTTP_BAD_REQUEST);
         }

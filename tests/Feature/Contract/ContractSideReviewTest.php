@@ -91,6 +91,69 @@ class ContractSideReviewTest extends TestCase
         $this->assertSame('ООО Генподрядчик', $contract->secondParty?->name);
     }
 
+    public function test_organization_registration_number_is_stored_as_ogrn_in_party_snapshot(): void
+    {
+        $organization = Organization::factory()->create([
+            'name' => 'OOO Most-Systema',
+            'legal_name' => 'OOO Most-Systema',
+            'tax_number' => '166021006735',
+            'registration_number' => '325169000191393',
+        ]);
+
+        $customer = Counterparty::create([
+            'organization_id' => $organization->id,
+            'name' => 'Customer Ltd',
+            'inn' => '7702000002',
+            'kpp' => '770201001',
+            'roles' => ['customer'],
+            'source' => 'manual',
+            'is_active' => true,
+        ]);
+
+        $project = Project::factory()->create([
+            'organization_id' => $organization->id,
+            'customer_counterparty_id' => $customer->id,
+        ]);
+
+        $contract = app(ContractSideMutationService::class)->create(
+            $organization->id,
+            new ContractDTO(
+                project_id: $project->id,
+                contractor_id: null,
+                parent_contract_id: null,
+                number: 'ORG-OGRN-100',
+                date: now()->toDateString(),
+                subject: 'Contract with organization OGRN',
+                work_type_category: null,
+                payment_terms: null,
+                base_amount: 250000.0,
+                total_amount: 250000.0,
+                gp_percentage: null,
+                gp_calculation_type: GpCalculationTypeEnum::PERCENTAGE,
+                gp_coefficient: null,
+                warranty_retention_calculation_type: null,
+                warranty_retention_percentage: null,
+                warranty_retention_coefficient: null,
+                subcontract_amount: null,
+                planned_advance_amount: null,
+                actual_advance_amount: null,
+                status: ContractStatusEnum::ACTIVE,
+                start_date: null,
+                end_date: null,
+                notes: null,
+                contract_side_type: ContractSideTypeEnum::CUSTOMER_TO_GENERAL_CONTRACTOR,
+            )
+        );
+
+        $contract->load('secondParty');
+
+        $this->assertSame($organization->id, $contract->secondParty?->linked_organization_id);
+        $this->assertNull($contract->secondParty?->kpp);
+        $this->assertSame('325169000191393', $contract->secondParty?->ogrn);
+        $this->assertSame('325169000191393', $contract->secondParty?->snapshot['ogrn']);
+        $this->assertNull($contract->secondParty?->snapshot['kpp']);
+    }
+
     public function test_contract_creation_records_activity_event(): void
     {
         $organization = Organization::factory()->create();
