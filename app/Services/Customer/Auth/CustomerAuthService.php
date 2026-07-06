@@ -13,6 +13,7 @@ use App\Notifications\CustomerResetPasswordNotification;
 use App\Repositories\Interfaces\OrganizationRepositoryInterface;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 use App\Services\Auth\JwtAuthService;
+use App\Services\Auth\JwtTokenIssuer;
 use App\Services\Customer\CustomerPortalService;
 use App\Services\Project\ProjectParticipantInvitationService;
 use Illuminate\Auth\Events\PasswordReset;
@@ -23,7 +24,6 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
-use Tymon\JWTAuth\Facades\JWTAuth;
 
 use function trans_message;
 
@@ -35,6 +35,7 @@ class CustomerAuthService
         private readonly CustomerPortalService $customerPortalService,
         private readonly ProjectParticipantInvitationService $invitationService,
         private readonly JwtAuthService $jwtAuthService,
+        private readonly JwtTokenIssuer $tokenIssuer,
     ) {
     }
 
@@ -92,7 +93,11 @@ class CustomerAuthService
 
         $this->syncCurrentOrganization($user, $organization);
 
-        $token = JWTAuth::claims(['organization_id' => $organization->id])->fromUser($user);
+        $token = $this->tokenIssuer->issue($user, [
+            'guard' => $guard,
+            'organization_id' => (int) $organization->id,
+            'request' => request(),
+        ]);
         $profile = $this->customerPortalService->getProfile($user->fresh(), $organization->id);
         $interfaces = $profile['user']['interfaces'] ?? [];
 

@@ -11,14 +11,18 @@ use App\BusinessModules\Contractors\Brigades\Domain\Models\BrigadeResponse;
 use App\BusinessModules\Contractors\Brigades\Domain\Models\BrigadeSpecialization;
 use App\BusinessModules\Contractors\Brigades\Support\BrigadeStatuses;
 use App\Models\User;
+use App\Services\Auth\JwtTokenIssuer;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
-use Tymon\JWTAuth\Facades\JWTAuth;
 
 class BrigadeWorkflowService
 {
+    public function __construct(private readonly JwtTokenIssuer $tokenIssuer)
+    {
+    }
+
     public function register(array $payload): array
     {
         return DB::transaction(function () use ($payload): array {
@@ -54,7 +58,11 @@ class BrigadeWorkflowService
             return [
                 'user' => $user,
                 'brigade' => $brigade->load(['specializations', 'members', 'documents']),
-                'token' => JWTAuth::claims(['brigade_id' => $brigade->id])->fromUser($user),
+                'token' => $this->tokenIssuer->issue($user, [
+                    'guard' => 'api_brigade',
+                    'brigade_id' => (int) $brigade->id,
+                    'request' => request(),
+                ]),
             ];
         });
     }
@@ -80,7 +88,11 @@ class BrigadeWorkflowService
             return null;
         }
 
-        $token = JWTAuth::claims(['brigade_id' => $brigade->id])->fromUser($user);
+        $token = $this->tokenIssuer->issue($user, [
+            'guard' => 'api_brigade',
+            'brigade_id' => (int) $brigade->id,
+            'request' => request(),
+        ]);
 
         return [
             'user' => $user,

@@ -10,6 +10,7 @@ use App\Http\Requests\Api\V1\Mobile\Auth\LoginRequest;
 use App\Http\Responses\MobileResponse;
 use App\Http\Resources\Api\V1\Mobile\Auth\MobileUserResource;
 use App\Services\Auth\JwtAuthService;
+use App\Services\Auth\JwtTokenIssuer;
 use App\Services\LogService;
 use App\Services\PerformanceMonitor;
 use Illuminate\Http\Request;
@@ -24,8 +25,10 @@ class AuthController extends Controller
     protected JwtAuthService $authService;
     protected string $guard = 'api_mobile';
 
-    public function __construct(JwtAuthService $authService)
-    {
+    public function __construct(
+        JwtAuthService $authService,
+        private readonly JwtTokenIssuer $tokenIssuer
+    ) {
         $this->authService = $authService;
     }
 
@@ -154,8 +157,16 @@ class AuthController extends Controller
         $user->save();
 
         // Генерируем новый токен с новым claim
-        $customClaims = ['organization_id' => $organizationId];
-        $token = \Tymon\JWTAuth\Facades\JWTAuth::claims($customClaims)->fromUser($user);
+        $tokenPayload = $request->attributes->get('token_payload');
+        $sessionUuid = is_object($tokenPayload) && method_exists($tokenPayload, 'get')
+            ? $tokenPayload->get('session_uuid')
+            : null;
+        $token = $this->tokenIssuer->issue($user, [
+            'guard' => $this->guard,
+            'organization_id' => $organizationId,
+            'request' => $request,
+            'session_uuid' => is_string($sessionUuid) ? $sessionUuid : null,
+        ]);
 
         Log::info('[MobileAuthController] Organization switched', [
             'user_id' => $user->id,

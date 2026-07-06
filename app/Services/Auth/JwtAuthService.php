@@ -38,6 +38,7 @@ class JwtAuthService
     protected OrganizationRepositoryInterface $organizationRepository;
     protected BalanceServiceInterface $balanceService;
     protected UserAuthSessionService $authSessionService;
+    protected JwtTokenIssuer $tokenIssuer;
 
     /**
      * Конструктор сервиса аутентификации.
@@ -50,12 +51,14 @@ class JwtAuthService
         UserRepositoryInterface $userRepository,
         OrganizationRepositoryInterface $organizationRepository,
         BalanceServiceInterface $balanceService,
-        UserAuthSessionService $authSessionService
+        UserAuthSessionService $authSessionService,
+        JwtTokenIssuer $tokenIssuer
     ) {
         $this->userRepository = $userRepository;
         $this->organizationRepository = $organizationRepository;
         $this->balanceService = $balanceService;
         $this->authSessionService = $authSessionService;
+        $this->tokenIssuer = $tokenIssuer;
     }
 
     /**
@@ -225,16 +228,11 @@ class JwtAuthService
                     }
 
                     // Генерируем токен
-                    $customClaims = ['organization_id' => $organizationId];
-                    if ((bool) config('auth_tokens.sessions.enabled', true)) {
-                        $authSession = $this->authSessionService->createForLogin(
-                            $user,
-                            $organizationId ? (int) $organizationId : null,
-                            request()
-                        );
-                        $customClaims['session_uuid'] = $authSession->session_uuid;
-                    }
-                    $token = JWTAuth::claims($customClaims)->fromUser($user);
+                    $token = $this->tokenIssuer->issue($user, [
+                        'guard' => $guard,
+                        'organization_id' => $organizationId ? (int) $organizationId : null,
+                        'request' => request(),
+                    ]);
                     Log::info('[JwtAuthService] JWT token generated.');
 
                     LogService::authLog('login_success', array_merge($logContext, ['user_id' => $user->id, 'organization_id' => $organizationId]));
