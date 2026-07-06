@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\BusinessModules\ContractorMarketplace\Http\Requests\Admin;
+namespace App\BusinessModules\ContractorMarketplace\Http\Requests\Landing;
 
 use App\Enums\ProjectOrganizationRole;
 use Illuminate\Foundation\Http\FormRequest;

@@ -2,13 +2,21 @@
 
 use App\BusinessModules\ContractorMarketplace\Http\Controllers\Landing\MarketplaceCategoryController;
 use App\BusinessModules\ContractorMarketplace\Http\Controllers\Landing\MarketplaceOfferInboxController;
+use App\BusinessModules\ContractorMarketplace\Http\Controllers\Landing\MarketplaceOutgoingOfferController;
 use App\BusinessModules\ContractorMarketplace\Http\Controllers\Landing\MarketplaceProfileController;
+use App\BusinessModules\ContractorMarketplace\Http\Controllers\Landing\MarketplaceSearchController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('contractor-marketplace')->name('contractor-marketplace.')->group(function (): void {
     Route::get('/categories', [MarketplaceCategoryController::class, 'index'])
         ->middleware('authorize:contractor_marketplace.categories.view')
         ->name('categories.index');
+    Route::get('/search', [MarketplaceSearchController::class, 'index'])
+        ->middleware('authorize:contractor_marketplace.search.view')
+        ->name('search.index');
+    Route::get('/profiles/{profile}', [MarketplaceSearchController::class, 'show'])
+        ->middleware('authorize:contractor_marketplace.profile.view')
+        ->name('profiles.show');
     Route::get('/profile', [MarketplaceProfileController::class, 'show'])
         ->middleware('authorize:contractor_marketplace.profile.view')
         ->name('profile.show');
@@ -27,6 +35,21 @@ Route::prefix('contractor-marketplace')->name('contractor-marketplace.')->group(
     Route::delete('/profile/documents/{document}', [MarketplaceProfileController::class, 'deleteDocument'])
         ->middleware('authorize:contractor_marketplace.profile.edit')
         ->name('profile.documents.destroy');
+    Route::get('/outgoing-offers', [MarketplaceOutgoingOfferController::class, 'index'])
+        ->middleware('authorize:contractor_marketplace.offers.view')
+        ->name('outgoing-offers.index');
+    Route::post('/outgoing-offers', [MarketplaceOutgoingOfferController::class, 'store'])
+        ->middleware('authorize:contractor_marketplace.offers.create')
+        ->name('outgoing-offers.store');
+    Route::get('/outgoing-offers/{offer}', [MarketplaceOutgoingOfferController::class, 'show'])
+        ->middleware('authorize:contractor_marketplace.offers.view')
+        ->name('outgoing-offers.show');
+    Route::post('/outgoing-offers/{offer}/cancel', [MarketplaceOutgoingOfferController::class, 'cancel'])
+        ->middleware('authorize:contractor_marketplace.offers.cancel')
+        ->name('outgoing-offers.cancel');
+    Route::post('/outgoing-offers/{offer}/review', [MarketplaceOutgoingOfferController::class, 'review'])
+        ->middleware('authorize:contractor_marketplace.offers.review')
+        ->name('outgoing-offers.review');
     Route::get('/offers', [MarketplaceOfferInboxController::class, 'index'])
         ->middleware('authorize:contractor_marketplace.offers.view')
         ->name('offers.index');

@@ -2,23 +2,23 @@
 
 declare(strict_types=1);
 
-namespace App\BusinessModules\ContractorMarketplace\Http\Controllers\Admin;
+namespace App\BusinessModules\ContractorMarketplace\Http\Controllers\Landing;
 
 use App\BusinessModules\ContractorMarketplace\Domain\Models\MarketplaceHiringOffer;
 use App\BusinessModules\ContractorMarketplace\Domain\Services\MarketplaceHiringOfferService;
-use App\BusinessModules\ContractorMarketplace\Http\Requests\Admin\ReviewMarketplaceHiringOfferRequest;
-use App\BusinessModules\ContractorMarketplace\Http\Requests\Admin\StoreMarketplaceHiringOfferRequest;
+use App\BusinessModules\ContractorMarketplace\Http\Requests\Landing\CancelMarketplaceHiringOfferRequest;
+use App\BusinessModules\ContractorMarketplace\Http\Requests\Landing\ReviewMarketplaceHiringOfferRequest;
+use App\BusinessModules\ContractorMarketplace\Http\Requests\Landing\StoreMarketplaceHiringOfferRequest;
 use App\BusinessModules\ContractorMarketplace\Http\Resources\MarketplaceHiringOfferResource;
 use App\Exceptions\BusinessLogicException;
 use App\Http\Controllers\Controller;
-use App\Http\Responses\AdminResponse;
+use App\Http\Responses\LandingResponse;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Validator;
 
-class MarketplaceHiringOfferController extends Controller
+class MarketplaceOutgoingOfferController extends Controller
 {
     public function __construct(
         private readonly MarketplaceHiringOfferService $offerService
@@ -34,7 +34,7 @@ class MarketplaceHiringOfferController extends Controller
             $perPage = min(50, max(1, (int) $request->query('per_page', 20)));
             $offers = $this->offerService->listSent($organizationId, $filters, $perPage);
 
-            return AdminResponse::paginated(
+            return LandingResponse::paginated(
                 MarketplaceHiringOfferResource::collection($offers->getCollection()),
                 [
                     'current_page' => $offers->currentPage(),
@@ -54,13 +54,13 @@ class MarketplaceHiringOfferController extends Controller
                 ]
             );
         } catch (\Throwable $exception) {
-            Log::error('Failed to list marketplace hiring offers', [
+            Log::error('Failed to list outgoing marketplace hiring offers from landing cabinet', [
                 'organization_id' => $organizationId,
                 'user_id' => $request->user()?->id,
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(trans_message('contractor_marketplace.offer_list_error'), 500);
+            return LandingResponse::error(trans_message('contractor_marketplace.offer_list_error'), 500);
         }
     }
 
@@ -75,22 +75,22 @@ class MarketplaceHiringOfferController extends Controller
                 $request->validated()
             );
 
-            return AdminResponse::success(
+            return LandingResponse::success(
                 new MarketplaceHiringOfferResource($offer),
                 trans_message('contractor_marketplace.offer_sent'),
                 201
             );
         } catch (BusinessLogicException $exception) {
-            return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 400);
+            return LandingResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 400);
         } catch (\Throwable $exception) {
-            Log::error('Failed to create marketplace hiring offer', [
+            Log::error('Failed to create marketplace hiring offer from landing cabinet', [
                 'organization_id' => $organizationId,
                 'user_id' => $request->user()?->id,
                 'payload' => $request->validated(),
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(trans_message('contractor_marketplace.offer_send_error'), 500);
+            return LandingResponse::error(trans_message('contractor_marketplace.offer_send_error'), 500);
         }
     }
 
@@ -99,59 +99,48 @@ class MarketplaceHiringOfferController extends Controller
         $organizationId = $this->resolveOrganizationId($request);
 
         try {
-            return AdminResponse::success(new MarketplaceHiringOfferResource(
+            return LandingResponse::success(new MarketplaceHiringOfferResource(
                 $this->offerService->showForHiringOrganization($offer, $organizationId)
             ));
         } catch (BusinessLogicException $exception) {
-            return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 400);
+            return LandingResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 400);
         } catch (\Throwable $exception) {
-            Log::error('Failed to show marketplace hiring offer', [
+            Log::error('Failed to show outgoing marketplace hiring offer from landing cabinet', [
                 'organization_id' => $organizationId,
                 'offer_id' => $offer->id,
                 'user_id' => $request->user()?->id,
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(trans_message('contractor_marketplace.offer_load_error'), 500);
+            return LandingResponse::error(trans_message('contractor_marketplace.offer_load_error'), 500);
         }
     }
 
-    public function cancel(Request $request, MarketplaceHiringOffer $offer): JsonResponse
+    public function cancel(CancelMarketplaceHiringOfferRequest $request, MarketplaceHiringOffer $offer): JsonResponse
     {
         $organizationId = $this->resolveOrganizationId($request);
-        $validator = Validator::make($request->all(), [
-            'reason' => ['nullable', 'string', 'max:1000'],
-        ]);
-
-        if ($validator->fails()) {
-            return AdminResponse::error(
-                trans_message('contractor_marketplace.offer_validation_error'),
-                422,
-                $validator->errors()
-            );
-        }
 
         try {
-            return AdminResponse::success(
+            return LandingResponse::success(
                 new MarketplaceHiringOfferResource($this->offerService->cancel(
                     $offer,
                     $organizationId,
                     $this->resolveUser($request),
-                    $validator->validated()['reason'] ?? null
+                    $request->validated()['reason'] ?? null
                 )),
                 trans_message('contractor_marketplace.offer_cancelled')
             );
         } catch (BusinessLogicException $exception) {
-            return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 400);
+            return LandingResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 400);
         } catch (\Throwable $exception) {
-            Log::error('Failed to cancel marketplace hiring offer', [
+            Log::error('Failed to cancel outgoing marketplace hiring offer from landing cabinet', [
                 'organization_id' => $organizationId,
                 'offer_id' => $offer->id,
                 'user_id' => $request->user()?->id,
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(trans_message('contractor_marketplace.offer_cancel_error'), 500);
+            return LandingResponse::error(trans_message('contractor_marketplace.offer_cancel_error'), 500);
         }
     }
 
@@ -160,7 +149,7 @@ class MarketplaceHiringOfferController extends Controller
         $organizationId = $this->resolveOrganizationId($request);
 
         try {
-            return AdminResponse::success(
+            return LandingResponse::success(
                 new MarketplaceHiringOfferResource($this->offerService->review(
                     $offer,
                     $organizationId,
@@ -170,16 +159,16 @@ class MarketplaceHiringOfferController extends Controller
                 trans_message('contractor_marketplace.offer_review_saved')
             );
         } catch (BusinessLogicException $exception) {
-            return AdminResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 400);
+            return LandingResponse::error($exception->getMessage(), (int) $exception->getCode() ?: 400);
         } catch (\Throwable $exception) {
-            Log::error('Failed to review marketplace hiring offer', [
+            Log::error('Failed to review outgoing marketplace hiring offer from landing cabinet', [
                 'organization_id' => $organizationId,
                 'offer_id' => $offer->id,
                 'user_id' => $request->user()?->id,
                 'error' => $exception->getMessage(),
             ]);
 
-            return AdminResponse::error(trans_message('contractor_marketplace.offer_review_error'), 500);
+            return LandingResponse::error(trans_message('contractor_marketplace.offer_review_error'), 500);
         }
     }
 
