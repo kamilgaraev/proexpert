@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Core\Payments\Notifications;
 
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
@@ -19,7 +21,7 @@ class PaymentOverdueNotification extends Notification implements ShouldQueue
 
     public function via($notifiable): array
     {
-        return ['mail', 'database'];
+        return ['database'];
     }
 
     public function toMail($notifiable): MailMessage
