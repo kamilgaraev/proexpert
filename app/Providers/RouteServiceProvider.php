@@ -184,93 +184,6 @@ class RouteServiceProvider extends ServiceProvider
             return $payment;
         });
 
-        $this->routes(function () {
-            // Public API Routes (no authentication required)
-            Route::middleware('api')
-                ->prefix('api/public')
-                ->as('api.public.')
-                ->group(function () {
-                    require base_path('routes/api/public.php');
-                });
-
-            // Holding API Routes (v1) - публичные и защищенные
-            Route::middleware('api')
-                ->prefix('api/v1/holding-api')
-                ->as('api.v1.holdingApi.')
-                ->group(base_path('routes/api/v1/holding-api.php'));
-
-            // Mobile API Routes
-            Route::middleware('api')
-                ->prefix('api/v1/mobile')
-                ->as('api.v1.mobile.')
-                ->group(function () {
-                    require base_path('routes/api/v1/mobile/auth.php');
-                    require base_path('routes/api/v1/mobile/dashboard.php');
-                    require base_path('routes/api/v1/mobile/modules.php');
-                    require base_path('routes/api/v1/mobile/companions.php');
-                    require base_path('routes/api/v1/mobile/knowledge_hub.php');
-                    // require base_path('routes/api/v1/mobile/log.php'); // Removed
-                    require base_path('routes/api/v1/mobile/projects.php');
-                    require base_path('routes/api/v1/mobile/warehouse.php');
-                    require base_path('routes/api/v1/mobile/schedule.php');
-                    require base_path('routes/api/v1/mobile/notifications.php');
-                    if (file_exists(base_path('routes/api/v1/mobile/construction_journal.php'))) {
-                        require base_path('routes/api/v1/mobile/construction_journal.php');
-                    }
-                    // require base_path('routes/api/v1/mobile/catalogs.php'); // Removed
-                });
-
-            // Landing API Routes
-            Route::middleware('api')
-                ->prefix('api/v1/landing')
-                ->as('api.v1.landing.')
-                ->group(function () {
-                    require base_path('routes/api/v1/landing/auth.php');
-                    require base_path('routes/api/v1/landing/billing.php');
-                    require base_path('routes/api/v1/landing/landing_admin_auth.php');
-                    require base_path('routes/api/v1/landing/landing_admins.php');
-
-                    // Holding API Routes (объединены: лендинг, отчеты, публичные данные)
-                    require base_path('routes/api/v1/landing/holding.php');
-                });
-
-            Route::middleware('api')
-                ->prefix('api/v1/blog')
-                ->as('api.v1.blog.')
-                ->group(function () {
-                    require base_path('routes/api/v1/blog_public.php');
-                });
-
-            // Admin API Routes
-            Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.context'])
-                ->prefix('api/v1/admin')
-                ->as('api.v1.admin.')
-                ->group(function () {
-                    if (file_exists(base_path('routes/api/v1/admin/catalogs.php'))) {
-                        require base_path('routes/api/v1/admin/catalogs.php');
-                    }
-                    if (file_exists(base_path('routes/api/v1/admin/projects.php'))) {
-                        require base_path('routes/api/v1/admin/projects.php');
-                    }
-                    if (file_exists(base_path('routes/api/v1/admin/users.php'))) {
-                        require base_path('routes/api/v1/admin/users.php');
-                    }
-                    if (file_exists(base_path('routes/api/v1/admin/reports.php'))) {
-                        require base_path('routes/api/v1/admin/reports.php');
-                    }
-                    if (file_exists(base_path('routes/api/v1/admin/error-tracking.php'))) {
-                        require base_path('routes/api/v1/admin/error-tracking.php');
-                    }
-
-                    if (file_exists(base_path('routes/api/estimates-enterprise.php'))) {
-                        require base_path('routes/api/estimates-enterprise.php');
-                    }
-                });
-
-            // Web Routes
-            Route::middleware('web')
-                ->group(base_path('routes/web.php'));
-        });
     }
 
     /**
@@ -278,35 +191,28 @@ class RouteServiceProvider extends ServiceProvider
      *
      * @return void
      */
-    protected function configureRateLimiting()
+    protected function configureRateLimiting(): void
     {
-        // Основной API rate limiter - ВРЕМЕННО увеличен для нагрузочного тестирования
         RateLimiter::for('api', function (Request $request) {
-            // ДЛЯ ТЕСТА: 100K запросов в минуту
             if ($request->user()) {
-                return Limit::perMinute(100000)->by($request->user()->id);
+                return Limit::perMinute(240)->by('user:'.$request->user()->id);
             }
 
-            // Для неаутентифицированных (по IP) - 50K запросов в минуту
-            return Limit::perMinute(50000)->by($request->ip());
+            return Limit::perMinute(120)->by('ip:'.$request->ip());
         });
 
-        // Dashboard rate limiter - ВРЕМЕННО увеличен для нагрузочного тестирования
         RateLimiter::for('dashboard', function (Request $request) {
-            // ДЛЯ ТЕСТА: 100K запросов в минуту
             if ($request->user()) {
-                return Limit::perMinute(100000)->by($request->user()->id);
+                return Limit::perMinute(180)->by('user:'.$request->user()->id);
             }
 
-            return Limit::perMinute(50000)->by($request->ip());
+            return Limit::perMinute(60)->by('ip:'.$request->ip());
         });
 
-        // Публичные эндпоинты (более строгий лимит)
         RateLimiter::for('public', function (Request $request) {
             return Limit::perMinute(30)->by($request->ip());
         });
 
-        // Auth endpoints (защита от брутфорса)
         RateLimiter::for('auth', function (Request $request) {
             $identity = strtolower(trim((string) $request->input('email', '')));
             $identity = $identity !== '' ? sha1($identity) : 'anonymous';

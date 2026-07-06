@@ -7,6 +7,7 @@ namespace Tests\Feature\Auth;
 use App\Http\Middleware\JwtMiddleware;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Route as LaravelRoute;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Route;
 use ReflectionMethod;
 use Tests\TestCase;
@@ -131,6 +132,57 @@ final class AuthRouteStackHardeningTest extends TestCase
             $this->assertNotNull($route, "Route {$uri} is missing.");
             $this->assertContains('verified', $route->gatherMiddleware(), "{$uri} must require verified email.");
         }
+    }
+
+    public function test_rate_limiters_are_not_left_in_load_test_mode(): void
+    {
+        $provider = new \App\Providers\RouteServiceProvider($this->app);
+        $method = new ReflectionMethod($provider, 'configureRateLimiting');
+        $method->setAccessible(true);
+        $method->invoke($provider);
+
+        $apiLimits = RateLimiter::limiter('api')(Request::create('/api/test'));
+        $dashboardLimits = RateLimiter::limiter('dashboard')(Request::create('/api/test'));
+
+        $apiMaxAttempts = collect(is_array($apiLimits) ? $apiLimits : [$apiLimits])
+            ->map(fn ($limit) => $limit->maxAttempts)
+            ->all();
+        $dashboardMaxAttempts = collect(is_array($dashboardLimits) ? $dashboardLimits : [$dashboardLimits])
+            ->map(fn ($limit) => $limit->maxAttempts)
+            ->all();
+
+        $this->assertNotContains(100000, $apiMaxAttempts);
+        $this->assertNotContains(50000, $apiMaxAttempts);
+        $this->assertNotContains(100000, $dashboardMaxAttempts);
+        $this->assertNotContains(50000, $dashboardMaxAttempts);
+    }
+
+    public function test_api_routes_moved_from_route_service_provider_stay_registered(): void
+    {
+        foreach ([
+            'api/public/contact',
+            'api/v1/holding-api/{slug}',
+            'api/v1/blog/articles',
+            'api/v1/landing/holding/public/site-data',
+            'api/v1/admin/error-tracking',
+            'api/v1/admin/estimates/normative-rates',
+        ] as $uri) {
+            $this->assertNotNull($this->routeByUri($uri), "Route {$uri} is missing.");
+        }
+    }
+
+    public function test_api_v1_routes_do_not_have_duplicate_method_uri_definitions(): void
+    {
+        $duplicates = [];
+
+        foreach ($this->routesStartingWith('api/v1') as $route) {
+            $key = implode('|', $route->methods()).' '.$route->uri();
+            $duplicates[$key] = ($duplicates[$key] ?? 0) + 1;
+        }
+
+        $duplicates = array_filter($duplicates, static fn (int $count): bool => $count > 1);
+
+        $this->assertSame([], $duplicates);
     }
 
     private function routeByUri(string $uri): ?LaravelRoute

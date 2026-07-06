@@ -15,69 +15,27 @@ use App\Http\Controllers\Api\V1\System\GlitchTipController;
 |--------------------------------------------------------------------------
 |
 | Here is where you can register API routes for your application. These
-| routes are loaded by the RouteServiceProvider and all of them will
+| routes are loaded from bootstrap/app.php and all of them will
 | be assigned to the "api" middleware group. Make something great!
 |
-*/
-
-/*
-// ВНИМАНИЕ: Этот файл закомментирован, так как маршруты API уже определены в RouteServiceProvider.php.
-// Использование обоих определений приводило к дублированию маршрутов (api/v1/v1/...)
-
-// Применяем общие middleware для всех API v1, если нужно (например, throttle)
-// Route::middleware('throttle:api')->group(function() { // Раскомментировать, если нужно
-
-    Route::prefix('v1')->name('api.v1.')->group(function () {
-
-        // --- Landing/LK API ---
-        Route::prefix('landing')->name('landing.')->group(function () {
-            // Публичные маршруты Landing (Auth)
-            require __DIR__ . '/api/v1/landing/auth.php';
-
-            // Защищенные маршруты Landing (требуют токен landing + контекст организации)
-            // Middleware 'jwt.auth' и 'organization.context' вероятно нужны здесь
-            Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context'])->group(function() {
-                require __DIR__ . '/api/v1/landing/users.php'; // Управление админами из ЛК
-                 if (file_exists(__DIR__ . '/api/v1/landing/admin_panel_users.php')) {
-                     require __DIR__ . '/api/v1/landing/admin_panel_users.php'; // Управление пользователями админки из ЛК
-                 }
-                require __DIR__ . '/api/v1/landing/organization.php';
-                require __DIR__ . '/api/v1/landing/support.php';
-                
-                // Organization Profile & Capabilities Management
-                require __DIR__ . '/api/v1/landing/organization-profile.php';
-                
-                // Добавить другие защищенные маршруты ЛК
-            });
-        });
-
-        // --- Mobile App API ---
-        Route::prefix('mobile')->name('mobile.')->group(function () {
-            // Публичные маршруты Mobile App (Auth)
-            require __DIR__ . '/api/v1/mobile/auth.php';
-
-            // Защищенные маршруты Mobile App (требуют токен mobile + контекст организации)
-            // Middleware 'jwt.auth' и 'organization.context' + Gate 'access-mobile-app'
-            Route::middleware(['auth:api_mobile', 'jwt.auth', 'organization.context', 'can:access-mobile-app'])->group(function() {
-                require __DIR__ . '/api/v1/mobile/projects.php';
-                require __DIR__ . '/api/v1/mobile/log.php';
-                if (file_exists(__DIR__ . '/api/v1/mobile/catalogs.php')) {
-                    require __DIR__ . '/api/v1/mobile/catalogs.php';
-                }
-                // Добавить другие защищенные маршруты мобильного приложения
-            });
-        });
-
-
-    });
-
-// }); // Конец группы throttle:api
 */
 
 // Если вам нужно добавить новый маршрут API, добавьте его в соответствующий файл:
 // - Для админки: routes/api/v1/admin/...
 // - Для мобильного приложения: routes/api/v1/mobile/...
 // - Для лендинга/ЛК: routes/api/v1/landing/...
+
+Route::prefix('public')->name('api.public.')->group(function () {
+    require __DIR__ . '/api/public.php';
+});
+
+Route::prefix('v1/holding-api')->name('api.v1.holdingApi.')->group(function () {
+    require __DIR__ . '/api/v1/holding-api.php';
+});
+
+Route::prefix('v1/blog')->name('api.v1.blog.')->group(function () {
+    require __DIR__ . '/api/v1/blog_public.php';
+});
 
 // Начинаем группу маршрутов API v1
 Route::prefix('v1')->name('api.v1.')->group(function () {
@@ -119,6 +77,8 @@ Route::prefix('landing')->name('landing.')->group(function () {
 
             // Подключение маршрутов Landing Admins
             require __DIR__ . '/api/v1/landing/landing_admins.php';
+
+            require __DIR__ . '/api/v1/landing/holding.php';
 
             // Роуты авторизации Landing Admins
             require __DIR__ . '/api/v1/landing/landing_admin_auth.php';
@@ -200,6 +160,23 @@ Route::prefix('v1/brigades')->name('brigades.')->group(function () {
     require __DIR__ . '/api/v1/brigades.php';
 });
 
+Route::prefix('v1/mobile')->name('api.v1.mobile.')->group(function () {
+    require __DIR__ . '/api/v1/mobile/auth.php';
+    require __DIR__ . '/api/v1/mobile/security.php';
+    require __DIR__ . '/api/v1/mobile/dashboard.php';
+    require __DIR__ . '/api/v1/mobile/modules.php';
+    require __DIR__ . '/api/v1/mobile/companions.php';
+    require __DIR__ . '/api/v1/mobile/knowledge_hub.php';
+    require __DIR__ . '/api/v1/mobile/projects.php';
+    require __DIR__ . '/api/v1/mobile/warehouse.php';
+    require __DIR__ . '/api/v1/mobile/schedule.php';
+    require __DIR__ . '/api/v1/mobile/notifications.php';
+
+    if (file_exists(__DIR__ . '/api/v1/mobile/construction_journal.php')) {
+        require __DIR__ . '/api/v1/mobile/construction_journal.php';
+    }
+});
+
 // --- Admin Panel API ---
 Route::prefix('v1/admin')->middleware('admin.response')->name('admin.')->group(function () {
     // Публичные маршруты аутентификации админки
@@ -274,6 +251,16 @@ Route::prefix('v1/admin')->middleware('admin.response')->name('admin.')->group(f
         
         // PROJECT-BASED ROUTES with ProjectContext Middleware
         require __DIR__ . '/api/v1/admin/project-based.php';
+    });
+
+    Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context'])->group(function () {
+        if (file_exists(__DIR__ . '/api/v1/admin/error-tracking.php')) {
+            require __DIR__ . '/api/v1/admin/error-tracking.php';
+        }
+
+        if (file_exists(__DIR__ . '/api/estimates-enterprise.php')) {
+            require __DIR__ . '/api/estimates-enterprise.php';
+        }
     });
 });
 
