@@ -18,6 +18,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
 use Tests\TestCase;
+use Tymon\JWTAuth\Facades\JWTAuth;
 
 class SmartAccountProtectionTest extends TestCase
 {
@@ -235,9 +236,9 @@ class SmartAccountProtectionTest extends TestCase
         ]);
     }
 
-    public function test_auth_session_middleware_allows_missing_claim_when_not_enforced(): void
+    public function test_auth_session_middleware_allows_missing_claim_when_sessions_disabled(): void
     {
-        config(['auth_tokens.sessions.enforce' => false]);
+        config(['auth_tokens.sessions.enabled' => false]);
         $user = User::factory()->create();
         $request = Request::create('/api/v1/landing/auth/me', 'GET');
         $request->setUserResolver(fn () => $user);
@@ -250,7 +251,6 @@ class SmartAccountProtectionTest extends TestCase
 
     public function test_auth_session_middleware_rejects_revoked_session_when_enforced(): void
     {
-        config(['auth_tokens.sessions.enforce' => true]);
         $user = User::factory()->create();
         $session = UserAuthSession::query()->create([
             'user_id' => $user->id,
@@ -286,7 +286,6 @@ class SmartAccountProtectionTest extends TestCase
 
     public function test_missing_session_uuid_is_rejected_when_enforcement_enabled(): void
     {
-        config(['auth_tokens.sessions.enforce' => true]);
         $user = User::factory()->create();
         $request = Request::create('/api/v1/landing/auth/me', 'GET');
         $request->setUserResolver(fn () => $user);
@@ -301,5 +300,82 @@ class SmartAccountProtectionTest extends TestCase
             ->handle($request, fn () => response()->json(['ok' => true]));
 
         $this->assertSame(401, $response->getStatusCode());
+    }
+
+    public function test_auth_session_middleware_allows_refresh_payload_subject_without_request_user(): void
+    {
+        $user = User::factory()->create();
+        $session = UserAuthSession::query()->create([
+            'user_id' => $user->id,
+            'session_uuid' => (string) Str::uuid(),
+            'device_fingerprint' => hash('sha256', 'refresh'),
+            'risk_score' => 0,
+            'risk_flags' => [],
+            'status' => AuthSessionStatus::Active,
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+        ]);
+
+        $request = Request::create('/api/v1/landing/auth/refresh', 'POST');
+        $request->attributes->set('token_payload', new class ($session->session_uuid, $user->id) {
+            public function __construct(
+                private readonly string $sessionUuid,
+                private readonly int $userId
+            ) {
+            }
+
+            public function get(string $key): string|int|null
+            {
+                return match ($key) {
+                    'session_uuid' => $this->sessionUuid,
+                    'sub' => $this->userId,
+                    default => null,
+                };
+            }
+        });
+
+        $response = app(\App\Http\Middleware\EnsureAuthSessionIsActive::class)
+            ->handle($request, fn () => response()->json(['ok' => true]));
+
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertSame($session->id, $request->attributes->get('auth_session')?->id);
+    }
+
+    public function test_landing_refresh_accepts_expired_token_with_active_session(): void
+    {
+        $user = User::factory()->create(['email_verified_at' => now()]);
+        $session = UserAuthSession::query()->create([
+            'user_id' => $user->id,
+            'session_uuid' => (string) Str::uuid(),
+            'device_fingerprint' => hash('sha256', 'expired-refresh'),
+            'risk_score' => 0,
+            'risk_flags' => [],
+            'status' => AuthSessionStatus::Active,
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+        ]);
+        $validToken = JWTAuth::claims([
+            'session_uuid' => $session->session_uuid,
+        ])->fromUser($user);
+
+        $provider = app('tymon.jwt.provider.jwt');
+        $claims = $provider->decode($validToken);
+        $claims['iat'] = now()->subMinutes(10)->timestamp;
+        $claims['nbf'] = now()->subMinutes(10)->timestamp;
+        $claims['exp'] = now()->subMinute()->timestamp;
+        $expiredToken = $provider->encode($claims);
+
+        $response = $this
+            ->withHeader('Authorization', 'Bearer ' . $expiredToken)
+            ->postJson('/api/v1/landing/auth/refresh');
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonStructure(['data' => ['token']]);
+
+        $payload = JWTAuth::setToken((string) $response->json('data.token'))->getPayload();
+
+        $this->assertSame($session->session_uuid, $payload->get('session_uuid'));
     }
 }

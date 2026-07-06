@@ -27,10 +27,6 @@ class EnsureAuthSessionIsActive
         $payload = $request->attributes->get('token_payload');
         $sessionUuid = $payload?->get('session_uuid');
 
-        if (!$sessionUuid && !(bool) config('auth_tokens.sessions.enforce', false)) {
-            return $next($request);
-        }
-
         $authSession = $this->sessions->findActiveByUuid($sessionUuid);
 
         if (!$authSession || !$authSession->isActive()) {
@@ -38,7 +34,10 @@ class EnsureAuthSessionIsActive
         }
 
         $user = $request->user();
-        if (!$user || (int) $authSession->user_id !== (int) $user->id) {
+        $tokenUserId = $payload?->get('sub');
+        $expectedUserId = $user?->id ?? (is_numeric($tokenUserId) ? (int) $tokenUserId : null);
+
+        if ($expectedUserId === null || (int) $authSession->user_id !== (int) $expectedUserId) {
             return $this->error($request, trans_message('auth.security_session_expired'));
         }
 

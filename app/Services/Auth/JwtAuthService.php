@@ -472,7 +472,7 @@ class JwtAuthService
     {
         try {
             Auth::shouldUse($guard);
-            $payload = JWTAuth::parseToken()->getPayload();
+            $payload = request()->attributes->get('token_payload') ?? JWTAuth::parseToken()->getPayload();
             $claims = array_filter([
                 'organization_id' => $payload->get('organization_id'),
                 'session_uuid' => $payload->get('session_uuid'),

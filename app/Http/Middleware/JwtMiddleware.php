@@ -88,6 +88,24 @@ class JwtMiddleware
             ]);
         } catch (TokenExpiredException) {
             if ($isRefreshEndpoint) {
+                try {
+                    $payload = JWTAuth::manager()
+                        ->setRefreshFlow()
+                        ->decode($token);
+                    $request->attributes->add(['token_payload' => $payload]);
+                    $request->attributes->add(['jwt_token' => (string) $token]);
+                } catch (JWTException $exception) {
+                    LogService::exception($exception, [
+                        'action' => 'token_refresh_payload_decode',
+                        'ip' => $request->ip(),
+                        'uri' => $request->getRequestUri(),
+                    ]);
+
+                    return $this->errorResponse($request, $guard, 'auth.token_error', Response::HTTP_UNAUTHORIZED);
+                } finally {
+                    JWTAuth::manager()->setRefreshFlow(false);
+                }
+
                 LogService::authLog('token_expired_refresh', [
                     'reason' => 'token_expired_allowed_for_refresh',
                     'ip' => $request->ip(),
