@@ -34,7 +34,7 @@ class SetOrganizationContext
     {
         $startTime = microtime(true);
 
-        if ($request->is('*/auth/refresh')) {
+        if ($this->isRefreshEndpoint($request)) {
             $this->logging->technical('organization.context.skipped', [
                 'reason' => 'token_refresh',
                 'uri' => $request->getRequestUri()
@@ -232,6 +232,11 @@ class SetOrganizationContext
         }
 
         return $next($request);
+    }
+
+    private function isRefreshEndpoint(Request $request): bool
+    {
+        return $request->is('*/auth/refresh') || $request->is('*/landingAdminAuth/refresh');
     }
 
     /**

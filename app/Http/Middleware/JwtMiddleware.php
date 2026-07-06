@@ -24,7 +24,7 @@ class JwtMiddleware
 {
     public function handle(Request $request, Closure $next, ?string $guard = null): Response
     {
-        $isRefreshEndpoint = $request->is('*/auth/refresh');
+        $isRefreshEndpoint = $this->isRefreshEndpoint($request);
 
         try {
             if (! ($token = JWTAuth::getToken())) {
@@ -131,6 +131,11 @@ class JwtMiddleware
         $responseClass = $this->responseClass($request, $guard);
 
         return $responseClass::error(trans_message($messageKey), $statusCode);
+    }
+
+    private function isRefreshEndpoint(Request $request): bool
+    {
+        return $request->is('*/auth/refresh') || $request->is('*/landingAdminAuth/refresh');
     }
 
     private function responseClass(Request $request, ?string $guard): string

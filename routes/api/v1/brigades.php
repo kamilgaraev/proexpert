@@ -11,11 +11,13 @@ use App\Http\Controllers\Api\V1\Brigades\BrigadeResponseController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('auth')->group(function (): void {
-    Route::post('register', [BrigadeAuthController::class, 'register']);
-    Route::post('login', [BrigadeAuthController::class, 'login']);
+    Route::middleware('throttle:auth')->group(function (): void {
+        Route::post('register', [BrigadeAuthController::class, 'register']);
+        Route::post('login', [BrigadeAuthController::class, 'login']);
+    });
 });
 
-Route::middleware(['auth:api_brigade'])->group(function (): void {
+Route::middleware(['auth:api_brigade', 'auth.jwt:api_brigade', 'auth.session'])->group(function (): void {
     Route::prefix('auth')->group(function (): void {
         Route::get('me', [BrigadeAuthController::class, 'me']);
         Route::post('logout', [BrigadeAuthController::class, 'logout']);

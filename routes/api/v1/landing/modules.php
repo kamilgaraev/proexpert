@@ -4,7 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Landing\ModuleController;
 use App\Http\Controllers\Api\V1\Landing\OrganizationPackageController;
 
-Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context'])
+Route::middleware(['auth:api_landing', 'jwt.auth', 'verified', 'organization.context'])
     ->prefix('modules')
     ->name('modules.')
     ->group(function () {
@@ -85,7 +85,7 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context'])
             });
     });
 
-Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context'])
+Route::middleware(['auth:api_landing', 'jwt.auth', 'verified', 'organization.context'])
     ->prefix('packages')
     ->name('packages.')
     ->group(function () {

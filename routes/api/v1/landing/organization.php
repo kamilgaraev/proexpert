@@ -4,7 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Landing\OrganizationController;
 use App\Http\Controllers\Api\V1\Landing\OrganizationVerificationController;
 
-Route::middleware(['auth:api_landing', 'organization.context', 'authorize:organization.manage', 'interface:lk'])
+Route::middleware(['auth:api_landing', 'verified', 'organization.context', 'authorize:organization.manage', 'interface:lk'])
     ->prefix('organization')
     ->group(function () {
         Route::get('/', [OrganizationController::class, 'show'])
@@ -35,4 +35,4 @@ Route::middleware(['throttle:60,1']) // Публичные подсказки Da
              ->name('landing.dadata.suggest.addresses');
         Route::post('/clean/address', [OrganizationVerificationController::class, 'cleanAddress'])
              ->name('landing.dadata.clean.address');
-    }); 
+    });

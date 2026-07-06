@@ -10,7 +10,7 @@ use App\Http\Controllers\Api\V1\Landing\DashboardController;
 // организации пользователя. Модуль мультиорганизации не используется.
 // -----------------------------------------------------------------------------
 
-Route::middleware(['auth:api_landing', 'organization.context'])
+Route::middleware(['auth:api_landing', 'verified', 'organization.context'])
     ->name('dashboard.')
     ->group(function () {
         // Главная сводка дашборда ЛК
@@ -20,4 +20,4 @@ Route::middleware(['auth:api_landing', 'organization.context'])
         // В будущем здесь можно добавить дополнительные эндпойнты, например:
         // Route::get('/dashboard/stats', [DashboardController::class, 'stats'])->name('stats');
         // Route::get('/dashboard/history', [DashboardController::class, 'history'])->name('history');
-    }); 
+    });
