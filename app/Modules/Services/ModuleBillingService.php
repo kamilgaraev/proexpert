@@ -183,6 +183,7 @@ class ModuleBillingService
             ->where('organization_id', $organizationId)
             ->where('status', 'active')
             ->where('is_bundled_with_plan', false)
+            ->where('paid_amount', '>', 0)
             ->where(function ($query) use ($now) {
                 $query->whereNull('expires_at')
                     ->orWhere('expires_at', '>', $now);
@@ -254,6 +255,7 @@ class ModuleBillingService
         });
         $standaloneSubscriptionModules = $activeModules->filter(function ($activation) {
             return ! $activation->isBundled()
+                && (float) $activation->paid_amount > 0
                 && $activation->module !== null
                 && $activation->module->billing_model === 'subscription';
         });

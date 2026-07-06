@@ -422,6 +422,61 @@ class SubscriptionPackageBundlingTest extends TestCase
         );
     }
 
+    public function test_billing_summary_ignores_unpaid_standalone_subscription_activations(): void
+    {
+        $plan = $this->createPlan('profi', [], 39900);
+        $this->createSubscription($plan);
+
+        $systemModule = Module::create([
+            'name' => 'Contractor portal',
+            'slug' => 'contractor-portal',
+            'version' => '1.0.0',
+            'type' => 'addon',
+            'billing_model' => 'subscription',
+            'category' => 'collaboration',
+            'description' => 'Contractor portal',
+            'pricing_config' => [
+                'base_price' => 3490,
+                'currency' => 'RUB',
+                'duration_days' => 30,
+                'marketplace_visible' => false,
+            ],
+            'features' => [],
+            'permissions' => [],
+            'dependencies' => [],
+            'conflicts' => [],
+            'limits' => [],
+            'display_order' => 1,
+            'is_active' => true,
+            'is_system_module' => false,
+            'can_deactivate' => true,
+        ]);
+
+        OrganizationModuleActivation::create([
+            'organization_id' => $this->organization->id,
+            'module_id' => $systemModule->id,
+            'status' => 'active',
+            'activated_at' => now(),
+            'expires_at' => null,
+            'next_billing_date' => now()->addDays(30),
+            'paid_amount' => 0,
+            'is_bundled_with_plan' => false,
+            'is_auto_renew_enabled' => true,
+        ]);
+
+        $billingService = app(ModuleBillingService::class);
+        $stats = $billingService->getOrganizationBillingStats($this->organization->id);
+        $upcoming = $billingService->getUpcomingBilling($this->organization->id);
+
+        $this->assertSame(39900.0, $stats['stats']['monthly_recurring']);
+        $this->assertSame(1, $stats['breakdown_by_type']['subscription']);
+        $this->assertSame(39900.0, $upcoming['summary']['total_upcoming']);
+        $this->assertNotContains(
+            'contractor-portal',
+            collect($upcoming['upcoming_billing'])->pluck('module_slug')->all()
+        );
+    }
+
     public function test_active_package_grants_effective_warehouse_module_without_activation(): void
     {
         $this->createPackageModules('supply-warehouse', 'pro');
