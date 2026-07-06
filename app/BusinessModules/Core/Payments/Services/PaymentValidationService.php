@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Core\Payments\Services;
 
+use App\BusinessModules\Core\Payments\Enums\InvoiceType;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Models\Contract;
@@ -320,12 +321,7 @@ class PaymentValidationService
                 $existingPaymentsSum = (clone $paymentsQuery)->sum('amount');
 
                 // Определяем тип платежа
-                $invoiceTypeValue = null;
-                if (isset($data['invoice_type'])) {
-                    $invoiceTypeValue = is_object($data['invoice_type']) 
-                        ? $data['invoice_type']->value 
-                        : $data['invoice_type'];
-                }
+                $invoiceTypeValue = $this->invoiceTypeValue($data['invoice_type'] ?? null);
                 
                 $isAdvancePayment = $invoiceTypeValue === 'advance';
                 $isFinalPayment = $invoiceTypeValue === 'final';
@@ -354,7 +350,7 @@ class PaymentValidationService
                             );
                         }
                     }
-                } elseif (!$isFinalPayment) {
+                } elseif ($this->requiresPerformedWorkLimit($invoiceTypeValue)) {
                     // Для обычных платежей (кроме финального расчета) проверяем выполненные работы
                     // Для мультипроектных договоров - только по текущему проекту
                     
@@ -372,11 +368,8 @@ class PaymentValidationService
                     
                     // Получаем сумму неавансовых платежей (исключая финальные расчеты)
                     $regularPaymentsQuery = PaymentDocument::where('source_type', Contract::class)
-                        ->where('source_id', $sourceId)
-                        ->where(function($query) {
-                            $query->whereNull('invoice_type')
-                                  ->orWhereNotIn('invoice_type', ['advance', 'final']);
-                        });
+                        ->where('source_id', $sourceId);
+                    $this->scopePerformedWorkPayments($regularPaymentsQuery);
                     
                     if ($isMultiProject && $projectId) {
                         $regularPaymentsQuery->where('project_id', $projectId);
@@ -586,18 +579,13 @@ class PaymentValidationService
         $paidSum = $paymentsQuery->sum('amount');
 
         // Определяем тип платежа
-        $invoiceTypeValue = null;
-        if ($document->invoice_type) {
-            $invoiceTypeValue = is_object($document->invoice_type) 
-                ? $document->invoice_type->value 
-                : $document->invoice_type;
-        }
+        $invoiceTypeValue = $this->invoiceTypeValue($document->invoice_type);
         
         $isAdvancePayment = $invoiceTypeValue === 'advance';
         $isFinalPayment = $invoiceTypeValue === 'final';
         
         // Для обычных платежей (не аванс и не финальный расчет) проверяем по актам
-        if (!$isAdvancePayment && !$isFinalPayment) {
+        if (!$isAdvancePayment && !$isFinalPayment && $this->requiresPerformedWorkLimit($invoiceTypeValue)) {
             if ($isMultiProject && $projectId) {
                 // Для мультипроектного договора считаем акты только по текущему проекту
                 $performedAmount = DB::table('contract_performance_acts')
@@ -613,11 +601,8 @@ class PaymentValidationService
             // Получаем сумму неавансовых платежей (исключая финальные расчеты)
             $regularPaymentsQuery = PaymentDocument::where('source_type', Contract::class)
                 ->where('source_id', $contract->id)
-                ->where('id', '!=', $document->id)
-                ->where(function($query) {
-                    $query->whereNull('invoice_type')
-                          ->orWhereNotIn('invoice_type', ['advance', 'final']);
-                });
+                ->where('id', '!=', $document->id);
+            $this->scopePerformedWorkPayments($regularPaymentsQuery);
             
             if ($isMultiProject && $projectId) {
                 $regularPaymentsQuery->where('project_id', $projectId);
@@ -710,6 +695,36 @@ class PaymentValidationService
             ->whereNull('purchase_orders.deleted_at')
             ->whereNull('purchase_receipts.deleted_at')
             ->sum('purchase_receipt_lines.total_amount');
+    }
+
+    private function invoiceTypeValue(mixed $invoiceType): ?string
+    {
+        if ($invoiceType instanceof \BackedEnum) {
+            return (string) $invoiceType->value;
+        }
+
+        return is_string($invoiceType) && $invoiceType !== '' ? $invoiceType : null;
+    }
+
+    private function requiresPerformedWorkLimit(?string $invoiceTypeValue): bool
+    {
+        return $invoiceTypeValue === null
+            || in_array($invoiceTypeValue, [
+                InvoiceType::ACT->value,
+                InvoiceType::PROGRESS->value,
+            ], true);
+    }
+
+    private function scopePerformedWorkPayments($query): void
+    {
+        $query->where(function ($query): void {
+            $query
+                ->whereNull('invoice_type')
+                ->orWhereIn('invoice_type', [
+                    InvoiceType::ACT->value,
+                    InvoiceType::PROGRESS->value,
+                ]);
+        });
     }
 
     private function contractorExistsForOrganization(int $contractorId, int $organizationId): bool

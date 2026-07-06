@@ -19,6 +19,9 @@ use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Enums\Contract\ContractStatusEnum;
+use App\Enums\Contract\ContractWorkTypeCategoryEnum;
+use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\Organization;
 use App\Models\Project;
@@ -119,6 +122,56 @@ final class ProcurementChainControllerTest extends TestCase
             'organization_id' => $context->organization->id,
             'payer_organization_id' => $context->organization->id,
             'payee_contractor_id' => Contractor::query()->where('inn', '7700000000')->value('id'),
+        ]);
+    }
+
+    public function test_purchase_order_payment_document_uses_material_purchase_limit_for_procurement_contract(): void
+    {
+        $context = AdminApiTestContext::create();
+        $purchaseRequest = $this->createPurchaseRequest($context->organization);
+        $contractor = Contractor::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Concrete Supplier',
+            'email' => 'concrete-supplier@example.test',
+            'inn' => '7700000001',
+            'contractor_type' => Contractor::TYPE_MANUAL,
+        ]);
+        $contract = Contract::query()->create([
+            'organization_id' => $context->organization->id,
+            'contractor_id' => $contractor->id,
+            'contract_category' => 'procurement',
+            'number' => 'SUP-CHAIN-'.uniqid(),
+            'date' => now()->toDateString(),
+            'subject' => 'Concrete supply',
+            'work_type_category' => ContractWorkTypeCategoryEnum::SUPPLY,
+            'base_amount' => 500,
+            'total_amount' => 500,
+            'status' => ContractStatusEnum::DRAFT,
+            'is_fixed_amount' => true,
+        ]);
+        $purchaseOrder = $this->createPurchaseOrder($purchaseRequest, PurchaseOrderStatusEnum::CONFIRMED, [
+            'contract_id' => $contract->id,
+            'total_amount' => 500,
+            'supplier_snapshot' => [
+                'display_name' => 'Concrete Supplier',
+                'tax_id' => '7700000001',
+                'email' => 'concrete-supplier@example.test',
+            ],
+        ]);
+        $this->allowModuleAccess();
+        $this->allowPermissions();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/payment-document");
+
+        $response->assertCreated();
+        $this->assertDatabaseHas('payment_documents', [
+            'id' => $response->json('data.id'),
+            'organization_id' => $context->organization->id,
+            'source_type' => Contract::class,
+            'source_id' => $contract->id,
+            'invoice_type' => InvoiceType::MATERIAL_PURCHASE->value,
+            'amount' => 500,
         ]);
     }
 
