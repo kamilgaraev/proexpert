@@ -5,9 +5,11 @@ namespace App\Modules\Services;
 use App\Models\Organization;
 use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
+use App\Models\OrganizationSubscription;
 use App\Modules\Core\BillingEngine;
 use App\Interfaces\Billing\BalanceServiceInterface;
 use Illuminate\Support\Facades\Log;
+
 class ModuleBillingService
 {
     protected BillingEngine $billingEngine;
@@ -174,16 +176,25 @@ class ModuleBillingService
     
     public function getUpcomingBilling(int $organizationId, int $daysAhead = 30): array
     {
+        $now = now();
+        $billingUntil = $now->copy()->addDays($daysAhead);
+
         $upcomingBilling = OrganizationModuleActivation::with('module')
             ->where('organization_id', $organizationId)
             ->where('status', 'active')
+            ->where('is_bundled_with_plan', false)
+            ->where(function ($query) use ($now) {
+                $query->whereNull('expires_at')
+                    ->orWhere('expires_at', '>', $now);
+            })
             ->whereNotNull('next_billing_date')
-            ->whereBetween('next_billing_date', [now(), now()->addDays($daysAhead)])
+            ->whereBetween('next_billing_date', [$now, $billingUntil])
             ->orderBy('next_billing_date')
             ->get();
             
         $billing = $upcomingBilling->map(function ($activation) {
             return [
+                'type' => 'module',
                 'module_name' => $activation->module->name,
                 'module_slug' => $activation->module->slug,
                 'next_billing_date' => $activation->next_billing_date,
@@ -192,6 +203,28 @@ class ModuleBillingService
                 'days_until_billing' => now()->diffInDays($activation->next_billing_date, false)
             ];
         });
+
+        $activeSubscription = $this->getActiveSubscription($organizationId);
+
+        if (
+            $activeSubscription !== null
+            && $activeSubscription->plan !== null
+            && $activeSubscription->next_billing_at !== null
+            && $activeSubscription->next_billing_at->between($now, $billingUntil)
+        ) {
+            $billing->push([
+                'type' => 'subscription',
+                'subscription_id' => $activeSubscription->id,
+                'plan_name' => $activeSubscription->plan->name,
+                'plan_slug' => $activeSubscription->plan->slug,
+                'next_billing_date' => $activeSubscription->next_billing_at,
+                'amount' => (float) $activeSubscription->plan->price,
+                'currency' => $activeSubscription->plan->currency ?? 'RUB',
+                'days_until_billing' => $now->diffInDays($activeSubscription->next_billing_at, false),
+            ]);
+        }
+
+        $billing = $billing->sortBy('next_billing_date')->values();
         
         $totalUpcoming = $billing->sum('amount');
         $organization = Organization::findOrFail($organizationId);
@@ -216,16 +249,30 @@ class ModuleBillingService
             ->where('organization_id', $organizationId)
             ->get();
             
-        $activeModules = $activations->where('status', 'active');
-        $monthlySpend = $activeModules->filter(function ($activation) {
-            return $activation->module->billing_model === 'subscription';
-        })->sum(function ($activation) {
+        $activeModules = $activations->filter(function ($activation) {
+            return $activation->isActive();
+        });
+        $standaloneSubscriptionModules = $activeModules->filter(function ($activation) {
+            return ! $activation->isBundled()
+                && $activation->module !== null
+                && $activation->module->billing_model === 'subscription';
+        });
+        $standaloneSubscriptionAmount = $standaloneSubscriptionModules->sum(function ($activation) {
             return $activation->module->getPrice();
         });
+
+        $activeSubscription = $this->getActiveSubscription($organizationId);
+        $activeSubscriptionAmount = $activeSubscription?->plan !== null
+            ? (float) $activeSubscription->plan->price
+            : 0.0;
+
+        $monthlySpend = $activeSubscriptionAmount + $standaloneSubscriptionAmount;
         
         $oneTimeSpend = $activations->filter(function ($activation) {
-            return $activation->module->billing_model === 'one_time' && 
-                   $activation->created_at->isCurrentMonth();
+            return ! $activation->isBundled()
+                && $activation->module !== null
+                && $activation->module->billing_model === 'one_time'
+                && $activation->created_at->isCurrentMonth();
         })->sum('paid_amount');
         
         return [
@@ -239,10 +286,27 @@ class ModuleBillingService
                 'currency' => 'RUB'
             ],
             'breakdown_by_type' => [
-                'subscription' => $activeModules->where('module.billing_model', 'subscription')->count(),
-                'one_time' => $activations->where('module.billing_model', 'one_time')->count(),
+                'subscription' => $standaloneSubscriptionModules->count() + ($activeSubscription !== null ? 1 : 0),
+                'one_time' => $activations
+                    ->where('is_bundled_with_plan', false)
+                    ->where('module.billing_model', 'one_time')
+                    ->count(),
                 'free' => $activeModules->where('module.billing_model', 'free')->count()
             ]
         ];
+    }
+
+    private function getActiveSubscription(int $organizationId): ?OrganizationSubscription
+    {
+        return OrganizationSubscription::with('plan')
+            ->where('organization_id', $organizationId)
+            ->where('status', 'active')
+            ->whereNull('canceled_at')
+            ->where(function ($query) {
+                $query->whereNull('ends_at')
+                    ->orWhere('ends_at', '>', now());
+            })
+            ->orderByDesc('id')
+            ->first();
     }
 }

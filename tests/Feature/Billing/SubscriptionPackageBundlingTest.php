@@ -11,6 +11,7 @@ use App\Models\OrganizationPackageSubscription;
 use App\Models\OrganizationSubscription;
 use App\Models\SubscriptionPlan;
 use App\Modules\Core\AccessController;
+use App\Modules\Services\ModuleBillingService;
 use App\Services\Landing\OrganizationSubscriptionService;
 use App\Services\SubscriptionModuleSyncService;
 use Illuminate\Database\Schema\Blueprint;
@@ -150,6 +151,14 @@ class SubscriptionPackageBundlingTest extends TestCase
             $table->timestamp('expires_at')->nullable();
             $table->timestamps();
             $table->unique(['organization_id', 'package_slug', 'is_bundled_with_plan']);
+        });
+
+        Schema::create('organization_balances', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('organization_id')->unique();
+            $table->bigInteger('balance')->default(0);
+            $table->string('currency', 3)->default('RUB');
+            $table->timestamps();
         });
     }
 
@@ -340,6 +349,77 @@ class SubscriptionPackageBundlingTest extends TestCase
             'status' => 'active',
             'is_bundled_with_plan' => true,
         ]);
+    }
+
+    public function test_billing_summary_counts_plan_and_standalone_recurring_charges_only(): void
+    {
+        $plan = $this->createPlan('profi', [
+            ['package_slug' => 'supply-warehouse', 'tier' => 'pro'],
+        ], 39900);
+
+        $subscription = $this->createSubscription($plan);
+        $this->createPackageModules('supply-warehouse', 'pro');
+
+        app(SubscriptionModuleSyncService::class)->syncModulesOnSubscribe($subscription);
+
+        $standaloneModule = Module::create([
+            'name' => 'Standalone reporting',
+            'slug' => 'standalone-reporting',
+            'version' => '1.0.0',
+            'type' => 'feature',
+            'billing_model' => 'subscription',
+            'category' => 'landing',
+            'description' => 'Standalone reporting',
+            'pricing_config' => [
+                'base_price' => 2500,
+                'currency' => 'RUB',
+                'duration_days' => 30,
+            ],
+            'features' => [],
+            'permissions' => [],
+            'dependencies' => [],
+            'conflicts' => [],
+            'limits' => [],
+            'display_order' => 1,
+            'is_active' => true,
+            'is_system_module' => false,
+            'can_deactivate' => true,
+        ]);
+
+        OrganizationModuleActivation::create([
+            'organization_id' => $this->organization->id,
+            'module_id' => $standaloneModule->id,
+            'status' => 'active',
+            'activated_at' => now(),
+            'expires_at' => now()->addDays(30),
+            'next_billing_date' => now()->addDays(30),
+            'paid_amount' => 2500,
+            'is_bundled_with_plan' => false,
+        ]);
+
+        $bundledMonthlyAmount = OrganizationModuleActivation::with('module')
+            ->where('organization_id', $this->organization->id)
+            ->where('is_bundled_with_plan', true)
+            ->get()
+            ->sum(fn (OrganizationModuleActivation $activation): float => $activation->module->getPrice());
+
+        $this->assertGreaterThan(0, $bundledMonthlyAmount);
+
+        $billingService = app(ModuleBillingService::class);
+        $stats = $billingService->getOrganizationBillingStats($this->organization->id);
+        $upcoming = $billingService->getUpcomingBilling($this->organization->id);
+
+        $this->assertSame(42400.0, $stats['stats']['monthly_recurring']);
+        $this->assertSame(2, $stats['breakdown_by_type']['subscription']);
+        $this->assertSame(42400.0, $upcoming['summary']['total_upcoming']);
+        $this->assertContains(
+            'standalone-reporting',
+            collect($upcoming['upcoming_billing'])->pluck('module_slug')->all()
+        );
+        $this->assertContains(
+            'profi',
+            collect($upcoming['upcoming_billing'])->pluck('plan_slug')->all()
+        );
     }
 
     public function test_active_package_grants_effective_warehouse_module_without_activation(): void
