@@ -5,6 +5,9 @@ namespace App\Http\Requests\Api\V1\Landing\Auth;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rules\Password;
+
+use function trans_message;
 
 class RegisterRequest extends FormRequest
 {
@@ -58,9 +61,8 @@ class RegisterRequest extends FormRequest
             'password' => [
                 'required',
                 'string',
-                'min:8',
                 'confirmed',
-                'regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/' // Как минимум одна маленькая буква, одна большая и одна цифра
+                Password::min(8)->mixedCase()->numbers(),
             ],
             'phone' => [
                 'nullable',
@@ -117,7 +119,8 @@ class RegisterRequest extends FormRequest
             'password.required' => 'Пароль обязателен для заполнения',
             'password.min' => 'Пароль должен содержать не менее 8 символов',
             'password.confirmed' => 'Пароли не совпадают',
-            'password.regex' => 'Пароль должен содержать минимум одну заглавную букву, одну строчную букву и одну цифру',
+            'password.password.mixed' => trans_message('auth.validation.password_complexity'),
+            'password.password.numbers' => trans_message('auth.validation.password_complexity'),
             'phone.regex' => 'Некорректный формат телефона. Используйте формат +7XXXXXXXXXX или 8XXXXXXXXXX',
             
             'organization_name.required' => 'Название организации обязательно для заполнения',

@@ -7,6 +7,7 @@ namespace App\Http\Requests\Api\V1\Customer\Auth;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rules\Password;
 
 use function trans_message;
 
@@ -51,9 +52,8 @@ class RegisterRequest extends FormRequest
             'password' => [
                 'required',
                 'string',
-                'min:8',
                 'confirmed',
-                'regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/',
+                Password::min(8)->mixedCase()->numbers(),
             ],
             'phone' => ['nullable', 'string', 'max:20'],
             'position' => ['nullable', 'string', 'max:100'],
@@ -80,7 +80,8 @@ class RegisterRequest extends FormRequest
             'password.required' => trans_message('customer.auth.validation.password_required'),
             'password.min' => trans_message('customer.auth.validation.password_min'),
             'password.confirmed' => trans_message('customer.auth.validation.password_confirmation'),
-            'password.regex' => trans_message('customer.auth.validation.password_complexity'),
+            'password.password.mixed' => trans_message('customer.auth.validation.password_complexity'),
+            'password.password.numbers' => trans_message('customer.auth.validation.password_complexity'),
             'organization_name.required' => trans_message('customer.auth.validation.organization_name_required'),
             'organization_name.min' => trans_message('customer.auth.validation.organization_name_min'),
             'organization_tax_number.regex' => trans_message('customer.auth.validation.organization_tax_number'),

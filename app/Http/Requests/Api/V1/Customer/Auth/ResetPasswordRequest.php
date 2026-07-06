@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Requests\Api\V1\Customer\Auth;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rules\Password;
 
 use function trans_message;
 
@@ -23,9 +24,8 @@ class ResetPasswordRequest extends FormRequest
             'password' => [
                 'required',
                 'string',
-                'min:8',
                 'confirmed',
-                'regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/',
+                Password::min(8)->mixedCase()->numbers(),
             ],
         ];
     }
@@ -39,7 +39,8 @@ class ResetPasswordRequest extends FormRequest
             'password.required' => trans_message('customer.auth.validation.password_required'),
             'password.min' => trans_message('customer.auth.validation.password_min'),
             'password.confirmed' => trans_message('customer.auth.validation.password_confirmation'),
-            'password.regex' => trans_message('customer.auth.validation.password_complexity'),
+            'password.password.mixed' => trans_message('customer.auth.validation.password_complexity'),
+            'password.password.numbers' => trans_message('customer.auth.validation.password_complexity'),
         ];
     }
 }
