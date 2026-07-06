@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -23,6 +25,7 @@ class LandingAdmin extends Authenticatable implements JWTSubject
         'email',
         'password',
         'role',
+        'is_active',
     ];
 
     /**
@@ -42,6 +45,7 @@ class LandingAdmin extends Authenticatable implements JWTSubject
         'email_verified_at' => 'datetime',
         'password' => 'hashed',
         'is_super' => 'boolean',
+        'is_active' => 'boolean',
     ];
 
     // --- JWT implementation ----
@@ -55,8 +59,4 @@ class LandingAdmin extends Authenticatable implements JWTSubject
         return [];
     }
 
-    public function roles(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
-    {
-        return $this->belongsToMany(Role::class, 'landing_admin_role');
-    }
-} 
+}

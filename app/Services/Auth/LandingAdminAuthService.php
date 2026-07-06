@@ -1,10 +1,15 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services\Auth;
 
 use App\DTOs\Auth\LoginDTO;
+use App\Models\LandingAdmin;
 use Illuminate\Support\Facades\Auth;
 use Tymon\JWTAuth\Facades\JWTAuth;
+
+use function trans_message;
 
 class LandingAdminAuthService
 {
@@ -19,7 +24,17 @@ class LandingAdminAuthService
             return ['success' => false, 'message' => trans_message('auth.login_failed'), 'status_code' => 401];
         }
 
+        /** @var LandingAdmin|null $admin */
         $admin = Auth::getLastAttempted();
+
+        if (!$admin instanceof LandingAdmin) {
+            return ['success' => false, 'message' => trans_message('auth.login_failed'), 'status_code' => 401];
+        }
+
+        if (!$admin->is_active) {
+            return ['success' => false, 'message' => trans_message('auth.account_disabled'), 'status_code' => 403];
+        }
+
         $token = JWTAuth::fromUser($admin);
 
         return ['success' => true, 'token' => $token, 'user' => $admin, 'status_code' => 200];

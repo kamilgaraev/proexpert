@@ -96,6 +96,19 @@ class JwtAuthService
                     /** @var User $user */
                     $user = Auth::getLastAttempted();
                     Log::info('[JwtAuthService] User retrieved.', ['user_id' => $user?->id]);
+
+                    if (!$user->is_active) {
+                        LogService::authLog('login_failed', array_merge($logContext, [
+                            'reason' => 'account_disabled',
+                            'user_id' => $user->id,
+                        ]));
+
+                        return [
+                            'success' => false,
+                            'message' => trans_message('auth.account_disabled'),
+                            'status_code' => 403,
+                        ];
+                    }
                     
                     if (!$user->hasVerifiedEmail()) {
                         Log::warning('[JwtAuthService] Login blocked: email not verified', [

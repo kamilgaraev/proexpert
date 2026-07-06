@@ -69,6 +69,11 @@ class BrigadeWorkflowService
 
         /** @var User|null $user */
         $user = Auth::getLastAttempted();
+
+        if (!$user?->is_active) {
+            return null;
+        }
+
         $brigade = $user?->brigadeProfile;
 
         if (!$user || !$brigade) {

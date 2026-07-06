@@ -35,7 +35,10 @@ class LandingAdminAuthController extends Controller
             ], trans_message('landing.admin_auth.login_success'));
         }
 
-        return LandingResponse::error(trans_message('landing.admin_auth.login_failed'), 401);
+        return LandingResponse::error(
+            (string) ($result['message'] ?? trans_message('landing.admin_auth.login_failed')),
+            (int) ($result['status_code'] ?? 401)
+        );
     }
 
     public function me(Request $request): JsonResponse

@@ -61,6 +61,14 @@ class CustomerAuthService
             ];
         }
 
+        if (!$user->is_active) {
+            return [
+                'success' => false,
+                'message' => trans_message('auth.account_disabled'),
+                'status_code' => 403,
+            ];
+        }
+
         if (!$user->hasVerifiedEmail()) {
             return [
                 'success' => false,

@@ -158,7 +158,13 @@ class AuthController extends Controller
                     'email' => $loginDTO->email ?? 'N/A',
                     'ip' => request()->ip()
                 ]);
-                return LoginResponse::unauthorized($result['message']);
+                $message = (string) ($result['message'] ?? trans_message('auth.login_failed'));
+
+                if (($result['status_code'] ?? 401) === 403) {
+                    return LoginResponse::forbidden($message);
+                }
+
+                return LoginResponse::unauthorized($message);
             }
         } catch (\Throwable $e) {
             Log::error('[LandingAuthController] Unexpected exception', [
