@@ -63,19 +63,18 @@ class AuthController extends Controller
             }
 
             // Проверяем, что все необходимые данные присутствуют
-            if (!isset($result['user']) || !isset($result['organization']) || !isset($result['token'])) {
+            if (!isset($result['user']) || !isset($result['organization'])) {
                 Log::error('[LandingAuthController] Missing data in registration result', [
                     'has_user' => isset($result['user']),
                     'has_organization' => isset($result['organization']),
-                    'has_token' => isset($result['token'])
+                    'has_status' => isset($result['status'])
                 ]);
-                return RegisterResponse::error('Ошибка регистрации: неполные данные', 500);
+                return RegisterResponse::error(trans_message('auth.registration_incomplete_data'), 500);
             }
 
             /** @var \App\Models\User $user */
             $user = $result['user'];
             $organization = $result['organization'];
-            $token = $result['token'];
 
             // Обработка загрузки аватара
             if ($request->hasFile('avatar')) {
@@ -93,11 +92,7 @@ class AuthController extends Controller
             }
 
             // Возвращаем успешный ответ
-            return $this->withTokenCookie(
-                RegisterResponse::registerSuccess($user, $organization, $token),
-                $token,
-                $request
-            );
+            return RegisterResponse::verificationRequired($user, $organization)->toResponse($request);
         });
     }
 

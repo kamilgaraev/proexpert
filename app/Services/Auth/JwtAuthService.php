@@ -775,39 +775,6 @@ class JwtAuthService
                 }
             }
 
-            // Генерируем JWT токен для пользователя
-            $token = null;
-            try {
-                if ($organization) {
-                    $customClaims = ['organization_id' => $organization->id];
-                    if ((bool) config('auth_tokens.sessions.enabled', true)) {
-                        $authSession = $this->authSessionService->createForLogin(
-                            $user,
-                            (int) $organization->id,
-                            request()
-                        );
-                        $customClaims['session_uuid'] = $authSession->session_uuid;
-                    }
-                    $token = JWTAuth::claims($customClaims)->fromUser($user);
-                } else {
-                    $customClaims = [];
-                    if ((bool) config('auth_tokens.sessions.enabled', true)) {
-                        $authSession = $this->authSessionService->createForLogin($user, null, request());
-                        $customClaims['session_uuid'] = $authSession->session_uuid;
-                    }
-                    $token = $customClaims
-                        ? JWTAuth::claims($customClaims)->fromUser($user)
-                        : JWTAuth::fromUser($user);
-                }
-                Log::info('[JwtAuthService] JWT token generated');
-            } catch (\Exception $e) {
-                Log::error('[JwtAuthService] Failed to generate JWT token', [
-                    'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString()
-                ]);
-                throw $e;
-            }
-
             // Фиксируем транзакцию
             DB::commit();
 
@@ -966,7 +933,9 @@ class JwtAuthService
                 'success' => true, 
                 'user' => $user, 
                 'organization' => $organization,
-                'token' => $token,
+                'status' => 'verification_required',
+                'email_verified' => false,
+                'can_enter_portal' => false,
                 'status_code' => 201
             ];
 
