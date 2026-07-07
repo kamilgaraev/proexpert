@@ -207,6 +207,45 @@ final class DesignManagementApiTest extends TestCase
         $this->assertSame('X_DOC_02', $documents[1]['document_code']);
     }
 
+    public function test_generating_sections_preserves_custom_document_in_normative_section(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $packageId = $this->createPackage($context, $project);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson(
+                "/api/v1/admin/design-management/packages/{$packageId}/sections/custom",
+                $this->customSectionDocumentPayload([
+                    'section_code' => 'GD',
+                    'section_title' => 'General data',
+                    'document_code' => 'gd extra',
+                    'document_title' => 'Extra general data',
+                    'artifact_type' => 'text_document',
+                    'allowed_formats' => ['pdf'],
+                    'sheet_registry_required' => false,
+                ])
+            )
+            ->assertCreated();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/design-management/packages/{$packageId}/sections/generate")
+            ->assertOk();
+
+        $section = DesignPackageSection::query()
+            ->where('package_id', $packageId)
+            ->where('code', 'GD')
+            ->firstOrFail();
+        $documents = collect($section->metadata['documents'] ?? []);
+
+        $this->assertTrue($documents->contains(
+            static fn (array $document): bool => ($document['document_code'] ?? null) === 'GD_EXTRA'
+                && ($document['source'] ?? null) === 'custom'
+        ));
+    }
+
     public function test_project_manager_cannot_create_duplicate_custom_document_code_in_same_section(): void
     {
         $context = AdminApiTestContext::create(roleSlug: 'project_manager');

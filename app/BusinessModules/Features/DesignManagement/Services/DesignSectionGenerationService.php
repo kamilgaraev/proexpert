@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\DesignManagement\Services;
 
+use App\BusinessModules\Features\DesignManagement\Enums\DesignArtifactTypeEnum;
 use App\BusinessModules\Features\DesignManagement\Enums\DesignDocumentSectionStatusEnum;
+use App\BusinessModules\Features\DesignManagement\Enums\DesignFileFormatEnum;
 use App\BusinessModules\Features\DesignManagement\Models\DesignDocumentTemplate;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackage;
 use App\BusinessModules\Features\DesignManagement\Models\DesignPackageSection;
@@ -80,6 +82,9 @@ final class DesignSectionGenerationService
                 $status = $existing instanceof DesignPackageSection
                     ? $existing->status
                     : DesignDocumentSectionStatusEnum::NOT_STARTED;
+                $metadata = $existing instanceof DesignPackageSection
+                    ? $this->metadataWithExistingCustomDocuments($sectionPayload->metadata, $existing->metadata)
+                    : $sectionPayload->metadata;
 
                 DesignPackageSection::query()->updateOrCreate(
                     [
@@ -97,7 +102,7 @@ final class DesignSectionGenerationService
                         'required' => (bool) $sectionPayload->required,
                         'sort_order' => (int) $sectionPayload->sort_order,
                         'normative_reference' => $sectionPayload->normative_reference,
-                        'metadata' => $sectionPayload->metadata,
+                        'metadata' => $metadata,
                     ]
                 );
             }
@@ -186,15 +191,63 @@ final class DesignSectionGenerationService
         return $metadata;
     }
 
+    private function metadataWithExistingCustomDocuments(array $metadata, mixed $existingMetadata): array
+    {
+        if (!is_array($existingMetadata)) {
+            return $metadata;
+        }
+
+        $documents = is_array($metadata['documents'] ?? null) ? array_values($metadata['documents']) : [];
+        $existingDocuments = is_array($existingMetadata['documents'] ?? null) ? $existingMetadata['documents'] : [];
+        $documentCodes = [];
+
+        foreach ($documents as $document) {
+            if (!is_array($document)) {
+                continue;
+            }
+
+            $documentCode = $this->normalizeCode((string) ($document['document_code'] ?? ''));
+
+            if ($documentCode !== '') {
+                $documentCodes[$documentCode] = true;
+            }
+        }
+
+        foreach ($existingDocuments as $document) {
+            if (!is_array($document) || !$this->isCustomDocumentMetadata($document)) {
+                continue;
+            }
+
+            $documentCode = $this->normalizeCode((string) ($document['document_code'] ?? ''));
+
+            if ($documentCode === '' || isset($documentCodes[$documentCode])) {
+                continue;
+            }
+
+            $documents[] = $document;
+            $documentCodes[$documentCode] = true;
+        }
+
+        $metadata['documents'] = $documents;
+
+        return $metadata;
+    }
+
+    private function isCustomDocumentMetadata(array $document): bool
+    {
+        return ($document['source'] ?? null) === 'custom'
+            || (array_key_exists('template_id', $document) && $document['template_id'] === null);
+    }
+
     private function customDocumentMetadata(array $payload, string $documentCode): array
     {
         return [
             'template_id' => null,
             'document_code' => $documentCode,
             'document_title' => trim((string) $payload['document_title']),
-            'artifact_type' => (string) ($payload['artifact_type'] ?? 'text_document'),
+            'artifact_type' => (string) ($payload['artifact_type'] ?? DesignArtifactTypeEnum::TEXT_DOCUMENT->value),
             'required' => (bool) ($payload['required'] ?? true),
-            'allowed_formats' => array_values($payload['allowed_formats'] ?? ['pdf']),
+            'allowed_formats' => array_values($payload['allowed_formats'] ?? [DesignFileFormatEnum::PDF->value]),
             'sheet_registry_required' => (bool) ($payload['sheet_registry_required'] ?? false),
             'normative_reference' => $this->nullableText($payload['normative_reference'] ?? null),
             'source' => 'custom',
@@ -238,7 +291,13 @@ final class DesignSectionGenerationService
 
     private function nullableText(mixed $value): ?string
     {
-        return $value !== null ? trim((string) $value) : null;
+        if ($value === null) {
+            return null;
+        }
+
+        $text = trim((string) $value);
+
+        return $text !== '' ? $text : null;
     }
 
     private function value(mixed $value): ?string
