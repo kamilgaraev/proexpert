@@ -123,6 +123,10 @@ final class ProcurementChainControllerTest extends TestCase
             'payer_organization_id' => $context->organization->id,
             'payee_contractor_id' => Contractor::query()->where('inn', '7700000000')->value('id'),
         ]);
+        $this->assertSame(
+            now()->toDateString(),
+            PaymentDocument::query()->findOrFail($firstResponse->json('data.id'))->document_date?->toDateString()
+        );
     }
 
     public function test_purchase_order_payment_document_uses_material_purchase_limit_for_procurement_contract(): void
