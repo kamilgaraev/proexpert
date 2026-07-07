@@ -35,6 +35,9 @@ Route::prefix('api/v1/admin/design-management')
         Route::post('/packages/{packageId}/sections/generate', [DesignDocumentationController::class, 'generateSections'])
             ->middleware('authorize:design-management.documents.manage_structure')
             ->name('packages.sections.generate');
+        Route::post('/packages/{packageId}/sections/custom', [DesignDocumentationController::class, 'storeCustomSectionDocument'])
+            ->middleware('authorize:design-management.documents.manage_structure')
+            ->name('packages.sections.custom_store');
         Route::post('/packages/{packageId}/sections/{sectionId}/documents', [DesignDocumentationController::class, 'uploadDocument'])
             ->middleware('authorize:design-management.documents.upload')
             ->name('packages.sections.documents.upload');

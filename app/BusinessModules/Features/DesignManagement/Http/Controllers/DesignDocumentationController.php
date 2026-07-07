@@ -107,6 +107,42 @@ final class DesignDocumentationController extends Controller
         }
     }
 
+    public function storeCustomSectionDocument(Request $request, int $packageId): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'section_code' => ['required', 'string', 'max:80'],
+                'section_title' => ['required', 'string', 'max:255'],
+                'document_code' => ['required', 'string', 'max:80'],
+                'document_title' => ['required', 'string', 'max:255'],
+                'artifact_type' => ['nullable', 'string', Rule::in($this->artifactTypes())],
+                'required' => ['nullable', 'boolean'],
+                'allowed_formats' => ['nullable', 'array', 'min:1', 'max:10'],
+                'allowed_formats.*' => ['string', Rule::in(DesignFileFormatEnum::values())],
+                'sheet_registry_required' => ['nullable', 'boolean'],
+                'normative_reference' => ['nullable', 'string', 'max:255'],
+                'sort_order' => ['nullable', 'integer', 'min:1', 'max:10000'],
+            ]);
+            $package = $this->package($request, $packageId);
+
+            if ($package === null) {
+                return AdminResponse::error(trans_message('design_management.errors.package_not_found'), 404);
+            }
+
+            return AdminResponse::success(
+                new DesignPackageSectionResource($this->sectionGenerationService->storeCustomSectionDocument($package, $validated)),
+                trans_message('design_management.messages.custom_section_document_created'),
+                201
+            );
+        } catch (ValidationException $e) {
+            return $this->validationFailed($e);
+        } catch (DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
+        } catch (\Throwable $e) {
+            return $this->failed('store_custom_section_document', $packageId, $e);
+        }
+    }
+
     public function sections(Request $request, int $packageId): JsonResponse
     {
         try {

@@ -45,6 +45,7 @@ final class DesignManagementApiTest extends TestCase
         $this->assertRoutePermission('GET', 'api/v1/admin/design-management/document-templates', 'design-management.normative_catalog.view');
         $this->assertRoutePermission('GET', 'api/v1/admin/design-management/packages/{packageId}/sections', 'design-management.documents.view');
         $this->assertRoutePermission('POST', 'api/v1/admin/design-management/packages/{packageId}/sections/generate', 'design-management.documents.manage_structure');
+        $this->assertRoutePermission('POST', 'api/v1/admin/design-management/packages/{packageId}/sections/custom', 'design-management.documents.manage_structure');
         $this->assertRoutePermission('POST', 'api/v1/admin/design-management/packages/{packageId}/sections/{sectionId}/documents', 'design-management.documents.upload');
         $this->assertRoutePermission('PUT', 'api/v1/admin/design-management/document-versions/{versionId}/sheets', 'design-management.documents.edit');
         $this->assertRoutePermission('GET', 'api/v1/admin/design-management/document-versions/{versionId}/source-file', 'design-management.documents.view');
@@ -94,6 +95,154 @@ final class DesignManagementApiTest extends TestCase
         $response->assertJsonPath('data.workflow_summary.sections_count', 6);
         $this->assertSame([], $response->json('data.problem_flags'));
         $this->assertSame('GD', $response->json('data.sections.0.code'));
+    }
+
+    public function test_project_manager_can_create_custom_section_document(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $packageId = $this->createPackage($context, $project);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson(
+                "/api/v1/admin/design-management/packages/{$packageId}/sections/custom",
+                $this->customSectionDocumentPayload([
+                    'section_code' => ' x custom ',
+                    'document_code' => ' x doc 01 ',
+                    'sort_order' => 900,
+                ])
+            );
+
+        $response->assertCreated();
+        $response->assertJsonPath('message', trans_message('design_management.messages.custom_section_document_created'));
+        $response->assertJsonPath('data.code', 'X_CUSTOM');
+        $response->assertJsonPath('data.title', 'Пользовательский раздел');
+        $response->assertJsonPath('data.status', 'not_started');
+        $response->assertJsonPath('data.required', true);
+        $response->assertJsonPath('data.sort_order', 900);
+        $response->assertJsonPath('data.normative_reference', 'СТО 1.001');
+        $response->assertJsonPath('data.documents.0.document_code', 'X_DOC_01');
+        $response->assertJsonPath('data.documents.0.document_title', 'План этажей');
+        $response->assertJsonPath('data.documents.0.artifact_type', 'drawing_set');
+        $response->assertJsonPath('data.documents.0.required', true);
+        $response->assertJsonPath('data.documents.0.sheet_registry_required', true);
+        $response->assertJsonPath('data.documents.0.source', 'custom');
+        $this->assertSame(['pdf', 'dwg'], $response->json('data.documents.0.allowed_formats'));
+
+        $section = DesignPackageSection::query()
+            ->where('package_id', $packageId)
+            ->where('code', 'X_CUSTOM')
+            ->firstOrFail();
+        $documents = $section->metadata['documents'] ?? [];
+
+        $this->assertSame($context->organization->id, $section->organization_id);
+        $this->assertSame($project->id, $section->project_id);
+        $this->assertCount(1, $documents);
+        $this->assertSame('X_DOC_01', $documents[0]['document_code']);
+        $this->assertSame('custom', $documents[0]['source']);
+        $this->assertSame(['pdf', 'dwg'], $documents[0]['allowed_formats']);
+    }
+
+    public function test_project_manager_can_append_custom_document_to_existing_custom_section(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $packageId = $this->createPackage($context, $project);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson(
+                "/api/v1/admin/design-management/packages/{$packageId}/sections/custom",
+                $this->customSectionDocumentPayload([
+                    'section_code' => 'x custom',
+                    'document_code' => 'x doc 01',
+                ])
+            )
+            ->assertCreated();
+
+        $section = DesignPackageSection::query()
+            ->where('package_id', $packageId)
+            ->where('code', 'X_CUSTOM')
+            ->firstOrFail();
+        $section->update([
+            'metadata' => array_merge($section->metadata ?? [], [
+                'preserved_marker' => 'keep',
+            ]),
+        ]);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson(
+                "/api/v1/admin/design-management/packages/{$packageId}/sections/custom",
+                $this->customSectionDocumentPayload([
+                    'section_code' => ' X  CUSTOM ',
+                    'document_code' => 'x doc 02',
+                    'document_title' => 'Фасады',
+                    'artifact_type' => null,
+                    'required' => false,
+                    'allowed_formats' => null,
+                    'sheet_registry_required' => false,
+                    'normative_reference' => null,
+                    'sort_order' => null,
+                ])
+            );
+
+        $response->assertCreated();
+        $response->assertJsonPath('data.id', $section->id);
+        $response->assertJsonPath('data.code', 'X_CUSTOM');
+        $response->assertJsonPath('data.documents.1.document_code', 'X_DOC_02');
+        $response->assertJsonPath('data.documents.1.artifact_type', 'text_document');
+        $response->assertJsonPath('data.documents.1.required', false);
+        $response->assertJsonPath('data.documents.1.sheet_registry_required', false);
+        $this->assertSame(['pdf'], $response->json('data.documents.1.allowed_formats'));
+
+        $section->refresh();
+        $documents = $section->metadata['documents'] ?? [];
+
+        $this->assertSame('keep', $section->metadata['preserved_marker'] ?? null);
+        $this->assertCount(2, $documents);
+        $this->assertSame('X_DOC_01', $documents[0]['document_code']);
+        $this->assertSame('X_DOC_02', $documents[1]['document_code']);
+    }
+
+    public function test_project_manager_cannot_create_duplicate_custom_document_code_in_same_section(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'project_manager');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+        $packageId = $this->createPackage($context, $project);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson(
+                "/api/v1/admin/design-management/packages/{$packageId}/sections/custom",
+                $this->customSectionDocumentPayload([
+                    'section_code' => 'x custom',
+                    'document_code' => 'x doc 01',
+                ])
+            )
+            ->assertCreated();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson(
+                "/api/v1/admin/design-management/packages/{$packageId}/sections/custom",
+                $this->customSectionDocumentPayload([
+                    'section_code' => ' X CUSTOM ',
+                    'document_code' => ' X  DOC  01 ',
+                ])
+            );
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('message', trans_message('design_management.errors.custom_document_duplicate'));
+
+        $section = DesignPackageSection::query()
+            ->where('package_id', $packageId)
+            ->where('code', 'X_CUSTOM')
+            ->firstOrFail();
+
+        $this->assertCount(1, $section->metadata['documents'] ?? []);
     }
 
     public function test_project_manager_can_upload_ifc_model(): void
@@ -800,15 +949,15 @@ final class DesignManagementApiTest extends TestCase
         $response->assertForbidden();
     }
 
-    private function createPackage(AdminApiTestContext $context, Project $project): int
+    private function createPackage(AdminApiTestContext $context, Project $project, array $overrides = []): int
     {
         $response = $this->withHeaders($context->authHeaders())
-            ->postJson('/api/v1/admin/design-management/packages', [
+            ->postJson('/api/v1/admin/design-management/packages', array_merge([
                 'project_id' => $project->id,
                 'title' => 'Раздел АР',
                 'stage' => 'rd',
                 'discipline' => 'architecture',
-            ]);
+            ], $overrides));
 
         $response->assertCreated();
 
@@ -846,6 +995,21 @@ final class DesignManagementApiTest extends TestCase
                     'converted_in_browser' => true,
                 ],
             ]);
+    }
+
+    private function customSectionDocumentPayload(array $overrides = []): array
+    {
+        return array_merge([
+            'section_code' => 'X_CUSTOM',
+            'section_title' => 'Пользовательский раздел',
+            'document_code' => 'X_DOC_01',
+            'document_title' => 'План этажей',
+            'artifact_type' => 'drawing_set',
+            'required' => true,
+            'allowed_formats' => ['pdf', 'dwg'],
+            'sheet_registry_required' => true,
+            'normative_reference' => 'СТО 1.001',
+        ], $overrides);
     }
 
     private function storedVersion(DesignPackage $package, User $user): DesignArtifactVersion
