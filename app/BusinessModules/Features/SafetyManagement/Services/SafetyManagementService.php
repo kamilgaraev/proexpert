@@ -7,6 +7,7 @@ namespace App\BusinessModules\Features\SafetyManagement\Services;
 use App\BusinessModules\Features\SafetyManagement\DTOs\SafetyComplianceContext;
 use App\BusinessModules\Features\SafetyManagement\DTOs\SafetyComplianceResult;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyBriefing;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyBriefingParticipant;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyCorrectiveAction;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyEmployeeRequirement;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyInspection;
@@ -27,6 +28,7 @@ use App\Models\User;
 use App\Models\WorkType;
 use Carbon\CarbonImmutable;
 use DomainException;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 
@@ -75,7 +77,7 @@ final class SafetyManagementService
     public function paginateBriefings(int $organizationId, int $perPage = 20, array $filters = []): LengthAwarePaginator
     {
         return SafetyBriefing::forOrganization($organizationId)
-            ->with(['project:id,name', 'conductedByUser:id,name', 'participants.user:id,name'])
+            ->with(['project:id,name', 'conductedByUser:id,name', 'participants.user:id,name', 'participants.employee:id,last_name,first_name,middle_name', 'participants.signedByUser:id,name'])
             ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
             ->orderByDesc('conducted_at')
             ->paginate($perPage);
@@ -395,6 +397,13 @@ final class SafetyManagementService
             ->when($projectId !== null, fn ($query) => $query->where('project_id', (int) $projectId));
         $findings = SafetyInspectionFinding::forOrganization($organizationId)
             ->when($projectId !== null, fn ($query) => $query->where('project_id', (int) $projectId));
+        $briefings = SafetyBriefing::forOrganization($organizationId)
+            ->when($projectId !== null, fn ($query) => $query->where('project_id', (int) $projectId));
+        $briefingParticipants = SafetyBriefingParticipant::query()
+            ->whereHas('briefing', static function ($query) use ($organizationId, $projectId): void {
+                $query->forOrganization($organizationId)
+                    ->when($projectId !== null, fn ($scope) => $scope->where('project_id', (int) $projectId));
+            });
 
         return [
             'summary' => [
@@ -408,6 +417,9 @@ final class SafetyManagementService
                 'open_corrective_actions' => (clone $actions)->whereIn('status', ['open', 'resolved'])->count(),
                 'open_inspections' => (clone $inspections)->whereIn('status', ['planned', 'in_progress'])->count(),
                 'open_findings' => (clone $findings)->where('status', 'open')->count(),
+                'briefings_awaiting_signatures' => (clone $briefings)->where('status', 'awaiting_signatures')->count(),
+                'briefing_participants_pending' => (clone $briefingParticipants)->where('signature_status', 'pending')->count(),
+                'briefing_participants_refused' => (clone $briefingParticipants)->where('signature_status', 'refused')->count(),
             ],
             'overdue' => [
                 'violations' => (clone $violations)->where('status', 'open')->whereDate('due_date', '<', $today)->count(),
@@ -619,15 +631,42 @@ final class SafetyManagementService
 
     public function mobilePermitsForUser(int $organizationId, int $userId, array $filters = []): array
     {
+        $employee = $this->employeeForUser($organizationId, $userId);
+
         return SafetyWorkPermit::forOrganization($organizationId)
             ->with(['project:id,name', 'responsibleUser:id,name', 'participants.employee:id,last_name,first_name,middle_name'])
-            ->where(function ($query) use ($userId): void {
-                $query->whereNull('responsible_user_id')
-                    ->orWhere('responsible_user_id', $userId);
+            ->where(function ($query) use ($userId, $employee): void {
+                $query->where('responsible_user_id', $userId)
+                    ->orWhereHas('participants', static function ($relation) use ($userId, $employee): void {
+                        $relation->where('user_id', $userId);
+
+                        if ($employee instanceof WorkforceEmployee) {
+                            $relation->orWhere('employee_id', $employee->id);
+                        }
+                    });
             })
             ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
             ->when(!empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']))
             ->orderBy('valid_until')
+            ->get()
+            ->all();
+    }
+
+    public function mobileBriefingsForUser(int $organizationId, int $userId, array $filters = []): array
+    {
+        $employee = $this->employeeForUser($organizationId, $userId);
+
+        return $this->mobileBriefingsQuery($organizationId, $userId, $employee, $filters)
+            ->with([
+                'project:id,name',
+                'conductedByUser:id,name',
+                'completedByUser:id,name',
+                'cancelledByUser:id,name',
+                'participants.user:id,name',
+                'participants.employee:id,last_name,first_name,middle_name',
+                'participants.signedByUser:id,name',
+            ])
+            ->orderByDesc('conducted_at')
             ->get()
             ->all();
     }
@@ -666,9 +705,67 @@ final class SafetyManagementService
             'open_permits' => (clone $permits)->whereIn('status', ['approved', 'active', 'suspended'])->count(),
             'open_violations' => (clone $violations)->where('status', 'open')->count(),
             'open_findings' => (clone $findings)->where('status', 'open')->count(),
+            'briefings_to_sign' => (clone $this->mobileBriefingsQuery($organizationId, $userId, $employee, $filters))
+                ->where('status', 'awaiting_signatures')
+                ->whereHas('participants', static function ($relation) use ($userId, $employee): void {
+                    $relation->where('signature_status', 'pending')
+                        ->where(function ($participantScope) use ($userId, $employee): void {
+                            $participantScope->where('user_id', $userId);
+
+                            if ($employee instanceof WorkforceEmployee) {
+                                $participantScope->orWhere('employee_id', $employee->id);
+                            }
+                        });
+                })
+                ->count(),
         ];
 
         return $dashboard;
+    }
+
+    public function findMobileBriefing(int $organizationId, int $userId, int $id): ?SafetyBriefing
+    {
+        $employee = $this->employeeForUser($organizationId, $userId);
+
+        return $this->mobileBriefingsQuery($organizationId, $userId, $employee)
+            ->with([
+                'project:id,name',
+                'conductedByUser:id,name',
+                'completedByUser:id,name',
+                'cancelledByUser:id,name',
+                'participants.user:id,name',
+                'participants.employee:id,last_name,first_name,middle_name',
+                'participants.signedByUser:id,name',
+            ])
+            ->find($id);
+    }
+
+    public function signMobileBriefingParticipant(
+        int $organizationId,
+        int $userId,
+        int $briefingId,
+        int $participantId
+    ): ?SafetyBriefing {
+        $briefing = $this->findMobileBriefing($organizationId, $userId, $briefingId);
+
+        if (!$briefing instanceof SafetyBriefing) {
+            return null;
+        }
+
+        $participant = $this->findBriefingParticipant($briefing, $participantId);
+        $employee = $this->employeeForUser($organizationId, $userId);
+        $matchesUser = (int) $participant->user_id === $userId;
+        $matchesEmployee = $employee instanceof WorkforceEmployee
+            && $participant->employee_id !== null
+            && (int) $participant->employee_id === (int) $employee->id;
+
+        if (!$matchesUser && !$matchesEmployee) {
+            throw new DomainException(trans_message('safety_management.errors.briefing_participant_not_found'));
+        }
+
+        return $this->signBriefingParticipant($briefing, $participantId, $userId, 'mobile', [
+            'source' => 'mobile_app',
+        ]);
     }
 
     public function mobileAdmissionForUser(int $organizationId, int $userId, array $filters = []): ?SafetyComplianceResult
@@ -695,11 +792,19 @@ final class SafetyManagementService
 
     public function findMobilePermit(int $organizationId, int $userId, int $id): ?SafetyWorkPermit
     {
+        $employee = $this->employeeForUser($organizationId, $userId);
+
         return SafetyWorkPermit::forOrganization($organizationId)
             ->with(['project:id,name', 'responsibleUser:id,name', 'participants.employee:id,last_name,first_name,middle_name'])
-            ->where(function ($query) use ($userId): void {
-                $query->whereNull('responsible_user_id')
-                    ->orWhere('responsible_user_id', $userId);
+            ->where(function ($query) use ($userId, $employee): void {
+                $query->where('responsible_user_id', $userId)
+                    ->orWhereHas('participants', static function ($relation) use ($userId, $employee): void {
+                        $relation->where('user_id', $userId);
+
+                        if ($employee instanceof WorkforceEmployee) {
+                            $relation->orWhere('employee_id', $employee->id);
+                        }
+                    });
             })
             ->find($id);
     }
@@ -811,6 +916,12 @@ final class SafetyManagementService
         if ($permit->status !== 'suspended') {
             throw new DomainException(trans_message('safety_management.errors.permit_resume_invalid_status'));
         }
+
+        if ($permit->valid_until->isPast()) {
+            throw new DomainException(trans_message('safety_management.errors.permit_expired'));
+        }
+
+        $this->assertPermitParticipantsAdmitted($permit);
 
         $permit->update([
             'status' => 'active',
@@ -1033,33 +1144,183 @@ final class SafetyManagementService
                 'briefing_type' => $data['briefing_type'],
                 'location_name' => $data['location_name'] ?? null,
                 'conducted_at' => $data['conducted_at'],
+                'status' => 'awaiting_signatures',
+                'started_at' => $data['conducted_at'],
+                'signature_deadline_at' => $data['signature_deadline_at'] ?? null,
+                'signature_summary' => $this->emptyBriefingSignatureSummary(),
                 'topics' => $data['topics'] ?? [],
                 'notes' => $data['notes'] ?? null,
                 'metadata' => $data['metadata'] ?? null,
             ]);
 
             foreach ($data['participants'] ?? [] as $participant) {
-                $userIdValue = $participant['user_id'] ?? null;
-                $externalName = trim((string) ($participant['external_name'] ?? ''));
-
-                if ($userIdValue === null && $externalName === '') {
-                    throw new DomainException(trans_message('safety_management.errors.briefing_participant_required'));
-                }
-
-                $this->assertOptionalUserBelongsToOrganization($userIdValue, $organizationId);
-
-                $briefing->participants()->create([
-                    'user_id' => $userIdValue,
-                    'external_name' => $externalName !== '' ? $externalName : null,
-                    'company_name' => $participant['company_name'] ?? null,
-                    'role_name' => $participant['role_name'] ?? null,
-                    'signed_at' => $participant['signed_at'] ?? now(),
-                    'metadata' => $participant['metadata'] ?? null,
-                ]);
+                $this->createBriefingParticipant($briefing, $participant);
             }
 
-            return $briefing->fresh(['project:id,name', 'conductedByUser:id,name', 'participants.user:id,name']);
+            $this->refreshBriefingSignatureSummary($briefing);
+
+            return $this->freshBriefing($briefing);
         });
+    }
+
+    public function findBriefing(int $organizationId, int $id): ?SafetyBriefing
+    {
+        return SafetyBriefing::forOrganization($organizationId)
+            ->with([
+                'project:id,name',
+                'conductedByUser:id,name',
+                'completedByUser:id,name',
+                'cancelledByUser:id,name',
+                'participants.user:id,name',
+                'participants.employee:id,last_name,first_name,middle_name',
+                'participants.signedByUser:id,name',
+            ])
+            ->find($id);
+    }
+
+    public function addBriefingParticipants(SafetyBriefing $briefing, array $participants): SafetyBriefing
+    {
+        $this->assertBriefingCanCollectSignatures($briefing);
+
+        return DB::transaction(function () use ($briefing, $participants): SafetyBriefing {
+            foreach ($participants as $participant) {
+                $this->createBriefingParticipant($briefing, $participant);
+            }
+
+            $this->refreshBriefingSignatureSummary($briefing);
+
+            return $this->freshBriefing($briefing);
+        });
+    }
+
+    public function signBriefingParticipant(
+        SafetyBriefing $briefing,
+        int $participantId,
+        int $actorUserId,
+        string $method = 'admin',
+        array $metadata = []
+    ): SafetyBriefing {
+        $this->assertBriefingCanCollectSignatures($briefing);
+
+        return DB::transaction(function () use ($briefing, $participantId, $actorUserId, $method, $metadata): SafetyBriefing {
+            $participant = $this->findBriefingParticipant($briefing, $participantId);
+
+            if (in_array($participant->signature_status, ['absent', 'refused'], true)) {
+                throw new DomainException(trans_message('safety_management.errors.briefing_participant_signature_locked'));
+            }
+
+            $participant->update([
+                'signature_status' => 'signed',
+                'signed_at' => now(),
+                'signed_by_user_id' => $actorUserId,
+                'signature_method' => trim($method) !== '' ? trim($method) : 'admin',
+                'refusal_reason' => null,
+                'absence_reason' => null,
+                'signature_metadata' => $metadata,
+            ]);
+
+            $this->refreshBriefingSignatureSummary($briefing);
+
+            return $this->freshBriefing($briefing);
+        });
+    }
+
+    public function markBriefingParticipantAbsent(SafetyBriefing $briefing, int $participantId, string $reason): SafetyBriefing
+    {
+        $this->assertBriefingCanCollectSignatures($briefing);
+        $reason = trim($reason);
+
+        if ($reason === '') {
+            throw new DomainException(trans_message('safety_management.errors.briefing_absence_reason_required'));
+        }
+
+        return DB::transaction(function () use ($briefing, $participantId, $reason): SafetyBriefing {
+            $participant = $this->findBriefingParticipant($briefing, $participantId);
+            $participant->update([
+                'signature_status' => 'absent',
+                'signed_at' => null,
+                'signed_by_user_id' => null,
+                'signature_method' => null,
+                'refusal_reason' => null,
+                'absence_reason' => $reason,
+                'signature_metadata' => null,
+            ]);
+
+            $this->refreshBriefingSignatureSummary($briefing);
+
+            return $this->freshBriefing($briefing);
+        });
+    }
+
+    public function markBriefingParticipantRefused(SafetyBriefing $briefing, int $participantId, string $reason): SafetyBriefing
+    {
+        $this->assertBriefingCanCollectSignatures($briefing);
+        $reason = trim($reason);
+
+        if ($reason === '') {
+            throw new DomainException(trans_message('safety_management.errors.briefing_refusal_reason_required'));
+        }
+
+        return DB::transaction(function () use ($briefing, $participantId, $reason): SafetyBriefing {
+            $participant = $this->findBriefingParticipant($briefing, $participantId);
+            $participant->update([
+                'signature_status' => 'refused',
+                'signed_at' => null,
+                'signed_by_user_id' => null,
+                'signature_method' => null,
+                'refusal_reason' => $reason,
+                'absence_reason' => null,
+                'signature_metadata' => null,
+            ]);
+
+            $this->refreshBriefingSignatureSummary($briefing);
+
+            return $this->freshBriefing($briefing);
+        });
+    }
+
+    public function completeBriefing(SafetyBriefing $briefing, int $actorUserId): SafetyBriefing
+    {
+        $this->assertBriefingCanCollectSignatures($briefing);
+        $summary = $this->refreshBriefingSignatureSummary($briefing);
+
+        if (($summary['total'] ?? 0) === 0) {
+            throw new DomainException(trans_message('safety_management.errors.briefing_participant_required'));
+        }
+
+        if (($summary['pending'] ?? 0) > 0) {
+            throw new DomainException(trans_message('safety_management.errors.briefing_has_pending_signatures'));
+        }
+
+        $briefing->update([
+            'status' => 'completed',
+            'completed_at' => now(),
+            'completed_by_user_id' => $actorUserId,
+        ]);
+
+        return $this->freshBriefing($briefing);
+    }
+
+    public function cancelBriefing(SafetyBriefing $briefing, int $actorUserId, string $reason): SafetyBriefing
+    {
+        if (in_array($briefing->status, ['completed', 'cancelled'], true)) {
+            throw new DomainException(trans_message('safety_management.errors.briefing_cannot_be_changed'));
+        }
+
+        $reason = trim($reason);
+
+        if ($reason === '') {
+            throw new DomainException(trans_message('safety_management.errors.briefing_cancellation_reason_required'));
+        }
+
+        $briefing->update([
+            'status' => 'cancelled',
+            'cancelled_at' => now(),
+            'cancelled_by_user_id' => $actorUserId,
+            'cancellation_reason' => $reason,
+        ]);
+
+        return $this->freshBriefing($briefing);
     }
 
     public function createCorrectiveAction(int $organizationId, int $userId, array $data): SafetyCorrectiveAction
@@ -1274,6 +1535,135 @@ final class SafetyManagementService
             ->where('organization_id', $organizationId)
             ->where('user_id', $userId)
             ->first();
+    }
+
+    private function mobileBriefingsQuery(
+        int $organizationId,
+        int $userId,
+        ?WorkforceEmployee $employee,
+        array $filters = []
+    ): Builder {
+        return SafetyBriefing::forOrganization($organizationId)
+            ->whereHas('participants', static function ($relation) use ($userId, $employee): void {
+                $relation->where('user_id', $userId);
+
+                if ($employee instanceof WorkforceEmployee) {
+                    $relation->orWhere('employee_id', $employee->id);
+                }
+            })
+            ->when(!empty($filters['project_id']), fn ($query) => $query->where('project_id', (int) $filters['project_id']))
+            ->when(!empty($filters['status']), fn ($query) => $query->where('status', (string) $filters['status']));
+    }
+
+    private function createBriefingParticipant(SafetyBriefing $briefing, array $participant): SafetyBriefingParticipant
+    {
+        $employeeId = $participant['employee_id'] ?? null;
+        $employee = null;
+
+        if ($employeeId !== null && $employeeId !== '') {
+            $employee = $this->findEmployee((int) $briefing->organization_id, (int) $employeeId);
+        }
+
+        $userIdValue = $participant['user_id'] ?? $employee?->user_id;
+        $externalName = trim((string) ($participant['external_name'] ?? ''));
+
+        if ($employee === null && $userIdValue === null && $externalName === '') {
+            throw new DomainException(trans_message('safety_management.errors.briefing_participant_required'));
+        }
+
+        $this->assertOptionalUserBelongsToOrganization($userIdValue, (int) $briefing->organization_id);
+
+        if ($employee instanceof WorkforceEmployee && $userIdValue !== null && $employee->user_id !== null && (int) $employee->user_id !== (int) $userIdValue) {
+            throw new DomainException(trans_message('safety_management.errors.briefing_participant_user_mismatch'));
+        }
+
+        return $briefing->participants()->create([
+            'employee_id' => $employee?->id,
+            'user_id' => $userIdValue,
+            'external_name' => $externalName !== '' ? $externalName : null,
+            'company_name' => $participant['company_name'] ?? null,
+            'role_name' => $participant['role_name'] ?? null,
+            'signature_status' => 'pending',
+            'signed_at' => null,
+            'signed_by_user_id' => null,
+            'signature_method' => null,
+            'metadata' => $participant['metadata'] ?? null,
+        ]);
+    }
+
+    private function findBriefingParticipant(SafetyBriefing $briefing, int $participantId): SafetyBriefingParticipant
+    {
+        $participant = $briefing->participants()
+            ->where('id', $participantId)
+            ->first();
+
+        if (!$participant instanceof SafetyBriefingParticipant) {
+            throw new DomainException(trans_message('safety_management.errors.briefing_participant_not_found'));
+        }
+
+        return $participant;
+    }
+
+    private function assertBriefingCanCollectSignatures(SafetyBriefing $briefing): void
+    {
+        if (in_array($briefing->status, ['completed', 'cancelled'], true)) {
+            throw new DomainException(trans_message('safety_management.errors.briefing_cannot_be_changed'));
+        }
+    }
+
+    private function refreshBriefingSignatureSummary(SafetyBriefing $briefing): array
+    {
+        $counts = $briefing->participants()
+            ->selectRaw('signature_status, count(*) as aggregate')
+            ->groupBy('signature_status')
+            ->pluck('aggregate', 'signature_status');
+        $total = (int) $counts->sum();
+        $signed = (int) ($counts['signed'] ?? 0);
+        $pending = (int) ($counts['pending'] ?? 0);
+        $absent = (int) ($counts['absent'] ?? 0);
+        $refused = (int) ($counts['refused'] ?? 0);
+        $resolved = $signed + $absent + $refused;
+        $summary = [
+            'total' => $total,
+            'signed' => $signed,
+            'pending' => $pending,
+            'absent' => $absent,
+            'refused' => $refused,
+            'resolved' => $resolved,
+            'completion_percent' => $total === 0 ? 0 : round(($resolved / $total) * 100, 2),
+            'all_resolved' => $total > 0 && $pending === 0,
+        ];
+
+        $briefing->forceFill(['signature_summary' => $summary])->save();
+
+        return $summary;
+    }
+
+    private function emptyBriefingSignatureSummary(): array
+    {
+        return [
+            'total' => 0,
+            'signed' => 0,
+            'pending' => 0,
+            'absent' => 0,
+            'refused' => 0,
+            'resolved' => 0,
+            'completion_percent' => 0,
+            'all_resolved' => false,
+        ];
+    }
+
+    private function freshBriefing(SafetyBriefing $briefing): SafetyBriefing
+    {
+        return $briefing->fresh([
+            'project:id,name',
+            'conductedByUser:id,name',
+            'completedByUser:id,name',
+            'cancelledByUser:id,name',
+            'participants.user:id,name',
+            'participants.employee:id,last_name,first_name,middle_name',
+            'participants.signedByUser:id,name',
+        ]);
     }
 
     private function freshPermit(SafetyWorkPermit $permit): SafetyWorkPermit

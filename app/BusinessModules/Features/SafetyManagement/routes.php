@@ -216,6 +216,30 @@ Route::prefix('api/v1/admin/safety-management')
         Route::post('/briefings', [SafetyManagementController::class, 'storeBriefing'])
             ->middleware('authorize:safety-management.briefings.manage')
             ->name('briefings.store');
+        Route::post('/briefings/{id}/participants', [SafetyManagementController::class, 'addBriefingParticipants'])
+            ->whereNumber('id')
+            ->middleware('authorize:safety-management.briefings.manage')
+            ->name('briefings.participants.add');
+        Route::post('/briefings/{id}/participants/{participantId}/sign', [SafetyManagementController::class, 'signBriefingParticipant'])
+            ->whereNumber(['id', 'participantId'])
+            ->middleware('authorize:safety-management.briefings.manage')
+            ->name('briefings.participants.sign');
+        Route::post('/briefings/{id}/participants/{participantId}/mark-absent', [SafetyManagementController::class, 'markBriefingParticipantAbsent'])
+            ->whereNumber(['id', 'participantId'])
+            ->middleware('authorize:safety-management.briefings.manage')
+            ->name('briefings.participants.mark_absent');
+        Route::post('/briefings/{id}/participants/{participantId}/mark-refused', [SafetyManagementController::class, 'markBriefingParticipantRefused'])
+            ->whereNumber(['id', 'participantId'])
+            ->middleware('authorize:safety-management.briefings.manage')
+            ->name('briefings.participants.mark_refused');
+        Route::post('/briefings/{id}/complete', [SafetyManagementController::class, 'completeBriefing'])
+            ->whereNumber('id')
+            ->middleware('authorize:safety-management.briefings.manage')
+            ->name('briefings.complete');
+        Route::post('/briefings/{id}/cancel', [SafetyManagementController::class, 'cancelBriefing'])
+            ->whereNumber('id')
+            ->middleware('authorize:safety-management.briefings.manage')
+            ->name('briefings.cancel');
 
         Route::get('/corrective-actions', [SafetyManagementController::class, 'correctiveActions'])
             ->middleware('authorize:safety-management.view')
@@ -278,6 +302,17 @@ Route::prefix('api/v1/mobile/safety-management')
             ->whereNumber('id')
             ->middleware('authorize:safety-management.permits.manage')
             ->name('work_permits.close');
+        Route::get('/briefings', [MobileSafetyManagementController::class, 'briefings'])
+            ->middleware('authorize:safety-management.view')
+            ->name('briefings.index');
+        Route::get('/briefings/{id}', [MobileSafetyManagementController::class, 'showBriefing'])
+            ->whereNumber('id')
+            ->middleware('authorize:safety-management.view')
+            ->name('briefings.show');
+        Route::post('/briefings/{id}/participants/{participantId}/sign', [MobileSafetyManagementController::class, 'signBriefingParticipant'])
+            ->whereNumber(['id', 'participantId'])
+            ->middleware('authorize:safety-management.view')
+            ->name('briefings.participants.sign');
         Route::get('/incidents', [MobileSafetyManagementController::class, 'incidents'])
             ->middleware('authorize:safety-management.view')
             ->name('incidents.index');

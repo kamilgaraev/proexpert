@@ -6,8 +6,11 @@ namespace Tests\Feature\Api\V1\Mobile;
 
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyInspection;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyInspectionFinding;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyBriefing;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyBriefingParticipant;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyRequirementMatrix;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermit;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermitParticipant;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -35,11 +38,30 @@ final class SafetyManagementMobileTest extends TestCase
             'is_active' => true,
             'settings' => null,
         ]);
+        $employee = WorkforceEmployee::query()->create([
+            'organization_id' => $context->organization->id,
+            'user_id' => $context->user->id,
+            'personnel_number' => 'SAFE-MOB-SCOPE-001',
+            'last_name' => 'Полевой',
+            'first_name' => 'Работник',
+            'employment_status' => 'active',
+            'hire_date' => now()->subMonth()->toDateString(),
+        ]);
         $this->allowAdminAccess();
         $this->allowModuleAccess();
 
         $ownPermit = $this->createPermit($context, $project, $context->user, 'approved');
-        $sharedPermit = $this->createPermit($context, $project, null, 'active');
+        $unassignedPermit = $this->createPermit($context, $project, null, 'active');
+        $participantPermit = $this->createPermit($context, $project, $otherUser, 'active');
+        SafetyWorkPermitParticipant::query()->create([
+            'organization_id' => $context->organization->id,
+            'permit_id' => $participantPermit->id,
+            'employee_id' => $employee->id,
+            'user_id' => $context->user->id,
+            'role_name' => 'Исполнитель',
+            'work_category' => 'height_work',
+            'admission_status' => 'admitted',
+        ]);
         $otherAssignedPermit = $this->createPermit($context, $project, $otherUser, 'approved');
         $foreignPermit = $this->createPermit($foreignContext, $foreignProject, null, 'approved');
 
@@ -49,7 +71,8 @@ final class SafetyManagementMobileTest extends TestCase
         $response->assertOk();
         $permitIds = collect($response->json('data.data'))->pluck('id')->all();
         $this->assertContains($ownPermit->id, $permitIds);
-        $this->assertContains($sharedPermit->id, $permitIds);
+        $this->assertContains($participantPermit->id, $permitIds);
+        $this->assertNotContains($unassignedPermit->id, $permitIds);
         $this->assertNotContains($otherAssignedPermit->id, $permitIds);
         $this->assertNotContains($foreignPermit->id, $permitIds);
 
@@ -59,6 +82,11 @@ final class SafetyManagementMobileTest extends TestCase
             ->assertJsonPath('data.available_actions.0', 'activate');
 
         $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/mobile/safety-management/work-permits/{$participantPermit->id}")
+            ->assertOk()
+            ->assertJsonPath('data.id', $participantPermit->id);
+
+        $this->withHeaders($context->authHeaders())
             ->getJson("/api/v1/mobile/safety-management/work-permits/{$otherAssignedPermit->id}")
             ->assertNotFound();
 
@@ -66,6 +94,130 @@ final class SafetyManagementMobileTest extends TestCase
             ->getJson('/api/v1/mobile/safety-management/work-permits?status=not-a-status')
             ->assertStatus(422)
             ->assertJsonPath('errors.status.0', trans_message('safety_management.validation.status_invalid'));
+    }
+
+    public function test_mobile_user_can_view_and_sign_only_own_briefing_participant(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $otherUser = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $context->organization->users()->attach($otherUser->id, [
+            'is_owner' => false,
+            'is_active' => true,
+            'settings' => null,
+        ]);
+        $employee = WorkforceEmployee::query()->create([
+            'organization_id' => $context->organization->id,
+            'user_id' => $context->user->id,
+            'personnel_number' => 'SAFE-BRF-MOB-001',
+            'last_name' => 'Полевой',
+            'first_name' => 'Инструктируемый',
+            'employment_status' => 'active',
+            'hire_date' => now()->subMonth()->toDateString(),
+        ]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $briefing = SafetyBriefing::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'conducted_by_user_id' => $otherUser->id,
+            'briefing_number' => 'HSE-B-MOB-001',
+            'title' => 'Инструктаж перед сменой',
+            'briefing_type' => 'toolbox',
+            'location_name' => 'Башня А',
+            'conducted_at' => now()->subHour(),
+            'status' => 'awaiting_signatures',
+            'started_at' => now()->subHour(),
+            'signature_summary' => [
+                'total' => 2,
+                'signed' => 0,
+                'pending' => 2,
+                'absent' => 0,
+                'refused' => 0,
+                'resolved' => 0,
+                'completion_percent' => 0,
+                'all_resolved' => false,
+            ],
+            'topics' => ['Безопасный проход'],
+        ]);
+        $ownParticipant = SafetyBriefingParticipant::query()->create([
+            'briefing_id' => $briefing->id,
+            'employee_id' => $employee->id,
+            'user_id' => $context->user->id,
+            'role_name' => 'Исполнитель',
+            'signature_status' => 'pending',
+        ]);
+        $otherParticipant = SafetyBriefingParticipant::query()->create([
+            'briefing_id' => $briefing->id,
+            'user_id' => $otherUser->id,
+            'role_name' => 'Наблюдающий',
+            'signature_status' => 'pending',
+        ]);
+        $foreignBriefing = SafetyBriefing::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'conducted_by_user_id' => $otherUser->id,
+            'briefing_number' => 'HSE-B-MOB-002',
+            'title' => 'Чужой инструктаж',
+            'briefing_type' => 'target',
+            'conducted_at' => now()->subMinutes(30),
+            'status' => 'awaiting_signatures',
+            'started_at' => now()->subMinutes(30),
+            'signature_summary' => [
+                'total' => 1,
+                'signed' => 0,
+                'pending' => 1,
+                'absent' => 0,
+                'refused' => 0,
+                'resolved' => 0,
+                'completion_percent' => 0,
+                'all_resolved' => false,
+            ],
+        ]);
+        SafetyBriefingParticipant::query()->create([
+            'briefing_id' => $foreignBriefing->id,
+            'user_id' => $otherUser->id,
+            'signature_status' => 'pending',
+        ]);
+
+        $dashboard = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/mobile/safety-management/dashboard?project_id={$project->id}");
+        $dashboard->assertOk()
+            ->assertJsonPath('data.mine.briefings_to_sign', 1);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/mobile/safety-management/briefings');
+        $response->assertOk();
+        $briefingIds = collect($response->json('data.data'))->pluck('id')->all();
+        $this->assertContains($briefing->id, $briefingIds);
+        $this->assertNotContains($foreignBriefing->id, $briefingIds);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/mobile/safety-management/briefings/{$briefing->id}")
+            ->assertOk()
+            ->assertJsonPath('data.participants.0.signature_status', 'pending');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/safety-management/briefings/{$briefing->id}/participants/{$otherParticipant->id}/sign")
+            ->assertStatus(422)
+            ->assertJsonPath('message', trans_message('safety_management.errors.briefing_participant_not_found'));
+
+        $signed = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/mobile/safety-management/briefings/{$briefing->id}/participants/{$ownParticipant->id}/sign");
+
+        $signed->assertOk()
+            ->assertJsonPath('data.signature_summary.signed', 1)
+            ->assertJsonPath('data.signature_summary.pending', 1);
+        $signedParticipant = collect($signed->json('data.participants'))->firstWhere('id', $ownParticipant->id);
+        self::assertSame('signed', $signedParticipant['signature_status']);
+        self::assertSame('mobile', $signedParticipant['signature_method']);
+        self::assertSame($context->user->id, $signedParticipant['signed_by_user_id']);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/mobile/safety-management/dashboard?project_id={$project->id}")
+            ->assertOk()
+            ->assertJsonPath('data.mine.briefings_to_sign', 0);
     }
 
     public function test_mobile_dashboard_and_my_admission_are_available_for_current_user(): void

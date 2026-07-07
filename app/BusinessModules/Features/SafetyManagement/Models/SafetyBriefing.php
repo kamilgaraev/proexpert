@@ -25,6 +25,15 @@ final class SafetyBriefing extends Model
         'briefing_type',
         'location_name',
         'conducted_at',
+        'status',
+        'started_at',
+        'signature_deadline_at',
+        'completed_at',
+        'completed_by_user_id',
+        'cancelled_at',
+        'cancelled_by_user_id',
+        'cancellation_reason',
+        'signature_summary',
         'topics',
         'notes',
         'metadata',
@@ -32,6 +41,11 @@ final class SafetyBriefing extends Model
 
     protected $casts = [
         'conducted_at' => 'datetime',
+        'started_at' => 'datetime',
+        'signature_deadline_at' => 'datetime',
+        'completed_at' => 'datetime',
+        'cancelled_at' => 'datetime',
+        'signature_summary' => 'array',
         'topics' => 'array',
         'metadata' => 'array',
     ];
@@ -44,6 +58,16 @@ final class SafetyBriefing extends Model
     public function conductedByUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'conducted_by_user_id');
+    }
+
+    public function completedByUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'completed_by_user_id');
+    }
+
+    public function cancelledByUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'cancelled_by_user_id');
     }
 
     public function participants(): HasMany

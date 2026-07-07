@@ -9,9 +9,12 @@ use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborPayrollAc
 use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborTimesheet;
 use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborWorkOrder;
 use App\BusinessModules\Features\ProductionLabor\Models\ProductionLaborWorkOrderLine;
+use App\BusinessModules\Features\SafetyManagement\DTOs\SafetyComplianceContext;
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermit;
+use App\BusinessModules\Features\SafetyManagement\Services\SafetyComplianceService;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
 use App\Models\Project;
+use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
@@ -19,6 +22,11 @@ use Illuminate\Support\Facades\DB;
 
 final class ProductionLaborService
 {
+    public function __construct(
+        private readonly SafetyComplianceService $safetyComplianceService,
+    ) {
+    }
+
     public function paginateWorkOrders(int $organizationId, int $perPage, array $filters = []): LengthAwarePaginator
     {
         return ProductionLaborWorkOrder::query()
@@ -285,6 +293,7 @@ final class ProductionLaborService
                         (int) $workOrder->project_id,
                         $payload['shift_date'],
                         $safetyPermitReference,
+                        $line,
                         $employee
                     );
                 }
@@ -439,6 +448,7 @@ final class ProductionLaborService
         int $projectId,
         string $shiftDate,
         string $permitNumber,
+        ProductionLaborWorkOrderLine $line,
         ?WorkforceEmployee $employee = null
     ): void {
         $permit = SafetyWorkPermit::query()
@@ -455,13 +465,35 @@ final class ProductionLaborService
             throw new DomainException(trans_message('production_labor.errors.safety_permit_required'));
         }
 
-        if ($employee === null || $permit->participants->isEmpty()) {
+        if ($employee === null) {
             return;
+        }
+
+        if ($permit->participants->isEmpty()) {
+            throw new DomainException(trans_message('production_labor.errors.safety_permit_employee_not_admitted'));
         }
 
         $participant = $permit->participants->firstWhere('employee_id', $employee->id);
 
-        if ($participant === null || !in_array($participant->admission_status, ['admitted', 'partial'], true)) {
+        if ($participant === null) {
+            throw new DomainException(trans_message('production_labor.errors.safety_permit_employee_not_admitted'));
+        }
+
+        $metadata = is_array($line->metadata) ? $line->metadata : [];
+        $result = $this->safetyComplianceService->check(new SafetyComplianceContext(
+            organizationId: $organizationId,
+            employeeId: (int) $employee->id,
+            userId: $employee->user_id === null ? null : (int) $employee->user_id,
+            projectId: $projectId,
+            workTypeId: $line->work_type_id === null ? null : (int) $line->work_type_id,
+            workCategory: (string) ($metadata['work_category'] ?? $metadata['safety_work_category'] ?? $participant->work_category ?? $permit->permit_type),
+            date: CarbonImmutable::parse($shiftDate),
+            positionName: $participant->position_name,
+            permitId: (int) $permit->id,
+            workOrderLineId: (int) $line->id,
+        ));
+
+        if ($result->blocked) {
             throw new DomainException(trans_message('production_labor.errors.safety_permit_employee_not_admitted'));
         }
     }

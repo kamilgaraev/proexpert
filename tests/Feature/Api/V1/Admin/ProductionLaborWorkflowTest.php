@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin;
 
 use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermit;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyRequirementMatrix;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyWorkPermitParticipant;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\BusinessModules\Features\WorkforceManagement\Domain\HR\Models\WorkforceEmployee;
@@ -120,7 +122,7 @@ final class ProductionLaborWorkflowTest extends TestCase
             ]);
         $timesheetWithUnknownPermit->assertStatus(422);
 
-        SafetyWorkPermit::query()->create([
+        $permit = SafetyWorkPermit::query()->create([
             'organization_id' => $context->organization->id,
             'project_id' => $project->id,
             'created_by_user_id' => $context->user->id,
@@ -131,6 +133,22 @@ final class ProductionLaborWorkflowTest extends TestCase
             'valid_until' => now()->addDay(),
             'risk_level' => 'high',
             'status' => 'active',
+        ]);
+        SafetyRequirementMatrix::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'work_category' => 'high_risk_work',
+            'risk_level' => 'high',
+            'requirements' => [],
+            'is_active' => true,
+            'effective_from' => now()->subDay()->toDateString(),
+        ]);
+        SafetyWorkPermitParticipant::query()->create([
+            'organization_id' => $context->organization->id,
+            'permit_id' => $permit->id,
+            'employee_id' => $employee->id,
+            'work_category' => 'high_risk_work',
+            'admission_status' => 'admitted',
         ]);
 
         $timesheet = $this->withHeaders($context->authHeaders())

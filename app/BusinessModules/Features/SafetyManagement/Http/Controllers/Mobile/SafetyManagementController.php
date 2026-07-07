@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\SafetyManagement\Http\Controllers\Mobile;
 
+use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyBriefingResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyIncidentResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyComplianceResultResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyInspectionFindingResource;
@@ -32,6 +33,12 @@ final class SafetyManagementController extends Controller
         'suspended',
         'rejected',
         'closed',
+        'cancelled',
+    ];
+
+    private const BRIEFING_STATUSES = [
+        'awaiting_signatures',
+        'completed',
         'cancelled',
     ];
 
@@ -185,6 +192,94 @@ final class SafetyManagementController extends Controller
             ]);
 
             return MobileResponse::error(trans_message('safety_management.errors.index_failed'), 500);
+        }
+    }
+
+    public function briefings(Request $request): JsonResponse
+    {
+        try {
+            $filters = $this->validated($request, [
+                'project_id' => ['nullable', 'integer'],
+                'status' => ['nullable', 'string', Rule::in(self::BRIEFING_STATUSES)],
+            ]);
+
+            $briefings = $this->service->mobileBriefingsForUser(
+                (int) $request->attributes->get('current_organization_id'),
+                (int) $request->user()?->id,
+                $filters
+            );
+
+            return MobileResponse::success(SafetyBriefingResource::collection(collect($briefings)));
+        } catch (ValidationException $exception) {
+            return MobileResponse::error(
+                trans_message('safety_management.errors.validation_failed'),
+                422,
+                $exception->errors()
+            );
+        } catch (\Throwable $exception) {
+            Log::error('safety_management.mobile.briefings.index.error', [
+                'user_id' => $request->user()?->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return MobileResponse::error(trans_message('safety_management.errors.index_failed'), 500);
+        }
+    }
+
+    public function showBriefing(Request $request, int $id): JsonResponse
+    {
+        try {
+            $briefing = $this->service->findMobileBriefing(
+                (int) $request->attributes->get('current_organization_id'),
+                (int) $request->user()?->id,
+                $id
+            );
+
+            if ($briefing === null) {
+                return MobileResponse::error(trans_message('safety_management.errors.briefing_not_found'), 404);
+            }
+
+            return MobileResponse::success(new SafetyBriefingResource($briefing));
+        } catch (\Throwable $exception) {
+            Log::error('safety_management.mobile.briefings.show.error', [
+                'user_id' => $request->user()?->id,
+                'briefing_id' => $id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return MobileResponse::error(trans_message('safety_management.errors.index_failed'), 500);
+        }
+    }
+
+    public function signBriefingParticipant(Request $request, int $id, int $participantId): JsonResponse
+    {
+        try {
+            $briefing = $this->service->signMobileBriefingParticipant(
+                (int) $request->attributes->get('current_organization_id'),
+                (int) $request->user()?->id,
+                $id,
+                $participantId
+            );
+
+            if ($briefing === null) {
+                return MobileResponse::error(trans_message('safety_management.errors.briefing_not_found'), 404);
+            }
+
+            return MobileResponse::success(
+                new SafetyBriefingResource($briefing),
+                trans_message('safety_management.messages.briefing_signed')
+            );
+        } catch (DomainException $exception) {
+            return MobileResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            Log::error('safety_management.mobile.briefings.sign.error', [
+                'user_id' => $request->user()?->id,
+                'briefing_id' => $id,
+                'participant_id' => $participantId,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return MobileResponse::error(trans_message('safety_management.errors.action_failed'), 500);
         }
     }
 

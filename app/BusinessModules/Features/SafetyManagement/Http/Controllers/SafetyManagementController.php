@@ -1233,15 +1233,16 @@ final class SafetyManagementController extends Controller
                 'briefing_type' => ['required', 'string', 'max:80'],
                 'location_name' => ['nullable', 'string', 'max:255'],
                 'conducted_at' => ['required', 'date'],
+                'signature_deadline_at' => ['nullable', 'date', 'after_or_equal:conducted_at'],
                 'topics' => ['nullable', 'array'],
                 'topics.*' => ['string', 'max:160'],
                 'notes' => ['nullable', 'string', 'max:5000'],
                 'participants' => ['required', 'array', 'min:1'],
+                'participants.*.employee_id' => ['nullable', 'integer'],
                 'participants.*.user_id' => ['nullable', 'integer'],
                 'participants.*.external_name' => ['nullable', 'string', 'max:255'],
                 'participants.*.company_name' => ['nullable', 'string', 'max:255'],
                 'participants.*.role_name' => ['nullable', 'string', 'max:255'],
-                'participants.*.signed_at' => ['nullable', 'date'],
                 'participants.*.metadata' => ['nullable', 'array'],
                 'metadata' => ['nullable', 'array'],
             ]);
@@ -1262,6 +1263,118 @@ final class SafetyManagementController extends Controller
         } catch (\Throwable $exception) {
             return $this->failedStore($request, $exception, 'briefings');
         }
+    }
+
+    public function addBriefingParticipants(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'participants' => ['required', 'array', 'min:1'],
+                'participants.*.employee_id' => ['nullable', 'integer'],
+                'participants.*.user_id' => ['nullable', 'integer'],
+                'participants.*.external_name' => ['nullable', 'string', 'max:255'],
+                'participants.*.company_name' => ['nullable', 'string', 'max:255'],
+                'participants.*.role_name' => ['nullable', 'string', 'max:255'],
+                'participants.*.metadata' => ['nullable', 'array'],
+            ]);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        }
+
+        return $this->briefingAction(
+            $request,
+            $id,
+            fn ($briefing) => $this->service->addBriefingParticipants($briefing, $validated['participants'])
+        );
+    }
+
+    public function signBriefingParticipant(Request $request, int $id, int $participantId): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'signature_method' => ['nullable', 'string', 'max:40'],
+                'metadata' => ['nullable', 'array'],
+            ]);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        }
+
+        return $this->briefingAction(
+            $request,
+            $id,
+            fn ($briefing) => $this->service->signBriefingParticipant(
+                $briefing,
+                $participantId,
+                (int) $request->user()?->id,
+                (string) ($validated['signature_method'] ?? 'admin'),
+                $validated['metadata'] ?? []
+            ),
+            trans_message('safety_management.messages.briefing_signed')
+        );
+    }
+
+    public function markBriefingParticipantAbsent(Request $request, int $id, int $participantId): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'absence_reason' => ['required', 'string', 'max:1000'],
+            ]);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        }
+
+        return $this->briefingAction(
+            $request,
+            $id,
+            fn ($briefing) => $this->service->markBriefingParticipantAbsent($briefing, $participantId, $validated['absence_reason']),
+            trans_message('safety_management.messages.briefing_participant_absent')
+        );
+    }
+
+    public function markBriefingParticipantRefused(Request $request, int $id, int $participantId): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'refusal_reason' => ['required', 'string', 'max:1000'],
+            ]);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        }
+
+        return $this->briefingAction(
+            $request,
+            $id,
+            fn ($briefing) => $this->service->markBriefingParticipantRefused($briefing, $participantId, $validated['refusal_reason']),
+            trans_message('safety_management.messages.briefing_participant_refused')
+        );
+    }
+
+    public function completeBriefing(Request $request, int $id): JsonResponse
+    {
+        return $this->briefingAction(
+            $request,
+            $id,
+            fn ($briefing) => $this->service->completeBriefing($briefing, (int) $request->user()?->id),
+            trans_message('safety_management.messages.briefing_completed')
+        );
+    }
+
+    public function cancelBriefing(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'cancellation_reason' => ['required', 'string', 'max:2000'],
+            ]);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        }
+
+        return $this->briefingAction(
+            $request,
+            $id,
+            fn ($briefing) => $this->service->cancelBriefing($briefing, (int) $request->user()?->id, $validated['cancellation_reason']),
+            trans_message('safety_management.messages.briefing_cancelled')
+        );
     }
 
     public function storeCorrectiveAction(Request $request): JsonResponse
@@ -1370,6 +1483,23 @@ final class SafetyManagementController extends Controller
             }
 
             return AdminResponse::success(new SafetyViolationResource($action($violation)));
+        } catch (DomainException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422);
+        } catch (\Throwable $exception) {
+            return $this->failedAction($request, $exception);
+        }
+    }
+
+    private function briefingAction(Request $request, int $id, callable $action, ?string $message = null): JsonResponse
+    {
+        try {
+            $briefing = $this->service->findBriefing((int) $request->attributes->get('current_organization_id'), $id);
+
+            if ($briefing === null) {
+                return AdminResponse::error(trans_message('safety_management.errors.briefing_not_found'), 404);
+            }
+
+            return AdminResponse::success(new SafetyBriefingResource($action($briefing)), $message);
         } catch (DomainException $exception) {
             return AdminResponse::error($exception->getMessage(), 422);
         } catch (\Throwable $exception) {

@@ -56,6 +56,10 @@ final class SafetyComplianceService
                 $warnings[] = $this->flag('medical_exam_restrictions', 'warning', $result);
             }
 
+            if ($result->status === 'waived') {
+                $warnings[] = $this->flag('requirement_waived', 'warning', $result);
+            }
+
             if ($this->isExpiringSoon($result->validUntil, $date)) {
                 $warnings[] = $this->flag('requirement_expires_soon', 'warning', $result);
             }
@@ -288,7 +292,14 @@ final class SafetyComplianceService
         $override = $this->validEmployeeRequirement($context, $requirement, $date);
 
         if ($override instanceof SafetyEmployeeRequirement) {
-            return $this->result($requirement, 'fulfilled', 'ok', $override->valid_until, 'employee_requirement', (int) $override->id);
+            return $this->result(
+                $requirement,
+                $override->status === 'waived' ? 'waived' : 'fulfilled',
+                $override->status === 'waived' ? 'warning' : 'ok',
+                $override->valid_until,
+                'employee_requirement',
+                (int) $override->id
+            );
         }
 
         return match ($requirement['type']) {
@@ -310,7 +321,7 @@ final class SafetyComplianceService
             ->where('employee_id', $context->employeeId)
             ->where('requirement_type', $requirement['type'])
             ->where('requirement_code', $requirement['code'])
-            ->whereIn('status', ['fulfilled', 'valid', 'approved', 'completed'])
+            ->whereIn('status', ['fulfilled', 'valid', 'approved', 'completed', 'waived'])
             ->where(static function (Builder $query) use ($date): void {
                 $query->whereNull('valid_from')->orWhereDate('valid_from', '<=', $date->toDateString());
             })
@@ -426,16 +437,20 @@ final class SafetyComplianceService
         array $requirement,
         CarbonInterface $date
     ): SafetyComplianceRequirementResult {
-        if ($employee->user_id === null) {
-            return $this->result($requirement, 'missing', $this->severity($requirement));
-        }
-
         $participant = SafetyBriefingParticipant::query()
-            ->where('user_id', $employee->user_id)
+            ->where(function (Builder $query) use ($employee): void {
+                $query->where('employee_id', $employee->id);
+
+                if ($employee->user_id !== null) {
+                    $query->orWhere('user_id', $employee->user_id);
+                }
+            })
+            ->where('signature_status', 'signed')
             ->whereNotNull('signed_at')
             ->whereHas('briefing', static function (Builder $query) use ($context, $requirement, $date): void {
                 $query->where('organization_id', $context->organizationId)
                     ->where('briefing_type', $requirement['code'])
+                    ->where('status', 'completed')
                     ->whereDate('conducted_at', '<=', $date->toDateString())
                     ->when($context->projectId !== null, static fn (Builder $query): Builder => $query->where('project_id', $context->projectId));
             })
