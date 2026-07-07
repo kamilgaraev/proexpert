@@ -11,6 +11,8 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceiptLine;
+use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
+use App\BusinessModules\Features\Procurement\Models\SupplierProposalVersion;
 use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
 use App\BusinessModules\Features\Procurement\Services\PurchaseOrderPaymentGateService;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -36,6 +38,7 @@ final class MobilePurchaseOrderResource extends JsonResource
             'status' => $this->statusValue($order),
             'status_label' => trans_message('procurement.mobile.purchase_order_statuses.'.$this->statusValue($order)),
             'total_amount' => (float) $order->total_amount,
+            'pricing_breakdown' => $this->pricingBreakdown($order),
             'currency' => $order->currency,
             'delivery_date' => $order->delivery_date?->toDateString(),
             'sent_at' => $order->sent_at?->toIso8601String(),
@@ -165,6 +168,86 @@ final class MobilePurchaseOrderResource extends JsonResource
             })
             ->values()
             ->all();
+    }
+
+    private function pricingBreakdown(PurchaseOrder $order): array
+    {
+        $snapshot = $this->acceptedCommercialSnapshot($order);
+        $itemsAmount = $this->itemsSubtotal($order);
+        $deliveryAmount = $this->numericPayloadValue($snapshot, 'delivery_amount') ?? 0.0;
+        $vatAmount = $this->numericPayloadValue($snapshot, 'vat_amount') ?? 0.0;
+        $totalAmount = $this->numericPayloadValue($snapshot, 'total_amount') ?? (float) $order->total_amount;
+        $subtotalAmount = $this->numericPayloadValue($snapshot, 'subtotal_amount')
+            ?? $itemsAmount
+            ?? max($totalAmount - $deliveryAmount - $vatAmount, 0.0);
+
+        return [
+            'subtotal_amount' => round($subtotalAmount, 2),
+            'delivery_amount' => round($deliveryAmount, 2),
+            'vat_amount' => round($vatAmount, 2),
+            'total_amount' => round($totalAmount, 2),
+            'currency' => $this->stringPayloadValue($snapshot, 'currency') ?? $order->currency,
+            'vat_mode' => $this->stringPayloadValue($snapshot, 'vat_mode'),
+            'vat_rate' => $this->numericPayloadValue($snapshot, 'vat_rate'),
+        ];
+    }
+
+    private function acceptedCommercialSnapshot(PurchaseOrder $order): array
+    {
+        $version = $order->relationLoaded('acceptedSupplierProposalVersion')
+            ? $order->acceptedSupplierProposalVersion
+            : null;
+
+        if ($version instanceof SupplierProposalVersion && is_array($version->commercial_snapshot)) {
+            return $version->commercial_snapshot;
+        }
+
+        $proposal = $order->relationLoaded('acceptedSupplierProposal')
+            ? $order->acceptedSupplierProposal
+            : null;
+
+        if (! $proposal instanceof SupplierProposal) {
+            return [];
+        }
+
+        return [
+            'subtotal_amount' => (float) $proposal->subtotal_amount,
+            'delivery_amount' => (float) $proposal->delivery_amount,
+            'vat_amount' => (float) $proposal->vat_amount,
+            'total_amount' => (float) $proposal->total_amount,
+            'currency' => $proposal->currency,
+            'vat_mode' => $proposal->vat_mode,
+            'vat_rate' => $proposal->vat_rate === null ? null : (float) $proposal->vat_rate,
+        ];
+    }
+
+    private function itemsSubtotal(PurchaseOrder $order): ?float
+    {
+        if (! $order->relationLoaded('items')) {
+            return null;
+        }
+
+        return round((float) $order->items->sum('total_price'), 2);
+    }
+
+    private function numericPayloadValue(array $payload, string $key): ?float
+    {
+        $value = $payload[$key] ?? null;
+
+        return is_numeric($value) ? (float) $value : null;
+    }
+
+    private function stringPayloadValue(array $payload, string $key): ?string
+    {
+        $value = $payload[$key] ?? null;
+
+        if (! is_string($value) && ! is_numeric($value)) {
+            return null;
+        }
+
+        $normalized = trim((string) $value);
+
+        return $normalized === '' ? null : $normalized;
     }
 
     private function receipts(PurchaseOrder $order): array

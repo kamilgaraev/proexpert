@@ -255,6 +255,8 @@ final class MobileProcurementService
                 'supplier',
                 'externalSupplierContact',
                 'supplierParty',
+                'acceptedSupplierProposal',
+                'acceptedSupplierProposalVersion',
                 'purchaseRequest.siteRequest.project',
                 'items.receiptLines',
                 'receipts.warehouse',
