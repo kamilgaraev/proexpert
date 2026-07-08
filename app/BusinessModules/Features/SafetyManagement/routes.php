@@ -15,6 +15,10 @@ Route::prefix('api/v1/admin/safety-management')
             ->middleware('authorize:safety-management.view')
             ->name('dashboard');
 
+        Route::get('/employee-cards', [SafetyManagementController::class, 'employeeCards'])
+            ->middleware('authorize:safety-management.view')
+            ->name('employee_cards.index');
+
         Route::post('/admission/check', [SafetyManagementController::class, 'checkAdmission'])
             ->middleware('authorize:safety-management.view')
             ->name('admission.check');

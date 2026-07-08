@@ -213,6 +213,38 @@ return [
             'summary' => 'Сведения',
         ],
     ],
+    'employee_cards' => [
+        'statuses' => [
+            'admitted' => 'Готов к работам',
+            'partial' => 'Нужно заполнить карточку',
+            'not_admitted' => 'Не готов к работам',
+        ],
+        'next_actions' => [
+            'check_hr_status' => 'Проверьте статус сотрудника в HR',
+            'fix_blockers' => 'Устраните блокеры допуска',
+            'create_briefing' => 'Создайте инструктаж и соберите подпись',
+            'add_medical_exam' => 'Добавьте медосмотр',
+            'issue_ppe' => 'Зафиксируйте выдачу СИЗ',
+            'configure_requirements' => 'Добавьте правило допуска',
+            'ready_for_permit' => 'Можно включать в наряд',
+        ],
+        'blockers' => [
+            'employee_inactive' => 'Сотрудник не находится в активном статусе.',
+            'requirement' => ':label: :status.',
+            'training_failed' => ':label: обучение не пройдено.',
+            'medical_not_fit' => 'По медосмотру сотрудник не допущен к работам.',
+            'ppe_problem' => ':label: :status.',
+        ],
+        'warnings' => [
+            'requirements_missing' => 'Правила допуска по сотруднику еще не заполнены.',
+            'training_missing' => 'Нет записанного инструктажа или обучения.',
+            'training_pending' => ':label: ожидает проверки.',
+            'medical_missing' => 'Нет записанного медосмотра.',
+            'medical_restrictions' => 'Медосмотр содержит ограничения.',
+            'medical_restrictions_with_text' => 'Медосмотр содержит ограничения: :text.',
+            'ppe_missing' => 'Нет записанной выдачи СИЗ.',
+        ],
+    ],
     'problem_flags' => [
         'permit_expired' => 'Срок действия наряда-допуска истек.',
         'investigation_required' => 'Требуется расследование происшествия.',

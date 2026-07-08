@@ -135,6 +135,36 @@ final class SafetyComplianceWorkflowTest extends TestCase
         self::assertSame('not_admitted', $participant->refresh()->admission_status);
     }
 
+    public function test_employee_cards_include_workforce_employees_without_safety_records(): void
+    {
+        $context = AdminApiTestContext::create();
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $employee = WorkforceEmployee::query()->create([
+            'organization_id' => $context->organization->id,
+            'user_id' => $context->user->id,
+            'personnel_number' => 'SAFE-EMPTY',
+            'last_name' => 'Смирнов',
+            'first_name' => 'Алексей',
+            'employment_status' => 'active',
+            'hire_date' => now()->subMonth()->toDateString(),
+        ]);
+
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/safety-management/employee-cards?project_id={$project->id}");
+
+        $response->assertOk()
+            ->assertJsonPath('data.summary.total', 1)
+            ->assertJsonPath('data.summary.attention', 1)
+            ->assertJsonPath('data.cards.0.employee_id', $employee->id)
+            ->assertJsonPath('data.cards.0.employee_name', 'Смирнов Алексей')
+            ->assertJsonPath('data.cards.0.status', 'partial')
+            ->assertJsonPath('data.cards.0.next_action_label', trans_message('safety_management.employee_cards.next_actions.create_briefing'))
+            ->assertJsonPath('data.cards.0.record_counts.training_records', 0);
+    }
+
     public function test_inspection_completion_creates_open_finding_for_non_compliant_item(): void
     {
         $context = AdminApiTestContext::create();

@@ -30,6 +30,7 @@ use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 final class SafetyManagementService
@@ -37,6 +38,211 @@ final class SafetyManagementService
     public function __construct(
         private readonly SafetyComplianceService $complianceService,
     ) {
+    }
+
+    public function employeeCards(int $organizationId, array $filters = []): array
+    {
+        $limit = min(max((int) ($filters['per_page'] ?? 200), 1), 200);
+        $search = trim((string) ($filters['search'] ?? ''));
+
+        $employees = WorkforceEmployee::query()
+            ->with('user:id,name,email,current_organization_id')
+            ->where('organization_id', $organizationId)
+            ->when(!empty($filters['employee_id']), fn (Builder $query) => $query->whereKey((int) $filters['employee_id']))
+            ->when($search !== '', function (Builder $query) use ($search): void {
+                $query->where(function (Builder $scope) use ($search): void {
+                    $scope->where('last_name', 'like', "%{$search}%")
+                        ->orWhere('first_name', 'like', "%{$search}%")
+                        ->orWhere('middle_name', 'like', "%{$search}%")
+                        ->orWhere('personnel_number', 'like', "%{$search}%");
+                });
+            })
+            ->orderByRaw("case when employment_status = 'active' then 0 else 1 end")
+            ->orderBy('last_name')
+            ->orderBy('first_name')
+            ->limit($limit)
+            ->get();
+
+        $employeeIds = $employees->pluck('id')
+            ->map(static fn ($id): int => (int) $id)
+            ->values()
+            ->all();
+
+        if ($employeeIds === []) {
+            return [
+                'cards' => [],
+                'summary' => [
+                    'total' => 0,
+                    'ready' => 0,
+                    'attention' => 0,
+                    'blocked' => 0,
+                ],
+            ];
+        }
+
+        $projectId = !empty($filters['project_id']) ? (int) $filters['project_id'] : null;
+        $assignments = $this->currentEmployeeAssignments($organizationId, $employeeIds);
+        $requirements = SafetyEmployeeRequirement::forOrganization($organizationId)
+            ->with(['employee:id,last_name,first_name,middle_name', 'user:id,name', 'project:id,name', 'workType:id,name,code'])
+            ->whereIn('employee_id', $employeeIds)
+            ->when($projectId !== null, function (Builder $query) use ($projectId): void {
+                $query->where(function (Builder $scope) use ($projectId): void {
+                    $scope->whereNull('project_id')
+                        ->orWhere('project_id', $projectId);
+                });
+            })
+            ->orderByDesc('valid_until')
+            ->get()
+            ->groupBy('employee_id');
+        $trainingRecords = SafetyTrainingRecord::forOrganization($organizationId)
+            ->with(['employee:id,last_name,first_name,middle_name', 'user:id,name'])
+            ->whereIn('employee_id', $employeeIds)
+            ->orderByDesc('valid_until')
+            ->get()
+            ->groupBy('employee_id');
+        $medicalExams = SafetyMedicalExam::forOrganization($organizationId)
+            ->with(['employee:id,last_name,first_name,middle_name'])
+            ->whereIn('employee_id', $employeeIds)
+            ->orderByDesc('valid_until')
+            ->get()
+            ->groupBy('employee_id');
+        $ppeIssues = SafetyPpeIssue::forOrganization($organizationId)
+            ->with(['employee:id,last_name,first_name,middle_name'])
+            ->whereIn('employee_id', $employeeIds)
+            ->orderByDesc('issued_at')
+            ->get()
+            ->groupBy('employee_id');
+
+        $cards = $employees
+            ->map(function (WorkforceEmployee $employee) use ($assignments, $requirements, $trainingRecords, $medicalExams, $ppeIssues): array {
+                $employeeId = (int) $employee->id;
+                $employeeRequirements = $requirements->get($employeeId, collect())->values();
+                $employeeTrainingRecords = $trainingRecords->get($employeeId, collect())->values();
+                $employeeMedicalExams = $medicalExams->get($employeeId, collect())->values();
+                $employeePpeIssues = $ppeIssues->get($employeeId, collect())->values();
+                $assignment = $assignments->get($employeeId);
+                $blockers = [];
+                $warnings = [];
+
+                if ($employee->employment_status !== 'active') {
+                    $blockers[] = trans_message('safety_management.employee_cards.blockers.employee_inactive');
+                }
+
+                foreach ($employeeRequirements as $record) {
+                    if (in_array($record->status, ['expired', 'revoked'], true)) {
+                        $blockers[] = trans_message('safety_management.employee_cards.blockers.requirement', [
+                            'label' => $record->requirement_code,
+                            'status' => trans_message("safety_management.requirement_statuses.{$record->status}"),
+                        ]);
+                    }
+                }
+
+                foreach ($employeeTrainingRecords as $record) {
+                    if ($record->result === 'failed') {
+                        $blockers[] = trans_message('safety_management.employee_cards.blockers.training_failed', [
+                            'label' => $record->program_name,
+                        ]);
+                    }
+
+                    if ($record->result === 'pending') {
+                        $warnings[] = trans_message('safety_management.employee_cards.warnings.training_pending', [
+                            'label' => $record->program_name,
+                        ]);
+                    }
+                }
+
+                foreach ($employeeMedicalExams as $record) {
+                    if ($record->result === 'not_fit') {
+                        $blockers[] = trans_message('safety_management.employee_cards.blockers.medical_not_fit');
+                    }
+
+                    if ($record->result === 'fit_with_restrictions') {
+                        $warnings[] = $record->restrictions
+                            ? trans_message('safety_management.employee_cards.warnings.medical_restrictions_with_text', [
+                                'text' => $record->restrictions,
+                            ])
+                            : trans_message('safety_management.employee_cards.warnings.medical_restrictions');
+                    }
+                }
+
+                foreach ($employeePpeIssues as $record) {
+                    if (in_array($record->status, ['lost', 'damaged', 'expired'], true)) {
+                        $blockers[] = trans_message('safety_management.employee_cards.blockers.ppe_problem', [
+                            'label' => $record->ppe_name,
+                            'status' => trans_message("safety_management.ppe_issue_statuses.{$record->status}"),
+                        ]);
+                    }
+                }
+
+                if ($employeeRequirements->isEmpty()) {
+                    $warnings[] = trans_message('safety_management.employee_cards.warnings.requirements_missing');
+                }
+
+                if ($employeeTrainingRecords->isEmpty()) {
+                    $warnings[] = trans_message('safety_management.employee_cards.warnings.training_missing');
+                }
+
+                if ($employeeMedicalExams->isEmpty()) {
+                    $warnings[] = trans_message('safety_management.employee_cards.warnings.medical_missing');
+                }
+
+                if ($employeePpeIssues->isEmpty()) {
+                    $warnings[] = trans_message('safety_management.employee_cards.warnings.ppe_missing');
+                }
+
+                $status = $blockers !== []
+                    ? 'not_admitted'
+                    : ($warnings !== [] ? 'partial' : 'admitted');
+
+                return [
+                    'employee_id' => $employeeId,
+                    'employee_name' => $employee->full_name,
+                    'personnel_number' => $employee->personnel_number,
+                    'user_id' => $employee->user_id,
+                    'employment_status' => $employee->employment_status,
+                    'employment_status_label' => trans_message("workforce.employee_statuses.{$employee->employment_status}"),
+                    'department_label' => $assignment?->department_label,
+                    'position_label' => $assignment?->position_label,
+                    'project_id' => $assignment?->project_id,
+                    'project_label' => $assignment?->project_label,
+                    'status' => $status,
+                    'status_label' => trans_message("safety_management.employee_cards.statuses.{$status}"),
+                    'next_action_label' => $this->employeeCardNextAction($employee->employment_status, $blockers, [
+                        'requirements' => $employeeRequirements->isEmpty(),
+                        'training' => $employeeTrainingRecords->isEmpty(),
+                        'medical' => $employeeMedicalExams->isEmpty(),
+                        'ppe' => $employeePpeIssues->isEmpty(),
+                    ]),
+                    'blockers' => array_values(array_unique($blockers)),
+                    'warnings' => array_values(array_unique($warnings)),
+                    'record_counts' => [
+                        'requirements' => $employeeRequirements->count(),
+                        'training_records' => $employeeTrainingRecords->count(),
+                        'medical_exams' => $employeeMedicalExams->count(),
+                        'ppe_issues' => $employeePpeIssues->count(),
+                    ],
+                    'requirements' => $employeeRequirements,
+                    'training_records' => $employeeTrainingRecords,
+                    'medical_exams' => $employeeMedicalExams,
+                    'ppe_issues' => $employeePpeIssues,
+                ];
+            })
+            ->sort(function (array $first, array $second): int {
+                return count($second['blockers']) <=> count($first['blockers'])
+                    ?: count($second['warnings']) <=> count($first['warnings'])
+                    ?: strcmp((string) $first['employee_name'], (string) $second['employee_name']);
+            })
+            ->values();
+
+        return [
+            'cards' => $cards,
+            'summary' => [
+                'total' => $cards->count(),
+                'ready' => $cards->where('status', 'admitted')->count(),
+                'attention' => $cards->where('status', 'partial')->count(),
+                'blocked' => $cards->where('status', 'not_admitted')->count(),
+            ],
+        ];
     }
 
     public function paginatePermits(int $organizationId, int $perPage = 20, array $filters = []): LengthAwarePaginator
@@ -1514,6 +1720,72 @@ final class SafetyManagementService
         if ($hasBlockedParticipants) {
             throw new DomainException(trans_message('safety_management.errors.permit_participant_not_admitted'));
         }
+    }
+
+    private function currentEmployeeAssignments(int $organizationId, array $employeeIds): Collection
+    {
+        if ($employeeIds === []) {
+            return collect();
+        }
+
+        $today = now()->toDateString();
+
+        return DB::table('workforce_employee_assignments as assignment')
+            ->join('workforce_departments as department', 'department.id', '=', 'assignment.department_id')
+            ->join('workforce_positions as position', 'position.id', '=', 'assignment.position_id')
+            ->join('workforce_staff_units as staff_unit', 'staff_unit.id', '=', 'assignment.staff_unit_id')
+            ->leftJoin('projects as project', 'project.id', '=', 'assignment.project_id')
+            ->where('assignment.organization_id', $organizationId)
+            ->whereIn('assignment.employee_id', $employeeIds)
+            ->where('assignment.status', 'active')
+            ->whereDate('assignment.valid_from', '<=', $today)
+            ->where(function ($query) use ($today): void {
+                $query->whereNull('assignment.valid_to')
+                    ->orWhereDate('assignment.valid_to', '>=', $today);
+            })
+            ->orderByDesc('assignment.valid_from')
+            ->select([
+                'assignment.employee_id',
+                'assignment.department_id',
+                'assignment.position_id',
+                'assignment.project_id',
+                'department.name as department_label',
+                'position.name as position_label',
+                'staff_unit.code as staff_unit_label',
+                'project.name as project_label',
+            ])
+            ->get()
+            ->unique('employee_id')
+            ->keyBy('employee_id');
+    }
+
+    private function employeeCardNextAction(string $employmentStatus, array $blockers, array $missing): string
+    {
+        if ($employmentStatus !== 'active') {
+            return trans_message('safety_management.employee_cards.next_actions.check_hr_status');
+        }
+
+        if ($blockers !== []) {
+            return trans_message('safety_management.employee_cards.next_actions.fix_blockers');
+        }
+
+        if ($missing['training']) {
+            return trans_message('safety_management.employee_cards.next_actions.create_briefing');
+        }
+
+        if ($missing['medical']) {
+            return trans_message('safety_management.employee_cards.next_actions.add_medical_exam');
+        }
+
+        if ($missing['ppe']) {
+            return trans_message('safety_management.employee_cards.next_actions.issue_ppe');
+        }
+
+        if ($missing['requirements']) {
+            return trans_message('safety_management.employee_cards.next_actions.configure_requirements');
+        }
+
+        return trans_message('safety_management.employee_cards.next_actions.ready_for_permit');
     }
 
     private function findEmployee(int $organizationId, int $employeeId): WorkforceEmployee

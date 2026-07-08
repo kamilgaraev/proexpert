@@ -8,6 +8,7 @@ use App\BusinessModules\Features\SafetyManagement\DTOs\SafetyComplianceContext;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyBriefingResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyComplianceResultResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyCorrectiveActionResource;
+use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyEmployeeCardResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyEmployeeRequirementResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyIncidentResource;
 use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyInspectionFindingResource;
@@ -116,6 +117,32 @@ final class SafetyManagementController extends Controller
             return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
         } catch (\Throwable $exception) {
             return $this->failedIndex($request, $exception, 'dashboard');
+        }
+    }
+
+    public function employeeCards(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'project_id' => ['nullable', 'integer'],
+                'employee_id' => ['nullable', 'integer'],
+                'search' => ['nullable', 'string', 'max:255'],
+                'per_page' => ['nullable', 'integer', 'min:1', 'max:200'],
+            ], $this->recordValidationMessages());
+
+            $result = $this->service->employeeCards(
+                (int) $request->attributes->get('current_organization_id'),
+                $validated
+            );
+
+            return AdminResponse::success([
+                'cards' => SafetyEmployeeCardResource::collection($result['cards'])->resolve($request),
+                'summary' => $result['summary'],
+            ]);
+        } catch (ValidationException $exception) {
+            return AdminResponse::error($exception->getMessage(), 422, $exception->errors());
+        } catch (\Throwable $exception) {
+            return $this->failedIndex($request, $exception, 'employee_cards');
         }
     }
 
@@ -1603,6 +1630,9 @@ final class SafetyManagementController extends Controller
             'issued_at.required' => trans_message('safety_management.validation.issued_at_required'),
             'status.in' => trans_message('safety_management.validation.status_invalid'),
             'result.in' => trans_message('safety_management.validation.status_invalid'),
+            'per_page.integer' => trans_message('safety_management.validation.per_page_invalid'),
+            'per_page.min' => trans_message('safety_management.validation.per_page_invalid'),
+            'per_page.max' => trans_message('safety_management.validation.per_page_invalid'),
         ];
     }
 }
