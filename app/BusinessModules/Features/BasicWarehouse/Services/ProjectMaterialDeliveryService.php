@@ -72,15 +72,18 @@ class ProjectMaterialDeliveryService
     public function createOrLinkFromSiteRequest(
         SiteRequest $siteRequest,
         User $user,
-        ?PurchaseRequest $purchaseRequest = null
+        ?PurchaseRequest $purchaseRequest = null,
+        ?float $requestedQuantity = null,
+        array $metadata = []
     ): ProjectMaterialDelivery {
-        return DB::transaction(function () use ($siteRequest, $user, $purchaseRequest): ProjectMaterialDelivery {
+        return DB::transaction(function () use ($siteRequest, $user, $purchaseRequest, $requestedQuantity, $metadata): ProjectMaterialDelivery {
             if (!$siteRequest->material_id) {
                 throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.material_required'));
             }
 
             $delivery = ProjectMaterialDelivery::query()->firstOrNew([
                 'site_request_id' => $siteRequest->id,
+                'source_type' => 'purchase',
             ]);
 
             $delivery->fill([
@@ -93,14 +96,14 @@ class ProjectMaterialDeliveryService
                 'status' => $delivery->exists
                     ? $delivery->status
                     : ProjectMaterialDeliveryStatusEnum::PROCESSING,
-                'requested_quantity' => (float) ($siteRequest->material_quantity ?? 0),
+                'requested_quantity' => $requestedQuantity ?? (float) ($siteRequest->material_quantity ?? 0),
                 'responsible_user_id' => $purchaseRequest?->assigned_to ?? $delivery->responsible_user_id,
                 'planned_delivery_date' => $siteRequest->required_date,
                 'notes' => $siteRequest->notes ?? $delivery->notes,
-                'metadata' => array_filter([
+                'metadata' => array_filter(array_merge($delivery->metadata ?? [], $metadata, [
                     'created_from' => 'site_request',
                     'site_request_id' => $siteRequest->id,
-                ]),
+                ])),
             ]);
 
             $this->assertDeliveryCanBeSaved($delivery);
@@ -116,6 +119,63 @@ class ProjectMaterialDeliveryService
             );
 
             return $delivery->load(['project', 'material.measurementUnit', 'latestEvent']);
+        });
+    }
+
+    public function createOrLinkWarehouseFromSiteRequest(
+        SiteRequest $siteRequest,
+        User $user,
+        int $warehouseId,
+        float $quantity,
+        ?int $reservationId = null,
+        ?string $notes = null
+    ): ProjectMaterialDelivery {
+        return DB::transaction(function () use ($siteRequest, $user, $warehouseId, $quantity, $reservationId, $notes): ProjectMaterialDelivery {
+            if (!$siteRequest->material_id) {
+                throw new DomainException(trans_message('basic_warehouse.project_material_deliveries.errors.material_required'));
+            }
+
+            $delivery = ProjectMaterialDelivery::query()->firstOrNew([
+                'site_request_id' => $siteRequest->id,
+                'source_type' => 'warehouse',
+            ]);
+
+            $delivery->fill([
+                'organization_id' => $siteRequest->organization_id,
+                'project_id' => $siteRequest->project_id,
+                'material_id' => $siteRequest->material_id,
+                'warehouse_id' => $warehouseId,
+                'site_request_id' => $siteRequest->id,
+                'source_type' => 'warehouse',
+                'status' => $delivery->exists
+                    ? $delivery->status
+                    : ProjectMaterialDeliveryStatusEnum::RESERVED,
+                'requested_quantity' => $quantity,
+                'reserved_quantity' => max((float) $delivery->reserved_quantity, $quantity),
+                'responsible_user_id' => $delivery->responsible_user_id ?? $user->id,
+                'planned_delivery_date' => $siteRequest->required_date,
+                'notes' => $notes ?? $delivery->notes ?? $siteRequest->notes,
+                'metadata' => array_filter(array_merge($delivery->metadata ?? [], [
+                    'created_from' => 'site_request_fulfillment',
+                    'site_request_id' => $siteRequest->id,
+                    'asset_reservation_id' => $reservationId,
+                ])),
+            ]);
+
+            $this->assertDeliveryCanBeSaved($delivery);
+            $delivery->save();
+
+            $this->recordEvent(
+                $delivery,
+                $user,
+                $delivery->wasRecentlyCreated ? 'created_from_site_request_fulfillment' : 'linked_site_request_fulfillment',
+                null,
+                $delivery->status,
+                $quantity,
+                $notes
+            );
+
+            return $delivery->load(['project', 'material.measurementUnit', 'warehouse', 'latestEvent']);
         });
     }
 

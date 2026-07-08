@@ -51,6 +51,17 @@ class CreatePurchaseRequestFromSiteRequest
             return;
         }
 
+        if (
+            $siteRequest->request_type->value === 'material_request'
+            && ($settings['require_material_fulfillment_decision_before_purchase'] ?? true)
+        ) {
+            \Log::info('procurement.skip_auto_create', [
+                'site_request_id' => $siteRequest->id,
+                'reason' => 'material_fulfillment_decision_required',
+            ]);
+            return;
+        }
+
         try {
             // Создаем заявку на закупку
             $purchaseRequest = $this->purchaseRequestService->createFromSiteRequest($siteRequest);

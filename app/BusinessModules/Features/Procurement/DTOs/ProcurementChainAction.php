@@ -14,6 +14,8 @@ final readonly class ProcurementChainAction
         public ?string $requiredPermission = null,
         public bool $isEnabled = true,
         public ?string $disabledReason = null,
+        public string $scope = 'procurement_chain',
+        public int $priority = 100,
     ) {
     }
 
@@ -30,6 +32,8 @@ final readonly class ProcurementChainAction
             'required_permission' => $this->requiredPermission,
             'is_enabled' => $this->isEnabled,
             'disabled_reason' => $this->disabledReason,
+            'scope' => $this->scope,
+            'priority' => $this->priority,
         ];
     }
 }

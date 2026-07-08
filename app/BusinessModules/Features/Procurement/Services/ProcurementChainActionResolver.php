@@ -17,6 +17,15 @@ final class ProcurementChainActionResolver
      */
     private const PERMISSIONS = [
         'approve_site_request' => 'site_requests.approve',
+        'submit_site_request' => 'site_requests.edit',
+        'start_work' => 'site_requests.change_status',
+        'fulfill_site_request' => 'site_requests.change_status',
+        'complete_site_request' => 'site_requests.change_status',
+        'reject_site_request' => 'site_requests.approve',
+        'assign_site_request' => 'site_requests.assign',
+        'edit_site_request' => 'site_requests.edit',
+        'delete_site_request' => 'site_requests.delete',
+        'determine_fulfillment_source' => 'site_requests.view',
         'create_purchase_request' => 'procurement.purchase_requests.create',
         'approve_purchase_request' => 'procurement.purchase_requests.approve',
         'create_supplier_request' => 'procurement.supplier_requests.create',
@@ -29,6 +38,7 @@ final class ProcurementChainActionResolver
         'register_payment' => 'payments.transaction.register',
         'receive_materials' => 'procurement.purchase_orders.receive',
         'open_warehouse_receipt' => 'warehouse.view',
+        'open_project_material_delivery' => 'warehouse.manage_stock',
     ];
 
     public function __construct(
@@ -47,7 +57,9 @@ final class ProcurementChainActionResolver
         array $context = [],
         string $method = 'GET',
         bool $domainEnabled = true,
-        ?string $domainDisabledReason = null
+        ?string $domainDisabledReason = null,
+        string $scope = 'procurement_chain',
+        int $priority = 100
     ): ProcurementChainAction {
         $permission = self::PERMISSIONS[$key] ?? null;
         $hasPermission = $permission === null || $actor === null || $this->authorizationService->can($actor, $permission, [
@@ -70,6 +82,8 @@ final class ProcurementChainActionResolver
             requiredPermission: $permission,
             isEnabled: $isEnabled,
             disabledReason: $disabledReason,
+            scope: $scope,
+            priority: $priority,
         );
     }
 

@@ -6,6 +6,8 @@ namespace App\BusinessModules\Features\Procurement\Services;
 
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliveryStatusEnum;
+use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\Procurement\DTOs\ProcurementChainAction;
 use App\BusinessModules\Features\Procurement\DTOs\ProcurementChainBlocker;
 use App\BusinessModules\Features\Procurement\DTOs\ProcurementChainDocumentLink;
@@ -22,6 +24,7 @@ use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposalDecision;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\Models\User;
 use Illuminate\Support\Collection;
@@ -36,6 +39,10 @@ final class ProcurementChainService
     private const STAGE_ORDER = [
         'site_request_created',
         'site_request_approved',
+        'fulfillment_source_required',
+        'warehouse_reserved',
+        'warehouse_in_transit',
+        'project_material_accepted',
         'purchase_request_created',
         'purchase_request_approved',
         'supplier_request_created',
@@ -91,7 +98,12 @@ final class ProcurementChainService
         $linkedDocuments = $this->linkedDocuments($graph);
         $currentDocument = $this->documentForStage($currentKey, $linkedDocuments);
         $currentStage = $this->stage($currentKey, 'current', $currentDocument, $blockers->first());
-        $stages = $this->stages($currentKey, $linkedDocuments, $blockers);
+        $stages = $this->stages(
+            $currentKey,
+            $linkedDocuments,
+            $blockers,
+            $this->usesFulfillmentStages($graph, $currentKey, $linkedDocuments)
+        );
 
         return new ProcurementChainSummary(
             root: [
@@ -125,6 +137,7 @@ final class ProcurementChainService
         $purchaseOrder = $graph['purchase_order'] ?? null;
         $paymentDocuments = $graph['payment_documents'] ?? collect();
         $receipts = $graph['receipts'] ?? collect();
+        $materialDeliveries = $graph['material_deliveries'] ?? collect();
 
         if ($siteRequest instanceof SiteRequest && in_array($siteRequest->status, [
             SiteRequestStatusEnum::REJECTED,
@@ -135,6 +148,27 @@ final class ProcurementChainService
 
         if (! $purchaseRequest instanceof PurchaseRequest) {
             if ($siteRequest instanceof SiteRequest && $siteRequest->status === SiteRequestStatusEnum::APPROVED) {
+                if ($siteRequest->request_type === SiteRequestTypeEnum::MATERIAL_REQUEST) {
+                    $warehouseDelivery = $this->warehouseDelivery($materialDeliveries);
+
+                    if ($warehouseDelivery instanceof ProjectMaterialDelivery) {
+                        return $this->warehouseDeliveryState($warehouseDelivery, $actor, $organizationId);
+                    }
+
+                    if ($this->fulfillmentDecision($siteRequest) === null) {
+                        return [
+                            'fulfillment_source_required',
+                            $this->action(
+                                'determine_fulfillment_source',
+                                '/site-requests/'.$siteRequest->id.'?fulfillment=1',
+                                $actor,
+                                $organizationId
+                            ),
+                            collect([$this->blocker('fulfillment_source_not_selected', 'site_request', $siteRequest->id)]),
+                        ];
+                    }
+                }
+
                 return [
                     'site_request_approved',
                     $this->action('create_purchase_request', '/procurement/purchase-requests/create?site_request_id='.$siteRequest->id, $actor, $organizationId),
@@ -335,7 +369,9 @@ final class ProcurementChainService
         int $organizationId,
         string $method = 'GET',
         bool $domainEnabled = true,
-        ?string $domainDisabledReason = null
+        ?string $domainDisabledReason = null,
+        string $scope = 'procurement_chain',
+        int $priority = 100
     ): ProcurementChainAction {
         return $this->actionResolver->action(
             key: $key,
@@ -344,7 +380,9 @@ final class ProcurementChainService
             organizationId: $organizationId,
             method: $method,
             domainEnabled: $domainEnabled,
-            domainDisabledReason: $domainDisabledReason
+            domainDisabledReason: $domainDisabledReason,
+            scope: $scope,
+            priority: $priority
         );
     }
 
@@ -357,6 +395,59 @@ final class ProcurementChainService
             entityType: $entityType,
             entityId: $entityId,
         );
+    }
+
+    /**
+     * @param Collection<int, ProjectMaterialDelivery> $deliveries
+     */
+    private function warehouseDelivery(Collection $deliveries): ?ProjectMaterialDelivery
+    {
+        return $deliveries
+            ->filter(static fn (ProjectMaterialDelivery $delivery): bool => $delivery->source_type === 'warehouse')
+            ->reject(static fn (ProjectMaterialDelivery $delivery): bool => $delivery->status === ProjectMaterialDeliveryStatusEnum::CANCELLED)
+            ->sortByDesc('id')
+            ->first();
+    }
+
+    /**
+     * @return array{0: string, 1: ProcurementChainAction|null, 2: Collection<int, ProcurementChainBlocker>}
+     */
+    private function warehouseDeliveryState(
+        ProjectMaterialDelivery $delivery,
+        ?User $actor,
+        int $organizationId
+    ): array {
+        if ($delivery->status === ProjectMaterialDeliveryStatusEnum::ACCEPTED) {
+            return ['project_material_accepted', null, collect()];
+        }
+
+        $href = '/warehouse?tab=project-material-deliveries&delivery_id='.$delivery->id;
+
+        if (in_array($delivery->status, [
+            ProjectMaterialDeliveryStatusEnum::IN_TRANSIT,
+            ProjectMaterialDeliveryStatusEnum::PARTIALLY_DELIVERED,
+            ProjectMaterialDeliveryStatusEnum::DELIVERED,
+        ], true)) {
+            return [
+                'warehouse_in_transit',
+                $this->action('open_project_material_delivery', $href, $actor, $organizationId),
+                collect(),
+            ];
+        }
+
+        return [
+            'warehouse_reserved',
+            $this->action('open_project_material_delivery', $href, $actor, $organizationId),
+            collect(),
+        ];
+    }
+
+    private function fulfillmentDecision(SiteRequest $siteRequest): ?array
+    {
+        $metadata = $siteRequest->metadata ?? [];
+        $decision = $metadata['fulfillment_decision'] ?? null;
+
+        return is_array($decision) ? $decision : null;
     }
 
     /**
@@ -401,6 +492,10 @@ final class ProcurementChainService
 
         if (($graph['purchase_order'] ?? null) instanceof PurchaseOrder) {
             $documents->push($this->purchaseOrderLink($graph['purchase_order']));
+        }
+
+        foreach (($graph['material_deliveries'] ?? collect()) as $delivery) {
+            $documents->push($this->projectMaterialDeliveryLink($delivery));
         }
 
         foreach (($graph['payment_documents'] ?? collect()) as $paymentDocument) {
@@ -516,13 +611,27 @@ final class ProcurementChainService
         );
     }
 
+    private function projectMaterialDeliveryLink(ProjectMaterialDelivery $delivery): ProcurementChainDocumentLink
+    {
+        return new ProcurementChainDocumentLink(
+            type: 'project_material_delivery',
+            id: $delivery->id,
+            label: trans_message('procurement.chain.documents.project_material_delivery'),
+            number: (string) $delivery->id,
+            status: $delivery->status->value,
+            statusLabel: $delivery->status->label(),
+            href: '/warehouse?tab=project-material-deliveries&delivery_id='.$delivery->id,
+        );
+    }
+
     /**
      * @param Collection<int, ProcurementChainDocumentLink> $documents
      */
     private function documentForStage(string $stage, Collection $documents): ?ProcurementChainDocumentLink
     {
         $type = match ($stage) {
-            'site_request_created', 'site_request_approved' => 'site_request',
+            'site_request_created', 'site_request_approved', 'fulfillment_source_required' => 'site_request',
+            'warehouse_reserved', 'warehouse_in_transit', 'project_material_accepted' => 'project_material_delivery',
             'purchase_request_created', 'purchase_request_approved' => 'purchase_request',
             'supplier_request_created', 'supplier_request_sent' => 'supplier_request',
             'commercial_proposal_received', 'proposal_selected' => 'supplier_proposal',
@@ -544,12 +653,18 @@ final class ProcurementChainService
      * @param Collection<int, ProcurementChainBlocker> $blockers
      * @return Collection<int, ProcurementChainStage>
      */
-    private function stages(string $currentKey, Collection $documents, Collection $blockers): Collection
+    private function stages(
+        string $currentKey,
+        Collection $documents,
+        Collection $blockers,
+        bool $includeFulfillmentStages
+    ): Collection
     {
-        $currentIndex = array_search($currentKey, self::STAGE_ORDER, true);
-        $currentIndex = $currentIndex === false ? count(self::STAGE_ORDER) - 1 : $currentIndex;
+        $stageOrder = $this->stageOrder($documents, $includeFulfillmentStages);
+        $currentIndex = array_search($currentKey, $stageOrder, true);
+        $currentIndex = $currentIndex === false ? count($stageOrder) - 1 : $currentIndex;
 
-        return collect(self::STAGE_ORDER)
+        return collect($stageOrder)
             ->map(function (string $stageKey, int $index) use ($currentKey, $currentIndex, $documents, $blockers): ProcurementChainStage {
                 $status = 'pending';
 
@@ -571,6 +686,51 @@ final class ProcurementChainService
                 );
             })
             ->values();
+    }
+
+    /**
+     * @param array<string, mixed> $graph
+     * @param Collection<int, ProcurementChainDocumentLink> $documents
+     */
+    private function usesFulfillmentStages(array $graph, string $currentKey, Collection $documents): bool
+    {
+        $siteRequest = $graph['site_request'] ?? null;
+
+        if (!$siteRequest instanceof SiteRequest || $siteRequest->request_type !== SiteRequestTypeEnum::MATERIAL_REQUEST) {
+            return false;
+        }
+
+        return $currentKey === 'fulfillment_source_required'
+            || $this->fulfillmentDecision($siteRequest) !== null
+            || $documents->contains(static fn (ProcurementChainDocumentLink $document): bool => $document->type === 'project_material_delivery');
+    }
+
+    /**
+     * @param Collection<int, ProcurementChainDocumentLink> $documents
+     * @return array<int, string>
+     */
+    private function stageOrder(Collection $documents, bool $includeFulfillmentStages): array
+    {
+        $warehouseStages = ['warehouse_reserved', 'warehouse_in_transit', 'project_material_accepted'];
+        $fulfillmentStages = array_merge(['fulfillment_source_required'], $warehouseStages);
+        $hasWarehouseDelivery = $documents->contains(
+            static fn (ProcurementChainDocumentLink $document): bool => $document->type === 'project_material_delivery'
+        );
+
+        return array_values(array_filter(
+            self::STAGE_ORDER,
+            static function (string $stage) use ($includeFulfillmentStages, $fulfillmentStages, $warehouseStages, $hasWarehouseDelivery): bool {
+                if (!$includeFulfillmentStages && in_array($stage, $fulfillmentStages, true)) {
+                    return false;
+                }
+
+                if ($includeFulfillmentStages && !$hasWarehouseDelivery && in_array($stage, $warehouseStages, true)) {
+                    return false;
+                }
+
+                return true;
+            }
+        ));
     }
 
     private function stage(

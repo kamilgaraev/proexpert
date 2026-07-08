@@ -297,6 +297,7 @@ class ProcurementModule implements ModuleInterface, BillableInterface, Configura
             // Общие настройки
             'enable_notifications' => true,
             'auto_create_purchase_request' => true,
+            'require_material_fulfillment_decision_before_purchase' => true,
             'auto_create_invoice' => true,
             'auto_receive_to_warehouse' => true,
 

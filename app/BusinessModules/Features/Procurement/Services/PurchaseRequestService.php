@@ -72,7 +72,12 @@ class PurchaseRequestService
         return $query->paginate($perPage);
     }
 
-    public function createFromSiteRequest(SiteRequest $siteRequest, ?int $assignedTo = null): PurchaseRequest
+    public function createFromSiteRequest(
+        SiteRequest $siteRequest,
+        ?int $assignedTo = null,
+        ?float $quantityOverride = null,
+        array $metadata = []
+    ): PurchaseRequest
     {
         $allowedTypes = ['material_request', 'equipment_request', 'personnel_request'];
 
@@ -82,7 +87,7 @@ class PurchaseRequestService
 
         $existingRequest = $this->findExistingBySiteRequest($siteRequest->organization_id, $siteRequest->id);
         if ($existingRequest) {
-            $this->syncDeliveryFromSiteRequest($siteRequest, $existingRequest);
+            $this->syncDeliveryFromSiteRequest($siteRequest, $existingRequest, $quantityOverride, $metadata);
 
             return $existingRequest->fresh(self::RESOURCE_RELATIONS);
         }
@@ -109,23 +114,27 @@ class PurchaseRequestService
                 'request_number' => $requestNumber,
                 'status' => PurchaseRequestStatusEnum::PENDING,
                 'needed_by' => $siteRequest->required_date,
+                'metadata' => $metadata !== [] ? $metadata : null,
                 'notes' => "Создана из {$requestTypeLabel}: {$siteRequest->title}",
             ]);
 
             if ($siteRequest->material_name || $siteRequest->material_quantity) {
+                $quantity = $quantityOverride ?? (float) ($siteRequest->material_quantity ?: 1);
+
                 $purchaseRequest->lines()->create([
                     'name' => $siteRequest->material_name ?: $siteRequest->title,
-                    'quantity' => $siteRequest->material_quantity ?: 1,
+                    'quantity' => $quantity,
                     'unit' => $siteRequest->material_unit ?: 'шт',
                     'needed_by' => $siteRequest->required_date,
                     'metadata' => [
                         'source_type' => 'site_request',
                         'source_id' => $siteRequest->id,
+                        'requested_quantity' => $quantity,
                     ],
                 ]);
             }
 
-            $this->syncDeliveryFromSiteRequest($siteRequest, $purchaseRequest);
+            $this->syncDeliveryFromSiteRequest($siteRequest, $purchaseRequest, $quantityOverride, $metadata);
 
             DB::commit();
 
@@ -308,7 +317,12 @@ class PurchaseRequestService
             ->first();
     }
 
-    private function syncDeliveryFromSiteRequest(SiteRequest $siteRequest, PurchaseRequest $purchaseRequest): void
+    private function syncDeliveryFromSiteRequest(
+        SiteRequest $siteRequest,
+        PurchaseRequest $purchaseRequest,
+        ?float $requestedQuantity = null,
+        array $metadata = []
+    ): void
     {
         if (!$siteRequest->material_id) {
             return;
@@ -320,7 +334,13 @@ class PurchaseRequestService
             return;
         }
 
-        $this->deliveryService->createOrLinkFromSiteRequest($siteRequest, $actor, $purchaseRequest);
+        $this->deliveryService->createOrLinkFromSiteRequest(
+            $siteRequest,
+            $actor,
+            $purchaseRequest,
+            $requestedQuantity,
+            $metadata
+        );
     }
 
     private function invalidateCache(int $organizationId): void

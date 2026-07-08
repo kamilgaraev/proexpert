@@ -4,6 +4,7 @@ use App\BusinessModules\Features\SiteRequests\Http\Controllers\Mobile\SiteReques
 use App\BusinessModules\Features\SiteRequests\Http\Controllers\SiteRequestCalendarController;
 use App\BusinessModules\Features\SiteRequests\Http\Controllers\SiteRequestController;
 use App\BusinessModules\Features\SiteRequests\Http\Controllers\SiteRequestDashboardController;
+use App\BusinessModules\Features\SiteRequests\Http\Controllers\SiteRequestFulfillmentController;
 use App\BusinessModules\Features\SiteRequests\Http\Controllers\SiteRequestPaymentController;
 use App\BusinessModules\Features\SiteRequests\Http\Controllers\SiteRequestTemplateController;
 use App\Support\Routing\AdminRouteStack;
@@ -76,6 +77,12 @@ Route::prefix('api/v1/admin/site-requests')
         Route::get('/{id}', [SiteRequestController::class, 'show'])
             ->middleware('authorize:site_requests.view')
             ->name('show');
+        Route::get('/{id}/fulfillment-options', [SiteRequestFulfillmentController::class, 'options'])
+            ->middleware('authorize:site_requests.view')
+            ->name('fulfillment_options');
+        Route::post('/{id}/fulfillment-decision', [SiteRequestFulfillmentController::class, 'decide'])
+            ->middleware('authorize:site_requests.view')
+            ->name('fulfillment_decision');
         Route::get('/groups/{id}', [SiteRequestController::class, 'showGroup'])
             ->middleware('authorize:site_requests.view')
             ->name('show_group');

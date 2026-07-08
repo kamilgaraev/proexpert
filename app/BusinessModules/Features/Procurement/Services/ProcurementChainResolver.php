@@ -34,6 +34,7 @@ final class ProcurementChainResolver
             'purchaseRequests.purchaseOrders.items',
             'purchaseRequests.purchaseOrders.receipts.lines',
             'purchaseRequests.purchaseOrders.acceptedSupplierProposal',
+            'materialDeliveries.latestEvent',
         ]);
 
         $purchaseRequest = $siteRequest->purchaseRequests
@@ -56,6 +57,7 @@ final class ProcurementChainResolver
             'purchaseOrders.items',
             'purchaseOrders.receipts.lines',
             'purchaseOrders.acceptedSupplierProposal',
+            'siteRequest.materialDeliveries.latestEvent',
         ]);
 
         return $this->graph($purchaseRequest->siteRequest, $purchaseRequest);
@@ -71,6 +73,7 @@ final class ProcurementChainResolver
             'purchaseRequest.lines',
             'purchaseRequest.supplierRequests.proposals',
             'purchaseRequest.supplierRequests.proposalDecision.winningProposal',
+            'purchaseRequest.siteRequest.materialDeliveries.latestEvent',
             'items',
             'receipts.lines',
             'receipts.warehouse',
@@ -103,6 +106,7 @@ final class ProcurementChainResolver
             'proposal_decision' => null,
             'selected_proposal' => null,
             'purchase_order' => null,
+            'material_deliveries' => collect(),
             'payment_documents' => collect([$paymentDocument]),
             'receipts' => collect(),
         ];
@@ -124,6 +128,7 @@ final class ProcurementChainResolver
                 'proposal_decision' => null,
                 'selected_proposal' => null,
                 'purchase_order' => null,
+                'material_deliveries' => collect(),
                 'payment_documents' => collect(),
                 'receipts' => collect([$purchaseReceipt]),
             ];
@@ -156,6 +161,7 @@ final class ProcurementChainResolver
             ? $this->paymentGateService->linkedDocuments($purchaseOrder)
             : collect();
         $receipts = $purchaseOrder?->receipts ?? collect();
+        $materialDeliveries = $siteRequest?->materialDeliveries ?? collect();
 
         return [
             'site_request' => $siteRequest,
@@ -165,6 +171,7 @@ final class ProcurementChainResolver
             'proposal_decision' => $proposalDecision,
             'selected_proposal' => $selectedProposal,
             'purchase_order' => $purchaseOrder,
+            'material_deliveries' => $materialDeliveries->values(),
             'payment_documents' => $paymentDocuments,
             'receipts' => $receipts->values(),
         ];

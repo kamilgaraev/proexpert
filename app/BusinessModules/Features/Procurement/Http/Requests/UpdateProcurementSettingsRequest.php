@@ -31,6 +31,7 @@ class UpdateProcurementSettingsRequest extends FormRequest
         return [
             'enable_notifications' => ['sometimes', 'boolean'],
             'auto_create_purchase_request' => ['sometimes', 'boolean'],
+            'require_material_fulfillment_decision_before_purchase' => ['sometimes', 'boolean'],
             'auto_create_invoice' => ['sometimes', 'boolean'],
             'auto_receive_to_warehouse' => ['sometimes', 'boolean'],
             'require_approval' => ['sometimes', 'boolean'],
