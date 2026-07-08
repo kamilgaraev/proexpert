@@ -450,9 +450,7 @@ class SupplierProposalService
         $subtotalAmount = array_key_exists('subtotal_amount', $data)
             ? round((float) $data['subtotal_amount'], 2)
             : ($lineSubtotal > 0.0 ? $lineSubtotal : max(0.0, round($totalAmount - $deliveryAmount, 2)));
-        $vatAmount = $this->vatAmount($data, $subtotalAmount);
-        $calculatedTotal = round($subtotalAmount + $deliveryAmount + $vatAmount, 2);
-        $totalAmount = abs($totalAmount - $calculatedTotal) > 0.01 ? $calculatedTotal : $totalAmount;
+        $vatAmount = $this->vatAmount($data, $subtotalAmount, $deliveryAmount, $totalAmount);
 
         return [
             'subtotal_amount' => $subtotalAmount,
@@ -475,19 +473,23 @@ class SupplierProposalService
         return round($sum, 2);
     }
 
-    private function vatAmount(array $data, float $subtotalAmount): float
+    private function vatAmount(array $data, float $subtotalAmount, float $deliveryAmount, float $totalAmount): float
     {
-        if (array_key_exists('vat_amount', $data)) {
-            return round((float) $data['vat_amount'], 2);
-        }
-
-        if (($data['vat_mode'] ?? null) !== SupplierProposalVatModeEnum::EXCLUDED->value) {
+        if (($data['vat_mode'] ?? null) === SupplierProposalVatModeEnum::NOT_APPLICABLE->value) {
             return 0.0;
         }
 
         $vatRate = (float) ($data['vat_rate'] ?? 0);
 
-        return round($subtotalAmount * $vatRate / 100, 2);
+        if ($vatRate <= 0.0) {
+            return 0.0;
+        }
+
+        if (($data['vat_mode'] ?? null) === SupplierProposalVatModeEnum::EXCLUDED->value) {
+            return round(($subtotalAmount + $deliveryAmount) * $vatRate / 100, 2);
+        }
+
+        return round($totalAmount * $vatRate / (100 + $vatRate), 2);
     }
 
     private function snapshotFloat(array $snapshot, string $key, float $fallback): float

@@ -59,6 +59,7 @@ class PublicSupplierRequestControllerTest extends TestCase
         $this->assertSame(['public_supplier_response' => true], $proposal->metadata);
         $this->assertSame('other', $proposal->intake?->source->value);
         $this->assertSame($line->id, $proposal->lines->first()?->supplier_request_line_id);
+        $this->assertEqualsWithDelta(91.67, (float) $proposal->vat_amount, 0.01);
         $this->assertSame(SupplierRequestStatusEnum::RESPONDED, $supplierRequest->fresh()->status);
 
         $secondSubmitResponse = $this->postJson(
@@ -176,6 +177,7 @@ class PublicSupplierRequestControllerTest extends TestCase
             'total_amount' => 550,
             'currency' => 'RUB',
             'vat_mode' => 'included',
+            'vat_rate' => 20,
             'valid_until' => now()->addDays(7)->toDateString(),
             'delivery_due_date' => now()->addDays(3)->toDateString(),
             'payment_terms' => 'Payment after delivery',

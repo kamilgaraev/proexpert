@@ -456,6 +456,10 @@ class ProcurementApprovalService
             return round((float) $selectedRow['comparison_total'], 2);
         }
 
+        if ((float) $selectedProposal->total_amount > 0.0) {
+            return round((float) $selectedProposal->total_amount, 2);
+        }
+
         $componentTotal = (float) $selectedProposal->subtotal_amount
             + (float) $selectedProposal->delivery_amount
             + (float) $selectedProposal->vat_amount;

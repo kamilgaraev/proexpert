@@ -608,15 +608,17 @@ class SupplierProposalComparisonService
     private function comparisonTotal(SupplierProposal $proposal): float
     {
         $commercial = $this->commercialSnapshot($proposal);
-        $componentTotal = (float) $commercial['subtotal_amount']
-            + (float) $commercial['delivery_amount']
-            + (float) $commercial['vat_amount'];
 
-        if ($componentTotal > 0.0) {
-            return round($componentTotal, 2);
+        if ((float) $commercial['total_amount'] > 0.0) {
+            return round((float) $commercial['total_amount'], 2);
         }
 
-        return round((float) $commercial['total_amount'], 2);
+        return round(
+            (float) $commercial['subtotal_amount']
+            + (float) $commercial['delivery_amount']
+            + (float) $commercial['vat_amount'],
+            2
+        );
     }
 
     private function commercialSnapshot(SupplierProposal $proposal): array
