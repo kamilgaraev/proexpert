@@ -9,6 +9,8 @@ use App\BusinessModules\Core\Payments\Enums\InvoiceType;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Features\Budgeting\Models\BudgetArticle;
+use App\BusinessModules\Features\Budgeting\Models\ResponsibilityCenter;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
@@ -176,6 +178,51 @@ final class ProcurementChainControllerTest extends TestCase
             'source_id' => $contract->id,
             'invoice_type' => InvoiceType::MATERIAL_PURCHASE->value,
             'amount' => 500,
+        ]);
+    }
+
+    public function test_payment_document_endpoint_applies_budget_dimensions_from_request(): void
+    {
+        $context = AdminApiTestContext::create();
+        $purchaseRequest = $this->createPurchaseRequest($context->organization);
+        $purchaseOrder = $this->createPurchaseOrder($purchaseRequest, PurchaseOrderStatusEnum::CONFIRMED, [
+            'supplier_snapshot' => [
+                'display_name' => 'Budget Supplier',
+                'tax_id' => '7700000002',
+                'email' => 'budget-supplier@example.test',
+            ],
+        ]);
+        $article = BudgetArticle::query()->create([
+            'organization_id' => $context->organization->id,
+            'code' => 'MAT-'.uniqid(),
+            'name' => 'Материалы',
+            'budget_kind' => 'bdds',
+            'flow_direction' => 'outflow',
+            'is_leaf' => true,
+            'is_active' => true,
+        ]);
+        $center = ResponsibilityCenter::query()->create([
+            'organization_id' => $context->organization->id,
+            'center_type' => 'project',
+            'code' => 'CFO-'.uniqid(),
+            'name' => 'Производство',
+            'is_active' => true,
+        ]);
+        $this->allowModuleAccess();
+        $this->allowPermissions();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/payment-document", [
+                'budget_article_id' => $article->uuid,
+                'responsibility_center_id' => $center->uuid,
+            ]);
+
+        $response->assertCreated();
+        $this->assertDatabaseHas('payment_documents', [
+            'id' => $response->json('data.id'),
+            'organization_id' => $context->organization->id,
+            'budget_article_id' => $article->id,
+            'responsibility_center_id' => $center->id,
         ]);
     }
 

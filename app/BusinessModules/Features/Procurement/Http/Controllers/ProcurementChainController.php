@@ -169,7 +169,12 @@ final class ProcurementChainController extends Controller
                 return AdminResponse::error(trans_message('procurement.purchase_orders.not_found'), 404);
             }
 
-            $result = $this->paymentDocumentService->createOrOpen($purchaseOrder, $request->user()?->id);
+            $budgetDimensions = $this->paymentDocumentBudgetDimensions($request);
+            $result = $this->paymentDocumentService->createOrOpen(
+                $purchaseOrder,
+                $request->user()?->id,
+                $budgetDimensions
+            );
             $document = $result['document']->fresh([
                 'payerOrganization',
                 'payerContractor',
@@ -205,5 +210,23 @@ final class ProcurementChainController extends Controller
             $resource,
             trans_message('procurement.chain.loaded')
         );
+    }
+
+    /**
+     * @return array<string, int|string|null>
+     */
+    private function paymentDocumentBudgetDimensions(Request $request): array
+    {
+        $dimensions = [];
+
+        foreach (['budget_article_id', 'responsibility_center_id'] as $field) {
+            $value = $request->input($field);
+
+            if (is_scalar($value) || $value === null) {
+                $dimensions[$field] = $value;
+            }
+        }
+
+        return $dimensions;
     }
 }
