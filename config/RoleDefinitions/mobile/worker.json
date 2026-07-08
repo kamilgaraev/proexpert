@@ -62,6 +62,11 @@
     "dashboard-widgets": [
       "dashboard.view"
     ],
+    "notifications": [
+      "notifications.view",
+      "notifications.manage_preferences",
+      "notifications.receive.system"
+    ],
     "schedule-management": [
       "schedule.view"
     ],

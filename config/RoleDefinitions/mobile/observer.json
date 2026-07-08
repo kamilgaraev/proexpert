@@ -43,6 +43,11 @@
     "report-templates": [],
     "data-filters": ["filters.quick_stats.view"],
     "dashboard-widgets": ["dashboard.view"],
+    "notifications": [
+      "notifications.view",
+      "notifications.manage_preferences",
+      "notifications.receive.system"
+    ],
     "schedule-management": ["schedule.view"],
     "budget-estimates": [
       "budget-estimates.view",

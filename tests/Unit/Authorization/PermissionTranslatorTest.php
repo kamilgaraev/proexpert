@@ -323,6 +323,30 @@ class PermissionTranslatorTest extends TestCase
         $this->assertStringNotContainsString('presale_estimates.transfer.mapping.edit', $flattenedValues);
     }
 
+    public function test_notification_receive_permissions_are_translated_for_frontend(): void
+    {
+        $translated = PermissionTranslator::translatePermissionsData([
+            'module_permissions' => [
+                'notifications' => [
+                    'notifications.view',
+                    'notifications.receive.system',
+                    'notifications.receive.site_requests',
+                    'notifications.receive.procurement',
+                ],
+            ],
+        ]);
+
+        $flattenedValues = json_encode($this->valuesOnly($translated), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+
+        $this->assertSame('Уведомления', $translated['module_groups']['notifications']);
+        $this->assertSame('Просмотр уведомлений', $translated['module_permissions']['notifications']['notifications.view']);
+        $this->assertSame('Получение базовых уведомлений', $translated['module_permissions']['notifications']['notifications.receive.system']);
+        $this->assertSame('Получение уведомлений по заявкам с объекта', $translated['module_permissions']['notifications']['notifications.receive.site_requests']);
+        $this->assertSame('Получение уведомлений по закупкам', $translated['module_permissions']['notifications']['notifications.receive.procurement']);
+        $this->assertStringNotContainsString('notifications.receive.site_requests', $flattenedValues);
+        $this->assertStringNotContainsString('notifications.receive.procurement', $flattenedValues);
+    }
+
     private function valuesOnly(array $value): array
     {
         $values = [];

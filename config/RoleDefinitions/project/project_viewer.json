@@ -86,6 +86,12 @@
       "dashboard.view",
       "dashboard.recent_activity.view"
     ],
+    "notifications": [
+      "notifications.view",
+      "notifications.manage_preferences",
+      "notifications.receive.system",
+      "notifications.receive.site_requests"
+    ],
     "schedule-management": [
       "schedule.view"
     ],

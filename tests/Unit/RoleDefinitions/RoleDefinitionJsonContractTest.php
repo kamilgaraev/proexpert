@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\RoleDefinitions;
 
 use App\BusinessModules\Features\SiteRequests\SiteRequestsModule;
+use App\BusinessModules\Features\Notifications\NotificationModule;
 use PHPUnit\Framework\TestCase;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
@@ -28,6 +29,12 @@ class RoleDefinitionJsonContractTest extends TestCase
         'site_requests.files.upload',
         'site_requests.files.delete',
         'site_requests.export',
+    ];
+
+    private const REQUIRED_NOTIFICATION_RECEIVE_PERMISSIONS = [
+        'notifications.receive.system',
+        'notifications.receive.site_requests',
+        'notifications.receive.procurement',
     ];
 
     private string $basePath;
@@ -73,6 +80,45 @@ class RoleDefinitionJsonContractTest extends TestCase
             $this->assertContains($permission, $modulePermissions, "SiteRequestsModule misses {$permission}");
             $this->assertContains($permission, $manifestPermissions, "site-requests manifest misses {$permission}");
         }
+    }
+
+    public function test_notification_receive_permissions_are_synchronized_in_module_and_manifest(): void
+    {
+        $modulePermissions = (new NotificationModule())->getPermissions();
+        $manifest = json_decode(
+            (string) file_get_contents($this->basePath . '/config/ModuleList/features/notifications.json'),
+            true,
+            512,
+            JSON_THROW_ON_ERROR,
+        );
+        $manifestPermissions = $manifest['permissions'] ?? [];
+
+        foreach (self::REQUIRED_NOTIFICATION_RECEIVE_PERMISSIONS as $permission) {
+            $this->assertContains($permission, $modulePermissions, "NotificationModule misses {$permission}");
+            $this->assertContains($permission, $manifestPermissions, "notifications manifest misses {$permission}");
+        }
+    }
+
+    public function test_notification_receive_permissions_are_assigned_to_operational_roles(): void
+    {
+        $owner = $this->roleDefinition('lk/organization_owner.json');
+        $admin = $this->roleDefinition('lk/organization_admin.json');
+        $supplier = $this->roleDefinition('lk/supplier.json');
+        $projectManager = $this->roleDefinition('project/project_manager.json');
+        $foreman = $this->roleDefinition('mobile/foreman.json');
+        $viewer = $this->roleDefinition('lk/viewer.json');
+
+        $this->assertSame(['*'], $owner['module_permissions']['notifications']);
+
+        foreach (self::REQUIRED_NOTIFICATION_RECEIVE_PERMISSIONS as $permission) {
+            $this->assertContains($permission, $admin['module_permissions']['notifications']);
+            $this->assertContains($permission, $projectManager['module_permissions']['notifications']);
+            $this->assertContains($permission, $foreman['module_permissions']['notifications']);
+        }
+
+        $this->assertContains('notifications.receive.procurement', $supplier['module_permissions']['notifications']);
+        $this->assertContains('notifications.receive.system', $viewer['module_permissions']['notifications']);
+        $this->assertNotContains('notifications.receive.procurement', $viewer['module_permissions']['notifications']);
     }
 
     public function test_role_translations_cover_all_role_definitions(): void

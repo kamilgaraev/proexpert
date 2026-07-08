@@ -143,6 +143,11 @@
       "schedule.view",
       "schedule.export"
     ],
+    "notifications": [
+      "notifications.view",
+      "notifications.manage_preferences",
+      "notifications.receive.system"
+    ],
     "budgeting": [
       "budgeting.budgets.view",
       "budgeting.budgets.create",

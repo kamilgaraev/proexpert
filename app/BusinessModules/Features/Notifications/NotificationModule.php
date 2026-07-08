@@ -91,6 +91,9 @@ class NotificationModule implements ModuleInterface, BillableInterface
             'notifications.manage_templates',
             'notifications.view_analytics',
             'notifications.manage_webhooks',
+            'notifications.receive.system',
+            'notifications.receive.site_requests',
+            'notifications.receive.procurement',
         ];
     }
 

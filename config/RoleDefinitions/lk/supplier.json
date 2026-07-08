@@ -91,6 +91,12 @@
       "filters.custom.save",
       "filters.export"
     ],
+    "notifications": [
+      "notifications.view",
+      "notifications.manage_preferences",
+      "notifications.receive.system",
+      "notifications.receive.procurement"
+    ],
     "basic-warehouse": [
       "warehouse.view",
       "warehouse.manage_stock",

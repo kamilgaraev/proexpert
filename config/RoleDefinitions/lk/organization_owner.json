@@ -177,6 +177,9 @@
     "access_recertification": [
       "*"
     ],
+    "notifications": [
+      "*"
+    ],
     "handover-acceptance": [
       "*"
     ]

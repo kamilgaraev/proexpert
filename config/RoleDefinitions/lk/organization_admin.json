@@ -340,6 +340,13 @@
       "schedule.export",
       "schedule.notifications"
     ],
+    "notifications": [
+      "notifications.view",
+      "notifications.manage_preferences",
+      "notifications.receive.system",
+      "notifications.receive.site_requests",
+      "notifications.receive.procurement"
+    ],
     "basic-warehouse": [
       "warehouse.view",
       "warehouse.manage_stock",

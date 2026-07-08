@@ -50,6 +50,10 @@ class NotificationServiceProvider extends ServiceProvider
         $this->app->singleton(
             \App\BusinessModules\Features\Notifications\Services\NotificationPayloadNormalizer::class
         );
+
+        $this->app->singleton(
+            \App\BusinessModules\Features\Notifications\Services\NotificationRecipientPermissionResolver::class
+        );
     }
 
     protected function loadRoutes(): void

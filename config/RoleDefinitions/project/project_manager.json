@@ -171,6 +171,13 @@
       "schedule.approve",
       "schedule.notifications"
     ],
+    "notifications": [
+      "notifications.view",
+      "notifications.manage_preferences",
+      "notifications.receive.system",
+      "notifications.receive.site_requests",
+      "notifications.receive.procurement"
+    ],
     "budgeting": [
       "budgeting.budgets.view",
       "budgeting.budgets.create",

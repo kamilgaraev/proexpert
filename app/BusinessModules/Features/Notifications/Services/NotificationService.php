@@ -19,7 +19,8 @@ class NotificationService
 
     public function __construct(
         PreferenceManager $preferenceManager,
-        private readonly NotificationPayloadNormalizer $payloadNormalizer
+        private readonly NotificationPayloadNormalizer $payloadNormalizer,
+        private readonly NotificationRecipientPermissionResolver $permissionResolver
     ) {
         $this->preferenceManager = $preferenceManager;
     }
@@ -31,7 +32,8 @@ class NotificationService
         ?string $notificationType = 'system',
         ?string $priority = 'normal',
         ?array $channels = null,
-        ?int $organizationId = null
+        ?int $organizationId = null,
+        string|array|null $requiredPermissions = null
     ): Notification {
         // 🔥 Критические уведомления с флагом force_send игнорируют настройки пользователя
         $notificationType = $notificationType ?? 'system';
@@ -39,6 +41,29 @@ class NotificationService
         $data = $this->payloadNormalizer->normalize($type, $data, $notificationType);
 
         $forceSend = $data['force_send'] ?? false;
+        $requiredPermissions = $this->permissionResolver->requiredPermissions(
+            $type,
+            $notificationType,
+            $data,
+            $requiredPermissions
+        );
+
+        if (!$this->permissionResolver->canReceive($user, $requiredPermissions, $organizationId, $data)) {
+            Log::info('Notification skipped due to recipient permissions', [
+                'user_id' => $user->id,
+                'notification_type' => $notificationType,
+                'required_permissions' => $requiredPermissions,
+            ]);
+
+            return $this->makeSkippedNotification(
+                $user,
+                $type,
+                $data,
+                $notificationType,
+                $priority,
+                $organizationId
+            );
+        }
         
         if (!$forceSend && !$this->preferenceManager->canSend($user, $notificationType, $organizationId)) {
             Log::info('Notification skipped due to preferences', [
@@ -101,10 +126,13 @@ class NotificationService
                 $options['notification_type'] ?? 'system',
                 $options['priority'] ?? 'normal',
                 $options['channels'] ?? null,
-                $options['organization_id'] ?? null
+                $options['organization_id'] ?? null,
+                $options['required_permissions'] ?? null
             );
 
-            $notifications->push($notification);
+            if ($notification->exists) {
+                $notifications->push($notification);
+            }
         }
 
         return $notifications;
@@ -127,6 +155,27 @@ class NotificationService
             'notification_type' => $notificationType,
             'priority' => $priority,
             'channels' => $channels,
+            'data' => $data,
+            'delivery_status' => [],
+        ]);
+    }
+
+    private function makeSkippedNotification(
+        User $user,
+        string $type,
+        array $data,
+        string $notificationType,
+        string $priority,
+        ?int $organizationId
+    ): Notification {
+        return new Notification([
+            'type' => $type,
+            'notifiable_type' => User::class,
+            'notifiable_id' => $user->id,
+            'organization_id' => $organizationId,
+            'notification_type' => $notificationType,
+            'priority' => $priority,
+            'channels' => [],
             'data' => $data,
             'delivery_status' => [],
         ]);

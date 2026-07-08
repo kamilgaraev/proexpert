@@ -103,6 +103,13 @@
       "schedule.daily_plan.manage",
       "schedule.daily_plan.confirm"
     ],
+    "notifications": [
+      "notifications.view",
+      "notifications.manage_preferences",
+      "notifications.receive.system",
+      "notifications.receive.site_requests",
+      "notifications.receive.procurement"
+    ],
     "basic-warehouse": [
       "warehouse.view",
       "warehouse.return_from_responsible",

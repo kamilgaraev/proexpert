@@ -84,6 +84,7 @@ class SiteRequestNotificationService
                     'type' => 'site_request_status_changed',
                     'organization_id' => $request->organization_id,
                     'request_id' => $request->id,
+                    'project_id' => $request->project_id,
                     'old_status' => $oldStatus,
                     'new_status' => $newStatus,
                 ]
@@ -103,6 +104,7 @@ class SiteRequestNotificationService
                     'type' => 'site_request_status_changed',
                     'organization_id' => $request->organization_id,
                     'request_id' => $request->id,
+                    'project_id' => $request->project_id,
                     'old_status' => $oldStatus,
                     'new_status' => $newStatus,
                 ]
@@ -173,6 +175,7 @@ class SiteRequestNotificationService
                     'type' => 'site_request_overdue',
                     'organization_id' => $request->organization_id,
                     'request_id' => $request->id,
+                    'project_id' => $request->project_id,
                     'required_date' => $request->required_date->toDateString(),
                 ]
             );
@@ -191,6 +194,7 @@ class SiteRequestNotificationService
                     'type' => 'site_request_overdue',
                     'organization_id' => $request->organization_id,
                     'request_id' => $request->id,
+                    'project_id' => $request->project_id,
                     'required_date' => $request->required_date->toDateString(),
                 ]
             );

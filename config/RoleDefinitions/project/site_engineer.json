@@ -117,6 +117,12 @@
       "schedule.daily_plan.view",
       "schedule.daily_plan.manage"
     ],
+    "notifications": [
+      "notifications.view",
+      "notifications.manage_preferences",
+      "notifications.receive.system",
+      "notifications.receive.site_requests"
+    ],
     "budget-estimates": [
       "budget-estimates.view",
       "budget-estimates.create",

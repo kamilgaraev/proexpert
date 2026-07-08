@@ -1,0 +1,55 @@
+{
+  "name": "Уведомления",
+  "slug": "notifications",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "free",
+  "category": "communication",
+  "description": "Система уведомлений с настройками получателей, каналов доставки, шаблонов и аналитики",
+  "class_name": "App\\BusinessModules\\Features\\Notifications\\NotificationModule",
+  "service_provider": "App\\BusinessModules\\Features\\Notifications\\NotificationServiceProvider",
+  "pricing": {
+    "base_price": 0,
+    "currency": "RUB",
+    "included_in_plans": ["free", "start", "business", "profi", "enterprise"],
+    "duration_days": 30
+  },
+  "permissions": [
+    "notifications.view",
+    "notifications.manage_preferences",
+    "notifications.manage_templates",
+    "notifications.view_analytics",
+    "notifications.manage_webhooks",
+    "notifications.receive.system",
+    "notifications.receive.site_requests",
+    "notifications.receive.procurement"
+  ],
+  "features": [
+    "Доставка уведомлений в интерфейсе",
+    "Настройка пользовательских каналов",
+    "Права на получение уведомлений по доменам",
+    "Шаблоны уведомлений",
+    "Аналитика доставки"
+  ],
+  "dependencies": [
+    "organizations",
+    "users"
+  ],
+  "conflicts": [],
+  "limits": {
+    "max_notifications_per_hour": 100,
+    "max_notifications_per_day": 500,
+    "max_templates_per_organization": 50,
+    "max_webhooks_per_organization": 10,
+    "data_retention_days": 90
+  },
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  "auto_activate": true,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "bell",
+  "display_order": 12,
+  "tags": ["notifications", "communication", "permissions"],
+  "documentation_url": "/docs/modules/notifications"
+}
