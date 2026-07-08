@@ -390,6 +390,10 @@ return [
         'stages' => [
             'site_request_created' => 'Заявка с площадки создана',
             'site_request_approved' => 'Заявка с площадки одобрена',
+            'fulfillment_source_required' => 'Источник обеспечения не выбран',
+            'warehouse_reserved' => 'Материал зарезервирован на складе',
+            'warehouse_in_transit' => 'Материал передается на объект',
+            'project_material_accepted' => 'Материал принят на объекте',
             'purchase_request_created' => 'Заявка на закупку создана',
             'purchase_request_approved' => 'Заявка на закупку одобрена',
             'supplier_request_created' => 'Запрос поставщикам подготовлен',
@@ -409,6 +413,10 @@ return [
         'stage_descriptions' => [
             'site_request_created' => 'Исходная заявка еще ждет решения ответственного.',
             'site_request_approved' => 'Можно оформить внутреннюю заявку на закупку.',
+            'fulfillment_source_required' => 'Снабженцу нужно выбрать: выдать материал со склада, создать закупку или закрыть потребность смешанно.',
+            'warehouse_reserved' => 'Материал зарезервирован на складе и ожидает передачи на объект.',
+            'warehouse_in_transit' => 'Материал находится в складской передаче и ожидает приемки на объекте.',
+            'project_material_accepted' => 'Потребность закрыта складской выдачей.',
             'purchase_request_created' => 'Заявку на закупку нужно согласовать перед запросом поставщиков.',
             'purchase_request_approved' => 'Можно запросить условия у поставщиков.',
             'supplier_request_created' => 'Запрос подготовлен и ожидает отправки поставщикам.',
@@ -428,6 +436,14 @@ return [
         'actions' => [
             'submit_site_request' => 'Отправить заявку',
             'approve_site_request' => 'Одобрить заявку',
+            'reject_site_request' => 'Отклонить заявку',
+            'assign_site_request' => 'Сменить исполнителя',
+            'edit_site_request' => 'Редактировать заявку',
+            'delete_site_request' => 'Удалить заявку',
+            'start_work' => 'Взять в работу',
+            'fulfill_site_request' => 'Отметить выполненной',
+            'complete_site_request' => 'Завершить заявку',
+            'determine_fulfillment_source' => 'Определить источник обеспечения',
             'create_purchase_request' => 'Создать заявку на закупку',
             'approve_purchase_request' => 'Одобрить закупку',
             'create_supplier_request' => 'Запросить поставщиков',
@@ -441,6 +457,7 @@ return [
             'register_payment' => 'Подтвердить оплату',
             'receive_materials' => 'Принять материалы',
             'open_warehouse_receipt' => 'Открыть склад',
+            'open_project_material_delivery' => 'Открыть складскую выдачу',
             'disabled' => [
                 'waiting_for_supplier' => 'Следующий шаг появится после ответа поставщика.',
                 'waiting_external_step' => 'Следующий шаг пока недоступен.',
@@ -449,6 +466,7 @@ return [
         ],
         'blockers' => [
             'site_request_not_approved' => 'Сначала нужно одобрить исходную заявку с площадки.',
+            'fulfillment_source_not_selected' => 'Выберите источник обеспечения для материальной заявки.',
             'purchase_request_not_approved' => 'Заявка на закупку должна быть одобрена.',
             'supplier_request_missing' => 'Нет запроса поставщикам.',
             'proposal_missing' => 'Нет коммерческого предложения поставщика.',
@@ -469,6 +487,7 @@ return [
             'purchase_order' => 'Заказ поставщику',
             'payment_document' => 'Платежный документ',
             'purchase_receipt' => 'Приемка',
+            'project_material_delivery' => 'Складская выдача на объект',
         ],
         'payment_document' => [
             'created' => 'Платежный документ создан.',
