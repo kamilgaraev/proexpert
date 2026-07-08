@@ -12,12 +12,14 @@ use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
+use App\BusinessModules\Features\Procurement\Enums\SupplierProposalStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\SupplierRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
 use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
+use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Models\SupplierRequest;
 use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
@@ -59,11 +61,59 @@ final class ProcurementChainServiceTest extends TestCase
 
         $this->assertSame('purchase_request_approved', $summary->currentStage->key);
         $this->assertSame('create_supplier_request', $summary->nextAction?->key);
-        $this->assertSame('/procurement/purchase-requests/'.$purchaseRequest->id, $summary->nextAction?->href);
+        $this->assertSame('/procurement?tab=supplier_requests&purchase_request_id='.$purchaseRequest->id, $summary->nextAction?->href);
         $this->assertSame(
             ['site_request', 'purchase_request'],
             $summary->linkedDocuments->pluck('type')->all()
         );
+    }
+
+    public function test_pending_purchase_request_action_points_to_approval_post_endpoint(): void
+    {
+        $organization = Organization::factory()->create();
+        $purchaseRequest = $this->createPurchaseRequest($organization);
+        $purchaseRequest->update(['status' => PurchaseRequestStatusEnum::PENDING]);
+
+        $summary = app(ProcurementChainService::class)->forPurchaseRequest($purchaseRequest->fresh());
+
+        $this->assertSame('purchase_request_created', $summary->currentStage->key);
+        $this->assertSame('approve_purchase_request', $summary->nextAction?->key);
+        $this->assertSame('POST', $summary->nextAction?->method);
+        $this->assertSame(
+            "/api/v1/admin/procurement/purchase-requests/{$purchaseRequest->id}/approve",
+            $summary->nextAction?->href
+        );
+    }
+
+    public function test_draft_supplier_request_action_points_to_send_post_endpoint(): void
+    {
+        $organization = Organization::factory()->create();
+        $purchaseRequest = $this->createPurchaseRequest($organization);
+        $supplierRequest = $this->createSupplierRequest($purchaseRequest, SupplierRequestStatusEnum::DRAFT);
+
+        $summary = app(ProcurementChainService::class)->forPurchaseRequest($purchaseRequest->fresh());
+
+        $this->assertSame('supplier_request_created', $summary->currentStage->key);
+        $this->assertSame('send_supplier_request', $summary->nextAction?->key);
+        $this->assertSame('POST', $summary->nextAction?->method);
+        $this->assertSame(
+            "/api/v1/admin/procurement/supplier-requests/{$supplierRequest->id}/send",
+            $summary->nextAction?->href
+        );
+    }
+
+    public function test_received_supplier_proposals_action_points_to_purchase_request_comparison(): void
+    {
+        $organization = Organization::factory()->create();
+        $purchaseRequest = $this->createPurchaseRequest($organization);
+        $supplierRequest = $this->createSupplierRequest($purchaseRequest, SupplierRequestStatusEnum::SENT);
+        $this->createSupplierProposal($supplierRequest);
+
+        $summary = app(ProcurementChainService::class)->forPurchaseRequest($purchaseRequest->fresh());
+
+        $this->assertSame('commercial_proposal_received', $summary->currentStage->key);
+        $this->assertSame('select_proposal', $summary->nextAction?->key);
+        $this->assertSame('/procurement/proposals/compare?purchase_request_id='.$purchaseRequest->id, $summary->nextAction?->href);
     }
 
     public function test_sent_supplier_request_without_proposals_waits_without_enabled_action(): void
@@ -202,6 +252,22 @@ final class ProcurementChainServiceTest extends TestCase
             'status' => $status,
             'public_token' => 'chain-token-'.$purchaseRequest->id.str_repeat('x', 32),
             'public_token_expires_at' => now()->addDay(),
+        ]);
+    }
+
+    private function createSupplierProposal(SupplierRequest $supplierRequest): SupplierProposal
+    {
+        return SupplierProposal::query()->create([
+            'organization_id' => $supplierRequest->organization_id,
+            'supplier_request_id' => $supplierRequest->id,
+            'proposal_number' => 'KP-CHAIN-'.$supplierRequest->id,
+            'proposal_date' => now()->toDateString(),
+            'status' => SupplierProposalStatusEnum::SUBMITTED,
+            'subtotal_amount' => 100,
+            'delivery_amount' => 0,
+            'vat_amount' => 0,
+            'total_amount' => 100,
+            'currency' => 'RUB',
         ]);
     }
 

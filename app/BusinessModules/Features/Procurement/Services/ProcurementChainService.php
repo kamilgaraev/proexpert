@@ -160,7 +160,13 @@ final class ProcurementChainService
         if ($purchaseRequest->status !== PurchaseRequestStatusEnum::APPROVED) {
             return [
                 'purchase_request_created',
-                $this->action('approve_purchase_request', '/procurement/purchase-requests/'.$purchaseRequest->id, $actor, $organizationId),
+                $this->action(
+                    'approve_purchase_request',
+                    "/api/v1/admin/procurement/purchase-requests/{$purchaseRequest->id}/approve",
+                    $actor,
+                    $organizationId,
+                    'POST'
+                ),
                 collect([$this->blocker('purchase_request_not_approved', 'purchase_request', $purchaseRequest->id)]),
             ];
         }
@@ -176,7 +182,7 @@ final class ProcurementChainService
             if ($activeSupplierRequests->isEmpty()) {
                 return [
                     'purchase_request_approved',
-                    $this->action('create_supplier_request', '/procurement/purchase-requests/'.$purchaseRequest->id, $actor, $organizationId),
+                    $this->action('create_supplier_request', $this->supplierRequestsWorkspaceHref($purchaseRequest->id), $actor, $organizationId),
                     collect(),
                 ];
             }
@@ -188,7 +194,13 @@ final class ProcurementChainService
             if ($draftRequest instanceof SupplierRequest) {
                 return [
                     'supplier_request_created',
-                    $this->action('send_supplier_request', '/procurement/purchase-requests/'.$purchaseRequest->id, $actor, $organizationId),
+                    $this->action(
+                        'send_supplier_request',
+                        "/api/v1/admin/procurement/supplier-requests/{$draftRequest->id}/send",
+                        $actor,
+                        $organizationId,
+                        'POST'
+                    ),
                     collect(),
                 ];
             }
@@ -212,7 +224,7 @@ final class ProcurementChainService
             if (! $proposalDecision instanceof SupplierProposalDecision) {
                 return [
                     'commercial_proposal_received',
-                    $this->action('select_proposal', '/procurement/purchase-requests/'.$purchaseRequest->id, $actor, $organizationId),
+                    $this->action('select_proposal', "/procurement/proposals/compare?purchase_request_id={$purchaseRequest->id}", $actor, $organizationId),
                     collect(),
                 ];
             }
@@ -225,9 +237,19 @@ final class ProcurementChainService
                 ];
             }
 
+            $acceptHref = $selectedProposal instanceof SupplierProposal
+                ? "/api/v1/admin/procurement/proposals/{$selectedProposal->id}/accept"
+                : '/procurement/proposals';
+
             return [
                 'proposal_selected',
-                $this->action('accept_proposal', $selectedProposal instanceof SupplierProposal ? '/procurement/proposals/'.$selectedProposal->id : '/procurement/proposals', $actor, $organizationId),
+                $this->action(
+                    'accept_proposal',
+                    $acceptHref,
+                    $actor,
+                    $organizationId,
+                    $selectedProposal instanceof SupplierProposal ? 'POST' : 'GET'
+                ),
                 collect(),
             ];
         }
@@ -280,7 +302,7 @@ final class ProcurementChainService
         if ($receipts->isEmpty()) {
             return [
                 'payment_confirmed',
-                $this->action('receive_materials', '/procurement/purchase-orders/'.$purchaseOrder->id, $actor, $organizationId),
+                $this->action('receive_materials', "/procurement/purchase-orders/{$purchaseOrder->id}?receive_materials=1", $actor, $organizationId),
                 collect(),
             ];
         }
@@ -429,7 +451,7 @@ final class ProcurementChainService
             number: $supplierRequest->request_number,
             status: $supplierRequest->status->value,
             statusLabel: $supplierRequest->status->label(),
-            href: '/procurement/purchase-requests/'.$supplierRequest->purchase_request_id,
+            href: $this->supplierRequestsWorkspaceHref($supplierRequest->purchase_request_id),
             supplierName: $this->supplierName($supplierRequest->supplier_snapshot),
         );
     }
@@ -595,6 +617,11 @@ final class ProcurementChainService
             'purchase-receipts' => 'purchase_receipt',
             default => $context,
         };
+    }
+
+    private function supplierRequestsWorkspaceHref(int $purchaseRequestId): string
+    {
+        return "/procurement?tab=supplier_requests&purchase_request_id={$purchaseRequestId}";
     }
 
     /**
