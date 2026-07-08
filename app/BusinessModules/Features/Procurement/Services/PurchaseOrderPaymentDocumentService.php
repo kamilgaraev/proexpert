@@ -26,10 +26,10 @@ final class PurchaseOrderPaymentDocumentService
     }
 
     /**
-     * @param array<string, int|string|null> $budgetDimensions
+     * @param array<string, int|string|null> $paymentDocumentInput
      * @return array{document: PaymentDocument, created: bool}
      */
-    public function createOrOpen(PurchaseOrder $order, ?int $createdByUserId = null, array $budgetDimensions = []): array
+    public function createOrOpen(PurchaseOrder $order, ?int $createdByUserId = null, array $paymentDocumentInput = []): array
     {
         $order->loadMissing([
             'contract',
@@ -48,7 +48,7 @@ final class PurchaseOrderPaymentDocumentService
             ];
         }
 
-        return DB::transaction(function () use ($order, $createdByUserId, $budgetDimensions): array {
+        return DB::transaction(function () use ($order, $createdByUserId, $paymentDocumentInput): array {
             $existingDocument = $this->paymentGateService->linkedDocuments($order)->first();
 
             if ($existingDocument instanceof PaymentDocument) {
@@ -60,7 +60,7 @@ final class PurchaseOrderPaymentDocumentService
 
             $contractor = $this->resolvePayeeContractor($order);
             $document = $this->paymentDocumentService->createPaymentOrder(
-                $this->paymentDocumentPayload($order, $contractor, $createdByUserId, $budgetDimensions)
+                $this->paymentDocumentPayload($order, $contractor, $createdByUserId, $paymentDocumentInput)
             );
 
             return [
@@ -130,14 +130,14 @@ final class PurchaseOrderPaymentDocumentService
     }
 
     /**
-     * @param array<string, int|string|null> $budgetDimensions
+     * @param array<string, int|string|null> $paymentDocumentInput
      * @return array<string, mixed>
      */
     private function paymentDocumentPayload(
         PurchaseOrder $order,
         Contractor $contractor,
         ?int $createdByUserId,
-        array $budgetDimensions = []
+        array $paymentDocumentInput = []
     ): array {
         $contract = $order->contract;
         $payload = [
@@ -162,9 +162,9 @@ final class PurchaseOrderPaymentDocumentService
             'created_by_user_id' => $createdByUserId,
         ];
 
-        foreach (['budget_article_id', 'responsibility_center_id'] as $field) {
-            if (array_key_exists($field, $budgetDimensions)) {
-                $payload[$field] = $budgetDimensions[$field];
+        foreach (['budget_article_id', 'responsibility_center_id', 'budget_override_reason'] as $field) {
+            if (array_key_exists($field, $paymentDocumentInput)) {
+                $payload[$field] = $paymentDocumentInput[$field];
             }
         }
 

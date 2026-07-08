@@ -169,11 +169,11 @@ final class ProcurementChainController extends Controller
                 return AdminResponse::error(trans_message('procurement.purchase_orders.not_found'), 404);
             }
 
-            $budgetDimensions = $this->paymentDocumentBudgetDimensions($request);
+            $budgetPayload = $this->paymentDocumentBudgetPayload($request);
             $result = $this->paymentDocumentService->createOrOpen(
                 $purchaseOrder,
                 $request->user()?->id,
-                $budgetDimensions
+                $budgetPayload
             );
             $document = $result['document']->fresh([
                 'payerOrganization',
@@ -215,18 +215,28 @@ final class ProcurementChainController extends Controller
     /**
      * @return array<string, int|string|null>
      */
-    private function paymentDocumentBudgetDimensions(Request $request): array
+    private function paymentDocumentBudgetPayload(Request $request): array
     {
-        $dimensions = [];
+        $payload = [];
 
         foreach (['budget_article_id', 'responsibility_center_id'] as $field) {
             $value = $request->input($field);
 
             if (is_scalar($value) || $value === null) {
-                $dimensions[$field] = $value;
+                $payload[$field] = $value;
             }
         }
 
-        return $dimensions;
+        $budgetOverrideReason = $request->input('budget_override_reason');
+
+        if (is_scalar($budgetOverrideReason)) {
+            $budgetOverrideReason = trim((string) $budgetOverrideReason);
+
+            if ($budgetOverrideReason !== '') {
+                $payload['budget_override_reason'] = mb_substr($budgetOverrideReason, 0, 1000);
+            }
+        }
+
+        return $payload;
     }
 }
