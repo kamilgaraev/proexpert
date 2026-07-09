@@ -10,9 +10,11 @@ use App\BusinessModules\Core\Payments\Notifications\PaymentApprovalRequiredNotif
 use App\BusinessModules\Core\Payments\Notifications\PaymentApprovedNotification;
 use App\BusinessModules\Core\Payments\Notifications\PaymentRejectedNotification;
 use App\BusinessModules\Core\Payments\Notifications\PaymentRequestReceivedNotification;
+use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Models\Contractor;
 use App\Models\User;
 use Illuminate\Events\Dispatcher;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 
 class SendPaymentNotifications
@@ -56,6 +58,7 @@ class SendPaymentNotifications
                 ->where('approval_level', 1)
                 ->where('status', 'pending')
                 ->get();
+            $notifiedUserIds = [];
 
             foreach ($approvals as $approval) {
                 if ($approval->approver_user_id) {
@@ -63,13 +66,29 @@ class SendPaymentNotifications
                     if ($user) {
                         $user->notify(new PaymentApprovalRequiredNotification($document));
                         $approval->markAsNotified();
+                        $notifiedUserIds[] = $user->id;
                     }
+
+                    continue;
+                }
+
+                if ($approval->approval_permission) {
+                    foreach ($this->usersWithAnyPermission((int) $document->organization_id, [$approval->approval_permission]) as $user) {
+                        if (in_array($user->id, $notifiedUserIds, true)) {
+                            continue;
+                        }
+
+                        $user->notify(new PaymentApprovalRequiredNotification($document));
+                        $notifiedUserIds[] = $user->id;
+                    }
+
+                    $approval->markAsNotified();
                 }
             }
 
             Log::info('payment_notifications.document_submitted', [
                 'document_id' => $document->id,
-                'approvers_notified' => $approvals->count(),
+                'approvers_notified' => count($notifiedUserIds),
             ]);
         } catch (\Exception $e) {
             Log::error('payment_notifications.document_submitted_failed', [
@@ -95,13 +114,9 @@ class SendPaymentNotifications
                 }
             }
 
-            // Уведомляем финансовый отдел через новую систему авторизации
-            $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($document->organization_id);
-            
-            $financialUsers = User::whereHas('roleAssignments', function($query) use ($context) {
-                $query->where('context_id', $context->id)
-                    ->whereIn('role_slug', ['financial_director', 'chief_accountant']);
-            })->get();
+            $financialUsers = $this->usersWithAnyPermission((int) $document->organization_id, [
+                'payments.transaction.register',
+            ]);
 
             foreach ($financialUsers as $user) {
                 $user->notify(new PaymentApprovedNotification($document));
@@ -157,13 +172,10 @@ class SendPaymentNotifications
             $request = $event->request;
             $contractor = Contractor::find($event->contractorId);
 
-            // Уведомляем ответственных за работу с данным контрагентом через новую систему авторизации
-            $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($request->organization_id);
-            
-            $responsibleUsers = User::whereHas('roleAssignments', function($query) use ($context) {
-                $query->where('context_id', $context->id)
-                    ->whereIn('role_slug', ['financial_director', 'chief_accountant', 'project_manager']);
-            })->get();
+            $responsibleUsers = $this->usersWithAnyPermission((int) $request->organization_id, [
+                'payments.invoice.create',
+                'payments.invoice.issue',
+            ]);
 
             foreach ($responsibleUsers as $user) {
                 $user->notify(new PaymentRequestReceivedNotification(
@@ -183,6 +195,31 @@ class SendPaymentNotifications
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * @param array<int, string> $permissions
+     * @return Collection<int, User>
+     */
+    private function usersWithAnyPermission(int $organizationId, array $permissions): Collection
+    {
+        $context = AuthorizationContext::getOrganizationContext($organizationId);
+
+        return User::query()
+            ->whereHas('roleAssignments', static function ($query) use ($context): void {
+                $query->where('context_id', $context->id);
+            })
+            ->get()
+            ->filter(static function (User $user) use ($permissions, $organizationId): bool {
+                foreach ($permissions as $permission) {
+                    if ($user->can($permission, ['organization_id' => $organizationId])) {
+                        return true;
+                    }
+                }
+
+                return false;
+            })
+            ->values();
     }
 }
 

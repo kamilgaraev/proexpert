@@ -51,8 +51,9 @@ final class ProcurementChainControllerTest extends TestCase
         $response->assertOk();
         $response->assertJsonPath('success', true);
         $response->assertJsonPath('data.root.type', 'site_request');
-        $response->assertJsonPath('data.current_stage.key', 'site_request_approved');
-        $response->assertJsonPath('data.next_action.key', 'create_purchase_request');
+        $response->assertJsonPath('data.current_stage.key', 'fulfillment_source_required');
+        $response->assertJsonPath('data.next_action.key', 'determine_fulfillment_source');
+        $response->assertJsonPath('data.blockers.0.key', 'fulfillment_source_not_selected');
         $response->assertJsonPath('data.linked_documents.0.type', 'site_request');
         $response->assertJsonStructure([
             'data' => [
@@ -82,10 +83,11 @@ final class ProcurementChainControllerTest extends TestCase
             ->getJson("/api/v1/admin/procurement/chains/purchase-orders/{$purchaseOrder->id}");
 
         $response->assertOk();
-        $response->assertJsonPath('data.current_stage.key', 'payment_document_created');
+        $response->assertJsonPath('data.current_stage.key', 'payment_approved');
         $response->assertJsonPath('data.next_action.key', 'register_payment');
-        $response->assertJsonPath('data.next_action.href', '/payments/documents/'.$paymentDocument->id);
-        $response->assertJsonPath('data.blockers.0.key', 'payment_confirmation_required');
+        $response->assertJsonPath('data.next_action.href', "/api/v1/admin/payments/documents/{$paymentDocument->id}/register-payment");
+        $response->assertJsonPath('data.next_action.method', 'POST');
+        $response->assertJsonPath('data.blockers.0.key', 'payment_registration_required');
         $this->assertContains(
             'payment_document',
             collect($response->json('data.linked_documents'))->pluck('type')->all()
@@ -114,6 +116,9 @@ final class ProcurementChainControllerTest extends TestCase
         $firstResponse->assertCreated();
         $secondResponse->assertOk();
         $this->assertSame($firstResponse->json('data.id'), $secondResponse->json('data.id'));
+        $this->assertSame($firstResponse->json('data.id'), $firstResponse->json('data.payment_document.id'));
+        $this->assertSame('submit_payment_document', $firstResponse->json('data.payment_action_summary.primary_action.key'));
+        $this->assertSame('payment_document_draft', $firstResponse->json('data.procurement_chain_summary.current_stage.key'));
         $this->assertDatabaseHas('contractors', [
             'organization_id' => $context->organization->id,
             'name' => 'Поставщик цепочки',
@@ -129,6 +134,40 @@ final class ProcurementChainControllerTest extends TestCase
             now()->toDateString(),
             PaymentDocument::query()->findOrFail($firstResponse->json('data.id'))->document_date?->toDateString()
         );
+    }
+
+    public function test_payment_document_endpoint_can_submit_after_create_when_requested(): void
+    {
+        $context = AdminApiTestContext::create();
+        $purchaseRequest = $this->createPurchaseRequest($context->organization);
+        $purchaseOrder = $this->createPurchaseOrder($purchaseRequest, PurchaseOrderStatusEnum::CONFIRMED, [
+            'supplier_snapshot' => [
+                'display_name' => 'Submit Supplier',
+                'tax_id' => '7700000003',
+                'email' => 'submit-supplier@example.test',
+            ],
+        ]);
+        $this->allowModuleAccess();
+        $this->allowPermissions();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/payment-document", [
+                'submit_after_create' => true,
+                'bank_account' => '40702810900000000001',
+                'bank_bik' => '044525001',
+                'bank_correspondent_account' => '30101810400000000225',
+            ]);
+
+        $response->assertCreated();
+        $response->assertJsonPath('data.submitted', true);
+        $response->assertJsonPath('data.payment_action_summary.primary_action.key', 'approve_payment_document');
+        $response->assertJsonPath('data.procurement_chain_summary.current_stage.key', 'payment_approval_required');
+        $this->assertDatabaseHas('payment_approvals', [
+            'payment_document_id' => $response->json('data.id'),
+            'approval_role' => null,
+            'approval_permission' => 'payments.transaction.approve',
+            'status' => 'pending',
+        ]);
     }
 
     public function test_purchase_order_payment_document_uses_material_purchase_limit_for_procurement_contract(): void

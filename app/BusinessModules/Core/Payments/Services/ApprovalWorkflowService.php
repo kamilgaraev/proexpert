@@ -15,6 +15,8 @@ use function trans_message;
 
 class ApprovalWorkflowService
 {
+    private const PAYMENT_APPROVAL_PERMISSION = 'payments.transaction.approve';
+
     public function __construct(
         private readonly PaymentDocumentStateMachine $stateMachine,
         private readonly PaymentBudgetLimitService $budgetLimitService
@@ -97,28 +99,25 @@ class ApprovalWorkflowService
      */
     private function getDefaultApprovalRule(PaymentDocument $document): ?PaymentApprovalRule
     {
-        // Создаем виртуальное правило на основе суммы
         $amount = $document->amount;
-        
-        if ($amount < 50000) {
-            // До 50к - только главный бухгалтер
-            return $this->createVirtualRule($document, [
-                ['role' => 'chief_accountant', 'level' => 1, 'order' => 1, 'required' => true]
-            ]);
-        } elseif ($amount < 500000) {
-            // До 500к - главбух + финдир
-            return $this->createVirtualRule($document, [
-                ['role' => 'chief_accountant', 'level' => 1, 'order' => 1, 'required' => true],
-                ['role' => 'financial_director', 'level' => 2, 'order' => 1, 'required' => true],
-            ]);
-        } else {
-            // Более 500к - главбух + финдир + гендир
-            return $this->createVirtualRule($document, [
-                ['role' => 'chief_accountant', 'level' => 1, 'order' => 1, 'required' => true],
-                ['role' => 'financial_director', 'level' => 2, 'order' => 1, 'required' => true],
-                ['role' => 'general_director', 'level' => 3, 'order' => 1, 'required' => true],
-            ]);
+
+        $levels = match (true) {
+            $amount < 50000 => 1,
+            $amount < 500000 => 2,
+            default => 3,
+        };
+
+        $chain = [];
+        for ($level = 1; $level <= $levels; $level++) {
+            $chain[] = [
+                'permission' => self::PAYMENT_APPROVAL_PERMISSION,
+                'level' => $level,
+                'order' => 1,
+                'required' => true,
+            ];
         }
+
+        return $this->createVirtualRule($document, $chain);
     }
 
     /**
@@ -144,14 +143,20 @@ class ApprovalWorkflowService
         $approvals = collect();
 
         foreach ($chain as $item) {
-            // Найти пользователя с данной ролью
-            $approver = $this->findApproverByRole($document->organization_id, $item['role']);
+            $permission = $item['approval_permission'] ?? $item['permission'] ?? null;
+            $role = $permission ? null : ($item['role'] ?? null);
+            $approverUserId = $item['approver_user_id'] ?? null;
+
+            if (!$permission && $role) {
+                $approverUserId = $this->findApproverByRole($document->organization_id, $role)?->id;
+            }
 
             $approval = PaymentApproval::create([
                 'payment_document_id' => $document->id,
                 'organization_id' => $document->organization_id,
-                'approval_role' => $item['role'],
-                'approver_user_id' => $approver?->id,
+                'approval_role' => $role,
+                'approval_permission' => $permission,
+                'approver_user_id' => $approverUserId,
                 'approval_level' => $item['level'],
                 'approval_order' => $item['order'] ?? 1,
                 'amount_threshold' => $item['amount_threshold'] ?? null,
@@ -179,6 +184,66 @@ class ApprovalWorkflowService
         })->first();
     }
 
+    private function approvalQueryForUser(PaymentDocument $document, int $userId, ?User $user)
+    {
+        $query = PaymentApproval::where('payment_document_id', $document->id)
+            ->where('status', 'pending');
+
+        return $query->where(function ($scope) use ($document, $userId, $user): void {
+            $scope->where('approver_user_id', $userId);
+
+            if ($this->userHasPermission($user, self::PAYMENT_APPROVAL_PERMISSION, (int) $document->organization_id)) {
+                $scope->orWhere(function ($permissionScope): void {
+                    $permissionScope->whereNull('approver_user_id')
+                        ->where('approval_permission', self::PAYMENT_APPROVAL_PERMISSION);
+                });
+            }
+        });
+    }
+
+    private function userHasPermission(?User $user, string $permission, int $organizationId): bool
+    {
+        if (!$user) {
+            return false;
+        }
+
+        return $user->can($permission, ['organization_id' => $organizationId]);
+    }
+
+    private function isPrivilegedApprovalActor(?User $user, int $organizationId): bool
+    {
+        if (!$user) {
+            return false;
+        }
+
+        return $user->isOrganizationOwner($organizationId) || $user->isSystemAdmin();
+    }
+
+    private function legacyRoleApprovalForUser(PaymentDocument $document, int $userId): ?PaymentApproval
+    {
+        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext((int) $document->organization_id);
+        $user = User::find($userId);
+
+        if (!$user) {
+            return null;
+        }
+
+        $legacyApprovals = PaymentApproval::where('payment_document_id', $document->id)
+            ->where('status', 'pending')
+            ->whereNull('approval_permission')
+            ->whereNotNull('approval_role')
+            ->lockForUpdate()
+            ->get();
+
+        return $legacyApprovals->first(function (PaymentApproval $approval) use ($user, $userId, $context): bool {
+            if ($approval->approver_user_id === $userId) {
+                return true;
+            }
+
+            return $approval->approval_role && $user->hasRole($approval->approval_role, $context->id);
+        });
+    }
+
     /**
      * Утвердить документ пользователем
      */
@@ -195,72 +260,25 @@ class ApprovalWorkflowService
             $document = PaymentDocument::where('id', $document->id)->lockForUpdate()->first();
 
             // Найти pending утверждение для данного пользователя
-            $approval = PaymentApproval::where('payment_document_id', $document->id)
-                ->where('approver_user_id', $userId)
-                ->where('status', 'pending')
+            $user = User::find($userId);
+            $approval = $this->approvalQueryForUser($document, $userId, $user)
                 ->lockForUpdate()
                 ->first();
-
-            $user = User::find($userId);
+            $approval ??= $this->legacyRoleApprovalForUser($document, $userId);
+            $canApprovePayments = $this->userHasPermission($user, self::PAYMENT_APPROVAL_PERMISSION, (int) $document->organization_id);
             
             // Проверка прав администратора/владельца организации
-            $isAdmin = false;
+            $isAdmin = $canApprovePayments || $this->isPrivilegedApprovalActor($user, (int) $document->organization_id);
             if ($user) {
                 $organizationId = $document->organization_id;
-                
-                // 1. Проверка владельца организации (GOD MODE)
-                if ($user->isOrganizationOwner($organizationId)) {
-                    $isAdmin = true;
-                    Log::info('payment_approval.auth_check', [
-                        'user_id' => $userId,
-                        'document_id' => $document->id,
-                        'organization_id' => $organizationId,
-                        'check' => 'isOrganizationOwner',
-                        'result' => true,
-                    ]);
-                }
-                
-                // 2. Проверка системного администратора
-                if (!$isAdmin && $user->isSystemAdmin()) {
-                    $isAdmin = true;
-                    Log::info('payment_approval.auth_check', [
-                        'user_id' => $userId,
-                        'document_id' => $document->id,
-                        'check' => 'isSystemAdmin',
-                        'result' => true,
-                    ]);
-                }
-                
-                // 3. Проверка ролей админа/финдира в контексте организации
-                if (!$isAdmin) {
-                    $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
-                    $rolesToCheck = ['admin', 'finance_admin'];
-                    foreach ($rolesToCheck as $role) {
-                        if ($user->hasRole($role, $context->id)) {
-                            $isAdmin = true;
-                            Log::info('payment_approval.auth_check', [
-                                'user_id' => $userId,
-                                'document_id' => $document->id,
-                                'organization_id' => $organizationId,
-                                'check' => "hasRole({$role})",
-                                'result' => true,
-                            ]);
-                            break;
-                        }
-                    }
-                }
-                
-                // 4. Проверка конкретного разрешения с контекстом организации
-                if (!$isAdmin) {
-                    $isAdmin = $user->can('payments.transaction.approve', ['organization_id' => $organizationId]);
-                    Log::info('payment_approval.auth_check', [
-                        'user_id' => $userId,
-                        'document_id' => $document->id,
-                        'organization_id' => $organizationId,
-                        'check' => 'can(payments.transaction.approve)',
-                        'result' => $isAdmin,
-                    ]);
-                }
+
+                Log::info('payment_approval.auth_check', [
+                    'user_id' => $userId,
+                    'document_id' => $document->id,
+                    'organization_id' => $organizationId,
+                    'check' => self::PAYMENT_APPROVAL_PERMISSION,
+                    'result' => $isAdmin,
+                ]);
             }
 
             // Если нет прямого назначения, но есть права админа/владельца - ищем любое активное утверждение
@@ -307,7 +325,8 @@ class ApprovalWorkflowService
                         PaymentApproval::create([
                             'payment_document_id' => $document->id,
                             'organization_id' => $document->organization_id,
-                            'approval_role' => 'admin',
+                            'approval_role' => null,
+                            'approval_permission' => self::PAYMENT_APPROVAL_PERMISSION,
                             'approver_user_id' => $userId,
                             'approval_level' => 1,
                             'approval_order' => 1,
@@ -429,17 +448,17 @@ class ApprovalWorkflowService
             }
 
             // Найти pending утверждение для данного пользователя
-            $approval = PaymentApproval::where('payment_document_id', $document->id)
-                ->where('approver_user_id', $userId)
-                ->where('status', 'pending')
+            $user = User::find($userId);
+            $approval = $this->approvalQueryForUser($document, $userId, $user)
                 ->lockForUpdate()
                 ->first();
+            $approval ??= $this->legacyRoleApprovalForUser($document, $userId);
 
             if (!$approval) {
                 throw new \DomainException(trans_message('payments.validation.approval_reject_forbidden'));
             }
 
-            // Отклонить
+            $approval->approver_user_id = $userId;
             $approval->reject($reason);
 
             // Отменить все остальные pending утверждения
@@ -538,32 +557,8 @@ class ApprovalWorkflowService
         if ($organizationId) {
             $user = User::find($userId);
             if ($user) {
-                // 1. Проверка владельца организации
-                if ($user->isOrganizationOwner($organizationId)) {
-                    $isAdmin = true;
-                }
-                
-                // 2. Проверка системного администратора
-                if (!$isAdmin && $user->isSystemAdmin()) {
-                    $isAdmin = true;
-                }
-                
-                // 3. Проверка ролей админа/финдира в контексте организации
-                if (!$isAdmin) {
-                    $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
-                    $rolesToCheck = ['admin', 'finance_admin'];
-                    foreach ($rolesToCheck as $role) {
-                        if ($user->hasRole($role, $context->id)) {
-                            $isAdmin = true;
-                            break;
-                        }
-                    }
-                }
-                
-                // 4. Проверка конкретного разрешения с контекстом организации
-                if (!$isAdmin) {
-                    $isAdmin = $user->can('payments.transaction.approve', ['organization_id' => $organizationId]);
-                }
+                $isAdmin = $this->isPrivilegedApprovalActor($user, $organizationId)
+                    || $this->userHasPermission($user, self::PAYMENT_APPROVAL_PERMISSION, $organizationId);
             }
         }
 
@@ -578,7 +573,10 @@ class ApprovalWorkflowService
             $query->where('organization_id', $organizationId)
                 ->where(function($q) use ($userId) {
                     $q->where('approver_user_id', $userId)
-                      ->orWhereNull('approver_user_id');
+                      ->orWhere(function ($permissionScope): void {
+                          $permissionScope->whereNull('approver_user_id')
+                              ->where('approval_permission', self::PAYMENT_APPROVAL_PERMISSION);
+                      });
                 });
             
             Log::info('payment_approval.get_pending_for_admin', [
@@ -624,7 +622,8 @@ class ApprovalWorkflowService
                     PaymentApproval::create([
                         'payment_document_id' => $doc->id,
                         'organization_id' => $doc->organization_id,
-                        'approval_role' => 'admin',
+                        'approval_role' => null,
+                        'approval_permission' => self::PAYMENT_APPROVAL_PERMISSION,
                         'approver_user_id' => $userId,
                         'approval_level' => 1,
                         'approval_order' => 1,
@@ -672,29 +671,14 @@ class ApprovalWorkflowService
 
         // Если документ утвержден, но нет записей утверждения - создаем ретроспективную запись
         if ($document->status === PaymentDocumentStatus::APPROVED && $total === 0) {
-            // Пытаемся найти пользователя, который утвердил документ
             $approvedByUserId = $document->approved_by_user_id;
-            
-            // Если нет информации о пользователе, пытаемся найти через логи или используем системного пользователя
-            if (!$approvedByUserId) {
-                // Ищем в логах последнего, кто утвердил документ
-                // Или используем первого админа организации как fallback
-                $orgAdmin = User::whereHas('roleAssignments', function ($query) use ($document) {
-                    $query->where('role_slug', 'organization_owner')
-                        ->whereHas('context', function ($q) use ($document) {
-                            $q->where('type', \App\Domain\Authorization\Models\AuthorizationContext::TYPE_ORGANIZATION)
-                              ->where('resource_id', $document->organization_id);
-                        });
-                })->first();
-                
-                $approvedByUserId = $orgAdmin?->id ?? 1; // Fallback на системного пользователя
-            }
             
             // Создаем запись для истории (ретроспективно)
             PaymentApproval::create([
                 'payment_document_id' => $document->id,
                 'organization_id' => $document->organization_id,
-                'approval_role' => 'admin',
+                'approval_role' => null,
+                'approval_permission' => self::PAYMENT_APPROVAL_PERMISSION,
                 'approver_user_id' => $approvedByUserId,
                 'approval_level' => 1,
                 'approval_order' => 1,
@@ -714,7 +698,8 @@ class ApprovalWorkflowService
             PaymentApproval::create([
                 'payment_document_id' => $document->id,
                 'organization_id' => $document->organization_id,
-                'approval_role' => 'admin',
+                'approval_role' => null,
+                'approval_permission' => self::PAYMENT_APPROVAL_PERMISSION,
                 'approver_user_id' => null, // Может утвердить любой админ
                 'approval_level' => 1,
                 'approval_order' => 1,
@@ -742,7 +727,7 @@ class ApprovalWorkflowService
             $user = User::find($userId);
             if ($user) {
                 // Проверяем админские права
-                if ($user->isOrganizationOwner($document->organization_id) || $user->hasRole('admin')) {
+                if ($this->isPrivilegedApprovalActor($user, (int) $document->organization_id)) {
                     $canBeApprovedByCurrentUser = true;
                 } else {
                     // Ищем pending approvals, которые может утвердить этот юзер
@@ -758,8 +743,12 @@ class ApprovalWorkflowService
                             break;
                         }
                         
-                        // Или у пользователя есть необходимая роль
-                        if ($approval->approval_role) {
+                        if ($approval->approval_permission) {
+                            if ($this->userHasPermission($user, $approval->approval_permission, (int) $document->organization_id)) {
+                                $canBeApprovedByCurrentUser = true;
+                                break;
+                            }
+                        } elseif ($approval->approval_role) {
                             $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($document->organization_id);
                             $hasRole = User::where('id', $userId)
                                 ->whereHas('roleAssignments', function ($query) use ($context, $approval) {
@@ -791,6 +780,8 @@ class ApprovalWorkflowService
                 'id' => $a->id,
                 'role' => $a->approval_role,
                 'role_label' => $a->getRoleLabel(),
+                'approval_permission' => $a->approval_permission,
+                'approval_permission_label' => $a->getPermissionLabel(),
                 'approver' => $a->approver?->name,
                 'level' => $a->approval_level,
                 'order' => $a->approval_order,
@@ -803,6 +794,8 @@ class ApprovalWorkflowService
                 'id' => $a->id,
                 'role' => $a->approval_role,
                 'role_label' => $a->getRoleLabel(),
+                'approval_permission' => $a->approval_permission,
+                'approval_permission_label' => $a->getPermissionLabel(),
                 'approver' => $a->approver?->name,
                 'level' => $a->approval_level,
                 'order' => $a->approval_order,

@@ -35,17 +35,18 @@ final class ProcurementChainServiceTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_approved_site_request_without_purchase_request_points_to_purchase_request_creation(): void
+    public function test_approved_material_site_request_without_fulfillment_decision_points_to_source_selection(): void
     {
         $organization = Organization::factory()->create();
         $siteRequest = $this->createSiteRequest($organization);
 
         $summary = app(ProcurementChainService::class)->forSiteRequest($siteRequest);
 
-        $this->assertSame('site_request_approved', $summary->currentStage->key);
-        $this->assertSame('create_purchase_request', $summary->nextAction?->key);
-        $this->assertFalse($summary->compact()->isBlocked);
-        $this->assertSame('/procurement/purchase-requests/create?site_request_id='.$siteRequest->id, $summary->nextAction?->href);
+        $this->assertSame('fulfillment_source_required', $summary->currentStage->key);
+        $this->assertSame('determine_fulfillment_source', $summary->nextAction?->key);
+        $this->assertTrue($summary->compact()->isBlocked);
+        $this->assertSame('/site-requests/'.$siteRequest->id.'?fulfillment=1', $summary->nextAction?->href);
+        $this->assertSame('fulfillment_source_not_selected', $summary->blockers->first()?->key);
         $this->assertSame('site_request', $summary->root['type']);
         $this->assertSame($siteRequest->id, $summary->root['id']);
         $this->assertSame(['site_request'], $summary->linkedDocuments->pluck('type')->all());
@@ -138,10 +139,48 @@ final class ProcurementChainServiceTest extends TestCase
 
         $summary = app(ProcurementChainService::class)->forPurchaseOrder($purchaseOrder);
 
-        $this->assertSame('purchase_order_created', $summary->currentStage->key);
+        $this->assertSame('payment_document_missing', $summary->currentStage->key);
         $this->assertSame('create_or_open_payment_document', $summary->nextAction?->key);
         $this->assertSame('payment_document_missing', $summary->blockers->first()?->key);
         $this->assertTrue($summary->compact()->isBlocked);
+    }
+
+    public function test_draft_payment_document_points_to_submission(): void
+    {
+        $organization = Organization::factory()->create();
+        $purchaseRequest = $this->createPurchaseRequest($organization);
+        $purchaseOrder = $this->createPurchaseOrder($purchaseRequest, PurchaseOrderStatusEnum::CONFIRMED);
+        $paymentDocument = $this->createPaymentDocument($purchaseOrder, PaymentDocumentStatus::DRAFT, 0.0);
+
+        $summary = app(ProcurementChainService::class)->forPurchaseOrder($purchaseOrder);
+
+        $this->assertSame('payment_document_draft', $summary->currentStage->key);
+        $this->assertSame('submit_payment_document', $summary->nextAction?->key);
+        $this->assertSame('POST', $summary->nextAction?->method);
+        $this->assertSame(
+            "/api/v1/admin/payments/documents/{$paymentDocument->id}/submit",
+            $summary->nextAction?->href
+        );
+        $this->assertSame('payment_document_not_submitted', $summary->blockers->first()?->key);
+    }
+
+    public function test_submitted_payment_document_points_to_approval(): void
+    {
+        $organization = Organization::factory()->create();
+        $purchaseRequest = $this->createPurchaseRequest($organization);
+        $purchaseOrder = $this->createPurchaseOrder($purchaseRequest, PurchaseOrderStatusEnum::CONFIRMED);
+        $paymentDocument = $this->createPaymentDocument($purchaseOrder, PaymentDocumentStatus::PENDING_APPROVAL, 0.0);
+
+        $summary = app(ProcurementChainService::class)->forPurchaseOrder($purchaseOrder);
+
+        $this->assertSame('payment_approval_required', $summary->currentStage->key);
+        $this->assertSame('approve_payment_document', $summary->nextAction?->key);
+        $this->assertSame('POST', $summary->nextAction?->method);
+        $this->assertSame(
+            "/api/v1/admin/payments/approvals/documents/{$paymentDocument->id}/approve",
+            $summary->nextAction?->href
+        );
+        $this->assertSame('payment_approval_required', $summary->blockers->first()?->key);
     }
 
     public function test_unpaid_payment_document_blocks_receipt_and_points_to_payment_registration(): void
@@ -153,10 +192,14 @@ final class ProcurementChainServiceTest extends TestCase
 
         $summary = app(ProcurementChainService::class)->forPurchaseOrder($purchaseOrder);
 
-        $this->assertSame('payment_document_created', $summary->currentStage->key);
+        $this->assertSame('payment_approved', $summary->currentStage->key);
         $this->assertSame('register_payment', $summary->nextAction?->key);
-        $this->assertSame('/payments/documents/'.$paymentDocument->id, $summary->nextAction?->href);
-        $this->assertSame('payment_confirmation_required', $summary->blockers->first()?->key);
+        $this->assertSame('POST', $summary->nextAction?->method);
+        $this->assertSame(
+            "/api/v1/admin/payments/documents/{$paymentDocument->id}/register-payment",
+            $summary->nextAction?->href
+        );
+        $this->assertSame('payment_registration_required', $summary->blockers->first()?->key);
     }
 
     public function test_paid_order_without_receipt_points_to_material_receipt(): void
@@ -168,7 +211,7 @@ final class ProcurementChainServiceTest extends TestCase
 
         $summary = app(ProcurementChainService::class)->forPurchaseOrder($purchaseOrder);
 
-        $this->assertSame('payment_confirmed', $summary->currentStage->key);
+        $this->assertSame('payment_registered', $summary->currentStage->key);
         $this->assertSame('receive_materials', $summary->nextAction?->key);
         $this->assertFalse($summary->compact()->isBlocked);
     }

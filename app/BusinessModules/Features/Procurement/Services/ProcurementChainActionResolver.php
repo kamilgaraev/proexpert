@@ -35,6 +35,8 @@ final class ProcurementChainActionResolver
         'accept_proposal' => 'procurement.supplier_proposals.accept',
         'open_purchase_order' => 'procurement.purchase_orders.view',
         'create_or_open_payment_document' => 'payments.invoice.create',
+        'submit_payment_document' => 'payments.invoice.issue',
+        'approve_payment_document' => 'payments.transaction.approve',
         'register_payment' => 'payments.transaction.register',
         'receive_materials' => 'procurement.purchase_orders.receive',
         'open_warehouse_receipt' => 'warehouse.view',

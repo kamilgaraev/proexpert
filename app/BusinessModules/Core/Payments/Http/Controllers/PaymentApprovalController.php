@@ -53,6 +53,8 @@ class PaymentApprovalController extends Controller
                     'status' => $approval->status,
                     'approval_role' => $approval->approval_role,
                     'approval_role_label' => $approval->getRoleLabel(),
+                    'approval_permission' => $approval->approval_permission,
+                    'approval_permission_label' => $approval->getPermissionLabel(),
                     'approval_level' => $approval->approval_level,
                     'approval_order' => $approval->approval_order,
                     'amount_threshold' => $approval->amount_threshold,
@@ -194,6 +196,8 @@ class PaymentApprovalController extends Controller
                     'id' => $approval->id,
                     'role' => $approval->approval_role,
                     'role_label' => $approval->getRoleLabel(),
+                    'approval_permission' => $approval->approval_permission,
+                    'approval_permission_label' => $approval->getPermissionLabel(),
                     'approver' => $approval->approver ? [
                         'id' => $approval->approver->id,
                         'name' => $approval->approver->name,

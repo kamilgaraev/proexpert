@@ -6,6 +6,7 @@ use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\BusinessModules\Core\Payments\Notifications\PaymentDocumentCreatedNotification;
 use App\BusinessModules\Core\Payments\Notifications\PaymentRegisteredNotification;
+use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Support\Facades\Log;
@@ -151,14 +152,7 @@ class PaymentRecipientNotificationService
         // 2. Финансовые менеджеры
         // 3. Администраторы организации
 
-        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
-
-        // Получаем пользователей с нужными ролями в контексте организации
-        $users = User::whereHas('roleAssignments', function ($query) use ($context) {
-            $query->where('context_id', $context->id)
-                ->where('is_active', true)
-                ->whereIn('role_slug', ['organization_owner', 'finance_admin', 'admin']);
-        })->get();
+        $context = AuthorizationContext::getOrganizationContext($organizationId);
 
         // Также добавляем пользователей, которые имеют право payments.view через кастомные роли
         // Проверяем через AuthorizationService
@@ -172,7 +166,7 @@ class PaymentRecipientNotificationService
         });
 
         // Объединяем и убираем дубликаты
-        return $users->merge($usersWithPermission)->unique('id');
+        return $usersWithPermission->unique('id')->values();
     }
 }
 

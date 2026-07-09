@@ -777,14 +777,17 @@ class PaymentValidationService
         float $paymentAmount
     ): void {
         try {
-            // Получаем администраторов и владельцев организации
             $context = AuthorizationContext::getOrganizationContext($organizationId);
 
             $users = User::whereHas('roleAssignments', function ($query) use ($context) {
                 $query->where('context_id', $context->id)
-                    ->where('is_active', true)
-                    ->whereIn('role_slug', ['organization_owner', 'admin', 'accountant']);
-            })->get();
+                    ->where('is_active', true);
+            })
+                ->get()
+                ->filter(static function (User $user) use ($organizationId): bool {
+                    return $user->can('payments.view', ['organization_id' => $organizationId]);
+                })
+                ->values();
             
             if ($users->isEmpty()) {
                 Log::warning('No users to notify about contract excess', [

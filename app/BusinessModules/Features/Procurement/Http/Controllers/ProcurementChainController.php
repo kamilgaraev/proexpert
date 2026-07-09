@@ -183,9 +183,19 @@ final class ProcurementChainController extends Controller
                 'project',
                 'siteRequests',
             ]);
+            $documentResource = new PaymentDocumentResource($document ?? $result['document']);
+            $documentPayload = $documentResource->resolve($request);
+            $chainPayload = (new ProcurementChainResource(
+                $this->chainService->forPurchaseOrder($purchaseOrder->fresh(), $request->user())
+            ))->resolve($request);
 
             return AdminResponse::success(
-                new PaymentDocumentResource($document ?? $result['document']),
+                array_merge($documentPayload, [
+                    'payment_document' => $documentPayload,
+                    'payment_action_summary' => $documentPayload['action_summary'] ?? null,
+                    'procurement_chain_summary' => $chainPayload,
+                    'submitted' => $result['submitted'] ?? false,
+                ]),
                 $result['created']
                     ? trans_message('procurement.chain.payment_document.created')
                     : trans_message('procurement.chain.payment_document.opened'),
@@ -213,7 +223,7 @@ final class ProcurementChainController extends Controller
     }
 
     /**
-     * @return array<string, int|string|null>
+     * @return array<string, mixed>
      */
     private function paymentDocumentBudgetPayload(Request $request): array
     {
@@ -227,6 +237,18 @@ final class ProcurementChainController extends Controller
             }
         }
 
+        foreach (['bank_account', 'bank_bik', 'bank_correspondent_account', 'bank_name'] as $field) {
+            $value = $request->input($field);
+
+            if (is_scalar($value)) {
+                $value = trim((string) $value);
+
+                if ($value !== '') {
+                    $payload[$field] = $value;
+                }
+            }
+        }
+
         $budgetOverrideReason = $request->input('budget_override_reason');
 
         if (is_scalar($budgetOverrideReason)) {
@@ -235,6 +257,10 @@ final class ProcurementChainController extends Controller
             if ($budgetOverrideReason !== '') {
                 $payload['budget_override_reason'] = mb_substr($budgetOverrideReason, 0, 1000);
             }
+        }
+
+        if ($request->boolean('submit_after_create')) {
+            $payload['submit_after_create'] = true;
         }
 
         return $payload;

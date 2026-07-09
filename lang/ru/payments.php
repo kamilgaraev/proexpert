@@ -11,6 +11,16 @@ return [
         'amount' => 'сумма',
         'currency' => 'валюта',
     ],
+    'actions' => [
+        'submit_payment_document' => 'Передать на согласование',
+        'approve_payment_document' => 'Согласовать оплату',
+        'register_payment' => 'Зарегистрировать оплату',
+    ],
+    'blockers' => [
+        'payment_approval_required' => 'Оплата ожидает согласования.',
+        'payment_registration_required' => 'Сначала зарегистрируйте оплату по счету.',
+        'permission_required' => 'Недостаточно прав для выполнения следующего шага.',
+    ],
     'validation' => [
         'errors_prefix' => 'Ошибки валидации: %s',
         'required_field' => 'Поле "%s" обязательно.',
@@ -111,6 +121,7 @@ return [
         'loaded' => 'Данные по согласованию загружены.',
         'approved' => 'Платежный документ согласован.',
         'rejected' => 'Платежный документ отклонен.',
+        'permission_based_step' => 'Согласование платежа',
         'reminders_sent' => 'Напоминания по согласованию отправлены.',
         'load_error' => 'Не удалось загрузить данные по согласованию.',
         'approve_error' => 'Не удалось согласовать платежный документ.',

@@ -5,6 +5,7 @@ namespace App\BusinessModules\Core\Payments\Jobs;
 use App\BusinessModules\Core\Payments\Events\PaymentDocumentOverdue;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Notifications\PaymentOverdueNotification;
+use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Models\User;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -75,25 +76,38 @@ class ProcessOverduePaymentsJob implements ShouldQueue
      */
     private function notifyResponsibleUsers(PaymentDocument $document, int $overdueDays): void
     {
-        // Определяем кого уведомлять в зависимости от срока просрочки
-        $roles = match(true) {
-            $overdueDays > 30 => ['general_director', 'financial_director', 'chief_accountant'],
-            $overdueDays > 7 => ['financial_director', 'chief_accountant'],
-            default => ['chief_accountant', 'accountant'],
-        };
-
-        // Получаем пользователей с этими ролями в организации через новую систему авторизации
-        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($document->organization_id);
-        
-        $users = User::whereHas('roleAssignments', function($query) use ($context, $roles) {
-            $query->where('context_id', $context->id)
-                ->whereIn('role_slug', $roles);
-        })->get();
+        $users = $this->usersWithAnyPermission((int) $document->organization_id, [
+            'payments.transaction.register',
+        ]);
 
         // Отправляем уведомления
         foreach ($users as $user) {
             $user->notify(new PaymentOverdueNotification($document, $overdueDays));
         }
+    }
+
+    /**
+     * @param array<int, string> $permissions
+     */
+    private function usersWithAnyPermission(int $organizationId, array $permissions): \Illuminate\Support\Collection
+    {
+        $context = AuthorizationContext::getOrganizationContext($organizationId);
+
+        return User::query()
+            ->whereHas('roleAssignments', static function ($query) use ($context): void {
+                $query->where('context_id', $context->id);
+            })
+            ->get()
+            ->filter(static function (User $user) use ($permissions, $organizationId): bool {
+                foreach ($permissions as $permission) {
+                    if ($user->can($permission, ['organization_id' => $organizationId])) {
+                        return true;
+                    }
+                }
+
+                return false;
+            })
+            ->values();
     }
 }
 

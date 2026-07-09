@@ -50,8 +50,12 @@ final class ProcurementChainService
         'commercial_proposal_received',
         'proposal_selected',
         'purchase_order_created',
-        'payment_document_created',
-        'payment_confirmed',
+        'payment_document_missing',
+        'payment_document_draft',
+        'payment_approval_required',
+        'payment_approved',
+        'payment_partially_registered',
+        'payment_registered',
         'receipt_created',
         'warehouse_posted',
         'completed',
@@ -306,7 +310,7 @@ final class ProcurementChainService
 
         if ($paymentDocuments->isEmpty()) {
             return [
-                'purchase_order_created',
+                'payment_document_missing',
                 $this->action(
                     'create_or_open_payment_document',
                     "/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}/payment-document",
@@ -318,16 +322,51 @@ final class ProcurementChainService
             ];
         }
 
+        if ($paymentDocument instanceof PaymentDocument && $paymentDocument->status === PaymentDocumentStatus::DRAFT) {
+            return [
+                'payment_document_draft',
+                $this->action(
+                    'submit_payment_document',
+                    "/api/v1/admin/payments/documents/{$paymentDocument->id}/submit",
+                    $actor,
+                    $organizationId,
+                    'POST'
+                ),
+                collect([$this->blocker('payment_document_not_submitted', 'payment_document', $paymentDocument->id)]),
+            ];
+        }
+
+        if ($paymentDocument instanceof PaymentDocument && in_array($paymentDocument->status, [
+            PaymentDocumentStatus::SUBMITTED,
+            PaymentDocumentStatus::PENDING_APPROVAL,
+        ], true)) {
+            return [
+                'payment_approval_required',
+                $this->action(
+                    'approve_payment_document',
+                    "/api/v1/admin/payments/approvals/documents/{$paymentDocument->id}/approve",
+                    $actor,
+                    $organizationId,
+                    'POST'
+                ),
+                collect([$this->blocker('payment_approval_required', 'payment_document', $paymentDocument->id)]),
+            ];
+        }
+
         if ($requiredAmount > 0.0001 && $paidAmount + 0.0001 < $requiredAmount) {
-            $blockerKey = $paidAmount <= 0.0001 ? 'payment_confirmation_required' : 'payment_amount_not_enough';
+            $stageKey = $paidAmount <= 0.0001 ? 'payment_approved' : 'payment_partially_registered';
+            $blockerKey = $paidAmount <= 0.0001 ? 'payment_registration_required' : 'payment_amount_not_enough';
 
             return [
-                'payment_document_created',
+                $stageKey,
                 $this->action(
                     'register_payment',
-                    $paymentDocument instanceof PaymentDocument ? '/payments/documents/'.$paymentDocument->id : '/payments/documents',
+                    $paymentDocument instanceof PaymentDocument
+                        ? "/api/v1/admin/payments/documents/{$paymentDocument->id}/register-payment"
+                        : '/payments/documents',
                     $actor,
-                    $organizationId
+                    $organizationId,
+                    'POST'
                 ),
                 collect([$this->blocker($blockerKey, 'payment_document', $paymentDocument?->id)]),
             ];
@@ -335,7 +374,7 @@ final class ProcurementChainService
 
         if ($receipts->isEmpty()) {
             return [
-                'payment_confirmed',
+                'payment_registered',
                 $this->action('receive_materials', "/procurement/purchase-orders/{$purchaseOrder->id}?receive_materials=1", $actor, $organizationId),
                 collect(),
             ];
@@ -635,8 +674,11 @@ final class ProcurementChainService
             'purchase_request_created', 'purchase_request_approved' => 'purchase_request',
             'supplier_request_created', 'supplier_request_sent' => 'supplier_request',
             'commercial_proposal_received', 'proposal_selected' => 'supplier_proposal',
-            'purchase_order_created', 'payment_confirmed' => 'purchase_order',
-            'payment_document_created' => 'payment_document',
+            'purchase_order_created', 'payment_document_missing', 'payment_registered' => 'purchase_order',
+            'payment_document_draft',
+            'payment_approval_required',
+            'payment_approved',
+            'payment_partially_registered' => 'payment_document',
             'receipt_created', 'warehouse_posted', 'completed' => 'purchase_receipt',
             default => null,
         };

@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Core\Payments\Models;
 
+use App\Helpers\PermissionTranslator;
 use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -16,6 +17,7 @@ class PaymentApproval extends Model
         'payment_document_id',
         'organization_id',
         'approval_role',
+        'approval_permission',
         'approver_user_id',
         'approval_level',
         'approval_order',
@@ -90,6 +92,11 @@ class PaymentApproval extends Model
     public function scopeForRole($query, string $role)
     {
         return $query->where('approval_role', $role);
+    }
+
+    public function scopeForPermission($query, string $permission)
+    {
+        return $query->where('approval_permission', $permission);
     }
 
     public function scopeByLevel($query, int $level)
@@ -232,6 +239,10 @@ class PaymentApproval extends Model
      */
     public function getRoleLabel(): string
     {
+        if ($this->approval_permission) {
+            return $this->getPermissionLabel();
+        }
+
         return match($this->approval_role) {
             'financial_director' => 'Финансовый директор',
             'chief_accountant' => 'Главный бухгалтер',
@@ -239,8 +250,17 @@ class PaymentApproval extends Model
             'project_manager' => 'Руководитель проекта',
             'department_head' => 'Начальник отдела',
             'general_director' => 'Генеральный директор',
-            default => $this->approval_role,
+            default => $this->approval_role ?? trans_message('payments.approval.permission_based_step'),
         };
+    }
+
+    public function getPermissionLabel(): string
+    {
+        if (!$this->approval_permission) {
+            return $this->approval_role ? $this->getRoleLabel() : trans_message('payments.approval.permission_based_step');
+        }
+
+        return PermissionTranslator::getPermissionTranslation($this->approval_permission);
     }
 
     /**

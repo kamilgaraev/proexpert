@@ -284,6 +284,8 @@ class PaymentRecipientController extends Controller
                 'status_label' => $approval->getStatusLabel(),
                 'approval_role' => $approval->approval_role,
                 'approval_role_label' => $approval->getRoleLabel(),
+                'approval_permission' => $approval->approval_permission,
+                'approval_permission_label' => $approval->getPermissionLabel(),
                 'approver' => $approval->approver ? [
                     'id' => $approval->approver->id,
                     'name' => $approval->approver->name,

@@ -3,11 +3,15 @@
 namespace App\BusinessModules\Core\Payments\Http\Resources;
 
 use App\BusinessModules\Core\Payments\Enums\InvoiceType;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\PaymentBudgetLimitService;
 use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\Http\Resources\ModelJsonResource;
+use App\Models\User;
 use Illuminate\Http\Request;
+
+use function trans_message;
 
 /**
  * API Resource для платежного документа
@@ -89,6 +93,7 @@ class PaymentDocumentResource extends ModelJsonResource
             'procurement_chain_href' => $hasProcurementChain
                 ? '/procurement/chains/payment-documents/'.$document->id
                 : null,
+            'action_summary' => $this->buildActionSummary($document, $user),
             'created_at' => $this->created_at->toIso8601String(),
             'updated_at' => $this->updated_at->toIso8601String(),
         ];
@@ -103,5 +108,88 @@ class PaymentDocumentResource extends ModelJsonResource
         }
 
         return $document->invoice_type === InvoiceType::MATERIAL_PURCHASE;
+    }
+
+    private function buildActionSummary(PaymentDocument $document, ?User $user): array
+    {
+        $primaryAction = match ($document->status) {
+            PaymentDocumentStatus::DRAFT => $this->action(
+                'submit_payment_document',
+                "/api/v1/admin/payments/documents/{$document->id}/submit",
+                'POST',
+                'payments.invoice.issue',
+                $document,
+                $user
+            ),
+            PaymentDocumentStatus::SUBMITTED,
+            PaymentDocumentStatus::PENDING_APPROVAL => $this->action(
+                'approve_payment_document',
+                "/api/v1/admin/payments/approvals/documents/{$document->id}/approve",
+                'POST',
+                'payments.transaction.approve',
+                $document,
+                $user
+            ),
+            PaymentDocumentStatus::APPROVED,
+            PaymentDocumentStatus::SCHEDULED,
+            PaymentDocumentStatus::PARTIALLY_PAID => $this->action(
+                'register_payment',
+                "/api/v1/admin/payments/documents/{$document->id}/register-payment",
+                'POST',
+                'payments.transaction.register',
+                $document,
+                $user
+            ),
+            default => null,
+        };
+
+        $remainingAmount = $document->remaining_amount !== null
+            ? (float) $document->remaining_amount
+            : max((float) $document->amount - (float) $document->paid_amount, 0.0);
+
+        if ($document->status === PaymentDocumentStatus::PAID || $remainingAmount <= 0.0001) {
+            $primaryAction = null;
+        }
+
+        return [
+            'primary_action' => $primaryAction,
+            'secondary_actions' => [],
+            'menu_actions' => [],
+            'blockers' => $primaryAction && !$primaryAction['is_enabled'] ? [[
+                'key' => 'permission_required',
+                'message' => trans_message('payments.blockers.permission_required'),
+                'severity' => 'warning',
+                'entity_type' => 'payment_document',
+                'entity_id' => $document->id,
+                'action' => $primaryAction,
+            ]] : [],
+        ];
+    }
+
+    private function action(
+        string $key,
+        string $href,
+        string $method,
+        string $permission,
+        PaymentDocument $document,
+        ?User $user
+    ): array {
+        $isEnabled = $user
+            ? $user->can($permission, ['organization_id' => (int) $document->organization_id])
+            : false;
+
+        return [
+            'key' => $key,
+            'label' => trans_message("payments.actions.{$key}"),
+            'href' => $href,
+            'method' => $method,
+            'required_permission' => $permission,
+            'permission' => $permission,
+            'is_enabled' => $isEnabled,
+            'disabled' => !$isEnabled,
+            'disabled_reason' => $isEnabled ? null : trans_message('payments.blockers.permission_required'),
+            'scope' => 'payment_document',
+            'priority' => 'primary',
+        ];
     }
 }

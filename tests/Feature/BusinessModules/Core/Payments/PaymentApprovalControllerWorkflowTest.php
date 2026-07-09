@@ -43,6 +43,8 @@ class PaymentApprovalControllerWorkflowTest extends TestCase
         $this->assertDatabaseHas('payment_approvals', [
             'payment_document_id' => $document->id,
             'approver_user_id' => $context->user->id,
+            'approval_role' => null,
+            'approval_permission' => 'payments.transaction.approve',
             'status' => 'approved',
             'decision_comment' => 'Проверено бухгалтерией',
         ]);
@@ -97,6 +99,9 @@ class PaymentApprovalControllerWorkflowTest extends TestCase
         $approval = $response->json('data.0');
         $this->assertIsInt($approval['id']);
         $this->assertSame('pending', $approval['status']);
+        $this->assertNull($approval['approval_role']);
+        $this->assertSame('payments.transaction.approve', $approval['approval_permission']);
+        $this->assertNotSame('payments.transaction.approve', $approval['approval_permission_label']);
         $this->assertArrayHasKey('due_date', $approval);
         $this->assertSame($document->document_number, $approval['payment_document']['document_number']);
     }
@@ -180,8 +185,9 @@ class PaymentApprovalControllerWorkflowTest extends TestCase
         PaymentApproval::query()->create([
             'payment_document_id' => $document->id,
             'organization_id' => $context->organization->id,
-            'approval_role' => 'chief_accountant',
-            'approver_user_id' => $context->user->id,
+            'approval_role' => null,
+            'approval_permission' => 'payments.transaction.approve',
+            'approver_user_id' => null,
             'approval_level' => 1,
             'approval_order' => 1,
             'status' => 'pending',

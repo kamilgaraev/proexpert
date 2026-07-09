@@ -13,6 +13,7 @@ use App\Enums\ContractorType;
 use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\Supplier;
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 
 use function trans_message;
@@ -26,8 +27,8 @@ final class PurchaseOrderPaymentDocumentService
     }
 
     /**
-     * @param array<string, int|string|null> $paymentDocumentInput
-     * @return array{document: PaymentDocument, created: bool}
+     * @param array<string, mixed> $paymentDocumentInput
+     * @return array{document: PaymentDocument, created: bool, submitted: bool}
      */
     public function createOrOpen(PurchaseOrder $order, ?int $createdByUserId = null, array $paymentDocumentInput = []): array
     {
@@ -42,19 +43,23 @@ final class PurchaseOrderPaymentDocumentService
         $existingDocument = $this->paymentGateService->linkedDocuments($order)->first();
 
         if ($existingDocument instanceof PaymentDocument) {
-            return [
+            $result = [
                 'document' => $existingDocument,
                 'created' => false,
+                'submitted' => false,
             ];
+
+            return $this->submitAfterCreateIfRequested($order, $result, $createdByUserId, $paymentDocumentInput);
         }
 
-        return DB::transaction(function () use ($order, $createdByUserId, $paymentDocumentInput): array {
+        $result = DB::transaction(function () use ($order, $createdByUserId, $paymentDocumentInput): array {
             $existingDocument = $this->paymentGateService->linkedDocuments($order)->first();
 
             if ($existingDocument instanceof PaymentDocument) {
                 return [
                     'document' => $existingDocument,
                     'created' => false,
+                    'submitted' => false,
                 ];
             }
 
@@ -66,8 +71,42 @@ final class PurchaseOrderPaymentDocumentService
             return [
                 'document' => $document,
                 'created' => true,
+                'submitted' => false,
             ];
         });
+
+        return $this->submitAfterCreateIfRequested($order, $result, $createdByUserId, $paymentDocumentInput);
+    }
+
+    /**
+     * @param array{document: PaymentDocument, created: bool, submitted: bool} $result
+     * @param array<string, mixed> $paymentDocumentInput
+     * @return array{document: PaymentDocument, created: bool, submitted: bool}
+     */
+    private function submitAfterCreateIfRequested(
+        PurchaseOrder $order,
+        array $result,
+        ?int $createdByUserId,
+        array $paymentDocumentInput
+    ): array {
+        if (($paymentDocumentInput['submit_after_create'] ?? false) !== true) {
+            return $result;
+        }
+
+        $actor = $createdByUserId ? User::find($createdByUserId) : null;
+
+        if (!$actor || !$actor->can('payments.invoice.issue', ['organization_id' => (int) $order->organization_id])) {
+            throw new \DomainException(trans_message('procurement.chain.payment_document.submit_permission_required'));
+        }
+
+        if ($result['document']->status !== \App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus::DRAFT) {
+            return $result;
+        }
+
+        $result['document'] = $this->paymentDocumentService->submit($result['document'], $actor);
+        $result['submitted'] = true;
+
+        return $result;
     }
 
     private function resolvePayeeContractor(PurchaseOrder $order): Contractor
@@ -130,7 +169,7 @@ final class PurchaseOrderPaymentDocumentService
     }
 
     /**
-     * @param array<string, int|string|null> $paymentDocumentInput
+     * @param array<string, mixed> $paymentDocumentInput
      * @return array<string, mixed>
      */
     private function paymentDocumentPayload(
@@ -140,6 +179,7 @@ final class PurchaseOrderPaymentDocumentService
         array $paymentDocumentInput = []
     ): array {
         $contract = $order->contract;
+        $supplierBankDetails = $this->supplierBankDetails($order);
         $payload = [
             'organization_id' => $order->organization_id,
             'project_id' => $this->projectId($order),
@@ -162,9 +202,27 @@ final class PurchaseOrderPaymentDocumentService
             'created_by_user_id' => $createdByUserId,
         ];
 
-        foreach (['budget_article_id', 'responsibility_center_id', 'budget_override_reason'] as $field) {
+        foreach ([
+            'budget_article_id',
+            'responsibility_center_id',
+            'budget_override_reason',
+            'bank_account',
+            'bank_bik',
+            'bank_correspondent_account',
+            'bank_name',
+        ] as $field) {
             if (array_key_exists($field, $paymentDocumentInput)) {
                 $payload[$field] = $paymentDocumentInput[$field];
+            }
+        }
+
+        foreach (['bank_account', 'bank_bik', 'bank_correspondent_account', 'bank_name'] as $field) {
+            if (!empty($payload[$field])) {
+                continue;
+            }
+
+            if (!empty($supplierBankDetails[$field])) {
+                $payload[$field] = $supplierBankDetails[$field];
             }
         }
 
@@ -190,7 +248,7 @@ final class PurchaseOrderPaymentDocumentService
     }
 
     /**
-     * @return array{name: string, inn: ?string, email: ?string, phone: ?string, contact_person: ?string, legal_address: ?string}
+     * @return array{name: string, inn: ?string, email: ?string, phone: ?string, contact_person: ?string, legal_address: ?string, bank_account: ?string, bank_bik: ?string, bank_correspondent_account: ?string, bank_name: ?string}
      */
     private function supplierPayload(PurchaseOrder $order): array
     {
@@ -244,6 +302,34 @@ final class PurchaseOrderPaymentDocumentService
                 $snapshot['address'] ?? null,
                 $externalSupplier?->address,
                 $supplier instanceof Supplier ? $supplier->address : null
+            ),
+            ...$this->supplierBankDetails($order),
+        ];
+    }
+
+    /**
+     * @return array{bank_account: ?string, bank_bik: ?string, bank_correspondent_account: ?string, bank_name: ?string}
+     */
+    private function supplierBankDetails(PurchaseOrder $order): array
+    {
+        $snapshot = is_array($order->supplier_snapshot) ? $order->supplier_snapshot : [];
+
+        return [
+            'bank_account' => $this->firstFilledString(
+                $snapshot['bank_account'] ?? null,
+                $snapshot['account'] ?? null,
+                $snapshot['settlement_account'] ?? null
+            ),
+            'bank_bik' => $this->firstFilledString(
+                $snapshot['bank_bik'] ?? null,
+                $snapshot['bik'] ?? null
+            ),
+            'bank_correspondent_account' => $this->firstFilledString(
+                $snapshot['bank_correspondent_account'] ?? null,
+                $snapshot['correspondent_account'] ?? null
+            ),
+            'bank_name' => $this->firstFilledString(
+                $snapshot['bank_name'] ?? null
             ),
         ];
     }

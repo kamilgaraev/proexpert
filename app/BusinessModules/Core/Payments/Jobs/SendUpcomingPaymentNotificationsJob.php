@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Core\Payments\Jobs;
 
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Bus\Queueable;
@@ -63,16 +64,9 @@ class SendUpcomingPaymentNotificationsJob implements ShouldQueue
      */
     private function notifyFinancialTeam(PaymentDocument $document, int $daysUntilDue): void
     {
-        // Определяем роли для уведомления
-        $roles = ['financial_director', 'chief_accountant', 'accountant'];
-
-        // Получаем пользователей через новую систему авторизации
-        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($document->organization_id);
-        
-        $users = User::whereHas('roleAssignments', function($query) use ($context, $roles) {
-            $query->where('context_id', $context->id)
-                ->whereIn('role_slug', $roles);
-        })->get();
+        $users = $this->usersWithAnyPermission((int) $document->organization_id, [
+            'payments.transaction.register',
+        ]);
 
         $notification = new class($document, $daysUntilDue) extends Notification {
             public function __construct(
@@ -119,6 +113,30 @@ class SendUpcomingPaymentNotificationsJob implements ShouldQueue
         foreach ($users as $user) {
             $user->notify($notification);
         }
+    }
+
+    /**
+     * @param array<int, string> $permissions
+     */
+    private function usersWithAnyPermission(int $organizationId, array $permissions): \Illuminate\Support\Collection
+    {
+        $context = AuthorizationContext::getOrganizationContext($organizationId);
+
+        return User::query()
+            ->whereHas('roleAssignments', static function ($query) use ($context): void {
+                $query->where('context_id', $context->id);
+            })
+            ->get()
+            ->filter(static function (User $user) use ($permissions, $organizationId): bool {
+                foreach ($permissions as $permission) {
+                    if ($user->can($permission, ['organization_id' => $organizationId])) {
+                        return true;
+                    }
+                }
+
+                return false;
+            })
+            ->values();
     }
 }
 

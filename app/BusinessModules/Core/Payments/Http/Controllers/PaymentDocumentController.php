@@ -938,50 +938,17 @@ class PaymentDocumentController extends Controller
         
         // Разрешаем утверждение для статусов submitted и pending_approval
         if (in_array($document->status->value, ['submitted', 'pending_approval']) && $user) {
-            // 1. Проверка прямой записи на утверждение
-            $hasApprovalRequest = $document->approvals()
-                ->where('approver_user_id', $user->id)
-                ->where('status', 'pending')
-                ->exists();
-                
-            // 2. Проверка прав администратора/владельца (GOD MODE)
-            $isSuperUser = false;
-            
             $orgId = $document->organization_id;
             $context = ['organization_id' => $orgId];
-            
-            // Логирование для отладки
-            Log::info('DEBUG_AUTH: Checking rights for doc ' . $document->id, [
-                'user_id' => $user->id,
-                'org_id' => $orgId,
-                'is_system_admin' => $user->isSystemAdmin(),
-                'is_org_owner' => $user->isOrganizationOwner($orgId),
-            ]);
 
-            // Проверка через нативные методы модели User
-            if ($user->isSystemAdmin() || $user->isOrganizationOwner($orgId)) {
-                $isSuperUser = true;
-            } 
-            // Проверяем роль администратора через новую систему
-            elseif ($user->hasRole('admin', null) || $user->hasRole('finance_admin', null)) {
-                $isSuperUser = true;
-            }
-            
-            // Если все еще нет прав, проверяем конкретное разрешение С ЯВНЫМ КОНТЕКСТОМ
-            if (!$isSuperUser) {
-                $canApprovePermission = $user->can('payments.transaction.approve', $context);
-                
-                Log::info('DEBUG_AUTH: Checking permission payments.transaction.approve', [
-                    'result' => $canApprovePermission,
-                    'context' => $context
-                ]);
-                
-                if ($canApprovePermission) {
-                    $isSuperUser = true;
-                }
-            }
-                          
-            $canApprove = $hasApprovalRequest || $isSuperUser;
+            $canApprovePermission = $user->can('payments.transaction.approve', $context);
+            $canApprove = $user->isSystemAdmin()
+                || $user->isOrganizationOwner($orgId)
+                || $canApprovePermission
+                || $document->approvals()
+                    ->where('status', 'pending')
+                    ->where('approver_user_id', $user->id)
+                    ->exists();
         }
 
         // Определяем contract_id из invoiceable
