@@ -486,7 +486,7 @@ return [
             'create_or_open_payment_document' => 'Перейти к оплате',
             'submit_payment_document' => 'Передать на согласование',
             'approve_payment_document' => 'Согласовать оплату',
-            'register_payment' => 'Подтвердить оплату',
+            'register_payment' => 'Зарегистрировать оплату',
             'receive_materials' => 'Принять материалы',
             'open_warehouse_receipt' => 'Открыть склад',
             'open_project_material_delivery' => 'Открыть складскую выдачу',
