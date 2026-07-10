@@ -13,8 +13,8 @@ use App\BusinessModules\Features\SiteRequests\Http\Requests\UpdateSiteRequestReq
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestCalendarEventResource;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestResource;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestTemplateResource;
-use App\BusinessModules\Features\SiteRequests\Models\SiteRequestHistory;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequestHistory;
 use App\BusinessModules\Features\SiteRequests\Services\SiteRequestCalendarService;
 use App\BusinessModules\Features\SiteRequests\Services\SiteRequestService;
 use App\BusinessModules\Features\SiteRequests\Services\SiteRequestTemplateService;
@@ -38,8 +38,7 @@ class SiteRequestController extends Controller
         private readonly SiteRequestCalendarService $calendarService,
         private readonly SiteRequestWorkflowService $workflowService,
         private readonly AuthorizationService $authorizationService
-    ) {
-    }
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -48,7 +47,7 @@ class SiteRequestController extends Controller
             /** @var User|null $user */
             $user = auth()->user();
 
-            if ($organizationId <= 0 || !$user) {
+            if ($organizationId <= 0 || ! $user) {
                 return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
             }
 
@@ -63,7 +62,7 @@ class SiteRequestController extends Controller
             ]);
 
             if ($scope === 'approvals') {
-                if (!$this->canReviewRequests($user, $organizationId)) {
+                if (! $this->canReviewRequests($user, $organizationId)) {
                     return MobileResponse::error(trans_message('site_requests::mobile.approvals_access_denied'), 403);
                 }
 
@@ -75,7 +74,7 @@ class SiteRequestController extends Controller
                 $filters['user_id'] = (int) $user->id;
             }
 
-            $requests = $this->service->paginate($organizationId, $perPage, $filters);
+            $requests = $this->service->paginate($organizationId, (int) $user->id, $perPage, $filters);
 
             return MobileResponse::success([
                 'data' => $requests->getCollection()
@@ -110,17 +109,17 @@ class SiteRequestController extends Controller
             /** @var User|null $user */
             $user = auth()->user();
 
-            if ($organizationId <= 0 || !$user) {
+            if ($organizationId <= 0 || ! $user) {
                 return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
             }
 
-            $siteRequest = $this->service->find($id, $organizationId);
+            $siteRequest = $this->service->find($id, $organizationId, (int) $user->id);
 
-            if (!$siteRequest) {
+            if (! $siteRequest) {
                 return MobileResponse::error(trans_message('site_requests::mobile.not_found'), 404);
             }
 
-            if (!$this->canAccessRequest($siteRequest, $user, $organizationId)) {
+            if (! $this->canAccessRequest($siteRequest, $user, $organizationId)) {
                 return MobileResponse::error(trans_message('site_requests::mobile.access_denied'), 403);
             }
 
@@ -143,7 +142,7 @@ class SiteRequestController extends Controller
             /** @var User|null $user */
             $user = auth()->user();
 
-            if ($organizationId <= 0 || !$user) {
+            if ($organizationId <= 0 || ! $user) {
                 return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
             }
 
@@ -162,7 +161,7 @@ class SiteRequestController extends Controller
                     ];
 
                     $itemData['title'] = ($validated['title'] ?? trans_message('site_requests::mobile.default_title'))
-                        . ($itemData['material_name'] ? ' - ' . $itemData['material_name'] : '');
+                        .($itemData['material_name'] ? ' - '.$itemData['material_name'] : '');
 
                     $items[] = $itemData;
                 }
@@ -215,17 +214,17 @@ class SiteRequestController extends Controller
             /** @var User|null $user */
             $user = auth()->user();
 
-            if ($organizationId <= 0 || !$user) {
+            if ($organizationId <= 0 || ! $user) {
                 return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
             }
 
-            $siteRequest = $this->service->find($id, $organizationId);
+            $siteRequest = $this->service->find($id, $organizationId, (int) $user->id);
 
-            if (!$siteRequest) {
+            if (! $siteRequest) {
                 return MobileResponse::error(trans_message('site_requests::mobile.not_found'), 404);
             }
 
-            if (!$siteRequest->belongsToUser((int) $user->id)) {
+            if (! $siteRequest->belongsToUser((int) $user->id)) {
                 return MobileResponse::error(trans_message('site_requests::mobile.edit_only_own'), 403);
             }
 
@@ -255,13 +254,13 @@ class SiteRequestController extends Controller
             /** @var User|null $user */
             $user = auth()->user();
 
-            if ($organizationId <= 0 || !$user) {
+            if ($organizationId <= 0 || ! $user) {
                 return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
             }
 
-            $group = $this->service->findGroup($id, $organizationId);
+            $group = $this->service->findGroup($id, $organizationId, (int) $user->id);
 
-            if (!$group) {
+            if (! $group) {
                 return MobileResponse::error(trans_message('site_requests::mobile.group_not_found'), 404);
             }
 
@@ -308,17 +307,17 @@ class SiteRequestController extends Controller
             /** @var User|null $user */
             $user = auth()->user();
 
-            if ($organizationId <= 0 || !$user) {
+            if ($organizationId <= 0 || ! $user) {
                 return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
             }
 
-            $siteRequest = $this->service->find($id, $organizationId);
+            $siteRequest = $this->service->find($id, $organizationId, (int) $user->id);
 
-            if (!$siteRequest) {
+            if (! $siteRequest) {
                 return MobileResponse::error(trans_message('site_requests::mobile.not_found'), 404);
             }
 
-            if (!$siteRequest->belongsToUser((int) $user->id)) {
+            if (! $siteRequest->belongsToUser((int) $user->id)) {
                 return MobileResponse::error(trans_message('site_requests::mobile.cancel_only_own'), 403);
             }
 
@@ -348,17 +347,17 @@ class SiteRequestController extends Controller
             /** @var User|null $user */
             $user = auth()->user();
 
-            if ($organizationId <= 0 || !$user) {
+            if ($organizationId <= 0 || ! $user) {
                 return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
             }
 
-            $siteRequest = $this->service->find($id, $organizationId);
+            $siteRequest = $this->service->find($id, $organizationId, (int) $user->id);
 
-            if (!$siteRequest) {
+            if (! $siteRequest) {
                 return MobileResponse::error(trans_message('site_requests::mobile.not_found'), 404);
             }
 
-            if (!$siteRequest->belongsToUser((int) $user->id)) {
+            if (! $siteRequest->belongsToUser((int) $user->id)) {
                 return MobileResponse::error(trans_message('site_requests::mobile.submit_only_own'), 403);
             }
 
@@ -388,17 +387,17 @@ class SiteRequestController extends Controller
             /** @var User|null $user */
             $user = auth()->user();
 
-            if ($organizationId <= 0 || !$user) {
+            if ($organizationId <= 0 || ! $user) {
                 return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
             }
 
-            $siteRequest = $this->service->find($id, $organizationId);
+            $siteRequest = $this->service->find($id, $organizationId, (int) $user->id);
 
-            if (!$siteRequest) {
+            if (! $siteRequest) {
                 return MobileResponse::error(trans_message('site_requests::mobile.not_found'), 404);
             }
 
-            if (!$siteRequest->belongsToUser((int) $user->id)) {
+            if (! $siteRequest->belongsToUser((int) $user->id)) {
                 return MobileResponse::error(trans_message('site_requests::mobile.complete_only_own'), 403);
             }
 
@@ -428,17 +427,17 @@ class SiteRequestController extends Controller
             /** @var User|null $user */
             $user = auth()->user();
 
-            if ($organizationId <= 0 || !$user) {
+            if ($organizationId <= 0 || ! $user) {
                 return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
             }
 
-            $siteRequest = $this->service->find($id, $organizationId);
+            $siteRequest = $this->service->find($id, $organizationId, (int) $user->id);
 
-            if (!$siteRequest) {
+            if (! $siteRequest) {
                 return MobileResponse::error(trans_message('site_requests::mobile.not_found'), 404);
             }
 
-            if (!$this->canAccessRequest($siteRequest, $user, $organizationId)) {
+            if (! $this->canAccessRequest($siteRequest, $user, $organizationId)) {
                 return MobileResponse::error(trans_message('site_requests::mobile.access_denied'), 403);
             }
 
@@ -447,7 +446,7 @@ class SiteRequestController extends Controller
                 $this->getAvailableTransitionsForUser($siteRequest, $user, $organizationId)
             )->pluck('status');
 
-            if (!$availableStatuses->contains($nextStatus)) {
+            if (! $availableStatuses->contains($nextStatus)) {
                 return MobileResponse::error(trans_message('site_requests::mobile.transition_forbidden'), 403);
             }
 
@@ -521,7 +520,7 @@ class SiteRequestController extends Controller
             /** @var User|null $user */
             $user = auth()->user();
 
-            if (!$user) {
+            if (! $user) {
                 return MobileResponse::error(trans_message('site_requests::mobile.no_organization'), 400);
             }
 
@@ -530,7 +529,7 @@ class SiteRequestController extends Controller
                 trans_message('site_requests::mobile.from_template_success'),
                 201
             );
-        } catch (\InvalidArgumentException | \DomainException $e) {
+        } catch (\InvalidArgumentException|\DomainException $e) {
             return MobileResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
             Log::error('site_requests.mobile.create_from_template.error', [
@@ -688,7 +687,7 @@ class SiteRequestController extends Controller
 
     private function makeGroupPayload(SiteRequest $siteRequest): ?array
     {
-        if (!$siteRequest->relationLoaded('group') || !$siteRequest->group) {
+        if (! $siteRequest->relationLoaded('group') || ! $siteRequest->group) {
             return null;
         }
 
@@ -746,7 +745,7 @@ class SiteRequestController extends Controller
 
     private function statusLabel(?string $status): ?string
     {
-        if (!is_string($status) || $status === '') {
+        if (! is_string($status) || $status === '') {
             return null;
         }
 
@@ -780,7 +779,7 @@ class SiteRequestController extends Controller
         return array_values(array_filter($transitions, function (array $transition) use ($user, $organizationId) {
             $requiredPermission = $transition['required_permission'] ?? null;
 
-            if (!is_string($requiredPermission) || $requiredPermission === '') {
+            if (! is_string($requiredPermission) || $requiredPermission === '') {
                 return true;
             }
 
@@ -806,7 +805,7 @@ class SiteRequestController extends Controller
         $grantedPermissions = $permissions['modules']['site-requests'] ?? [];
 
         foreach ($grantedPermissions as $grantedPermission) {
-            if (!is_string($grantedPermission) || $grantedPermission === '') {
+            if (! is_string($grantedPermission) || $grantedPermission === '') {
                 continue;
             }
 

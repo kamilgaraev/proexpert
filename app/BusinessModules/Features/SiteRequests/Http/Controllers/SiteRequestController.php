@@ -3,23 +3,23 @@
 namespace App\BusinessModules\Features\SiteRequests\Http\Controllers;
 
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
-use App\Http\Controllers\Controller;
-use App\BusinessModules\Features\SiteRequests\Services\SiteRequestService;
-use App\BusinessModules\Features\SiteRequests\Services\SiteRequestWorkflowService;
-use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
-use App\BusinessModules\Features\SiteRequests\Http\Requests\StoreSiteRequestRequest;
-use App\BusinessModules\Features\SiteRequests\Http\Requests\UpdateSiteRequestRequest;
-use App\BusinessModules\Features\SiteRequests\Http\Requests\UpdateSiteRequestGroupRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Requests\ChangeStatusRequest;
-use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestResource;
+use App\BusinessModules\Features\SiteRequests\Http\Requests\StoreSiteRequestRequest;
+use App\BusinessModules\Features\SiteRequests\Http\Requests\UpdateSiteRequestGroupRequest;
+use App\BusinessModules\Features\SiteRequests\Http\Requests\UpdateSiteRequestRequest;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestCollection;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestGroupResource;
+use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestResource;
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
+use App\BusinessModules\Features\SiteRequests\Services\SiteRequestService;
+use App\BusinessModules\Features\SiteRequests\Services\SiteRequestWorkflowService;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\File;
 use App\Services\Storage\FileService;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
 use function trans_message;
@@ -61,7 +61,12 @@ class SiteRequestController extends Controller
                 'sort_dir',
             ]);
 
-            $requests = $this->service->paginate($organizationId, $perPage, $filters);
+            $requests = $this->service->paginate(
+                (int) $organizationId,
+                (int) $request->user()->id,
+                $perPage,
+                $filters
+            );
 
             return AdminResponse::success(
                 new SiteRequestCollection($requests)
@@ -84,9 +89,9 @@ class SiteRequestController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
 
-            $siteRequest = $this->service->find($id, $organizationId);
+            $siteRequest = $this->service->find($id, (int) $organizationId, (int) $request->user()->id);
 
-            if (!$siteRequest) {
+            if (! $siteRequest) {
                 return AdminResponse::error(trans_message('site_requests.not_found'), 404);
             }
 
@@ -114,9 +119,9 @@ class SiteRequestController extends Controller
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            $siteRequest = $this->service->find($id, $organizationId);
+            $siteRequest = $this->service->find($id, (int) $organizationId, (int) $request->user()->id);
 
-            if (!$siteRequest) {
+            if (! $siteRequest) {
                 return AdminResponse::error(trans_message('site_requests.not_found'), 404);
             }
 
@@ -127,7 +132,7 @@ class SiteRequestController extends Controller
             $uploadedFile = $validated['file'];
             $path = $this->fileService->upload(
                 $uploadedFile,
-                'site-requests/' . $siteRequest->id,
+                'site-requests/'.$siteRequest->id,
                 null,
                 'private',
                 $siteRequest->organization
@@ -182,9 +187,9 @@ class SiteRequestController extends Controller
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            $siteRequest = $this->service->find($id, $organizationId);
+            $siteRequest = $this->service->find($id, (int) $organizationId, (int) $request->user()->id);
 
-            if (!$siteRequest) {
+            if (! $siteRequest) {
                 return AdminResponse::error(trans_message('site_requests.not_found'), 404);
             }
 
@@ -192,7 +197,7 @@ class SiteRequestController extends Controller
                 ->where('organization_id', $organizationId)
                 ->find($fileId);
 
-            if (!$file instanceof File) {
+            if (! $file instanceof File) {
                 return AdminResponse::error(trans_message('files.not_found'), 404);
             }
 
@@ -218,9 +223,9 @@ class SiteRequestController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
 
-            $group = $this->service->findGroup($id, $organizationId);
+            $group = $this->service->findGroup($id, (int) $organizationId, (int) $request->user()->id);
 
-            if (!$group) {
+            if (! $group) {
                 return AdminResponse::error(trans_message('site_requests.group_not_found'), 404);
             }
 
@@ -242,11 +247,11 @@ class SiteRequestController extends Controller
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            $userId = auth()->id();
+            $userId = (int) auth()->id();
 
-            $group = $this->service->findGroup($id, $organizationId);
+            $group = $this->service->findGroup($id, (int) $organizationId, (int) $request->user()->id);
 
-            if (!$group) {
+            if (! $group) {
                 return AdminResponse::error(trans_message('site_requests.group_not_found'), 404);
             }
 
@@ -279,12 +284,12 @@ class SiteRequestController extends Controller
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            $userId = auth()->id();
+            $userId = (int) auth()->id();
             $data = $request->validated();
 
             // Обработка массового создания (создание группы)
             if (isset($data['materials']) && is_array($data['materials'])) {
-                
+
                 $items = [];
                 foreach ($data['materials'] as $material) {
                     // Маппинг данных
@@ -296,16 +301,16 @@ class SiteRequestController extends Controller
                         'estimate_item_id' => $material['estimate_item_id'] ?? null,
                         'note' => $material['note'] ?? null,
                     ];
-                    
+
                     // Формируем заголовок для каждого элемента
-                    $itemData['title'] = ($data['title'] ?? 'Заявка') . 
-                                        ($itemData['material_name'] ? ' - ' . $itemData['material_name'] : '');
-                    
+                    $itemData['title'] = ($data['title'] ?? 'Заявка').
+                                        ($itemData['material_name'] ? ' - '.$itemData['material_name'] : '');
+
                     $items[] = $itemData;
                 }
 
                 $group = $this->service->createBatch($organizationId, $userId, $data, $items);
-                
+
                 return AdminResponse::success(
                     new SiteRequestGroupResource($group),
                     trans_message('site_requests.batch_created_success', ['count' => $group->requests->count()]),
@@ -345,11 +350,11 @@ class SiteRequestController extends Controller
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            $userId = auth()->id();
+            $userId = (int) auth()->id();
 
-            $siteRequest = $this->service->find($id, $organizationId);
+            $siteRequest = $this->service->find($id, (int) $organizationId, (int) $userId);
 
-            if (!$siteRequest) {
+            if (! $siteRequest) {
                 return AdminResponse::error(trans_message('site_requests.not_found'), 404);
             }
 
@@ -378,11 +383,11 @@ class SiteRequestController extends Controller
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            $userId = auth()->id();
+            $userId = (int) auth()->id();
 
-            $siteRequest = $this->service->find($id, $organizationId);
+            $siteRequest = $this->service->find($id, (int) $organizationId, (int) $userId);
 
-            if (!$siteRequest) {
+            if (! $siteRequest) {
                 return AdminResponse::error(trans_message('site_requests.not_found'), 404);
             }
 
@@ -392,6 +397,8 @@ class SiteRequestController extends Controller
                 null,
                 trans_message('site_requests.deleted_success')
             );
+        } catch (\DomainException $e) {
+            return AdminResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
             Log::error('site_requests.destroy.error', [
                 'id' => $id,
@@ -409,15 +416,15 @@ class SiteRequestController extends Controller
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            $userId = auth()->id();
+            $userId = (int) auth()->id();
 
-            $siteRequest = $this->service->find($id, $organizationId);
+            $siteRequest = $this->service->find($id, (int) $organizationId, (int) $userId);
 
-            if (!$siteRequest) {
+            if (! $siteRequest) {
                 return AdminResponse::error(trans_message('site_requests.not_found'), 404);
             }
 
-            if (!$this->canChangeStatus($request, $siteRequest, (string) $request->input('status'))) {
+            if (! $this->canChangeStatus($request, $siteRequest, (string) $request->input('status'))) {
                 return AdminResponse::error(trans_message('errors.unauthorized'), 403);
             }
 
@@ -451,15 +458,15 @@ class SiteRequestController extends Controller
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            $userId = auth()->id();
+            $userId = (int) auth()->id();
 
             $request->validate([
                 'user_id' => ['required', 'integer', 'exists:users,id'],
             ]);
 
-            $siteRequest = $this->service->find($id, $organizationId);
+            $siteRequest = $this->service->find($id, (int) $organizationId, (int) $userId);
 
-            if (!$siteRequest) {
+            if (! $siteRequest) {
                 return AdminResponse::error(trans_message('site_requests.not_found'), 404);
             }
 
@@ -486,11 +493,11 @@ class SiteRequestController extends Controller
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            $userId = auth()->id();
+            $userId = (int) auth()->id();
 
-            $siteRequest = $this->service->find($id, $organizationId);
+            $siteRequest = $this->service->find($id, (int) $organizationId, (int) $userId);
 
-            if (!$siteRequest) {
+            if (! $siteRequest) {
                 return AdminResponse::error(trans_message('site_requests.not_found'), 404);
             }
 
@@ -519,11 +526,11 @@ class SiteRequestController extends Controller
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            $userId = auth()->id();
+            $userId = (int) auth()->id();
 
-            $group = $this->service->findGroup($groupId, $organizationId);
+            $group = $this->service->findGroup($groupId, (int) $organizationId, (int) $userId);
 
-            if (!$group) {
+            if (! $group) {
                 return AdminResponse::error(trans_message('site_requests.group_not_found'), 404);
             }
 
@@ -553,7 +560,7 @@ class SiteRequestController extends Controller
             $toStatus
         );
 
-        if (!$requiredPermission) {
+        if (! $requiredPermission) {
             return true;
         }
 

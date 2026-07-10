@@ -2,27 +2,28 @@
 
 namespace App\BusinessModules\Features\SiteRequests\Models;
 
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
-use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\HasOne;
-use Illuminate\Database\Eloquent\Relations\HasManyThrough;
-use Illuminate\Database\Eloquent\Relations\MorphMany;
-use Illuminate\Database\Eloquent\Factories\HasFactory;
-use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
-use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
-use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
-use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
-use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
 use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
+use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
+use App\BusinessModules\Features\SiteRequests\Models\Concerns\HasActorAwareDraftVisibility;
+use App\Models\EstimateItem;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
-use App\Models\EstimateItem;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Casts\Attribute;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasManyThrough;
+use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 /**
  * Модель заявки с объекта
@@ -43,7 +44,7 @@ use Illuminate\Database\Eloquent\Casts\Attribute;
  */
 class SiteRequest extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasActorAwareDraftVisibility, HasFactory, SoftDeletes;
 
     protected $table = 'site_requests';
 
@@ -286,6 +287,7 @@ class SiteRequest extends Model
     public function scopeWithStatus($query, string|SiteRequestStatusEnum $status)
     {
         $value = $status instanceof SiteRequestStatusEnum ? $status->value : $status;
+
         return $query->where('status', $value);
     }
 
@@ -295,6 +297,7 @@ class SiteRequest extends Model
     public function scopeOfType($query, string|SiteRequestTypeEnum $type)
     {
         $value = $type instanceof SiteRequestTypeEnum ? $type->value : $type;
+
         return $query->where('request_type', $value);
     }
 
@@ -304,6 +307,7 @@ class SiteRequest extends Model
     public function scopeWithPriority($query, string|SiteRequestPriorityEnum $priority)
     {
         $value = $priority instanceof SiteRequestPriorityEnum ? $priority->value : $priority;
+
         return $query->where('priority', $value);
     }
 
@@ -352,8 +356,8 @@ class SiteRequest extends Model
     {
         return $query->where(function ($q) {
             $q->whereNotNull('required_date')
-              ->orWhereNotNull('work_start_date')
-              ->orWhereNotNull('rental_start_date');
+                ->orWhereNotNull('work_start_date')
+                ->orWhereNotNull('rental_start_date');
         });
     }
 
@@ -380,7 +384,7 @@ class SiteRequest extends Model
             return null;
         }
 
-        if (!$this->personnel_count || !$this->hourly_rate || !$this->work_hours_per_day) {
+        if (! $this->personnel_count || ! $this->hourly_rate || ! $this->work_hours_per_day) {
             return null;
         }
 
@@ -397,7 +401,7 @@ class SiteRequest extends Model
      */
     public function getDaysUntilRequiredAttribute(): ?int
     {
-        if (!$this->required_date) {
+        if (! $this->required_date) {
             return null;
         }
 
@@ -409,7 +413,7 @@ class SiteRequest extends Model
      */
     public function getIsOverdueAttribute(): bool
     {
-        if (!$this->required_date || $this->status->isFinal()) {
+        if (! $this->required_date || $this->status->isFinal()) {
             return false;
         }
 

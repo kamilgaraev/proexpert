@@ -9,6 +9,7 @@ use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Project;
 use App\Models\User;
@@ -18,6 +19,7 @@ use Illuminate\Support\Facades\Event;
 use Mockery\MockInterface;
 use Tests\Support\AdminApiTestContext;
 use Tests\TestCase;
+use Tymon\JWTAuth\Facades\JWTAuth;
 
 final class SiteRequestsMobileTest extends TestCase
 {
@@ -130,6 +132,43 @@ final class SiteRequestsMobileTest extends TestCase
         $this->assertArrayNotHasKey('purchaseRequests', $payload);
         $this->assertArrayNotHasKey('purchaseOrders', $payload);
         $this->assertArrayHasKey('available_transitions', $payload);
+    }
+
+    public function test_mobile_reviewer_cannot_open_another_users_draft_by_id(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $reviewer = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $context->organization->users()->attach($reviewer->id, [
+            'is_owner' => false,
+            'is_active' => true,
+            'settings' => null,
+        ]);
+        UserRoleAssignment::assignRole(
+            user: $reviewer,
+            roleSlug: 'foreman',
+            context: AuthorizationContext::getOrganizationContext($context->organization->id)
+        );
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $draft = SiteRequest::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'user_id' => $context->user->id,
+            'title' => 'Private mobile draft',
+            'request_type' => SiteRequestTypeEnum::MATERIAL_REQUEST->value,
+            'status' => SiteRequestStatusEnum::DRAFT->value,
+            'priority' => SiteRequestPriorityEnum::MEDIUM->value,
+            'material_name' => 'Concrete',
+            'material_quantity' => 1,
+            'material_unit' => 'm3',
+        ]);
+        $token = JWTAuth::claims(['organization_id' => $context->organization->id])->fromUser($reviewer);
+        $this->allowAccess();
+
+        $this->withHeaders([
+            'Authorization' => 'Bearer '.$token,
+            'Accept' => 'application/json',
+        ])->getJson("/api/v1/mobile/site-requests/{$draft->id}")
+            ->assertNotFound();
     }
 
     private function allowAccess(): void

@@ -25,16 +25,15 @@ class SiteRequestFulfillmentController extends Controller
     public function __construct(
         private readonly SiteRequestService $siteRequestService,
         private readonly SiteRequestFulfillmentService $fulfillmentService
-    ) {
-    }
+    ) {}
 
     public function options(Request $request, int $id): JsonResponse
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $siteRequest = $this->siteRequestService->find($id, $organizationId);
+            $siteRequest = $this->siteRequestService->find($id, $organizationId, (int) $request->user()->id);
 
-            if (!$siteRequest) {
+            if (! $siteRequest) {
                 return AdminResponse::error(trans_message('site_requests.not_found'), 404);
             }
 
@@ -58,9 +57,9 @@ class SiteRequestFulfillmentController extends Controller
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $siteRequest = $this->siteRequestService->find($id, $organizationId);
+            $siteRequest = $this->siteRequestService->find($id, $organizationId, (int) $request->user()->id);
 
-            if (!$siteRequest) {
+            if (! $siteRequest) {
                 return AdminResponse::error(trans_message('site_requests.not_found'), 404);
             }
 

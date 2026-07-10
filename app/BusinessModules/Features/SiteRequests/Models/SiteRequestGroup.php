@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Features\SiteRequests\Models;
 
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
+use App\BusinessModules\Features\SiteRequests\Models\Concerns\HasActorAwareDraftVisibility;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -17,7 +18,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  */
 class SiteRequestGroup extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasActorAwareDraftVisibility, HasFactory, SoftDeletes;
 
     protected $table = 'site_request_groups';
 

@@ -12,21 +12,23 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
+
 use function trans_message;
 
 class SiteRequestDashboardController extends Controller
 {
     public function __construct(
         private readonly SiteRequestService $service
-    ) {
-    }
+    ) {}
 
     public function statistics(Request $request): JsonResponse
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
 
-            return AdminResponse::success($this->service->getStatistics($organizationId));
+            return AdminResponse::success(
+                $this->service->getStatistics($organizationId, (int) $request->user()->id)
+            );
         } catch (\Throwable $e) {
             Log::error('[SiteRequestDashboardController.statistics] Unexpected error', [
                 'message' => $e->getMessage(),
@@ -45,7 +47,7 @@ class SiteRequestDashboardController extends Controller
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $overdue = $this->service->getOverdueRequests($organizationId);
+            $overdue = $this->service->getOverdueRequests($organizationId, (int) $request->user()->id);
 
             return AdminResponse::success([
                 'items' => SiteRequestResource::collection($overdue)->resolve(),

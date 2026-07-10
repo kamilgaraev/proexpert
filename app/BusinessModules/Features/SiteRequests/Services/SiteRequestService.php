@@ -4,29 +4,28 @@ namespace App\BusinessModules\Features\SiteRequests\Services;
 
 use App\BusinessModules\Features\BasicWarehouse\Enums\ProjectMaterialDeliveryStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
-use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
-use App\BusinessModules\Features\SiteRequests\Models\SiteRequestGroup;
-use App\BusinessModules\Features\SiteRequests\Models\SiteRequestHistory;
 use App\BusinessModules\Features\SiteRequests\Enums\EquipmentTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
-use App\BusinessModules\Features\SiteRequests\Events\SiteRequestCreated;
-use App\BusinessModules\Features\SiteRequests\Events\SiteRequestUpdated;
-use App\BusinessModules\Features\SiteRequests\Events\SiteRequestStatusChanged;
 use App\BusinessModules\Features\SiteRequests\Events\SiteRequestApproved;
 use App\BusinessModules\Features\SiteRequests\Events\SiteRequestAssigned;
+use App\BusinessModules\Features\SiteRequests\Events\SiteRequestCreated;
+use App\BusinessModules\Features\SiteRequests\Events\SiteRequestStatusChanged;
+use App\BusinessModules\Features\SiteRequests\Events\SiteRequestUpdated;
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequestGroup;
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequestHistory;
 use App\BusinessModules\Features\SiteRequests\SiteRequestsModule;
 use App\Models\EstimateItem;
 use App\Models\Material;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Pagination\LengthAwarePaginator;
-use Illuminate\Database\Eloquent\Collection;
 use Carbon\Carbon;
 use DomainException;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 use function trans_message;
 
@@ -36,6 +35,7 @@ use function trans_message;
 class SiteRequestService
 {
     private const CACHE_TTL = 300; // 5 минут
+
     private const CACHE_TAG = 'site_requests';
 
     public function __construct(
@@ -47,9 +47,10 @@ class SiteRequestService
     /**
      * Получить заявку по ID
      */
-    public function find(int $id, int $organizationId): ?SiteRequest
+    public function find(int $id, int $organizationId, int $actorId): ?SiteRequest
     {
         return SiteRequest::forOrganization($organizationId)
+            ->visibleToActor($actorId)
             ->with([
                 'project',
                 'user',
@@ -69,12 +70,13 @@ class SiteRequestService
     /**
      * Получить группу заявок по ID
      */
-    public function findGroup(int $id, int $organizationId): ?SiteRequestGroup
+    public function findGroup(int $id, int $organizationId, int $actorId): ?SiteRequestGroup
     {
         return SiteRequestGroup::where('id', $id)
             ->where('organization_id', $organizationId)
+            ->visibleToActor($actorId)
             ->with([
-                'requests' => static fn ($query) => $query->orderBy('id'),
+                'requests' => static fn ($query) => $query->visibleToActor($actorId)->orderBy('id'),
                 'requests.project',
                 'requests.user',
                 'requests.estimateItem.measurementUnit',
@@ -87,10 +89,12 @@ class SiteRequestService
      */
     public function paginate(
         int $organizationId,
+        int $actorId,
         int $perPage = 15,
         array $filters = []
     ): LengthAwarePaginator {
         $query = SiteRequest::forOrganization($organizationId)
+            ->visibleToActor($actorId)
             ->with(['project', 'user', 'assignedUser', 'group', 'estimateItem.measurementUnit', 'materialDeliveries.latestEvent']);
 
         // Применяем фильтры
@@ -175,8 +179,8 @@ class SiteRequestService
                 $requestData = array_merge($data, $itemData);
 
                 // Если у элемента есть специфичное примечание, добавляем его
-                if (!empty($itemData['note'])) {
-                    $requestData['notes'] = ($data['notes'] ?? '') . "\n" . $itemData['note'];
+                if (! empty($itemData['note'])) {
+                    $requestData['notes'] = ($data['notes'] ?? '')."\n".$itemData['note'];
                 }
 
                 // Создаем заявку, привязывая к группе
@@ -192,14 +196,20 @@ class SiteRequestService
      */
     public function updateGroup(SiteRequestGroup $group, int $userId, array $data): SiteRequestGroup
     {
+        $this->ensureDraftOwnedByActor($group, $userId);
+
+        if ($group->status !== SiteRequestStatusEnum::DRAFT) {
+            throw new DomainException(trans_message('site_requests.group_not_editable'));
+        }
+
         return DB::transaction(function () use ($group, $userId, $data) {
             // 1. Обновляем основные поля группы
             $groupData = array_filter([
                 'title' => $data['title'] ?? null,
                 'description' => $data['description'] ?? null,
             ]);
-            
-            if (!empty($groupData)) {
+
+            if (! empty($groupData)) {
                 $group->update($groupData);
             }
 
@@ -211,9 +221,9 @@ class SiteRequestService
 
                 foreach ($data['materials'] as $itemData) {
                     // Если передан ID - обновляем существующую заявку
-                    if (!empty($itemData['id']) && in_array($itemData['id'], $existingIds)) {
+                    if (! empty($itemData['id']) && in_array($itemData['id'], $existingIds)) {
                         $request = $group->requests->find($itemData['id']);
-                        
+
                         // Формируем данные для обновления
                         $updateData = [
                             'estimate_item_id' => $itemData['estimate_item_id'] ?? $request->estimate_item_id,
@@ -234,18 +244,18 @@ class SiteRequestService
 
                         $this->update($request, $userId, $updateData);
                         $processedIds[] = $itemData['id'];
-                    } 
+                    }
                     // Если ID нет - создаем новую заявку в группе
                     else {
                         // Берем данные из первого запроса группы как основу для общих полей
                         $baseRequest = $group->requests->first();
-                        
+
                         $createData = [
                             'project_id' => $group->project_id,
                             'request_type' => SiteRequestTypeEnum::MATERIAL_REQUEST->value, // Предполагаем что в группе только материалы
                             'priority' => $baseRequest ? $baseRequest->priority->value : SiteRequestPriorityEnum::MEDIUM->value,
                             'required_date' => $baseRequest ? $baseRequest->required_date : null,
-                            'title' => ($group->title ?? 'Заявка') . (!empty($itemData['name']) ? ' - ' . $itemData['name'] : ''),
+                            'title' => ($group->title ?? 'Заявка').(! empty($itemData['name']) ? ' - '.$itemData['name'] : ''),
                             'material_name' => $itemData['name'] ?? null,
                             'material_quantity' => $itemData['quantity'] ?? null,
                             'material_unit' => $itemData['unit'] ?? null,
@@ -284,8 +294,10 @@ class SiteRequestService
      */
     public function update(SiteRequest $request, int $userId, array $data): SiteRequest
     {
+        $this->ensureDraftOwnedByActor($request, $userId);
+
         // Проверяем возможность редактирования
-        if (!$request->canBeEdited()) {
+        if (! $request->canBeEdited()) {
             throw new \DomainException(trans_message('site_requests.errors.not_editable_status'));
         }
 
@@ -319,6 +331,12 @@ class SiteRequestService
      */
     public function delete(SiteRequest $request, int $userId): bool
     {
+        $this->ensureDraftOwnedByActor($request, $userId);
+
+        if ($request->status !== SiteRequestStatusEnum::DRAFT) {
+            throw new DomainException(trans_message('site_requests.errors.draft_only_delete'));
+        }
+
         $organizationId = $request->organization_id;
 
         $result = DB::transaction(function () use ($request, $userId) {
@@ -359,7 +377,7 @@ class SiteRequestService
         $oldStatus = $request->status->value;
 
         // Проверяем возможность перехода
-        if (!$this->workflowService->canTransition($request, $newStatus)) {
+        if (! $this->workflowService->canTransition($request, $newStatus)) {
             throw new \DomainException(trans_message('site_requests.errors.invalid_status_transition'));
         }
 
@@ -411,6 +429,8 @@ class SiteRequestService
      */
     public function submitGroup(SiteRequestGroup $group, int $userId): SiteRequestGroup
     {
+        $this->ensureDraftOwnedByActor($group, $userId);
+
         $group->loadMissing('requests');
 
         if ($group->status !== SiteRequestStatusEnum::DRAFT) {
@@ -470,6 +490,8 @@ class SiteRequestService
      */
     public function submit(SiteRequest $request, int $userId): SiteRequest
     {
+        $this->ensureDraftOwnedByActor($request, $userId);
+
         if ($request->status !== SiteRequestStatusEnum::DRAFT) {
             throw new \DomainException(trans_message('site_requests.errors.draft_only_submit'));
         }
@@ -494,7 +516,7 @@ class SiteRequestService
      */
     public function cancel(SiteRequest $request, int $userId, ?string $notes = null): SiteRequest
     {
-        if (!$request->canBeCancelled()) {
+        if (! $request->canBeCancelled()) {
             throw new \DomainException(trans_message('site_requests.errors.not_cancellable_status'));
         }
 
@@ -555,7 +577,7 @@ class SiteRequestService
             ->with(['requests' => static fn ($query) => $query->select('id', 'site_request_group_id', 'status')])
             ->first();
 
-        if (!$group instanceof SiteRequestGroup || $group->requests->isEmpty()) {
+        if (! $group instanceof SiteRequestGroup || $group->requests->isEmpty()) {
             return;
         }
 
@@ -614,23 +636,28 @@ class SiteRequestService
     /**
      * Получить статистику по заявкам
      */
-    public function getStatistics(int $organizationId): array
+    public function getStatistics(int $organizationId, int $actorId): array
     {
-        $cacheKey = "site_requests_stats_{$organizationId}";
+        $cacheKey = "site_requests_stats_{$organizationId}_actor_{$actorId}";
 
         return Cache::tags([self::CACHE_TAG, "org_{$organizationId}"])
-            ->remember($cacheKey, self::CACHE_TTL, function () use ($organizationId) {
-                $requests = SiteRequest::forOrganization($organizationId)->get();
+            ->remember($cacheKey, self::CACHE_TTL, function () use ($organizationId, $actorId) {
+                $requests = SiteRequest::forOrganization($organizationId)
+                    ->visibleToActor($actorId)
+                    ->get();
 
                 return [
                     'total' => $requests->count(),
-                    'by_status' => $requests->groupBy(fn($r) => $r->status->value)->map->count(),
-                    'by_type' => $requests->groupBy(fn($r) => $r->request_type->value)->map->count(),
-                    'by_priority' => $requests->groupBy(fn($r) => $r->priority->value)->map->count(),
-                    'overdue' => SiteRequest::forOrganization($organizationId)->overdue()->count(),
+                    'by_status' => $requests->groupBy(fn ($r) => $r->status->value)->map->count(),
+                    'by_type' => $requests->groupBy(fn ($r) => $r->request_type->value)->map->count(),
+                    'by_priority' => $requests->groupBy(fn ($r) => $r->priority->value)->map->count(),
+                    'overdue' => SiteRequest::forOrganization($organizationId)
+                        ->visibleToActor($actorId)
+                        ->overdue()
+                        ->count(),
                     'pending' => $requests->where('status', SiteRequestStatusEnum::PENDING)->count(),
                     'in_progress' => $requests->where('status', SiteRequestStatusEnum::IN_PROGRESS)->count(),
-                    'personnel_stats' => $this->getPersonnelStatistics($organizationId),
+                    'personnel_stats' => $this->getPersonnelStatistics($organizationId, $actorId),
                 ];
             });
     }
@@ -638,21 +665,22 @@ class SiteRequestService
     /**
      * Получить статистику по персоналу
      */
-    private function getPersonnelStatistics(int $organizationId): array
+    private function getPersonnelStatistics(int $organizationId, int $actorId): array
     {
         $personnelRequests = SiteRequest::forOrganization($organizationId)
+            ->visibleToActor($actorId)
             ->ofType(SiteRequestTypeEnum::PERSONNEL_REQUEST)
             ->active()
             ->get();
 
         $totalPersonnel = $personnelRequests->sum('personnel_count');
-        $totalCost = $personnelRequests->sum(fn($r) => $r->estimated_personnel_cost ?? 0);
+        $totalCost = $personnelRequests->sum(fn ($r) => $r->estimated_personnel_cost ?? 0);
 
         return [
             'total_requests' => $personnelRequests->count(),
             'total_personnel' => $totalPersonnel,
             'estimated_total_cost' => $totalCost,
-            'by_type' => $personnelRequests->groupBy(fn($r) => $r->personnel_type?->value)->map(function ($group) {
+            'by_type' => $personnelRequests->groupBy(fn ($r) => $r->personnel_type?->value)->map(function ($group) {
                 return [
                     'count' => $group->count(),
                     'personnel' => $group->sum('personnel_count'),
@@ -664,9 +692,10 @@ class SiteRequestService
     /**
      * Получить просроченные заявки
      */
-    public function getOverdueRequests(int $organizationId): Collection
+    public function getOverdueRequests(int $organizationId, int $actorId): Collection
     {
         return SiteRequest::forOrganization($organizationId)
+            ->visibleToActor($actorId)
             ->overdue()
             ->with(['project', 'user', 'assignedUser'])
             ->orderBy('required_date')
@@ -678,43 +707,43 @@ class SiteRequestService
      */
     private function applyFilters($query, array $filters): void
     {
-        if (!empty($filters['status'])) {
+        if (! empty($filters['status'])) {
             $query->withStatus($filters['status']);
         }
 
-        if (!empty($filters['status_in']) && is_array($filters['status_in'])) {
+        if (! empty($filters['status_in']) && is_array($filters['status_in'])) {
             $query->whereIn('status', array_values($filters['status_in']));
         }
 
-        if (!empty($filters['priority'])) {
+        if (! empty($filters['priority'])) {
             $query->withPriority($filters['priority']);
         }
 
-        if (!empty($filters['request_type'])) {
+        if (! empty($filters['request_type'])) {
             $query->ofType($filters['request_type']);
         }
 
-        if (!empty($filters['project_id'])) {
+        if (! empty($filters['project_id'])) {
             $query->forProject($filters['project_id']);
         }
 
-        if (!empty($filters['user_id'])) {
+        if (! empty($filters['user_id'])) {
             $query->forUser($filters['user_id']);
         }
 
-        if (!empty($filters['assigned_to'])) {
+        if (! empty($filters['assigned_to'])) {
             $query->where('assigned_to', $filters['assigned_to']);
         }
 
-        if (!empty($filters['date_from'])) {
+        if (! empty($filters['date_from'])) {
             $query->where('created_at', '>=', Carbon::parse($filters['date_from'])->startOfDay());
         }
 
-        if (!empty($filters['date_to'])) {
+        if (! empty($filters['date_to'])) {
             $query->where('created_at', '<=', Carbon::parse($filters['date_to'])->endOfDay());
         }
 
-        if (!empty($filters['search'])) {
+        if (! empty($filters['search'])) {
             $search = $filters['search'];
             $query->where(function ($q) use ($search) {
                 $q->whereLike('title', "%{$search}%")
@@ -738,7 +767,7 @@ class SiteRequestService
     ): array {
         $estimateItemId = isset($data['estimate_item_id']) ? (int) $data['estimate_item_id'] : null;
 
-        if (!$estimateItemId) {
+        if (! $estimateItemId) {
             return $data;
         }
 
@@ -760,7 +789,7 @@ class SiteRequestService
             })
             ->first();
 
-        if (!$estimateItem) {
+        if (! $estimateItem) {
             throw new DomainException(trans_message('construction_journal.errors.invalid_estimate_item'));
         }
 
@@ -805,7 +834,7 @@ class SiteRequestService
     {
         $materialId = isset($data['material_id']) ? (int) $data['material_id'] : null;
 
-        if (!$materialId) {
+        if (! $materialId) {
             return $data;
         }
 
@@ -815,7 +844,7 @@ class SiteRequestService
             ->where('is_active', true)
             ->find($materialId);
 
-        if (!$material) {
+        if (! $material) {
             throw new DomainException(trans_message('site_requests.material_not_found'));
         }
 
@@ -845,12 +874,13 @@ class SiteRequestService
     private function tryReserveMaterial(SiteRequest $request, int $organizationId): void
     {
         $accessController = app(\App\Modules\Core\AccessController::class);
-        
-        if (!$accessController->hasModuleAccess($organizationId, 'basic-warehouse')) {
+
+        if (! $accessController->hasModuleAccess($organizationId, 'basic-warehouse')) {
             \Log::info('site_request.skip_reservation', [
                 'request_id' => $request->id,
                 'reason' => 'Модуль склада не активирован',
             ]);
+
             return;
         }
 
@@ -867,8 +897,8 @@ class SiteRequestService
                 [
                     'project_id' => $request->project_id,
                     'user_id' => $request->user_id,
-                    'reason' => 'Резерв под заявку #' . $request->id,
-                    'site_request_id' => $request->id
+                    'reason' => 'Резерв под заявку #'.$request->id,
+                    'site_request_id' => $request->id,
                 ]
             );
 
@@ -879,7 +909,7 @@ class SiteRequestService
                     'reserved_warehouse_id' => $warehouse->id,
                     'reserved_quantity' => $request->material_quantity,
                     'reserved_at' => now()->toDateTimeString(),
-                    'asset_reservation_id' => $reservationResult['reservation_id'] ?? null
+                    'asset_reservation_id' => $reservationResult['reservation_id'] ?? null,
                 ]),
             ]);
 
@@ -888,7 +918,7 @@ class SiteRequestService
                 'material_id' => $request->material_id,
                 'quantity' => $request->material_quantity,
                 'warehouse_id' => $warehouse->id,
-                'reservation_id' => $reservationResult['reservation_id'] ?? null
+                'reservation_id' => $reservationResult['reservation_id'] ?? null,
             ]);
 
         } catch (\Exception $e) {
@@ -907,13 +937,13 @@ class SiteRequestService
     {
         $metadata = $request->metadata ?? [];
 
-        if (!($metadata['material_reserved'] ?? false)) {
+        if (! ($metadata['material_reserved'] ?? false)) {
             return;
         }
 
         $accessController = app(\App\Modules\Core\AccessController::class);
-        
-        if (!$accessController->hasModuleAccess($request->organization_id, 'basic-warehouse')) {
+
+        if (! $accessController->hasModuleAccess($request->organization_id, 'basic-warehouse')) {
             return;
         }
 
@@ -950,12 +980,23 @@ class SiteRequestService
                 'quantity' => $quantity,
                 'warehouse_id' => $warehouseId,
             ]);
-            
+
         } catch (\Exception $e) {
             \Log::error('site_request.unreservation_failed', [
                 'request_id' => $request->id,
                 'error' => $e->getMessage(),
             ]);
+        }
+    }
+
+    private function ensureDraftOwnedByActor(SiteRequest|SiteRequestGroup $request, int $actorId): void
+    {
+        if ($actorId <= 0) {
+            throw new \InvalidArgumentException('Actor ID must be a positive integer.');
+        }
+
+        if ($request->status === SiteRequestStatusEnum::DRAFT && (int) $request->user_id !== $actorId) {
+            throw new DomainException(trans_message('site_requests.errors.draft_owner_only'));
         }
     }
 
