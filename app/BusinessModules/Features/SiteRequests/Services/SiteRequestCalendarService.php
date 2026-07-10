@@ -29,7 +29,7 @@ class SiteRequestCalendarService
      */
     public function createCalendarEvent(SiteRequest $request): ?SiteRequestCalendarEvent
     {
-        return $this->syncCalendarEventWithLock($request);
+        return $this->reconcileOrDefer($request->id);
     }
 
     /**
@@ -37,96 +37,129 @@ class SiteRequestCalendarService
      */
     public function updateCalendarEvent(SiteRequest $request): ?SiteRequestCalendarEvent
     {
-        return $this->syncCalendarEventWithLock($request);
+        return $this->reconcileOrDefer($request->id);
     }
 
-    private function syncCalendarEventWithLock(SiteRequest $request): ?SiteRequestCalendarEvent
+    private function reconcileOrDefer(int $requestId): ?SiteRequestCalendarEvent
     {
-        $result = DB::transaction(function () use ($request): array {
-            $lockedRequest = SiteRequest::query()
-                ->whereKey($request->getKey())
-                ->lockForUpdate()
+        if (DB::transactionLevel() > 0) {
+            $calendarEvent = SiteRequestCalendarEvent::query()
+                ->where('site_request_id', $requestId)
                 ->first();
+            $deletionSnapshot = $calendarEvent instanceof SiteRequestCalendarEvent
+                ? $calendarEvent->only(['id', 'organization_id', 'schedule_event_id'])
+                : null;
 
-            if (!$lockedRequest instanceof SiteRequest) {
-                return ['request' => null, 'event' => null, 'action' => 'none'];
-            }
+            DB::afterCommit(fn () => $this->reconcileCalendarEvent($requestId, $deletionSnapshot));
 
-            if (
-                $lockedRequest->status === SiteRequestStatusEnum::DRAFT
-                || !$lockedRequest->hasCalendarEvent()
-            ) {
-                $calendarEvent = SiteRequestCalendarEvent::query()
-                    ->where('site_request_id', $lockedRequest->id)
-                    ->first();
-                $calendarEvent?->delete();
+            return $calendarEvent;
+        }
 
-                return [
-                    'request' => $lockedRequest,
-                    'event' => $calendarEvent,
-                    'action' => $calendarEvent ? 'deleted' : 'none',
-                ];
-            }
+        return $this->reconcileCalendarEvent($requestId);
+    }
 
-            $calendarEvent = SiteRequestCalendarEvent::query()->updateOrCreate(
-                ['site_request_id' => $lockedRequest->id],
-                $this->prepareEventData($lockedRequest)
+    private function reconcileCalendarEvent(
+        int $requestId,
+        ?array $deletionSnapshot = null
+    ): ?SiteRequestCalendarEvent
+    {
+        return Cache::lock("site-request-calendar:{$requestId}", 60)
+            ->block(
+                10,
+                fn (): ?SiteRequestCalendarEvent => $this->reconcileCalendarEventLocked(
+                    $requestId,
+                    $deletionSnapshot
+                )
             );
+    }
 
-            return [
-                'request' => $lockedRequest,
-                'event' => $calendarEvent,
-                'action' => $calendarEvent->wasRecentlyCreated ? 'created' : 'updated',
-            ];
-        });
+    private function reconcileCalendarEventLocked(
+        int $requestId,
+        ?array $deletionSnapshot
+    ): ?SiteRequestCalendarEvent
+    {
+        $request = SiteRequest::withTrashed()->find($requestId);
+        $calendarEvent = SiteRequestCalendarEvent::query()
+            ->where('site_request_id', $requestId)
+            ->first();
 
-        $lockedRequest = $result['request'];
-        $calendarEvent = $result['event'];
-        $action = $result['action'];
-
-        if (!$lockedRequest instanceof SiteRequest) {
-            return null;
-        }
-
-        if ($action === 'deleted') {
-            if (
-                $calendarEvent instanceof SiteRequestCalendarEvent
-                && $calendarEvent->schedule_event_id
-                && $this->hasScheduleManagement($lockedRequest->organization_id)
-            ) {
-                $this->deleteScheduleManagementEvent($calendarEvent);
+        if (!$this->shouldHaveCalendarEvent($request)) {
+            if (!$calendarEvent instanceof SiteRequestCalendarEvent && $deletionSnapshot !== null) {
+                $calendarEvent = new SiteRequestCalendarEvent();
+                $calendarEvent->forceFill($deletionSnapshot);
             }
 
-            Log::info('site_request.calendar_event.deleted', [
-                'request_id' => $lockedRequest->id,
-            ]);
+            $this->deleteCalendarEventLocked($requestId, $request, $calendarEvent);
 
             return null;
         }
 
-        if (!$calendarEvent instanceof SiteRequestCalendarEvent) {
+        $calendarEvent = DB::transaction(fn (): SiteRequestCalendarEvent =>
+            SiteRequestCalendarEvent::query()->updateOrCreate(
+                ['site_request_id' => $requestId],
+                $this->prepareEventData($request)
+            )
+        );
+
+        $request = SiteRequest::withTrashed()->find($requestId);
+
+        if (!$this->shouldHaveCalendarEvent($request)) {
+            $this->deleteCalendarEventLocked($requestId, $request, $calendarEvent);
+
             return null;
         }
 
-        if ($this->hasScheduleManagement($lockedRequest->organization_id)) {
-            Cache::lock("site-request-calendar-integration:{$lockedRequest->id}", 30)
-                ->block(10, function () use ($lockedRequest, $calendarEvent): void {
-                    $calendarEvent->refresh();
+        DB::transaction(fn () => $calendarEvent->update($this->prepareEventData($request)));
 
-                    if ($calendarEvent->schedule_event_id) {
-                        $this->updateScheduleManagementEvent($calendarEvent);
-                    } else {
-                        $this->syncWithScheduleManagement($lockedRequest, $calendarEvent);
-                    }
-                });
+        if ($this->hasScheduleManagement($request->organization_id)) {
+            if ($calendarEvent->schedule_event_id) {
+                $this->updateScheduleManagementEvent($calendarEvent);
+            } else {
+                $calendarEvent = $this->syncWithScheduleManagement($request, $calendarEvent);
+
+                if (!$calendarEvent instanceof SiteRequestCalendarEvent) {
+                    return null;
+                }
+            }
         }
 
-        Log::info("site_request.calendar_event.{$action}", [
-            'request_id' => $lockedRequest->id,
+        Log::info('site_request.calendar_event.reconciled', [
+            'request_id' => $requestId,
             'event_id' => $calendarEvent->id,
         ]);
 
         return $calendarEvent;
+    }
+
+    private function shouldHaveCalendarEvent(?SiteRequest $request): bool
+    {
+        return $request instanceof SiteRequest
+            && !$request->trashed()
+            && $request->status !== SiteRequestStatusEnum::DRAFT
+            && $request->hasCalendarEvent();
+    }
+
+    private function deleteCalendarEventLocked(
+        int $requestId,
+        ?SiteRequest $request,
+        ?SiteRequestCalendarEvent $calendarEvent
+    ): void {
+        if (
+            $calendarEvent instanceof SiteRequestCalendarEvent
+            && $calendarEvent->schedule_event_id
+            && $this->hasScheduleManagement($calendarEvent->organization_id)
+        ) {
+            $this->deleteScheduleManagementEvent($calendarEvent);
+        }
+
+        DB::transaction(static fn () => SiteRequestCalendarEvent::query()
+            ->where('site_request_id', $requestId)
+            ->delete());
+
+        Log::info('site_request.calendar_event.deleted', [
+            'request_id' => $requestId,
+            'organization_id' => $request?->organization_id ?? $calendarEvent?->organization_id,
+        ]);
     }
 
     /**
@@ -134,20 +167,7 @@ class SiteRequestCalendarService
      */
     public function deleteCalendarEvent(SiteRequest $request): void
     {
-        $calendarEvent = SiteRequestCalendarEvent::where('site_request_id', $request->id)->first();
-
-        if ($calendarEvent) {
-            // Удалить из schedule-management
-            if ($this->hasScheduleManagement($request->organization_id) && $calendarEvent->schedule_event_id) {
-                $this->deleteScheduleManagementEvent($calendarEvent);
-            }
-
-            $calendarEvent->delete();
-
-            Log::info('site_request.calendar_event.deleted', [
-                'request_id' => $request->id,
-            ]);
-        }
+        $this->reconcileOrDefer($request->id);
     }
 
     /**
@@ -367,7 +387,7 @@ class SiteRequestCalendarService
     private function syncWithScheduleManagement(
         SiteRequest $request,
         SiteRequestCalendarEvent $calendarEvent
-    ): void {
+    ): ?SiteRequestCalendarEvent {
         try {
             $scheduleService = app(\App\BusinessModules\Features\ScheduleManagement\Services\ProjectEventService::class);
 
@@ -388,17 +408,56 @@ class SiteRequestCalendarService
                 ]
             );
 
-            $calendarEvent->update(['schedule_event_id' => $scheduleEvent->id]);
+            $currentRequest = SiteRequest::withTrashed()->find($request->id);
+            $currentCalendarEvent = SiteRequestCalendarEvent::query()
+                ->whereKey($calendarEvent->id)
+                ->where('site_request_id', $request->id)
+                ->first();
+
+            if (
+                !$this->shouldHaveCalendarEvent($currentRequest)
+                || !$currentCalendarEvent instanceof SiteRequestCalendarEvent
+            ) {
+                $scheduleService->deleteEvent($scheduleEvent);
+                DB::transaction(static fn () => SiteRequestCalendarEvent::query()
+                    ->where('site_request_id', $request->id)
+                    ->delete());
+
+                Log::info('site_request.schedule_management.stale_create_discarded', [
+                    'request_id' => $request->id,
+                    'schedule_event_id' => $scheduleEvent->id,
+                ]);
+
+                return null;
+            }
+
+            $persisted = SiteRequestCalendarEvent::query()
+                ->whereKey($currentCalendarEvent->id)
+                ->whereNull('schedule_event_id')
+                ->update(['schedule_event_id' => $scheduleEvent->id]);
+
+            if ($persisted !== 1) {
+                $scheduleService->deleteEvent($scheduleEvent);
+
+                return SiteRequestCalendarEvent::query()->find($currentCalendarEvent->id);
+            }
+
+            $currentCalendarEvent->setAttribute('schedule_event_id', $scheduleEvent->id);
+            $currentCalendarEvent->syncOriginalAttribute('schedule_event_id');
 
             Log::info('site_request.schedule_management.synced', [
                 'request_id' => $request->id,
                 'schedule_event_id' => $scheduleEvent->id,
             ]);
+
+            return $currentCalendarEvent;
         } catch (\Exception $e) {
             Log::warning('site_request.schedule_management.sync_failed', [
                 'request_id' => $request->id,
                 'error' => $e->getMessage(),
             ]);
+
+            return null;
         }
     }
 

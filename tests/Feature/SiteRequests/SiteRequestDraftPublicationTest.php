@@ -6,6 +6,8 @@ namespace Tests\Feature\SiteRequests;
 
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\BusinessModules\Features\Notifications\Services\NotificationService;
+use App\BusinessModules\Features\ScheduleManagement\Models\ProjectEvent;
+use App\BusinessModules\Features\ScheduleManagement\Services\ProjectEventService;
 use App\BusinessModules\Features\SiteRequests\Enums\CalendarEventTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
@@ -251,6 +253,37 @@ final class SiteRequestDraftPublicationTest extends TestCase
             ->count());
     }
 
+    public function test_stale_schedule_creator_cannot_restore_calendar_after_dates_are_cleared(): void
+    {
+        [$request, , $calendarService] = $this->publicationContext(true);
+        $request->update(['status' => SiteRequestStatusEnum::PENDING->value]);
+        $scheduleEvent = new ProjectEvent;
+        $scheduleEvent->setAttribute('id', 987654);
+        $scheduleService = Mockery::mock(ProjectEventService::class);
+        $scheduleService->shouldReceive('createEvent')
+            ->once()
+            ->andReturnUsing(function () use ($request, $scheduleEvent): ProjectEvent {
+                $request->update(['required_date' => null]);
+                SiteRequestCalendarEvent::query()
+                    ->where('site_request_id', $request->id)
+                    ->delete();
+
+                return $scheduleEvent;
+            });
+        $scheduleService->shouldReceive('deleteEvent')
+            ->once()
+            ->with($scheduleEvent)
+            ->andReturnTrue();
+        $this->app->instance(ProjectEventService::class, $scheduleService);
+
+        $result = $calendarService->createCalendarEvent($request->fresh());
+
+        $this->assertNull($result);
+        $this->assertDatabaseMissing('site_request_calendar_events', [
+            'site_request_id' => $request->id,
+        ]);
+    }
+
     public function test_legacy_draft_calendar_event_is_not_visible_in_shared_calendar_or_request_list(): void
     {
         [$request, , $calendarService, $foreignUser] = $this->publicationContext();
@@ -290,7 +323,7 @@ final class SiteRequestDraftPublicationTest extends TestCase
         $this->assertNotContains($request->id, $visibleRequests);
     }
 
-    private function publicationContext(): array
+    private function publicationContext(bool $scheduleManagement = false): array
     {
         $organization = Organization::factory()->verified()->create();
         $project = Project::factory()->create(['organization_id' => $organization->id]);
@@ -332,7 +365,7 @@ final class SiteRequestDraftPublicationTest extends TestCase
             'notify_on_status_change' => true,
         ]);
         $module->shouldReceive('hasNotifications')->andReturn(true);
-        $module->shouldReceive('hasScheduleManagement')->andReturn(false);
+        $module->shouldReceive('hasScheduleManagement')->andReturn($scheduleManagement);
 
         $this->app->instance(NotificationService::class, new class extends NotificationService
         {
