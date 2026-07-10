@@ -9,6 +9,8 @@ use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\SiteRequestsModule;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 use function trans_message;
@@ -26,6 +28,21 @@ class SiteRequestNotificationService
      * Уведомление о создании заявки
      */
     public function notifyOnCreated(SiteRequest $request): void
+    {
+        DB::transaction(function () use ($request): void {
+            // All publication deliveries lock the request before checking the notification key.
+            $lockedRequest = SiteRequest::query()
+                ->whereKey($request->getKey())
+                ->lockForUpdate()
+                ->first();
+
+            if ($lockedRequest instanceof SiteRequest) {
+                $this->notifyOnCreatedLocked($lockedRequest);
+            }
+        });
+    }
+
+    private function notifyOnCreatedLocked(SiteRequest $request): void
     {
         if ($request->status === SiteRequestStatusEnum::DRAFT) {
             return;
@@ -72,16 +89,15 @@ class SiteRequestNotificationService
         SiteRequest $request,
         string $publicationKey
     ): bool {
-        return Notification::query()
-            ->where('type', 'site_request_created')
-            ->where('notifiable_type', User::class)
-            ->where('notifiable_id', $user->id)
-            ->where('organization_id', $request->organization_id)
-            ->get()
-            ->contains(
-                static fn (Notification $notification): bool =>
-                    ($notification->data['publication_key'] ?? null) === $publicationKey
-            );
+        return $this->whereJsonValue(
+            Notification::query()
+                ->where('type', 'site_request_created')
+                ->where('notifiable_type', User::class)
+                ->where('notifiable_id', $user->id)
+                ->where('organization_id', $request->organization_id),
+            'publication_key',
+            $publicationKey
+        )->exists();
     }
 
     /**
@@ -91,7 +107,39 @@ class SiteRequestNotificationService
         SiteRequest $request,
         string $oldStatus,
         string $newStatus,
-        int $changedByUserId
+        int $changedByUserId,
+        string $transitionKey
+    ): void {
+        DB::transaction(function () use (
+            $request,
+            $oldStatus,
+            $newStatus,
+            $changedByUserId,
+            $transitionKey
+        ): void {
+            $lockedRequest = SiteRequest::query()
+                ->whereKey($request->getKey())
+                ->lockForUpdate()
+                ->first();
+
+            if ($lockedRequest instanceof SiteRequest) {
+                $this->notifyOnStatusChangeLocked(
+                    $lockedRequest,
+                    $oldStatus,
+                    $newStatus,
+                    $changedByUserId,
+                    $transitionKey
+                );
+            }
+        });
+    }
+
+    private function notifyOnStatusChangeLocked(
+        SiteRequest $request,
+        string $oldStatus,
+        string $newStatus,
+        int $changedByUserId,
+        string $transitionKey
     ): void {
         $settings = $this->module->getSettings($request->organization_id);
 
@@ -101,7 +149,11 @@ class SiteRequestNotificationService
 
         // Уведомляем создателя заявки
         $creator = $request->user;
-        if ($creator && $creator->id !== $changedByUserId) {
+        if (
+            $creator
+            && $creator->id !== $changedByUserId
+            && !$this->statusNotificationExists($creator, $request, $transitionKey)
+        ) {
             $this->sendNotification(
                 $creator,
                 trans_message('site_requests.notifications.status_changed.title'),
@@ -116,12 +168,17 @@ class SiteRequestNotificationService
                     'project_id' => $request->project_id,
                     'old_status' => $oldStatus,
                     'new_status' => $newStatus,
+                    'transition_key' => $transitionKey,
                 ]
             );
         }
 
         // Уведомляем исполнителя
-        if ($request->assignedUser && $request->assigned_to !== $changedByUserId) {
+        if (
+            $request->assignedUser
+            && $request->assigned_to !== $changedByUserId
+            && !$this->statusNotificationExists($request->assignedUser, $request, $transitionKey)
+        ) {
             $this->sendNotification(
                 $request->assignedUser,
                 trans_message('site_requests.notifications.status_changed.title'),
@@ -136,6 +193,7 @@ class SiteRequestNotificationService
                     'project_id' => $request->project_id,
                     'old_status' => $oldStatus,
                     'new_status' => $newStatus,
+                    'transition_key' => $transitionKey,
                 ]
             );
         }
@@ -145,6 +203,31 @@ class SiteRequestNotificationService
             'old_status' => $oldStatus,
             'new_status' => $newStatus,
         ]);
+    }
+
+    private function statusNotificationExists(
+        User $user,
+        SiteRequest $request,
+        string $transitionKey
+    ): bool {
+        return $this->whereJsonValue(
+            Notification::query()
+                ->where('type', 'site_request_status_changed')
+                ->where('notifiable_type', User::class)
+                ->where('notifiable_id', $user->id)
+                ->where('organization_id', $request->organization_id),
+            'transition_key',
+            $transitionKey
+        )->exists();
+    }
+
+    private function whereJsonValue(Builder $query, string $key, string $value): Builder
+    {
+        return match (DB::getDriverName()) {
+            'pgsql' => $query->whereRaw('data::jsonb ->> ? = ?', [$key, $value]),
+            'sqlite' => $query->whereRaw('json_extract(data, ?) = ?', ["$.{$key}", $value]),
+            default => $query->where("data->{$key}", $value),
+        };
     }
 
     /**

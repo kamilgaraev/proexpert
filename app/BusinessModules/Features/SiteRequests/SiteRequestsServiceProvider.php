@@ -136,18 +136,6 @@ class SiteRequestsServiceProvider extends ServiceProvider
      */
     protected function registerEvents(): void
     {
-        // Отправка уведомлений при создании заявки
-        Event::listen(
-            Events\SiteRequestCreated::class,
-            Listeners\SendSiteRequestNotification::class
-        );
-
-        // Создание события в календаре при создании заявки
-        Event::listen(
-            Events\SiteRequestCreated::class,
-            Listeners\CreateCalendarEventOnSiteRequest::class
-        );
-
         // Обновление события в календаре при изменении заявки
         Event::listen(
             Events\SiteRequestUpdated::class,

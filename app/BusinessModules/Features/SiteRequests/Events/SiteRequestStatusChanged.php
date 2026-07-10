@@ -6,6 +6,7 @@ use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Str;
 
 /**
  * Событие смены статуса заявки
@@ -13,6 +14,8 @@ use Illuminate\Queue\SerializesModels;
 class SiteRequestStatusChanged
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
+
+    public readonly string $transitionKey;
 
     /**
      * Create a new event instance.
@@ -22,6 +25,8 @@ class SiteRequestStatusChanged
         public readonly string $oldStatus,
         public readonly string $newStatus,
         public readonly int $changedByUserId
-    ) {}
+    ) {
+        $this->transitionKey = (string) Str::uuid();
+    }
 }
 

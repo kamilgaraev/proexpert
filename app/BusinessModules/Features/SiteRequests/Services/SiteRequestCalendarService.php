@@ -11,6 +11,7 @@ use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\SiteRequestsModule;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -26,6 +27,21 @@ class SiteRequestCalendarService
      * Создать событие в календаре
      */
     public function createCalendarEvent(SiteRequest $request): ?SiteRequestCalendarEvent
+    {
+        return DB::transaction(function () use ($request): ?SiteRequestCalendarEvent {
+            // Every calendar publication path locks this row before the upsert.
+            $lockedRequest = SiteRequest::query()
+                ->whereKey($request->getKey())
+                ->lockForUpdate()
+                ->first();
+
+            return $lockedRequest instanceof SiteRequest
+                ? $this->createCalendarEventLocked($lockedRequest)
+                : null;
+        });
+    }
+
+    private function createCalendarEventLocked(SiteRequest $request): ?SiteRequestCalendarEvent
     {
         if ($request->status === SiteRequestStatusEnum::DRAFT) {
             $this->deleteCalendarEvent($request);
@@ -66,6 +82,21 @@ class SiteRequestCalendarService
      */
     public function updateCalendarEvent(SiteRequest $request): ?SiteRequestCalendarEvent
     {
+        return DB::transaction(function () use ($request): ?SiteRequestCalendarEvent {
+            // Draft updates and submitted publications share the same serialization point.
+            $lockedRequest = SiteRequest::query()
+                ->whereKey($request->getKey())
+                ->lockForUpdate()
+                ->first();
+
+            return $lockedRequest instanceof SiteRequest
+                ? $this->updateCalendarEventLocked($lockedRequest)
+                : null;
+        });
+    }
+
+    private function updateCalendarEventLocked(SiteRequest $request): ?SiteRequestCalendarEvent
+    {
         if ($request->status === SiteRequestStatusEnum::DRAFT) {
             $this->deleteCalendarEvent($request);
 
@@ -75,7 +106,7 @@ class SiteRequestCalendarService
         $calendarEvent = SiteRequestCalendarEvent::where('site_request_id', $request->id)->first();
 
         if (!$calendarEvent) {
-            return $this->createCalendarEvent($request);
+            return $this->createCalendarEventLocked($request);
         }
 
         if (!$request->hasCalendarEvent()) {

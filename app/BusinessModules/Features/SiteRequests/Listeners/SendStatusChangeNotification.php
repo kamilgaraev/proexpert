@@ -27,7 +27,8 @@ class SendStatusChangeNotification implements ShouldQueue
             $event->siteRequest,
             $event->oldStatus,
             $event->newStatus,
-            $event->changedByUserId
+            $event->changedByUserId,
+            $event->transitionKey
         );
     }
 }
