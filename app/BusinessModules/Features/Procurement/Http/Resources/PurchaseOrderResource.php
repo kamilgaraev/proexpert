@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Features\Procurement\Http\Resources;
 
+use App\BusinessModules\Features\Procurement\DTOs\ProcurementChainSummary;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\BusinessModules\Features\Procurement\Services\ProcurementLifecycleService;
@@ -12,13 +13,20 @@ use Illuminate\Http\Resources\Json\JsonResource;
 /** @mixin PurchaseOrder */
 class PurchaseOrderResource extends JsonResource
 {
+    public function __construct(
+        mixed $resource,
+        private readonly ?ProcurementChainSummary $procurementChain = null
+    ) {
+        parent::__construct($resource);
+    }
+
     public function toArray(Request $request): array
     {
         $workflowSummary = app(ProcurementLifecycleService::class)
             ->forPurchaseOrder($this->resource);
         $paymentSummary = app(PurchaseOrderPaymentGateService::class)
             ->summary($this->resource);
-        $chainSummary = app(ProcurementChainService::class)
+        $chainSummary = $this->procurementChain ?? app(ProcurementChainService::class)
             ->forPurchaseOrder($this->resource, $request->user());
 
         return [
@@ -52,6 +60,10 @@ class PurchaseOrderResource extends JsonResource
             'workflow_summary' => $workflowSummary->toArray(),
             'payment_summary' => $paymentSummary,
             'procurement_chain_summary' => $chainSummary->compact()->toArray(),
+            'procurement_chain' => $this->when(
+                $this->procurementChain !== null,
+                fn (): array => $this->procurementChain->toArray()
+            ),
             'has_contract' => $this->hasContract(),
             'supplier' => $this->supplierPayload(),
             'external_supplier_contact' => $this->whenLoaded(

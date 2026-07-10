@@ -15,8 +15,10 @@ use App\BusinessModules\Features\Procurement\Enums\PurchaseOrderStatusEnum;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem;
+use App\BusinessModules\Features\Procurement\Models\PurchaseReceipt;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
+use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
@@ -92,6 +94,80 @@ final class ProcurementChainControllerTest extends TestCase
             'payment_document',
             collect($response->json('data.linked_documents'))->pluck('type')->all()
         );
+    }
+
+    public function test_purchase_order_detail_embeds_full_chain_while_list_keeps_compact_contract(): void
+    {
+        $context = AdminApiTestContext::create();
+        $purchaseRequest = $this->createPurchaseRequest($context->organization);
+        $purchaseOrder = $this->createPurchaseOrder($purchaseRequest, PurchaseOrderStatusEnum::CONFIRMED);
+        $this->createPaymentDocument($purchaseOrder, PaymentDocumentStatus::APPROVED, 0);
+        $this->allowModuleAccess();
+        $this->allowPermissions();
+
+        $detailResponse = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}");
+        $listResponse = $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/procurement/purchase-orders?per_page=20');
+
+        $detailResponse->assertOk();
+        $detailResponse->assertJsonStructure([
+            'data' => [
+                'procurement_chain' => [
+                    'current_stage',
+                    'next_action',
+                    'blockers',
+                    'linked_documents',
+                    'stages',
+                ],
+            ],
+        ]);
+        $detailResponse->assertJsonPath('data.procurement_chain.current_stage.key', 'payment_approved');
+        $detailResponse->assertJsonPath('data.procurement_chain.blockers.0.key', 'payment_registration_required');
+        $detailResponse->assertJsonPath('data.procurement_chain_summary.stage', 'payment_approved');
+
+        $listResponse->assertOk();
+        $this->assertArrayNotHasKey('procurement_chain', $listResponse->json('data.0'));
+        $listResponse->assertJsonPath('data.0.procurement_chain_summary.stage', 'payment_approved');
+    }
+
+    public function test_partially_delivered_order_chain_uses_receipt_and_payment_state(): void
+    {
+        $context = AdminApiTestContext::create();
+        $purchaseRequest = $this->createPurchaseRequest($context->organization);
+        $purchaseOrder = $this->createPurchaseOrder($purchaseRequest, PurchaseOrderStatusEnum::PARTIALLY_DELIVERED);
+        $this->createPaymentDocument($purchaseOrder, PaymentDocumentStatus::PAID, 500);
+        $this->createPostedReceipt($purchaseOrder, 2, 100);
+        $this->allowModuleAccess();
+        $this->allowPermissions();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}");
+
+        $response->assertOk();
+        $response->assertJsonPath('data.status', PurchaseOrderStatusEnum::PARTIALLY_DELIVERED->value);
+        $response->assertJsonPath('data.procurement_chain.current_stage.key', 'partially_delivered');
+        $response->assertJsonPath('data.procurement_chain.next_action.key', 'receive_materials');
+        $response->assertJsonPath('data.procurement_chain.blockers', []);
+    }
+
+    public function test_partially_delivered_order_chain_keeps_payment_blocker_when_remaining_payment_is_insufficient(): void
+    {
+        $context = AdminApiTestContext::create();
+        $purchaseRequest = $this->createPurchaseRequest($context->organization);
+        $purchaseOrder = $this->createPurchaseOrder($purchaseRequest, PurchaseOrderStatusEnum::PARTIALLY_DELIVERED);
+        $this->createPaymentDocument($purchaseOrder, PaymentDocumentStatus::PAID, 200);
+        $this->createPostedReceipt($purchaseOrder, 2, 100);
+        $this->allowModuleAccess();
+        $this->allowPermissions();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/procurement/purchase-orders/{$purchaseOrder->id}");
+
+        $response->assertOk();
+        $response->assertJsonPath('data.procurement_chain.current_stage.key', 'payment_partially_registered');
+        $response->assertJsonPath('data.procurement_chain.blockers.0.key', 'payment_amount_not_enough');
+        $response->assertJsonPath('data.procurement_chain.next_action.key', 'register_payment');
     }
 
     public function test_payment_document_endpoint_is_idempotent_and_uses_supplier_contractor(): void
@@ -372,6 +448,35 @@ final class ProcurementChainControllerTest extends TestCase
                 'purchase_order_number' => $purchaseOrder->order_number,
             ],
         ]);
+    }
+
+    private function createPostedReceipt(PurchaseOrder $purchaseOrder, float $quantity, float $price): PurchaseReceipt
+    {
+        $warehouse = OrganizationWarehouse::query()->create([
+            'organization_id' => $purchaseOrder->organization_id,
+            'name' => 'Склад цепочки',
+            'code' => 'CHAIN-'.uniqid(),
+            'warehouse_type' => OrganizationWarehouse::TYPE_CENTRAL,
+            'is_main' => true,
+            'is_active' => true,
+        ]);
+        $receipt = PurchaseReceipt::query()->create([
+            'organization_id' => $purchaseOrder->organization_id,
+            'purchase_order_id' => $purchaseOrder->id,
+            'warehouse_id' => $warehouse->id,
+            'receipt_number' => 'REC-CHAIN-'.uniqid(),
+            'receipt_date' => now()->toDateString(),
+            'status' => 'posted',
+        ]);
+
+        $receipt->lines()->create([
+            'purchase_order_item_id' => $purchaseOrder->items()->value('id'),
+            'quantity_received' => $quantity,
+            'price' => $price,
+            'total_amount' => $quantity * $price,
+        ]);
+
+        return $receipt;
     }
 
     private function allowModuleAccess(): void

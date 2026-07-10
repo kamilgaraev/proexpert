@@ -58,6 +58,7 @@ final class ProcurementChainService
         'payment_registered',
         'receipt_created',
         'warehouse_posted',
+        'partially_delivered',
         'completed',
     ];
 
@@ -353,6 +354,30 @@ final class ProcurementChainService
             ];
         }
 
+        if ($purchaseOrder->status === PurchaseOrderStatusEnum::PARTIALLY_DELIVERED) {
+            $availablePaidAmount = round($paidAmount - $this->receivedAmount($receipts), 2);
+
+            if ($availablePaidAmount <= 0.0001) {
+                return [
+                    'payment_partially_registered',
+                    $this->action(
+                        'register_payment',
+                        "/api/v1/admin/payments/documents/{$paymentDocument->id}/register-payment",
+                        $actor,
+                        $organizationId,
+                        'POST'
+                    ),
+                    collect([$this->blocker('payment_amount_not_enough', 'payment_document', $paymentDocument->id)]),
+                ];
+            }
+
+            return [
+                'partially_delivered',
+                $this->action('receive_materials', "/procurement/purchase-orders/{$purchaseOrder->id}?receive_materials=1", $actor, $organizationId),
+                collect(),
+            ];
+        }
+
         if ($requiredAmount > 0.0001 && $paidAmount + 0.0001 < $requiredAmount) {
             $stageKey = $paidAmount <= 0.0001 ? 'payment_approved' : 'payment_partially_registered';
             $blockerKey = $paidAmount <= 0.0001 ? 'payment_registration_required' : 'payment_amount_not_enough';
@@ -503,6 +528,16 @@ final class ProcurementChainService
 
             return $paidAmount;
         });
+    }
+
+    /**
+     * @param Collection<int, PurchaseReceipt> $receipts
+     */
+    private function receivedAmount(Collection $receipts): float
+    {
+        return (float) $receipts
+            ->flatMap(static fn (PurchaseReceipt $receipt): Collection => $receipt->lines)
+            ->sum(static fn (mixed $line): float => (float) $line->total_amount);
     }
 
     /**
@@ -679,7 +714,7 @@ final class ProcurementChainService
             'payment_approval_required',
             'payment_approved',
             'payment_partially_registered' => 'payment_document',
-            'receipt_created', 'warehouse_posted', 'completed' => 'purchase_receipt',
+            'receipt_created', 'warehouse_posted', 'partially_delivered', 'completed' => 'purchase_receipt',
             default => null,
         };
 

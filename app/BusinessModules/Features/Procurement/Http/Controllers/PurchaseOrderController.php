@@ -16,6 +16,7 @@ use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\Procurement\Models\SupplierProposal;
 use App\BusinessModules\Features\Procurement\Services\PurchaseOrderService;
 use App\BusinessModules\Features\Procurement\Services\PurchaseReceiptDocumentPdfService;
+use App\BusinessModules\Features\Procurement\Services\ProcurementChainService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
@@ -31,7 +32,8 @@ class PurchaseOrderController extends Controller
 {
     public function __construct(
         private readonly PurchaseOrderService $service,
-        private readonly PurchaseReceiptDocumentPdfService $receiptDocumentPdfService
+        private readonly PurchaseReceiptDocumentPdfService $receiptDocumentPdfService,
+        private readonly ProcurementChainService $procurementChainService
     ) {}
 
     public function index(Request $request): JsonResponse
@@ -46,7 +48,12 @@ class PurchaseOrderController extends Controller
                     'externalSupplierContact',
                     'supplierParty',
                     'purchaseRequest',
+                    'purchaseRequest.siteRequest.materialDeliveries.latestEvent',
+                    'purchaseRequest.lines',
+                    'purchaseRequest.supplierRequests.proposals',
+                    'purchaseRequest.supplierRequests.proposalDecision.winningProposal',
                     'contract',
+                    'acceptedSupplierProposal',
                     'acceptedSupplierProposalVersion',
                     'items',
                     'receipts.warehouse',
@@ -101,7 +108,12 @@ class PurchaseOrderController extends Controller
                     'externalSupplierContact',
                     'supplierParty',
                     'purchaseRequest',
+                    'purchaseRequest.siteRequest.materialDeliveries.latestEvent',
+                    'purchaseRequest.lines',
+                    'purchaseRequest.supplierRequests.proposals',
+                    'purchaseRequest.supplierRequests.proposalDecision.winningProposal',
                     'contract',
+                    'acceptedSupplierProposal',
                     'acceptedSupplierProposalVersion',
                     'proposals.supplier',
                     'proposals.externalSupplierContact',
@@ -119,7 +131,9 @@ class PurchaseOrderController extends Controller
                 return AdminResponse::error(trans_message('procurement.purchase_orders.not_found'), 404);
             }
 
-            return AdminResponse::success(new PurchaseOrderResource($order));
+            $procurementChain = $this->procurementChainService->forPurchaseOrder($order, $request->user());
+
+            return AdminResponse::success(new PurchaseOrderResource($order, $procurementChain));
         } catch (\Exception $e) {
             Log::error('procurement.purchase_orders.show.error', [
                 'id' => $id,
