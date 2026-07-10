@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\Procurement\Services;
 
 use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
+use App\BusinessModules\Features\Procurement\Events\PurchaseRequestCreated;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
@@ -143,11 +144,8 @@ class PurchaseRequestService
 
             $this->syncDeliveryFromSiteRequest($siteRequest, $purchaseRequest, $quantityOverride, $metadata);
 
+            $this->dispatchCreatedAfterCommit($purchaseRequest);
             DB::commit();
-
-            $this->invalidateCache($siteRequest->organization_id);
-
-            event(new \App\BusinessModules\Features\Procurement\Events\PurchaseRequestCreated($purchaseRequest));
 
             Log::info('procurement.purchase_request.created', [
                 'purchase_request_id' => $purchaseRequest->id,
@@ -213,11 +211,8 @@ class PurchaseRequestService
                 $this->syncDeliveryFromSiteRequest($siteRequest, $purchaseRequest);
             }
 
+            $this->dispatchCreatedAfterCommit($purchaseRequest);
             DB::commit();
-
-            $this->invalidateCache($organizationId);
-
-            event(new \App\BusinessModules\Features\Procurement\Events\PurchaseRequestCreated($purchaseRequest));
 
             return $purchaseRequest->fresh(self::RESOURCE_RELATIONS);
         } catch (\Exception $e) {
@@ -374,5 +369,20 @@ class PurchaseRequestService
     private function invalidateCache(int $organizationId): void
     {
         Cache::forget("procurement_purchase_requests_{$organizationId}");
+    }
+
+    private function dispatchCreatedAfterCommit(PurchaseRequest $purchaseRequest): void
+    {
+        $purchaseRequestId = (int) $purchaseRequest->id;
+        $organizationId = (int) $purchaseRequest->organization_id;
+
+        DB::afterCommit(function () use ($purchaseRequestId, $organizationId): void {
+            $this->invalidateCache($organizationId);
+
+            $createdPurchaseRequest = PurchaseRequest::query()->find($purchaseRequestId);
+            if ($createdPurchaseRequest instanceof PurchaseRequest) {
+                event(new PurchaseRequestCreated($createdPurchaseRequest));
+            }
+        });
     }
 }

@@ -158,6 +158,148 @@ final class SiteRequestFulfillmentControllerTest extends TestCase
         ]);
     }
 
+    public function test_empty_existing_purchase_request_is_rejected_without_saving_fulfillment_decision(): void
+    {
+        $context = AdminApiTestContext::create();
+        $siteRequest = $this->createManualMaterialRequest($context->organization, $context->user);
+        $purchaseRequest = $this->createExistingPurchaseRequest($siteRequest);
+        $this->allowFulfillmentAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/site-requests/{$siteRequest->id}/fulfillment-decision", [
+                'source' => 'purchase',
+            ]);
+
+        $response->assertConflict();
+        $response->assertJsonPath(
+            'message',
+            'Существующая заявка на закупку не соответствует материалу и объему заявки.'
+        );
+        $this->assertDatabaseCount('purchase_requests', 1);
+        $this->assertDatabaseCount('purchase_request_lines', 0);
+        $this->assertNull($siteRequest->fresh()->metadata['fulfillment_decision'] ?? null);
+        $this->assertDatabaseHas('purchase_requests', ['id' => $purchaseRequest->id]);
+    }
+
+    public function test_mismatched_existing_purchase_request_line_is_rejected_without_saving_fulfillment_decision(): void
+    {
+        $context = AdminApiTestContext::create();
+        $siteRequest = $this->createManualMaterialRequest($context->organization, $context->user);
+        $purchaseRequest = $this->createExistingPurchaseRequest($siteRequest);
+        PurchaseRequestLine::query()->create([
+            'purchase_request_id' => $purchaseRequest->id,
+            'material_id' => null,
+            'name' => 'Герметик',
+            'quantity' => 12.5,
+            'unit' => 'баллон',
+        ]);
+        $this->allowFulfillmentAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/site-requests/{$siteRequest->id}/fulfillment-decision", [
+                'source' => 'purchase',
+            ]);
+
+        $response->assertConflict();
+        $response->assertJsonPath(
+            'message',
+            'Существующая заявка на закупку не соответствует материалу и объему заявки.'
+        );
+        $this->assertDatabaseCount('purchase_requests', 1);
+        $this->assertDatabaseCount('purchase_request_lines', 1);
+        $this->assertNull($siteRequest->fresh()->metadata['fulfillment_decision'] ?? null);
+    }
+
+    public function test_existing_catalog_purchase_request_requires_the_exact_material_id(): void
+    {
+        $context = AdminApiTestContext::create();
+        $requestedMaterial = Material::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Кладочный раствор',
+            'is_active' => true,
+        ]);
+        $differentMaterial = Material::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Штукатурная смесь',
+            'is_active' => true,
+        ]);
+        $siteRequest = $this->createMaterialRequest($context->organization, $context->user, [
+            'material_id' => $requestedMaterial->id,
+            'material_name' => 'Кладочный раствор',
+            'material_quantity' => 20,
+            'material_unit' => 'мешок',
+        ]);
+        $purchaseRequest = $this->createExistingPurchaseRequest($siteRequest);
+        PurchaseRequestLine::query()->create([
+            'purchase_request_id' => $purchaseRequest->id,
+            'material_id' => $differentMaterial->id,
+            'name' => 'Кладочный раствор',
+            'quantity' => 20,
+            'unit' => 'мешок',
+        ]);
+        $this->allowFulfillmentAccess();
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/site-requests/{$siteRequest->id}/fulfillment-decision", [
+                'source' => 'purchase',
+            ]);
+
+        $response->assertConflict();
+        $response->assertJsonPath(
+            'message',
+            'Существующая заявка на закупку не соответствует материалу и объему заявки.'
+        );
+        $this->assertNull($siteRequest->fresh()->metadata['fulfillment_decision'] ?? null);
+    }
+
+    public function test_matching_existing_purchase_request_is_reused_idempotently(): void
+    {
+        $context = AdminApiTestContext::create();
+        $siteRequest = $this->createManualMaterialRequest($context->organization, $context->user);
+        $purchaseRequest = $this->createExistingPurchaseRequest($siteRequest);
+        PurchaseRequestLine::query()->create([
+            'purchase_request_id' => $purchaseRequest->id,
+            'material_id' => null,
+            'name' => '  МОНТАЖНАЯ   ПЕНА ',
+            'quantity' => 12.5,
+            'unit' => ' БАЛЛОН ',
+        ]);
+        $this->allowFulfillmentAccess();
+
+        $firstResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/site-requests/{$siteRequest->id}/fulfillment-decision", [
+                'source' => 'purchase',
+            ]);
+        $secondResponse = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/site-requests/{$siteRequest->id}/fulfillment-decision", [
+                'source' => 'purchase',
+            ]);
+
+        $firstResponse->assertOk();
+        $secondResponse->assertOk();
+        $this->assertSame($purchaseRequest->id, $firstResponse->json('data.decision.purchase_request_id'));
+        $this->assertSame($purchaseRequest->id, $secondResponse->json('data.decision.purchase_request_id'));
+        $this->assertDatabaseCount('purchase_requests', 1);
+        $this->assertDatabaseCount('purchase_request_lines', 1);
+    }
+
+    public function test_purchase_fulfillment_requires_the_procurement_module_before_writing(): void
+    {
+        $context = AdminApiTestContext::create();
+        $siteRequest = $this->createManualMaterialRequest($context->organization, $context->user);
+        $this->allowFulfillmentAccess(false);
+
+        $response = $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/site-requests/{$siteRequest->id}/fulfillment-decision", [
+                'source' => 'purchase',
+            ]);
+
+        $response->assertUnprocessable();
+        $response->assertJsonPath('message', 'Модуль закупок недоступен для вашей организации.');
+        $this->assertDatabaseCount('purchase_requests', 0);
+        $this->assertNull($siteRequest->fresh()->metadata['fulfillment_decision'] ?? null);
+    }
+
     public function test_fulfillment_does_not_expose_a_foreign_organization_request(): void
     {
         $ownerContext = AdminApiTestContext::create();
@@ -201,10 +343,34 @@ final class SiteRequestFulfillmentControllerTest extends TestCase
         ], $overrides));
     }
 
-    private function allowFulfillmentAccess(): void
+    private function createManualMaterialRequest(Organization $organization, User $user): SiteRequest
     {
-        $this->mock(AccessController::class, function (MockInterface $mock): void {
-            $mock->shouldReceive('hasModuleAccess')->andReturn(true);
+        return $this->createMaterialRequest($organization, $user, [
+            'material_id' => null,
+            'material_name' => 'Монтажная пена',
+            'material_quantity' => 12.5,
+            'material_unit' => 'баллон',
+        ]);
+    }
+
+    private function createExistingPurchaseRequest(SiteRequest $siteRequest): PurchaseRequest
+    {
+        return PurchaseRequest::query()->create([
+            'organization_id' => $siteRequest->organization_id,
+            'site_request_id' => $siteRequest->id,
+            'assigned_to' => $siteRequest->user_id,
+            'request_number' => 'PR-FULFILLMENT-'.uniqid(),
+            'status' => 'pending',
+            'budget_currency' => 'RUB',
+        ]);
+    }
+
+    private function allowFulfillmentAccess(bool $procurementEnabled = true): void
+    {
+        $this->mock(AccessController::class, function (MockInterface $mock) use ($procurementEnabled): void {
+            $mock->shouldReceive('hasModuleAccess')->andReturnUsing(
+                static fn (int $organizationId, string $module): bool => $module !== 'procurement' || $procurementEnabled
+            );
         });
         $this->mock(AuthorizationService::class, function (MockInterface $mock): void {
             $mock->shouldReceive('canAccessInterface')->andReturn(true);

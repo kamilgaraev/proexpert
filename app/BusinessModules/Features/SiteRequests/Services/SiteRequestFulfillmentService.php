@@ -9,6 +9,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\ProjectMaterialDelivery;
 use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDeliveryService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
+use App\BusinessModules\Features\Procurement\Models\PurchaseRequestLine;
 use App\BusinessModules\Features\Procurement\Services\PurchaseRequestService;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
@@ -105,12 +106,17 @@ class SiteRequestFulfillmentService
 
             $this->assertMaterialRequest($locked);
 
+            $source = (string) $data['source'];
+            if (in_array($source, ['purchase', 'mixed'], true)) {
+                $this->assertProcurementModuleActive($locked);
+            }
             $existingDecision = $this->currentDecision($locked);
             if ($existingDecision !== null) {
+                $this->assertExistingDecisionPurchaseRequestMatches($locked, $existingDecision);
+
                 return $this->result($locked->fresh($this->siteRequestRelations()), $existingDecision);
             }
 
-            $source = (string) $data['source'];
             $requestedQuantity = $this->requestedQuantity($locked);
             $warehouseQuantity = isset($data['warehouse_quantity']) ? (float) $data['warehouse_quantity'] : 0.0;
             $purchaseQuantity = isset($data['purchase_quantity']) ? (float) $data['purchase_quantity'] : 0.0;
@@ -140,6 +146,7 @@ class SiteRequestFulfillmentService
             if (in_array($source, ['purchase', 'mixed'], true)) {
                 $this->authorize($actor, 'procurement.purchase_requests.create', (int) $locked->organization_id);
                 $quantity = $source === 'purchase' ? $requestedQuantity : $purchaseQuantity;
+                $this->assertExistingPurchaseRequestMatches($locked, $quantity);
                 $purchaseRequest = $this->purchaseRequestService->createFromSiteRequest(
                     $locked,
                     (int) $actor->id,
@@ -227,6 +234,86 @@ class SiteRequestFulfillmentService
     private function hasManualMaterialName(SiteRequest $siteRequest): bool
     {
         return trim((string) $siteRequest->material_name) !== '';
+    }
+
+    /**
+     * @param  array<string, mixed>  $decision
+     */
+    private function assertExistingDecisionPurchaseRequestMatches(SiteRequest $siteRequest, array $decision): void
+    {
+        if (! in_array($decision['source'] ?? null, ['purchase', 'mixed'], true)) {
+            return;
+        }
+
+        $purchaseQuantity = isset($decision['purchase_quantity'])
+            ? (float) $decision['purchase_quantity']
+            : $this->requestedQuantity($siteRequest);
+
+        $this->assertExistingPurchaseRequestMatches($siteRequest, $purchaseQuantity, true);
+    }
+
+    private function assertExistingPurchaseRequestMatches(
+        SiteRequest $siteRequest,
+        float $requestedQuantity,
+        bool $required = false
+    ): void {
+        $purchaseRequest = PurchaseRequest::query()
+            ->where('organization_id', $siteRequest->organization_id)
+            ->where('site_request_id', $siteRequest->id)
+            ->with('lines')
+            ->first();
+
+        if (! $purchaseRequest instanceof PurchaseRequest) {
+            if ($required) {
+                throw new ConflictHttpException(trans_message('site_requests.fulfillment.errors.purchase_request_mismatch'));
+            }
+
+            return;
+        }
+
+        $hasMatchingLine = $purchaseRequest->lines->contains(
+            fn ($line): bool => $this->lineMatchesSiteRequest($siteRequest, $line, $requestedQuantity)
+        );
+
+        if (! $hasMatchingLine) {
+            throw new ConflictHttpException(trans_message('site_requests.fulfillment.errors.purchase_request_mismatch'));
+        }
+    }
+
+    private function lineMatchesSiteRequest(
+        SiteRequest $siteRequest,
+        PurchaseRequestLine $line,
+        float $requestedQuantity
+    ): bool
+    {
+        if (abs((float) $line->quantity - $requestedQuantity) > self::EPSILON) {
+            return false;
+        }
+
+        if ($this->normalizeMaterialValue((string) $line->unit) !== $this->normalizeMaterialValue((string) $siteRequest->material_unit)) {
+            return false;
+        }
+
+        if ($siteRequest->material_id) {
+            return (int) $line->material_id === (int) $siteRequest->material_id;
+        }
+
+        return $this->normalizeMaterialValue((string) $line->name)
+            === $this->normalizeMaterialValue((string) $siteRequest->material_name);
+    }
+
+    private function normalizeMaterialValue(string $value): string
+    {
+        $normalized = preg_replace('/\s+/u', ' ', trim($value));
+
+        return mb_strtolower($normalized ?? '', 'UTF-8');
+    }
+
+    private function assertProcurementModuleActive(SiteRequest $siteRequest): void
+    {
+        if (! $this->accessController->hasModuleAccess((int) $siteRequest->organization_id, 'procurement')) {
+            throw new DomainException(trans_message('site_requests.fulfillment.errors.procurement_module_required'));
+        }
     }
 
     private function requestedQuantity(SiteRequest $siteRequest): float
