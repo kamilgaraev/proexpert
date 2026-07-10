@@ -44,14 +44,28 @@ class SiteRequestFulfillmentService
 
         $organizationId = (int) $siteRequest->organization_id;
         $requestedQuantity = $this->requestedQuantity($siteRequest);
-        $warehouses = $this->warehouseOptions($siteRequest, $requestedQuantity);
+        $isManualMaterial = $this->isManualMaterial($siteRequest);
+        $warehouses = $isManualMaterial ? [] : $this->warehouseOptions($siteRequest, $requestedQuantity);
         $totalAvailable = array_sum(array_column($warehouses, 'available_quantity'));
-        $canUseWarehouse = $this->can($actor, 'warehouse.manage_stock', $organizationId)
+        $canUseWarehouse = ! $isManualMaterial
+            && $this->can($actor, 'warehouse.manage_stock', $organizationId)
             && $this->accessController->hasModuleAccess($organizationId, 'basic-warehouse');
         $canCreatePurchase = $this->can($actor, 'procurement.purchase_requests.create', $organizationId)
             && $this->accessController->hasModuleAccess($organizationId, 'procurement');
+        $recommendedSource = $isManualMaterial
+            ? 'purchase'
+            : $this->recommendedSource($requestedQuantity, (float) $totalAvailable);
 
         return [
+            'material_source' => $isManualMaterial ? 'manual' : 'catalog',
+            'warehouse_lookup_supported' => ! $isManualMaterial,
+            'warehouse_unavailable_reason' => $isManualMaterial
+                ? trans_message('site_requests.fulfillment.manual_purchase_only')
+                : null,
+            'can_use_warehouse' => $canUseWarehouse,
+            'can_use_purchase' => $canCreatePurchase,
+            'can_use_mixed' => $canUseWarehouse && $canCreatePurchase,
+            'recommended_source' => $recommendedSource,
             'request' => [
                 'id' => $siteRequest->id,
                 'material_id' => $siteRequest->material_id,
@@ -65,7 +79,7 @@ class SiteRequestFulfillmentService
             'summary' => [
                 'total_available_quantity' => round((float) $totalAvailable, 3),
                 'missing_quantity' => round(max(0.0, $requestedQuantity - (float) $totalAvailable), 3),
-                'recommended_source' => $this->recommendedSource($requestedQuantity, (float) $totalAvailable),
+                'recommended_source' => $recommendedSource,
             ],
             'permissions' => [
                 'can_use_warehouse' => $canUseWarehouse,
@@ -103,6 +117,7 @@ class SiteRequestFulfillmentService
             $warehouseId = isset($data['warehouse_id']) ? (int) $data['warehouse_id'] : null;
             $notes = isset($data['notes']) ? (string) $data['notes'] : null;
 
+            $this->assertSourceSupportsMaterial($source, $locked);
             $this->assertDecisionQuantities($source, $requestedQuantity, $warehouseQuantity, $purchaseQuantity);
 
             $warehouseDelivery = null;
@@ -189,9 +204,29 @@ class SiteRequestFulfillmentService
             throw new DomainException(trans_message('site_requests.fulfillment.errors.approved_required'));
         }
 
-        if (! $siteRequest->material_id || $this->requestedQuantity($siteRequest) <= 0) {
+        if (
+            (! $siteRequest->material_id && ! $this->hasManualMaterialName($siteRequest))
+            || $this->requestedQuantity($siteRequest) <= 0
+        ) {
             throw new DomainException(trans_message('site_requests.fulfillment.errors.material_required'));
         }
+    }
+
+    private function assertSourceSupportsMaterial(string $source, SiteRequest $siteRequest): void
+    {
+        if ($this->isManualMaterial($siteRequest) && in_array($source, ['warehouse', 'mixed'], true)) {
+            throw new DomainException(trans_message('site_requests.fulfillment.manual_purchase_only'));
+        }
+    }
+
+    private function isManualMaterial(SiteRequest $siteRequest): bool
+    {
+        return ! $siteRequest->material_id && $this->hasManualMaterialName($siteRequest);
+    }
+
+    private function hasManualMaterialName(SiteRequest $siteRequest): bool
+    {
+        return trim((string) $siteRequest->material_name) !== '';
     }
 
     private function requestedQuantity(SiteRequest $siteRequest): float

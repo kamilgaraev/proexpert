@@ -128,6 +128,7 @@ class PurchaseRequestService
                 $quantity = $quantityOverride ?? (float) ($siteRequest->material_quantity ?: 1);
 
                 $purchaseRequest->lines()->create([
+                    'material_id' => $siteRequest->material_id,
                     'name' => $siteRequest->material_name ?: $siteRequest->title,
                     'quantity' => $quantity,
                     'unit' => $siteRequest->material_unit ?: 'шт',
