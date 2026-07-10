@@ -28,6 +28,15 @@ class CreateInvoiceFromPurchaseOrder
             return;
         }
 
+        if ($this->accessController->hasModuleAccess($order->organization_id, 'budgeting')) {
+            Log::info('procurement.skip_invoice_creation', [
+                'purchase_order_id' => $order->id,
+                'reason' => 'budgeting_dimensions_required',
+            ]);
+
+            return;
+        }
+
         $module = app(\App\BusinessModules\Features\Procurement\ProcurementModule::class);
         $settings = $module->getSettings($order->organization_id);
 
