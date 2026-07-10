@@ -13,11 +13,17 @@ use Illuminate\Http\Resources\Json\JsonResource;
 /** @mixin PurchaseOrder */
 class PurchaseOrderResource extends JsonResource
 {
+    private readonly ?ProcurementChainSummary $procurementChain;
+
     public function __construct(
         mixed $resource,
-        private readonly ?ProcurementChainSummary $procurementChain = null
+        mixed $procurementChain = null
     ) {
         parent::__construct($resource);
+
+        $this->procurementChain = $procurementChain instanceof ProcurementChainSummary
+            ? $procurementChain
+            : null;
     }
 
     public function toArray(Request $request): array
