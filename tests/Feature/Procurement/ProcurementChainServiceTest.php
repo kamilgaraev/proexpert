@@ -52,6 +52,26 @@ final class ProcurementChainServiceTest extends TestCase
         $this->assertSame(['site_request'], $summary->linkedDocuments->pluck('type')->all());
     }
 
+    public function test_malformed_fulfillment_decision_does_not_open_purchase_request_creation(): void
+    {
+        $organization = Organization::factory()->create();
+        $siteRequest = $this->createSiteRequest($organization);
+        $siteRequest->update([
+            'metadata' => [
+                'fulfillment_decision' => [
+                    'source' => 'purchase',
+                    'purchase_quantity' => 5,
+                ],
+            ],
+        ]);
+
+        $summary = app(ProcurementChainService::class)->forSiteRequest($siteRequest->fresh());
+
+        $this->assertSame('fulfillment_source_required', $summary->currentStage->key);
+        $this->assertSame('determine_fulfillment_source', $summary->nextAction?->key);
+        $this->assertSame('fulfillment_source_not_selected', $summary->blockers->first()?->key);
+    }
+
     public function test_approved_purchase_request_without_supplier_request_points_to_supplier_request_creation(): void
     {
         $organization = Organization::factory()->create();

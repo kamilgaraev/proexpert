@@ -511,7 +511,30 @@ final class ProcurementChainService
         $metadata = $siteRequest->metadata ?? [];
         $decision = $metadata['fulfillment_decision'] ?? null;
 
-        return is_array($decision) ? $decision : null;
+        if (! is_array($decision)) {
+            return null;
+        }
+
+        $source = $decision['source'] ?? null;
+        if (! in_array($source, ['warehouse', 'purchase', 'mixed'], true)) {
+            return null;
+        }
+
+        if (
+            in_array($source, ['warehouse', 'mixed'], true)
+            && (! isset($decision['warehouse_delivery_id']) || (int) $decision['warehouse_delivery_id'] <= 0)
+        ) {
+            return null;
+        }
+
+        if (
+            in_array($source, ['purchase', 'mixed'], true)
+            && (! isset($decision['purchase_request_id']) || (int) $decision['purchase_request_id'] <= 0)
+        ) {
+            return null;
+        }
+
+        return $decision;
     }
 
     /**
