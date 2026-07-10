@@ -221,6 +221,7 @@ class WarehouseController extends Controller
                 'low_stock' => $request->boolean('low_stock'),
                 'project_id' => $request->input('project_id'),
                 'location_code' => $request->input('location_code'),
+                'cell_id' => $request->input('cell_id'),
             ];
 
             $balances = $this->warehouseService->getStockData($organizationId, $filters);
@@ -233,7 +234,7 @@ class WarehouseController extends Controller
                 'organization_id' => $organizationId,
                 'user_id' => $request->user()?->id,
                 'warehouse_id' => $warehouseId,
-                'filters' => $request->only(['asset_type', 'low_stock', 'project_id', 'location_code']),
+                'filters' => $request->only(['asset_type', 'low_stock', 'project_id', 'location_code', 'cell_id']),
                 'error' => $exception->getMessage(),
             ]);
 

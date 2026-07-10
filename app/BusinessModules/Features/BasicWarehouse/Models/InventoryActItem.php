@@ -16,6 +16,7 @@ class InventoryActItem extends Model
 
     protected $fillable = [
         'inventory_act_id',
+        'cell_id',
         'material_id',
         'expected_quantity',
         'actual_quantity',
@@ -43,6 +44,11 @@ class InventoryActItem extends Model
     public function material(): BelongsTo
     {
         return $this->belongsTo(Material::class);
+    }
+
+    public function cell(): BelongsTo
+    {
+        return $this->belongsTo(WarehouseStorageCell::class, 'cell_id');
     }
 
     /**

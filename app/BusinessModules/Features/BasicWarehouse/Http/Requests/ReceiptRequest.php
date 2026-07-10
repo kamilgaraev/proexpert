@@ -19,6 +19,7 @@ class ReceiptRequest extends FormRequest
 
         $this->merge([
             'warehouse_id' => $this->nullableInteger($this->input('warehouse_id')),
+            'cell_id' => $this->nullableInteger($this->input('cell_id')),
             'material_id' => $this->nullableInteger($this->input('material_id')),
             'material' => $material,
             'quantity' => $this->nullableFloat($this->input('quantity')),
@@ -50,6 +51,7 @@ class ReceiptRequest extends FormRequest
                     ->where('organization_id', $organizationId)
                     ->where('is_active', true),
             ],
+            'cell_id' => 'nullable|integer',
             'material' => 'nullable|array',
             'material.name' => 'required_without:material_id|string|max:255',
             'material.code' => 'nullable|string|max:50',

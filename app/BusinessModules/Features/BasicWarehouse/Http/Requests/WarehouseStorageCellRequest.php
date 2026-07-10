@@ -26,6 +26,7 @@ class WarehouseStorageCellRequest extends FormRequest
             'bin_number' => 'nullable|string|max:50',
             'capacity' => 'nullable|numeric|min:0',
             'max_weight' => 'nullable|numeric|min:0',
+            'storage_conditions' => 'nullable|array',
             'metadata' => 'nullable|array',
             'is_active' => 'sometimes|boolean',
             'notes' => 'nullable|string',

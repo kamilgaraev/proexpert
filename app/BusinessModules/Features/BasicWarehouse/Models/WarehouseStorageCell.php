@@ -38,6 +38,7 @@ class WarehouseStorageCell extends Model
         'bin_number',
         'capacity',
         'max_weight',
+        'storage_conditions',
         'metadata',
         'is_active',
         'notes',
@@ -46,6 +47,7 @@ class WarehouseStorageCell extends Model
     protected $casts = [
         'capacity' => 'decimal:3',
         'max_weight' => 'decimal:3',
+        'storage_conditions' => 'array',
         'metadata' => 'array',
         'is_active' => 'boolean',
     ];
@@ -66,13 +68,24 @@ class WarehouseStorageCell extends Model
 
     public function getFullAddressAttribute(): string
     {
-        $parts = array_filter([
-            $this->zone?->code,
-            $this->rack_number ? "R{$this->rack_number}" : null,
-            $this->shelf_number ? "S{$this->shelf_number}" : null,
-            $this->bin_number ? "B{$this->bin_number}" : null,
-        ]);
+        $parts = [];
 
-        return $parts !== [] ? implode('-', $parts) : $this->code;
+        if ($this->zone?->code) {
+            $parts[] = "Зона {$this->zone->code}";
+        }
+
+        if ($this->rack_number !== null && $this->rack_number !== '') {
+            $parts[] = "Стеллаж {$this->rack_number}";
+        }
+
+        if ($this->shelf_number !== null && $this->shelf_number !== '') {
+            $parts[] = "Полка {$this->shelf_number}";
+        }
+
+        if ($this->bin_number !== null && $this->bin_number !== '') {
+            $parts[] = "Ячейка {$this->bin_number}";
+        }
+
+        return $parts !== [] ? implode(', ', $parts) : $this->code;
     }
 }

@@ -5,7 +5,12 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
+use App\BusinessModules\Features\BasicWarehouse\Models\InventoryAct;
+use App\BusinessModules\Features\BasicWarehouse\Models\InventoryActItem;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseIdentifier;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseLogisticUnit;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseStorageCell;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseTask;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseZone;
@@ -71,11 +76,16 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
                 'shelf_number' => '01',
                 'bin_number' => '001',
                 'capacity' => 50,
+                'storage_conditions' => [
+                    'temperature' => 'room',
+                    'humidity' => 'normal',
+                ],
                 'is_active' => true,
             ]);
 
         $cellResponse->assertCreated();
         $cellResponse->assertJsonPath('data.zone.id', $zone->id);
+        $cellResponse->assertJsonPath('data.storage_conditions.temperature', 'room');
         $cell = WarehouseStorageCell::query()->where('warehouse_id', $warehouse->id)->where('code', 'CELL-A1')->firstOrFail();
 
         $unitResponse = $this->withHeaders($context->authHeaders())
@@ -91,7 +101,7 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
             ]);
 
         $unitResponse->assertCreated();
-        $unitResponse->assertJsonPath('data.storage_address', 'Z-REC-RA-S01-B001');
+        $unitResponse->assertJsonPath('data.storage_address', 'Зона Z-REC, Стеллаж A, Полка 01, Ячейка 001');
         $unitResponse->assertJsonPath('data.current_utilization', 25);
         $unit = WarehouseLogisticUnit::query()->where('warehouse_id', $warehouse->id)->where('code', 'PALLET-A1')->firstOrFail();
 
@@ -274,6 +284,300 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
         ]);
     }
 
+    public function test_zone_cannot_be_deleted_while_it_has_linked_warehouse_entities(): void
+    {
+        $context = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN');
+        $this->allowAdminAccess();
+
+        $zoneWithCell = $this->createZone($warehouse->id, 'Cell zone', 'ZONE-CELL');
+        $this->createCell($context->organization->id, $warehouse->id, $zoneWithCell->id, 'Cell', 'CELL-1');
+
+        $zoneWithUnit = $this->createZone($warehouse->id, 'Unit zone', 'ZONE-UNIT');
+        $this->createLogisticUnit(
+            $context->organization->id,
+            $warehouse->id,
+            $zoneWithUnit->id,
+            null,
+            'Pallet',
+            'PALLET-1'
+        );
+
+        $zoneWithTask = $this->createZone($warehouse->id, 'Task zone', 'ZONE-TASK');
+        $this->createTask($context->organization->id, $warehouse->id, $zoneWithTask->id, null, 'Zone task', 'TASK-ZONE');
+
+        $zoneWithIdentifier = $this->createZone($warehouse->id, 'Identifier zone', 'ZONE-ID');
+        WarehouseIdentifier::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'identifier_type' => WarehouseIdentifier::TYPE_QR,
+            'code' => 'ZONE-ID-QR',
+            'entity_type' => 'zone',
+            'entity_id' => $zoneWithIdentifier->id,
+            'status' => WarehouseIdentifier::STATUS_ACTIVE,
+        ]);
+
+        foreach ([
+            [$zoneWithCell, 'basic_warehouse.zone.delete_has_cells'],
+            [$zoneWithUnit, 'basic_warehouse.zone.delete_has_logistic_units'],
+            [$zoneWithTask, 'basic_warehouse.zone.delete_has_tasks'],
+            [$zoneWithIdentifier, 'basic_warehouse.zone.delete_has_identifiers'],
+        ] as [$zone, $messageKey]) {
+            $this->withHeaders($context->authHeaders())
+                ->deleteJson("/api/v1/admin/warehouses/{$warehouse->id}/zones/{$zone->id}")
+                ->assertUnprocessable()
+                ->assertJsonPath('message', trans_message($messageKey));
+
+            $this->assertDatabaseHas('warehouse_zones', ['id' => $zone->id]);
+        }
+    }
+
+    public function test_cell_cannot_be_deleted_while_it_has_logistic_units_or_unfinished_tasks(): void
+    {
+        $context = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN');
+        $zone = $this->createZone($warehouse->id, 'Storage zone', 'STORAGE');
+        $this->allowAdminAccess();
+
+        $cellWithUnit = $this->createCell($context->organization->id, $warehouse->id, $zone->id, 'Unit cell', 'CELL-UNIT');
+        $this->createLogisticUnit(
+            $context->organization->id,
+            $warehouse->id,
+            $zone->id,
+            $cellWithUnit->id,
+            'Pallet in cell',
+            'PALLET-CELL'
+        );
+
+        $cellWithTask = $this->createCell($context->organization->id, $warehouse->id, $zone->id, 'Task cell', 'CELL-TASK');
+        $this->createTask(
+            $context->organization->id,
+            $warehouse->id,
+            $zone->id,
+            $cellWithTask->id,
+            'Cell task',
+            'TASK-CELL'
+        );
+
+        foreach ([
+            [$cellWithUnit, 'basic_warehouse.cell.delete_has_logistic_units'],
+            [$cellWithTask, 'basic_warehouse.cell.delete_has_unfinished_tasks'],
+        ] as [$cell, $messageKey]) {
+            $this->withHeaders($context->authHeaders())
+                ->deleteJson("/api/v1/admin/warehouses/{$warehouse->id}/cells/{$cell->id}")
+                ->assertUnprocessable()
+                ->assertJsonPath('message', trans_message($messageKey));
+
+            $this->assertDatabaseHas('warehouse_storage_cells', ['id' => $cell->id]);
+        }
+    }
+
+    public function test_cell_cannot_be_deleted_while_it_has_balance_or_operation_history(): void
+    {
+        $context = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN');
+        $zone = $this->createZone($warehouse->id, 'Storage zone', 'STORAGE');
+        $this->allowAdminAccess();
+
+        $cellWithBalance = $this->createCell(
+            $context->organization->id,
+            $warehouse->id,
+            $zone->id,
+            'Balance cell',
+            'CELL-BALANCE'
+        );
+        $cellWithMovement = $this->createCell(
+            $context->organization->id,
+            $warehouse->id,
+            $zone->id,
+            'Movement cell',
+            'CELL-MOVEMENT'
+        );
+        $cellWithInventoryItem = $this->createCell(
+            $context->organization->id,
+            $warehouse->id,
+            $zone->id,
+            'Inventory cell',
+            'CELL-INVENTORY'
+        );
+
+        $balanceMaterial = Material::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Balance material',
+            'code' => 'BALANCE-MATERIAL',
+            'is_active' => true,
+        ]);
+        $movementMaterial = Material::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Movement material',
+            'code' => 'MOVEMENT-MATERIAL',
+            'is_active' => true,
+        ]);
+        $inventoryMaterial = Material::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Inventory material',
+            'code' => 'INVENTORY-MATERIAL',
+            'is_active' => true,
+        ]);
+
+        WarehouseBalance::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'cell_id' => $cellWithBalance->id,
+            'material_id' => $balanceMaterial->id,
+            'available_quantity' => 0,
+            'reserved_quantity' => 0,
+            'unit_price' => 0,
+        ]);
+        WarehouseMovement::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'cell_id' => $cellWithMovement->id,
+            'material_id' => $movementMaterial->id,
+            'movement_type' => WarehouseMovement::TYPE_RECEIPT,
+            'quantity' => 1,
+            'price' => 10,
+            'movement_date' => now(),
+        ]);
+        $inventoryAct = InventoryAct::query()->create([
+            'organization_id' => $context->organization->id,
+            'warehouse_id' => $warehouse->id,
+            'act_number' => 'INV-CELL-HISTORY',
+            'status' => InventoryAct::STATUS_DRAFT,
+            'inventory_date' => now()->toDateString(),
+            'created_by' => $context->user->id,
+            'commission_members' => [],
+        ]);
+        InventoryActItem::query()->create([
+            'inventory_act_id' => $inventoryAct->id,
+            'cell_id' => $cellWithInventoryItem->id,
+            'material_id' => $inventoryMaterial->id,
+            'expected_quantity' => 0,
+            'actual_quantity' => 0,
+            'difference' => 0,
+            'unit_price' => 10,
+            'total_value' => 0,
+            'location_code' => $cellWithInventoryItem->code,
+        ]);
+
+        foreach ([
+            [$cellWithBalance, 'basic_warehouse.cell.delete_has_balances'],
+            [$cellWithMovement, 'basic_warehouse.cell.delete_has_movements'],
+            [$cellWithInventoryItem, 'basic_warehouse.cell.delete_has_inventory_items'],
+        ] as [$cell, $messageKey]) {
+            $this->withHeaders($context->authHeaders())
+                ->deleteJson("/api/v1/admin/warehouses/{$warehouse->id}/cells/{$cell->id}")
+                ->assertUnprocessable()
+                ->assertJsonPath('message', trans_message($messageKey));
+
+            $this->assertDatabaseHas('warehouse_storage_cells', ['id' => $cell->id]);
+        }
+    }
+
+    public function test_warehouse_operations_and_inventory_use_cell_id_with_legacy_location_code(): void
+    {
+        $context = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN');
+        $targetWarehouse = $this->createWarehouse($context->organization->id, 'Target warehouse', 'TARGET');
+        $zone = $this->createZone($warehouse->id, 'Main zone', 'MAIN-ZONE');
+        $targetZone = $this->createZone($targetWarehouse->id, 'Target zone', 'TARGET-ZONE');
+        $cell = $this->createCell($context->organization->id, $warehouse->id, $zone->id, 'Main cell', 'CELL-MAIN');
+        $targetCell = $this->createCell($context->organization->id, $targetWarehouse->id, $targetZone->id, 'Target cell', 'CELL-TARGET');
+        $material = Material::query()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Cement',
+            'code' => 'CEMENT-CELL',
+            'is_active' => true,
+        ]);
+        $this->allowAdminAccess();
+
+        $receipt = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/receipt', [
+                'warehouse_id' => $warehouse->id,
+                'cell_id' => $cell->id,
+                'material_id' => $material->id,
+                'quantity' => 10,
+                'price' => 100,
+            ]);
+
+        $receipt->assertCreated()
+            ->assertJsonPath('data.cell_id', $cell->id)
+            ->assertJsonPath('data.cell.code', $cell->code);
+        $this->assertDatabaseHas('warehouse_balances', [
+            'warehouse_id' => $warehouse->id,
+            'material_id' => $material->id,
+            'cell_id' => $cell->id,
+            'location_code' => $cell->code,
+        ]);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/write-off', [
+                'warehouse_id' => $warehouse->id,
+                'cell_id' => $cell->id,
+                'material_id' => $material->id,
+                'quantity' => 2,
+                'reason' => 'Damage',
+                'operation_category' => 'damage',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.movement.cell_id', $cell->id);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/transfer', [
+                'from_warehouse_id' => $warehouse->id,
+                'from_cell_id' => $cell->id,
+                'to_warehouse_id' => $targetWarehouse->id,
+                'to_cell_id' => $targetCell->id,
+                'material_id' => $material->id,
+                'quantity' => 3,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.movement_out.cell_id', $cell->id)
+            ->assertJsonPath('data.movement_in.cell_id', $targetCell->id);
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson("/api/v1/admin/warehouses/{$warehouse->id}/balances?cell_id={$cell->id}")
+            ->assertOk()
+            ->assertJsonPath('data.0.cell_id', $cell->id)
+            ->assertJsonPath('data.0.cell.code', $cell->code)
+            ->assertJsonPath('data.0.storage_address', $cell->full_address);
+
+        $inventory = $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/inventory', [
+                'warehouse_id' => $warehouse->id,
+                'inventory_date' => '2026-07-10',
+            ]);
+
+        $inventory->assertCreated()
+            ->assertJsonPath('data.items.0.cell_id', $cell->id)
+            ->assertJsonPath('data.items.0.location_code', $cell->code);
+        $this->assertDatabaseHas('inventory_act_items', [
+            'cell_id' => $cell->id,
+            'location_code' => $cell->code,
+        ]);
+
+        $foreignContext = AdminApiTestContext::create();
+        $foreignWarehouse = $this->createWarehouse($foreignContext->organization->id, 'Foreign warehouse', 'FOREIGN');
+        $foreignZone = $this->createZone($foreignWarehouse->id, 'Foreign zone', 'FOREIGN-ZONE');
+        $foreignCell = $this->createCell($foreignContext->organization->id, $foreignWarehouse->id, $foreignZone->id, 'Foreign cell', 'FOREIGN-CELL');
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson('/api/v1/admin/warehouses/operations/receipt', [
+                'warehouse_id' => $warehouse->id,
+                'cell_id' => $foreignCell->id,
+                'material_id' => $material->id,
+                'quantity' => 1,
+                'price' => 100,
+            ])
+            ->assertUnprocessable();
+
+        $this->assertSame(5.0, (float) WarehouseBalance::query()
+            ->where('warehouse_id', $warehouse->id)
+            ->where('material_id', $material->id)
+            ->where('cell_id', $cell->id)
+            ->sum('available_quantity'));
+    }
+
     private function createWarehouse(int $organizationId, string $name, string $code): OrganizationWarehouse
     {
         return OrganizationWarehouse::query()->create([
@@ -320,7 +624,7 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
         int $organizationId,
         int $warehouseId,
         int $zoneId,
-        int $cellId,
+        ?int $cellId,
         string $name,
         string $code
     ): WarehouseLogisticUnit {
@@ -334,6 +638,27 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
             'unit_type' => WarehouseLogisticUnit::TYPE_PALLET,
             'status' => WarehouseLogisticUnit::STATUS_AVAILABLE,
             'is_active' => true,
+        ]);
+    }
+
+    private function createTask(
+        int $organizationId,
+        int $warehouseId,
+        ?int $zoneId,
+        ?int $cellId,
+        string $title,
+        string $taskNumber
+    ): WarehouseTask {
+        return WarehouseTask::query()->create([
+            'organization_id' => $organizationId,
+            'warehouse_id' => $warehouseId,
+            'zone_id' => $zoneId,
+            'cell_id' => $cellId,
+            'task_number' => $taskNumber,
+            'title' => $title,
+            'task_type' => WarehouseTask::TYPE_PLACEMENT,
+            'status' => WarehouseTask::STATUS_QUEUED,
+            'priority' => WarehouseTask::PRIORITY_NORMAL,
         ]);
     }
 

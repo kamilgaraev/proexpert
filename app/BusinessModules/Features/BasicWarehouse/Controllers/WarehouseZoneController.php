@@ -7,6 +7,10 @@ namespace App\BusinessModules\Features\BasicWarehouse\Controllers;
 use App\BusinessModules\Features\BasicWarehouse\Http\Requests\WarehouseZoneRequest;
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseBalance;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseIdentifier;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseLogisticUnit;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseStorageCell;
+use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseTask;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseZone;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -42,13 +46,13 @@ class WarehouseZoneController extends Controller
                 ->orderBy('name')
                 ->get();
 
-            $storedQuantities = $this->getStoredQuantitiesByLocationCode($warehouse->id);
+            $zoneSummaries = $this->getZoneSummaries($organizationId, $warehouse->id);
 
             return AdminResponse::success(
                 $zones->map(
                     fn (WarehouseZone $zone) => $this->makeZonePayload(
                         $zone,
-                        (float) ($storedQuantities[$zone->code] ?? 0)
+                        $zoneSummaries[$zone->id] ?? $this->emptyZoneSummary()
                     )
                 )->values()->all()
             );
@@ -90,7 +94,7 @@ class WarehouseZoneController extends Controller
             ]);
 
             return AdminResponse::success(
-                $this->makeZonePayload($zone, 0),
+                $this->makeZonePayload($zone, $this->emptyZoneSummary()),
                 trans_message('basic_warehouse.zone.created'),
                 201
             );
@@ -127,10 +131,10 @@ class WarehouseZoneController extends Controller
         try {
             $warehouse = $this->findWarehouse($organizationId, $warehouseId);
             $zone = $this->findZone($warehouse->id, $id);
-            $storedQuantities = $this->getStoredQuantitiesByLocationCode($warehouse->id);
+            $zoneSummaries = $this->getZoneSummaries($organizationId, $warehouse->id);
 
             return AdminResponse::success(
-                $this->makeZonePayload($zone, (float) ($storedQuantities[$zone->code] ?? 0))
+                $this->makeZonePayload($zone, $zoneSummaries[$zone->id] ?? $this->emptyZoneSummary())
             );
         } catch (ModelNotFoundException) {
             return AdminResponse::error(trans_message('basic_warehouse.zone.not_found'), 404);
@@ -170,10 +174,10 @@ class WarehouseZoneController extends Controller
 
             $zone->update($validated);
 
-            $storedQuantities = $this->getStoredQuantitiesByLocationCode($warehouse->id);
+            $zoneSummaries = $this->getZoneSummaries($organizationId, $warehouse->id);
 
             return AdminResponse::success(
-                $this->makeZonePayload($zone->fresh(), (float) ($storedQuantities[$zone->code] ?? 0)),
+                $this->makeZonePayload($zone->fresh(), $zoneSummaries[$zone->id] ?? $this->emptyZoneSummary()),
                 trans_message('basic_warehouse.zone.updated')
             );
         } catch (ModelNotFoundException) {
@@ -210,6 +214,54 @@ class WarehouseZoneController extends Controller
         try {
             $warehouse = $this->findWarehouse($organizationId, $warehouseId);
             $zone = $this->findZone($warehouse->id, $id);
+
+            $hasCells = WarehouseStorageCell::query()
+                ->where('organization_id', $organizationId)
+                ->where('warehouse_id', $warehouse->id)
+                ->where('zone_id', $zone->id)
+                ->exists();
+
+            if ($hasCells) {
+                return AdminResponse::error(trans_message('basic_warehouse.zone.delete_has_cells'), 422);
+            }
+
+            $hasLogisticUnits = WarehouseLogisticUnit::query()
+                ->where('organization_id', $organizationId)
+                ->where('warehouse_id', $warehouse->id)
+                ->where(function ($query) use ($zone): void {
+                    $query->where('zone_id', $zone->id)
+                        ->orWhereHas('cell', fn ($cellQuery) => $cellQuery->where('zone_id', $zone->id));
+                })
+                ->exists();
+
+            if ($hasLogisticUnits) {
+                return AdminResponse::error(trans_message('basic_warehouse.zone.delete_has_logistic_units'), 422);
+            }
+
+            $hasTasks = WarehouseTask::query()
+                ->where('organization_id', $organizationId)
+                ->where('warehouse_id', $warehouse->id)
+                ->where(function ($query) use ($zone): void {
+                    $query->where('zone_id', $zone->id)
+                        ->orWhereHas('cell', fn ($cellQuery) => $cellQuery->where('zone_id', $zone->id));
+                })
+                ->exists();
+
+            if ($hasTasks) {
+                return AdminResponse::error(trans_message('basic_warehouse.zone.delete_has_tasks'), 422);
+            }
+
+            $hasIdentifiers = WarehouseIdentifier::query()
+                ->where('organization_id', $organizationId)
+                ->where('warehouse_id', $warehouse->id)
+                ->where('entity_type', 'zone')
+                ->where('entity_id', $zone->id)
+                ->exists();
+
+            if ($hasIdentifiers) {
+                return AdminResponse::error(trans_message('basic_warehouse.zone.delete_has_identifiers'), 422);
+            }
+
             $zone->delete();
 
             return AdminResponse::success(null, trans_message('basic_warehouse.zone.deleted'));
@@ -242,26 +294,77 @@ class WarehouseZoneController extends Controller
             ->findOrFail($zoneId);
     }
 
-    private function getStoredQuantitiesByLocationCode(int $warehouseId): array
+    private function getZoneSummaries(int $organizationId, int $warehouseId): array
     {
-        return WarehouseBalance::query()
+        $cells = WarehouseStorageCell::query()
+            ->where('organization_id', $organizationId)
             ->where('warehouse_id', $warehouseId)
-            ->whereNotNull('location_code')
+            ->get(['id', 'zone_id', 'code', 'capacity', 'is_active']);
+
+        if ($cells->isEmpty()) {
+            return [];
+        }
+
+        $cellIds = $cells->pluck('id');
+        $cellCodes = $cells->pluck('code')->filter();
+        $quantityByCellId = WarehouseBalance::query()
+            ->where('warehouse_id', $warehouseId)
+            ->whereIn('cell_id', $cellIds)
+            ->selectRaw('cell_id, SUM(available_quantity + reserved_quantity) as stored_quantity')
+            ->groupBy('cell_id')
+            ->pluck('stored_quantity', 'cell_id')
+            ->map(fn ($value) => (float) $value)
+            ->all();
+        $legacyQuantityByCode = WarehouseBalance::query()
+            ->where('warehouse_id', $warehouseId)
+            ->whereNull('cell_id')
+            ->whereIn('location_code', $cellCodes)
             ->selectRaw('location_code, SUM(available_quantity + reserved_quantity) as stored_quantity')
             ->groupBy('location_code')
             ->pluck('stored_quantity', 'location_code')
             ->map(fn ($value) => (float) $value)
             ->all();
+
+        return $cells
+            ->whereNotNull('zone_id')
+            ->groupBy('zone_id')
+            ->map(function ($zoneCells) use ($quantityByCellId, $legacyQuantityByCode): array {
+                $storedQuantity = $zoneCells->sum(
+                    fn (WarehouseStorageCell $cell): float => ($quantityByCellId[$cell->id] ?? 0.0)
+                        + ($legacyQuantityByCode[$cell->code] ?? 0.0)
+                );
+                $capacities = $zoneCells->pluck('capacity');
+                $capacity = $capacities->contains(null)
+                    ? null
+                    : (float) $capacities->sum(fn ($value) => (float) $value);
+
+                return [
+                    'cells_count' => $zoneCells->count(),
+                    'active_cells_count' => $zoneCells->where('is_active', true)->count(),
+                    'stored_quantity' => round($storedQuantity, 3),
+                    'capacity' => $capacity,
+                    'current_utilization' => $capacity !== null && $capacity > 0
+                        ? round(min(100, ($storedQuantity / $capacity) * 100), 1)
+                        : null,
+                ];
+            })
+            ->all();
     }
 
-    private function makeZonePayload(WarehouseZone $zone, float $storedQuantity): array
+    private function emptyZoneSummary(): array
+    {
+        return [
+            'cells_count' => 0,
+            'active_cells_count' => 0,
+            'stored_quantity' => 0.0,
+            'capacity' => null,
+            'current_utilization' => null,
+        ];
+    }
+
+    private function makeZonePayload(WarehouseZone $zone, array $summary): array
     {
         $capacity = $zone->capacity !== null ? (float) $zone->capacity : null;
-        $currentUtilization = null;
-
-        if ($capacity !== null && $capacity > 0) {
-            $currentUtilization = round(min(100, ($storedQuantity / $capacity) * 100), 1);
-        }
 
         return [
             'id' => $zone->id,
@@ -274,8 +377,9 @@ class WarehouseZoneController extends Controller
             'cell_number' => $zone->cell_number,
             'capacity' => $capacity,
             'max_weight' => $zone->max_weight !== null ? (float) $zone->max_weight : null,
-            'stored_quantity' => round($storedQuantity, 3),
-            'current_utilization' => $currentUtilization,
+            'stored_quantity' => $summary['stored_quantity'],
+            'current_utilization' => $summary['current_utilization'],
+            'summary' => $summary,
             'full_address' => $zone->full_address,
             'storage_conditions' => $zone->storage_conditions ?? [],
             'is_active' => (bool) $zone->is_active,

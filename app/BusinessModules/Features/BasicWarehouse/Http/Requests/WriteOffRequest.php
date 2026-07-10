@@ -32,6 +32,7 @@ class WriteOffRequest extends FormRequest
                     ->where('organization_id', $organizationId)
                     ->where('is_active', true),
             ],
+            'cell_id' => 'nullable|integer',
             'quantity' => 'required|numeric|min:0.001',
             'project_id' => [
                 'nullable',

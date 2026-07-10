@@ -29,6 +29,7 @@ class WarehouseMovement extends Model
     protected $fillable = [
         'organization_id',
         'warehouse_id',
+        'cell_id',
         'material_id',
         'movement_type',
         'quantity',
@@ -87,6 +88,11 @@ class WarehouseMovement extends Model
     public function warehouse(): BelongsTo
     {
         return $this->belongsTo(OrganizationWarehouse::class, 'warehouse_id');
+    }
+
+    public function cell(): BelongsTo
+    {
+        return $this->belongsTo(WarehouseStorageCell::class, 'cell_id');
     }
 
     public function material(): BelongsTo

@@ -13,6 +13,7 @@ use App\BusinessModules\Features\BasicWarehouse\Http\Requests\WriteOffRequest;
 use App\BusinessModules\Features\BasicWarehouse\Services\AssetService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehousePhotoService;
 use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseStorageCellResolver;
 use App\BusinessModules\Features\BasicWarehouse\Http\Resources\WarehouseMovementResource;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -32,6 +33,7 @@ class WarehouseOperationsController extends Controller
         protected WarehouseService $warehouseService,
         protected AssetService $assetService,
         protected WarehousePhotoService $warehousePhotoService,
+        protected WarehouseStorageCellResolver $storageCellResolver,
         protected \App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseExportManager $exportManager
     ) {}
 
@@ -276,19 +278,28 @@ class WarehouseOperationsController extends Controller
         $price = (float) $validated['price'];
 
         try {
+            $cell = $this->storageCellResolver->resolveForWarehouse(
+                $organizationId,
+                $warehouseId,
+                isset($validated['cell_id']) ? (int) $validated['cell_id'] : null
+            );
+
             $result = $this->warehouseService->receiveAsset(
                 $organizationId,
                 $warehouseId,
                 $materialId,
                 $quantity,
                 $price,
-                [
+                array_merge(
+                    [
                     'project_id' => $validated['project_id'] ?? null,
                     'user_id' => (int) $request->user()->id,
                     'document_number' => $validated['document_number'] ?? null,
                     'reason' => $validated['reason'] ?? null,
                     'metadata' => $validated['metadata'] ?? [],
-                ]
+                    ],
+                    $this->storageCellResolver->metadata($cell)
+                )
             );
 
             if ($request->hasFile('photos')) {
@@ -321,19 +332,28 @@ class WarehouseOperationsController extends Controller
         $organizationId = $request->user()->current_organization_id;
         
         try {
+            $cell = $this->storageCellResolver->resolveForWarehouse(
+                (int) $organizationId,
+                (int) $validated['warehouse_id'],
+                isset($validated['cell_id']) ? (int) $validated['cell_id'] : null
+            );
+
             $result = $this->warehouseService->writeOffAsset(
                 $organizationId,
                 $validated['warehouse_id'],
                 $validated['material_id'],
                 $validated['quantity'],
-                [
+                array_merge(
+                    [
                     'project_id' => $validated['project_id'] ?? null,
                     'user_id' => $request->user()->id,
                     'document_number' => $validated['document_number'] ?? null,
                     'reason' => $validated['reason'],
                     'operation_category' => $validated['operation_category'],
                     'metadata' => $validated['metadata'] ?? [],
-                ]
+                    ],
+                    $this->storageCellResolver->metadata($cell)
+                )
             );
 
             return AdminResponse::success([
@@ -358,18 +378,37 @@ class WarehouseOperationsController extends Controller
         $organizationId = $request->user()->current_organization_id;
         
         try {
+            $sourceCell = $this->storageCellResolver->resolveForWarehouse(
+                (int) $organizationId,
+                (int) $validated['from_warehouse_id'],
+                isset($validated['from_cell_id']) ? (int) $validated['from_cell_id'] : null
+            );
+            $targetCell = $this->storageCellResolver->resolveForWarehouse(
+                (int) $organizationId,
+                (int) $validated['to_warehouse_id'],
+                isset($validated['to_cell_id']) ? (int) $validated['to_cell_id'] : null
+            );
+
             $result = $this->warehouseService->transferAsset(
                 $organizationId,
                 $validated['from_warehouse_id'],
                 $validated['to_warehouse_id'],
                 $validated['material_id'],
                 $validated['quantity'],
-                [
+                array_merge(
+                    [
                     'user_id' => $request->user()->id,
                     'document_number' => $validated['document_number'] ?? null,
                     'reason' => $validated['reason'] ?? null,
                     'metadata' => $validated['metadata'] ?? [],
-                ]
+                    ],
+                    $this->storageCellResolver->metadata($targetCell),
+                    $sourceCell === null ? [] : [
+                        'from_cell_id' => $sourceCell->id,
+                        'from_location_code' => $sourceCell->code,
+                        'from_storage_address' => $sourceCell->full_address,
+                    ]
+                )
             );
 
             return AdminResponse::success([
@@ -500,4 +539,3 @@ class WarehouseOperationsController extends Controller
         return AdminResponse::error($message, $status);
     }
 }
-

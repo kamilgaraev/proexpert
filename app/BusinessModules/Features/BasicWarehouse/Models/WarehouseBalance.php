@@ -22,6 +22,7 @@ class WarehouseBalance extends Model
     protected $fillable = [
         'organization_id',
         'warehouse_id',
+        'cell_id',
         'material_id',
         'available_quantity',
         'reserved_quantity',
@@ -61,6 +62,11 @@ class WarehouseBalance extends Model
     public function warehouse(): BelongsTo
     {
         return $this->belongsTo(OrganizationWarehouse::class, 'warehouse_id');
+    }
+
+    public function cell(): BelongsTo
+    {
+        return $this->belongsTo(WarehouseStorageCell::class, 'cell_id');
     }
 
     /**

@@ -155,13 +155,14 @@ class InventoryController extends Controller
                 ]);
 
                 $groupedBalances = WarehouseBalance::query()
-                    ->with(['material.measurementUnit'])
+                    ->with(['material.measurementUnit', 'cell.zone'])
                     ->where('organization_id', $organizationId)
                     ->where('warehouse_id', $warehouse->id)
                     ->where('available_quantity', '>', 0)
                     ->get()
                     ->groupBy(fn (WarehouseBalance $balance) => implode(':', [
                         $balance->material_id,
+                        $balance->cell_id ?? 'no-cell',
                         $balance->batch_number ?? 'no-batch',
                         $balance->unit_price,
                     ]));
@@ -181,6 +182,7 @@ class InventoryController extends Controller
                             fn (WarehouseBalance $balance) => (float) $balance->available_quantity
                         ),
                         'unit_price' => $firstBalance->unit_price,
+                        'cell_id' => $firstBalance->cell_id,
                         'location_code' => $locationCodes->count() === 1 ? $locationCodes->first() : null,
                         'batch_number' => $firstBalance->batch_number,
                     ]);
@@ -192,6 +194,7 @@ class InventoryController extends Controller
                     'warehouse',
                     'creator',
                     'items.material.measurementUnit',
+                    'items.cell.zone',
                 ]);
 
                 return AdminResponse::success(
@@ -229,6 +232,7 @@ class InventoryController extends Controller
                 'creator',
                 'approver',
                 'items.material.measurementUnit',
+                'items.cell.zone',
             ]);
 
             return AdminResponse::success($this->makeInventoryActPayload($act, true));
@@ -334,7 +338,7 @@ class InventoryController extends Controller
         $organizationId = (int) $request->user()->current_organization_id;
 
         try {
-            $act = $this->findAct($organizationId, $id, ['warehouse', 'creator', 'items.material.measurementUnit']);
+            $act = $this->findAct($organizationId, $id, ['warehouse', 'creator', 'items.material.measurementUnit', 'items.cell.zone']);
 
             if ($act->status !== InventoryAct::STATUS_IN_PROGRESS) {
                 return AdminResponse::error(trans_message('basic_warehouse.inventory.complete_invalid_status'), 400);
@@ -424,6 +428,7 @@ class InventoryController extends Controller
                     'creator',
                     'approver',
                     'items.material.measurementUnit',
+                    'items.cell.zone',
                 ]);
 
                 return AdminResponse::success(
@@ -482,7 +487,9 @@ class InventoryController extends Controller
             ? $query->where('batch_number', $item->batch_number)
             : $query->whereNull('batch_number');
 
-        if ($item->location_code) {
+        if ($item->cell_id !== null) {
+            $query->where('cell_id', $item->cell_id);
+        } elseif ($item->location_code) {
             $query->where('location_code', $item->location_code);
         }
 
@@ -502,6 +509,7 @@ class InventoryController extends Controller
                 'unit_price' => $item->unit_price,
                 'min_stock_level' => 0,
                 'max_stock_level' => 0,
+                'cell_id' => $item->cell_id,
                 'location_code' => $item->location_code,
                 'batch_number' => $item->batch_number,
                 'last_movement_at' => now(),
@@ -589,6 +597,19 @@ class InventoryController extends Controller
             'difference_quantity' => $item->difference !== null ? (float) $item->difference : null,
             'unit_price' => (float) $item->unit_price,
             'difference_value' => $item->total_value !== null ? (float) $item->total_value : null,
+            'cell_id' => $item->cell_id,
+            'cell' => $item->cell ? [
+                'id' => $item->cell->id,
+                'code' => $item->cell->code,
+                'name' => $item->cell->name,
+                'full_address' => $item->cell->full_address,
+                'zone' => $item->cell->zone ? [
+                    'id' => $item->cell->zone->id,
+                    'code' => $item->cell->zone->code,
+                    'name' => $item->cell->zone->name,
+                ] : null,
+            ] : null,
+            'storage_address' => $item->cell?->full_address ?? $item->location_code,
             'location_code' => $item->location_code,
             'batch_number' => $item->batch_number,
             'notes' => $item->notes,

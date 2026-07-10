@@ -138,6 +138,10 @@ class WarehouseService implements WarehouseReportDataProvider
                 $query->where('location_code', $metadata['location_code']);
             }
 
+            if (isset($metadata['cell_id'])) {
+                $query->where('cell_id', $metadata['cell_id']);
+            }
+
             $balance = $query->first();
 
             if ($balance) {
@@ -155,6 +159,7 @@ class WarehouseService implements WarehouseReportDataProvider
                     'unit_price' => $price,
                     'batch_number' => $metadata['batch_number'] ?? null,
                     'expiry_date' => $metadata['expiry_date'] ?? null,
+                    'cell_id' => $metadata['cell_id'] ?? null,
                     'location_code' => $metadata['location_code'] ?? null,
                     'created_at' => now(), // Важно для FIFO
                     'last_movement_at' => now(),
@@ -165,6 +170,7 @@ class WarehouseService implements WarehouseReportDataProvider
             $movement = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::create([
                 'organization_id' => $organizationId,
                 'warehouse_id' => $warehouseId,
+                'cell_id' => $metadata['cell_id'] ?? null,
                 'material_id' => $materialId,
                 'movement_type' => 'receipt',
                 'quantity' => $quantity,
@@ -217,10 +223,16 @@ class WarehouseService implements WarehouseReportDataProvider
         try {
             // Получаем все партии с доступным количеством, сортируем по дате создания (FIFO)
             // (или по сроку годности FEFO, если есть)
-            $batches = WarehouseBalance::where('organization_id', $organizationId)
+            $batchesQuery = WarehouseBalance::where('organization_id', $organizationId)
                 ->where('warehouse_id', $warehouseId)
                 ->where('material_id', $materialId)
-                ->where('available_quantity', '>', 0)
+                ->where('available_quantity', '>', 0);
+
+            if (isset($metadata['cell_id'])) {
+                $batchesQuery->where('cell_id', $metadata['cell_id']);
+            }
+
+            $batches = $batchesQuery
                 ->orderByRaw('CASE WHEN expiry_date IS NOT NULL THEN expiry_date ELSE created_at END ASC')
                 ->lockForUpdate()
                 ->get();
@@ -255,6 +267,8 @@ class WarehouseService implements WarehouseReportDataProvider
                     'quantity' => $takeFromBatch,
                     'unit_price' => $batch->unit_price,
                     'batch_number' => $batch->batch_number,
+                    'cell_id' => $batch->cell_id,
+                    'location_code' => $batch->location_code,
                 ];
 
                 $totalCost += ($takeFromBatch * $batch->unit_price);
@@ -267,6 +281,7 @@ class WarehouseService implements WarehouseReportDataProvider
             $movement = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::create([
                 'organization_id' => $organizationId,
                 'warehouse_id' => $warehouseId,
+                'cell_id' => $metadata['cell_id'] ?? null,
                 'material_id' => $materialId,
                 'movement_type' => 'write_off',
                 'quantity' => $quantity,
@@ -322,10 +337,16 @@ class WarehouseService implements WarehouseReportDataProvider
         DB::beginTransaction();
         try {
             // 1. Списываем с исходного склада по FIFO
-            $sourceBatches = WarehouseBalance::where('organization_id', $organizationId)
+            $sourceBatchesQuery = WarehouseBalance::where('organization_id', $organizationId)
                 ->where('warehouse_id', $fromWarehouseId)
                 ->where('material_id', $materialId)
-                ->where('available_quantity', '>', 0)
+                ->where('available_quantity', '>', 0);
+
+            if (isset($metadata['from_cell_id'])) {
+                $sourceBatchesQuery->where('cell_id', $metadata['from_cell_id']);
+            }
+
+            $sourceBatches = $sourceBatchesQuery
                 ->orderByRaw('CASE WHEN expiry_date IS NOT NULL THEN expiry_date ELSE created_at END ASC')
                 ->lockForUpdate()
                 ->get();
@@ -361,6 +382,8 @@ class WarehouseService implements WarehouseReportDataProvider
                     'source_batch_id' => $batch->id,
                     'quantity' => $takeFromBatch,
                     'unit_price' => $batch->unit_price,
+                    'cell_id' => $batch->cell_id,
+                    'location_code' => $batch->location_code,
                 ];
             }
 
@@ -393,6 +416,7 @@ class WarehouseService implements WarehouseReportDataProvider
             $movementOut = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::create([
                 'organization_id' => $organizationId,
                 'warehouse_id' => $fromWarehouseId,
+                'cell_id' => $metadata['from_cell_id'] ?? null,
                 'material_id' => $materialId,
                 'movement_type' => 'transfer_out',
                 'quantity' => $quantity,
@@ -477,7 +501,7 @@ class WarehouseService implements WarehouseReportDataProvider
         $query = WarehouseBalance::where('organization_id', $organizationId)
             ->where('warehouse_id', $warehouseId)
             ->where('available_quantity', '>', 0)
-            ->with(['material', 'warehouse']);
+            ->with(['material', 'warehouse', 'cell.zone']);
 
         // Фильтры
         if (isset($filters['asset_type'])) {
@@ -499,6 +523,10 @@ class WarehouseService implements WarehouseReportDataProvider
 
         if (! empty($filters['location_code'])) {
             $query->where('location_code', $filters['location_code']);
+        }
+
+        if (! empty($filters['cell_id'])) {
+            $query->where('cell_id', $filters['cell_id']);
         }
 
         if (isset($filters['low_stock']) && $filters['low_stock']) {
@@ -555,7 +583,7 @@ class WarehouseService implements WarehouseReportDataProvider
     {
         $query = WarehouseBalance::where('organization_id', $organizationId)
             ->where('available_quantity', '>', 0)
-            ->with(['material.measurementUnit', 'warehouse', 'material.photos']);
+            ->with(['material.measurementUnit', 'warehouse', 'cell.zone', 'material.photos']);
 
         // Применяем фильтры
         if (isset($filters['warehouse_id'])) {
@@ -581,6 +609,10 @@ class WarehouseService implements WarehouseReportDataProvider
 
         if (! empty($filters['location_code'])) {
             $query->where('location_code', $filters['location_code']);
+        }
+
+        if (! empty($filters['cell_id'])) {
+            $query->where('cell_id', $filters['cell_id']);
         }
 
         if (isset($filters['low_stock']) && $filters['low_stock']) {
@@ -672,6 +704,36 @@ class WarehouseService implements WarehouseReportDataProvider
                 'max_stock_level' => (float) $first->max_stock_level,
                 'is_low_stock' => $first->min_stock_level > 0 && $totalQty <= $first->min_stock_level,
                 'location_code' => $batches->pluck('location_code')->filter()->unique()->implode(', '),
+                'cell_id' => $batches->pluck('cell_id')->filter()->unique()->count() === 1
+                    ? $batches->pluck('cell_id')->filter()->unique()->first()
+                    : null,
+                'cell_ids' => $batches->pluck('cell_id')->filter()->unique()->values()->all(),
+                'cells' => $batches->pluck('cell')->filter()->unique('id')->map(static fn ($cell) => [
+                    'id' => $cell->id,
+                    'code' => $cell->code,
+                    'name' => $cell->name,
+                    'full_address' => $cell->full_address,
+                    'zone' => $cell->zone ? [
+                        'id' => $cell->zone->id,
+                        'code' => $cell->zone->code,
+                        'name' => $cell->zone->name,
+                    ] : null,
+                ])->values()->all(),
+                'cell' => $batches->pluck('cell')->filter()->unique('id')->count() === 1
+                    ? $batches->pluck('cell')->filter()->unique('id')->map(static fn ($cell) => [
+                        'id' => $cell->id,
+                        'code' => $cell->code,
+                        'name' => $cell->name,
+                        'full_address' => $cell->full_address,
+                        'zone' => $cell->zone ? [
+                            'id' => $cell->zone->id,
+                            'code' => $cell->zone->code,
+                            'name' => $cell->zone->name,
+                        ] : null,
+                    ])->first()
+                    : null,
+                'storage_address' => $batches->pluck('cell.full_address')->filter()->unique()->implode(', ')
+                    ?: $batches->pluck('location_code')->filter()->unique()->implode(', '),
                 'last_movement_at' => $batches->max('last_movement_at')?->toDateTimeString(),
                 'photo_gallery' => $balancePhotos !== [] ? $balancePhotos : $receiptPhotos,
                 'receipt_photo_gallery' => $receiptPhotos,
@@ -799,7 +861,7 @@ class WarehouseService implements WarehouseReportDataProvider
     public function getMovementsData(int $organizationId, array $filters = []): array
     {
         $query = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement::where('organization_id', $organizationId)
-            ->with(['material.measurementUnit', 'warehouse', 'project', 'user', 'relatedUser', 'photos']);
+            ->with(['material.measurementUnit', 'warehouse', 'cell.zone', 'project', 'user', 'relatedUser', 'photos']);
 
         // Применяем фильтры
         if (isset($filters['warehouse_id'])) {
@@ -839,6 +901,19 @@ class WarehouseService implements WarehouseReportDataProvider
                 'operation_category_label' => $movement->operationCategoryLabel(),
                 'warehouse_id' => $movement->warehouse_id,
                 'warehouse_name' => $movement->warehouse->name,
+                'cell_id' => $movement->cell_id,
+                'cell' => $movement->cell ? [
+                    'id' => $movement->cell->id,
+                    'code' => $movement->cell->code,
+                    'name' => $movement->cell->name,
+                    'full_address' => $movement->cell->full_address,
+                    'zone' => $movement->cell->zone ? [
+                        'id' => $movement->cell->zone->id,
+                        'code' => $movement->cell->zone->code,
+                        'name' => $movement->cell->zone->name,
+                    ] : null,
+                ] : null,
+                'storage_address' => $movement->cell?->full_address ?? $movement->metadata['storage_address'] ?? null,
                 'material_id' => $movement->material_id,
                 'material_name' => $movement->material->name,
                 'material_code' => $movement->material->code,
