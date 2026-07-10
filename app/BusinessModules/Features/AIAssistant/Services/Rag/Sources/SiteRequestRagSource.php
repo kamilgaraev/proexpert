@@ -5,13 +5,15 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\AIAssistant\Services\Rag\Sources;
 
 use App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagChunkData;
+use App\BusinessModules\Features\AIAssistant\Models\RagSource;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceCollectorInterface;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourcePrunerInterface;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use BackedEnum;
 use DateTimeInterface;
 
-final class SiteRequestRagSource implements RagSourceCollectorInterface
+final class SiteRequestRagSource implements RagSourceCollectorInterface, RagSourcePrunerInterface
 {
     public function sourceType(): string
     {
@@ -51,6 +53,50 @@ final class SiteRequestRagSource implements RagSourceCollectorInterface
             ->first();
 
         return $request instanceof SiteRequest ? [$this->chunk($request)] : [];
+    }
+
+    public function pruneForOrganization(int $organizationId, ?int $projectId = null): int
+    {
+        $sources = RagSource::query()
+            ->where('organization_id', $organizationId)
+            ->where('source_type', $this->sourceType())
+            ->where('entity_type', 'site_request')
+            ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
+            ->get();
+
+        if ($sources->isEmpty()) {
+            return 0;
+        }
+
+        $entityIds = $sources
+            ->pluck('entity_id')
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->filter(static fn (int $id): bool => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+        $indexableIds = SiteRequest::query()
+            ->where('organization_id', $organizationId)
+            ->whereIn('id', $entityIds)
+            ->where('status', '!=', SiteRequestStatusEnum::DRAFT->value)
+            ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
+            ->pluck('id')
+            ->map(static fn (mixed $id): string => (string) $id)
+            ->all();
+        $indexableLookup = array_fill_keys($indexableIds, true);
+        $pruned = 0;
+
+        foreach ($sources as $source) {
+            if (isset($indexableLookup[(string) $source->entity_id])) {
+                continue;
+            }
+
+            $source->chunks()->delete();
+            $source->delete();
+            $pruned++;
+        }
+
+        return $pruned;
     }
 
     private function chunk(SiteRequest $request): RagChunkData

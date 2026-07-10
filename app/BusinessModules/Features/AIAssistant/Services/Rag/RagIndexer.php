@@ -122,13 +122,44 @@ class RagIndexer
         }
 
         $indexed = 0;
+        $collected = false;
 
         foreach ($collector->collectEntity($organizationId, $entityType, $entityId) as $chunk) {
+            $collected = true;
             $this->indexChunk($chunk);
             $indexed++;
         }
 
+        if (! $collected && $collector instanceof RagSourcePrunerInterface) {
+            $this->deleteIndexedEntity($organizationId, $sourceType, $entityType, $entityId);
+        }
+
         return $indexed;
+    }
+
+    private function deleteIndexedEntity(
+        int $organizationId,
+        string $sourceType,
+        string $entityType,
+        string|int $entityId
+    ): void {
+        $sources = RagSource::query()
+            ->where('organization_id', $organizationId)
+            ->where('source_type', $sourceType)
+            ->where('entity_type', $entityType)
+            ->where('entity_id', (string) $entityId)
+            ->get();
+
+        if ($sources->isEmpty()) {
+            return;
+        }
+
+        DB::transaction(static function () use ($sources): void {
+            foreach ($sources as $source) {
+                $source->chunks()->delete();
+                $source->delete();
+            }
+        });
     }
 
     /**

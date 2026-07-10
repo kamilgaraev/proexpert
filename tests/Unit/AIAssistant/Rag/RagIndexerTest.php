@@ -11,6 +11,12 @@ use App\BusinessModules\Features\AIAssistant\Services\Rag\RagEmbeddingProviderIn
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagIndexer;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceCollectorInterface;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceRegistry;
+use App\BusinessModules\Features\AIAssistant\Services\Rag\Sources\SiteRequestRagSource;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
+use App\Models\Organization;
+use App\Models\Project;
+use App\Models\User;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -159,6 +165,58 @@ class RagIndexerTest extends TestCase
         $this->assertStringEndsWith('...', $storedTitle);
     }
 
+    public function test_site_request_organization_reindex_prunes_persisted_draft_and_deleted_sources(): void
+    {
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $pending = $this->siteRequest($organization, $project, $user, SiteRequestStatusEnum::PENDING, 'Pending request');
+        $draft = $this->siteRequest($organization, $project, $user, SiteRequestStatusEnum::DRAFT, 'Private draft');
+        $deleted = $this->siteRequest($organization, $project, $user, SiteRequestStatusEnum::PENDING, 'Deleted request');
+        $pendingSource = $this->persistedSiteRequestSource($pending);
+        $draftSource = $this->persistedSiteRequestSource($draft);
+        $deletedSource = $this->persistedSiteRequestSource($deleted);
+        $deleted->delete();
+        $indexer = new RagIndexer(
+            new RecordingEmbeddingProvider([0.1, 0.2, 0.3]),
+            new RagSourceRegistry([new SiteRequestRagSource])
+        );
+
+        $indexer->indexOrganization($organization->id, null, 'site_request');
+
+        $this->assertDatabaseHas('ai_rag_sources', ['id' => $pendingSource->id]);
+        $this->assertDatabaseMissing('ai_rag_sources', ['id' => $draftSource->id]);
+        $this->assertDatabaseMissing('ai_rag_sources', ['id' => $deletedSource->id]);
+        $this->assertDatabaseMissing('ai_rag_chunks', ['source_id' => $draftSource->id]);
+        $this->assertDatabaseMissing('ai_rag_chunks', ['source_id' => $deletedSource->id]);
+    }
+
+    public function test_site_request_entity_reindex_removes_exact_source_when_entity_becomes_draft(): void
+    {
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $request = $this->siteRequest($organization, $project, $user, SiteRequestStatusEnum::PENDING, 'Request to hide');
+        $sibling = $this->siteRequest($organization, $project, $user, SiteRequestStatusEnum::PENDING, 'Visible sibling');
+        $indexer = new RagIndexer(
+            new RecordingEmbeddingProvider([0.1, 0.2, 0.3]),
+            new RagSourceRegistry([new SiteRequestRagSource])
+        );
+        $indexer->indexEntity($organization->id, 'site_request', 'site_request', $request->id);
+        $indexer->indexEntity($organization->id, 'site_request', 'site_request', $sibling->id);
+        $requestSource = RagSource::query()->where('entity_id', (string) $request->id)->firstOrFail();
+        $siblingSource = RagSource::query()->where('entity_id', (string) $sibling->id)->firstOrFail();
+
+        $request->update(['status' => SiteRequestStatusEnum::DRAFT->value]);
+        $indexed = $indexer->indexEntity($organization->id, 'site_request', 'site_request', $request->id);
+
+        $this->assertSame(0, $indexed);
+        $this->assertDatabaseMissing('ai_rag_sources', ['id' => $requestSource->id]);
+        $this->assertDatabaseMissing('ai_rag_chunks', ['source_id' => $requestSource->id]);
+        $this->assertDatabaseHas('ai_rag_sources', ['id' => $siblingSource->id]);
+        $this->assertDatabaseHas('ai_rag_chunks', ['source_id' => $siblingSource->id]);
+    }
+
     /**
      * @return array{0: int, 1: int}
      */
@@ -201,6 +259,57 @@ class RagIndexerTest extends TestCase
             updatedAt: now()
         );
     }
+
+    private function siteRequest(
+        Organization $organization,
+        Project $project,
+        User $user,
+        SiteRequestStatusEnum $status,
+        string $title
+    ): SiteRequest {
+        return SiteRequest::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => $user->id,
+            'title' => $title,
+            'request_type' => 'material_request',
+            'status' => $status->value,
+            'priority' => 'medium',
+            'material_name' => 'Concrete',
+            'material_quantity' => 1,
+            'material_unit' => 'm3',
+        ]);
+    }
+
+    private function persistedSiteRequestSource(SiteRequest $request): RagSource
+    {
+        $source = RagSource::query()->create([
+            'organization_id' => $request->organization_id,
+            'project_id' => $request->project_id,
+            'source_type' => 'site_request',
+            'entity_type' => 'site_request',
+            'entity_id' => (string) $request->id,
+            'title' => $request->title,
+            'checksum' => 'persisted-'.uniqid(),
+            'metadata' => ['status' => $request->status->value],
+            'indexed_at' => now(),
+        ]);
+
+        RagChunk::query()->create([
+            'source_id' => $source->id,
+            'organization_id' => $request->organization_id,
+            'project_id' => $request->project_id,
+            'chunk_index' => 0,
+            'content' => 'Persisted private content',
+            'content_hash' => hash('sha256', 'Persisted private content'),
+            'metadata' => ['status' => $request->status->value],
+            'embedding_provider' => 'fake',
+            'embedding_model' => 'fake-model',
+            'embedding_created_at' => now(),
+        ]);
+
+        return $source;
+    }
 }
 
 final class RecordingRagCollector implements RagSourceCollectorInterface
@@ -217,8 +326,7 @@ final class RecordingRagCollector implements RagSourceCollectorInterface
         private readonly string $sourceType,
         private readonly bool $enabled,
         private readonly array $chunks
-    ) {
-    }
+    ) {}
 
     public function sourceType(): string
     {
@@ -252,9 +360,7 @@ final class RecordingEmbeddingProvider implements RagEmbeddingProviderInterface
     /**
      * @param  array<int, float>  $embedding
      */
-    public function __construct(private readonly array $embedding)
-    {
-    }
+    public function __construct(private readonly array $embedding) {}
 
     public function embed(string $text, string $purpose = self::PURPOSE_DOCUMENT): array
     {
