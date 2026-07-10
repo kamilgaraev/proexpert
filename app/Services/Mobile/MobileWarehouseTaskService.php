@@ -6,10 +6,17 @@ namespace App\Services\Mobile;
 
 use App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseTask;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseTaskWorkflowService;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 
 class MobileWarehouseTaskService
 {
+    public function __construct(
+        private readonly WarehouseTaskWorkflowService $workflow
+    ) {
+    }
+
     public function listTasks(int $organizationId, int $warehouseId, array $filters = []): array
     {
         $warehouse = $this->findWarehouse($organizationId, $warehouseId);
@@ -79,15 +86,18 @@ class MobileWarehouseTaskService
         ?string $notes = null
     ): array {
         $warehouse = $this->findWarehouse($organizationId, $warehouseId);
-        $task = $this->findTask($organizationId, $warehouse->id, $taskId);
 
-        $task = $this->applyStatusTransition(
-            $task,
-            $status,
-            $userId,
-            $completedQuantity,
-            $notes
-        );
+        $task = DB::transaction(function () use ($organizationId, $warehouse, $taskId, $status, $userId, $completedQuantity, $notes): WarehouseTask {
+            $task = $this->findTaskForUpdate($organizationId, $warehouse->id, $taskId);
+
+            return $this->workflow->applyStatusTransition(
+                $task,
+                $status,
+                $userId,
+                $completedQuantity,
+                $notes
+            );
+        });
 
         return $this->serializeTask($this->findTask($organizationId, $warehouse->id, $task->id));
     }
@@ -151,6 +161,10 @@ class MobileWarehouseTaskService
             'task_type_label' => $this->taskTypeLabel($task->task_type),
             'status' => $task->status,
             'status_label' => $this->statusLabel($task->status),
+            'blocked_from_status' => $task->blocked_from_status,
+            'resume_status' => $this->workflow->resumeStatus($task),
+            'can_edit' => $this->workflow->canEdit($task),
+            'can_delete' => $this->workflow->canDelete($task),
             'priority' => $task->priority,
             'priority_label' => $this->priorityLabel($task->priority),
             'planned_quantity' => $plannedQuantity,
@@ -221,20 +235,20 @@ class MobileWarehouseTaskService
                 'name' => $task->completedBy->name,
                 'email' => $task->completedBy->email,
             ] : null,
-            'available_transitions' => $this->availableTransitions($task->status),
+            'available_transitions' => $this->availableTransitions($task),
             'created_at' => optional($task->created_at)?->toDateTimeString(),
             'updated_at' => optional($task->updated_at)?->toDateTimeString(),
         ];
     }
 
-    private function availableTransitions(string $currentStatus): array
+    private function availableTransitions(WarehouseTask $task): array
     {
         return array_map(
             fn (string $status): array => [
                 'status' => $status,
                 'name' => $this->actionLabel($status),
             ],
-            $this->allowedTransitions($currentStatus)
+            $this->workflow->allowedTransitions($task)
         );
     }
 
@@ -248,6 +262,13 @@ class MobileWarehouseTaskService
     private function findTask(int $organizationId, int $warehouseId, int $taskId): WarehouseTask
     {
         return $this->baseTaskQuery($organizationId, $warehouseId)->findOrFail($taskId);
+    }
+
+    private function findTaskForUpdate(int $organizationId, int $warehouseId, int $taskId): WarehouseTask
+    {
+        return $this->baseTaskQuery($organizationId, $warehouseId)
+            ->lockForUpdate()
+            ->findOrFail($taskId);
     }
 
     private function baseTaskQuery(int $organizationId, int $warehouseId): Builder
@@ -284,79 +305,6 @@ class MobileWarehouseTaskService
             'movement' => $query->where('movement_id', $entityId),
             default => $query->whereRaw('1 = 0'),
         };
-    }
-
-    private function applyStatusTransition(
-        WarehouseTask $task,
-        string $nextStatus,
-        ?int $userId,
-        ?float $completedQuantity = null,
-        ?string $notes = null
-    ): WarehouseTask {
-        $currentStatus = $task->status;
-
-        if (
-            ! in_array($nextStatus, $this->allowedTransitions($currentStatus), true)
-            && $currentStatus !== $nextStatus
-        ) {
-            throw new \InvalidArgumentException(trans_message('basic_warehouse.task.status_invalid_transition'));
-        }
-
-        $updateData = ['status' => $nextStatus];
-
-        if ($notes !== null) {
-            $updateData['notes'] = $notes;
-        }
-
-        if ($nextStatus === WarehouseTask::STATUS_IN_PROGRESS && $task->started_at === null) {
-            $updateData['started_at'] = now();
-        }
-
-        if ($nextStatus === WarehouseTask::STATUS_COMPLETED) {
-            $updateData['started_at'] = $task->started_at ?? now();
-            $updateData['completed_at'] = now();
-            $updateData['completed_by_id'] = $userId;
-            $updateData['completed_quantity'] = $completedQuantity
-                ?? ($task->planned_quantity !== null ? (float) $task->planned_quantity : (float) ($task->completed_quantity ?? 0));
-        }
-
-        if ($completedQuantity !== null && $nextStatus !== WarehouseTask::STATUS_COMPLETED) {
-            $updateData['completed_quantity'] = $completedQuantity;
-        }
-
-        $task->update($updateData);
-
-        return $task->fresh();
-    }
-
-    private function allowedTransitions(string $currentStatus): array
-    {
-        return [
-            WarehouseTask::STATUS_DRAFT => [
-                WarehouseTask::STATUS_QUEUED,
-                WarehouseTask::STATUS_CANCELLED,
-            ],
-            WarehouseTask::STATUS_QUEUED => [
-                WarehouseTask::STATUS_IN_PROGRESS,
-                WarehouseTask::STATUS_BLOCKED,
-                WarehouseTask::STATUS_CANCELLED,
-            ],
-            WarehouseTask::STATUS_IN_PROGRESS => [
-                WarehouseTask::STATUS_BLOCKED,
-                WarehouseTask::STATUS_COMPLETED,
-                WarehouseTask::STATUS_CANCELLED,
-                WarehouseTask::STATUS_QUEUED,
-            ],
-            WarehouseTask::STATUS_BLOCKED => [
-                WarehouseTask::STATUS_QUEUED,
-                WarehouseTask::STATUS_IN_PROGRESS,
-                WarehouseTask::STATUS_CANCELLED,
-            ],
-            WarehouseTask::STATUS_COMPLETED => [],
-            WarehouseTask::STATUS_CANCELLED => [
-                WarehouseTask::STATUS_QUEUED,
-            ],
-        ][$currentStatus] ?? [];
     }
 
     private function taskTypeLabel(string $taskType): string

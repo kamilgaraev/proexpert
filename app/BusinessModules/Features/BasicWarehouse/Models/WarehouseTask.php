@@ -54,6 +54,7 @@ class WarehouseTask extends Model
         'title',
         'task_type',
         'status',
+        'blocked_from_status',
         'priority',
         'planned_quantity',
         'completed_quantity',

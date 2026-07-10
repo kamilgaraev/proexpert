@@ -228,6 +228,73 @@ class WarehouseTopologyAndTaskControllerTest extends TestCase
         ]);
     }
 
+    public function test_task_workflow_assigns_executor_resumes_work_and_locks_completed_task(): void
+    {
+        $context = AdminApiTestContext::create();
+        $warehouse = $this->createWarehouse($context->organization->id, 'Main warehouse', 'MAIN');
+        $task = $this->createTask(
+            $context->organization->id,
+            $warehouse->id,
+            null,
+            null,
+            'Inspect pallet',
+            'TASK-WORKFLOW'
+        );
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/warehouses/{$warehouse->id}/tasks/{$task->id}/status", [
+                'status' => WarehouseTask::STATUS_IN_PROGRESS,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.status', WarehouseTask::STATUS_IN_PROGRESS)
+            ->assertJsonPath('data.assigned_to_id', $context->user->id);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/warehouses/{$warehouse->id}/tasks/{$task->id}/status", [
+                'status' => WarehouseTask::STATUS_BLOCKED,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.blocked_from_status', WarehouseTask::STATUS_IN_PROGRESS)
+            ->assertJsonPath('data.resume_status', WarehouseTask::STATUS_IN_PROGRESS);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/warehouses/{$warehouse->id}/tasks/{$task->id}/status", [
+                'status' => WarehouseTask::STATUS_IN_PROGRESS,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.status', WarehouseTask::STATUS_IN_PROGRESS)
+            ->assertJsonPath('data.blocked_from_status', null);
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/warehouses/{$warehouse->id}/tasks/{$task->id}/status", [
+                'status' => WarehouseTask::STATUS_COMPLETED,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.can_edit', false)
+            ->assertJsonPath('data.available_transitions', []);
+
+        $this->withHeaders($context->authHeaders())
+            ->putJson("/api/v1/admin/warehouses/{$warehouse->id}/tasks/{$task->id}", [
+                'title' => 'Changed after completion',
+                'status' => WarehouseTask::STATUS_QUEUED,
+            ])
+            ->assertUnprocessable();
+
+        $this->withHeaders($context->authHeaders())
+            ->postJson("/api/v1/admin/warehouses/{$warehouse->id}/tasks/{$task->id}/status", [
+                'status' => WarehouseTask::STATUS_COMPLETED,
+                'notes' => 'Changed after completion',
+            ])
+            ->assertUnprocessable();
+
+        $this->assertDatabaseHas('warehouse_tasks', [
+            'id' => $task->id,
+            'status' => WarehouseTask::STATUS_COMPLETED,
+            'title' => 'Inspect pallet',
+        ]);
+    }
+
     public function test_task_relations_must_belong_to_current_organization(): void
     {
         $context = AdminApiTestContext::create();

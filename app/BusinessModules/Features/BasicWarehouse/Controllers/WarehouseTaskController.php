@@ -13,6 +13,7 @@ use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseMovement;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseStorageCell;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseTask;
 use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseZone;
+use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseTaskWorkflowService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Material;
@@ -22,10 +23,16 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class WarehouseTaskController extends Controller
 {
+    public function __construct(
+        private readonly WarehouseTaskWorkflowService $workflow
+    ) {
+    }
+
     public function index(Request $request, int $warehouseId): JsonResponse
     {
         $organizationId = (int) $request->user()->current_organization_id;
@@ -117,7 +124,7 @@ class WarehouseTaskController extends Controller
             ]);
 
             if ($task->status !== WarehouseTask::STATUS_DRAFT) {
-                $task = $this->applyStatusTransition(
+                $task = $this->workflow->applyStatusTransition(
                     $task,
                     $task->status,
                     $request->user()?->id,
@@ -179,7 +186,6 @@ class WarehouseTaskController extends Controller
 
         try {
             $warehouse = $this->findWarehouse($organizationId, $warehouseId);
-            $task = $this->findTask($organizationId, $warehouse->id, $id);
             $validated = $request->validated();
             $requestedStatus = isset($validated['status']) ? (string) $validated['status'] : null;
 
@@ -187,19 +193,32 @@ class WarehouseTaskController extends Controller
                 unset($validated['status']);
             }
 
-            $this->assertWarehouseRelations($organizationId, $warehouse->id, $validated, $task);
+            $task = DB::transaction(function () use ($organizationId, $warehouse, $id, $validated, $requestedStatus, $request): WarehouseTask {
+                $task = $this->findTaskForUpdate($organizationId, $warehouse->id, $id);
 
-            $task->update($validated);
+                if (! $this->workflow->canEdit($task)) {
+                    throw new \InvalidArgumentException(trans_message('basic_warehouse.task.edit_restricted'));
+                }
 
-            if ($requestedStatus !== null) {
-                $task = $this->applyStatusTransition(
+                if ($requestedStatus !== null && ! $this->workflow->canTransition($task, $requestedStatus)) {
+                    throw new \InvalidArgumentException(trans_message('basic_warehouse.task.status_invalid_transition'));
+                }
+
+                $this->assertWarehouseRelations($organizationId, $warehouse->id, $validated, $task);
+                $task->update($validated);
+
+                if ($requestedStatus === null) {
+                    return $task->fresh();
+                }
+
+                return $this->workflow->applyStatusTransition(
                     $task->fresh(),
                     $requestedStatus,
                     $request->user()?->id,
                     isset($validated['completed_quantity']) ? (float) $validated['completed_quantity'] : null,
                     $validated['notes'] ?? null
                 );
-            }
+            });
 
             return AdminResponse::success(
                 $this->makeTaskPayload($this->reloadTask($organizationId, $warehouse->id, $task->id)),
@@ -228,16 +247,19 @@ class WarehouseTaskController extends Controller
 
         try {
             $warehouse = $this->findWarehouse($organizationId, $warehouseId);
-            $task = $this->findTask($organizationId, $warehouse->id, $id);
             $validated = $request->validated();
 
-            $task = $this->applyStatusTransition(
-                $task,
-                (string) $validated['status'],
-                $request->user()?->id,
-                isset($validated['completed_quantity']) ? (float) $validated['completed_quantity'] : null,
-                $validated['notes'] ?? null
-            );
+            $task = DB::transaction(function () use ($organizationId, $warehouse, $id, $validated, $request): WarehouseTask {
+                $task = $this->findTaskForUpdate($organizationId, $warehouse->id, $id);
+
+                return $this->workflow->applyStatusTransition(
+                    $task,
+                    (string) $validated['status'],
+                    $request->user()?->id,
+                    isset($validated['completed_quantity']) ? (float) $validated['completed_quantity'] : null,
+                    $validated['notes'] ?? null
+                );
+            });
 
             return AdminResponse::success(
                 $this->makeTaskPayload($this->reloadTask($organizationId, $warehouse->id, $task->id)),
@@ -269,7 +291,7 @@ class WarehouseTaskController extends Controller
             $warehouse = $this->findWarehouse($organizationId, $warehouseId);
             $task = $this->findTask($organizationId, $warehouse->id, $id);
 
-            if (! in_array($task->status, [WarehouseTask::STATUS_DRAFT, WarehouseTask::STATUS_QUEUED, WarehouseTask::STATUS_CANCELLED], true)) {
+            if (! $this->workflow->canDelete($task)) {
                 return AdminResponse::error(trans_message('basic_warehouse.task.delete_restricted'), 422);
             }
 
@@ -323,6 +345,13 @@ class WarehouseTaskController extends Controller
     private function findTask(int $organizationId, int $warehouseId, int $taskId): WarehouseTask
     {
         return $this->baseTaskQuery($organizationId, $warehouseId)->findOrFail($taskId);
+    }
+
+    private function findTaskForUpdate(int $organizationId, int $warehouseId, int $taskId): WarehouseTask
+    {
+        return $this->baseTaskQuery($organizationId, $warehouseId)
+            ->lockForUpdate()
+            ->findOrFail($taskId);
     }
 
     private function reloadTask(int $organizationId, int $warehouseId, int $taskId): WarehouseTask
@@ -457,83 +486,6 @@ class WarehouseTaskController extends Controller
         return $validated[$key] !== null ? (int) $validated[$key] : null;
     }
 
-    private function applyStatusTransition(
-        WarehouseTask $task,
-        string $nextStatus,
-        ?int $userId,
-        ?float $completedQuantity = null,
-        ?string $notes = null,
-        bool $validateTransition = true
-    ): WarehouseTask {
-        $currentStatus = $task->status;
-
-        if ($validateTransition && ! $this->isAllowedTransition($currentStatus, $nextStatus)) {
-            throw new \InvalidArgumentException(trans_message('basic_warehouse.task.status_invalid_transition'));
-        }
-
-        $updateData = ['status' => $nextStatus];
-
-        if ($notes !== null) {
-            $updateData['notes'] = $notes;
-        }
-
-        if ($nextStatus === WarehouseTask::STATUS_IN_PROGRESS && $task->started_at === null) {
-            $updateData['started_at'] = now();
-        }
-
-        if ($nextStatus === WarehouseTask::STATUS_COMPLETED) {
-            $updateData['started_at'] = $task->started_at ?? now();
-            $updateData['completed_at'] = now();
-            $updateData['completed_by_id'] = $userId;
-            $updateData['completed_quantity'] = $completedQuantity
-                ?? ($task->planned_quantity !== null ? (float) $task->planned_quantity : (float) ($task->completed_quantity ?? 0));
-        }
-
-        if ($completedQuantity !== null && $nextStatus !== WarehouseTask::STATUS_COMPLETED) {
-            $updateData['completed_quantity'] = $completedQuantity;
-        }
-
-        $task->update($updateData);
-
-        return $task->fresh();
-    }
-
-    private function isAllowedTransition(string $currentStatus, string $nextStatus): bool
-    {
-        if ($currentStatus === $nextStatus) {
-            return true;
-        }
-
-        $map = [
-            WarehouseTask::STATUS_DRAFT => [
-                WarehouseTask::STATUS_QUEUED,
-                WarehouseTask::STATUS_CANCELLED,
-            ],
-            WarehouseTask::STATUS_QUEUED => [
-                WarehouseTask::STATUS_IN_PROGRESS,
-                WarehouseTask::STATUS_BLOCKED,
-                WarehouseTask::STATUS_CANCELLED,
-            ],
-            WarehouseTask::STATUS_IN_PROGRESS => [
-                WarehouseTask::STATUS_BLOCKED,
-                WarehouseTask::STATUS_COMPLETED,
-                WarehouseTask::STATUS_CANCELLED,
-                WarehouseTask::STATUS_QUEUED,
-            ],
-            WarehouseTask::STATUS_BLOCKED => [
-                WarehouseTask::STATUS_QUEUED,
-                WarehouseTask::STATUS_IN_PROGRESS,
-                WarehouseTask::STATUS_CANCELLED,
-            ],
-            WarehouseTask::STATUS_COMPLETED => [],
-            WarehouseTask::STATUS_CANCELLED => [
-                WarehouseTask::STATUS_QUEUED,
-            ],
-        ];
-
-        return in_array($nextStatus, $map[$currentStatus] ?? [], true);
-    }
-
     private function generateTaskNumber(int $warehouseId): string
     {
         return sprintf('WT-%d-%s', $warehouseId, now()->format('ymdHis'));
@@ -567,6 +519,17 @@ class WarehouseTaskController extends Controller
             'title' => $task->title,
             'task_type' => $task->task_type,
             'status' => $task->status,
+            'blocked_from_status' => $task->blocked_from_status,
+            'resume_status' => $this->workflow->resumeStatus($task),
+            'can_edit' => $this->workflow->canEdit($task),
+            'can_delete' => $this->workflow->canDelete($task),
+            'available_transitions' => array_map(
+                fn (string $status): array => [
+                    'status' => $status,
+                    'name' => trans_message('basic_warehouse.task.actions.' . $status),
+                ],
+                $this->workflow->allowedTransitions($task)
+            ),
             'priority' => $task->priority,
             'planned_quantity' => $plannedQuantity,
             'completed_quantity' => $completedQuantity,
