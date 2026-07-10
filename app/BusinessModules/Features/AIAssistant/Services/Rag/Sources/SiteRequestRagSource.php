@@ -6,6 +6,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services\Rag\Sources;
 
 use App\BusinessModules\Features\AIAssistant\DTOs\Rag\RagChunkData;
 use App\BusinessModules\Features\AIAssistant\Services\Rag\RagSourceCollectorInterface;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use BackedEnum;
 use DateTimeInterface;
@@ -27,6 +28,7 @@ final class SiteRequestRagSource implements RagSourceCollectorInterface
         $query = SiteRequest::query()
             ->with(['project', 'user', 'assignedUser'])
             ->where('organization_id', $organizationId)
+            ->where('status', '!=', SiteRequestStatusEnum::DRAFT->value)
             ->when($projectId !== null, static fn ($query) => $query->where('project_id', $projectId))
             ->orderBy('id');
 
@@ -44,6 +46,7 @@ final class SiteRequestRagSource implements RagSourceCollectorInterface
         $request = SiteRequest::query()
             ->with(['project', 'user', 'assignedUser'])
             ->where('organization_id', $organizationId)
+            ->where('status', '!=', SiteRequestStatusEnum::DRAFT->value)
             ->where('id', $entityId)
             ->first();
 

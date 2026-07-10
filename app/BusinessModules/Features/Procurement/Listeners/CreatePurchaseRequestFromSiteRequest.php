@@ -2,8 +2,8 @@
 
 namespace App\BusinessModules\Features\Procurement\Listeners;
 
-use App\BusinessModules\Features\SiteRequests\Events\SiteRequestApproved;
 use App\BusinessModules\Features\Procurement\Services\PurchaseRequestService;
+use App\BusinessModules\Features\SiteRequests\Events\SiteRequestApproved;
 use App\Modules\Core\AccessController;
 
 /**
@@ -26,16 +26,17 @@ class CreatePurchaseRequestFromSiteRequest
 
         // Проверяем, что это заявка на материалы, технику или персонал
         $allowedTypes = ['material_request', 'equipment_request', 'personnel_request'];
-        if (!in_array($siteRequest->request_type->value, $allowedTypes)) {
+        if (! in_array($siteRequest->request_type->value, $allowedTypes)) {
             return;
         }
 
         // Проверяем активацию модуля procurement
-        if (!$this->accessController->hasModuleAccess($siteRequest->organization_id, 'procurement')) {
+        if (! $this->accessController->hasModuleAccess($siteRequest->organization_id, 'procurement')) {
             \Log::info('procurement.skip_auto_create', [
                 'site_request_id' => $siteRequest->id,
                 'reason' => 'Модуль закупок не активирован',
             ]);
+
             return;
         }
 
@@ -43,11 +44,12 @@ class CreatePurchaseRequestFromSiteRequest
         $module = app(\App\BusinessModules\Features\Procurement\ProcurementModule::class);
         $settings = $module->getSettings($siteRequest->organization_id);
 
-        if (!($settings['auto_create_purchase_request'] ?? true)) {
+        if (! ($settings['auto_create_purchase_request'] ?? true)) {
             \Log::info('procurement.skip_auto_create', [
                 'site_request_id' => $siteRequest->id,
                 'reason' => 'Автоматическое создание отключено в настройках',
             ]);
+
             return;
         }
 
@@ -59,12 +61,16 @@ class CreatePurchaseRequestFromSiteRequest
                 'site_request_id' => $siteRequest->id,
                 'reason' => 'material_fulfillment_decision_required',
             ]);
+
             return;
         }
 
         try {
             // Создаем заявку на закупку
-            $purchaseRequest = $this->purchaseRequestService->createFromSiteRequest($siteRequest);
+            $purchaseRequest = $this->purchaseRequestService->createFromSiteRequest(
+                $siteRequest,
+                $event->approvedByUserId
+            );
 
             \Log::info('procurement.purchase_request.auto_created', [
                 'site_request_id' => $siteRequest->id,
@@ -78,4 +84,3 @@ class CreatePurchaseRequestFromSiteRequest
         }
     }
 }
-

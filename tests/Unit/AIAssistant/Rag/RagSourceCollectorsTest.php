@@ -145,6 +145,25 @@ class RagSourceCollectorsTest extends TestCase
         }
     }
 
+    public function test_site_request_collector_excludes_drafts_from_all_collection_paths(): void
+    {
+        $organization = Organization::factory()->create();
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $pending = $this->siteRequest($organization->id, $project->id, $user->id, 'Pending RAG request');
+        $draft = $this->siteRequest($organization->id, $project->id, $user->id, 'Private RAG draft');
+        $draft->update(['status' => SiteRequestStatusEnum::DRAFT->value]);
+        $collector = new SiteRequestRagSource;
+
+        $chunks = iterator_to_array($collector->collectForOrganization($organization->id));
+        $entityIds = array_map(static fn ($chunk): int => (int) $chunk->entityId, $chunks);
+
+        $this->assertContains($pending->id, $entityIds);
+        $this->assertNotContains($draft->id, $entityIds);
+        $this->assertCount(1, $collector->collectEntity($organization->id, 'site_request', $pending->id));
+        $this->assertSame([], $collector->collectEntity($organization->id, 'site_request', $draft->id));
+    }
+
     public function test_expanded_collectors_scope_by_organization_and_project(): void
     {
         config()->set('ai-assistant.rag.enabled', false);

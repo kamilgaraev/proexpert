@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Mobile;
 
+use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyIncident;
 use App\BusinessModules\Features\ScheduleManagement\Models\DailyWorkPlan;
 use App\BusinessModules\Features\ScheduleManagement\Models\LookaheadPlan;
 use App\BusinessModules\Features\ScheduleManagement\Models\LookaheadPlanTask;
 use App\BusinessModules\Features\ScheduleManagement\Models\WorkConstraint;
-use App\BusinessModules\Features\SafetyManagement\Models\SafetyIncident;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
-use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
 use App\Enums\EstimatePositionItemType;
 use App\Models\ConstructionJournal;
 use App\Models\Estimate;
@@ -20,6 +20,7 @@ use App\Models\Project;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Models\User;
+use App\Services\Mobile\MobileProjectScheduleService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -27,6 +28,47 @@ use Tests\TestCase;
 class ScheduleDailyPlanningWorkflowTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_linked_site_request_lookup_treats_foreign_draft_as_absent(): void
+    {
+        $organization = Organization::factory()->verified()->create();
+        $actor = User::factory()->create(['current_organization_id' => $organization->id]);
+        $foreignUser = User::factory()->create(['current_organization_id' => $organization->id]);
+        $project = Project::factory()->create(['organization_id' => $organization->id]);
+        $draft = SiteRequest::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => $foreignUser->id,
+            'title' => 'Foreign linked draft',
+            'request_type' => 'material_request',
+            'status' => 'draft',
+            'priority' => 'medium',
+        ]);
+        $pending = SiteRequest::query()->create([
+            'organization_id' => $organization->id,
+            'project_id' => $project->id,
+            'user_id' => $foreignUser->id,
+            'title' => 'Visible linked pending request',
+            'request_type' => 'material_request',
+            'status' => 'pending',
+            'priority' => 'medium',
+        ]);
+        $constraint = (new WorkConstraint)->forceFill([
+            'organization_id' => $organization->id,
+            'metadata' => ['linked_action' => ['type' => 'site_request', 'id' => $draft->id]],
+        ]);
+        $service = (new \ReflectionClass(MobileProjectScheduleService::class))->newInstanceWithoutConstructor();
+        $method = new \ReflectionMethod(MobileProjectScheduleService::class, 'findExistingLinkedAction');
+        $method->setAccessible(true);
+
+        $this->assertNull($method->invoke($service, $constraint, (int) $actor->id));
+
+        $constraint->metadata = ['linked_action' => ['type' => 'site_request', 'id' => $pending->id]];
+        $visible = $method->invoke($service, $constraint, (int) $actor->id);
+
+        $this->assertIsArray($visible);
+        $this->assertSame($pending->id, $visible['entity']['id']);
+    }
 
     public function test_foreman_can_see_daily_plan_record_fact_and_submit_result(): void
     {

@@ -8,6 +8,7 @@ use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequestGroup;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -169,6 +170,71 @@ final class SiteRequestsMobileTest extends TestCase
             'Accept' => 'application/json',
         ])->getJson("/api/v1/mobile/site-requests/{$draft->id}")
             ->assertNotFound();
+    }
+
+    public function test_mobile_group_context_does_not_leak_foreign_draft_sibling(): void
+    {
+        $context = AdminApiTestContext::create(roleSlug: 'foreman');
+        $reviewer = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $context->organization->users()->attach($reviewer->id, [
+            'is_owner' => false,
+            'is_active' => true,
+            'settings' => null,
+        ]);
+        UserRoleAssignment::assignRole(
+            user: $reviewer,
+            roleSlug: 'foreman',
+            context: AuthorizationContext::getOrganizationContext($context->organization->id)
+        );
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $group = SiteRequestGroup::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'user_id' => $context->user->id,
+            'title' => 'Mixed visibility group',
+            'status' => SiteRequestStatusEnum::PENDING->value,
+        ]);
+        $pending = SiteRequest::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'user_id' => $context->user->id,
+            'site_request_group_id' => $group->id,
+            'title' => 'Visible pending item',
+            'request_type' => SiteRequestTypeEnum::MATERIAL_REQUEST->value,
+            'status' => SiteRequestStatusEnum::PENDING->value,
+            'priority' => SiteRequestPriorityEnum::MEDIUM->value,
+            'material_name' => 'Concrete',
+            'material_quantity' => 1,
+            'material_unit' => 'm3',
+        ]);
+        $foreignDraft = SiteRequest::query()->create([
+            'organization_id' => $context->organization->id,
+            'project_id' => $project->id,
+            'user_id' => $context->user->id,
+            'site_request_group_id' => $group->id,
+            'title' => 'Private draft sibling',
+            'request_type' => SiteRequestTypeEnum::MATERIAL_REQUEST->value,
+            'status' => SiteRequestStatusEnum::DRAFT->value,
+            'priority' => SiteRequestPriorityEnum::MEDIUM->value,
+            'material_name' => 'Private material',
+            'material_quantity' => 2,
+            'material_unit' => 'pcs',
+        ]);
+        $token = JWTAuth::claims(['organization_id' => $context->organization->id])->fromUser($reviewer);
+        $this->allowAccess();
+
+        $response = $this->withHeaders([
+            'Authorization' => 'Bearer '.$token,
+            'Accept' => 'application/json',
+        ])->getJson("/api/v1/mobile/site-requests/{$pending->id}");
+
+        $response->assertOk()
+            ->assertJsonPath('data.group_context.request_count', 1)
+            ->assertJsonPath('data.group_context.items.0.id', $pending->id);
+        $this->assertNotContains(
+            $foreignDraft->id,
+            collect($response->json('data.group_context.items'))->pluck('id')->all()
+        );
     }
 
     private function allowAccess(): void

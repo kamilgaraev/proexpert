@@ -33,8 +33,7 @@ class SiteRequestFulfillmentService
         private readonly PurchaseRequestService $purchaseRequestService,
         private readonly AuthorizationService $authorizationService,
         private readonly AccessController $accessController
-    ) {
-    }
+    ) {}
 
     /**
      * @return array<string, mixed>
@@ -77,7 +76,7 @@ class SiteRequestFulfillmentService
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
     public function decide(SiteRequest $siteRequest, User $actor, array $data): array
@@ -128,6 +127,7 @@ class SiteRequestFulfillmentService
                 $quantity = $source === 'purchase' ? $requestedQuantity : $purchaseQuantity;
                 $purchaseRequest = $this->purchaseRequestService->createFromSiteRequest(
                     $locked,
+                    (int) $actor->id,
                     $actor->id,
                     $quantity,
                     [
@@ -189,7 +189,7 @@ class SiteRequestFulfillmentService
             throw new DomainException(trans_message('site_requests.fulfillment.errors.approved_required'));
         }
 
-        if (!$siteRequest->material_id || $this->requestedQuantity($siteRequest) <= 0) {
+        if (! $siteRequest->material_id || $this->requestedQuantity($siteRequest) <= 0) {
             throw new DomainException(trans_message('site_requests.fulfillment.errors.material_required'));
         }
     }
@@ -204,7 +204,7 @@ class SiteRequestFulfillmentService
      */
     private function warehouseOptions(SiteRequest $siteRequest, float $requestedQuantity): array
     {
-        if (!$siteRequest->material_id) {
+        if (! $siteRequest->material_id) {
             return [];
         }
 
@@ -300,7 +300,7 @@ class SiteRequestFulfillmentService
             ->where('is_active', true)
             ->find($warehouseId);
 
-        if (!$warehouse instanceof OrganizationWarehouse) {
+        if (! $warehouse instanceof OrganizationWarehouse) {
             throw new DomainException(trans_message('site_requests.fulfillment.errors.warehouse_not_found'));
         }
 
@@ -310,7 +310,7 @@ class SiteRequestFulfillmentService
             (int) $siteRequest->material_id
         );
 
-        if (!$balance || (float) $balance->availableQuantity + self::EPSILON < $quantity) {
+        if (! $balance || (float) $balance->availableQuantity + self::EPSILON < $quantity) {
             throw new ConflictHttpException(trans_message('site_requests.fulfillment.errors.stock_changed'));
         }
 
@@ -335,7 +335,7 @@ class SiteRequestFulfillmentService
 
     private function authorize(User $actor, string $permission, int $organizationId): void
     {
-        if (!$this->can($actor, $permission, $organizationId)) {
+        if (! $this->can($actor, $permission, $organizationId)) {
             throw new AuthorizationException(trans_message('errors.unauthorized'));
         }
     }
@@ -348,7 +348,7 @@ class SiteRequestFulfillmentService
     }
 
     /**
-     * @param array<string, mixed> $decision
+     * @param  array<string, mixed>  $decision
      * @return array<string, mixed>
      */
     private function result(SiteRequest $siteRequest, array $decision): array

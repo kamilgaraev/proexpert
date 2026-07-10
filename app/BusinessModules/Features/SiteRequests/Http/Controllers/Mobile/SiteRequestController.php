@@ -616,8 +616,13 @@ class SiteRequestController extends Controller
             'files',
             'calendarEvent',
             'history.user',
-            'group.requests.user',
-            'group.requests.assignedUser',
+            'group',
+        ]);
+
+        $siteRequest->group?->load([
+            'requests' => static fn ($query) => $query
+                ->visibleToActor((int) $user->id)
+                ->with(['user', 'assignedUser']),
         ]);
         $payload = $this->makeMobileResourcePayload($siteRequest, $request);
         $payload['available_transitions'] = $this->getAvailableTransitionsForUser($siteRequest, $user, $organizationId);

@@ -7,13 +7,13 @@ namespace App\Services\Mobile;
 use App\BusinessModules\Features\QualityControl\Http\Resources\QualityDefectResource;
 use App\BusinessModules\Features\QualityControl\Models\QualityDefect;
 use App\BusinessModules\Features\QualityControl\Services\QualityDefectService;
+use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyIncidentResource;
+use App\BusinessModules\Features\SafetyManagement\Models\SafetyIncident;
+use App\BusinessModules\Features\SafetyManagement\Services\SafetyManagementService;
 use App\BusinessModules\Features\ScheduleManagement\Models\DailyWorkPlan;
 use App\BusinessModules\Features\ScheduleManagement\Models\DailyWorkPlanAssignment;
 use App\BusinessModules\Features\ScheduleManagement\Models\WorkConstraint;
 use App\BusinessModules\Features\ScheduleManagement\Services\LookaheadPlanningService;
-use App\BusinessModules\Features\SafetyManagement\Http\Resources\SafetyIncidentResource;
-use App\BusinessModules\Features\SafetyManagement\Models\SafetyIncident;
-use App\BusinessModules\Features\SafetyManagement\Services\SafetyManagementService;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestResource;
@@ -35,8 +35,7 @@ class MobileProjectScheduleService
         private readonly SiteRequestService $siteRequestService,
         private readonly QualityDefectService $qualityDefectService,
         private readonly SafetyManagementService $safetyManagementService,
-    ) {
-    }
+    ) {}
 
     public function list(User $user, ?int $projectId): array
     {
@@ -53,8 +52,8 @@ class MobileProjectScheduleService
             ->where('project_id', $project->id)
             ->withCount([
                 'tasks',
-                'tasks as completed_tasks_count' => fn($query) => $query->where('status', TaskStatusEnum::COMPLETED->value),
-                'tasks as overdue_tasks_count' => fn($query) => $query
+                'tasks as completed_tasks_count' => fn ($query) => $query->where('status', TaskStatusEnum::COMPLETED->value),
+                'tasks as overdue_tasks_count' => fn ($query) => $query
                     ->whereDate('planned_end_date', '<', now()->toDateString())
                     ->where('status', '!=', TaskStatusEnum::COMPLETED->value),
             ])
@@ -69,10 +68,10 @@ class MobileProjectScheduleService
             'summary' => [
                 'total_schedules' => $schedules->count(),
                 'active_schedules' => $schedules
-                    ->filter(fn(ProjectSchedule $schedule): bool => $this->resolveStatusValue($schedule->status) === ScheduleStatusEnum::ACTIVE->value)
+                    ->filter(fn (ProjectSchedule $schedule): bool => $this->resolveStatusValue($schedule->status) === ScheduleStatusEnum::ACTIVE->value)
                     ->count(),
                 'completed_schedules' => $schedules
-                    ->filter(fn(ProjectSchedule $schedule): bool => $this->resolveStatusValue($schedule->status) === ScheduleStatusEnum::COMPLETED->value)
+                    ->filter(fn (ProjectSchedule $schedule): bool => $this->resolveStatusValue($schedule->status) === ScheduleStatusEnum::COMPLETED->value)
                     ->count(),
                 'average_progress_percent' => round((float) ($schedules->avg('overall_progress_percent') ?? 0), 1),
             ],
@@ -93,7 +92,7 @@ class MobileProjectScheduleService
             ->where('id', $scheduleId)
             ->with([
                 'project:id,name',
-                'tasks' => fn($query) => $query
+                'tasks' => fn ($query) => $query
                     ->with(['measurementUnit:id,name,short_name'])
                     ->withCount('childTasks')
                     ->orderBy('sort_order')
@@ -101,15 +100,15 @@ class MobileProjectScheduleService
             ])
             ->withCount([
                 'tasks',
-                'tasks as completed_tasks_count' => fn($query) => $query->where('status', TaskStatusEnum::COMPLETED->value),
-                'tasks as in_progress_tasks_count' => fn($query) => $query->where('status', TaskStatusEnum::IN_PROGRESS->value),
-                'tasks as overdue_tasks_count' => fn($query) => $query
+                'tasks as completed_tasks_count' => fn ($query) => $query->where('status', TaskStatusEnum::COMPLETED->value),
+                'tasks as in_progress_tasks_count' => fn ($query) => $query->where('status', TaskStatusEnum::IN_PROGRESS->value),
+                'tasks as overdue_tasks_count' => fn ($query) => $query
                     ->whereDate('planned_end_date', '<', now()->toDateString())
                     ->where('status', '!=', TaskStatusEnum::COMPLETED->value),
             ])
             ->first();
 
-        if (!$schedule) {
+        if (! $schedule) {
             throw new DomainException(trans_message('mobile_schedule.errors.load_failed'));
         }
 
@@ -190,7 +189,7 @@ class MobileProjectScheduleService
             throw new DomainException(trans_message('mobile_schedule.errors.constraint_not_open'));
         }
 
-        $existing = $this->findExistingLinkedAction($constraint);
+        $existing = $this->findExistingLinkedAction($constraint, (int) $user->id);
 
         if ($existing !== null) {
             return $existing + ['created' => false];
@@ -228,7 +227,7 @@ class MobileProjectScheduleService
 
     private function assertProjectAccess(User $user, int $organizationId, int $projectId): void
     {
-        if (!$this->findAccessibleProject($user, $organizationId, $projectId)) {
+        if (! $this->findAccessibleProject($user, $organizationId, $projectId)) {
             throw new DomainException(trans_message('mobile_schedule.errors.project_not_found'));
         }
     }
@@ -239,7 +238,7 @@ class MobileProjectScheduleService
             ->where('organization_id', $organizationId)
             ->where('id', $projectId);
 
-        if (!$user->isOrganizationAdmin($organizationId)) {
+        if (! $user->isOrganizationAdmin($organizationId)) {
             $query->whereHas('users', function ($usersQuery) use ($user): void {
                 $usersQuery->where('users.id', $user->id);
             });
@@ -251,7 +250,7 @@ class MobileProjectScheduleService
     private function mapSchedules(Collection $schedules): array
     {
         return $schedules
-            ->map(fn(ProjectSchedule $schedule): array => $this->mapSchedule($schedule))
+            ->map(fn (ProjectSchedule $schedule): array => $this->mapSchedule($schedule))
             ->values()
             ->all();
     }
@@ -334,7 +333,7 @@ class MobileProjectScheduleService
             ->with(['dailyWorkPlan', 'scheduleTask', 'journalEntry', 'lookaheadPlanTask.constraints'])
             ->find($assignmentId);
 
-        if (!$assignment) {
+        if (! $assignment) {
             throw new DomainException(trans_message('mobile_schedule.errors.assignment_not_found'));
         }
 
@@ -352,7 +351,7 @@ class MobileProjectScheduleService
             ->with(['assignments.scheduleTask', 'assignments.journalEntry', 'assignments.lookaheadPlanTask.constraints'])
             ->find($dailyPlanId);
 
-        if (!$dailyPlan) {
+        if (! $dailyPlan) {
             throw new DomainException(trans_message('mobile_schedule.errors.daily_plan_not_found'));
         }
 
@@ -370,7 +369,7 @@ class MobileProjectScheduleService
             ->with(['scheduleTask'])
             ->find($constraintId);
 
-        if (!$constraint) {
+        if (! $constraint) {
             throw new DomainException(trans_message('mobile_schedule.errors.constraint_not_found'));
         }
 
@@ -379,11 +378,11 @@ class MobileProjectScheduleService
         return $constraint;
     }
 
-    private function findExistingLinkedAction(WorkConstraint $constraint): ?array
+    private function findExistingLinkedAction(WorkConstraint $constraint, int $actorId): ?array
     {
         $linkedAction = $constraint->metadata['linked_action'] ?? null;
 
-        if (!is_array($linkedAction)) {
+        if (! is_array($linkedAction)) {
             return null;
         }
 
@@ -391,11 +390,12 @@ class MobileProjectScheduleService
         $id = (int) ($linkedAction['id'] ?? 0);
 
         if ($type === 'site_request' && $id > 0) {
-            $siteRequest = SiteRequest::query()
-                ->where('organization_id', $constraint->organization_id)
+            $siteRequest = SiteRequest::forOrganization((int) $constraint->organization_id)
+                ->visibleToActor($actorId)
+                ->with(['project', 'user', 'assignedUser', 'group'])
                 ->find($id);
 
-            return $siteRequest ? $this->mapLinkedSiteRequest($siteRequest) : null;
+            return $siteRequest ? $this->mapLinkedSiteRequest($siteRequest, $actorId) : null;
         }
 
         if ($type === 'quality_defect' && $id > 0) {
@@ -425,7 +425,8 @@ class MobileProjectScheduleService
             $this->makeSiteRequestData($constraint, $data)
         );
 
-        return $this->mapLinkedSiteRequest($siteRequest);
+        return $this->mapLinkedSiteRequest($siteRequest, (int) $user->id)
+            ?? throw new DomainException(trans_message('mobile_schedule.errors.constraint_not_found'));
     }
 
     private function createQualityDefectFromConstraint(User $user, WorkConstraint $constraint, array $data): array
@@ -499,7 +500,7 @@ class MobileProjectScheduleService
     {
         $material = $constraint->metadata['required_material'] ?? null;
 
-        if (!is_array($material)) {
+        if (! is_array($material)) {
             throw new DomainException(trans_message('mobile_schedule.errors.constraint_material_data_required'));
         }
 
@@ -522,7 +523,7 @@ class MobileProjectScheduleService
     {
         $personnel = $constraint->metadata['required_personnel'] ?? null;
 
-        if (!is_array($personnel)) {
+        if (! is_array($personnel)) {
             throw new DomainException(trans_message('mobile_schedule.errors.constraint_personnel_data_required'));
         }
 
@@ -545,7 +546,7 @@ class MobileProjectScheduleService
     {
         $equipment = $constraint->metadata['required_equipment'] ?? null;
 
-        if (!is_array($equipment)) {
+        if (! is_array($equipment)) {
             throw new DomainException(trans_message('mobile_schedule.errors.constraint_equipment_data_required'));
         }
 
@@ -601,16 +602,25 @@ class MobileProjectScheduleService
         }
 
         return trim((string) $description) !== ''
-            ? trim((string) $description) . "\n\n" . $trimmedComment
+            ? trim((string) $description)."\n\n".$trimmedComment
             : $trimmedComment;
     }
 
-    private function mapLinkedSiteRequest(SiteRequest $siteRequest): array
+    private function mapLinkedSiteRequest(SiteRequest $siteRequest, int $actorId): ?array
     {
+        $visibleRequest = SiteRequest::forOrganization((int) $siteRequest->organization_id)
+            ->visibleToActor($actorId)
+            ->with(['project', 'user', 'assignedUser', 'group'])
+            ->find($siteRequest->id);
+
+        if (! $visibleRequest instanceof SiteRequest) {
+            return null;
+        }
+
         return [
             'type' => 'site_request',
-            'entity' => (new SiteRequestResource($siteRequest->fresh(['project', 'user', 'assignedUser', 'group'])))->resolve(),
-            'route' => "/site-requests/{$siteRequest->id}",
+            'entity' => (new SiteRequestResource($visibleRequest))->resolve(),
+            'route' => "/site-requests/{$visibleRequest->id}",
         ];
     }
 

@@ -8,12 +8,14 @@ use App\BusinessModules\Features\BasicWarehouse\Services\ProjectMaterialDelivery
 use App\BusinessModules\Features\Procurement\Enums\PurchaseRequestStatusEnum;
 use App\BusinessModules\Features\Procurement\Models\PurchaseOrder;
 use App\BusinessModules\Features\Procurement\Models\PurchaseRequest;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\Models\User;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+
 use function trans_message;
 
 class PurchaseRequestService
@@ -35,8 +37,7 @@ class PurchaseRequestService
     public function __construct(
         private readonly PurchaseRequestNumberGenerator $numberGenerator,
         private readonly ProjectMaterialDeliveryService $deliveryService
-    ) {
-    }
+    ) {}
 
     public function find(int $id, int $organizationId): ?PurchaseRequest
     {
@@ -74,14 +75,19 @@ class PurchaseRequestService
 
     public function createFromSiteRequest(
         SiteRequest $siteRequest,
+        int $actorId,
         ?int $assignedTo = null,
         ?float $quantityOverride = null,
         array $metadata = []
-    ): PurchaseRequest
-    {
+    ): PurchaseRequest {
+        $siteRequest = $this->resolveSiteRequestForProcurement(
+            (int) $siteRequest->organization_id,
+            (int) $siteRequest->id,
+            $actorId
+        );
         $allowedTypes = ['material_request', 'equipment_request', 'personnel_request'];
 
-        if (!in_array($siteRequest->request_type->value, $allowedTypes, true)) {
+        if (! in_array($siteRequest->request_type->value, $allowedTypes, true)) {
             throw new \DomainException(trans_message('procurement.purchase_requests.invalid_site_request_type'));
         }
 
@@ -155,21 +161,22 @@ class PurchaseRequestService
         }
     }
 
-    public function create(int $organizationId, array $data): PurchaseRequest
+    public function create(int $organizationId, int $actorId, array $data): PurchaseRequest
     {
+        if ($actorId <= 0) {
+            throw new \InvalidArgumentException('Actor ID must be a positive integer.');
+        }
+
         $this->checkLimits($organizationId);
 
         $siteRequestId = isset($data['site_request_id']) ? (int) $data['site_request_id'] : null;
+        $siteRequest = $siteRequestId
+            ? $this->resolveSiteRequestForProcurement($organizationId, $siteRequestId, $actorId)
+            : null;
+
         if ($siteRequestId && $this->findExistingBySiteRequest($organizationId, $siteRequestId)) {
             throw new \DomainException(trans_message('procurement.purchase_requests.duplicate_site_request'));
         }
-
-        $siteRequest = $siteRequestId
-            ? SiteRequest::query()
-                ->where('organization_id', $organizationId)
-                ->where('id', $siteRequestId)
-                ->first()
-            : null;
 
         DB::beginTransaction();
 
@@ -220,7 +227,7 @@ class PurchaseRequestService
 
     public function approve(PurchaseRequest $request, int $userId): PurchaseRequest
     {
-        if (!$request->canBeApproved()) {
+        if (! $request->canBeApproved()) {
             throw new \DomainException(trans_message('procurement.purchase_requests.approve_invalid_status'));
         }
 
@@ -246,7 +253,7 @@ class PurchaseRequestService
 
     public function reject(PurchaseRequest $request, int $userId, string $reason): PurchaseRequest
     {
-        if (!$request->canBeRejected()) {
+        if (! $request->canBeRejected()) {
             throw new \DomainException(trans_message('procurement.purchase_requests.reject_invalid_status'));
         }
 
@@ -255,7 +262,7 @@ class PurchaseRequestService
         try {
             $request->update([
                 'status' => PurchaseRequestStatusEnum::REJECTED,
-                'notes' => ($request->notes ? $request->notes . "\n\n" : '') . "Отклонена: {$reason}",
+                'notes' => ($request->notes ? $request->notes."\n\n" : '')."Отклонена: {$reason}",
             ]);
 
             DB::commit();
@@ -317,20 +324,40 @@ class PurchaseRequestService
             ->first();
     }
 
+    private function resolveSiteRequestForProcurement(
+        int $organizationId,
+        int $siteRequestId,
+        int $actorId
+    ): SiteRequest {
+        if ($actorId <= 0) {
+            throw new \InvalidArgumentException('Actor ID must be a positive integer.');
+        }
+
+        $siteRequest = SiteRequest::forOrganization($organizationId)
+            ->visibleToActor($actorId)
+            ->where('status', '!=', SiteRequestStatusEnum::DRAFT->value)
+            ->find($siteRequestId);
+
+        if (! $siteRequest instanceof SiteRequest) {
+            throw new \DomainException(trans_message('procurement.purchase_requests.site_request_unavailable'));
+        }
+
+        return $siteRequest;
+    }
+
     private function syncDeliveryFromSiteRequest(
         SiteRequest $siteRequest,
         PurchaseRequest $purchaseRequest,
         ?float $requestedQuantity = null,
         array $metadata = []
-    ): void
-    {
-        if (!$siteRequest->material_id) {
+    ): void {
+        if (! $siteRequest->material_id) {
             return;
         }
 
         $actor = User::query()->find($purchaseRequest->assigned_to ?? $siteRequest->user_id);
 
-        if (!$actor) {
+        if (! $actor) {
             return;
         }
 

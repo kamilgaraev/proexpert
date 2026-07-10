@@ -15,14 +15,14 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+
 use function trans_message;
 
 class PurchaseRequestController extends Controller
 {
     public function __construct(
         private readonly PurchaseRequestService $service
-    ) {
-    }
+    ) {}
 
     public function index(Request $request): JsonResponse
     {
@@ -64,7 +64,7 @@ class PurchaseRequestController extends Controller
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $purchaseRequest = $this->service->find($id, $organizationId);
 
-            if (!$purchaseRequest) {
+            if (! $purchaseRequest) {
                 return AdminResponse::error(trans_message('procurement.purchase_requests.not_found'), 404);
             }
 
@@ -84,7 +84,11 @@ class PurchaseRequestController extends Controller
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $purchaseRequest = $this->service->create($organizationId, $request->validated());
+            $purchaseRequest = $this->service->create(
+                $organizationId,
+                (int) $request->user()->id,
+                $request->validated()
+            );
 
             return AdminResponse::success(
                 new PurchaseRequestResource($purchaseRequest),
@@ -111,7 +115,7 @@ class PurchaseRequestController extends Controller
             $userId = (int) auth()->id();
             $purchaseRequest = $this->service->find($id, $organizationId);
 
-            if (!$purchaseRequest) {
+            if (! $purchaseRequest) {
                 return AdminResponse::error(trans_message('procurement.purchase_requests.not_found'), 404);
             }
 
@@ -141,7 +145,7 @@ class PurchaseRequestController extends Controller
             $userId = (int) auth()->id();
             $purchaseRequest = $this->service->find($id, $organizationId);
 
-            if (!$purchaseRequest) {
+            if (! $purchaseRequest) {
                 return AdminResponse::error(trans_message('procurement.purchase_requests.not_found'), 404);
             }
 
@@ -176,7 +180,7 @@ class PurchaseRequestController extends Controller
             $organizationId = (int) $request->attributes->get('current_organization_id');
             $purchaseRequest = $this->service->find($id, $organizationId);
 
-            if (!$purchaseRequest) {
+            if (! $purchaseRequest) {
                 return AdminResponse::error(trans_message('procurement.purchase_requests.not_found'), 404);
             }
 

@@ -198,6 +198,46 @@ class PurchaseRequestCoreExperienceControllerTest extends TestCase
         ]);
     }
 
+    public function test_purchase_request_creation_rejects_any_draft_site_request_before_writes(): void
+    {
+        Event::fake();
+
+        $context = AdminApiTestContext::create();
+        $otherUser = User::factory()->create(['current_organization_id' => $context->organization->id]);
+        $context->organization->users()->attach($otherUser->id, [
+            'is_owner' => false,
+            'is_active' => true,
+            'settings' => null,
+        ]);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $ownDraft = $this->createSiteRequest($context, $project);
+        $ownDraft->update(['status' => SiteRequestStatusEnum::DRAFT->value]);
+        $foreignDraft = $this->createSiteRequest($context, $project);
+        $foreignDraft->update([
+            'user_id' => $otherUser->id,
+            'status' => SiteRequestStatusEnum::DRAFT->value,
+        ]);
+        $this->allowAdminAccess();
+        $this->allowModuleAccess();
+
+        foreach ([$ownDraft, $foreignDraft] as $draft) {
+            $this->withHeaders($context->authHeaders())
+                ->postJson('/api/v1/admin/procurement/purchase-requests', [
+                    'site_request_id' => $draft->id,
+                    'lines' => [[
+                        'name' => 'Draft material',
+                        'quantity' => 1,
+                        'unit' => 'pcs',
+                    ]],
+                ])
+                ->assertStatus(422);
+        }
+
+        $this->assertDatabaseMissing('purchase_requests', [
+            'organization_id' => $context->organization->id,
+        ]);
+    }
+
     public function test_pending_purchase_request_can_be_approved_once_and_foreign_request_is_hidden(): void
     {
         Event::fake();
@@ -271,7 +311,7 @@ class PurchaseRequestCoreExperienceControllerTest extends TestCase
     ): PurchaseRequest {
         $purchaseRequest = PurchaseRequest::query()->create([
             'organization_id' => $context->organization->id,
-            'request_number' => 'PR-' . $context->organization->id . '-' . uniqid(),
+            'request_number' => 'PR-'.$context->organization->id.'-'.uniqid(),
             'status' => $status->value,
             'budget_currency' => 'RUB',
         ]);
