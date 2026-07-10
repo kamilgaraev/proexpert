@@ -38,7 +38,9 @@ final class PurchaseRequestServiceTransactionTest extends TestCase
             'material_unit' => 'баллон',
         ]);
         Event::fake([PurchaseRequestCreated::class]);
-        Cache::spy();
+        Cache::shouldReceive('forget')
+            ->never()
+            ->with("procurement_purchase_requests_{$organization->id}");
 
         try {
             DB::transaction(function () use ($siteRequest, $user): void {
@@ -50,8 +52,5 @@ final class PurchaseRequestServiceTransactionTest extends TestCase
         }
 
         Event::assertNotDispatched(PurchaseRequestCreated::class);
-        Cache::shouldNotHaveReceived('forget', [
-            "procurement_purchase_requests_{$organization->id}",
-        ]);
     }
 }
