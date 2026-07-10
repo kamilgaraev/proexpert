@@ -7,6 +7,7 @@ use App\BusinessModules\Features\SiteRequests\Models\SiteRequestCalendarEvent;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\CalendarEventTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\SiteRequestsModule;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -26,17 +27,30 @@ class SiteRequestCalendarService
      */
     public function createCalendarEvent(SiteRequest $request): ?SiteRequestCalendarEvent
     {
+        if ($request->status === SiteRequestStatusEnum::DRAFT) {
+            $this->deleteCalendarEvent($request);
+
+            return null;
+        }
+
         if (!$request->hasCalendarEvent()) {
             return null;
         }
 
         $eventData = $this->prepareEventData($request);
 
-        $calendarEvent = SiteRequestCalendarEvent::create($eventData);
+        $calendarEvent = SiteRequestCalendarEvent::query()->updateOrCreate(
+            ['site_request_id' => $request->id],
+            $eventData
+        );
 
         // Интеграция с schedule-management (если активен)
         if ($this->hasScheduleManagement($request->organization_id)) {
-            $this->syncWithScheduleManagement($request, $calendarEvent);
+            if ($calendarEvent->schedule_event_id) {
+                $this->updateScheduleManagementEvent($calendarEvent);
+            } else {
+                $this->syncWithScheduleManagement($request, $calendarEvent);
+            }
         }
 
         Log::info('site_request.calendar_event.created', [
@@ -52,6 +66,12 @@ class SiteRequestCalendarService
      */
     public function updateCalendarEvent(SiteRequest $request): ?SiteRequestCalendarEvent
     {
+        if ($request->status === SiteRequestStatusEnum::DRAFT) {
+            $this->deleteCalendarEvent($request);
+
+            return null;
+        }
+
         $calendarEvent = SiteRequestCalendarEvent::where('site_request_id', $request->id)->first();
 
         if (!$calendarEvent) {
@@ -67,8 +87,12 @@ class SiteRequestCalendarService
         $calendarEvent->update($eventData);
 
         // Обновить в schedule-management
-        if ($this->hasScheduleManagement($request->organization_id) && $calendarEvent->schedule_event_id) {
-            $this->updateScheduleManagementEvent($calendarEvent);
+        if ($this->hasScheduleManagement($request->organization_id)) {
+            if ($calendarEvent->schedule_event_id) {
+                $this->updateScheduleManagementEvent($calendarEvent);
+            } else {
+                $this->syncWithScheduleManagement($request, $calendarEvent);
+            }
         }
 
         Log::info('site_request.calendar_event.updated', [
@@ -113,6 +137,10 @@ class SiteRequestCalendarService
         $query = SiteRequestCalendarEvent::query()
             ->forOrganization($organizationId)
             ->inDateRange($startDate, $endDate)
+            ->whereHas(
+                'siteRequest',
+                static fn ($query) => $query->where('status', '!=', SiteRequestStatusEnum::DRAFT->value)
+            )
             ->with(['siteRequest.project', 'siteRequest.user']);
 
         if ($projectId) {
@@ -136,6 +164,10 @@ class SiteRequestCalendarService
         $query = SiteRequestCalendarEvent::query()
             ->forOrganization($organizationId)
             ->onDate($date)
+            ->whereHas(
+                'siteRequest',
+                static fn ($query) => $query->where('status', '!=', SiteRequestStatusEnum::DRAFT->value)
+            )
             ->with(['siteRequest.project', 'siteRequest.user']);
 
         if ($projectId) {

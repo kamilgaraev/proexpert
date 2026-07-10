@@ -157,6 +157,11 @@ class SiteRequestsServiceProvider extends ServiceProvider
         // Уведомление о смене статуса
         Event::listen(
             Events\SiteRequestStatusChanged::class,
+            Listeners\PublishSiteRequestOnSubmit::class
+        );
+
+        Event::listen(
+            Events\SiteRequestStatusChanged::class,
             Listeners\SendStatusChangeNotification::class
         );
 

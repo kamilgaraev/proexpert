@@ -2,7 +2,9 @@
 
 namespace App\BusinessModules\Features\SiteRequests\Services;
 
+use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\BusinessModules\Features\Notifications\Services\NotificationService;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\SiteRequestsModule;
 use App\Domain\Authorization\Models\AuthorizationContext;
@@ -25,6 +27,10 @@ class SiteRequestNotificationService
      */
     public function notifyOnCreated(SiteRequest $request): void
     {
+        if ($request->status === SiteRequestStatusEnum::DRAFT) {
+            return;
+        }
+
         $settings = $this->module->getSettings($request->organization_id);
 
         if (!$settings['notify_on_create']) {
@@ -33,8 +39,13 @@ class SiteRequestNotificationService
 
         // Получаем менеджеров организации
         $managers = $this->getOrganizationManagers($request->organization_id);
+        $publicationKey = "site_request:{$request->id}:submitted";
 
         foreach ($managers as $manager) {
+            if ($this->publicationNotificationExists($manager, $request, $publicationKey)) {
+                continue;
+            }
+
             $this->sendNotification(
                 $manager,
                 trans_message('site_requests.notifications.created.title'),
@@ -45,6 +56,7 @@ class SiteRequestNotificationService
                     'request_id' => $request->id,
                     'request_type' => $request->request_type->value,
                     'project_id' => $request->project_id,
+                    'publication_key' => $publicationKey,
                 ]
             );
         }
@@ -53,6 +65,23 @@ class SiteRequestNotificationService
             'request_id' => $request->id,
             'managers_notified' => $managers->count(),
         ]);
+    }
+
+    private function publicationNotificationExists(
+        User $user,
+        SiteRequest $request,
+        string $publicationKey
+    ): bool {
+        return Notification::query()
+            ->where('type', 'site_request_created')
+            ->where('notifiable_type', User::class)
+            ->where('notifiable_id', $user->id)
+            ->where('organization_id', $request->organization_id)
+            ->get()
+            ->contains(
+                static fn (Notification $notification): bool =>
+                    ($notification->data['publication_key'] ?? null) === $publicationKey
+            );
     }
 
     /**
