@@ -28,6 +28,63 @@ class WarehouseOperationsControllerTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_write_off_projects_returns_only_active_non_archived_projects_of_current_organization(): void
+    {
+        $context = AdminApiTestContext::create();
+        $foreignContext = AdminApiTestContext::create();
+        $activeProject = Project::factory()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Активный объект',
+            'status' => 'active',
+            'is_archived' => false,
+        ]);
+        $participantProject = Project::factory()->create([
+            'organization_id' => $foreignContext->organization->id,
+            'name' => 'Партнёрский объект',
+            'status' => 'active',
+            'is_archived' => false,
+        ]);
+        $participantProject->organizations()->attach($context->organization->id, [
+            'role' => 'contractor',
+            'role_new' => 'contractor',
+            'is_active' => true,
+        ]);
+        Project::factory()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Завершённый объект',
+            'status' => 'completed',
+            'is_archived' => false,
+        ]);
+        Project::factory()->create([
+            'organization_id' => $context->organization->id,
+            'name' => 'Архивный объект',
+            'status' => 'active',
+            'is_archived' => true,
+        ]);
+        Project::factory()->create([
+            'organization_id' => $foreignContext->organization->id,
+            'name' => 'Чужой объект',
+            'status' => 'active',
+            'is_archived' => false,
+        ]);
+        $this->allowAdminAccess();
+
+        $this->withHeaders($context->authHeaders())
+            ->getJson('/api/v1/admin/warehouses/operations/write-off/projects')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.projects', [
+                [
+                    'id' => $activeProject->id,
+                    'name' => 'Активный объект',
+                ],
+                [
+                    'id' => $participantProject->id,
+                    'name' => 'Партнёрский объект',
+                ],
+            ]);
+    }
+
     public function test_owner_can_receive_write_off_transfer_reserve_and_partially_release_stock(): void
     {
         $context = AdminApiTestContext::create();

@@ -17,6 +17,8 @@ use App\BusinessModules\Features\BasicWarehouse\Services\WarehouseStorageCellRes
 use App\BusinessModules\Features\BasicWarehouse\Http\Resources\WarehouseMovementResource;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
+use App\Models\Project;
+use App\Services\Project\ProjectService;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -34,8 +36,33 @@ class WarehouseOperationsController extends Controller
         protected AssetService $assetService,
         protected WarehousePhotoService $warehousePhotoService,
         protected WarehouseStorageCellResolver $storageCellResolver,
+        protected ProjectService $projectService,
         protected \App\BusinessModules\Features\BasicWarehouse\Services\Export\WarehouseExportManager $exportManager
     ) {}
+
+    public function writeOffProjects(Request $request): JsonResponse
+    {
+        try {
+            $projects = $this->projectService
+                ->getActiveProjectsForCurrentOrg($request)
+                ->map(static fn (Project $project): array => [
+                    'id' => $project->id,
+                    'name' => $project->name,
+                ])
+                ->values();
+
+            return AdminResponse::success([
+                'projects' => $projects,
+            ]);
+        } catch (Throwable $exception) {
+            return $this->warehouseError(
+                'write_off_projects',
+                $exception,
+                $request,
+                'warehouse_basic.write_off_projects_load_error'
+            );
+        }
+    }
 
     /**
      * Экспорт Приходного ордера (М-4)

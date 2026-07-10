@@ -87,6 +87,9 @@ Route::middleware(AdminRouteStack::middleware())
             // Операции со складом
             Route::post('/operations/receipt', [WarehouseOperationsController::class, 'receipt'])
                 ->name('operations.receipt');
+            Route::get('/operations/write-off/projects', [WarehouseOperationsController::class, 'writeOffProjects'])
+                ->middleware('authorize:warehouse.write_offs')
+                ->name('operations.write-off.projects');
             Route::post('/operations/write-off', [WarehouseOperationsController::class, 'writeOff'])
                 ->name('operations.write-off');
             Route::post('/operations/transfer', [WarehouseOperationsController::class, 'transfer'])

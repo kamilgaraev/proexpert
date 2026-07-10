@@ -7,6 +7,7 @@ return [
     'receipt_error' => 'Не удалось оприходовать активы.',
     'write_off_success' => 'Активы успешно списаны.',
     'write_off_error' => 'Не удалось списать активы.',
+    'write_off_projects_load_error' => 'Не удалось загрузить доступные объекты для списания.',
     'transfer_success' => 'Активы успешно перемещены.',
     'transfer_error' => 'Не удалось переместить активы.',
     'reserve_success' => 'Активы успешно зарезервированы.',
@@ -17,6 +18,7 @@ return [
     'transfer_to_contractor_error' => 'Не удалось передать материалы подрядчику.',
     'operation_validation_error' => 'Операцию нельзя выполнить с указанными параметрами.',
     'validation' => [
+        'project_invalid' => 'Выбранный объект недоступен для списания.',
         'insufficient_stock' => 'Недостаточно активов на складе. Доступно: :available, запрошено: :requested.',
         'insufficient_transfer_stock' => 'Недостаточно активов для перемещения. Доступно: :available, запрошено: :requested.',
         'insufficient_reserve_stock' => 'Недостаточно активов для резервирования. Доступно: :available, запрошено: :requested.',

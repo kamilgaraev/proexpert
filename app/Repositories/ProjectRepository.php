@@ -117,9 +117,8 @@ class ProjectRepository extends BaseRepository implements ProjectRepositoryInter
      */
     public function getActiveProjects(int $organizationId)
     {
-        return $this->model->where('organization_id', $organizationId)
-            ->where('status', 'active')
-            ->where('is_archived', false)
+        return $this->model->query()
+            ->activeAccessibleByOrganization($organizationId)
             ->orderBy('name')
             ->get();
     }

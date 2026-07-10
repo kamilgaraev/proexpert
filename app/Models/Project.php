@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Builder;
 use App\Models\WorkType;
 use App\Traits\HasOnboardingDemo;
 
@@ -154,6 +155,22 @@ class Project extends Model
     public function activeParticipants()
     {
         return $this->organizations()->wherePivot('is_active', true);
+    }
+
+    public function scopeActiveAccessibleByOrganization(Builder $query, int $organizationId): Builder
+    {
+        return $query
+            ->where(function (Builder $scope) use ($organizationId): void {
+                $scope
+                    ->where('organization_id', $organizationId)
+                    ->orWhereHas('organizations', function (Builder $participants) use ($organizationId): void {
+                        $participants
+                            ->where('organizations.id', $organizationId)
+                            ->where('project_organization.is_active', true);
+                    });
+            })
+            ->where('status', 'active')
+            ->where('is_archived', false);
     }
     
     /**
