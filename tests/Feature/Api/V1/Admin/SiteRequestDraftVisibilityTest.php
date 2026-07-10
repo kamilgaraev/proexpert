@@ -48,6 +48,51 @@ final class SiteRequestDraftVisibilityTest extends TestCase
         $this->assertNotContains($foreignDraft->id, $ids);
     }
 
+    public function test_list_cannot_expose_foreign_draft_through_status_and_owner_filters(): void
+    {
+        $context = AdminApiTestContext::create();
+        [$otherUser, $otherHeaders] = $this->createActor($context->organization);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $foreignDraft = $this->createRequest(
+            $context->organization,
+            $project,
+            $context->user,
+            SiteRequestStatusEnum::DRAFT
+        );
+        $this->createRequest($context->organization, $project, $otherUser, SiteRequestStatusEnum::DRAFT);
+        $this->allowAccess();
+
+        $response = $this->withHeaders($otherHeaders)->getJson(sprintf(
+            '/api/v1/admin/site-requests?status=%s&user_id=%d&per_page=20',
+            SiteRequestStatusEnum::DRAFT->value,
+            $context->user->id
+        ));
+
+        $response->assertOk()->assertJsonPath('data.meta.total', 0);
+        $this->assertNotContains(
+            $foreignDraft->id,
+            collect($response->json('data.data'))->pluck('id')->all()
+        );
+    }
+
+    public function test_procurement_chain_cannot_open_another_users_draft(): void
+    {
+        $context = AdminApiTestContext::create();
+        [, $otherHeaders] = $this->createActor($context->organization);
+        $project = Project::factory()->create(['organization_id' => $context->organization->id]);
+        $foreignDraft = $this->createRequest(
+            $context->organization,
+            $project,
+            $context->user,
+            SiteRequestStatusEnum::DRAFT
+        );
+        $this->allowAccess();
+
+        $this->withHeaders($otherHeaders)
+            ->getJson("/api/v1/admin/procurement/chains/site-requests/{$foreignDraft->id}")
+            ->assertNotFound();
+    }
+
     public function test_foreign_draft_read_and_mutations_return_not_found_without_mutation(): void
     {
         Event::fake();

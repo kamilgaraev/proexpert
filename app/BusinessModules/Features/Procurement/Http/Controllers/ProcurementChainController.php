@@ -26,14 +26,15 @@ final class ProcurementChainController extends Controller
     public function __construct(
         private readonly ProcurementChainService $chainService,
         private readonly PurchaseOrderPaymentDocumentService $paymentDocumentService
-    ) {
-    }
+    ) {}
 
     public function siteRequest(Request $request, int $id): JsonResponse
     {
         try {
             $organizationId = (int) $request->attributes->get('current_organization_id');
-            $siteRequest = SiteRequest::forOrganization($organizationId)->find($id);
+            $siteRequest = SiteRequest::forOrganization($organizationId)
+                ->visibleToActor((int) $request->user()->id)
+                ->find($id);
 
             if (! $siteRequest instanceof SiteRequest) {
                 return AdminResponse::error(trans_message('procurement.chain.not_found'), 404);
