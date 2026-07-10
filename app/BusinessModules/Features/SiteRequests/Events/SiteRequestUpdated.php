@@ -14,12 +14,17 @@ class SiteRequestUpdated
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
+    public readonly string $statusAtDispatch;
+
     /**
      * Create a new event instance.
      */
     public function __construct(
         public readonly SiteRequest $siteRequest,
-        public readonly array $oldValues = []
-    ) {}
+        public readonly array $oldValues = [],
+        ?string $statusAtDispatch = null
+    ) {
+        $this->statusAtDispatch = $statusAtDispatch ?? $siteRequest->status->value;
+    }
 }
 

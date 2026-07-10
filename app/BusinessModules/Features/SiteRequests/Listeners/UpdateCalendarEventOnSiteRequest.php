@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Features\SiteRequests\Listeners;
 
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Events\SiteRequestUpdated;
 use App\BusinessModules\Features\SiteRequests\Services\SiteRequestCalendarService;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -23,6 +24,10 @@ class UpdateCalendarEventOnSiteRequest implements ShouldQueue
      */
     public function handle(SiteRequestUpdated $event): void
     {
+        if ($event->statusAtDispatch === SiteRequestStatusEnum::DRAFT->value) {
+            return;
+        }
+
         // Обновляем событие в календаре только если изменились связанные с календарем поля
         $relevantFields = [
             'title',

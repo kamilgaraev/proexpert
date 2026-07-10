@@ -12,10 +12,12 @@ use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Events\SiteRequestCreated;
 use App\BusinessModules\Features\SiteRequests\Events\SiteRequestStatusChanged;
+use App\BusinessModules\Features\SiteRequests\Events\SiteRequestUpdated;
 use App\BusinessModules\Features\SiteRequests\Listeners\CreateCalendarEventOnSiteRequest;
 use App\BusinessModules\Features\SiteRequests\Listeners\PublishSiteRequestOnSubmit;
 use App\BusinessModules\Features\SiteRequests\Listeners\SendSiteRequestNotification;
 use App\BusinessModules\Features\SiteRequests\Listeners\SendStatusChangeNotification;
+use App\BusinessModules\Features\SiteRequests\Listeners\UpdateCalendarEventOnSiteRequest;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
 use App\BusinessModules\Features\SiteRequests\Models\SiteRequestCalendarEvent;
 use App\BusinessModules\Features\SiteRequests\Services\SiteRequestCalendarService;
@@ -146,6 +148,69 @@ final class SiteRequestDraftPublicationTest extends TestCase
             CallQueuedListener::class,
             static fn (CallQueuedListener $job): bool => $job->class === SendStatusChangeNotification::class
         );
+    }
+
+    public function test_stale_draft_update_does_not_publish_after_request_is_submitted(): void
+    {
+        [$request, $notificationService, $calendarService] = $this->publicationContext();
+        $oldRequiredDate = $request->required_date?->toDateString();
+        $request->update(['required_date' => now()->addDays(2)->toDateString()]);
+        $updateEvent = new SiteRequestUpdated(
+            $request->fresh(),
+            ['required_date' => $oldRequiredDate]
+        );
+        Queue::fake();
+        event($updateEvent);
+        Queue::assertPushed(
+            CallQueuedListener::class,
+            static fn (CallQueuedListener $job): bool => $job->class === UpdateCalendarEventOnSiteRequest::class
+        );
+        $serializedEvent = serialize($updateEvent);
+
+        Event::fake([SiteRequestStatusChanged::class]);
+        $submittedRequest = app(SiteRequestService::class)->submit($request, $request->user_id);
+        $rehydratedEvent = unserialize($serializedEvent, ['allowed_classes' => true]);
+        $this->assertInstanceOf(SiteRequestUpdated::class, $rehydratedEvent);
+        $this->assertSame(SiteRequestStatusEnum::DRAFT->value, $rehydratedEvent->statusAtDispatch);
+        $this->assertSame(SiteRequestStatusEnum::PENDING, $rehydratedEvent->siteRequest->status);
+
+        (new UpdateCalendarEventOnSiteRequest($calendarService))->handle($rehydratedEvent);
+
+        $this->assertDatabaseCount('site_request_calendar_events', 0);
+
+        $submitEvent = new SiteRequestStatusChanged(
+            $submittedRequest->fresh(),
+            SiteRequestStatusEnum::DRAFT->value,
+            SiteRequestStatusEnum::PENDING->value,
+            $request->user_id
+        );
+        $publicationListener = new PublishSiteRequestOnSubmit($calendarService, $notificationService);
+        $publicationListener->handle($submitEvent);
+        $publicationListener->handle($submitEvent);
+
+        $this->assertDatabaseCount('site_request_calendar_events', 1);
+        $this->assertDatabaseHas('site_request_calendar_events', [
+            'site_request_id' => $request->id,
+        ]);
+
+        $publishedCalendarEvent = SiteRequestCalendarEvent::query()
+            ->where('site_request_id', $request->id)
+            ->sole();
+        $publishedRequiredDate = $submittedRequest->required_date?->toDateString();
+        $updatedRequiredDate = now()->addDays(3)->toDateString();
+        $submittedRequest->update(['required_date' => $updatedRequiredDate]);
+        $publishedUpdateEvent = new SiteRequestUpdated(
+            $submittedRequest->fresh(),
+            ['required_date' => $publishedRequiredDate]
+        );
+
+        (new UpdateCalendarEventOnSiteRequest($calendarService))->handle($publishedUpdateEvent);
+
+        $this->assertDatabaseCount('site_request_calendar_events', 1);
+        $this->assertDatabaseHas('site_request_calendar_events', [
+            'id' => $publishedCalendarEvent->id,
+            'start_date' => $updatedRequiredDate,
+        ]);
     }
 
     public function test_legacy_draft_calendar_event_is_not_visible_in_shared_calendar_or_request_list(): void
