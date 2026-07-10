@@ -24,7 +24,10 @@ class UpdateCalendarEventOnSiteRequest implements ShouldQueue
      */
     public function handle(SiteRequestUpdated $event): void
     {
-        if ($event->statusAtDispatch === SiteRequestStatusEnum::DRAFT->value) {
+        if (
+            !isset($event->statusAtDispatch)
+            || $event->statusAtDispatch === SiteRequestStatusEnum::DRAFT->value
+        ) {
             return;
         }
 

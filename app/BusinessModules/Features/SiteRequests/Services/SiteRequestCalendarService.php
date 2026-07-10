@@ -11,6 +11,7 @@ use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
 use App\BusinessModules\Features\SiteRequests\SiteRequestsModule;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -28,53 +29,7 @@ class SiteRequestCalendarService
      */
     public function createCalendarEvent(SiteRequest $request): ?SiteRequestCalendarEvent
     {
-        return DB::transaction(function () use ($request): ?SiteRequestCalendarEvent {
-            // Every calendar publication path locks this row before the upsert.
-            $lockedRequest = SiteRequest::query()
-                ->whereKey($request->getKey())
-                ->lockForUpdate()
-                ->first();
-
-            return $lockedRequest instanceof SiteRequest
-                ? $this->createCalendarEventLocked($lockedRequest)
-                : null;
-        });
-    }
-
-    private function createCalendarEventLocked(SiteRequest $request): ?SiteRequestCalendarEvent
-    {
-        if ($request->status === SiteRequestStatusEnum::DRAFT) {
-            $this->deleteCalendarEvent($request);
-
-            return null;
-        }
-
-        if (!$request->hasCalendarEvent()) {
-            return null;
-        }
-
-        $eventData = $this->prepareEventData($request);
-
-        $calendarEvent = SiteRequestCalendarEvent::query()->updateOrCreate(
-            ['site_request_id' => $request->id],
-            $eventData
-        );
-
-        // Интеграция с schedule-management (если активен)
-        if ($this->hasScheduleManagement($request->organization_id)) {
-            if ($calendarEvent->schedule_event_id) {
-                $this->updateScheduleManagementEvent($calendarEvent);
-            } else {
-                $this->syncWithScheduleManagement($request, $calendarEvent);
-            }
-        }
-
-        Log::info('site_request.calendar_event.created', [
-            'request_id' => $request->id,
-            'event_id' => $calendarEvent->id,
-        ]);
-
-        return $calendarEvent;
+        return $this->syncCalendarEventWithLock($request);
     }
 
     /**
@@ -82,52 +37,92 @@ class SiteRequestCalendarService
      */
     public function updateCalendarEvent(SiteRequest $request): ?SiteRequestCalendarEvent
     {
-        return DB::transaction(function () use ($request): ?SiteRequestCalendarEvent {
-            // Draft updates and submitted publications share the same serialization point.
+        return $this->syncCalendarEventWithLock($request);
+    }
+
+    private function syncCalendarEventWithLock(SiteRequest $request): ?SiteRequestCalendarEvent
+    {
+        $result = DB::transaction(function () use ($request): array {
             $lockedRequest = SiteRequest::query()
                 ->whereKey($request->getKey())
                 ->lockForUpdate()
                 ->first();
 
-            return $lockedRequest instanceof SiteRequest
-                ? $this->updateCalendarEventLocked($lockedRequest)
-                : null;
-        });
-    }
-
-    private function updateCalendarEventLocked(SiteRequest $request): ?SiteRequestCalendarEvent
-    {
-        if ($request->status === SiteRequestStatusEnum::DRAFT) {
-            $this->deleteCalendarEvent($request);
-
-            return null;
-        }
-
-        $calendarEvent = SiteRequestCalendarEvent::where('site_request_id', $request->id)->first();
-
-        if (!$calendarEvent) {
-            return $this->createCalendarEventLocked($request);
-        }
-
-        if (!$request->hasCalendarEvent()) {
-            $this->deleteCalendarEvent($request);
-            return null;
-        }
-
-        $eventData = $this->prepareEventData($request);
-        $calendarEvent->update($eventData);
-
-        // Обновить в schedule-management
-        if ($this->hasScheduleManagement($request->organization_id)) {
-            if ($calendarEvent->schedule_event_id) {
-                $this->updateScheduleManagementEvent($calendarEvent);
-            } else {
-                $this->syncWithScheduleManagement($request, $calendarEvent);
+            if (!$lockedRequest instanceof SiteRequest) {
+                return ['request' => null, 'event' => null, 'action' => 'none'];
             }
+
+            if (
+                $lockedRequest->status === SiteRequestStatusEnum::DRAFT
+                || !$lockedRequest->hasCalendarEvent()
+            ) {
+                $calendarEvent = SiteRequestCalendarEvent::query()
+                    ->where('site_request_id', $lockedRequest->id)
+                    ->first();
+                $calendarEvent?->delete();
+
+                return [
+                    'request' => $lockedRequest,
+                    'event' => $calendarEvent,
+                    'action' => $calendarEvent ? 'deleted' : 'none',
+                ];
+            }
+
+            $calendarEvent = SiteRequestCalendarEvent::query()->updateOrCreate(
+                ['site_request_id' => $lockedRequest->id],
+                $this->prepareEventData($lockedRequest)
+            );
+
+            return [
+                'request' => $lockedRequest,
+                'event' => $calendarEvent,
+                'action' => $calendarEvent->wasRecentlyCreated ? 'created' : 'updated',
+            ];
+        });
+
+        $lockedRequest = $result['request'];
+        $calendarEvent = $result['event'];
+        $action = $result['action'];
+
+        if (!$lockedRequest instanceof SiteRequest) {
+            return null;
         }
 
-        Log::info('site_request.calendar_event.updated', [
-            'request_id' => $request->id,
+        if ($action === 'deleted') {
+            if (
+                $calendarEvent instanceof SiteRequestCalendarEvent
+                && $calendarEvent->schedule_event_id
+                && $this->hasScheduleManagement($lockedRequest->organization_id)
+            ) {
+                $this->deleteScheduleManagementEvent($calendarEvent);
+            }
+
+            Log::info('site_request.calendar_event.deleted', [
+                'request_id' => $lockedRequest->id,
+            ]);
+
+            return null;
+        }
+
+        if (!$calendarEvent instanceof SiteRequestCalendarEvent) {
+            return null;
+        }
+
+        if ($this->hasScheduleManagement($lockedRequest->organization_id)) {
+            Cache::lock("site-request-calendar-integration:{$lockedRequest->id}", 30)
+                ->block(10, function () use ($lockedRequest, $calendarEvent): void {
+                    $calendarEvent->refresh();
+
+                    if ($calendarEvent->schedule_event_id) {
+                        $this->updateScheduleManagementEvent($calendarEvent);
+                    } else {
+                        $this->syncWithScheduleManagement($lockedRequest, $calendarEvent);
+                    }
+                });
+        }
+
+        Log::info("site_request.calendar_event.{$action}", [
+            'request_id' => $lockedRequest->id,
             'event_id' => $calendarEvent->id,
         ]);
 

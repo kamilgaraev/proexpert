@@ -187,6 +187,7 @@ class NotificationService
         $queue = $priorityConfig['queue'] ?? 'notifications';
 
         SendNotificationJob::dispatch($notification)
+            ->afterCommit()
             ->onQueue($queue);
 
         Log::info('Notification dispatched to queue', [

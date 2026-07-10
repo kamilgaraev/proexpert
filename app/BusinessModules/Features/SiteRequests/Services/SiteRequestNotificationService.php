@@ -10,6 +10,7 @@ use App\BusinessModules\Features\SiteRequests\SiteRequestsModule;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -29,34 +30,41 @@ class SiteRequestNotificationService
      */
     public function notifyOnCreated(SiteRequest $request): void
     {
-        DB::transaction(function () use ($request): void {
-            // All publication deliveries lock the request before checking the notification key.
-            $lockedRequest = SiteRequest::query()
-                ->whereKey($request->getKey())
-                ->lockForUpdate()
-                ->first();
-
-            if ($lockedRequest instanceof SiteRequest) {
-                $this->notifyOnCreatedLocked($lockedRequest);
-            }
-        });
-    }
-
-    private function notifyOnCreatedLocked(SiteRequest $request): void
-    {
-        if ($request->status === SiteRequestStatusEnum::DRAFT) {
-            return;
-        }
-
         $settings = $this->module->getSettings($request->organization_id);
 
         if (!$settings['notify_on_create']) {
             return;
         }
 
-        // Получаем менеджеров организации
         $managers = $this->getOrganizationManagers($request->organization_id);
         $publicationKey = "site_request:{$request->id}:submitted";
+
+        DB::transaction(function () use ($request, $managers, $publicationKey): void {
+            $lockedRequest = SiteRequest::query()
+                ->whereKey($request->getKey())
+                ->lockForUpdate()
+                ->first();
+
+            if ($lockedRequest instanceof SiteRequest) {
+                $this->notifyOnCreatedLocked($lockedRequest, $managers, $publicationKey);
+            }
+        });
+
+        Log::info('site_request.notification.created', [
+            'request_id' => $request->id,
+            'managers_notified' => $managers->count(),
+        ]);
+    }
+
+    private function notifyOnCreatedLocked(
+        SiteRequest $request,
+        Collection $managers,
+        string $publicationKey
+    ): void
+    {
+        if ($request->status === SiteRequestStatusEnum::DRAFT) {
+            return;
+        }
 
         foreach ($managers as $manager) {
             if ($this->publicationNotificationExists($manager, $request, $publicationKey)) {
@@ -77,11 +85,6 @@ class SiteRequestNotificationService
                 ]
             );
         }
-
-        Log::info('site_request.notification.created', [
-            'request_id' => $request->id,
-            'managers_notified' => $managers->count(),
-        ]);
     }
 
     private function publicationNotificationExists(
@@ -110,12 +113,24 @@ class SiteRequestNotificationService
         int $changedByUserId,
         string $transitionKey
     ): void {
+        $settings = $this->module->getSettings($request->organization_id);
+
+        if (!$settings['notify_on_status_change']) {
+            return;
+        }
+
+        $request->loadMissing(['user', 'assignedUser']);
+        $recipients = collect([$request->user, $request->assignedUser])
+            ->filter(static fn (?User $user): bool => $user instanceof User && $user->id !== $changedByUserId)
+            ->unique('id')
+            ->values();
+
         DB::transaction(function () use (
             $request,
             $oldStatus,
             $newStatus,
-            $changedByUserId,
-            $transitionKey
+            $transitionKey,
+            $recipients
         ): void {
             $lockedRequest = SiteRequest::query()
                 ->whereKey($request->getKey())
@@ -127,82 +142,50 @@ class SiteRequestNotificationService
                     $lockedRequest,
                     $oldStatus,
                     $newStatus,
-                    $changedByUserId,
-                    $transitionKey
+                    $transitionKey,
+                    $recipients
                 );
             }
         });
-    }
-
-    private function notifyOnStatusChangeLocked(
-        SiteRequest $request,
-        string $oldStatus,
-        string $newStatus,
-        int $changedByUserId,
-        string $transitionKey
-    ): void {
-        $settings = $this->module->getSettings($request->organization_id);
-
-        if (!$settings['notify_on_status_change']) {
-            return;
-        }
-
-        // Уведомляем создателя заявки
-        $creator = $request->user;
-        if (
-            $creator
-            && $creator->id !== $changedByUserId
-            && !$this->statusNotificationExists($creator, $request, $transitionKey)
-        ) {
-            $this->sendNotification(
-                $creator,
-                trans_message('site_requests.notifications.status_changed.title'),
-                trans_message('site_requests.notifications.status_changed.message', [
-                    'title' => $request->title,
-                    'status' => $request->status->label(),
-                ]),
-                [
-                    'type' => 'site_request_status_changed',
-                    'organization_id' => $request->organization_id,
-                    'request_id' => $request->id,
-                    'project_id' => $request->project_id,
-                    'old_status' => $oldStatus,
-                    'new_status' => $newStatus,
-                    'transition_key' => $transitionKey,
-                ]
-            );
-        }
-
-        // Уведомляем исполнителя
-        if (
-            $request->assignedUser
-            && $request->assigned_to !== $changedByUserId
-            && !$this->statusNotificationExists($request->assignedUser, $request, $transitionKey)
-        ) {
-            $this->sendNotification(
-                $request->assignedUser,
-                trans_message('site_requests.notifications.status_changed.title'),
-                trans_message('site_requests.notifications.status_changed.message', [
-                    'title' => $request->title,
-                    'status' => $request->status->label(),
-                ]),
-                [
-                    'type' => 'site_request_status_changed',
-                    'organization_id' => $request->organization_id,
-                    'request_id' => $request->id,
-                    'project_id' => $request->project_id,
-                    'old_status' => $oldStatus,
-                    'new_status' => $newStatus,
-                    'transition_key' => $transitionKey,
-                ]
-            );
-        }
 
         Log::info('site_request.notification.status_changed', [
             'request_id' => $request->id,
             'old_status' => $oldStatus,
             'new_status' => $newStatus,
         ]);
+    }
+
+    private function notifyOnStatusChangeLocked(
+        SiteRequest $request,
+        string $oldStatus,
+        string $newStatus,
+        string $transitionKey,
+        Collection $recipients
+    ): void {
+        foreach ($recipients as $recipient) {
+            if (!$recipient instanceof User || $this->statusNotificationExists($recipient, $request, $transitionKey)) {
+                continue;
+            }
+
+            $this->sendNotification(
+                $recipient,
+                trans_message('site_requests.notifications.status_changed.title'),
+                trans_message('site_requests.notifications.status_changed.message', [
+                    'title' => $request->title,
+                    'status' => $request->status->label(),
+                ]),
+                [
+                    'type' => 'site_request_status_changed',
+                    'organization_id' => $request->organization_id,
+                    'request_id' => $request->id,
+                    'project_id' => $request->project_id,
+                    'old_status' => $oldStatus,
+                    'new_status' => $newStatus,
+                    'transition_key' => $transitionKey,
+                ]
+            );
+        }
+
     }
 
     private function statusNotificationExists(

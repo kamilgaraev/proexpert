@@ -36,6 +36,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
 use Mockery;
+use ReflectionClass;
 use Tests\TestCase;
 
 final class SiteRequestDraftPublicationTest extends TestCase
@@ -213,6 +214,43 @@ final class SiteRequestDraftPublicationTest extends TestCase
         ]);
     }
 
+    public function test_legacy_updated_event_without_status_snapshot_fails_closed(): void
+    {
+        [$request, , $calendarService] = $this->publicationContext();
+        $legacyEvent = $this->legacyEvent(SiteRequestUpdated::class, [
+            'siteRequest' => $request->fresh(),
+            'oldValues' => ['required_date' => $request->required_date?->toDateString()],
+        ]);
+        $this->assertInstanceOf(SiteRequestUpdated::class, $legacyEvent);
+        $this->assertFalse(isset($legacyEvent->statusAtDispatch));
+
+        (new UpdateCalendarEventOnSiteRequest($calendarService))->handle($legacyEvent);
+
+        $this->assertDatabaseCount('site_request_calendar_events', 0);
+    }
+
+    public function test_legacy_status_event_without_transition_key_is_idempotent(): void
+    {
+        [$request, $notificationService, , $foreignUser] = $this->publicationContext();
+        $request->update(['status' => SiteRequestStatusEnum::IN_REVIEW->value]);
+        $legacyEvent = $this->legacyEvent(SiteRequestStatusChanged::class, [
+            'siteRequest' => $request->fresh(),
+            'oldStatus' => SiteRequestStatusEnum::PENDING->value,
+            'newStatus' => SiteRequestStatusEnum::IN_REVIEW->value,
+            'changedByUserId' => $foreignUser->id,
+        ]);
+        $this->assertInstanceOf(SiteRequestStatusChanged::class, $legacyEvent);
+        $this->assertFalse(isset($legacyEvent->transitionKey));
+        $listener = new SendStatusChangeNotification($notificationService);
+
+        $listener->handle($legacyEvent);
+        $listener->handle($legacyEvent);
+
+        $this->assertSame(1, Notification::query()
+            ->where('type', 'site_request_status_changed')
+            ->count());
+    }
+
     public function test_legacy_draft_calendar_event_is_not_visible_in_shared_calendar_or_request_list(): void
     {
         [$request, , $calendarService, $foreignUser] = $this->publicationContext();
@@ -330,5 +368,17 @@ final class SiteRequestDraftPublicationTest extends TestCase
             new SiteRequestCalendarService($module),
             $foreignUser,
         ];
+    }
+
+    private function legacyEvent(string $eventClass, array $properties): object
+    {
+        $reflection = new ReflectionClass($eventClass);
+        $event = $reflection->newInstanceWithoutConstructor();
+
+        foreach ($properties as $property => $value) {
+            $reflection->getProperty($property)->setValue($event, $value);
+        }
+
+        return $event;
     }
 }

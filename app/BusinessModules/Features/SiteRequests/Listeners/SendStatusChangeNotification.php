@@ -23,12 +23,22 @@ class SendStatusChangeNotification implements ShouldQueue
      */
     public function handle(SiteRequestStatusChanged $event): void
     {
+        $transitionKey = isset($event->transitionKey)
+            ? $event->transitionKey
+            : hash('sha256', implode('|', [
+                $event->siteRequest->id,
+                $event->oldStatus,
+                $event->newStatus,
+                $event->changedByUserId,
+                $event->siteRequest->created_at?->toISOString() ?? 'unknown',
+            ]));
+
         $this->notificationService->notifyOnStatusChange(
             $event->siteRequest,
             $event->oldStatus,
             $event->newStatus,
             $event->changedByUserId,
-            $event->transitionKey
+            $transitionKey
         );
     }
 }
