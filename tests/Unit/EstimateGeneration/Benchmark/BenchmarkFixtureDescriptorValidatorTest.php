@@ -53,6 +53,8 @@ final class BenchmarkFixtureDescriptorValidatorTest extends TestCase
     {
         $validator = new BenchmarkFixtureDescriptorValidator;
         $validator->validateBytes("P5\n1 1\n255\n\x7f", BenchmarkSourceType::PhotoPlan, 'input.ppm', []);
+        $validator->validateBytes("P6\n1 1\n2\n\x00\x01\x02", BenchmarkSourceType::PhotoPlan, 'input.ppm', []);
+        $validator->validateBytes("P5\n1 1\n256\n\x01\x00", BenchmarkSourceType::PhotoPlan, 'input.ppm', []);
         $large = "P6\n1000 333\n255\n".str_repeat("\0", 999_000);
         $before = memory_get_peak_usage(true);
         $validator->validateBytes($large, BenchmarkSourceType::PhotoPlan, 'input.ppm', []);
@@ -74,6 +76,10 @@ final class BenchmarkFixtureDescriptorValidatorTest extends TestCase
         yield 'svg style url' => ['<svg viewBox="0 0 1 1"><rect width="1" height="1" style="fill:url(x)"/></svg>', BenchmarkSourceType::DimensionedSketch, 'input.svg', []];
         yield 'svg style import' => ['<svg viewBox="0 0 1 1"><style>@import "x"</style><rect width="1" height="1"/></svg>', BenchmarkSourceType::DimensionedSketch, 'input.svg', []];
         yield 'svg unknown element' => ['<svg viewBox="0 0 1 1"><rect width="1" height="1"/><animate attributeName="x"/></svg>', BenchmarkSourceType::DimensionedSketch, 'input.svg', []];
+        yield 'svg stylesheet processing instruction' => ['<?xml-stylesheet href="https://evil.test/a.css"?><svg viewBox="0 0 1 1"><rect width="1" height="1"/></svg>', BenchmarkSourceType::DimensionedSketch, 'input.svg', []];
+        yield 'svg relative processing instruction' => ['<?xml-stylesheet href="local.css"?><svg viewBox="0 0 1 1"><rect width="1" height="1"/></svg>', BenchmarkSourceType::DimensionedSketch, 'input.svg', []];
+        yield 'svg cdata' => ['<svg viewBox="0 0 1 1"><text><![CDATA[x]]></text><rect width="1" height="1"/></svg>', BenchmarkSourceType::DimensionedSketch, 'input.svg', []];
+        yield 'svg comment' => ['<svg viewBox="0 0 1 1"><!-- hidden --><rect width="1" height="1"/></svg>', BenchmarkSourceType::DimensionedSketch, 'input.svg', []];
         yield 'dxf sections' => ["0\nSECTION\n2\nHEADER\n0\nEOF\n", BenchmarkSourceType::Dxf, 'input.dxf', []];
         yield 'dwg version' => ['AC9999 SYNTHETIC-LICENSED-DESCRIPTOR DWG conversion intentionally unsupported in Task 1.', BenchmarkSourceType::Dwg, 'input.dwg', ['descriptor_validation', 'unsupported_conversion']];
         yield 'dwg unsupported policy' => ['AC1027 SYNTHETIC-LICENSED-DESCRIPTOR DWG conversion intentionally unsupported in Task 1', BenchmarkSourceType::Dwg, 'input.dwg', ['descriptor_validation']];
@@ -83,6 +89,10 @@ final class BenchmarkFixtureDescriptorValidatorTest extends TestCase
         yield 'ppm truncated binary' => ["P6\n2 2\n255\nabc", BenchmarkSourceType::PhotoPlan, 'input.ppm', []];
         yield 'ppm extra binary' => ["P6\n1 1\n255\n1234", BenchmarkSourceType::PhotoPlan, 'input.ppm', []];
         yield 'ppm oversized comment' => ["P6\n#".str_repeat('x', 70_000)."\n1 1\n255\n123", BenchmarkSourceType::PhotoPlan, 'input.ppm', []];
+        yield 'ppm p5 out of range' => ["P5\n1 1\n1\n\xff", BenchmarkSourceType::PhotoPlan, 'input.ppm', []];
+        yield 'ppm p6 out of range' => ["P6\n1 1\n2\n\x00\x02\x03", BenchmarkSourceType::PhotoPlan, 'input.ppm', []];
+        yield 'ppm 16 bit out of range' => ["P5\n1 1\n256\n\x01\x01", BenchmarkSourceType::PhotoPlan, 'input.ppm', []];
+        yield 'ppm 16 bit truncated' => ["P5\n1 1\n256\n\x01", BenchmarkSourceType::PhotoPlan, 'input.ppm', []];
     }
 
     #[Test]

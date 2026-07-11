@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Benchmark;
 
 use DOMDocument;
 use DOMElement;
+use DOMNode;
 use Smalot\PdfParser\Parser;
 use Throwable;
 
@@ -121,6 +122,15 @@ final class BenchmarkFixtureDescriptorValidator
             || $length - $offset !== $samples * $bytesPerSample) {
             throw new BenchmarkManifestException('ppm_fixture_invalid');
         }
+        for ($sample = 0; $sample < $samples; $sample++) {
+            $position = $offset + ($sample * $bytesPerSample);
+            $value = $bytesPerSample === 1
+                ? ord($content[$position])
+                : (ord($content[$position]) << 8) | ord($content[$position + 1]);
+            if ($value > $max) {
+                throw new BenchmarkManifestException('ppm_fixture_invalid');
+            }
+        }
     }
 
     private function svg(string $content): void
@@ -165,9 +175,30 @@ final class BenchmarkFixtureDescriptorValidator
             if ($geometry < 1) {
                 throw new BenchmarkManifestException('svg_fixture_invalid');
             }
+            $this->assertSafeSvgNodes($document);
         } finally {
             libxml_clear_errors();
             libxml_use_internal_errors($previous);
+        }
+    }
+
+    private function assertSafeSvgNodes(DOMNode $node): void
+    {
+        foreach ($node->childNodes as $child) {
+            if ($child->nodeType === XML_ELEMENT_NODE) {
+                $this->assertSafeSvgNodes($child);
+
+                continue;
+            }
+            if ($child->nodeType === XML_TEXT_NODE) {
+                if (trim($child->nodeValue ?? '') !== ''
+                    && (! $node instanceof DOMElement || ! in_array($node->localName, ['title', 'desc', 'text'], true))) {
+                    throw new BenchmarkManifestException('svg_fixture_invalid');
+                }
+
+                continue;
+            }
+            throw new BenchmarkManifestException('svg_fixture_invalid');
         }
     }
 
