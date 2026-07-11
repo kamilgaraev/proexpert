@@ -18,9 +18,19 @@ final class RecoverEstimateGenerationUnitsJob implements ShouldQueue
     use InteractsWithQueue;
     use Queueable;
 
+    public const CONNECTION = 'redis_estimate_generation';
+
+    public const QUEUE = 'estimate-generation-unit-maintenance';
+
     public int $tries = 3;
 
     public int $timeout = 120;
+
+    public function __construct()
+    {
+        $this->onConnection(self::CONNECTION);
+        $this->onQueue(self::QUEUE);
+    }
 
     public function middleware(): array
     {

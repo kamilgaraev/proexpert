@@ -2,16 +2,24 @@
 
 use Illuminate\Support\Str;
 
+$estimateGenerationUnitsMinProcesses = max(1, (int) env('ESTIMATE_GENERATION_UNITS_MIN_PROCESSES', 1));
+$estimateGenerationUnitsMaxProcesses = max(
+    $estimateGenerationUnitsMinProcesses,
+    (int) env('ESTIMATE_GENERATION_UNITS_MAX_PROCESSES', 3),
+);
+
 return [
     'domain' => env('HORIZON_DOMAIN'),
     'path' => env('HORIZON_PATH', 'horizon'),
     'use' => 'default',
     'prefix' => env('HORIZON_PREFIX', Str::slug(env('APP_NAME', 'laravel'), '_').'_horizon:'),
-    
+
     'middleware' => ['web'],
-    
+
     'waits' => [
         'redis_estimate_generation:estimate-generation' => 120,
+        'redis_estimate_generation:estimate-generation-units' => 120,
+        'redis_estimate_generation:estimate-generation-unit-maintenance' => 60,
         'redis:estimate-generation' => 120,
         'redis:notifications-critical' => 30,
         'redis:notifications-high' => 60,
@@ -21,7 +29,7 @@ return [
         'redis_ai_rag:ai-rag' => 600,
         'redis:'.env('EPM_DATA_MART_QUEUE', 'epm-data-mart') => 600,
     ],
-    
+
     'trim' => [
         'recent' => 60,
         'pending' => 60,
@@ -30,14 +38,14 @@ return [
         'failed' => 10080,
         'monitored' => 10080,
     ],
-    
+
     'silenced' => [
     ],
-    
+
     'fast_termination' => false,
-    
+
     'memory_limit' => (int) env('HORIZON_MEMORY_LIMIT', 256),
-    
+
     'defaults' => [
         'supervisor-1' => [
             'connection' => 'redis',
@@ -53,7 +61,7 @@ return [
             'nice' => 0,
         ],
     ],
-    
+
     'environments' => [
         'production' => [
             'supervisor-critical' => [
@@ -117,6 +125,28 @@ return [
                 'timeout' => 1800,
                 'memory' => 512,
             ],
+            'supervisor-estimate-generation-units' => [
+                'connection' => 'redis_estimate_generation',
+                'queue' => ['estimate-generation-units'],
+                'balance' => 'auto',
+                'autoScalingStrategy' => 'time',
+                'minProcesses' => $estimateGenerationUnitsMinProcesses,
+                'maxProcesses' => $estimateGenerationUnitsMaxProcesses,
+                'balanceMaxShift' => 1,
+                'balanceCooldown' => 3,
+                'tries' => 20,
+                'timeout' => 2100,
+                'memory' => 512,
+            ],
+            'supervisor-estimate-generation-unit-maintenance' => [
+                'connection' => 'redis_estimate_generation',
+                'queue' => ['estimate-generation-unit-maintenance'],
+                'balance' => 'simple',
+                'processes' => 1,
+                'tries' => 3,
+                'timeout' => 300,
+                'memory' => 256,
+            ],
             'supervisor-ai-rag' => [
                 'connection' => env('AI_RAG_QUEUE_CONNECTION', 'redis_ai_rag'),
                 'queue' => [env('AI_RAG_QUEUE', 'ai-rag')],
@@ -144,6 +174,24 @@ return [
         ],
 
         'local' => [
+            'supervisor-estimate-generation-units' => [
+                'connection' => 'redis_estimate_generation',
+                'queue' => ['estimate-generation-units'],
+                'balance' => 'simple',
+                'processes' => max(1, (int) env('ESTIMATE_GENERATION_UNITS_LOCAL_PROCESSES', 1)),
+                'tries' => 20,
+                'timeout' => 2100,
+                'memory' => 512,
+            ],
+            'supervisor-estimate-generation-unit-maintenance' => [
+                'connection' => 'redis_estimate_generation',
+                'queue' => ['estimate-generation-unit-maintenance'],
+                'balance' => 'simple',
+                'processes' => 1,
+                'tries' => 3,
+                'timeout' => 300,
+                'memory' => 256,
+            ],
             'supervisor-estimate-generation' => [
                 'connection' => 'redis_estimate_generation',
                 'queue' => ['estimate-generation'],
