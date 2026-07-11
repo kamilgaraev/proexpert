@@ -17,6 +17,7 @@ final readonly class CreateDocumentProcessingUnits
         private DocumentUnitDetector $detector,
         private DocumentProcessingStatusService $status,
         private DispatchDocumentProcessingUnits $dispatcher,
+        private ?EvidenceSourceReplacementInvalidator $evidenceInvalidator = null,
     ) {}
 
     /** @return Collection<int, EstimateGenerationProcessingUnit> */
@@ -24,6 +25,7 @@ final readonly class CreateDocumentProcessingUnits
     {
         $document->loadMissing('session');
         $sourceVersion = DocumentSourceVersion::fromDocument($document);
+        $previousSourceVersion = (string) $document->source_version;
 
         if (
             $document->session === null
@@ -116,6 +118,16 @@ final readonly class CreateDocumentProcessingUnits
                 ->orderBy('unit_index')
                 ->get();
         }, 3);
+
+        if ($previousSourceVersion !== '' && $previousSourceVersion !== $sourceVersion) {
+            $this->evidenceInvalidator?->invalidateReplacedDocumentSource(
+                (int) $document->organization_id,
+                (int) $document->project_id,
+                (int) $document->session_id,
+                (int) $document->id,
+                $previousSourceVersion,
+            );
+        }
 
         $this->dispatcher->forDocument((int) $document->id, $sourceVersion);
 
