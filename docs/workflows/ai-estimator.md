@@ -148,7 +148,7 @@ RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT=1 php artisan test --group=postgres
 RUN_POSTGRES_CONTENTION_TESTS=1 RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT=1 php artisan test --group=postgres-contention
 ```
 
-Первая команда проверяет схемы, tenant-связи, журналы, evidence и лимиты источника; вторая — snapshot/ETag; третья — конкурентные checkpoint, artifact и evidence сценарии. Эти команды покрывают все 20 opt-in тестовых методов и не входят в DB-less gate.
+Первая команда проверяет схемы, tenant-связи, журналы, evidence и лимиты источника; вторая — snapshot/ETag; третья — конкурентные checkpoint, artifact и evidence сценарии. Эти команды покрывают все 23 opt-in тестовых метода и не входят в DB-less gate.
 
 ## Production-границы чтения и tenant-связей
 
