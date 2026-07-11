@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace App\BusinessModules\Addons\EstimateGeneration\Benchmark;
+namespace App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions;
 
 use RuntimeException;
 
-final class BenchmarkManifestException extends RuntimeException
+final class RasterPreprocessingException extends RuntimeException
 {
     public function __construct(public readonly string $reason)
     {

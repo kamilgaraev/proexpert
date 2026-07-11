@@ -196,7 +196,7 @@ final readonly class BenchmarkRunner
         } catch (Throwable $exception) {
             $expected = isset($expected) && is_array($expected) ? $expected : $this->emptyExpected();
             $metrics = $this->metrics->calculate($expected, [], false);
-            $code = $exception instanceof BenchmarkManifestException ? $exception->getMessage() : 'pipeline_exception';
+            $code = $exception instanceof BenchmarkManifestException ? $exception->reason : 'pipeline_exception';
             if (! preg_match('/^[a-z][a-z0-9_]{2,63}$/', $code)) {
                 $code = 'pipeline_exception';
             }

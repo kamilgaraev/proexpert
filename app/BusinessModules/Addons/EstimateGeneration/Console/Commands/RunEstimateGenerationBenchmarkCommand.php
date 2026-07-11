@@ -6,6 +6,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Console\Commands;
 
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkCorpusLoader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkAdapterRegistry;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCommandException;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkContractException;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCorpus;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkDatasetType;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkManifest;
@@ -13,7 +15,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkReportData;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunOptions;
 use Illuminate\Console\Command;
-use InvalidArgumentException;
 use Throwable;
 
 final class RunEstimateGenerationBenchmarkCommand extends Command
@@ -59,10 +60,10 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
     {
         try {
             $dataset = BenchmarkDatasetType::tryFrom((string) $this->option('dataset'))
-                ?? throw new InvalidArgumentException('dataset_invalid');
+                ?? throw new BenchmarkCommandException('dataset_invalid');
             $format = (string) $this->option('format');
             if (! in_array($format, ['json', 'table'], true)) {
-                throw new InvalidArgumentException('format_invalid');
+                throw new BenchmarkCommandException('format_invalid');
             }
             $corpus = $this->corpus($dataset);
             $adapter = $this->adapters->get((string) $this->option('adapter'));
@@ -100,16 +101,16 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
             );
         }
         if (($this->environment)() === 'production') {
-            throw new InvalidArgumentException('acceptance_forbidden_in_production');
+            throw new BenchmarkCommandException('acceptance_forbidden_in_production');
         }
         if (($this->env)('RUN_ESTIMATE_GENERATION_ACCEPTANCE_BENCHMARK') !== '1') {
-            throw new InvalidArgumentException('acceptance_gate_disabled');
+            throw new BenchmarkCommandException('acceptance_gate_disabled');
         }
         if ($this->acceptanceOrganizationId === null || $this->acceptanceOrganizationId < 1
             || $this->acceptanceLoader === null || $this->acceptanceManifestLocator === null
             || ! preg_match('#^s3://org-[1-9][0-9]*/estimate-generation/benchmarks/acceptance/[a-zA-Z0-9._/-]+$#', $this->acceptanceManifestLocator)
             || str_contains($this->acceptanceManifestLocator, '?')) {
-            throw new InvalidArgumentException('acceptance_private_corpus_not_configured');
+            throw new BenchmarkCommandException('acceptance_private_corpus_not_configured');
         }
 
         return $this->acceptanceLoader->load(
@@ -123,15 +124,15 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
     {
         $value = filter_var($this->option('max-failure-rate'), FILTER_VALIDATE_FLOAT);
         if ($value === false) {
-            throw new InvalidArgumentException('failure_rate_invalid');
+            throw new BenchmarkCommandException('failure_rate_invalid');
         }
         $rate = (float) $value;
         $policy = (string) $this->option('failure-policy-version');
         if (! preg_match('/^[a-zA-Z0-9][a-zA-Z0-9._:-]{2,95}$/', $policy)) {
-            throw new InvalidArgumentException('failure_policy_version_invalid');
+            throw new BenchmarkCommandException('failure_policy_version_invalid');
         }
         if ($rate > 0.0 && $policy === 'strict-zero:v1') {
-            throw new InvalidArgumentException('failure_threshold_policy_mismatch');
+            throw new BenchmarkCommandException('failure_threshold_policy_mismatch');
         }
 
         return $rate;
@@ -145,32 +146,32 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
         }
         if ($normalized === '' || str_starts_with($normalized, '/') || preg_match('/^[A-Za-z]:/', $normalized)
             || str_contains($normalized, '../') || ! preg_match('#^[a-zA-Z0-9._/-]+\.(json|txt)$#', $normalized)) {
-            throw new InvalidArgumentException('output_path_invalid');
+            throw new BenchmarkCommandException('output_path_invalid');
         }
         if (! file_exists($this->outputRoot) && ! mkdir($this->outputRoot, 0750, true) && ! is_dir($this->outputRoot)) {
-            throw new InvalidArgumentException('output_root_unavailable');
+            throw new BenchmarkCommandException('output_root_unavailable');
         }
         $root = realpath($this->outputRoot);
         if ($root === false || ! is_dir($root) || is_link($this->outputRoot)) {
-            throw new InvalidArgumentException('output_root_invalid');
+            throw new BenchmarkCommandException('output_root_invalid');
         }
         $path = $root.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $normalized);
         $parent = dirname($path);
         if (! is_dir($parent) && ! mkdir($parent, 0750, true) && ! is_dir($parent)) {
-            throw new InvalidArgumentException('output_directory_unavailable');
+            throw new BenchmarkCommandException('output_directory_unavailable');
         }
         $realParent = realpath($parent);
         $prefix = rtrim(str_replace('\\', '/', $root), '/').'/';
         if ($realParent === false || ! str_starts_with(str_replace('\\', '/', $realParent).'/', $prefix) || file_exists($path)) {
-            throw new InvalidArgumentException('output_path_unsafe');
+            throw new BenchmarkCommandException('output_path_unsafe');
         }
         $handle = @fopen($path, 'x');
         if ($handle === false) {
-            throw new InvalidArgumentException('output_create_failed');
+            throw new BenchmarkCommandException('output_create_failed');
         }
         try {
             if (fwrite($handle, $contents) !== strlen($contents)) {
-                throw new InvalidArgumentException('output_write_failed');
+                throw new BenchmarkCommandException('output_write_failed');
             }
         } finally {
             fclose($handle);
@@ -193,8 +194,8 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
 
     private function safeCode(Throwable $exception): string
     {
-        $message = $exception->getMessage();
-
-        return preg_match('/^[a-z][a-z0-9_:.-]{2,96}$/', $message) ? $message : 'benchmark_failed';
+        return $exception instanceof BenchmarkCommandException || $exception instanceof BenchmarkContractException
+            ? $exception->reason
+            : 'benchmark_failed';
     }
 }

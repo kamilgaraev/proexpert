@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Benchmark;
 
-use InvalidArgumentException;
+use RuntimeException;
 
-final class BenchmarkContractException extends InvalidArgumentException
+final class BenchmarkCommandException extends RuntimeException
 {
     public function __construct(public readonly string $reason)
     {

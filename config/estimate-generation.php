@@ -9,6 +9,38 @@ $envValue = static function (string $key, mixed $default = null): mixed {
 };
 
 return [
+    'vision' => [
+        'provider' => env('ESTIMATE_GENERATION_VISION_PROVIDER', 'timeweb'),
+        'model' => env('ESTIMATE_GENERATION_VISION_MODEL', 'gemini/gemini-3.1-flash'),
+        'model_version' => env('ESTIMATE_GENERATION_VISION_MODEL_VERSION', '2026-07-11'),
+        'api_key' => $envValue('ESTIMATE_GENERATION_VISION_API_KEY', $envValue('TIMEWEB_AI_API_KEY')),
+        'base_uri' => $envValue('ESTIMATE_GENERATION_VISION_BASE_URI', $envValue('TIMEWEB_AI_BASE_URI', 'https://api.timeweb.ai/v1')),
+        'timeout_seconds' => (int) env('ESTIMATE_GENERATION_VISION_TIMEOUT', 60),
+        'retry_attempts' => (int) env('ESTIMATE_GENERATION_VISION_RETRY_ATTEMPTS', 3),
+        'retry_delay_ms' => (int) env('ESTIMATE_GENERATION_VISION_RETRY_DELAY_MS', 250),
+        'max_tokens' => (int) env('ESTIMATE_GENERATION_VISION_MAX_TOKENS', 4096),
+        'max_response_bytes' => (int) env('ESTIMATE_GENERATION_VISION_MAX_RESPONSE_BYTES', 1_000_000),
+        'max_elements' => (int) env('ESTIMATE_GENERATION_VISION_MAX_ELEMENTS', 500),
+        'max_depth' => (int) env('ESTIMATE_GENERATION_VISION_MAX_DEPTH', 16),
+        'image_detail' => env('ESTIMATE_GENERATION_VISION_IMAGE_DETAIL', 'high'),
+        'preprocessing' => [
+            'max_bytes' => (int) env('ESTIMATE_GENERATION_VISION_MAX_IMAGE_BYTES', 20_000_000),
+            'max_pixels' => (int) env('ESTIMATE_GENERATION_VISION_MAX_IMAGE_PIXELS', 20_000_000),
+            'max_dimension' => (int) env('ESTIMATE_GENERATION_VISION_MAX_DIMENSION', 4096),
+            'version' => 'raster-preprocessor:v1',
+        ],
+        'pricing' => [
+            'input_per_million' => $envValue('ESTIMATE_GENERATION_VISION_PRICE_INPUT_PER_MILLION'),
+            'cached_input_per_million' => $envValue('ESTIMATE_GENERATION_VISION_PRICE_CACHED_INPUT_PER_MILLION'),
+            'output_per_million' => $envValue('ESTIMATE_GENERATION_VISION_PRICE_OUTPUT_PER_MILLION'),
+            'image_unit' => $envValue('ESTIMATE_GENERATION_VISION_PRICE_IMAGE_UNIT'),
+            'reasoning_mode' => 'excluded_from_output',
+            'currency' => $envValue('ESTIMATE_GENERATION_VISION_PRICE_CURRENCY'),
+            'source' => 'contract',
+            'version' => $envValue('ESTIMATE_GENERATION_VISION_PRICE_VERSION'),
+            'effective_at' => $envValue('ESTIMATE_GENERATION_VISION_PRICE_EFFECTIVE_AT'),
+        ],
+    ],
     'ocr' => [
         'provider' => env('ESTIMATE_GENERATION_OCR_PROVIDER', 'timeweb'),
         'enabled' => (bool) env('ESTIMATE_GENERATION_OCR_ENABLED', true),

@@ -154,6 +154,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\SpreadsheetDocume
 use App\BusinessModules\Addons\EstimateGeneration\Services\ProjectDocumentNormativeReferenceExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorReadinessService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPreprocessor;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Providers\TimewebVisionProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Console\Scheduling\Schedule;
@@ -177,6 +180,9 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(BenchmarkPrivateObjectStore::class, FileServiceBenchmarkPrivateObjectStore::class);
         $this->app->singleton(AcceptanceBenchmarkCorpusLoader::class);
         $this->app->singleton(BenchmarkRunner::class);
+        $this->app->singleton(RasterPreprocessor::class);
+        $this->app->singleton(TimewebVisionProvider::class);
+        $this->app->singleton(VisionProvider::class, TimewebVisionProvider::class);
         $this->app->singleton(BenchmarkAdapterRegistry::class, static fn ($app): BenchmarkAdapterRegistry => new BenchmarkAdapterRegistry([
             $app->make(CurrentBaselineBenchmarkAdapter::class),
         ]));
