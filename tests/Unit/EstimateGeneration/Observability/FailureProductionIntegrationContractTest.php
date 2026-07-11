@@ -76,7 +76,14 @@ final class FailureProductionIntegrationContractTest extends TestCase
         self::assertStringContainsString('$creator->handleClaimed($document, $claim)', $documentJob);
         self::assertStringContainsString("->where('claim_token', \$claim->claimToken)", $publication);
         self::assertStringContainsString("->where('state_version', \$context->stateVersion)", $publication);
-        self::assertStringContainsString('matches($lockedSession, (int) $session->state_version', $orchestrator);
+        self::assertStringContainsString('(int) $lockedSession->state_version !== (int) $session->state_version', $orchestrator);
+        $creator = file_get_contents($root.'/Application/Documents/CreateDocumentProcessingUnits.php');
+        self::assertIsString($creator);
+        self::assertStringNotContainsString('EstimateGenerationUnitJobDispatcher', $creator);
+        self::assertStringNotContainsString('->forDocument(', $creator);
+        $recovery = file_get_contents($root.'/Jobs/RecoverEstimateGenerationUnitsJob.php');
+        self::assertIsString($recovery);
+        self::assertStringContainsString('$dispatcher->recover()', $recovery);
     }
 
     #[Test]

@@ -176,7 +176,10 @@ class EstimateGenerationOrchestrator
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            if (! $this->generationAttemptGuard->matches($lockedSession, (int) $session->state_version, is_string($attemptId) ? $attemptId : null)) {
+            if ((int) $lockedSession->state_version !== (int) $session->state_version
+                || $lockedSession->status !== EstimateGenerationStatus::Generating
+                || ! is_string($attemptId)
+                || ! hash_equals($attemptId, (string) ($lockedSession->input_payload['generation_attempt_id'] ?? ''))) {
                 throw new StaleEstimateGenerationState((int) $session->getKey(), (int) $session->state_version);
             }
 
