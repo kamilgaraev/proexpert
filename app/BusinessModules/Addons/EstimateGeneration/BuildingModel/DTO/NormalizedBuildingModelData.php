@@ -127,6 +127,25 @@ final readonly class NormalizedBuildingModelData
                 }
             }
         }
+        $scaleBlockers = array_values(array_filter(
+            $assumptions,
+            static fn (AssumptionData $assumption): bool => in_array($assumption->code, ['scale_estimated', 'scale_missing', 'scale_conflict'], true),
+        ));
+        if ($scaleStatus === 'confirmed' && $scaleBlockers !== []) {
+            throw new InvalidArgumentException('Confirmed scale contains a stale scale blocker.');
+        }
+        if ($scaleStatus !== 'confirmed') {
+            $requiredCode = $scaleStatus === 'estimated' ? 'scale_estimated' : 'scale_missing';
+            $matching = array_values(array_filter(
+                $scaleBlockers,
+                static fn (AssumptionData $assumption): bool => $assumption->code === $requiredCode
+                    && $assumption->severity === 'blocking'
+                    && $assumption->requiresConfirmation,
+            ));
+            if ($matching === []) {
+                throw new InvalidArgumentException("Unconfirmed scale requires {$requiredCode} blocking confirmation metadata.");
+            }
+        }
         if ($elementCount > BuildingModelSchema::MAX_ELEMENTS) {
             throw new InvalidArgumentException('Building model element count exceeds the limit.');
         }

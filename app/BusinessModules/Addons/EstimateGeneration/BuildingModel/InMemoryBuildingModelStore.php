@@ -41,4 +41,17 @@ final class InMemoryBuildingModelStore implements BuildingModelStore
     {
         $this->evidence[$stored->id] = $evidenceIds;
     }
+
+    public function find(BuildingModelOperationContext $context): ?StoredBuildingModel
+    {
+        $slot = implode(':', [$context->organizationId, $context->projectId, $context->sessionId, $context->inputVersion]);
+        $stored = $this->models[$slot] ?? null;
+
+        return $stored === null ? null : new StoredBuildingModel($stored->id, $context, $stored->modelVersion, $stored->contentVersion, false);
+    }
+
+    public function evidenceIds(StoredBuildingModel $stored): array
+    {
+        return $this->evidence[$stored->id] ?? [];
+    }
 }

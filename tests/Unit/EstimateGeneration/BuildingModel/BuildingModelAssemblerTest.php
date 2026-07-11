@@ -69,6 +69,26 @@ final class BuildingModelAssemblerTest extends TestCase
         self::assertSame([], $model->assumptions);
     }
 
+    #[Test]
+    public function estimated_and_unknown_single_detections_always_create_auto_apply_blockers(): void
+    {
+        $estimatedFloor = new FloorData('floor-1', 0, 2.8, [], [], [], [], [11], 0.8, 'estimated');
+        $estimated = (new BuildingModelAssembler)->assemble([
+            new BuildingModelDetectionData('vision:v1', 'estimated', 0.02, [$estimatedFloor], [11]),
+        ]);
+        $unknownFloor = new FloorData('floor-1', null, null, [], [], [], [], [12], 0.8, 'unknown');
+        $unknown = (new BuildingModelAssembler)->assemble([
+            new BuildingModelDetectionData('sketch:v1', 'unknown', null, [$unknownFloor], [12]),
+        ]);
+
+        self::assertSame('scale_estimated', $estimated->assumptions[0]->code);
+        self::assertSame('blocking', $estimated->assumptions[0]->severity);
+        self::assertTrue($estimated->assumptions[0]->requiresConfirmation);
+        self::assertSame('scale_missing', $unknown->assumptions[0]->code);
+        self::assertSame('blocking', $unknown->assumptions[0]->severity);
+        self::assertTrue($unknown->assumptions[0]->requiresConfirmation);
+    }
+
     private static function floor(string $roomKey, int $width): FloorData
     {
         return new FloorData('floor-1', 0, 2.8, [

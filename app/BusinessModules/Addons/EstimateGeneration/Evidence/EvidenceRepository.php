@@ -12,6 +12,9 @@ interface EvidenceRepository
 
     public function node(int $organizationId, int $projectId, int $sessionId, int $id): ?EvidenceNode;
 
+    /** @param non-empty-list<int> $ids @return list<EvidenceNode> */
+    public function activeNodesForUpdate(int $organizationId, int $projectId, int $sessionId, array $ids): array;
+
     public function addEdge(EvidenceEdge $edge): void;
 
     public function pathExists(int $organizationId, int $projectId, int $sessionId, int $fromId, int $toId): bool;

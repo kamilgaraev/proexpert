@@ -15,16 +15,41 @@ final readonly class BuildingModelRepository
     public function store(BuildingModelOperationContext $context, NormalizedBuildingModelData $model): StoredBuildingModel
     {
         return $this->store->transaction($context, function () use ($context, $model): StoredBuildingModel {
-            foreach ($model->evidenceIds as $evidenceId) {
-                $node = $this->evidence->node($context->organizationId, $context->projectId, $context->sessionId, $evidenceId);
-                if ($node === null || $node->invalidatedAt !== null) {
-                    throw new InvalidArgumentException('Building model evidence must be active and match the exact tenant scope.');
-                }
+            $nodes = $this->evidence->activeNodesForUpdate(
+                $context->organizationId,
+                $context->projectId,
+                $context->sessionId,
+                $model->evidenceIds,
+            );
+            if (array_map(static fn ($node): int => $node->id, $nodes) !== $model->evidenceIds) {
+                throw new InvalidArgumentException('Building model evidence must be active and match the exact tenant scope.');
             }
             $stored = $this->store->insertOrGet($context, $model);
             $this->store->attachEvidence($stored, $model->evidenceIds);
 
             return $stored;
+        });
+    }
+
+    public function current(BuildingModelOperationContext $context): ?StoredBuildingModel
+    {
+        return $this->store->transaction($context, function () use ($context): ?StoredBuildingModel {
+            $stored = $this->store->find($context);
+            if ($stored === null) {
+                return null;
+            }
+            $ids = $this->store->evidenceIds($stored);
+            if ($ids === []) {
+                return null;
+            }
+            $nodes = $this->evidence->activeNodesForUpdate(
+                $context->organizationId,
+                $context->projectId,
+                $context->sessionId,
+                $ids,
+            );
+
+            return array_map(static fn ($node): int => $node->id, $nodes) === $ids ? $stored : null;
         });
     }
 }

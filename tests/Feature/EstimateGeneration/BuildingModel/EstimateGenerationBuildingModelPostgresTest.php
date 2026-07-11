@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBu
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentBuildingModelStore;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceInvalidator;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -24,6 +25,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
 use RuntimeException;
@@ -108,11 +110,35 @@ final class EstimateGenerationBuildingModelPostgresTest extends TestCase
             $stored = $this->repository(DB::connection())->store($fixture['context'], $this->model($fixture['evidence_id'], 2.8));
             DB::beginTransaction();
             $row = (array) DB::table('estimate_generation_building_models')->where('id', $stored->id)->first();
+            $model = json_decode((string) $row['model'], true, flags: JSON_THROW_ON_ERROR);
+            $assumptions = json_decode((string) $row['assumptions'], true, flags: JSON_THROW_ON_ERROR);
+            $metrics = json_decode((string) $row['metrics'], true, flags: JSON_THROW_ON_ERROR);
+            $scaleMissing = [['code' => 'scale_missing', 'severity' => 'blocking', 'affected_keys' => ['floor-1'], 'evidence_ids' => [$fixture['evidence_id']], 'requires_confirmation' => true]];
 
-            $this->assertRejected('tenant mismatch', [...$row, 'id' => null, 'input_version' => 'sha256:'.str_repeat('c', 64), 'organization_id' => $foreign['organization_id']]);
-            $this->assertRejected('unknown scale nullable bypass', [...$row, 'id' => null, 'input_version' => 'sha256:'.str_repeat('d', 64), 'scale_status' => 'unknown']);
-            $this->assertRejected('invalid model version', [...$row, 'id' => null, 'input_version' => 'sha256:'.str_repeat('e', 64), 'model_version' => 'building-model:v2']);
-            $this->assertRejected('open model json', [...$row, 'id' => null, 'input_version' => 'sha256:'.str_repeat('f', 64), 'model' => json_encode([...json_decode((string) $row['model'], true, flags: JSON_THROW_ON_ERROR), 'prompt' => 'secret'], JSON_THROW_ON_ERROR)]);
+            $missingUnit = $model;
+            unset($missingUnit['unit']);
+            $variants = [
+                'tenant mismatch' => ['organization_id' => $foreign['organization_id']],
+                'unknown scale nullable bypass' => ['scale_status' => 'unknown'],
+                'invalid model version' => ['model_version' => 'building-model:v2'],
+                'empty model' => ['model' => '{}'],
+                'missing top-level key' => ['model' => json_encode($missingUnit, JSON_THROW_ON_ERROR)],
+                'null required field' => ['model' => json_encode([...$model, 'unit' => null], JSON_THROW_ON_ERROR)],
+                'wrong floors type' => ['model' => json_encode([...$model, 'floors' => (object) []], JSON_THROW_ON_ERROR)],
+                'scale json column mismatch' => ['model' => json_encode([...$model, 'scale_meters_per_unit' => 0.02], JSON_THROW_ON_ERROR)],
+                'estimated without blocker' => ['scale_status' => 'estimated', 'model' => json_encode([...$model, 'scale_status' => 'estimated'], JSON_THROW_ON_ERROR)],
+                'unknown without blocker' => ['scale_status' => 'unknown', 'scale_meters_per_unit' => null, 'model' => json_encode([...$model, 'scale_status' => 'unknown', 'scale_meters_per_unit' => null], JSON_THROW_ON_ERROR)],
+                'confirmed stale blocker' => ['assumptions' => json_encode($scaleMissing, JSON_THROW_ON_ERROR), 'model' => json_encode([...$model, 'assumptions' => $scaleMissing], JSON_THROW_ON_ERROR)],
+                'open model json' => ['model' => json_encode([...$model, 'prompt' => 'secret'], JSON_THROW_ON_ERROR)],
+                'empty metrics' => ['metrics' => '{}', 'model' => json_encode([...$model, 'metrics' => (object) []], JSON_THROW_ON_ERROR)],
+                'metrics extra key' => ['metrics' => json_encode([...$metrics, 'prompt' => 1], JSON_THROW_ON_ERROR), 'model' => json_encode([...$model, 'metrics' => [...$metrics, 'prompt' => 1]], JSON_THROW_ON_ERROR)],
+                'metrics wrong type' => ['metrics' => json_encode([...$metrics, 'minimum_confidence' => 'high'], JSON_THROW_ON_ERROR), 'model' => json_encode([...$model, 'metrics' => [...$metrics, 'minimum_confidence' => 'high']], JSON_THROW_ON_ERROR)],
+                'assumptions wrong type' => ['assumptions' => '{}', 'model' => json_encode([...$model, 'assumptions' => (object) []], JSON_THROW_ON_ERROR)],
+                'unsafe assumption key' => ['assumptions' => json_encode([...$assumptions, ['code' => 'scale_missing', 'severity' => 'blocking', 'affected_keys' => ['floor-1'], 'evidence_ids' => [$fixture['evidence_id']], 'requires_confirmation' => true, 'prompt' => 'secret']], JSON_THROW_ON_ERROR)],
+            ];
+            foreach ($variants as $name => $changes) {
+                $this->assertRejected($name, [...$row, 'input_version' => 'sha256:'.hash('sha256', $name), ...$changes]);
+            }
             $this->assertRejectedLink($stored->id, $foreign['evidence_id'], $fixture);
             $this->assertMutationRejected(fn () => DB::table('estimate_generation_building_models')->where('id', $stored->id)->update(['scale_status' => 'estimated']));
             $this->assertMutationRejected(fn () => DB::table('estimate_generation_building_models')->where('id', $stored->id)->delete());
@@ -131,6 +157,109 @@ final class EstimateGenerationBuildingModelPostgresTest extends TestCase
         }
     }
 
+    #[Test]
+    public function evidence_invalidation_and_model_insert_serialize_in_both_commit_orders(): void
+    {
+        $this->requireEnvironment(true);
+        $this->assertInsertWinnerBecomesStaleAfterInvalidation();
+        $this->assertInvalidationWinnerRejectsInsert();
+    }
+
+    private function assertInsertWinnerBecomesStaleAfterInvalidation(): void
+    {
+        $fixture = $this->fixture();
+        $sockets = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        if ($sockets === false) {
+            throw new RuntimeException('Unable to create evidence invalidation barrier.');
+        }
+        $name = 'building_model_invalidate_'.strtolower(Str::random(8));
+        $first = $this->independentConnection('building_model_insert_'.strtolower(Str::random(8)));
+        $pid = null;
+        try {
+            $first->beginTransaction();
+            $this->repository($first)->store($fixture['context'], $this->model($fixture['evidence_id'], 2.8));
+            $pid = pcntl_fork();
+            if ($pid === 0) {
+                fclose($sockets[0]);
+                $this->runInvalidationChild($sockets[1], $name, $fixture);
+            }
+            self::assertGreaterThan(0, $pid);
+            fclose($sockets[1]);
+            self::assertSame("before_invalidation\n", fgets($sockets[0]));
+            self::assertFalse($this->readable($sockets[0], 0, 750_000));
+            $first->commit();
+            self::assertTrue($this->readable($sockets[0], 5, 0));
+            self::assertSame(['invalidated' => 1], json_decode(trim((string) fgets($sockets[0])), true, flags: JSON_THROW_ON_ERROR));
+            pcntl_waitpid($pid, $status);
+            $pid = null;
+            self::assertNull($this->repository(DB::connection())->current($fixture['context']));
+        } finally {
+            if ($first->transactionLevel() > 0) {
+                $first->rollBack();
+            }
+            if ($pid !== null) {
+                posix_kill($pid, SIGKILL);
+                pcntl_waitpid($pid, $status);
+            }
+            foreach ($sockets as $socket) {
+                if (is_resource($socket)) {
+                    fclose($socket);
+                }
+            }
+            $this->cleanup($fixture);
+        }
+    }
+
+    private function assertInvalidationWinnerRejectsInsert(): void
+    {
+        $fixture = $this->fixture();
+        $sockets = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        if ($sockets === false) {
+            throw new RuntimeException('Unable to create evidence insert barrier.');
+        }
+        $name = 'building_model_store_'.strtolower(Str::random(8));
+        $first = $this->independentConnection('building_model_invalidation_'.strtolower(Str::random(8)));
+        $pid = null;
+        try {
+            $first->beginTransaction();
+            $invalidated = (new EvidenceInvalidator(new EloquentEvidenceRepository($first)))->invalidateSource(
+                $fixture['organization_id'], $fixture['project_id'], $fixture['session_id'], EvidenceSourceType::Document,
+                'document:1', 'sha256:'.str_repeat('a', 64), 'source_replaced',
+            );
+            self::assertSame(1, $invalidated);
+            $pid = pcntl_fork();
+            if ($pid === 0) {
+                fclose($sockets[0]);
+                $this->runStoreChild($sockets[1], $name, $fixture);
+            }
+            self::assertGreaterThan(0, $pid);
+            fclose($sockets[1]);
+            self::assertSame("before_store\n", fgets($sockets[0]));
+            self::assertFalse($this->readable($sockets[0], 0, 750_000));
+            $first->commit();
+            self::assertTrue($this->readable($sockets[0], 5, 0));
+            $result = json_decode(trim((string) fgets($sockets[0])), true, flags: JSON_THROW_ON_ERROR);
+            pcntl_waitpid($pid, $status);
+            $pid = null;
+            self::assertSame(InvalidArgumentException::class, $result['error'] ?? null);
+            self::assertSame(0, DB::table('estimate_generation_building_models')->where('session_id', $fixture['session_id'])->count());
+        } finally {
+            if ($first->transactionLevel() > 0) {
+                $first->rollBack();
+            }
+            if ($pid !== null) {
+                posix_kill($pid, SIGKILL);
+                pcntl_waitpid($pid, $status);
+            }
+            foreach ($sockets as $socket) {
+                if (is_resource($socket)) {
+                    fclose($socket);
+                }
+            }
+            $this->cleanup($fixture);
+        }
+    }
+
     private function runChild(mixed $socket, string $connectionName, array $fixture): never
     {
         $exit = 0;
@@ -142,6 +271,45 @@ final class EstimateGenerationBuildingModelPostgresTest extends TestCase
         } catch (Throwable $error) {
             $exit = 1;
             fwrite($socket, json_encode(['error' => $error::class, 'code' => $error->getCode()], JSON_THROW_ON_ERROR)."\n");
+        } finally {
+            DB::disconnect($connectionName);
+            fclose($socket);
+        }
+        exit($exit);
+    }
+
+    private function runInvalidationChild(mixed $socket, string $connectionName, array $fixture): never
+    {
+        try {
+            fwrite($socket, "before_invalidation\n");
+            $connection = $this->independentConnection($connectionName);
+            $count = (new EvidenceInvalidator(new EloquentEvidenceRepository($connection)))->invalidateSource(
+                $fixture['organization_id'], $fixture['project_id'], $fixture['session_id'], EvidenceSourceType::Document,
+                'document:1', 'sha256:'.str_repeat('a', 64), 'source_replaced',
+            );
+            fwrite($socket, json_encode(['invalidated' => $count], JSON_THROW_ON_ERROR)."\n");
+            $exit = 0;
+        } catch (Throwable $error) {
+            fwrite($socket, json_encode(['error' => $error::class], JSON_THROW_ON_ERROR)."\n");
+            $exit = 1;
+        } finally {
+            DB::disconnect($connectionName);
+            fclose($socket);
+        }
+        exit($exit);
+    }
+
+    private function runStoreChild(mixed $socket, string $connectionName, array $fixture): never
+    {
+        try {
+            fwrite($socket, "before_store\n");
+            $connection = $this->independentConnection($connectionName);
+            $stored = $this->repository($connection)->store($fixture['context'], $this->model($fixture['evidence_id'], 2.8));
+            fwrite($socket, json_encode(['id' => $stored->id], JSON_THROW_ON_ERROR)."\n");
+            $exit = 0;
+        } catch (Throwable $error) {
+            fwrite($socket, json_encode(['error' => $error::class], JSON_THROW_ON_ERROR)."\n");
+            $exit = 1;
         } finally {
             DB::disconnect($connectionName);
             fclose($socket);

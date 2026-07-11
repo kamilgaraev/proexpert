@@ -47,6 +47,17 @@ final class BuildingModelRepositoryTest extends TestCase
         $repository->store(new BuildingModelOperationContext(1, 2, 3, $context->inputVersion), $this->model(2.8));
     }
 
+    #[Test]
+    public function model_is_current_only_while_every_linked_evidence_is_active(): void
+    {
+        [$repository, $context, $evidence] = $this->repositoryWithEvidence();
+        $stored = $repository->store($context, $this->model(2.8));
+
+        self::assertSame($stored->id, $repository->current($context)?->id);
+        $evidence->invalidate(1, 2, 3, [1], 'source_replaced');
+        self::assertNull($repository->current($context));
+    }
+
     private function repositoryWithEvidence(int $organizationId = 1): array
     {
         $evidence = new InMemoryEvidenceRepository;
@@ -66,7 +77,7 @@ final class BuildingModelRepositoryTest extends TestCase
         ));
         $context = new BuildingModelOperationContext($organizationId, 2, 3, 'sha256:'.str_repeat('b', 64));
 
-        return [new BuildingModelRepository(new InMemoryBuildingModelStore, $evidence), $context];
+        return [new BuildingModelRepository(new InMemoryBuildingModelStore, $evidence), $context, $evidence];
     }
 
     private function model(float $height): NormalizedBuildingModelData

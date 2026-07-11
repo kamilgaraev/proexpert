@@ -47,6 +47,20 @@ final class InMemoryEvidenceRepository implements EvidenceRepository
             && $node->sessionId === $sessionId ? $node : null;
     }
 
+    public function activeNodesForUpdate(int $organizationId, int $projectId, int $sessionId, array $ids): array
+    {
+        $nodes = [];
+        foreach (array_unique($ids) as $id) {
+            $node = $this->node($organizationId, $projectId, $sessionId, $id);
+            if ($node !== null && $node->invalidatedAt === null) {
+                $nodes[] = $node;
+            }
+        }
+        usort($nodes, static fn (EvidenceNode $left, EvidenceNode $right): int => $left->id <=> $right->id);
+
+        return $nodes;
+    }
+
     public function addEdge(EvidenceEdge $edge): void
     {
         $key = implode(':', [$edge->organizationId, $edge->sessionId, $edge->parentId, $edge->childId, $edge->relation->value]);

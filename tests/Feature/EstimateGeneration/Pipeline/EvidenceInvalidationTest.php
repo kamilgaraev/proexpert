@@ -40,6 +40,11 @@ final class BatchRecordingEvidenceRepository implements EvidenceRepository
         return $this->inner->node($organizationId, $projectId, $sessionId, $id);
     }
 
+    public function activeNodesForUpdate(int $organizationId, int $projectId, int $sessionId, array $ids): array
+    {
+        return $this->inner->activeNodesForUpdate($organizationId, $projectId, $sessionId, $ids);
+    }
+
     public function addEdge(EvidenceEdge $edge): void
     {
         $this->inner->addEdge($edge);

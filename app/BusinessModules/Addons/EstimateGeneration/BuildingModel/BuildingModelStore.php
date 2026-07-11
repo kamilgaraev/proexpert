@@ -13,4 +13,9 @@ interface BuildingModelStore
     public function insertOrGet(BuildingModelOperationContext $context, NormalizedBuildingModelData $model): StoredBuildingModel;
 
     public function attachEvidence(StoredBuildingModel $stored, array $evidenceIds): void;
+
+    public function find(BuildingModelOperationContext $context): ?StoredBuildingModel;
+
+    /** @return list<int> */
+    public function evidenceIds(StoredBuildingModel $stored): array;
 }

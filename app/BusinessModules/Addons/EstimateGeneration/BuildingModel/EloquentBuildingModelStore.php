@@ -79,4 +79,45 @@ final readonly class EloquentBuildingModelStore implements BuildingModelStore
             ]);
         }
     }
+
+    public function find(BuildingModelOperationContext $context): ?StoredBuildingModel
+    {
+        $row = $this->database->table('estimate_generation_building_models')
+            ->where('organization_id', $context->organizationId)
+            ->where('project_id', $context->projectId)
+            ->where('session_id', $context->sessionId)
+            ->where('input_version', $context->inputVersion)
+            ->first(['id', 'model_version', 'content_version']);
+
+        return $row === null ? null : new StoredBuildingModel(
+            (int) $row->id,
+            $context,
+            (string) $row->model_version,
+            (string) $row->content_version,
+            false,
+        );
+    }
+
+    public function evidenceIds(StoredBuildingModel $stored): array
+    {
+        $linked = $this->database->table('estimate_generation_building_model_evidence')
+            ->where('building_model_id', $stored->id)
+            ->where('organization_id', $stored->context->organizationId)
+            ->where('project_id', $stored->context->projectId)
+            ->where('session_id', $stored->context->sessionId)
+            ->orderBy('evidence_id')
+            ->pluck('evidence_id')
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->all();
+        $rawModel = $this->database->table('estimate_generation_building_models')
+            ->where('id', $stored->id)
+            ->where('organization_id', $stored->context->organizationId)
+            ->where('project_id', $stored->context->projectId)
+            ->where('session_id', $stored->context->sessionId)
+            ->value('model');
+        $model = is_array($rawModel) ? $rawModel : json_decode((string) $rawModel, true, 512, JSON_THROW_ON_ERROR);
+        $expected = array_map(static fn (mixed $id): int => (int) $id, is_array($model['evidence_ids'] ?? null) ? $model['evidence_ids'] : []);
+
+        return $linked === $expected ? $linked : [];
+    }
 }

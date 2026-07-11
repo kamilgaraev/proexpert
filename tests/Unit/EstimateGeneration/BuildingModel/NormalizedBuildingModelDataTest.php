@@ -88,6 +88,18 @@ final class NormalizedBuildingModelDataTest extends TestCase
             static fn () => new NormalizedBuildingModelData('m', 'estimated', 0.01, [new FloorData('f', 0.0, 2.8, [], [], [], [], [1], 1.0, 'confirmed')], [], 'building-model:v1'),
             'Estimated scale',
         ];
+        yield 'estimated scale without blocker' => [
+            static fn () => new NormalizedBuildingModelData('m', 'estimated', 0.01, [new FloorData('f', 0.0, 2.8, [], [], [], [], [1], 1.0, 'estimated')], [], 'building-model:v1'),
+            'scale_estimated',
+        ];
+        yield 'unknown scale without blocker' => [
+            static fn () => new NormalizedBuildingModelData('m', 'unknown', null, [new FloorData('f', null, null, [], [], [], [], [1], 1.0, 'unknown')], [], 'building-model:v1'),
+            'scale_missing',
+        ];
+        yield 'confirmed scale with stale scale blocker' => [
+            static fn () => new NormalizedBuildingModelData('m', 'confirmed', 0.01, [new FloorData('f', 0.0, 2.8, [], [], [], [], [1], 1.0, 'confirmed')], [new AssumptionData('scale_estimated', 'blocking', ['f'], [1], true)], 'building-model:v1'),
+            'stale scale blocker',
+        ];
         yield 'non finite scale' => [
             static fn () => new NormalizedBuildingModelData('m', 'confirmed', INF, [], [], 'building-model:v1'),
             'scale',
@@ -156,9 +168,31 @@ final class NormalizedBuildingModelDataTest extends TestCase
                     $floors[] = new FloorData("floor-{$floor}", null, null, $rooms, [], [], [], [1], 1, 'unknown');
                 }
 
-                return new NormalizedBuildingModelData('m', 'unknown', null, $floors, [], 'building-model:v1');
+                return new NormalizedBuildingModelData('m', 'unknown', null, $floors, [
+                    new AssumptionData('scale_missing', 'blocking', ['floor-0'], [1], true),
+                ], 'building-model:v1');
             },
             'element count',
+        ];
+        yield 'consecutive duplicate polygon vertex' => [
+            static fn () => new RoomData('r', null, [[0, 0], [2, 0], [2, 0], [0, 2]], [1], 1, 'confirmed'),
+            'zero-length',
+        ];
+        yield 'repeated non adjacent polygon vertex' => [
+            static fn () => new RoomData('r', null, [[0, 0], [3, 0], [3, 3], [0, 3], [3, 0]], [1], 1, 'confirmed'),
+            'repeated',
+        ];
+        yield 'non adjacent endpoint touches edge' => [
+            static fn () => new RoomData('r', null, [[0, 0], [4, 0], [4, 4], [2, 0], [0, 4]], [1], 1, 'confirmed'),
+            'self-intersect',
+        ];
+        yield 'collinear non adjacent edges overlap' => [
+            static fn () => new RoomData('r', null, [[0, 0], [4, 0], [4, 4], [0, 4], [1, 0], [3, 0]], [1], 1, 'confirmed'),
+            'self-intersect',
+        ];
+        yield 'adjacent collinear edges backtrack and overlap' => [
+            static fn () => new RoomData('r', null, [[0, 0], [4, 0], [2, 0], [2, 2], [0, 2]], [1], 1, 'confirmed'),
+            'self-intersect',
         ];
     }
 

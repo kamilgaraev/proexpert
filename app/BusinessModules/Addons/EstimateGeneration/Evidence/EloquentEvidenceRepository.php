@@ -65,6 +65,21 @@ final readonly class EloquentEvidenceRepository implements EvidenceRepository
         return $model === null ? null : $this->map($model);
     }
 
+    public function activeNodesForUpdate(int $organizationId, int $projectId, int $sessionId, array $ids): array
+    {
+        return $this->database->table('estimate_generation_evidence')
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('session_id', $sessionId)
+            ->whereIn('id', $ids)
+            ->whereNull('invalidated_at')
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get()
+            ->map(fn (stdClass $model): EvidenceNode => $this->map($model))
+            ->all();
+    }
+
     public function addEdge(EvidenceEdge $edge): void
     {
         $this->database->table('estimate_generation_evidence_edges')->insertOrIgnore([

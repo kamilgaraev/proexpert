@@ -67,6 +67,18 @@ final class BuildingModelAssembler
         ksort($floors, SORT_STRING);
         ksort($conflicts, SORT_STRING);
         $typedAssumptions = [];
+        if ($scaleStatus !== 'confirmed') {
+            if ($floors === []) {
+                throw new InvalidArgumentException('Unconfirmed scale requires an affected floor.');
+            }
+            $typedAssumptions[] = new AssumptionData(
+                $scaleStatus === 'estimated' ? 'scale_estimated' : 'scale_missing',
+                'blocking',
+                array_keys($floors),
+                $scaleEvidence,
+                true,
+            );
+        }
         if ($hasScaleConflict) {
             if ($floors === []) {
                 throw new InvalidArgumentException('Scale conflict requires an affected floor.');

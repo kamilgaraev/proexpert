@@ -149,21 +149,30 @@ final class BuildingModelSchema
         if (count($points) < 3 || count($points) > self::MAX_VERTICES) {
             throw new InvalidArgumentException('Room polygon vertex count is invalid.');
         }
+        $scaled = array_map(self::scaledPoint(...), $points);
         $unique = [];
-        foreach ($points as $point) {
-            $unique[implode(':', $point)] = true;
+        foreach ($scaled as $index => $point) {
+            $key = implode(':', $point);
+            if (isset($unique[$key])) {
+                $previous = $unique[$key];
+                if ($index === $previous + 1 || ($previous === 0 && $index === count($scaled) - 1)) {
+                    throw new InvalidArgumentException('Room polygon contains a zero-length edge.');
+                }
+                throw new InvalidArgumentException('Room polygon contains a repeated non-adjacent vertex.');
+            }
+            $unique[$key] = $index;
         }
         if (count($unique) < 3) {
             throw new InvalidArgumentException('Room polygon is degenerate.');
         }
-        if (self::selfIntersects($points)) {
+        if (self::selfIntersects($scaled)) {
             throw new InvalidArgumentException('Room polygon must not self-intersect.');
         }
-        $area = self::signedArea($points);
-        if (abs($area) < 0.0000005) {
+        $areaSign = self::polygonAreaSign($scaled);
+        if ($areaSign === 0) {
             throw new InvalidArgumentException('Room polygon is collinear.');
         }
-        if ($area < 0) {
+        if ($areaSign < 0) {
             $points = array_reverse($points);
         }
         $origin = 0;
@@ -220,16 +229,23 @@ final class BuildingModelSchema
         return round($value, 6);
     }
 
-    private static function signedArea(array $points): float
+    private static function polygonAreaSign(array $points): int
     {
-        $area = 0.0;
+        $area = '0';
         $count = count($points);
         for ($i = 0; $i < $count; $i++) {
             $next = ($i + 1) % $count;
-            $area += ($points[$i][0] * $points[$next][1]) - ($points[$next][0] * $points[$i][1]);
+            $left = bcmul((string) $points[$i][0], (string) $points[$next][1], 0);
+            $right = bcmul((string) $points[$next][0], (string) $points[$i][1], 0);
+            $area = bcadd($area, bcsub($left, $right, 0), 0);
         }
 
-        return $area / 2;
+        return bccomp($area, '0', 0);
+    }
+
+    private static function scaledPoint(array $point): array
+    {
+        return [(int) round($point[0] * 1000000), (int) round($point[1] * 1000000)];
     }
 
     private static function selfIntersects(array $points): bool
@@ -253,13 +269,31 @@ final class BuildingModelSchema
 
     private static function segmentsIntersect(array $a, array $b, array $c, array $d): bool
     {
-        $cross = static fn (array $p, array $q, array $r): float => ($q[0] - $p[0]) * ($r[1] - $p[1]) - ($q[1] - $p[1]) * ($r[0] - $p[0]);
-        $abC = $cross($a, $b, $c);
-        $abD = $cross($a, $b, $d);
-        $cdA = $cross($c, $d, $a);
-        $cdB = $cross($c, $d, $b);
+        $abC = self::orientation($a, $b, $c);
+        $abD = self::orientation($a, $b, $d);
+        $cdA = self::orientation($c, $d, $a);
+        $cdB = self::orientation($c, $d, $b);
+        if ($abC !== $abD && $cdA !== $cdB && $abC !== 0 && $abD !== 0 && $cdA !== 0 && $cdB !== 0) {
+            return true;
+        }
 
-        return (($abC > 0 && $abD < 0) || ($abC < 0 && $abD > 0))
-            && (($cdA > 0 && $cdB < 0) || ($cdA < 0 && $cdB > 0));
+        return ($abC === 0 && self::onSegment($a, $b, $c))
+            || ($abD === 0 && self::onSegment($a, $b, $d))
+            || ($cdA === 0 && self::onSegment($c, $d, $a))
+            || ($cdB === 0 && self::onSegment($c, $d, $b));
+    }
+
+    private static function orientation(array $a, array $b, array $c): int
+    {
+        $left = bcmul((string) ($b[0] - $a[0]), (string) ($c[1] - $a[1]), 0);
+        $right = bcmul((string) ($b[1] - $a[1]), (string) ($c[0] - $a[0]), 0);
+
+        return bccomp(bcsub($left, $right, 0), '0', 0);
+    }
+
+    private static function onSegment(array $a, array $b, array $point): bool
+    {
+        return $point[0] >= min($a[0], $b[0]) && $point[0] <= max($a[0], $b[0])
+            && $point[1] >= min($a[1], $b[1]) && $point[1] <= max($a[1], $b[1]);
     }
 }
