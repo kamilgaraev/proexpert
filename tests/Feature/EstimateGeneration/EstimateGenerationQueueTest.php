@@ -9,8 +9,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGener
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\GenerateEstimateGenerationRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\DraftPipelineEntrypoint;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNotificationService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\BusinessModules\Features\Notifications\Services\NotificationService;
 use App\Models\Organization;
@@ -59,7 +60,10 @@ class EstimateGenerationQueueTest extends TestCase
 
     public function test_generation_job_uses_long_running_queue_settings(): void
     {
-        $job = new GenerateEstimateDraftJob(123);
+        $job = new GenerateEstimateDraftJob(123, 1, '018f4a20-3f4c-7a11-8a22-123456789abc', new FailureExecutionSnapshot(
+            1, 2, 123, 1, 'generating', '018f4a20-3f4c-7a11-8a22-123456789abc',
+            '018f4a20-3f4c-7a11-8a22-123456789abd', '018f4a20-3f4c-7a11-8a22-123456789abe',
+        ));
         $productionSupervisor = config('horizon.environments.production.supervisor-estimate-generation');
         $localSupervisor = config('horizon.environments.local.supervisor-estimate-generation');
 
@@ -77,7 +81,7 @@ class EstimateGenerationQueueTest extends TestCase
     public function test_generation_job_marks_session_failed_when_generation_fails(): void
     {
         [, , $session] = $this->makeGenerationSession('generating');
-        $job = new GenerateEstimateDraftJob($session->id, $session->state_version, 'test-attempt');
+        $job = new GenerateEstimateDraftJob($session->id, $session->state_version, 'test-attempt', $this->snapshot($session, 'test-attempt'));
 
         $job->failed(new RuntimeException(str_repeat('Ошибка генерации ', 50)));
 
@@ -99,7 +103,7 @@ class EstimateGenerationQueueTest extends TestCase
             'last_error' => null,
         ])->save();
 
-        $job = new GenerateEstimateDraftJob($session->id, $session->state_version, 'test-attempt');
+        $job = new GenerateEstimateDraftJob($session->id, $session->state_version, 'test-attempt', $this->snapshot($session, 'test-attempt'));
         $job->failed(new RuntimeException('stale queue attempt'));
 
         $session->refresh();
@@ -123,7 +127,7 @@ class EstimateGenerationQueueTest extends TestCase
         $notifications->shouldNotReceive('notifyFailed');
         $this->app->instance(EstimateGenerationNotificationService::class, $notifications);
 
-        (new GenerateEstimateDraftJob($session->id, $session->state_version, 'old-attempt'))
+        (new GenerateEstimateDraftJob($session->id, $session->state_version, 'old-attempt', $this->snapshot($session, 'old-attempt')))
             ->failed(new RuntimeException('late failure'));
 
         $session->refresh();
@@ -135,11 +139,11 @@ class EstimateGenerationQueueTest extends TestCase
     public function test_generation_job_skips_finished_session_instead_of_regenerating(): void
     {
         [, , $session] = $this->makeGenerationSession('ready_to_apply');
-        $orchestrator = Mockery::mock(EstimateGenerationOrchestrator::class);
-        $orchestrator->shouldNotReceive('generate');
+        $pipeline = Mockery::mock(DraftPipelineEntrypoint::class);
+        $pipeline->shouldNotReceive('run');
 
-        $job = new GenerateEstimateDraftJob($session->id, $session->state_version, 'test-attempt');
-        $job->handle($orchestrator);
+        $job = new GenerateEstimateDraftJob($session->id, $session->state_version, 'test-attempt', $this->snapshot($session, 'test-attempt'));
+        $job->handle($pipeline);
 
         $session->refresh();
 
@@ -149,10 +153,10 @@ class EstimateGenerationQueueTest extends TestCase
     public function test_generation_job_notifies_user_when_generation_finishes(): void
     {
         [, , $session] = $this->makeGenerationSession('generating');
-        $orchestrator = Mockery::mock(EstimateGenerationOrchestrator::class);
-        $orchestrator->shouldReceive('generate')
+        $pipeline = Mockery::mock(DraftPipelineEntrypoint::class);
+        $pipeline->shouldReceive('run')
             ->once()
-            ->andReturnUsing(static function (EstimateGenerationSession $session): EstimateGenerationSession {
+            ->andReturnUsing(static function () use ($session): EstimateGenerationSession {
                 $session->forceFill([
                     'status' => 'ready_to_apply',
                     'processing_stage' => 'validation_and_normalization',
@@ -168,8 +172,8 @@ class EstimateGenerationQueueTest extends TestCase
             ->with(Mockery::on(static fn (EstimateGenerationSession $notifiedSession): bool => $notifiedSession->id === $session->id
                 && $notifiedSession->status === EstimateGenerationStatus::ReadyToApply));
 
-        $job = new GenerateEstimateDraftJob($session->id, $session->state_version, 'test-attempt');
-        $job->handle($orchestrator, $notifications);
+        $job = new GenerateEstimateDraftJob($session->id, $session->state_version, 'test-attempt', $this->snapshot($session, 'test-attempt'));
+        $job->handle($pipeline, $notifications);
     }
 
     public function test_generation_job_notifies_user_when_generation_fails(): void
@@ -183,7 +187,7 @@ class EstimateGenerationQueueTest extends TestCase
                 && $notifiedSession->failure_code === 'unexpected_internal_failure'));
         $this->app->instance(EstimateGenerationNotificationService::class, $notifications);
 
-        $job = new GenerateEstimateDraftJob($session->id, $session->state_version, 'test-attempt');
+        $job = new GenerateEstimateDraftJob($session->id, $session->state_version, 'test-attempt', $this->snapshot($session, 'test-attempt'));
         $job->failed(new RuntimeException('generation failed'));
     }
 
@@ -239,6 +243,11 @@ class EstimateGenerationQueueTest extends TestCase
     /**
      * @return array{0: User, 1: Project, 2: EstimateGenerationSession}
      */
+    private function snapshot(EstimateGenerationSession $session, string $attemptId): FailureExecutionSnapshot
+    {
+        return FailureExecutionSnapshot::capture($session, 'generate_draft', $attemptId);
+    }
+
     private function makeGenerationSession(string $status): array
     {
         $organization = Organization::factory()->create();

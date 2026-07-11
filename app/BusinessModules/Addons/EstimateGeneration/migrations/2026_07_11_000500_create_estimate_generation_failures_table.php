@@ -43,7 +43,7 @@ return new class extends Migration
         });
 
         Schema::create('estimate_generation_failure_events', function (Blueprint $table): void {
-            $table->bigIncrements('sequence');
+            $table->unsignedBigInteger('sequence')->primary();
             $table->uuid('event_id')->unique('eg_failure_events_event_uq');
             $table->uuid('correlation_id');
             $table->uuid('failure_id');
@@ -70,9 +70,11 @@ return new class extends Migration
             return;
         }
 
+        DB::statement('ALTER TABLE public.estimate_generation_failure_events ALTER COLUMN sequence ADD GENERATED ALWAYS AS IDENTITY');
+
         DB::statement("ALTER TABLE public.estimate_generation_failure_identities ADD CONSTRAINT eg_failure_identities_category_ck CHECK (category IN ('recoverable','user_action_required','terminal'))");
         DB::statement("ALTER TABLE public.estimate_generation_failure_identities ADD CONSTRAINT eg_failure_identities_identifier_ck CHECK (fingerprint ~ '^sha256:[0-9a-f]{64}$' AND stage ~ '^[a-z][a-z0-9_]{0,39}$' AND operation ~ '^[a-z][a-z0-9_]{0,39}$' AND code ~ '^[a-z][a-z0-9_]{0,79}$')");
-        DB::statement("ALTER TABLE public.estimate_generation_failure_identities ADD CONSTRAINT eg_failure_identities_provider_model_ck CHECK ((provider IS NULL OR provider ~ '^[a-z0-9._-]{1,80}$') AND (model IS NULL OR model ~ '^[A-Za-z0-9._/-]{1,160}$'))");
+        DB::statement("ALTER TABLE public.estimate_generation_failure_identities ADD CONSTRAINT eg_failure_identities_provider_model_ck CHECK ((provider IS NULL OR provider ~ '^[a-z][a-z0-9_]{0,39}$') AND (model IS NULL OR model ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$') AND lower(COALESCE(provider, '') || COALESCE(model, '')) !~ '(token|secret|password|bearer|api[_-]?key|eyj|sk-|gh[pousr]_)')");
         DB::statement('ALTER TABLE public.estimate_generation_failure_identities ADD CONSTRAINT eg_failure_identities_scope_ck CHECK ((page_id IS NULL OR document_id IS NOT NULL) AND (unit_id IS NULL OR document_id IS NOT NULL))');
         DB::statement("ALTER TABLE public.estimate_generation_failure_identities ADD CONSTRAINT eg_failure_identities_uuid_ck CHECK (id <> '00000000-0000-0000-0000-000000000000'::uuid)");
         DB::statement("ALTER TABLE public.estimate_generation_failure_events ADD CONSTRAINT eg_failure_events_type_ck CHECK (event_type IN ('occurred','resolved'))");
@@ -101,15 +103,27 @@ return new class extends Migration
             FOR EACH ROW EXECUTE FUNCTION public.prevent_estimate_generation_failure_history_mutation();
 
             CREATE FUNCTION public.validate_estimate_generation_failure_resolution() RETURNS trigger AS $$
+            DECLARE
+                latest_occurrence bigint;
+                latest_resolution bigint;
             BEGIN
-                IF NEW.event_type = 'resolved' AND NOT EXISTS (
-                    SELECT 1 FROM public.estimate_generation_failure_events target
-                    WHERE target.sequence = NEW.resolves_through_sequence
-                      AND target.failure_id = NEW.failure_id
-                      AND target.event_type = 'occurred'
-                      AND target.sequence < NEW.sequence
-                ) THEN
-                    RAISE EXCEPTION 'resolution must reference an existing occurrence of the same failure';
+                PERFORM 1 FROM public.estimate_generation_failure_identities
+                WHERE id = NEW.failure_id FOR UPDATE;
+
+                IF NEW.event_type = 'resolved' THEN
+                    SELECT MAX(sequence) INTO latest_occurrence
+                    FROM public.estimate_generation_failure_events
+                    WHERE failure_id = NEW.failure_id AND event_type = 'occurred';
+
+                    SELECT MAX(resolves_through_sequence) INTO latest_resolution
+                    FROM public.estimate_generation_failure_events
+                    WHERE failure_id = NEW.failure_id AND event_type = 'resolved';
+
+                    IF latest_occurrence IS NULL
+                        OR NEW.resolves_through_sequence <> latest_occurrence
+                        OR COALESCE(latest_resolution, 0) >= latest_occurrence THEN
+                        RAISE EXCEPTION 'resolution must target the latest active occurrence';
+                    END IF;
                 END IF;
                 RETURN NEW;
             END;

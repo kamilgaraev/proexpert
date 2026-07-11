@@ -7,8 +7,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Jobs;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\CreateDocumentProcessingUnits;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
-use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
@@ -19,7 +19,6 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\Middleware\RateLimited;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
-use Illuminate\Support\Str;
 
 final class ProcessEstimateGenerationDocumentJob implements ShouldQueue
 {
@@ -35,14 +34,10 @@ final class ProcessEstimateGenerationDocumentJob implements ShouldQueue
 
     public int $timeout = 120;
 
-    private readonly string $failureEventId;
-
-    private readonly string $failureCorrelationId;
-
-    public function __construct(private readonly int $documentId)
-    {
-        $this->failureEventId = (string) Str::uuid();
-        $this->failureCorrelationId = AiOperationContext::deterministicId('document-manifest|'.$documentId);
+    public function __construct(
+        private readonly int $documentId,
+        private readonly FailureExecutionSnapshot $failureSnapshot,
+    ) {
         $this->onConnection(self::CONNECTION);
         $this->onQueue(self::QUEUE);
     }
@@ -81,17 +76,26 @@ final class ProcessEstimateGenerationDocumentJob implements ShouldQueue
             return;
         }
 
+        $snapshot = $this->failureSnapshot;
+        if (! $document->session instanceof EstimateGenerationSession
+            || (int) $document->session->state_version !== $snapshot->stateVersion
+            || $document->session->status->value !== $snapshot->status
+            || (int) $document->organization_id !== $snapshot->organizationId
+            || (int) $document->project_id !== $snapshot->projectId
+            || (int) $document->session_id !== $snapshot->sessionId) {
+            return;
+        }
         $failure = app(FailureRecorder::class)->capture($error, new FailureContext(
-            organizationId: (int) $document->organization_id,
-            projectId: (int) $document->project_id,
-            sessionId: (int) $document->session_id,
+            organizationId: $snapshot->organizationId,
+            projectId: $snapshot->projectId,
+            sessionId: $snapshot->sessionId,
             stage: ProcessingStage::UnderstandDocuments,
             operation: 'create_units',
             attempt: max(1, $this->attempts()),
-            correlationId: $this->failureCorrelationId,
-            eventId: $this->failureEventId,
-            expectedSessionStateVersion: $document->session instanceof EstimateGenerationSession ? (int) $document->session->state_version : null,
-            expectedSessionStatus: $document->session instanceof EstimateGenerationSession ? $document->session->status->value : null,
+            correlationId: $snapshot->correlationId,
+            eventId: $snapshot->eventId,
+            expectedSessionStateVersion: $snapshot->stateVersion,
+            expectedSessionStatus: $snapshot->status,
             documentId: (int) $document->getKey(),
         ));
         try {
@@ -103,9 +107,7 @@ final class ProcessEstimateGenerationDocumentJob implements ShouldQueue
             );
             app(FailureWorkflowHandler::class)->handle(
                 $failure,
-                $document->session instanceof EstimateGenerationSession
-                    ? (int) $document->session->state_version
-                    : null,
+                $snapshot->stateVersion,
             );
         } catch (\Throwable) {
         }

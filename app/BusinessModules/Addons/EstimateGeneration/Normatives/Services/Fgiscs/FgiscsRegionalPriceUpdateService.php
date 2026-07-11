@@ -287,7 +287,7 @@ class FgiscsRegionalPriceUpdateService
                 'metadata' => array_merge($regionalVersion->metadata ?? [], [
                     'unavailable_reason' => 'fgiscs_region_unavailable',
                     'http_status' => $exception->statusCode,
-                    'response_body' => $exception->responseBody,
+                    'failure_code' => 'fgiscs_download_unavailable',
                 ]),
             ]);
             $datasetVersion->update([

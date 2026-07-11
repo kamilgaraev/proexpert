@@ -103,6 +103,112 @@ final class EstimateGenerationFailureLedgerPostgresTest extends TestCase
     }
 
     #[Test]
+    public function concurrent_different_events_both_increment_occurrence_count(): void
+    {
+        $this->requireEnvironment(true);
+        $fixture = $this->fixture();
+        $firstName = 'failure_distinct_a_'.strtolower(Str::random(8));
+        $secondName = 'failure_distinct_b_'.strtolower(Str::random(8));
+        $first = $this->independentConnection($firstName);
+        $sockets = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        $pid = null;
+        try {
+            $firstFailure = $this->failure($fixture, (string) Str::uuid());
+            $secondFailure = $this->failure($fixture, (string) Str::uuid());
+            $first->beginTransaction();
+            (new EloquentFailureStore($first))->record($firstFailure, new \DateTimeImmutable('2026-07-11T10:00:00+00:00'));
+            $pid = pcntl_fork();
+            if ($pid === 0) {
+                fclose($sockets[0]);
+                fwrite($sockets[1], "before_record\n");
+                (new EloquentFailureStore($this->independentConnection($secondName)))
+                    ->record($secondFailure, new \DateTimeImmutable('2026-07-11T10:00:01+00:00'));
+                fwrite($sockets[1], "recorded\n");
+                fclose($sockets[1]);
+                exit(0);
+            }
+            fclose($sockets[1]);
+            self::assertSame("before_record\n", fgets($sockets[0]));
+            self::assertFalse($this->readable($sockets[0], 0, 750_000));
+            $first->commit();
+            self::assertTrue($this->readable($sockets[0], 5, 0));
+            self::assertSame("recorded\n", fgets($sockets[0]));
+            pcntl_waitpid($pid, $status);
+            $pid = null;
+            self::assertSame(2, DB::table('estimate_generation_failures')->where('fingerprint', $firstFailure->fingerprint)->value('occurrence_count'));
+        } finally {
+            if ($first->transactionLevel() > 0) {
+                $first->rollBack();
+            }
+            if ($pid !== null) {
+                posix_kill($pid, SIGKILL);
+                pcntl_waitpid($pid, $status);
+            }
+            foreach ($sockets ?: [] as $socket) {
+                if (is_resource($socket)) {
+                    fclose($socket);
+                }
+            }
+            DB::disconnect($firstName);
+            DB::disconnect($secondName);
+            $this->cleanup($fixture);
+        }
+    }
+
+    #[Test]
+    public function concurrent_resolvers_create_only_one_resolution_event(): void
+    {
+        $this->requireEnvironment(true);
+        $fixture = $this->fixture();
+        $failure = $this->failure($fixture, (string) Str::uuid());
+        $firstName = 'failure_resolve_a_'.strtolower(Str::random(8));
+        $secondName = 'failure_resolve_b_'.strtolower(Str::random(8));
+        $first = $this->independentConnection($firstName);
+        $sockets = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        $pid = null;
+        try {
+            (new EloquentFailureStore(DB::connection()))->record($failure, new \DateTimeImmutable('2026-07-11T10:00:00+00:00'));
+            $first->beginTransaction();
+            self::assertTrue((new EloquentFailureStore($first))->resolve($failure->context, $failure->fingerprint, 'retry_succeeded', new \DateTimeImmutable('2026-07-11T10:01:00+00:00')));
+            $pid = pcntl_fork();
+            if ($pid === 0) {
+                fclose($sockets[0]);
+                fwrite($sockets[1], "before_resolve\n");
+                $resolved = (new EloquentFailureStore($this->independentConnection($secondName)))
+                    ->resolve($failure->context, $failure->fingerprint, 'retry_succeeded', new \DateTimeImmutable('2026-07-11T10:01:01+00:00'));
+                fwrite($sockets[1], $resolved ? "resolved\n" : "inactive\n");
+                fclose($sockets[1]);
+                exit(0);
+            }
+            fclose($sockets[1]);
+            self::assertSame("before_resolve\n", fgets($sockets[0]));
+            self::assertFalse($this->readable($sockets[0], 0, 750_000));
+            $first->commit();
+            self::assertTrue($this->readable($sockets[0], 5, 0));
+            self::assertSame("inactive\n", fgets($sockets[0]));
+            pcntl_waitpid($pid, $status);
+            $pid = null;
+            self::assertSame(1, DB::table('estimate_generation_failure_events')->where('fingerprint', $failure->fingerprint)->where('event_type', 'resolved')->count());
+        } finally {
+            if ($first->transactionLevel() > 0) {
+                $first->rollBack();
+            }
+            if ($pid !== null) {
+                posix_kill($pid, SIGKILL);
+                pcntl_waitpid($pid, $status);
+            }
+            foreach ($sockets ?: [] as $socket) {
+                if (is_resource($socket)) {
+                    fclose($socket);
+                }
+            }
+            DB::disconnect($firstName);
+            DB::disconnect($secondName);
+            $this->cleanup($fixture);
+        }
+    }
+
+    #[Test]
     public function postgres_enforces_tenant_privacy_collision_resolution_and_immutability(): void
     {
         $this->requireEnvironment(false);
@@ -126,6 +232,7 @@ final class EstimateGenerationFailureLedgerPostgresTest extends TestCase
             $store->record($this->failure($fixture, (string) Str::uuid()), new \DateTimeImmutable('2026-07-11T10:01:00+00:00'));
             self::assertSame(2, DB::table('estimate_generation_failures')->where('fingerprint', $first->fingerprint)->value('occurrence_count'));
             self::assertTrue($store->resolve($first->context, $first->fingerprint, 'retry_succeeded', new \DateTimeImmutable('2026-07-11T10:02:00+00:00')));
+            self::assertFalse($store->resolve($first->context, $first->fingerprint, 'retry_succeeded', new \DateTimeImmutable('2026-07-11T10:02:01+00:00')));
             self::assertNotNull(DB::table('estimate_generation_failures')->where('fingerprint', $first->fingerprint)->value('resolved_at'));
             $store->record($this->failure($fixture, (string) Str::uuid()), new \DateTimeImmutable('2026-07-11T10:03:00+00:00'));
             self::assertNull(DB::table('estimate_generation_failures')->where('fingerprint', $first->fingerprint)->value('resolved_at'));
@@ -133,6 +240,10 @@ final class EstimateGenerationFailureLedgerPostgresTest extends TestCase
 
             $identityId = DB::table('estimate_generation_failure_identities')->where('fingerprint', $first->fingerprint)->value('id');
             $eventSequence = DB::table('estimate_generation_failure_events')->where('fingerprint', $first->fingerprint)->where('event_type', 'occurred')->max('sequence');
+            $identity = (array) DB::table('estimate_generation_failure_identities')->where('id', $identityId)->first();
+            foreach ($this->invalidIdentityRows($identity) as $name => $row) {
+                $this->assertRejected(fn () => DB::table('estimate_generation_failure_identities')->insert($row), $name);
+            }
             $this->assertRejected(fn () => DB::table('estimate_generation_failure_identities')->where('id', $identityId)->update(['code' => 'changed']));
             $this->assertRejected(fn () => DB::table('estimate_generation_failure_identities')->where('id', $identityId)->delete());
             $this->assertRejected(fn () => DB::table('estimate_generation_failure_events')->where('sequence', $eventSequence)->update(['attempt' => 2]));
@@ -202,6 +313,35 @@ final class EstimateGenerationFailureLedgerPostgresTest extends TestCase
             'resolved future target' => [...$base, 'event_id' => (string) Str::uuid(), 'event_type' => 'resolved', 'resolution_code' => 'retry_succeeded', 'resolves_through_sequence' => $occurredSequence + 999999],
             'nil event uuid' => [...$base, 'event_id' => '00000000-0000-0000-0000-000000000000'],
             'nil correlation uuid' => [...$base, 'event_id' => (string) Str::uuid(), 'correlation_id' => '00000000-0000-0000-0000-000000000000'],
+            'explicit generated sequence' => [...$base, 'event_id' => (string) Str::uuid(), 'sequence' => $occurredSequence + 999999],
+            'stale resolution' => [...$base, 'event_id' => (string) Str::uuid(), 'event_type' => 'resolved', 'resolution_code' => 'retry_succeeded', 'resolves_through_sequence' => $occurredSequence - 1],
+        ];
+    }
+
+    /** @return array<string, array<string, mixed>> */
+    private function invalidIdentityRows(array $identity): array
+    {
+        $row = static function (array $changes) use ($identity): array {
+            $id = (string) Str::uuid();
+
+            return [...$identity, 'id' => $id, 'fingerprint' => 'sha256:'.hash('sha256', $id), ...$changes];
+        };
+
+        return [
+            'invalid identity category' => $row(['category' => 'unknown']),
+            'invalid identity stage' => $row(['stage' => 'Invalid-Stage']),
+            'invalid identity code' => $row(['code' => 'Invalid-Code']),
+            'invalid identity provider' => $row(['provider' => 'api_token']),
+            'invalid identity model' => $row(['model' => '../private/model']),
+            'nil identity uuid' => $row(['id' => '00000000-0000-0000-0000-000000000000']),
+            'nullable composite tenant bypass' => $row([
+                'organization_id' => (int) $identity['organization_id'] + 999999,
+                'document_id' => null,
+                'page_id' => null,
+                'unit_id' => null,
+                'checkpoint_id' => null,
+                'usage_attempt_id' => null,
+            ]),
         ];
     }
 

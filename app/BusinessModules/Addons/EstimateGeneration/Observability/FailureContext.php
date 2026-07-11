@@ -44,10 +44,10 @@ final readonly class FailureContext
         if (! self::isUuid($correlationId) || ! self::isUuid($eventId) || ($usageAttemptId !== null && ! self::isUuid($usageAttemptId))) {
             throw new InvalidArgumentException('Invalid failure correlation identifier.');
         }
-        if ($provider !== null && preg_match('/\A[a-z0-9._-]{1,80}\z/', $provider) !== 1) {
+        if ($provider !== null && (preg_match('/\A[a-z][a-z0-9_]{0,39}\z/', $provider) !== 1 || self::looksSensitive($provider))) {
             throw new InvalidArgumentException('Invalid failure provider.');
         }
-        if ($model !== null && preg_match('/\A[A-Za-z0-9._\/-]{1,160}\z/', $model) !== 1) {
+        if ($model !== null && (preg_match('/\A[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}\z/', $model) !== 1 || self::looksSensitive($model))) {
             throw new InvalidArgumentException('Invalid failure model.');
         }
         if (($pageId !== null || $unitId !== null) && $documentId === null) {
@@ -64,5 +64,10 @@ final readonly class FailureContext
     {
         return preg_match('/\A[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/i', $value) === 1
             && strtolower($value) !== '00000000-0000-0000-0000-000000000000';
+    }
+
+    private static function looksSensitive(string $value): bool
+    {
+        return preg_match('/(?:token|secret|password|bearer|api[_-]?key|[\\\\\/]|\.\.|eyJ|sk-|gh[pousr]_)/i', $value) === 1;
     }
 }

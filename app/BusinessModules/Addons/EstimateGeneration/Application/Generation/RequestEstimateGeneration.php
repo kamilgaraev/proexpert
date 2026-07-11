@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimat
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use Illuminate\Support\Str;
 
@@ -67,7 +68,12 @@ final class RequestEstimateGeneration
         $session = $this->advance->documentsReady($session);
         $attemptId = (string) Str::uuid();
         $session = $this->advance->generationStarted($session, $attemptId);
-        GenerateEstimateDraftJob::dispatch((int) $session->getKey(), $session->state_version, $attemptId)
+        GenerateEstimateDraftJob::dispatch(
+            (int) $session->getKey(),
+            $session->state_version,
+            $attemptId,
+            FailureExecutionSnapshot::capture($session, 'generate_draft', $attemptId),
+        )
             ->onQueue(GenerateEstimateDraftJob::QUEUE)
             ->afterCommit();
 

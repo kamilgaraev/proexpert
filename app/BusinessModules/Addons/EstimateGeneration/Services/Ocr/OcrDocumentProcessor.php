@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocum
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
@@ -57,13 +58,11 @@ class OcrDocumentProcessor
     {
         $startedAt = microtime(true);
         $document->loadMissing('session');
-        $eventId = (string) Str::uuid();
-        $correlationId = AiOperationContext::deterministicId(sprintf(
-            'whole-document|%d|%s',
-            (int) $document->getKey(),
-            (string) ($document->source_version ?? 'missing'),
-        ));
-
+        $session = $document->session;
+        if ($session === null) {
+            throw new \LogicException('Document processing requires a session snapshot.');
+        }
+        $snapshot = FailureExecutionSnapshot::capture($session, 'whole_document', (string) Str::uuid());
         try {
             $this->statusService->markProcessing($document, 'preflight', 10);
             $this->preflightService->validateForRecognition($document);
@@ -109,7 +108,7 @@ class OcrDocumentProcessor
 
             return $document->refresh();
         } catch (OcrProviderException $exception) {
-            $failure = $this->captureFailure($document, $exception, $eventId, $correlationId);
+            $failure = $this->captureFailure($document, $exception, $snapshot);
             if ($failure->category === FailureCategory::Recoverable) {
                 throw $exception;
             }
@@ -122,7 +121,7 @@ class OcrDocumentProcessor
 
             return $document->refresh();
         } catch (Throwable $exception) {
-            $failure = $this->captureFailure($document, $exception, $eventId, $correlationId);
+            $failure = $this->captureFailure($document, $exception, $snapshot);
             if ($failure->category === FailureCategory::Recoverable) {
                 throw $exception;
             }
@@ -214,21 +213,19 @@ class OcrDocumentProcessor
     private function captureFailure(
         EstimateGenerationDocument $document,
         Throwable $error,
-        string $eventId,
-        string $correlationId,
+        FailureExecutionSnapshot $snapshot,
     ): \App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData {
-        $session = $document->session;
         $failure = $this->failureRecorder->capture($error, new FailureContext(
-            organizationId: (int) $document->organization_id,
-            projectId: (int) $document->project_id,
-            sessionId: (int) $document->session_id,
+            organizationId: $snapshot->organizationId,
+            projectId: $snapshot->projectId,
+            sessionId: $snapshot->sessionId,
             stage: ProcessingStage::UnderstandDocuments,
             operation: 'process_document',
             attempt: max(1, (int) $document->ocr_attempts),
-            correlationId: $correlationId,
-            eventId: $eventId,
-            expectedSessionStateVersion: $session !== null ? (int) $session->state_version : null,
-            expectedSessionStatus: $session !== null ? $session->status->value : null,
+            correlationId: $snapshot->correlationId,
+            eventId: $snapshot->eventId,
+            expectedSessionStateVersion: $snapshot->stateVersion,
+            expectedSessionStatus: $snapshot->status,
             documentId: (int) $document->getKey(),
             provider: (string) config('estimate-generation.ocr.provider', 'timeweb'),
         ));

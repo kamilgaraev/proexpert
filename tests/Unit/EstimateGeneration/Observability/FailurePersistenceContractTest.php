@@ -32,7 +32,7 @@ final class FailurePersistenceContractTest extends TestCase
             'eg_failure_events_resolution_ck',
             'estimate_generation_failure_events',
             'eg_failure_events_append_only_guard',
-            'bigIncrements',
+            'ADD GENERATED ALWAYS AS IDENTITY',
             'latest_occurrence_sequence',
             'resolves_through_sequence',
             'CREATE VIEW public.estimate_generation_failures',
@@ -46,6 +46,8 @@ final class FailurePersistenceContractTest extends TestCase
         self::assertStringNotContainsString('SECURITY DEFINER', $source);
         self::assertStringContainsString('SET search_path = pg_catalog, public', $source);
         self::assertStringContainsString('REVOKE ALL ON FUNCTION', $source);
+        self::assertStringNotContainsString("'sequence' =>", file_get_contents(dirname(__DIR__, 4)
+            .'/app/BusinessModules/Addons/EstimateGeneration/Observability/EloquentFailureStore.php'));
     }
 
     #[Test]

@@ -100,6 +100,13 @@ final readonly class EloquentFailureStore implements FailureStore
             if ((int) $latestOccurrenceSequence !== (int) $active->latest_occurrence_sequence) {
                 return false;
             }
+            $latestResolvedSequence = $this->database->table('estimate_generation_failure_events')
+                ->where('failure_id', (string) $active->id)
+                ->where('event_type', 'resolved')
+                ->max('resolves_through_sequence');
+            if ($latestResolvedSequence !== null && (int) $latestResolvedSequence >= (int) $latestOccurrenceSequence) {
+                return false;
+            }
             $eventId = self::deterministicId(sprintf(
                 'resolution|%s|%s|%s',
                 $context->eventId,

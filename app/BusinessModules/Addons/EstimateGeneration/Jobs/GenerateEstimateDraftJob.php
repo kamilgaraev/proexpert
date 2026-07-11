@@ -5,14 +5,14 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Jobs;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\GenerationAttemptGuard;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
-use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\DraftPipelineEntrypoint;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNotificationService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -21,7 +21,6 @@ use Illuminate\Queue\Middleware\RateLimited;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 
 class GenerateEstimateDraftJob implements ShouldQueue
 {
@@ -42,21 +41,12 @@ class GenerateEstimateDraftJob implements ShouldQueue
 
     public bool $failOnTimeout = true;
 
-    private readonly string $failureEventId;
-
-    private readonly string $failureCorrelationId;
-
     public function __construct(
         private readonly int $sessionId,
-        private readonly ?int $expectedStateVersion = null,
-        private readonly ?string $attemptId = null,
+        private readonly int $expectedStateVersion,
+        private readonly string $attemptId,
+        private readonly FailureExecutionSnapshot $failureSnapshot,
     ) {
-        $this->failureEventId = (string) Str::uuid();
-        $this->failureCorrelationId = AiOperationContext::deterministicId(sprintf(
-            'generate-draft-correlation|%d|%s',
-            $this->sessionId,
-            $this->attemptId ?? 'missing',
-        ));
         $this->onConnection(self::CONNECTION);
         $this->onQueue(self::QUEUE);
     }
@@ -87,7 +77,7 @@ class GenerateEstimateDraftJob implements ShouldQueue
     }
 
     public function handle(
-        EstimateGenerationOrchestrator $orchestrator,
+        DraftPipelineEntrypoint $pipeline,
         ?EstimateGenerationNotificationService $notificationService = null,
         ?GenerationAttemptGuard $attemptGuard = null,
     ): void {
@@ -102,7 +92,10 @@ class GenerateEstimateDraftJob implements ShouldQueue
             return;
         }
 
-        $generatedSession = $orchestrator->generate($session);
+        $generatedSession = $pipeline->run($this->failureSnapshot);
+        if (! $generatedSession instanceof EstimateGenerationSession) {
+            return;
+        }
         $notificationService ??= app(EstimateGenerationNotificationService::class);
         $notificationService->notifyFinished($generatedSession);
     }
@@ -110,23 +103,29 @@ class GenerateEstimateDraftJob implements ShouldQueue
     public function failed(\Throwable $exception): void
     {
         $session = EstimateGenerationSession::query()->find($this->sessionId);
+        $snapshot = $this->failureSnapshot;
         if ($session instanceof EstimateGenerationSession
-            && app(GenerationAttemptGuard::class)->matches($session, null, $this->attemptId)) {
+            && (int) $session->state_version === $snapshot->stateVersion
+            && $session->status->value === $snapshot->status
+            && hash_equals($snapshot->attemptId, (string) ($session->input_payload['generation_attempt_id'] ?? ''))) {
             try {
                 $failure = app(FailureRecorder::class)->capture($exception, new FailureContext(
-                    organizationId: (int) $session->organization_id,
-                    projectId: (int) $session->project_id,
-                    sessionId: (int) $session->getKey(),
+                    organizationId: $snapshot->organizationId,
+                    projectId: $snapshot->projectId,
+                    sessionId: $snapshot->sessionId,
                     stage: ProcessingStage::BuildDraft,
                     operation: 'generate_draft',
                     attempt: max(1, $this->attempts()),
-                    correlationId: $this->failureCorrelationId,
-                    eventId: $this->failureEventId,
-                    expectedSessionStateVersion: (int) $session->state_version,
-                    expectedSessionStatus: $session->status->value,
+                    correlationId: $snapshot->correlationId,
+                    eventId: $snapshot->eventId,
+                    expectedSessionStateVersion: $snapshot->stateVersion,
+                    expectedSessionStatus: $snapshot->status,
                 ));
-                $session = app(AdvanceEstimateGeneration::class)->failed($session, $failure->code);
-                app(EstimateGenerationNotificationService::class)->notifyFailed($session);
+                app(FailureWorkflowHandler::class)->handle($failure, $snapshot->stateVersion);
+                $failedSession = EstimateGenerationSession::query()->find($snapshot->sessionId);
+                if ($failedSession instanceof EstimateGenerationSession && $failedSession->status->value === 'failed') {
+                    app(EstimateGenerationNotificationService::class)->notifyFailed($failedSession);
+                }
             } catch (\Throwable) {
             }
         }

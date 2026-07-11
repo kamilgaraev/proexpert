@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateG
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -67,7 +68,10 @@ final class RetryEstimateGenerationDocument
             return [$this->reconciler->changed($lockedSession), $lockedDocument];
         }, 3);
 
-        ProcessEstimateGenerationDocumentJob::dispatch((int) $document->getKey())
+        ProcessEstimateGenerationDocumentJob::dispatch(
+            (int) $document->getKey(),
+            FailureExecutionSnapshot::capture($session, 'document_manifest'),
+        )
             ->onConnection(ProcessEstimateGenerationDocumentJob::CONNECTION)
             ->onQueue(ProcessEstimateGenerationDocumentJob::QUEUE)
             ->afterCommit();

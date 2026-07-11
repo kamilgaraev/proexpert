@@ -77,6 +77,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebRerankWireClient;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentPipelineCheckpointStore;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LegacyDraftPipelineStageAdapter;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineCheckpointStore;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRegistry;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\ConstructionDocumentClassifierService;
@@ -143,6 +148,19 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(AiUsageStore::class, EloquentAiUsageStore::class);
         $this->app->singleton(FailureStore::class, EloquentFailureStore::class);
         $this->app->singleton(FailureWorkflowHandler::class, EloquentFailureWorkflowHandler::class);
+        $this->app->singleton(PipelineCheckpointStore::class, EloquentPipelineCheckpointStore::class);
+        $this->app->singleton(LegacyDraftPipelineStageAdapter::class);
+        $this->app->singleton(PipelineRegistry::class, fn ($app) => new PipelineRegistry([
+            $app->make(LegacyDraftPipelineStageAdapter::class),
+        ]));
+        $this->app->singleton(PipelineRunner::class, fn ($app) => new PipelineRunner(
+            registry: $app->make(PipelineRegistry::class),
+            checkpointStore: $app->make(PipelineCheckpointStore::class),
+            failureRecorder: $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder::class),
+            failureWorkflowHandler: $app->make(FailureWorkflowHandler::class),
+            clock: static fn (): \DateTimeImmutable => new \DateTimeImmutable,
+            leaseSeconds: max(2100, (int) config('estimate-generation.generation.pipeline_lease_seconds', 2100)),
+        ));
         $this->app->singleton(RerankWireClient::class, TimewebRerankWireClient::class);
         $this->app->singleton(OcrDocumentStorageService::class);
         $this->app->singleton(OcrPreflightService::class);

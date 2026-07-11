@@ -13,8 +13,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\AnalyzeEstimateG
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\GenerateEstimateGenerationRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrDocumentProcessor;
 use App\Models\Organization;
@@ -119,7 +119,12 @@ class EstimateGenerationDocumentE2ETest extends TestCase
             $session->id,
             $session->state_version,
             (string) ($session->input_payload['generation_attempt_id'] ?? ''),
-        ))->handle(app(EstimateGenerationOrchestrator::class));
+            FailureExecutionSnapshot::capture(
+                $session,
+                'generate_draft',
+                (string) ($session->input_payload['generation_attempt_id'] ?? ''),
+            ),
+        ))->handle(app(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\DraftPipelineEntrypoint::class));
         $session->refresh();
 
         $draft = $session->draft_payload;

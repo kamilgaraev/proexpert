@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration\Observability;
 
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -27,14 +28,19 @@ final class FailureEventIdentityTest extends TestCase
     /** @return iterable<string, array{object, object}> */
     public static function jobs(): iterable
     {
-        yield 'generation' => [new GenerateEstimateDraftJob(10, 2, 'attempt-a'), new GenerateEstimateDraftJob(10, 2, 'attempt-a')];
-        yield 'document' => [new ProcessEstimateGenerationDocumentJob(20), new ProcessEstimateGenerationDocumentJob(20)];
+        yield 'generation' => [new GenerateEstimateDraftJob(10, 2, 'attempt-a', self::snapshot('018f4a20-3f4c-7a11-8a22-123456789abc')), new GenerateEstimateDraftJob(10, 2, 'attempt-a', self::snapshot('018f4a20-3f4c-7a11-8a22-123456789abd'))];
+        yield 'document' => [new ProcessEstimateGenerationDocumentJob(20, self::snapshot('018f4a20-3f4c-7a11-8a22-123456789abc')), new ProcessEstimateGenerationDocumentJob(20, self::snapshot('018f4a20-3f4c-7a11-8a22-123456789abd'))];
     }
 
     private function eventId(object $job): string
     {
-        $property = new ReflectionProperty($job, 'failureEventId');
+        $property = new ReflectionProperty($job, 'failureSnapshot');
 
-        return (string) $property->getValue($job);
+        return $property->getValue($job)->eventId;
+    }
+
+    private static function snapshot(string $eventId): FailureExecutionSnapshot
+    {
+        return new FailureExecutionSnapshot(1, 2, 10, 2, 'generating', '018f4a20-3f4c-7a11-8a22-123456789abe', $eventId, '018f4a20-3f4c-7a11-8a22-123456789abf');
     }
 }

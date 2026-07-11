@@ -425,11 +425,11 @@ class EstimateSourceImportService
     ): void {
         EstimateImportError::query()->create([
             'dataset_version_id' => $datasetVersion->id,
-            'source_file' => $sourceFile,
+            'source_file' => 'redacted',
             'row_number' => $rowNumber,
             'severity' => $severity,
-            'message' => $message,
-            'raw_fragment' => $rawFragment,
+            'message' => preg_match('/\A[a-z][a-z0-9_]{0,79}\z/', $message) === 1 ? $message : 'import_row_invalid',
+            'raw_fragment' => null,
         ]);
     }
 

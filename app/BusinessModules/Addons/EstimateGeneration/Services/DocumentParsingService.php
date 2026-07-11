@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Reconcil
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrDocumentStorageService;
 use App\Models\User;
 use Illuminate\Http\UploadedFile;
@@ -35,10 +36,13 @@ class DocumentParsingService
         }
 
         if ($documents->isNotEmpty()) {
-            $this->documentReconciler->changed($session);
+            $session = $this->documentReconciler->changed($session);
 
             foreach ($documents as $document) {
-                ProcessEstimateGenerationDocumentJob::dispatch($document->id)
+                ProcessEstimateGenerationDocumentJob::dispatch(
+                    $document->id,
+                    FailureExecutionSnapshot::capture($session, 'document_manifest'),
+                )
                     ->onConnection(ProcessEstimateGenerationDocumentJob::CONNECTION)
                     ->onQueue(ProcessEstimateGenerationDocumentJob::QUEUE)
                     ->afterCommit();
