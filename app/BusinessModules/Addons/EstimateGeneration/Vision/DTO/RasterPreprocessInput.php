@@ -24,9 +24,9 @@ final readonly class RasterPreprocessInput
         public int $maxDimension = 4096,
     ) {
         if ($organizationId < 1 || $sessionId < 1 || $documentId < 1 || $pageNumber < 1
-            || $maxBytes < 1 || $maxPixels < 1 || $maxDimension < 64
+            || $maxBytes < 1 || $maxBytes > 50_000_000 || $maxPixels < 1 || $maxPixels > 50_000_000 || $maxDimension < 64 || $maxDimension > 8192
             || preg_match('/^sha256:[a-f0-9]{64}$/', $sourceVersion) !== 1
-            || ! in_array($contentType, ['image/jpeg', 'image/png', 'image/webp'], true)) {
+            || ! in_array($contentType, ['image/jpeg', 'image/png', 'image/webp', 'image/gif'], true)) {
             throw new InvalidArgumentException('Invalid raster preprocessing input.');
         }
     }

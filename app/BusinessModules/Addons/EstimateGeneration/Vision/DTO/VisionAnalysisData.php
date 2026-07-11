@@ -29,7 +29,7 @@ final readonly class VisionAnalysisData
         public ?int $inputTokens,
         public ?int $outputTokens,
     ) {
-        if (! in_array($sheetType, self::SHEET_TYPES, true) || count($evidence) > 256 || count($elements) > 1000 || count($scaleCandidates) > 32
+        if (! in_array($sheetType, self::SHEET_TYPES, true) || $evidence === [] || count($evidence) > 256 || count($elements) > 500 || count($scaleCandidates) > 32
             || array_diff($warnings, self::WARNINGS) !== [] || count($warnings) !== count(array_unique($warnings))
             || preg_match('/^[a-z0-9._-]{1,80}$/', $provider) !== 1
             || preg_match('#^[A-Za-z0-9._/-]{1,160}$#', $requestedModel) !== 1 || $reportedModel !== $requestedModel
@@ -49,8 +49,19 @@ final readonly class VisionAnalysisData
                 throw new VisionContractException('dangling_evidence');
             }
         }
-        $scaleValues = array_values(array_unique(array_map(static fn (VisionScaleCandidateData $item): string => sprintf('%.12F', $item->metersPerUnit), $scaleCandidates)));
-        if (count($scaleValues) > 1 && ! in_array('scale_conflict', $warnings, true)) {
+        $hasScaleMissing = in_array('scale_missing', $warnings, true);
+        $hasScaleConflict = in_array('scale_conflict', $warnings, true);
+        if (($scaleCandidates === []) !== $hasScaleMissing) {
+            throw new VisionContractException('scale_missing_warning_mismatch');
+        }
+        $materialConflict = false;
+        if (count($scaleCandidates) > 1) {
+            $scaleValues = array_map(static fn (VisionScaleCandidateData $item): float => $item->metersPerUnit, $scaleCandidates);
+            $minimum = min($scaleValues);
+            $maximum = max($scaleValues);
+            $materialConflict = ($maximum - $minimum) > max(1.0e-9, abs($minimum) * 0.02);
+        }
+        if ($materialConflict !== $hasScaleConflict) {
             throw new VisionContractException('unreported_scale_conflict');
         }
     }
@@ -84,11 +95,25 @@ final readonly class VisionAnalysisData
             return new VisionElementData($element->key, $element->type, $element->label, $polygon, $element->confidence, $element->evidenceRef);
         }, $this->elements);
 
+        $evidence = array_map(static fn (VisionEvidenceData $item): VisionEvidenceData => $item->toSourceSpace(), $this->evidence);
+
         return new self(
-            $this->sheetType, $this->evidence, $mapped, $this->scaleCandidates, $this->warnings,
+            $this->sheetType, $evidence, $mapped, $this->scaleCandidates, $this->warnings,
             $this->provider, $this->requestedModel, $this->reportedModel, $this->modelVersion,
             $this->usageStatus, $this->inputTokens, $this->outputTokens,
         );
+    }
+
+    public function assertProvenance(VisionDocumentInput $input, string $coordinateSpace): self
+    {
+        if ($this->evidence === []) {
+            throw new VisionContractException('evidence_required');
+        }
+        foreach ($this->evidence as $evidence) {
+            $evidence->assertMatches($input, $coordinateSpace);
+        }
+
+        return $this;
     }
 
     /** @param array<string, mixed> $data @param list<string> $keys */

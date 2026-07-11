@@ -15,6 +15,8 @@ final readonly class VisionDocumentInput
         public int $sessionId,
         public int $documentId,
         public int $pageId,
+        public int $pageNumber,
+        public int $processingUnitId,
         public string $sourceVersion,
         public string $derivativeHash,
         public string $contentType,
@@ -26,6 +28,7 @@ final readonly class VisionDocumentInput
         $dimensions = @getimagesizefromstring($imageContent);
         $detectedMime = is_array($dimensions) ? ($dimensions['mime'] ?? null) : null;
         if ($organizationId < 1 || $projectId < 1 || $sessionId < 1 || $documentId < 1 || $pageId < 1
+            || $pageNumber < 1 || $pageNumber > 10_000 || $processingUnitId < 1
             || preg_match('/^sha256:[a-f0-9]{64}$/', $sourceVersion) !== 1
             || ! hash_equals($derivativeHash, 'sha256:'.hash('sha256', $imageContent))
             || ! in_array($contentType, ['image/jpeg', 'image/png', 'image/webp'], true)
@@ -37,6 +40,7 @@ final readonly class VisionDocumentInput
             || $operationContext->sessionId !== $sessionId
             || $operationContext->documentId !== $documentId
             || $operationContext->pageId !== $pageId
+            || $operationContext->unitId !== $processingUnitId
             || $operationContext->operation !== 'vision') {
             throw new InvalidArgumentException('Invalid vision document input.');
         }

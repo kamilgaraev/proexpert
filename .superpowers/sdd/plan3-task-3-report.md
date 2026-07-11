@@ -57,3 +57,18 @@ DONE. Реализован отдельный production-контур raster/vis
 - Проверены EXIF 1–8 на уровне matrix round-trip и фактического raster pixel, perspective/round-trip, transparency, deterministic hash, tamper, animation, invalid magic/MIME, pixel bomb, quality warnings, strict DTO/schema matrix, source mapping, retry/status matrix, usage unknown/pricing/recorder/no-fallback.
 - Migrations/DB-команды не запускались; тесты DB-less.
 - Larastan touched scope: PASS, no errors. Pint: PASS, 25 files. `php -l`: 25 files PASS. `git diff --check`: PASS.
+
+## Corrective review cycle
+
+- S3 source/derivative reads больше не используют unbounded `get()`: metadata `size()` проверяется до `readStream()`, поток читается chunks не более `max+1`, фактическая длина сверяется с metadata. Spy-тесты доказывают отсутствие content read при oversized metadata и отсутствие `get()`.
+- Alpha и semi-transparent pixels детерминированно компонуются на белый opaque canvas до grayscale/contrast; derivative проверен с alpha `0` и реальным RGB composition.
+- По source установленного Laravel/Guzzle подтверждены `withOptions(['stream' => true])`, PSR-7 body/resource APIs. Non-2xx классифицируется и stream закрывается без чтения body; bounded body reader вызывается только для 2xx. Oversized/malformed 429/503 остаются retryable HTTP attempts.
+- Prompt `vision-contract:v1` теперь полностью перечисляет schema version, exact fields, caps, closed enums, geometry/confidence/provenance/scale invariants. Canonical system+user-template hash закреплён как `sha256:0599a6fe8c53cd198a1dc11fad38a4d0a759d6995b5443e256c79c5e57e1dc10`.
+- Provenance включает page id/number, processing unit, source version и coordinate space. Provider обязан точно вернуть derivative locator; после polygon mapping locator становится `normalized_source_v1`. Mismatch, unknown keys и null bypass fail closed.
+- Scale policy: zero candidates ↔ `scale_missing`; materially distinct values свыше `max(1e-9, 2%)` ↔ `scale_conflict`; один и near-equal candidates запрещают ложный conflict.
+- PNG chunk walker валидирует signature/chunk length/CRC/order/IEND и APNG chunks; WebP walker валидирует RIFF/chunks и animation flags/ANIM/ANMF; GIF parser структурно считает image descriptors/sub-blocks. Trailing data и malformed containers не принимаются.
+- Behavioral raster proof включает colored trapezoid/grid pixels/corners/aspect, EXIF+pre-scale+perspective+final-scale round trip, blank/blur/low-contrast fixtures и no-op rejection.
+- Near-production projective case: 2200×1800 = 3.96M output pixels, 13.34s isolated, PHPUnit peak 152MB; hard cap сохранён на 4,000,000 pixels.
+- `RasterPreprocessResult` закрывает status/warnings/hash/path/version/dimensions/finite metrics/skew invariants.
+- Corrective focused gate: `41 tests / 156 assertions`, PASS. Combined Benchmark/Vision/Observability/BuildingModel/command: `239 tests / 1355 assertions`, PASS.
+- Corrective final gates: Larastan touched scope PASS, Pint 26 files PASS, `php -l` 26 files PASS, privacy scan and `git diff --check` PASS.

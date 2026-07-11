@@ -60,8 +60,10 @@ final class RasterPreprocessorTest extends DatabaseLessTestCase
     public function it_rejects_cross_tenant_invalid_and_animated_sources(): void
     {
         Storage::disk('s3')->put('org-8/uploads/source.png', $this->png(10, 10, [0, 0, 0]));
+        $files = $this->createMock(FileService::class);
+        $files->expects(self::never())->method('disk');
         $this->expectException(RasterPreprocessingException::class);
-        $this->preprocessor->preprocess($this->input(storageKey: 'org-8/uploads/source.png'));
+        (new RasterPreprocessor($files))->preprocess($this->input(storageKey: 'org-8/uploads/source.png'));
     }
 
     #[Test]
@@ -103,7 +105,7 @@ final class RasterPreprocessorTest extends DatabaseLessTestCase
             $this->preprocessor->preprocess($this->input());
             self::fail('Invalid magic was accepted.');
         } catch (RasterPreprocessingException $exception) {
-            self::assertSame('invalid_image_content', $exception->reason);
+            self::assertSame('invalid_image_container', $exception->reason);
         }
 
         Storage::disk('s3')->put('org-7/uploads/source.png', $this->png(300, 300, [0, 0, 0]));
@@ -152,6 +154,30 @@ final class RasterPreprocessorTest extends DatabaseLessTestCase
         self::assertGreaterThan(245, ($pixel >> 16) & 255);
         self::assertGreaterThan(245, ($pixel >> 8) & 255);
         self::assertGreaterThan(245, $pixel & 255);
+        $channels = imagecolorsforindex($derivative, $pixel);
+        self::assertSame(0, $channels['alpha']);
+    }
+
+    #[Test]
+    public function it_composites_semitransparent_rgb_onto_white_before_normalization(): void
+    {
+        $image = imagecreatetruecolor(30, 20);
+        imagealphablending($image, false);
+        imagesavealpha($image, true);
+        imagefill($image, 0, 0, imagecolorallocatealpha($image, 255, 0, 0, 63));
+        ob_start();
+        imagepng($image);
+        $bytes = ob_get_clean();
+        Storage::disk('s3')->put('org-7/uploads/source.png', is_string($bytes) ? $bytes : '');
+
+        $result = $this->preprocessor->preprocess($this->input());
+        $derivative = imagecreatefromstring(Storage::disk('s3')->get($result->derivativeStorageKey));
+        $pixel = imagecolorat($derivative, 0, 0);
+        $channels = imagecolorsforindex($derivative, $pixel);
+
+        self::assertSame(0, $channels['alpha']);
+        self::assertGreaterThan(100, $channels['red']);
+        self::assertLessThan(245, $channels['red']);
     }
 
     #[Test]
@@ -173,12 +199,106 @@ final class RasterPreprocessorTest extends DatabaseLessTestCase
         $this->preprocessor->preprocess($this->input());
     }
 
+    #[Test]
+    public function quality_warnings_are_driven_by_real_blank_blur_and_low_contrast_pixels(): void
+    {
+        Storage::disk('s3')->put('org-7/uploads/source.png', $this->png(120, 80, [255, 255, 255]));
+        $blank = $this->preprocessor->preprocess($this->input());
+        self::assertContains('image_blurred', $blank->warnings);
+        self::assertContains('low_contrast', $blank->warnings);
+        self::assertContains('mostly_blank', $blank->warnings);
+
+        Storage::disk('s3')->put('org-7/uploads/source.png', $this->lowContrastGrid());
+        $lowContrast = $this->preprocessor->preprocess($this->input());
+        self::assertContains('low_contrast', $lowContrast->warnings);
+        self::assertNotContains('mostly_blank', $lowContrast->warnings);
+    }
+
+    #[Test]
+    public function preprocessing_cannot_silently_return_the_original_color_raster(): void
+    {
+        $image = imagecreatetruecolor(100, 50);
+        imagefilledrectangle($image, 0, 0, 49, 49, imagecolorallocate($image, 255, 0, 0));
+        imagefilledrectangle($image, 50, 0, 99, 49, imagecolorallocate($image, 0, 0, 255));
+        ob_start();
+        imagepng($image);
+        $source = ob_get_clean();
+        $source = is_string($source) ? $source : '';
+        Storage::disk('s3')->put('org-7/uploads/source.png', $source);
+
+        $result = $this->preprocessor->preprocess($this->input());
+        $outputBytes = Storage::disk('s3')->get($result->derivativeStorageKey);
+        $output = imagecreatefromstring($outputBytes);
+        $color = imagecolorsforindex($output, imagecolorat($output, 20, 20));
+
+        self::assertNotSame(hash('sha256', $source), substr($result->derivativeHash, 7));
+        self::assertSame($color['red'], $color['green']);
+        self::assertSame($color['green'], $color['blue']);
+        self::assertSame(0, $color['alpha']);
+    }
+
+    #[Test]
+    public function real_trapezoid_grid_maps_colored_corners_and_preserves_rectified_aspect(): void
+    {
+        $quad = [[0.10, 0.15], [0.90, 0.05], [0.80, 0.90], [0.20, 0.85]];
+        Storage::disk('s3')->put('org-7/uploads/source.png', $this->trapezoidGrid(400, 300, $quad));
+
+        $result = $this->preprocessor->preprocess($this->input($quad));
+        $output = imagecreatefromstring(Storage::disk('s3')->get($result->derivativeStorageKey));
+        $samples = [
+            imagecolorsforindex($output, imagecolorat($output, 2, 2))['red'],
+            imagecolorsforindex($output, imagecolorat($output, $result->outputWidth - 3, 2))['red'],
+            imagecolorsforindex($output, imagecolorat($output, $result->outputWidth - 3, $result->outputHeight - 3))['red'],
+            imagecolorsforindex($output, imagecolorat($output, 2, $result->outputHeight - 3))['red'],
+        ];
+
+        self::assertSame('corrected', $result->perspectiveStatus);
+        self::assertLessThan($samples[1], $samples[0]);
+        self::assertLessThan($samples[2], $samples[1]);
+        self::assertLessThan($samples[3], $samples[2]);
+        self::assertGreaterThan(1.1, $result->outputWidth / $result->outputHeight);
+        self::assertLessThan(1.6, $result->outputWidth / $result->outputHeight);
+        foreach ($quad as $corner) {
+            self::assertEqualsWithDelta($corner, $result->transform->toSource($result->transform->toDerivative($corner)), 0.00001);
+        }
+    }
+
+    #[Test]
+    public function composed_orientation_perspective_and_final_scale_remain_invertible(): void
+    {
+        $quad = [[0.10, 0.10], [0.90, 0.15], [0.85, 0.90], [0.15, 0.85]];
+        Storage::disk('s3')->put('org-7/uploads/source.jpg', $this->jpegWithOrientation(900, 600, 6));
+
+        $result = $this->preprocessor->preprocess($this->input($quad, storageKey: 'org-7/uploads/source.jpg', maxPixels: 1_000_000, contentType: 'image/jpeg'));
+
+        self::assertLessThanOrEqual(256, max($result->outputWidth, $result->outputHeight));
+        foreach ([[0.2, 0.2], [0.5, 0.5], [0.8, 0.8]] as $point) {
+            self::assertEqualsWithDelta($point, $result->transform->toSource($result->transform->toDerivative($point)), 0.00001);
+        }
+    }
+
+    #[Test]
+    public function near_production_perspective_is_deterministically_capped_under_time_and_memory_budget(): void
+    {
+        Storage::disk('s3')->put('org-7/uploads/source.png', $this->png(2200, 1800, [210, 210, 210]));
+        $quad = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+        $started = hrtime(true);
+        $memory = memory_get_usage(true);
+
+        $result = $this->preprocessor->preprocess($this->input($quad, maxPixels: 5_000_000, maxDimension: 5000));
+        $elapsedSeconds = (hrtime(true) - $started) / 1_000_000_000;
+
+        self::assertLessThanOrEqual(4_000_000, $result->outputWidth * $result->outputHeight);
+        self::assertLessThan(20.0, $elapsedSeconds);
+        self::assertLessThan(300 * 1024 * 1024, memory_get_peak_usage(true) - $memory);
+    }
+
     /** @param array<int, array{0: float, 1: float}>|null $quad */
-    private function input(?array $quad = null, bool $perspectiveRequired = false, string $storageKey = 'org-7/uploads/source.png', int $maxPixels = 1_000_000, string $contentType = 'image/png'): RasterPreprocessInput
+    private function input(?array $quad = null, bool $perspectiveRequired = false, string $storageKey = 'org-7/uploads/source.png', int $maxPixels = 1_000_000, string $contentType = 'image/png', int $maxDimension = 256): RasterPreprocessInput
     {
         $content = Storage::disk('s3')->exists($storageKey) ? Storage::disk('s3')->get($storageKey) : '';
 
-        return new RasterPreprocessInput(7, 11, 13, 1, 'sha256:'.hash('sha256', $content), $storageKey, $contentType, $quad, $perspectiveRequired, 2_000_000, $maxPixels, 256);
+        return new RasterPreprocessInput(7, 11, 13, 1, 'sha256:'.hash('sha256', $content), $storageKey, $contentType, $quad, $perspectiveRequired, 20_000_000, $maxPixels, $maxDimension);
     }
 
     /** @param array{0: int, 1: int, 2: int} $rgb */
@@ -206,5 +326,44 @@ final class RasterPreprocessorTest extends DatabaseLessTestCase
         $segment = "\xff\xe1".pack('n', strlen($exif) + 2).$exif;
 
         return substr((string) $jpeg, 0, 2).$segment.substr((string) $jpeg, 2);
+    }
+
+    private function lowContrastGrid(): string
+    {
+        $image = imagecreatetruecolor(120, 80);
+        for ($y = 0; $y < 80; $y++) {
+            for ($x = 0; $x < 120; $x++) {
+                $value = (($x + $y) % 2 === 0) ? 120 : 126;
+                imagesetpixel($image, $x, $y, imagecolorallocate($image, $value, $value, $value));
+            }
+        }
+        ob_start();
+        imagepng($image);
+        $bytes = ob_get_clean();
+
+        return is_string($bytes) ? $bytes : '';
+    }
+
+    /** @param array<int, array{0: float, 1: float}> $quad */
+    private function trapezoidGrid(int $width, int $height, array $quad): string
+    {
+        $image = imagecreatetruecolor($width, $height);
+        imagefill($image, 0, 0, imagecolorallocate($image, 255, 255, 255));
+        $points = array_map(static fn (array $point): array => [(int) round($point[0] * ($width - 1)), (int) round($point[1] * ($height - 1))], $quad);
+        foreach ([20, 80, 150, 225] as $index => $value) {
+            [$x, $y] = $points[$index];
+            imagefilledellipse($image, $x, $y, 24, 24, imagecolorallocate($image, $value, $value, $value));
+        }
+        foreach (range(1, 4) as $step) {
+            $t = $step / 5;
+            $top = [$points[0][0] + ($points[1][0] - $points[0][0]) * $t, $points[0][1] + ($points[1][1] - $points[0][1]) * $t];
+            $bottom = [$points[3][0] + ($points[2][0] - $points[3][0]) * $t, $points[3][1] + ($points[2][1] - $points[3][1]) * $t];
+            imageline($image, (int) $top[0], (int) $top[1], (int) $bottom[0], (int) $bottom[1], imagecolorallocate($image, 40, 40, 40));
+        }
+        ob_start();
+        imagepng($image);
+        $bytes = ob_get_clean();
+
+        return is_string($bytes) ? $bytes : '';
     }
 }

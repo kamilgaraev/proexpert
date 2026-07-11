@@ -23,6 +23,8 @@ final readonly class RasterPreprocessor
     public function __construct(
         private FileService $files,
         private ProjectiveTransformFactory $transforms = new ProjectiveTransformFactory,
+        private BoundedStorageReader $reader = new BoundedStorageReader,
+        private RasterAnimationInspector $animation = new RasterAnimationInspector,
     ) {}
 
     public function preprocess(RasterPreprocessInput $input): RasterPreprocessResult
@@ -32,13 +34,11 @@ final readonly class RasterPreprocessor
         if (! $disk->exists($input->storageKey)) {
             throw new RasterPreprocessingException('source_not_found');
         }
-        $bytes = $disk->get($input->storageKey);
-        if (! is_string($bytes) || $bytes === '' || strlen($bytes) > $input->maxBytes) {
-            throw new RasterPreprocessingException('invalid_image_size');
-        }
+        $bytes = $this->reader->read($disk, $input->storageKey, $input->maxBytes);
         if (! hash_equals($input->sourceVersion, 'sha256:'.hash('sha256', $bytes))) {
             throw new RasterPreprocessingException('source_version_mismatch');
         }
+        $this->animation->assertSingleFrame($bytes, $input->contentType);
         $dimensions = @getimagesizefromstring($bytes);
         $mime = is_array($dimensions) ? ($dimensions['mime'] ?? null) : null;
         if (! is_array($dimensions) || ! is_string($mime) || $mime !== $input->contentType) {
@@ -46,7 +46,7 @@ final readonly class RasterPreprocessor
         }
         [$sourceWidth, $sourceHeight] = [$dimensions[0], $dimensions[1]];
         if ($sourceWidth < 1 || $sourceHeight < 1 || $sourceWidth > 50_000 || $sourceHeight > 50_000
-            || $sourceWidth * $sourceHeight > $input->maxPixels || $this->animated($bytes, $mime)) {
+            || $sourceWidth * $sourceHeight > $input->maxPixels) {
             throw new RasterPreprocessingException('unsafe_image_dimensions');
         }
 
@@ -96,6 +96,7 @@ final readonly class RasterPreprocessor
             $warnings[] = 'perspective_confirmation_required';
         }
 
+        $normalized = $this->flattenToOpaqueWhite($normalized);
         $output = $manager->read($normalized)->greyscale()->contrast(12)->scaleDown($input->maxDimension, $input->maxDimension);
         $outputBytes = (string) $output->toPng(indexed: false, interlaced: false);
         $hash = hash('sha256', $outputBytes);
@@ -105,7 +106,12 @@ final readonly class RasterPreprocessor
         $filename = "{$hash}.png";
         $key = "org-{$input->organizationId}/{$directory}/{$filename}";
         if ($disk->exists($key)) {
-            if (! hash_equals($hash, hash('sha256', (string) $disk->get($key)))) {
+            try {
+                $storedDerivative = $this->reader->read($disk, $key, strlen($outputBytes));
+            } catch (RasterPreprocessingException) {
+                throw new RasterPreprocessingException('derivative_hash_collision');
+            }
+            if (! hash_equals($hash, hash('sha256', $storedDerivative))) {
                 throw new RasterPreprocessingException('derivative_hash_collision');
             }
         } else {
@@ -137,12 +143,6 @@ final readonly class RasterPreprocessor
             || str_contains($input->storageKey, '..') || str_contains($input->storageKey, "\0")) {
             throw new RasterPreprocessingException('cross_tenant_source');
         }
-    }
-
-    private function animated(string $bytes, string $mime): bool
-    {
-        return ($mime === 'image/png' && str_contains($bytes, 'acTL'))
-            || ($mime === 'image/webp' && str_contains(substr($bytes, 0, 256), 'ANIM'));
     }
 
     private function exifOrientation(string $bytes, string $mime): int
@@ -217,6 +217,25 @@ final readonly class RasterPreprocessor
         return isset($destinations[$orientation])
             ? $this->transforms->between($source, $destinations[$orientation])
             : $this->transforms->identity();
+    }
+
+    private function flattenToOpaqueWhite(string $bytes): string
+    {
+        $source = imagecreatefromstring($bytes);
+        if (! $source instanceof \GdImage) {
+            throw new RasterPreprocessingException('image_decode_failed');
+        }
+        $target = imagecreatetruecolor(imagesx($source), imagesy($source));
+        imagealphablending($target, true);
+        $white = imagecolorallocate($target, 255, 255, 255);
+        imagefill($target, 0, 0, $white);
+        imagealphablending($source, true);
+        imagecopy($target, $source, 0, 0, 0, 0, imagesx($source), imagesy($source));
+        ob_start();
+        imagepng($target, null, 6);
+        $result = ob_get_clean();
+
+        return is_string($result) ? $result : throw new RasterPreprocessingException('image_encode_failed');
     }
 
     private function compose(ProjectiveTransformData $first, ProjectiveTransformData $second): ProjectiveTransformData
