@@ -17,14 +17,7 @@ final class EstimateGenerationOrdinaryEstimateBoundaryTest extends TestCase
     ];
 
     /** @var array<string, array<int, string>> */
-    private const READ_DEPENDENCIES = [
-        'Models/EstimateGenerationLearningExample.php' => ['Estimate', 'EstimateItem'],
-        'Models/EstimateGenerationSession.php' => ['Estimate'],
-        'Services/EstimateGenerationExcelExportService.php' => ['Estimate'],
-        'Services/Learning/EstimateGenerationLearningBootstrapService.php' => ['Estimate'],
-        'Services/Learning/EstimateGenerationLearningRecorder.php' => ['Estimate'],
-        'Services/Learning/EstimateLearningExampleExtractor.php' => ['Estimate', 'EstimateItem'],
-    ];
+    private const READ_DEPENDENCIES = [];
 
     /** @var array<string, array<int, string>> */
     private const LOOKUP_DEPENDENCIES = [
@@ -32,14 +25,10 @@ final class EstimateGenerationOrdinaryEstimateBoundaryTest extends TestCase
     ];
 
     /** @var array<string, array<int, string>> */
-    private const RAW_READ_DEPENDENCIES = [
-        'Application/Apply/LaravelGeneratedEstimateNumberAllocator.php' => ['estimates'],
-    ];
+    private const RAW_READ_DEPENDENCIES = [];
 
     /** Virtual unsaved model required by the existing Excel builder contract. */
-    private const READ_ONLY_CONSTRUCTION = [
-        'Services/EstimateGenerationExcelExportService.php' => ['new'],
-    ];
+    private const READ_ONLY_CONSTRUCTION = [];
 
     #[Test]
     public function dependencies_match_the_exact_write_read_lookup_and_raw_read_boundaries(): void
@@ -108,7 +97,7 @@ final class EstimateGenerationOrdinaryEstimateBoundaryTest extends TestCase
     #[Test]
     public function analyzer_rejects_all_known_model_relation_group_use_and_raw_query_bypasses(): void
     {
-        $analyzer = $this->analyzer($this->projectSources());
+        $analyzer = new OrdinaryEstimateBoundaryAnalyzer(['appliedEstimate']);
         $fixtures = [
             '<?php use App\\Models\\Estimate; Estimate::whereKey(1)->update([]);',
             '<?php use App\\Models\\Estimate; Estimate::find(1)->delete();',
@@ -180,8 +169,6 @@ PHP;
 
         $relations = array_values(array_unique($relations));
         sort($relations);
-
-        self::assertContains('appliedEstimate', $relations);
 
         return $relations;
     }

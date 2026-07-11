@@ -2,9 +2,10 @@
 
 declare(strict_types=1);
 
-namespace App\BusinessModules\Addons\EstimateGeneration\Services\Learning;
+namespace App\BusinessModules\Features\BudgetEstimates\Integrations\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationLearningExample;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder;
 use App\Models\Estimate;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -12,6 +13,7 @@ use Illuminate\Support\Collection;
 final class EstimateGenerationLearningBootstrapService
 {
     private const DEFAULT_CHUNK_SIZE = 100;
+
     private const DEFAULT_MIN_QUALITY = 0.85;
 
     public function __construct(
@@ -20,7 +22,7 @@ final class EstimateGenerationLearningBootstrapService
     ) {}
 
     /**
-     * @param array<string, mixed> $options
+     * @param  array<string, mixed>  $options
      * @return array{
      *     dry_run: bool,
      *     processed_estimates: int,
@@ -41,7 +43,7 @@ final class EstimateGenerationLearningBootstrapService
         $requireUnitCompatible = (bool) ($options['require_unit_compatible'] ?? true);
 
         $stats = [
-            'dry_run' => !$write,
+            'dry_run' => ! $write,
             'processed_estimates' => 0,
             'candidate_examples' => 0,
             'passed_quality_gate' => 0,
@@ -64,7 +66,7 @@ final class EstimateGenerationLearningBootstrapService
                         return false;
                     }
 
-                    if (!$estimate instanceof Estimate) {
+                    if (! $estimate instanceof Estimate) {
                         continue;
                     }
 
@@ -79,7 +81,7 @@ final class EstimateGenerationLearningBootstrapService
     }
 
     /**
-     * @param array<string, mixed> $options
+     * @param  array<string, mixed>  $options
      * @return Builder<Estimate>
      */
     private function query(array $options): Builder
@@ -94,7 +96,7 @@ final class EstimateGenerationLearningBootstrapService
             ->when($organizationId !== null, static fn (Builder $query): Builder => $query->where('organization_id', $organizationId))
             ->when($projectId !== null, static fn (Builder $query): Builder => $query->where('project_id', $projectId))
             ->when($estimateId !== null, static fn (Builder $query): Builder => $query->whereKey($estimateId))
-            ->when(!$includeDemo, static function (Builder $query): void {
+            ->when(! $includeDemo, static function (Builder $query): void {
                 $query->where(static function (Builder $query): void {
                     $query->whereNull('is_onboarding_demo')
                         ->orWhere('is_onboarding_demo', false);
@@ -130,8 +132,9 @@ final class EstimateGenerationLearningBootstrapService
         foreach ($this->extractor->extractFromImportedEstimate($estimate) as $example) {
             $stats['candidate_examples']++;
 
-            if (!$this->passesQualityGate($example, $minQuality, $requireUnitCompatible)) {
+            if (! $this->passesQualityGate($example, $minQuality, $requireUnitCompatible)) {
                 $stats['skipped_low_quality']++;
+
                 continue;
             }
 
@@ -147,8 +150,9 @@ final class EstimateGenerationLearningBootstrapService
                 continue;
             }
 
-            if (!$write) {
+            if (! $write) {
                 $stats['would_create_examples']++;
+
                 continue;
             }
 
@@ -157,7 +161,7 @@ final class EstimateGenerationLearningBootstrapService
     }
 
     /**
-     * @param array<string, mixed> $example
+     * @param  array<string, mixed>  $example
      */
     private function passesQualityGate(array $example, float $minQuality, bool $requireUnitCompatible): bool
     {
@@ -167,7 +171,7 @@ final class EstimateGenerationLearningBootstrapService
             return false;
         }
 
-        if ($requireUnitCompatible && !in_array('unit_compatible', $flags, true)) {
+        if ($requireUnitCompatible && ! in_array('unit_compatible', $flags, true)) {
             return false;
         }
 
@@ -181,7 +185,7 @@ final class EstimateGenerationLearningBootstrapService
     }
 
     /**
-     * @param array<string, mixed> $example
+     * @param  array<string, mixed>  $example
      */
     private function alreadyRecorded(array $example): bool
     {
@@ -195,7 +199,7 @@ final class EstimateGenerationLearningBootstrapService
 
     private function positiveInt(mixed $value): ?int
     {
-        if (!is_numeric($value) || (int) $value <= 0) {
+        if (! is_numeric($value) || (int) $value <= 0) {
             return null;
         }
 
@@ -204,7 +208,7 @@ final class EstimateGenerationLearningBootstrapService
 
     private function minQuality(mixed $value): float
     {
-        if (!is_numeric($value)) {
+        if (! is_numeric($value)) {
             return self::DEFAULT_MIN_QUALITY;
         }
 

@@ -11,17 +11,15 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPacka
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
-use App\Models\Estimate;
-use App\Models\ImportSession;
 
 final class EstimateGenerationLearningRecorder
 {
     public function __construct(
-        private readonly EstimateLearningExampleExtractor $extractor,
+        private readonly ImportedEstimateExampleExtractor $extractor,
         private readonly WorkIntentClassifier $workIntentClassifier,
     ) {}
 
-    public function recordImportedEstimate(Estimate $estimate, ?ImportSession $importSession = null): int
+    public function recordImportedEstimate(object $estimate, ?object $importSession = null): int
     {
         $created = 0;
 
@@ -33,9 +31,9 @@ final class EstimateGenerationLearningRecorder
     }
 
     /**
-     * @param array<string, mixed> $originalWorkItem
-     * @param array<string, mixed> $selectedWorkItem
-     * @param array<string, mixed> $context
+     * @param  array<string, mixed>  $originalWorkItem
+     * @param  array<string, mixed>  $selectedWorkItem
+     * @param  array<string, mixed>  $context
      */
     public function recordUserSelection(
         EstimateGenerationSession $session,
@@ -46,7 +44,7 @@ final class EstimateGenerationLearningRecorder
     ): int {
         $norm = EstimateNorm::query()->with('collection')->find($normId);
 
-        if (!$norm instanceof EstimateNorm) {
+        if (! $norm instanceof EstimateNorm) {
             return 0;
         }
 
@@ -106,9 +104,9 @@ final class EstimateGenerationLearningRecorder
     }
 
     /**
-     * @param array<string, mixed> $originalWorkItem
-     * @param array<string, mixed> $selectedWorkItem
-     * @param array<string, mixed> $context
+     * @param  array<string, mixed>  $originalWorkItem
+     * @param  array<string, mixed>  $selectedWorkItem
+     * @param  array<string, mixed>  $context
      */
     public function recordSupersededSelection(
         EstimateGenerationSession $session,
@@ -128,7 +126,7 @@ final class EstimateGenerationLearningRecorder
 
         $norm = EstimateNorm::query()->with('collection')->find($previousNormId);
 
-        if (!$norm instanceof EstimateNorm) {
+        if (! $norm instanceof EstimateNorm) {
             return 0;
         }
 
@@ -204,7 +202,7 @@ final class EstimateGenerationLearningRecorder
 
     public function recordUserRejection(EstimateGenerationSession $session, EstimateGenerationFeedback $feedback): int
     {
-        if (!in_array($feedback->feedback_type, ['normative_rejection', 'normative_correction'], true)) {
+        if (! in_array($feedback->feedback_type, ['normative_rejection', 'normative_correction'], true)) {
             return 0;
         }
 
@@ -285,7 +283,7 @@ final class EstimateGenerationLearningRecorder
             ?? ''
         ));
 
-        if (!$norm instanceof EstimateNorm && $normCode !== '') {
+        if (! $norm instanceof EstimateNorm && $normCode !== '') {
             $norm = EstimateNorm::query()
                 ->with('collection')
                 ->where('code', $normCode)
@@ -293,7 +291,7 @@ final class EstimateGenerationLearningRecorder
                 ->first();
         }
 
-        if (!$norm instanceof EstimateNorm || $normCode === '') {
+        if (! $norm instanceof EstimateNorm || $normCode === '') {
             return 0;
         }
 
@@ -409,7 +407,7 @@ final class EstimateGenerationLearningRecorder
     }
 
     /**
-     * @param array<string, mixed> $attributes
+     * @param  array<string, mixed>  $attributes
      */
     public function record(array $attributes): int
     {
@@ -420,11 +418,11 @@ final class EstimateGenerationLearningRecorder
             'norm_code' => (string) $attributes['norm_code'],
         ]);
 
-        if ($example->exists && !$this->canReplace($example, $attributes)) {
+        if ($example->exists && ! $this->canReplace($example, $attributes)) {
             return 0;
         }
 
-        $wasNew = !$example->exists;
+        $wasNew = ! $example->exists;
         $example->fill($attributes);
         $example->save();
 
@@ -432,7 +430,7 @@ final class EstimateGenerationLearningRecorder
     }
 
     /**
-     * @param array<string, mixed> $attributes
+     * @param  array<string, mixed>  $attributes
      */
     private function canReplace(EstimateGenerationLearningExample $example, array $attributes): bool
     {
@@ -498,7 +496,7 @@ final class EstimateGenerationLearningRecorder
     }
 
     /**
-     * @param array<string, mixed> $payload
+     * @param  array<string, mixed>  $payload
      */
     private function normFromPayload(array $payload): ?EstimateNorm
     {
@@ -526,7 +524,7 @@ final class EstimateGenerationLearningRecorder
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function workItemKey(array $workItem): ?string
     {
@@ -534,7 +532,7 @@ final class EstimateGenerationLearningRecorder
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function workName(array $workItem): string
     {
@@ -580,7 +578,7 @@ final class EstimateGenerationLearningRecorder
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function quantityKey(array $workItem, ?string $workItemKey): string
     {
@@ -598,7 +596,7 @@ final class EstimateGenerationLearningRecorder
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      * @return array<int, array<string, mixed>>
      */
     private function quantitySourceRefs(
@@ -632,19 +630,19 @@ final class EstimateGenerationLearningRecorder
     }
 
     /**
-     * @param array<string, mixed> $selectedWorkItem
-     * @param array<string, mixed> $originalWorkItem
+     * @param  array<string, mixed>  $selectedWorkItem
+     * @param  array<string, mixed>  $originalWorkItem
      * @return array<string, mixed>|null
      */
     private function quantitySnapshot(array $selectedWorkItem, array $originalWorkItem): ?array
     {
         $quantityFeedback = data_get($selectedWorkItem, 'metadata.quantity_feedback');
 
-        if (!is_array($quantityFeedback)) {
+        if (! is_array($quantityFeedback)) {
             $quantityFeedback = data_get($originalWorkItem, 'metadata.quantity_feedback');
         }
 
-        if (!is_array($quantityFeedback)) {
+        if (! is_array($quantityFeedback)) {
             $quantityFeedback = [];
         }
 

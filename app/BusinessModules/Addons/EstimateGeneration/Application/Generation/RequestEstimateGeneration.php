@@ -55,7 +55,7 @@ final class RequestEstimateGeneration
                     'generation_requested' => true,
                 ]]);
 
-                return new SessionActionResult($session, true, 'estimate_generation.generation_waiting_for_documents', 202);
+                return new SessionActionResult($session, true, 'estimate_generation.generation_documents_pending', 202);
             }
 
             return new SessionActionResult($session, false, $readiness['blocking_message_key'] ?? 'estimate_generation.documents_require_action', 409, ['documents_summary' => $readiness['summary']]);

@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationExcelExportService;
+use App\BusinessModules\Features\BudgetEstimates\Integrations\EstimateGeneration\EstimateGenerationExcelExportService;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionMethod;

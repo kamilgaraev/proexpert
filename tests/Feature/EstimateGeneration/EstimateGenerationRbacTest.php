@@ -19,9 +19,7 @@ use Tests\TestCase;
 
 class EstimateGenerationRbacTest extends TestCase
 {
-    public function refreshDatabase(): void
-    {
-    }
+    public function refreshDatabase(): void {}
 
     #[DataProvider('protectedActions')]
     public function test_every_estimate_generation_endpoint_has_its_domain_permission(
@@ -57,6 +55,10 @@ class EstimateGenerationRbacTest extends TestCase
             'document ignore' => ['POST', "{$prefix}/{session}/documents/{document}/ignore", 'estimate_generation.review'],
             'analyze' => ['POST', "{$prefix}/{session}/analyze", 'estimate_generation.generate'],
             'generate' => ['POST', "{$prefix}/{session}/generate", 'estimate_generation.generate'],
+            'confirm input' => ['POST', "{$prefix}/{session}/confirm-input", 'estimate_generation.review'],
+            'retry session' => ['POST', "{$prefix}/{session}/retry", 'estimate_generation.generate'],
+            'cancel session' => ['POST', "{$prefix}/{session}/cancel", 'estimate_generation.generate'],
+            'archive session' => ['POST', "{$prefix}/{session}/archive", 'estimate_generation.generate'],
             'status' => ['GET', "{$prefix}/{session}/status", 'estimate_generation.view'],
             'packages index' => ['GET', "{$prefix}/{session}/packages", 'estimate_generation.view'],
             'package show' => ['GET', "{$prefix}/{session}/packages/{package}", 'estimate_generation.view'],

@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\GeneratedEst
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\GeneratedEstimateWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\LaravelGeneratedEstimateNumberAllocator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\LaravelGeneratedEstimateWriter;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\OrdinaryEstimateNumberLookup;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\BootstrapEstimateGenerationLearningCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\InspectEstimateGenerationProductionCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Contracts\DrawingAnalysisProviderInterface;
@@ -46,13 +47,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\RuleBasedDr
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationAuditService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationExcelExportService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferenceService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningBootstrapService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningEvidenceService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\ImportedEstimateExampleExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSearchService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeScopeRuleCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\LLMNormativeCandidateReranker;
@@ -77,7 +77,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorRead
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
-use App\BusinessModules\Features\BudgetEstimates\Services\Export\ExcelEstimateBuilder;
+use App\BusinessModules\Features\BudgetEstimates\Integrations\EstimateGeneration\EloquentOrdinaryEstimateNumberLookup;
+use App\BusinessModules\Features\BudgetEstimates\Integrations\EstimateGeneration\EstimateLearningExampleExtractor;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
@@ -117,12 +118,13 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(EstimateValidationService::class);
         $this->app->singleton(EstimateDraftPersistenceService::class);
         $this->app->singleton(GeneratedEstimateNumberAllocator::class, LaravelGeneratedEstimateNumberAllocator::class);
+        $this->app->singleton(OrdinaryEstimateNumberLookup::class, EloquentOrdinaryEstimateNumberLookup::class);
+        $this->app->singleton(ImportedEstimateExampleExtractor::class, EstimateLearningExampleExtractor::class);
         $this->app->singleton(GeneratedEstimateWriter::class, LaravelGeneratedEstimateWriter::class);
         $this->app->singleton(EstimateGenerationAuditService::class);
         $this->app->singleton(NormativeScopeRuleCatalog::class);
         $this->app->singleton(WorkIntentClassifier::class);
         $this->app->singleton(NormativeCandidateSearchService::class);
-        $this->app->singleton(EstimateGenerationLearningBootstrapService::class);
         $this->app->singleton(EstimateGenerationLearningEvidenceService::class);
         $this->app->singleton(RuleBasedNormativeCandidateReranker::class);
         $this->app->singleton(LLMNormativeCandidateReranker::class, fn ($app) => new LLMNormativeCandidateReranker(
@@ -139,9 +141,6 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 ? $app->make(LLMNormativeCandidateReranker::class)
                 : $app->make(RuleBasedNormativeCandidateReranker::class);
         });
-        $this->app->singleton(EstimateGenerationExcelExportService::class, fn () => new EstimateGenerationExcelExportService(
-            app(ExcelEstimateBuilder::class)
-        ));
         $this->app->singleton(EstimateGenerationOrchestrator::class);
         $this->app->singleton(EstimateSourceStorageService::class);
         $this->app->singleton(EstimateSourceImportService::class);

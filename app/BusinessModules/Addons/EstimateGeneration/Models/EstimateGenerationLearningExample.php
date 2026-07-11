@@ -6,8 +6,6 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Models;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateDatasetVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm;
-use App\Models\Estimate;
-use App\Models\EstimateItem;
 use App\Models\Organization;
 use App\Models\Project;
 use Illuminate\Database\Eloquent\Model;
@@ -77,16 +75,6 @@ class EstimateGenerationLearningExample extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
-    }
-
-    public function estimate(): BelongsTo
-    {
-        return $this->belongsTo(Estimate::class);
-    }
-
-    public function estimateItem(): BelongsTo
-    {
-        return $this->belongsTo(EstimateItem::class);
     }
 
     public function generationSession(): BelongsTo

@@ -13,12 +13,16 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\Request
 use App\BusinessModules\Addons\EstimateGeneration\Application\Review\RecordEstimateGenerationFeedback;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Review\SelectNormativeCandidate;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\CreateEstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\TransitionEstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationTransition;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\AnalyzeEstimateGenerationRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ApplyEstimateGenerationDraftRequest;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ConfirmEstimateGenerationInputRequest;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ControlEstimateGenerationSessionRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\CreateEstimateGenerationSessionRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\EstimateGenerationFeedbackRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\GenerateEstimateGenerationRequest;
@@ -32,12 +36,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerat
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationExcelExportService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationFinalWorkItemGuard;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationReviewItemService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateManualSearchService;
+use App\BusinessModules\Features\BudgetEstimates\Integrations\EstimateGeneration\EstimateGenerationExcelExportService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
@@ -47,6 +51,7 @@ use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 use function trans_message;
 
@@ -67,27 +72,29 @@ class EstimateGenerationController extends Controller
         protected UploadEstimateGenerationDocuments $uploadDocumentsAction,
         protected AnalyzeEstimateGenerationSession $analyzeSession,
         protected RequestEstimateGeneration $requestGeneration,
+        protected TransitionEstimateGenerationSession $transitionSession,
     ) {}
 
     public function index(Request $request, Project $project): JsonResponse
     {
-        $user = $request->user();
+        return $this->safeReadResponse(function () use ($request, $project): JsonResponse {
+            $user = $request->user();
+            $sessions = EstimateGenerationSession::query()
+                ->where('organization_id', $user->current_organization_id)
+                ->where('project_id', $project->id)
+                ->orderByDesc('id')
+                ->paginate((int) $request->input('per_page', 10));
 
-        $sessions = EstimateGenerationSession::query()
-            ->where('organization_id', $user->current_organization_id)
-            ->where('project_id', $project->id)
-            ->orderByDesc('id')
-            ->paginate((int) $request->input('per_page', 10));
-
-        return AdminResponse::paginated(
-            EstimateGenerationSessionListResource::collection($sessions),
-            [
-                'current_page' => $sessions->currentPage(),
-                'last_page' => $sessions->lastPage(),
-                'per_page' => $sessions->perPage(),
-                'total' => $sessions->total(),
-            ]
-        );
+            return AdminResponse::paginated(
+                EstimateGenerationSessionListResource::collection($sessions),
+                [
+                    'current_page' => $sessions->currentPage(),
+                    'last_page' => $sessions->lastPage(),
+                    'per_page' => $sessions->perPage(),
+                    'total' => $sessions->total(),
+                ]
+            );
+        }, 'list sessions', ['project_id' => $project->id]);
     }
 
     public function store(CreateEstimateGenerationSessionRequest $request, Project $project): JsonResponse
@@ -101,7 +108,7 @@ class EstimateGenerationController extends Controller
                 'organization_id' => $user->current_organization_id,
                 'project_id' => $project->id,
                 'user_id' => $user->id,
-                'processing_stage' => 'created',
+                'processing_stage' => 'draft',
                 'processing_progress' => 0,
                 'input_payload' => array_merge($validated, [
                     'generation_mode' => $generationMode,
@@ -224,70 +231,119 @@ class EstimateGenerationController extends Controller
         }
     }
 
+    public function confirmInput(ConfirmEstimateGenerationInputRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse
+    {
+        return $this->transitionSessionResponse(
+            $request,
+            $project,
+            $session,
+            EstimateGenerationEvent::InputConfirmed,
+            'estimate_generation.input_confirmed',
+            'confirm input',
+        );
+    }
+
+    public function retry(ControlEstimateGenerationSessionRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse
+    {
+        return $this->transitionSessionResponse(
+            $request,
+            $project,
+            $session,
+            EstimateGenerationEvent::Retried,
+            'estimate_generation.session_retried',
+            'retry session',
+        );
+    }
+
+    public function cancel(ControlEstimateGenerationSessionRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse
+    {
+        return $this->transitionSessionResponse(
+            $request,
+            $project,
+            $session,
+            EstimateGenerationEvent::Cancelled,
+            'estimate_generation.session_cancelled',
+            'cancel session',
+        );
+    }
+
+    public function archive(ControlEstimateGenerationSessionRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse
+    {
+        return $this->transitionSessionResponse(
+            $request,
+            $project,
+            $session,
+            EstimateGenerationEvent::Archived,
+            'estimate_generation.session_archived',
+            'archive session',
+        );
+    }
+
     public function show(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
     {
-        $this->guardSession($request, $project, $session);
+        return $this->safeReadResponse(function () use ($request, $project, $session): JsonResponse {
+            $this->guardSession($request, $project, $session);
 
-        return AdminResponse::success($this->sessionPayload($session));
+            return AdminResponse::success($this->sessionPayload($session));
+        }, 'show session', ['project_id' => $project->id, 'session_id' => $session->id]);
     }
 
     public function status(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
     {
-        $this->guardSession($request, $project, $session);
+        return $this->safeReadResponse(function () use ($request, $project, $session): JsonResponse {
+            $this->guardSession($request, $project, $session);
 
-        return AdminResponse::success($this->sessionPayload($session));
+            return AdminResponse::success($this->sessionPayload($session));
+        }, 'session status', ['project_id' => $project->id, 'session_id' => $session->id]);
     }
 
     public function packages(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
     {
-        $this->guardSession($request, $project, $session);
+        return $this->safeReadResponse(function () use ($request, $project, $session): JsonResponse {
+            $this->guardSession($request, $project, $session);
 
-        return AdminResponse::success(
-            $this->packagePresenter->collection($session->packages()->get())
-        );
+            return AdminResponse::success($this->packagePresenter->collection($session->packages()->get()));
+        }, 'list packages', ['project_id' => $project->id, 'session_id' => $session->id]);
     }
 
     public function package(Request $request, Project $project, EstimateGenerationSession $session, EstimateGenerationPackage $package): JsonResponse
     {
-        $this->guardSession($request, $project, $session);
+        return $this->safeReadResponse(function () use ($request, $project, $session, $package): JsonResponse {
+            $this->guardSession($request, $project, $session);
+            if ((int) $package->session_id !== (int) $session->id) {
+                abort(404);
+            }
 
-        if ((int) $package->session_id !== (int) $session->id) {
-            abort(404);
-        }
+            $perPage = min(max((int) $request->query('per_page', 100), 1), 500);
+            $items = $package->items()
+                ->whereNotIn('item_type', EstimateGenerationPackageItem::SERVICE_ITEM_TYPES)
+                ->limit($perPage)
+                ->get();
 
-        $perPage = min(max((int) $request->query('per_page', 100), 1), 500);
-        $items = $package->items()
-            ->whereNotIn('item_type', EstimateGenerationPackageItem::SERVICE_ITEM_TYPES)
-            ->limit($perPage)
-            ->get();
-
-        return AdminResponse::success(
-            $this->packagePresenter->detail($package, $items)
-        );
+            return AdminResponse::success($this->packagePresenter->detail($package, $items));
+        }, 'show package', [
+            'project_id' => $project->id,
+            'session_id' => $session->id,
+            'package_id' => $package->id,
+        ]);
     }
 
     public function draft(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
     {
-        $this->guardSession($request, $project, $session);
+        return $this->safeReadResponse(function () use ($request, $project, $session): JsonResponse {
+            $this->guardSession($request, $project, $session);
 
-        return AdminResponse::success($session->draft_payload ?? []);
+            return AdminResponse::success($session->draft_payload ?? []);
+        }, 'show draft', ['project_id' => $project->id, 'session_id' => $session->id]);
     }
 
     public function reviewItems(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
     {
-        try {
+        return $this->safeReadResponse(function () use ($request, $project, $session): JsonResponse {
             $this->guardSession($request, $project, $session);
 
             return AdminResponse::success($this->reviewItemService->forSession($session));
-        } catch (\Throwable $e) {
-            Log::error('[EstimateGeneration] Review items failed', [
-                'project_id' => $project->id,
-                'session_id' => $session->id,
-                'error' => $e->getMessage(),
-            ]);
-
-            return AdminResponse::error(trans_message('estimate_generation.review_items_error'), 500);
-        }
+        }, 'review items', ['project_id' => $project->id, 'session_id' => $session->id]);
     }
 
     public function export(Request $request, Project $project, EstimateGenerationSession $session): Response|StreamedResponse|JsonResponse
@@ -539,6 +595,58 @@ class EstimateGenerationController extends Controller
             (int) $session->project_id !== (int) $project->id
         ) {
             abort(403, trans_message('estimate_generation.access_denied'));
+        }
+    }
+
+    private function transitionSessionResponse(
+        Request $request,
+        Project $project,
+        EstimateGenerationSession $session,
+        EstimateGenerationEvent $event,
+        string $messageKey,
+        string $operation,
+    ): JsonResponse {
+        try {
+            $this->guardSession($request, $project, $session);
+            $updated = $this->transitionSession->handle(
+                $session,
+                (int) $request->input('state_version'),
+                $event,
+            );
+
+            return AdminResponse::success(
+                $this->sessionPayload($updated),
+                trans_message($messageKey),
+            );
+        } catch (StaleEstimateGenerationState|InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (\Throwable $e) {
+            Log::error('[EstimateGeneration] Session transition failed', [
+                'operation' => $operation,
+                'project_id' => $project->id,
+                'session_id' => $session->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('estimate_generation.session_transition_error'), 500);
+        }
+    }
+
+    /** @param callable(): JsonResponse $response @param array<string, mixed> $context */
+    private function safeReadResponse(callable $response, string $operation, array $context): JsonResponse
+    {
+        try {
+            return $response();
+        } catch (HttpExceptionInterface $exception) {
+            throw $exception;
+        } catch (\Throwable $exception) {
+            Log::error('[EstimateGeneration] Read endpoint failed', [
+                ...$context,
+                'operation' => $operation,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('estimate_generation.read_error'), 500);
         }
     }
 

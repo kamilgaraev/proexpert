@@ -35,35 +35,35 @@
   ],
   "permissions": [
     {
-      "name": "ai_estimates.create_session",
+      "name": "estimate_generation.create",
       "description": "Создание сессии AI-сметчика"
     },
     {
-      "name": "ai_estimates.view_sessions",
+      "name": "estimate_generation.view",
       "description": "Просмотр сессий AI-сметчика"
     },
     {
-      "name": "ai_estimates.upload_documents",
+      "name": "estimate_generation.upload_documents",
       "description": "Загрузка проектных документов для AI-сметчика"
     },
     {
-      "name": "ai_estimates.generate",
+      "name": "estimate_generation.generate",
       "description": "Формирование расчетного черновика сметы"
     },
     {
-      "name": "ai_estimates.review",
+      "name": "estimate_generation.review",
       "description": "Проверка норм, объемов и сметных допущений"
     },
     {
-      "name": "ai_estimates.apply",
+      "name": "estimate_generation.apply",
       "description": "Применение рассчитанной сметы"
     },
     {
-      "name": "ai_estimates.export",
+      "name": "estimate_generation.export",
       "description": "Экспорт расчетного черновика"
     },
     {
-      "name": "ai_estimates.configure",
+      "name": "estimate_generation.select_normative",
       "description": "Настройка AI-сметчика"
     }
   ],

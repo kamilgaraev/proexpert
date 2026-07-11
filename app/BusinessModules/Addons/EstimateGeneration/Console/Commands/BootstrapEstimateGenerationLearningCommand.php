@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Console\Commands;
 
-use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningBootstrapService;
+use App\BusinessModules\Features\BudgetEstimates\Integrations\EstimateGeneration\EstimateGenerationLearningBootstrapService;
 use Illuminate\Console\Command;
 
 final class BootstrapEstimateGenerationLearningCommand extends Command
@@ -39,7 +39,7 @@ final class BootstrapEstimateGenerationLearningCommand extends Command
             'limit' => $this->nullableIntOption('limit'),
             'chunk' => $this->nullableIntOption('chunk'),
             'min_quality' => $minQuality,
-            'require_unit_compatible' => !(bool) $this->option('allow-unverified-units'),
+            'require_unit_compatible' => ! (bool) $this->option('allow-unverified-units'),
             'include_demo' => (bool) $this->option('include-demo'),
             'write' => (bool) $this->option('write'),
         ]);
@@ -68,7 +68,7 @@ final class BootstrapEstimateGenerationLearningCommand extends Command
     {
         $value = $this->option($key);
 
-        if ($value === null || $value === '' || !is_numeric($value)) {
+        if ($value === null || $value === '' || ! is_numeric($value)) {
             return null;
         }
 

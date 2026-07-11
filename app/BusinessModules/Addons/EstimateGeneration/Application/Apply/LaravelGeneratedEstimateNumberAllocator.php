@@ -6,7 +6,6 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Apply;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use Closure;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class LaravelGeneratedEstimateNumberAllocator implements GeneratedEstimateNumberAllocator
@@ -15,8 +14,10 @@ class LaravelGeneratedEstimateNumberAllocator implements GeneratedEstimateNumber
 
     private Closure $suffixFactory;
 
-    public function __construct(?Closure $suffixFactory = null)
-    {
+    public function __construct(
+        private OrdinaryEstimateNumberLookup $numberLookup,
+        ?Closure $suffixFactory = null,
+    ) {
         $this->suffixFactory = $suffixFactory ?? static fn (): string => (string) Str::ulid();
     }
 
@@ -39,9 +40,6 @@ class LaravelGeneratedEstimateNumberAllocator implements GeneratedEstimateNumber
 
     protected function isOccupied(int $organizationId, string $number): bool
     {
-        return DB::table('estimates')
-            ->where('organization_id', $organizationId)
-            ->where('number', $number)
-            ->exists();
+        return $this->numberLookup->exists($organizationId, $number);
     }
 }

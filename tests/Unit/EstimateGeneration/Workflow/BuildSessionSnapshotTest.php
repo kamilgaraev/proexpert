@@ -10,14 +10,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Foundation\Testing\TestCase;
-use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 
 final class BuildSessionSnapshotTest extends TestCase
 {
     public function createApplication()
     {
-        $app = require dirname(__DIR__, 4) . '/bootstrap/app.php';
+        $app = require dirname(__DIR__, 4).'/bootstrap/app.php';
         $app->make(Kernel::class)->bootstrap();
 
         return $app;
@@ -88,11 +87,54 @@ final class BuildSessionSnapshotTest extends TestCase
     }
 
     #[Test]
-    #[DataProvider('terminalStatuses')]
-    public function terminal_sessions_never_expose_mutating_actions(EstimateGenerationStatus $status): void
+    public function input_review_exposes_confirm_and_cancel_with_their_route_contracts(): void
     {
         $snapshot = app(BuildSessionSnapshot::class)->handle(
-            session: $this->makeSession($status),
+            session: $this->makeSession(EstimateGenerationStatus::InputReviewRequired),
+            permissions: ['estimate_generation.review', 'estimate_generation.generate'],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+        );
+
+        self::assertSame(['confirm_input', 'retry', 'cancel'], array_column($snapshot->availableActions, 'action'));
+        self::assertSame(['POST', 'POST', 'POST'], array_column($snapshot->availableActions, 'method'));
+        self::assertSame([
+            '/api/v1/admin/projects/17/estimate-generation/sessions/41/confirm-input',
+            '/api/v1/admin/projects/17/estimate-generation/sessions/41/retry',
+            '/api/v1/admin/projects/17/estimate-generation/sessions/41/cancel',
+        ], array_column($snapshot->availableActions, 'endpoint'));
+    }
+
+    #[Test]
+    public function failed_session_exposes_retry_cancel_and_archive(): void
+    {
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $this->makeSession(EstimateGenerationStatus::Failed),
+            permissions: ['estimate_generation.generate'],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+        );
+
+        self::assertSame(['retry', 'cancel', 'archive'], array_column($snapshot->availableActions, 'action'));
+    }
+
+    #[Test]
+    public function applied_and_cancelled_sessions_expose_only_archive(): void
+    {
+        foreach ([EstimateGenerationStatus::Applied, EstimateGenerationStatus::Cancelled] as $status) {
+            $snapshot = app(BuildSessionSnapshot::class)->handle(
+                session: $this->makeSession($status),
+                permissions: ['estimate_generation.generate'],
+                readinessSummary: ['blockers' => [], 'warnings' => []],
+            );
+
+            self::assertSame(['archive'], array_column($snapshot->availableActions, 'action'));
+        }
+    }
+
+    #[Test]
+    public function archived_session_never_exposes_actions(): void
+    {
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $this->makeSession(EstimateGenerationStatus::Archived),
             permissions: [
                 'estimate_generation.upload_documents',
                 'estimate_generation.generate',
@@ -132,19 +174,9 @@ final class BuildSessionSnapshotTest extends TestCase
         self::assertSame('review', $snapshot->nextAction);
     }
 
-    /** @return array<string, array{EstimateGenerationStatus}> */
-    public static function terminalStatuses(): array
-    {
-        return [
-            'applied' => [EstimateGenerationStatus::Applied],
-            'cancelled' => [EstimateGenerationStatus::Cancelled],
-            'archived' => [EstimateGenerationStatus::Archived],
-        ];
-    }
-
     private function makeSession(EstimateGenerationStatus $status): EstimateGenerationSession
     {
-        $session = new EstimateGenerationSession();
+        $session = new EstimateGenerationSession;
         $session->forceFill([
             'id' => 41,
             'project_id' => 17,

@@ -2,9 +2,10 @@
 
 declare(strict_types=1);
 
-namespace App\BusinessModules\Addons\EstimateGeneration\Services;
+namespace App\BusinessModules\Features\BudgetEstimates\Integrations\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationFinalWorkItemGuard;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\ExcelEstimateBuilder;
 use App\Models\Estimate;
 
@@ -16,7 +17,7 @@ class EstimateGenerationExcelExportService
         protected ExcelEstimateBuilder $excelEstimateBuilder,
         ?EstimateGenerationFinalWorkItemGuard $finalWorkItemGuard = null,
     ) {
-        $this->finalWorkItemGuard = $finalWorkItemGuard ?? new EstimateGenerationFinalWorkItemGuard();
+        $this->finalWorkItemGuard = $finalWorkItemGuard ?? new EstimateGenerationFinalWorkItemGuard;
     }
 
     public function export(EstimateGenerationSession $session): array
@@ -30,12 +31,12 @@ class EstimateGenerationExcelExportService
 
     protected function makeVirtualEstimate(EstimateGenerationSession $session, array $draft): Estimate
     {
-        $estimate = new Estimate();
+        $estimate = new Estimate;
         $estimate->forceFill([
             'id' => 0,
             'organization_id' => $session->organization_id,
             'project_id' => $session->project_id,
-            'number' => 'AI-' . $session->id,
+            'number' => 'AI-'.$session->id,
             'name' => $draft['title'] ?? 'AI-смета',
             'description' => $session->input_payload['description'] ?? null,
             'type' => 'local',
@@ -66,7 +67,7 @@ class EstimateGenerationExcelExportService
         $exportTotal = 0.0;
 
         foreach ($draft['local_estimates'] ?? [] as $localEstimateIndex => $localEstimate) {
-            if (!is_array($localEstimate)) {
+            if (! is_array($localEstimate)) {
                 continue;
             }
 
@@ -79,7 +80,7 @@ class EstimateGenerationExcelExportService
                 'parent_section_id' => null,
                 'section_number' => (string) ($localEstimateIndex + 1),
                 'full_section_number' => (string) ($localEstimateIndex + 1),
-                'name' => $localEstimate['title'] ?? ('Локальная смета ' . ($localEstimateIndex + 1)),
+                'name' => $localEstimate['title'] ?? ('Локальная смета '.($localEstimateIndex + 1)),
                 'description' => $this->buildLocalEstimateDescription($localEstimate),
                 'is_summary' => true,
                 'section_total_amount' => round($localEstimateTotal, 2),
@@ -87,18 +88,18 @@ class EstimateGenerationExcelExportService
             ];
 
             foreach ($localEstimate['sections'] ?? [] as $sectionIndex => $section) {
-                if (!is_array($section)) {
+                if (! is_array($section)) {
                     continue;
                 }
 
                 $currentSectionId = $sectionId++;
-                $fullSectionNumber = (string) ($localEstimateIndex + 1) . '.' . ($sectionIndex + 1);
+                $fullSectionNumber = (string) ($localEstimateIndex + 1).'.'.($sectionIndex + 1);
                 $sectionTotal = 0.0;
                 $preparedItems = [];
                 $visibleWorkIndex = 1;
 
                 foreach ($section['work_items'] ?? [] as $workItem) {
-                    if (!is_array($workItem) || !$this->isEstimateWorkItem($workItem)) {
+                    if (! is_array($workItem) || ! $this->isEstimateWorkItem($workItem)) {
                         continue;
                     }
 
@@ -139,7 +140,7 @@ class EstimateGenerationExcelExportService
         return [
             'estimate' => [
                 'id' => 0,
-                'number' => 'AI-' . $session->id,
+                'number' => 'AI-'.$session->id,
                 'name' => $draft['title'] ?? 'AI-смета',
                 'description' => $session->input_payload['description'] ?? null,
                 'type' => 'local',
@@ -211,7 +212,7 @@ class EstimateGenerationExcelExportService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function isEstimateWorkItem(array $workItem): bool
     {
@@ -220,7 +221,7 @@ class EstimateGenerationExcelExportService
 
     private function finalWorkItemGuard(): EstimateGenerationFinalWorkItemGuard
     {
-        return $this->finalWorkItemGuard ??= new EstimateGenerationFinalWorkItemGuard();
+        return $this->finalWorkItemGuard ??= new EstimateGenerationFinalWorkItemGuard;
     }
 
     protected function prepareWorkItem(array $workItem, int $sectionId, int $itemId, string $positionNumber): array
@@ -238,7 +239,7 @@ class EstimateGenerationExcelExportService
                     'parent_work_id' => $currentItemId,
                     'catalog_item_id' => null,
                     'item_type' => $itemType,
-                    'position_number' => $positionNumber . '.' . $childPositionIndex,
+                    'position_number' => $positionNumber.'.'.$childPositionIndex,
                     'name' => $resource['name'] ?? 'Ресурс',
                     'description' => $resource['quantity_basis'] ?? null,
                     'normative_rate_code' => $resource['normative_ref']['resource_code'] ?? null,
@@ -335,16 +336,16 @@ class EstimateGenerationExcelExportService
     {
         $parts = [];
 
-        if (!empty($localEstimate['source_refs'])) {
+        if (! empty($localEstimate['source_refs'])) {
             $parts[] = implode('; ', array_map(
-                static fn (array $ref): string => ($ref['type'] ?? 'источник') . ': ' . ($ref['value'] ?? ''),
+                static fn (array $ref): string => ($ref['type'] ?? 'источник').': '.($ref['value'] ?? ''),
                 $localEstimate['source_refs']
             ));
         }
 
-        if (!empty($section['source_refs'])) {
+        if (! empty($section['source_refs'])) {
             $parts[] = implode('; ', array_map(
-                static fn (array $ref): string => ($ref['type'] ?? 'источник') . ': ' . ($ref['value'] ?? ''),
+                static fn (array $ref): string => ($ref['type'] ?? 'источник').': '.($ref['value'] ?? ''),
                 $section['source_refs']
             ));
         }
@@ -356,14 +357,14 @@ class EstimateGenerationExcelExportService
     {
         $parts = [];
 
-        if (!empty($localEstimate['source_refs'])) {
+        if (! empty($localEstimate['source_refs'])) {
             $parts[] = implode('; ', array_map(
-                static fn (array $ref): string => ($ref['type'] ?? 'источник') . ': ' . ($ref['value'] ?? ''),
+                static fn (array $ref): string => ($ref['type'] ?? 'источник').': '.($ref['value'] ?? ''),
                 $localEstimate['source_refs']
             ));
         }
 
-        if (!empty($localEstimate['assumptions'])) {
+        if (! empty($localEstimate['assumptions'])) {
             $parts[] = implode('; ', $localEstimate['assumptions']);
         }
 
@@ -375,9 +376,9 @@ class EstimateGenerationExcelExportService
         $parts = array_values(array_filter([
             $workItem['description'] ?? null,
             $workItem['quantity_basis'] ?? null,
-            !empty($workItem['source_refs'])
+            ! empty($workItem['source_refs'])
                 ? implode('; ', array_map(
-                    static fn (array $ref): string => ($ref['type'] ?? 'источник') . ': ' . ($ref['value'] ?? ''),
+                    static fn (array $ref): string => ($ref['type'] ?? 'источник').': '.($ref['value'] ?? ''),
                     $workItem['source_refs']
                 ))
                 : null,

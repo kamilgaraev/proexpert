@@ -14,12 +14,16 @@ final class BuildSessionSnapshot
 {
     /** @var array<string, list<EstimateGenerationAction>> */
     private const STATUS_ACTIONS = [
-        'draft' => [EstimateGenerationAction::UploadDocuments, EstimateGenerationAction::StartDocumentProcessing],
-        'input_review_required' => [EstimateGenerationAction::Review, EstimateGenerationAction::Retry],
-        'ready_to_generate' => [EstimateGenerationAction::Generate],
-        'estimate_review_required' => [EstimateGenerationAction::Review, EstimateGenerationAction::Generate],
-        'ready_to_apply' => [EstimateGenerationAction::Apply, EstimateGenerationAction::Review, EstimateGenerationAction::Generate],
-        'failed' => [EstimateGenerationAction::Retry],
+        'draft' => [EstimateGenerationAction::UploadDocuments, EstimateGenerationAction::StartDocumentProcessing, EstimateGenerationAction::Cancel],
+        'processing_documents' => [EstimateGenerationAction::Cancel],
+        'input_review_required' => [EstimateGenerationAction::ConfirmInput, EstimateGenerationAction::Retry, EstimateGenerationAction::Cancel],
+        'ready_to_generate' => [EstimateGenerationAction::Generate, EstimateGenerationAction::Cancel],
+        'generating' => [EstimateGenerationAction::Cancel],
+        'estimate_review_required' => [EstimateGenerationAction::Review, EstimateGenerationAction::Generate, EstimateGenerationAction::Cancel],
+        'ready_to_apply' => [EstimateGenerationAction::Apply, EstimateGenerationAction::Review, EstimateGenerationAction::Generate, EstimateGenerationAction::Cancel],
+        'failed' => [EstimateGenerationAction::Retry, EstimateGenerationAction::Cancel, EstimateGenerationAction::Archive],
+        'applied' => [EstimateGenerationAction::Archive],
+        'cancelled' => [EstimateGenerationAction::Archive],
     ];
 
     /** @var array<string, string> */
@@ -30,6 +34,9 @@ final class BuildSessionSnapshot
         'review' => 'estimate_generation.view',
         'apply' => 'estimate_generation.apply',
         'retry' => 'estimate_generation.generate',
+        'confirm_input' => 'estimate_generation.review',
+        'cancel' => 'estimate_generation.generate',
+        'archive' => 'estimate_generation.generate',
     ];
 
     public function handle(
@@ -72,8 +79,8 @@ final class BuildSessionSnapshot
     }
 
     /**
-     * @param list<string> $permissions
-     * @param list<array<string, mixed>> $blockers
+     * @param  list<string>  $permissions
+     * @param  list<array<string, mixed>>  $blockers
      * @return list<array{action: string, label: string, method: string, endpoint: string, requires_confirmation: bool}>
      */
     private function availableActions(
@@ -83,17 +90,17 @@ final class BuildSessionSnapshot
         array $blockers,
         bool $readinessEvaluated,
     ): array {
-        if ($status->isTerminal()) {
+        if ($status === EstimateGenerationStatus::Archived) {
             return [];
         }
 
         $available = [];
         foreach (self::STATUS_ACTIONS[$status->value] ?? [] as $action) {
             $permission = self::ACTION_PERMISSIONS[$action->value] ?? null;
-            if ($permission === null || !in_array($permission, $permissions, true)) {
+            if ($permission === null || ! in_array($permission, $permissions, true)) {
                 continue;
             }
-            if ($action === EstimateGenerationAction::Apply && (!$readinessEvaluated || $blockers !== [])) {
+            if ($action === EstimateGenerationAction::Apply && (! $readinessEvaluated || $blockers !== [])) {
                 continue;
             }
 
@@ -114,7 +121,11 @@ final class BuildSessionSnapshot
         [$method, $suffix] = match ($action) {
             EstimateGenerationAction::UploadDocuments => ['POST', '/documents'],
             EstimateGenerationAction::StartDocumentProcessing => ['POST', '/analyze'],
-            EstimateGenerationAction::Generate, EstimateGenerationAction::Retry => ['POST', '/generate'],
+            EstimateGenerationAction::Generate => ['POST', '/generate'],
+            EstimateGenerationAction::ConfirmInput => ['POST', '/confirm-input'],
+            EstimateGenerationAction::Retry => ['POST', '/retry'],
+            EstimateGenerationAction::Cancel => ['POST', '/cancel'],
+            EstimateGenerationAction::Archive => ['POST', '/archive'],
             EstimateGenerationAction::Review => ['GET', '/review-items'],
             EstimateGenerationAction::Apply => ['POST', '/apply'],
             default => ['GET', ''],
@@ -122,10 +133,14 @@ final class BuildSessionSnapshot
 
         return [
             'action' => $action->value,
-            'label' => trans_message('estimate_generation.action_' . $action->value),
+            'label' => trans_message('estimate_generation.action_'.$action->value),
             'method' => $method,
-            'endpoint' => $base . $suffix,
-            'requires_confirmation' => $action === EstimateGenerationAction::Apply,
+            'endpoint' => $base.$suffix,
+            'requires_confirmation' => in_array($action, [
+                EstimateGenerationAction::Apply,
+                EstimateGenerationAction::Cancel,
+                EstimateGenerationAction::Archive,
+            ], true),
         ];
     }
 

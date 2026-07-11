@@ -13,7 +13,7 @@ final class EstimateGenerationLearningExampleModelTest extends TestCase
 {
     public function test_model_casts_learning_payloads_and_dates(): void
     {
-        $example = new EstimateGenerationLearningExample();
+        $example = new EstimateGenerationLearningExample;
         $example->forceFill([
             'context_payload' => ['section' => 'Фундамент'],
             'work_intent' => ['scope' => 'foundation', 'action' => 'concreting'],
@@ -33,15 +33,15 @@ final class EstimateGenerationLearningExampleModelTest extends TestCase
 
     public function test_model_exposes_expected_belongs_to_relations(): void
     {
-        $example = new EstimateGenerationLearningExample();
+        $example = new EstimateGenerationLearningExample;
 
         $this->assertInstanceOf(BelongsTo::class, $example->organization());
         $this->assertInstanceOf(BelongsTo::class, $example->project());
-        $this->assertInstanceOf(BelongsTo::class, $example->estimate());
-        $this->assertInstanceOf(BelongsTo::class, $example->estimateItem());
         $this->assertInstanceOf(BelongsTo::class, $example->generationSession());
         $this->assertInstanceOf(BelongsTo::class, $example->generationPackageItem());
         $this->assertInstanceOf(BelongsTo::class, $example->datasetVersion());
         $this->assertInstanceOf(BelongsTo::class, $example->estimateNorm());
+        $this->assertContains('estimate_id', $example->getFillable());
+        $this->assertContains('estimate_item_id', $example->getFillable());
     }
 }

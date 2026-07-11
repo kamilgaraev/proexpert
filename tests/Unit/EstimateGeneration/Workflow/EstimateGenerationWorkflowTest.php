@@ -20,6 +20,20 @@ use PHPUnit\Framework\TestCase;
 final class EstimateGenerationWorkflowTest extends TestCase
 {
     #[Test]
+    public function only_applied_cancelled_and_archived_are_terminal(): void
+    {
+        $terminal = array_values(array_map(
+            static fn (EstimateGenerationStatus $status): string => $status->value,
+            array_filter(
+                EstimateGenerationStatus::cases(),
+                static fn (EstimateGenerationStatus $status): bool => $status->isTerminal(),
+            ),
+        ));
+
+        self::assertSame(['applied', 'cancelled', 'archived'], $terminal);
+    }
+
+    #[Test]
     public function happy_path_uses_every_required_state_and_one_version_per_transition(): void
     {
         $store = new InMemorySessionStateStore($this->session(EstimateGenerationStatus::Draft));

@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
-use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateLearningExampleExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeScopeRuleCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
+use App\BusinessModules\Features\BudgetEstimates\Integrations\EstimateGeneration\EstimateLearningExampleExtractor;
 use App\Models\Estimate;
 use PHPUnit\Framework\TestCase;
 
@@ -22,7 +22,7 @@ final class EstimateLearningExampleExtractorTest extends TestCase
         ]);
 
         $extractor = new EstimateLearningExampleExtractor(
-            new WorkIntentClassifier(new NormativeScopeRuleCatalog())
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog)
         );
 
         $this->assertSame([], $extractor->extractFromImportedEstimate($estimate));

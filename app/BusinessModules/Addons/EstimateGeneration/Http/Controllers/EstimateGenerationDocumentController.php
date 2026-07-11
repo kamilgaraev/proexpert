@@ -23,6 +23,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 use function trans_message;
 
@@ -36,16 +37,18 @@ class EstimateGenerationDocumentController extends Controller
 
     public function index(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
     {
-        $this->guardSession($request, $project, $session);
-        $documents = $session->documents()
-            ->withCount(['pages', 'facts', 'drawingElements', 'quantityTakeoffs', 'scopeInferences'])
-            ->orderBy('id')
-            ->get();
+        return $this->safeReadResponse(function () use ($request, $project, $session): JsonResponse {
+            $this->guardSession($request, $project, $session);
+            $documents = $session->documents()
+                ->withCount(['pages', 'facts', 'drawingElements', 'quantityTakeoffs', 'scopeInferences'])
+                ->orderBy('id')
+                ->get();
 
-        return AdminResponse::success([
-            'documents' => EstimateGenerationDocumentResource::collection($documents)->resolve(),
-            'documents_summary' => $this->readinessService->summary($documents),
-        ]);
+            return AdminResponse::success([
+                'documents' => EstimateGenerationDocumentResource::collection($documents)->resolve(),
+                'documents_summary' => $this->readinessService->summary($documents),
+            ]);
+        }, 'list documents', ['project_id' => $project->id, 'session_id' => $session->id]);
     }
 
     public function show(
@@ -54,17 +57,23 @@ class EstimateGenerationDocumentController extends Controller
         EstimateGenerationSession $session,
         EstimateGenerationDocument $document
     ): JsonResponse {
-        $this->guardDocument($request, $project, $session, $document);
+        return $this->safeReadResponse(function () use ($request, $project, $session, $document): JsonResponse {
+            $this->guardDocument($request, $project, $session, $document);
 
-        return AdminResponse::success(
-            (new EstimateGenerationDocumentDetailResource($document->load([
-                'pages',
-                'facts',
-                'drawingElements',
-                'quantityTakeoffs',
-                'scopeInferences',
-            ])))->resolve()
-        );
+            return AdminResponse::success(
+                (new EstimateGenerationDocumentDetailResource($document->load([
+                    'pages',
+                    'facts',
+                    'drawingElements',
+                    'quantityTakeoffs',
+                    'scopeInferences',
+                ])))->resolve()
+            );
+        }, 'show document', [
+            'project_id' => $project->id,
+            'session_id' => $session->id,
+            'document_id' => $document->id,
+        ]);
     }
 
     public function retry(
@@ -167,6 +176,24 @@ class EstimateGenerationDocumentController extends Controller
             (int) $document->project_id !== (int) $project->id
         ) {
             abort(404, trans_message('estimate_generation.document_not_found'));
+        }
+    }
+
+    /** @param callable(): JsonResponse $response @param array<string, mixed> $context */
+    private function safeReadResponse(callable $response, string $operation, array $context): JsonResponse
+    {
+        try {
+            return $response();
+        } catch (HttpExceptionInterface $exception) {
+            throw $exception;
+        } catch (\Throwable $exception) {
+            Log::error('[EstimateGeneration] Document read endpoint failed', [
+                ...$context,
+                'operation' => $operation,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('estimate_generation.read_error'), 500);
         }
     }
 }

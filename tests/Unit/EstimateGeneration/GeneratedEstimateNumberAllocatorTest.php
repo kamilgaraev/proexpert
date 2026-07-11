@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\LaravelGeneratedEstimateNumberAllocator;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\OrdinaryEstimateNumberLookup;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -14,18 +15,20 @@ final class GeneratedEstimateNumberAllocatorTest extends TestCase
     #[Test]
     public function free_session_number_is_stable_and_organization_scoped(): void
     {
-        $allocator = new TestGeneratedEstimateNumberAllocator([], fn (): string => 'suffix');
+        $lookup = new TestOrdinaryEstimateNumberLookup([]);
+        $allocator = new LaravelGeneratedEstimateNumberAllocator($lookup, fn (): string => 'suffix');
 
         self::assertSame('AI-42', $allocator->allocate($this->session(), 0));
-        self::assertSame([[10, 'AI-42']], $allocator->lookups);
+        self::assertSame([[10, 'AI-42']], $lookup->lookups);
     }
 
     #[Test]
     public function occupied_base_and_retry_attempts_receive_distinct_bounded_numbers(): void
     {
         $suffixes = ['01HAAA', '01HBBB'];
-        $allocator = new TestGeneratedEstimateNumberAllocator(
-            ['AI-42'],
+        $lookup = new TestOrdinaryEstimateNumberLookup(['AI-42']);
+        $allocator = new LaravelGeneratedEstimateNumberAllocator(
+            $lookup,
             static function () use (&$suffixes): string {
                 return (string) array_shift($suffixes);
             },
@@ -50,20 +53,15 @@ final class GeneratedEstimateNumberAllocatorTest extends TestCase
     }
 }
 
-final class TestGeneratedEstimateNumberAllocator extends LaravelGeneratedEstimateNumberAllocator
+final class TestOrdinaryEstimateNumberLookup implements OrdinaryEstimateNumberLookup
 {
     /** @var array<int, array{int, string}> */
     public array $lookups = [];
 
     /** @param array<int, string> $occupied */
-    public function __construct(
-        private array $occupied,
-        \Closure $suffixFactory,
-    ) {
-        parent::__construct($suffixFactory);
-    }
+    public function __construct(private array $occupied) {}
 
-    protected function isOccupied(int $organizationId, string $number): bool
+    public function exists(int $organizationId, string $number): bool
     {
         $this->lookups[] = [$organizationId, $number];
 

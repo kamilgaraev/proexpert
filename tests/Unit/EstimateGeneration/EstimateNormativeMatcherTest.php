@@ -6,10 +6,10 @@ namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationLearningExample;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningBootstrapService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
+use App\BusinessModules\Features\BudgetEstimates\Integrations\EstimateGeneration\EstimateGenerationLearningBootstrapService;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\EstimateSection;
@@ -534,8 +534,7 @@ class EstimateNormativeMatcherTest extends TestCase
         string $name,
         string $unit,
         ?string $sectionCode = null
-    ): int
-    {
+    ): int {
         return (int) DB::table('estimate_norms')->insertGetId([
             'collection_id' => $collectionId,
             'section_id' => $sectionId,
@@ -614,7 +613,7 @@ class EstimateNormativeMatcherTest extends TestCase
             'quantity' => 13.8,
             'unit_price' => 5000,
             'total_amount' => 69000,
-            'normative_rate_code' => 'ФСНБ ' . $normCode,
+            'normative_rate_code' => 'ФСНБ '.$normCode,
             'item_type' => 'work',
         ]);
     }

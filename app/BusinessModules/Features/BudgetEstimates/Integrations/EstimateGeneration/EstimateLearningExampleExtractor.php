@@ -2,17 +2,18 @@
 
 declare(strict_types=1);
 
-namespace App\BusinessModules\Addons\EstimateGeneration\Services\Learning;
+namespace App\BusinessModules\Features\BudgetEstimates\Integrations\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\WorkIntentData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\ImportedEstimateExampleExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\ImportSession;
 
-final class EstimateLearningExampleExtractor
+final class EstimateLearningExampleExtractor implements ImportedEstimateExampleExtractor
 {
     public function __construct(
         private readonly WorkIntentClassifier $workIntentClassifier,
@@ -21,8 +22,12 @@ final class EstimateLearningExampleExtractor
     /**
      * @return array<int, array<string, mixed>>
      */
-    public function extractFromImportedEstimate(Estimate $estimate, ?ImportSession $importSession = null): array
+    public function extractFromImportedEstimate(object $estimate, ?object $importSession = null): array
     {
+        if (! $estimate instanceof Estimate || ($importSession !== null && ! $importSession instanceof ImportSession)) {
+            return [];
+        }
+
         if ($this->isAiGeneratedEstimate($estimate)) {
             return [];
         }
@@ -66,14 +71,14 @@ final class EstimateLearningExampleExtractor
 
         $norm = $this->findNormByCode($normCode);
 
-        if (!$norm instanceof EstimateNorm) {
+        if (! $norm instanceof EstimateNorm) {
             return null;
         }
 
         $workUnit = $this->workUnit($item);
         $qualityFlags = [];
 
-        if (!$this->unitsCompatible($workUnit, (string) $norm->unit, $qualityFlags)) {
+        if (! $this->unitsCompatible($workUnit, (string) $norm->unit, $qualityFlags)) {
             return null;
         }
 
@@ -135,7 +140,7 @@ final class EstimateLearningExampleExtractor
     }
 
     /**
-     * @param array<int, string> $qualityFlags
+     * @param  array<int, string>  $qualityFlags
      */
     private function unitsCompatible(?string $workUnit, string $normUnit, array &$qualityFlags): bool
     {
@@ -145,7 +150,7 @@ final class EstimateLearningExampleExtractor
             return true;
         }
 
-        if (!NormativeUnitNormalizer::compatible($workUnit, $normUnit)) {
+        if (! NormativeUnitNormalizer::compatible($workUnit, $normUnit)) {
             $qualityFlags[] = 'unit_mismatch';
 
             return false;

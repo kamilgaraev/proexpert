@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Models;
 
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
-use App\Models\Estimate;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -100,10 +99,5 @@ class EstimateGenerationSession extends Model
     {
         return $this->hasMany(EstimateGenerationScopeInference::class, 'session_id')
             ->orderBy('id');
-    }
-
-    public function appliedEstimate(): BelongsTo
-    {
-        return $this->belongsTo(Estimate::class, 'applied_estimate_id');
     }
 }
