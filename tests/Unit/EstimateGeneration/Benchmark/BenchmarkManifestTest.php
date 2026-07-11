@@ -32,7 +32,11 @@ final class BenchmarkManifestTest extends TestCase
         );
         self::assertNotEmpty($manifest->casesFor(BenchmarkDatasetType::Development));
         self::assertNotEmpty($manifest->casesFor(BenchmarkDatasetType::Regression));
-        self::assertNotEmpty($manifest->casesFor(BenchmarkDatasetType::Acceptance));
+        self::assertSame([], $manifest->casesFor(BenchmarkDatasetType::Acceptance));
+        self::assertSame(
+            's3://org-{organization_id}/estimate-generation/benchmarks/acceptance/manifest.json',
+            $manifest->acceptanceManifestLocator,
+        );
 
         foreach ([BenchmarkDatasetType::Development, BenchmarkDatasetType::Regression] as $dataset) {
             foreach ($manifest->casesFor($dataset) as $case) {
@@ -53,7 +57,36 @@ final class BenchmarkManifestTest extends TestCase
         $manifest['cases'][1]['input_sha256'] = $manifest['cases'][0]['input_sha256'];
 
         $this->expectException(BenchmarkManifestException::class);
-        $this->expectExceptionMessage('cross_dataset_input_digest_overlap');
+        $this->expectExceptionMessage('digest_ownership_collision');
+        BenchmarkManifest::fromArray($manifest, $this->fixtureRoot);
+    }
+
+    #[Test]
+    public function it_rejects_digest_reuse_across_input_and_expected_roles_in_both_directions(): void
+    {
+        $manifest = $this->validInlineManifest();
+        $manifest['cases'][1]['expected_sha256'] = $manifest['cases'][0]['input_sha256'];
+
+        try {
+            BenchmarkManifest::fromArray($manifest, $this->fixtureRoot);
+            self::fail('Cross-role digest reuse was accepted.');
+        } catch (BenchmarkManifestException $exception) {
+            self::assertSame('digest_ownership_collision', $exception->getMessage());
+        }
+
+        $manifest = $this->validInlineManifest();
+        $manifest['cases'][1]['input_sha256'] = $manifest['cases'][0]['expected_sha256'];
+        $this->expectExceptionMessage('digest_ownership_collision');
+        BenchmarkManifest::fromArray($manifest, $this->fixtureRoot);
+    }
+
+    #[Test]
+    public function it_rejects_same_case_input_and_expected_digest(): void
+    {
+        $manifest = $this->validInlineManifest();
+        $manifest['cases'][0]['expected_sha256'] = $manifest['cases'][0]['input_sha256'];
+
+        $this->expectExceptionMessage('digest_ownership_collision');
         BenchmarkManifest::fromArray($manifest, $this->fixtureRoot);
     }
 
@@ -70,15 +103,29 @@ final class BenchmarkManifestTest extends TestCase
     }
 
     #[Test]
+    public function it_rejects_unknown_source_enum_independently(): void
+    {
+        $manifest = $this->validInlineManifest();
+        $manifest['cases'][0]['source_type'] = 'mystery';
+        $this->expectExceptionMessage('source_type_invalid');
+        BenchmarkManifest::fromArray($manifest, $this->fixtureRoot);
+    }
+
+    #[Test]
+    public function it_rejects_missing_license_independently(): void
+    {
+        $manifest = $this->validInlineManifest();
+        $manifest['cases'][0]['license'] = '';
+        $this->expectExceptionMessage('license_invalid');
+        BenchmarkManifest::fromArray($manifest, $this->fixtureRoot);
+    }
+
+    #[Test]
     public function acceptance_cases_are_never_resolved_in_tuning_mode(): void
     {
         $manifest = BenchmarkManifest::fromFile($this->fixtureRoot.'/manifest.json', $this->fixtureRoot);
-
-        foreach ($manifest->casesFor(BenchmarkDatasetType::Acceptance) as $case) {
-            self::assertStringStartsWith('s3://org-{organization_id}/', $case->inputLocator);
-            self::assertStringStartsWith('s3://org-{organization_id}/', $case->expectedLocator);
-            self::assertFalse($case->isLocallyReadable());
-        }
+        self::assertSame([], $manifest->casesFor(BenchmarkDatasetType::Acceptance));
+        self::assertNotNull($manifest->acceptanceManifestLocator);
     }
 
     /** @return array<string, mixed> */

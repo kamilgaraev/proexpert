@@ -36,11 +36,20 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateG
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\LaravelEstimateGenerationRetryDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryableEstimateGenerationSessionRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkCorpusLoader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkAdapterRegistry;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseExecutor;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkObjectReader;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPrivateObjectStore;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunner;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\CurrentBaselineBenchmarkAdapter;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\FileServiceBenchmarkPrivateObjectStore;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkObjectReader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\Metrics\MetricRegistry;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\ProcessBenchmarkCaseExecutor;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\BootstrapEstimateGenerationLearningCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\InspectEstimateGenerationProductionCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\RunEstimateGenerationBenchmarkCaseCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\RunEstimateGenerationBenchmarkCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Contracts\DrawingAnalysisProviderInterface;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EloquentSessionStateStore;
@@ -160,8 +169,33 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(SessionOperationalSnapshotBuilder::class, BuildSessionOperationalSnapshot::class);
         $this->mergeConfigFrom(config_path('estimate-generation.php'), 'estimate-generation');
         $this->app->singleton(MetricRegistry::class, static fn (): MetricRegistry => MetricRegistry::standard());
+        $this->app->singleton(BenchmarkCaseExecutor::class, static fn (): BenchmarkCaseExecutor => new ProcessBenchmarkCaseExecutor(
+            PHP_BINARY,
+            base_path('artisan'),
+        ));
+        $this->app->singleton(BenchmarkObjectReader::class, LocalBenchmarkObjectReader::class);
+        $this->app->singleton(BenchmarkPrivateObjectStore::class, FileServiceBenchmarkPrivateObjectStore::class);
+        $this->app->singleton(AcceptanceBenchmarkCorpusLoader::class);
         $this->app->singleton(BenchmarkRunner::class);
-        $this->app->singleton(BenchmarkAdapterRegistry::class, static fn (): BenchmarkAdapterRegistry => new BenchmarkAdapterRegistry([]));
+        $this->app->singleton(BenchmarkAdapterRegistry::class, static fn ($app): BenchmarkAdapterRegistry => new BenchmarkAdapterRegistry([
+            $app->make(CurrentBaselineBenchmarkAdapter::class),
+        ]));
+        $this->app->singleton(RunEstimateGenerationBenchmarkCaseCommand::class, fn ($app): RunEstimateGenerationBenchmarkCaseCommand => new RunEstimateGenerationBenchmarkCaseCommand(
+            $app->make(BenchmarkAdapterRegistry::class),
+            base_path('tests/Fixtures/EstimateGeneration/benchmarks/manifest.json'),
+            base_path('tests/Fixtures/EstimateGeneration/benchmarks'),
+            $app->make(AcceptanceBenchmarkCorpusLoader::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\PdfTextLayerExtractor::class),
+            $app->make(RuleBasedDrawingAnalysisProvider::class),
+            (($organizationId = (int) config('estimate-generation.benchmark.acceptance_organization_id', 0)) > 0)
+                ? $organizationId
+                : null,
+            (static function (): ?string {
+                $locator = config('estimate-generation.benchmark.acceptance_manifest');
+
+                return is_string($locator) ? $locator : null;
+            })(),
+        ));
         $this->app->singleton(RunEstimateGenerationBenchmarkCommand::class, fn ($app): RunEstimateGenerationBenchmarkCommand => new RunEstimateGenerationBenchmarkCommand(
             $app->make(BenchmarkRunner::class),
             $app->make(BenchmarkAdapterRegistry::class),
@@ -173,6 +207,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
 
                 return is_string($locator) ? $locator : null;
             })(),
+            acceptanceOrganizationId: (($organizationId = (int) config('estimate-generation.benchmark.acceptance_organization_id', 0)) > 0)
+                ? $organizationId
+                : null,
+            acceptanceLoader: $app->make(AcceptanceBenchmarkCorpusLoader::class),
         ));
 
         $this->app->singleton(DocumentParsingService::class);
@@ -326,6 +364,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 BootstrapEstimateGenerationLearningCommand::class,
                 InspectEstimateGenerationProductionCommand::class,
                 RunEstimateGenerationBenchmarkCommand::class,
+                RunEstimateGenerationBenchmarkCaseCommand::class,
                 ClassifyEstimateNormativesCommand::class,
                 ImportEstimateNormativesCommand::class,
                 InspectEstimateNormativesCommand::class,

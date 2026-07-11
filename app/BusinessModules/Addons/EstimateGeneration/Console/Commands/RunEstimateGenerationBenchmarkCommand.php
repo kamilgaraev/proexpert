@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Console\Commands;
 
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkCorpusLoader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkAdapterRegistry;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCorpus;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkDatasetType;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkManifest;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkReportData;
@@ -45,6 +47,8 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
         ?callable $environment = null,
         ?callable $env = null,
         private readonly ?string $acceptanceManifestLocator = null,
+        private readonly ?int $acceptanceOrganizationId = null,
+        private readonly ?AcceptanceBenchmarkCorpusLoader $acceptanceLoader = null,
     ) {
         parent::__construct();
         $this->environment = $environment ?? static fn (): string => (string) app()->environment();
@@ -60,17 +64,16 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
             if (! in_array($format, ['json', 'table'], true)) {
                 throw new InvalidArgumentException('format_invalid');
             }
-            $this->guardAcceptance($dataset);
-            $manifest = BenchmarkManifest::fromFile($this->repositoryManifestPath, $this->fixtureRoot);
+            $corpus = $this->corpus($dataset);
             $adapter = $this->adapters->get((string) $this->option('adapter'));
-            $report = $this->runner->run($manifest, $dataset, $adapter, new BenchmarkRunOptions(
+            $report = $this->runner->run($corpus->manifest, $dataset, $adapter, new BenchmarkRunOptions(
                 (string) $this->option('pipeline-version'),
                 (string) $this->option('prompt-version'),
                 (int) $this->option('case-timeout-ms'),
                 $this->failureRate(),
                 (string) $this->option('failure-policy-version'),
                 (bool) $this->option('allow-unsupported'),
-            ));
+            ), $corpus->objects, $corpus->executionReference);
             $rendered = $format === 'json' ? $report->canonicalJson() : $this->tablePayload($report);
             $output = $this->option('output');
             if (is_string($output) && $output !== '') {
@@ -87,10 +90,14 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
         }
     }
 
-    private function guardAcceptance(BenchmarkDatasetType $dataset): void
+    private function corpus(BenchmarkDatasetType $dataset): BenchmarkCorpus
     {
         if ($dataset !== BenchmarkDatasetType::Acceptance) {
-            return;
+            return new BenchmarkCorpus(
+                BenchmarkManifest::fromFile($this->repositoryManifestPath, $this->fixtureRoot),
+                new \App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkObjectReader,
+                'repository:v1',
+            );
         }
         if (($this->environment)() === 'production') {
             throw new InvalidArgumentException('acceptance_forbidden_in_production');
@@ -98,12 +105,14 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
         if (($this->env)('RUN_ESTIMATE_GENERATION_ACCEPTANCE_BENCHMARK') !== '1') {
             throw new InvalidArgumentException('acceptance_gate_disabled');
         }
-        if ($this->acceptanceManifestLocator === null
+        if ($this->acceptanceOrganizationId === null || $this->acceptanceOrganizationId < 1
+            || $this->acceptanceLoader === null || $this->acceptanceManifestLocator === null
             || ! preg_match('#^s3://org-[1-9][0-9]*/estimate-generation/benchmarks/acceptance/[a-zA-Z0-9._/-]+$#', $this->acceptanceManifestLocator)
             || str_contains($this->acceptanceManifestLocator, '?')) {
             throw new InvalidArgumentException('acceptance_private_corpus_not_configured');
         }
-        throw new InvalidArgumentException('acceptance_private_loader_unavailable');
+
+        return $this->acceptanceLoader->load($this->acceptanceOrganizationId, $this->acceptanceManifestLocator);
     }
 
     private function failureRate(): float
@@ -167,8 +176,8 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
     private function tablePayload(BenchmarkReportData $report): string
     {
         $lines = [
-            'dataset | cases | succeeded | failed | skipped',
-            implode(' | ', [$report->dataset->value, $report->caseCount, $report->succeededCount, $report->failedCount, $report->skippedCount]),
+            'dataset | cases | attempted | succeeded | failed | skipped',
+            implode(' | ', [$report->dataset->value, $report->caseCount, $report->attemptedCount, $report->succeededCount, $report->failedCount, $report->skippedCount]),
             'metric | macro | micro',
         ];
         foreach ($report->metrics as $name => $metric) {

@@ -4,11 +4,15 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration\Benchmark;
 
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkCorpusLoader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkAdapterRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseData;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkContractException;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPipelineAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPipelineResultData;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPrivateObjectStore;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunner;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\InProcessBenchmarkCaseExecutor;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\Metrics\MetricRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\RunEstimateGenerationBenchmarkCommand;
 use Illuminate\Console\OutputStyle;
@@ -72,6 +76,19 @@ final class EstimateGenerationBenchmarkCommandTest extends TestCase
             '--pipeline-version' => 'fixture-pipeline:v1',
         ]));
         self::assertStringContainsString('acceptance_forbidden_in_production', $tester->getDisplay());
+    }
+
+    #[Test]
+    public function acceptance_rejects_missing_flag_or_org_configuration_and_runs_with_all_gates(): void
+    {
+        [$loader, $locator] = $this->acceptanceLoader();
+        $arguments = ['--dataset' => 'acceptance', '--adapter' => 'fixture-pipeline', '--pipeline-version' => 'fixture-pipeline:v1'];
+
+        self::assertSame(1, $this->tester([$this->passingAdapter()], 'testing', null, $locator, 42, $loader)->execute($arguments));
+        self::assertSame(1, $this->tester([$this->passingAdapter()], 'testing', '1', $locator, null, $loader)->execute($arguments));
+        $tester = $this->tester([$this->passingAdapter()], 'testing', '1', $locator, 42, $loader);
+        self::assertSame(0, $tester->execute($arguments));
+        self::assertStringContainsString('"dataset":"acceptance"', $tester->getDisplay());
     }
 
     #[Test]
@@ -140,10 +157,16 @@ final class EstimateGenerationBenchmarkCommandTest extends TestCase
     }
 
     /** @param list<BenchmarkPipelineAdapter> $adapters */
-    private function tester(array $adapters, string $environment = 'testing', ?string $gate = null, ?string $acceptanceLocator = null): CommandTester
-    {
+    private function tester(
+        array $adapters,
+        string $environment = 'testing',
+        ?string $gate = null,
+        ?string $acceptanceLocator = null,
+        ?int $acceptanceOrganizationId = null,
+        ?AcceptanceBenchmarkCorpusLoader $acceptanceLoader = null,
+    ): CommandTester {
         $command = new RunEstimateGenerationBenchmarkCommand(
-            new BenchmarkRunner(MetricRegistry::standard(), static fn (): float => 1000.0),
+            new BenchmarkRunner(MetricRegistry::standard(), new InProcessBenchmarkCaseExecutor, static fn (): float => 1000.0),
             new BenchmarkAdapterRegistry($adapters),
             $this->fixtureRoot.'/manifest.json',
             $this->fixtureRoot,
@@ -151,6 +174,8 @@ final class EstimateGenerationBenchmarkCommandTest extends TestCase
             static fn (): string => $environment,
             static fn (string $key): ?string => $key === 'RUN_ESTIMATE_GENERATION_ACCEPTANCE_BENCHMARK' ? $gate : null,
             $acceptanceLocator,
+            $acceptanceOrganizationId,
+            $acceptanceLoader,
         );
         $container = new class extends Container
         {
@@ -182,10 +207,56 @@ final class EstimateGenerationBenchmarkCommandTest extends TestCase
 
             public function run(BenchmarkCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
             {
-                $expected = json_decode((string) file_get_contents($case->expectedPath()), true, 64, JSON_THROW_ON_ERROR);
-
-                return BenchmarkPipelineResultData::success($expected['expected'], ['fixture' => 'fixture:v1'], '0', 'RUB');
+                return BenchmarkPipelineResultData::success(
+                    [
+                        'sheet_type' => 'floor_plan', 'room_cells' => [], 'wall_cells' => [], 'opening_ids' => [],
+                        'areas' => [], 'quantities' => [], 'work_ids' => [], 'normative_rankings' => [], 'costs' => [],
+                        'applicable_item_ids' => [], 'evidence_ids_by_item' => [],
+                        'model_schema_version' => 'benchmark-prediction:v1',
+                    ],
+                    ['fixture' => 'fixture:v1'],
+                    '0',
+                    'RUB',
+                );
             }
         };
+    }
+
+    /** @return array{AcceptanceBenchmarkCorpusLoader, string} */
+    private function acceptanceLoader(): array
+    {
+        $expected = json_encode([
+            'schema_version' => 1, 'expected_model_schema_version' => 'benchmark-expected:v1',
+            'expected' => [
+                'sheet_type' => 'floor_plan', 'room_cells' => [], 'wall_cells' => [], 'opening_ids' => [],
+                'areas' => [], 'quantities' => [], 'work_ids' => [], 'normative_rankings' => [], 'costs' => [],
+                'applicable_item_ids' => [], 'evidence_ids_by_item' => [],
+            ],
+        ], JSON_THROW_ON_ERROR);
+        $input = 'private-input';
+        $manifest = json_encode([
+            'schema_version' => 1, 'manifest_version' => 'acceptance-command:v1',
+            'cases' => [[
+                'id' => 'acceptance-command-001', 'dataset' => 'acceptance', 'source_type' => 'vector_pdf',
+                'input_locator' => 's3://org-{organization_id}/estimate-generation/benchmarks/acceptance/case/input.pdf',
+                'expected_locator' => 's3://org-{organization_id}/estimate-generation/benchmarks/acceptance/case/expected.json',
+                'input_sha256' => hash('sha256', $input), 'expected_sha256' => hash('sha256', $expected),
+                'license' => 'private-approved', 'provenance' => 'private:approved', 'tags' => ['private'],
+                'schema_version' => 1, 'expected_model_schema_version' => 'benchmark-expected:v1',
+                'allowed_capabilities' => ['document_understanding'],
+            ]],
+        ], JSON_THROW_ON_ERROR);
+        $store = new class(['org-42/estimate-generation/benchmarks/acceptance/manifest.json' => $manifest, 'org-42/estimate-generation/benchmarks/acceptance/case/input.pdf' => $input, 'org-42/estimate-generation/benchmarks/acceptance/case/expected.json' => $expected]) implements BenchmarkPrivateObjectStore
+        {
+            /** @param array<string, string> $objects */
+            public function __construct(private array $objects) {}
+
+            public function read(string $path, int $maxBytes): string
+            {
+                return $this->objects[$path] ?? throw new BenchmarkContractException('private_object_unavailable');
+            }
+        };
+
+        return [new AcceptanceBenchmarkCorpusLoader($store), 's3://org-42/estimate-generation/benchmarks/acceptance/manifest.json'];
     }
 }

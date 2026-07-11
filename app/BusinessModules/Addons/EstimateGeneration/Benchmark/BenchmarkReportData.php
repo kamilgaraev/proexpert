@@ -27,6 +27,7 @@ final readonly class BenchmarkReportData implements JsonSerializable
         public array $modelVersions,
         public array $fixtureHashes,
         public int $caseCount,
+        public int $attemptedCount,
         public int $succeededCount,
         public int $failedCount,
         public int $skippedCount,
@@ -59,6 +60,7 @@ final readonly class BenchmarkReportData implements JsonSerializable
             'model_versions' => $this->modelVersions,
             'fixture_hashes' => $this->fixtureHashes,
             'case_count' => $this->caseCount,
+            'attempted_count' => $this->attemptedCount,
             'succeeded_count' => $this->succeededCount,
             'failed_count' => $this->failedCount,
             'skipped_count' => $this->skippedCount,
@@ -97,7 +99,7 @@ final readonly class BenchmarkReportData implements JsonSerializable
 
     public function passedFailureGate(): bool
     {
-        return $this->caseCount > 0 && ($this->failedCount / $this->caseCount) <= $this->maxFailureRate;
+        return $this->attemptedCount > 0 && ($this->failedCount / $this->attemptedCount) <= $this->maxFailureRate;
     }
 
     /** @param array<mixed> $value */

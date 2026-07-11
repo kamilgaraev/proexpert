@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Benchmark;
 
 use InvalidArgumentException;
+use JsonException;
 
 final readonly class BenchmarkPipelineResultData
 {
@@ -61,5 +62,54 @@ final readonly class BenchmarkPipelineResultData
     public static function unsupported(string $code = 'capability_unsupported'): self
     {
         return new self('unsupported', [], [], null, null, $code);
+    }
+
+    public function protocolJson(): string
+    {
+        return (string) json_encode([
+            'schema_version' => 1,
+            'status' => $this->status,
+            'prediction' => $this->prediction,
+            'model_versions' => $this->modelVersions,
+            'cost_amount' => $this->costAmount,
+            'currency' => $this->currency,
+            'failure_code' => $this->failureCode,
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    }
+
+    public static function fromProtocolJson(string $json): self
+    {
+        if ($json === '' || strlen($json) > 1_048_576) {
+            return self::technicalFailure('worker_protocol_invalid');
+        }
+        try {
+            $payload = json_decode($json, true, 64, JSON_THROW_ON_ERROR);
+        } catch (JsonException) {
+            return self::technicalFailure('worker_protocol_invalid');
+        }
+        if (! is_array($payload)) {
+            return self::technicalFailure('worker_protocol_invalid');
+        }
+        $expectedKeys = ['schema_version', 'status', 'prediction', 'model_versions', 'cost_amount', 'currency', 'failure_code'];
+        $keys = array_keys($payload);
+        sort($keys, SORT_STRING);
+        sort($expectedKeys, SORT_STRING);
+        if ($keys !== $expectedKeys || ($payload['schema_version'] ?? null) !== 1
+            || ! is_string($payload['status'] ?? null) || ! is_array($payload['prediction'] ?? null)
+            || ! is_array($payload['model_versions'] ?? null)) {
+            return self::technicalFailure('worker_protocol_invalid');
+        }
+        try {
+            return new self(
+                $payload['status'],
+                $payload['prediction'],
+                $payload['model_versions'],
+                is_string($payload['cost_amount']) ? $payload['cost_amount'] : null,
+                is_string($payload['currency']) ? $payload['currency'] : null,
+                is_string($payload['failure_code']) ? $payload['failure_code'] : null,
+            );
+        } catch (InvalidArgumentException) {
+            return self::technicalFailure('worker_protocol_invalid');
+        }
     }
 }

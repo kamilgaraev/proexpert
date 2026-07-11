@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPipelineAda
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPipelineResultData;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunOptions;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\InProcessBenchmarkCaseExecutor;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\Metrics\MetricRegistry;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -32,10 +33,10 @@ final class BenchmarkRunnerTest extends TestCase
             {
                 $expected = json_decode((string) file_get_contents($case->expectedPath()), true, 512, JSON_THROW_ON_ERROR);
 
-                return BenchmarkPipelineResultData::success($expected['expected'], ['vision' => 'synthetic:v1'], null, null);
+                return BenchmarkPipelineResultData::success([...$expected['expected'], 'model_schema_version' => 'benchmark-prediction:v1'], ['vision' => 'synthetic:v1'], null, null);
             }
         };
-        $runner = new BenchmarkRunner(MetricRegistry::standard(), static fn (): float => 1000.0);
+        $runner = new BenchmarkRunner(MetricRegistry::standard(), new InProcessBenchmarkCaseExecutor, static fn (): float => 1000.0);
         $options = new BenchmarkRunOptions('pipeline:test:v1', 'prompt:test:v1', 1000, 1);
 
         $first = $runner->run($manifest, BenchmarkDatasetType::Regression, $adapter, $options);
@@ -73,7 +74,7 @@ final class BenchmarkRunnerTest extends TestCase
             }
         };
 
-        $report = (new BenchmarkRunner(MetricRegistry::standard()))->run(
+        $report = (new BenchmarkRunner(MetricRegistry::standard(), new InProcessBenchmarkCaseExecutor))->run(
             $manifest,
             BenchmarkDatasetType::Development,
             $adapter,
@@ -110,7 +111,7 @@ final class BenchmarkRunnerTest extends TestCase
             }
         };
 
-        (new BenchmarkRunner(MetricRegistry::standard()))->run(
+        (new BenchmarkRunner(MetricRegistry::standard(), new InProcessBenchmarkCaseExecutor))->run(
             $manifest,
             BenchmarkDatasetType::Regression,
             $adapter,
@@ -141,7 +142,7 @@ final class BenchmarkRunnerTest extends TestCase
                 $expected = json_decode((string) file_get_contents($case->expectedPath()), true, 64, JSON_THROW_ON_ERROR);
 
                 return BenchmarkPipelineResultData::success(
-                    $expected['expected'],
+                    [...$expected['expected'], 'model_schema_version' => 'benchmark-prediction:v1'],
                     ['vision' => 'synthetic:v1'],
                     $this->attempt === 1 ? null : '0.100000001',
                     $this->attempt === 1 ? null : 'RUB',
@@ -149,7 +150,7 @@ final class BenchmarkRunnerTest extends TestCase
             }
         };
 
-        $report = (new BenchmarkRunner(MetricRegistry::standard()))->run(
+        $report = (new BenchmarkRunner(MetricRegistry::standard(), new InProcessBenchmarkCaseExecutor))->run(
             $manifest,
             BenchmarkDatasetType::Regression,
             $adapter,
@@ -167,7 +168,7 @@ final class BenchmarkRunnerTest extends TestCase
     {
         $root = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/benchmarks';
         $manifest = BenchmarkManifest::fromFile($root.'/manifest.json', $root);
-        $report = (new BenchmarkRunner(MetricRegistry::standard()))->run(
+        $report = (new BenchmarkRunner(MetricRegistry::standard(), new InProcessBenchmarkCaseExecutor))->run(
             $manifest,
             BenchmarkDatasetType::Regression,
             new class implements BenchmarkPipelineAdapter
@@ -208,7 +209,7 @@ final class BenchmarkRunnerTest extends TestCase
                 return BenchmarkPipelineResultData::unsupported();
             }
         };
-        $runner = new BenchmarkRunner(MetricRegistry::standard());
+        $runner = new BenchmarkRunner(MetricRegistry::standard(), new InProcessBenchmarkCaseExecutor);
 
         $strict = $runner->run($manifest, BenchmarkDatasetType::Regression, $adapter, new BenchmarkRunOptions('pipeline:test:v1', 'prompt:test:v1', 1000, 1));
         $optedIn = $runner->run($manifest, BenchmarkDatasetType::Regression, $adapter, new BenchmarkRunOptions('pipeline:test:v1', 'prompt:test:v1', 1000, 1, 'allow-placeholder:v1', true));
@@ -217,6 +218,38 @@ final class BenchmarkRunnerTest extends TestCase
         self::assertSame(0, $strict->skippedCount);
         self::assertSame(3, $optedIn->failedCount);
         self::assertSame(1, $optedIn->skippedCount);
+        self::assertSame(3, $optedIn->attemptedCount);
         self::assertSame(0.0, $optedIn->metrics['technical_success_rate']['micro']);
+        self::assertSame(3, $optedIn->metrics['technical_success_rate']['denominator']);
+    }
+
+    #[Test]
+    public function malformed_prediction_is_a_technical_failure_with_all_metrics_zero(): void
+    {
+        $root = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/benchmarks';
+        $manifest = BenchmarkManifest::fromFile($root.'/manifest.json', $root);
+        $adapter = new class implements BenchmarkPipelineAdapter
+        {
+            public function id(): string
+            {
+                return 'malformed';
+            }
+
+            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
+            {
+                return BenchmarkPipelineResultData::success(['unknown' => ['nested' => true]], [], null, null);
+            }
+        };
+
+        $report = (new BenchmarkRunner(MetricRegistry::standard(), new InProcessBenchmarkCaseExecutor))->run(
+            $manifest, BenchmarkDatasetType::Development, $adapter,
+            new BenchmarkRunOptions('pipeline:test:v1', 'prompt:test:v1', 1000, 1),
+        );
+
+        self::assertSame($report->attemptedCount, $report->failedCount);
+        foreach ($report->metrics as $metric) {
+            self::assertSame(0.0, $metric['micro']);
+        }
+        self::assertSame(['prediction_contract_invalid'], array_values(array_unique(array_column($report->caseResults, 'failure_code'))));
     }
 }

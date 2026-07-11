@@ -16,8 +16,11 @@ final readonly class BenchmarkRunner
     /** @var Closure(): float */
     private Closure $clock;
 
-    public function __construct(private MetricRegistry $metrics, ?callable $clock = null)
-    {
+    public function __construct(
+        private MetricRegistry $metrics,
+        private BenchmarkCaseExecutor $executor,
+        ?callable $clock = null,
+    ) {
         $this->clock = $clock === null
             ? static fn (): float => microtime(true) * 1000
             : Closure::fromCallable($clock);
@@ -28,7 +31,10 @@ final readonly class BenchmarkRunner
         BenchmarkDatasetType $dataset,
         BenchmarkPipelineAdapter $adapter,
         BenchmarkRunOptions $options,
+        ?BenchmarkObjectReader $objects = null,
+        string $manifestReference = 'repository:v1',
     ): BenchmarkReportData {
+        $objects ??= new LocalBenchmarkObjectReader;
         $cases = $manifest->casesFor($dataset);
         if ($cases === []) {
             throw new BenchmarkManifestException('dataset_has_no_cases');
@@ -42,7 +48,9 @@ final readonly class BenchmarkRunner
         $unknownCostAttempts = 0;
 
         foreach ($cases as $case) {
-            [$caseResult, $calculated, $models, $knownCost, $knownCurrency] = $this->runCase($case, $adapter, $options);
+            [$caseResult, $calculated, $models, $knownCost, $knownCurrency] = $this->runCase(
+                $case, $adapter, $options, $objects, $manifestReference,
+            );
             $caseResults[] = $caseResult;
             $metricResults[$case->id] = $calculated;
             foreach ($models as $model => $version) {
@@ -50,6 +58,9 @@ final readonly class BenchmarkRunner
                     throw new BenchmarkManifestException('model_version_conflict');
                 }
                 $modelVersions[$model] = $version;
+            }
+            if ($caseResult['status'] === 'unsupported') {
+                continue;
             }
             if ($knownCost === null || $knownCurrency === null) {
                 $unknownCostAttempts++;
@@ -65,15 +76,24 @@ final readonly class BenchmarkRunner
         $succeeded = count(array_filter($caseResults, static fn (array $result): bool => $result['status'] === 'success'));
         $failed = count(array_filter($caseResults, static fn (array $result): bool => $result['status'] === 'technical_failure'));
         $skipped = count(array_filter($caseResults, static fn (array $result): bool => $result['status'] === 'unsupported'));
-        $aggregates = $this->aggregate($metricResults);
-        $breakdowns = $this->breakdowns($cases, $metricResults);
+        $attempted = $succeeded + $failed;
+        $statusByCase = array_column($caseResults, 'status', 'case_id');
+        $attemptedMetrics = array_filter(
+            $metricResults,
+            static fn (array $metrics, string $caseId): bool => ($statusByCase[$caseId] ?? null) !== 'unsupported',
+            ARRAY_FILTER_USE_BOTH,
+        );
+        $aggregates = $this->aggregate($attemptedMetrics);
+        $breakdowns = $this->breakdowns($cases, $attemptedMetrics);
         $fixtureHashes = array_map(static fn (BenchmarkCaseData $case): array => [
             'case_id' => $case->id,
             'input_sha256' => $case->inputSha256,
             'expected_sha256' => $case->expectedSha256,
         ], $cases);
         $knownCost = $cost->value();
-        $costStatus = $unknownCostAttempts === count($cases) ? 'unknown' : ($unknownCostAttempts > 0 ? 'partial' : 'known');
+        $costStatus = $attempted === 0 || $unknownCostAttempts === $attempted
+            ? 'unknown'
+            : ($unknownCostAttempts > 0 ? 'partial' : 'known');
         $knownCostAmount = $costStatus === 'unknown' ? null : $knownCost;
         $knownCurrency = $costStatus === 'unknown' ? null : $currency;
         $stable = [
@@ -109,6 +129,7 @@ final readonly class BenchmarkRunner
             $modelVersions,
             $fixtureHashes,
             count($cases),
+            $attempted,
             $succeeded,
             $failed,
             $skipped,
@@ -129,20 +150,23 @@ final readonly class BenchmarkRunner
     }
 
     /** @return array{array<string, mixed>, array<string, MetricResultData>, array<string, string>, ?string, ?string} */
-    private function runCase(BenchmarkCaseData $case, BenchmarkPipelineAdapter $adapter, BenchmarkRunOptions $options): array
-    {
+    private function runCase(
+        BenchmarkCaseData $case,
+        BenchmarkPipelineAdapter $adapter,
+        BenchmarkRunOptions $options,
+        BenchmarkObjectReader $objects,
+        string $manifestReference,
+    ): array {
         try {
-            $expectedPath = $case->expectedPath();
-            $expectedSize = @filesize($expectedPath);
-            if (! is_int($expectedSize) || $expectedSize < 2 || $expectedSize > 4_000_000) {
-                throw new BenchmarkManifestException('expected_size_invalid');
+            $expectedPayload = json_decode($objects->read($case, 'expected', 4_000_000), true, 64, JSON_THROW_ON_ERROR);
+            if (! is_array($expectedPayload)) {
+                throw new BenchmarkContractException('expected_contract_invalid');
             }
-            $expectedPayload = json_decode((string) file_get_contents($expectedPath), true, 64, JSON_THROW_ON_ERROR);
-            if (! is_array($expectedPayload) || ($expectedPayload['schema_version'] ?? null) !== 1 || ! is_array($expectedPayload['expected'] ?? null)) {
-                throw new BenchmarkManifestException('expected_contract_invalid');
-            }
+            $expected = BenchmarkExpectedContract::expected($expectedPayload, $case->expectedModelSchemaVersion);
             $started = ($this->clock)();
-            $result = $adapter->run($case, $options->caseTimeoutMs);
+            $result = $this->executor->execute(new BenchmarkCaseExecutionRequest(
+                $manifestReference, $case->id, $adapter->id(), $options->caseTimeoutMs,
+            ), $case, $adapter);
             if ($result->status === 'unsupported' && (! $options->allowUnsupported
                 || ! in_array('unsupported_conversion', $case->tags, true)
                 || ! in_array('descriptor_validation', $case->allowedCapabilities, true))) {
@@ -154,10 +178,11 @@ final readonly class BenchmarkRunner
             }
             $success = $result->status === 'success';
             try {
-                $metrics = $this->metrics->calculate($expectedPayload['expected'], $result->prediction, $success);
+                $prediction = $success ? BenchmarkExpectedContract::prediction($result->prediction) : [];
+                $metrics = $this->metrics->calculate($expected, $prediction, $success);
             } catch (Throwable) {
                 $result = BenchmarkPipelineResultData::technicalFailure('prediction_contract_invalid');
-                $metrics = $this->metrics->calculate($expectedPayload['expected'], [], false);
+                $metrics = $this->metrics->calculate($expected, [], false);
             }
 
             return [[
@@ -169,7 +194,7 @@ final readonly class BenchmarkRunner
                 'metrics' => array_map(static fn (MetricResultData $metric): float => $metric->value, $metrics),
             ], $metrics, $result->modelVersions, $result->costAmount, $result->currency];
         } catch (Throwable $exception) {
-            $expected = isset($expectedPayload['expected']) && is_array($expectedPayload['expected']) ? $expectedPayload['expected'] : $this->emptyExpected();
+            $expected = isset($expected) && is_array($expected) ? $expected : $this->emptyExpected();
             $metrics = $this->metrics->calculate($expected, [], false);
             $code = $exception instanceof BenchmarkManifestException ? $exception->getMessage() : 'pipeline_exception';
             if (! preg_match('/^[a-z][a-z0-9_]{2,63}$/', $code)) {
@@ -193,6 +218,11 @@ final readonly class BenchmarkRunner
         $aggregates = [];
         foreach ($this->metrics->names() as $name) {
             $items = array_map(static fn (array $case): MetricResultData => $case[$name], $results);
+            if ($items === []) {
+                $aggregates[$name] = ['macro' => 0.0, 'micro' => 0.0, 'denominator' => 0, 'raw_error' => 0.0, 'overflow_count' => 0];
+
+                continue;
+            }
             $denominator = array_sum(array_map(static fn (MetricResultData $metric): int => $metric->denominator, $items));
             $numerator = array_sum(array_map(static fn (MetricResultData $metric): float => $metric->numerator, $items));
             $isMape = str_ends_with($name, '_mape');
@@ -215,6 +245,9 @@ final readonly class BenchmarkRunner
     {
         $groups = ['per_source' => [], 'per_tag' => []];
         foreach ($cases as $case) {
+            if (! isset($results[$case->id])) {
+                continue;
+            }
             $groups['per_source'][$case->sourceType->value][$case->id] = $results[$case->id];
             foreach ($case->tags as $tag) {
                 $groups['per_tag'][$tag][$case->id] = $results[$case->id];

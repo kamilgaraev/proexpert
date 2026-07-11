@@ -78,4 +78,41 @@ PHP syntax checks passed for every changed PHP file. Recursive privacy checks co
 
 ## Acceptance corpus
 
-Acceptance execution was intentionally not run locally. The command refuses it in production and requires both `RUN_ESTIMATE_GENERATION_ACCEPTANCE_BENCHMARK=1` and an organization-scoped private S3 manifest configured by `ESTIMATE_GENERATION_ACCEPTANCE_BENCHMARK_MANIFEST`. Task 1 does not ship an acceptance object loader or a hidden provider; later Plan 3 integration must register the explicit private reader and real pipeline adapter before acceptance can run.
+Acceptance execution against real S3 was intentionally not run locally. The command refuses it in production and requires both `RUN_ESTIMATE_GENERATION_ACCEPTANCE_BENCHMARK=1` and an organization-scoped private S3 manifest configured by `ESTIMATE_GENERATION_ACCEPTANCE_BENCHMARK_MANIFEST`. The implementation now includes a bounded, digest-verifying private corpus loader through the existing `FileService`; its gated success path is covered with an isolated fake private object store without credentials or network access.
+
+## Corrective hardening
+
+The review findings were addressed without compatibility layers:
+
+- Production registration now uses `CurrentBaselineBenchmarkAdapter`, which reads only the input object and invokes the current PDF text extractor and rule-based drawing analysis provider. It never reads expected data or opens a database connection.
+- Each case runs in a Symfony Process worker with a PHP memory limit, hard timeout, bounded stdout/stderr, closed JSON protocol, and process-tree termination on Windows and POSIX.
+- Expected and predicted payloads share the closed `benchmark-expected:v1` schema; unknown fields, invalid nested values, duplicate IDs, foreign evidence references, and schema mismatches are rejected.
+- Authorized unsupported cases are excluded from attempted metric and failure-rate denominators; unauthorized unsupported results remain technical failures.
+- Digest ownership is global across input and expected roles and all datasets.
+- Path traversal, file links, directory links, unknown enums, missing licenses, timeout behavior, acceptance prefix isolation, object hashes, and bounded S3 reads have separate executable tests.
+
+The exact Symfony Process dependency used locally is `symfony/process v7.4.5`, MIT-licensed. Its official API for `start`, `checkTimeout`, `stop`, timeouts, and signals was checked through Context7 before implementation.
+
+The PDF corpus contains two real one-page PDFs verified with Poppler and the executable fixture validator:
+
+- Vector plan: A4 landscape, vector walls/openings/dimensions/text, no embedded image; SHA-256 `18b3ab3ddaa317b1f1f11c0dadd8aae266c5a3de169ee822b9340fb19a517dd4`.
+- Scanned plan: A4 landscape, one 1800x1273 grayscale raster, no text layer; SHA-256 `c35739115f4f8347fe05007d97c4ff0c3e8ceb2bd581f7e01ee9d1ea25b797eb`.
+
+Fresh corrective verification:
+
+```text
+vendor/bin/pint ...
+56 files; 15 style issues fixed
+
+php artisan test tests/Unit/EstimateGeneration/Benchmark
+31 passed, 194 assertions
+
+vendor/bin/phpunit --display-warnings tests/Feature/EstimateGeneration/Benchmark/EstimateGenerationBenchmarkCommandTest.php
+6 passed, 17 assertions, no warnings
+
+vendor/bin/phpstan analyse <affected production scope> --memory-limit=1G
+No errors (42 files)
+
+php artisan estimate-generation:benchmark --dataset=development --adapter=current-baseline ...
+Exit 0; 3 attempted, 1 vector success, 2 typed unsupported technical failures, technical success rate 0.3333333333333333
+```

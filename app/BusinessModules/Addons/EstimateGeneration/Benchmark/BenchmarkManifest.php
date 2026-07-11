@@ -23,6 +23,7 @@ final readonly class BenchmarkManifest
         public int $schemaVersion,
         public string $manifestVersion,
         public string $manifestSha256,
+        public ?string $acceptanceManifestLocator,
         private array $cases,
     ) {}
 
@@ -50,9 +51,17 @@ final readonly class BenchmarkManifest
     }
 
     /** @param array<string, mixed> $payload */
-    public static function fromArray(array $payload, string $fixtureRoot, ?string $manifestSha256 = null): self
-    {
-        self::assertExactKeys($payload, ['schema_version', 'manifest_version', 'cases'], 'manifest');
+    public static function fromArray(
+        array $payload,
+        string $fixtureRoot,
+        ?string $manifestSha256 = null,
+        bool $requireAllSourceTypes = true,
+    ): self {
+        $allowedKeys = ['schema_version', 'manifest_version', 'cases'];
+        if (array_key_exists('acceptance_manifest_locator', $payload)) {
+            $allowedKeys[] = 'acceptance_manifest_locator';
+        }
+        self::assertExactKeys($payload, $allowedKeys, 'manifest');
         if (($payload['schema_version'] ?? null) !== 1) {
             throw new BenchmarkManifestException('manifest_schema_version_unsupported');
         }
@@ -78,13 +87,16 @@ final readonly class BenchmarkManifest
 
         self::assertDisjoint($cases);
         self::assertLocalObjects($cases, $root);
-        self::assertRequiredSourceCoverage($cases);
+        if ($requireAllSourceTypes) {
+            self::assertRequiredSourceCoverage($cases);
+        }
         usort($cases, static fn (BenchmarkCaseData $left, BenchmarkCaseData $right): int => strcmp($left->id, $right->id));
 
         return new self(
             1,
             $payload['manifest_version'],
             $manifestSha256 ?? hash('sha256', self::canonicalJson($payload)),
+            self::acceptanceLocator($payload['acceptance_manifest_locator'] ?? null),
             $cases,
         );
     }
@@ -98,6 +110,17 @@ final readonly class BenchmarkManifest
         ));
     }
 
+    public function case(string $id): BenchmarkCaseData
+    {
+        foreach ($this->cases as $case) {
+            if ($case->id === $id) {
+                return $case;
+            }
+        }
+
+        throw new BenchmarkManifestException('benchmark_case_unknown');
+    }
+
     /** @return list<string> */
     public function sourceTypes(): array
     {
@@ -108,6 +131,11 @@ final readonly class BenchmarkManifest
         sort($types, SORT_STRING);
 
         return $types;
+    }
+
+    public function caseCount(): int
+    {
+        return count($this->cases);
     }
 
     /** @param array<string, mixed> $payload */
@@ -160,8 +188,7 @@ final readonly class BenchmarkManifest
     {
         $ids = [];
         $locators = [];
-        $inputDigests = [];
-        $expectedDigests = [];
+        $digestOwners = [];
         foreach ($cases as $case) {
             if (isset($ids[$case->id])) {
                 throw new BenchmarkManifestException('duplicate_case_id');
@@ -173,14 +200,12 @@ final readonly class BenchmarkManifest
                 }
                 $locators[$locator] = $case->dataset->value;
             }
-            if (isset($inputDigests[$case->inputSha256]) && $inputDigests[$case->inputSha256] !== $case->dataset->value) {
-                throw new BenchmarkManifestException('cross_dataset_input_digest_overlap');
+            foreach (['input' => $case->inputSha256, 'expected' => $case->expectedSha256] as $role => $digest) {
+                if (isset($digestOwners[$digest])) {
+                    throw new BenchmarkManifestException('digest_ownership_collision');
+                }
+                $digestOwners[$digest] = $case->id.':'.$role;
             }
-            if (isset($expectedDigests[$case->expectedSha256]) && $expectedDigests[$case->expectedSha256] !== $case->dataset->value) {
-                throw new BenchmarkManifestException('cross_dataset_expected_digest_overlap');
-            }
-            $inputDigests[$case->inputSha256] = $case->dataset->value;
-            $expectedDigests[$case->expectedSha256] = $case->dataset->value;
         }
     }
 
@@ -193,7 +218,9 @@ final readonly class BenchmarkManifest
             }
             foreach ([[$case->inputPath(), $case->inputSha256, 64_000_000], [$case->expectedPath(), $case->expectedSha256, 4_000_000]] as [$path, $hash, $maxBytes]) {
                 $real = realpath($path);
-                if ($real === false || ! is_file($real) || is_link($path) || ! self::isWithin($real, $root)) {
+                $stat = @lstat($path);
+                if ($real === false || ! is_file($real) || is_link($path) || ! is_array($stat)
+                    || (int) ($stat['nlink'] ?? 1) > 1 || ! self::isWithin($real, $root)) {
                     throw new BenchmarkManifestException('fixture_file_invalid');
                 }
                 $size = filesize($real);
@@ -203,6 +230,22 @@ final readonly class BenchmarkManifest
                 if (! hash_equals($hash, (string) hash_file('sha256', $real))) {
                     throw new BenchmarkManifestException('fixture_hash_mismatch');
                 }
+            }
+            if (in_array($case->sourceType, [BenchmarkSourceType::VectorPdf, BenchmarkSourceType::ScannedPdf], true)) {
+                (new BenchmarkFixtureDescriptorValidator)->pdf($case->inputPath(), $case->sourceType->value);
+            }
+            try {
+                $expectedPayload = json_decode((string) file_get_contents($case->expectedPath()), true, 64, JSON_THROW_ON_ERROR);
+            } catch (JsonException) {
+                throw new BenchmarkManifestException('expected_contract_invalid');
+            }
+            if (! is_array($expectedPayload)) {
+                throw new BenchmarkManifestException('expected_contract_invalid');
+            }
+            try {
+                BenchmarkExpectedContract::expected($expectedPayload, $case->expectedModelSchemaVersion);
+            } catch (BenchmarkContractException) {
+                throw new BenchmarkManifestException('expected_contract_invalid');
             }
         }
     }
@@ -237,6 +280,20 @@ final readonly class BenchmarkManifest
         }
 
         return str_replace('\\', '/', $value);
+    }
+
+    private static function acceptanceLocator(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (! is_string($value)
+            || ! preg_match('#^s3://org-\{organization_id\}/estimate-generation/benchmarks/acceptance/[a-zA-Z0-9._/-]+\.json$#', $value)
+            || str_contains($value, '..') || str_contains($value, '?')) {
+            throw new BenchmarkManifestException('acceptance_manifest_locator_invalid');
+        }
+
+        return $value;
     }
 
     private static function hash(mixed $value, string $code): string
