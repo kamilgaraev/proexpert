@@ -103,6 +103,31 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
     }
 
     #[Test]
+    public function textual_document_source_version_is_aggregated_without_numeric_cast_and_changes_revision(): void
+    {
+        [$user, $project, $session] = $this->fixture();
+        $documentId = DB::table('estimate_generation_documents')->insertGetId([
+            'organization_id' => $project->organization_id,
+            'project_id' => $project->id,
+            'session_id' => $session->id,
+            'user_id' => $user->id,
+            'filename' => 'plan.pdf',
+            'status' => 'ready',
+            'source_version' => 'sha256:'.str_repeat('a', 64),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $builder = app(BuildSessionOperationalSnapshot::class);
+        $before = $builder->handle($session, [])->operationalVersion;
+
+        DB::table('estimate_generation_documents')->where('id', $documentId)->update([
+            'source_version' => 'sha256:'.str_repeat('b', 64),
+        ]);
+
+        self::assertNotSame($before, $builder->handle($session, [])->operationalVersion);
+    }
+
+    #[Test]
     public function every_document_and_estimate_source_changes_operational_version(): void
     {
         [$user, $project, $session] = $this->fixture();
@@ -127,7 +152,7 @@ final class EstimateGenerationSnapshotApiTest extends TestCase
         });
         $this->assertSourceMutation($session, 'item insert', static fn () => DB::table('estimate_generation_package_items')->insert(['package_id' => $packageId, 'key' => 'wall', 'item_type' => 'priced_work', 'name' => 'wall', 'total_cost' => 100, 'created_at' => now(), 'updated_at' => now()]));
         $attemptId = (string) Str::uuid();
-        $this->assertSourceMutation($session, 'checkpoint insert', static fn () => DB::table('estimate_generation_pipeline_checkpoints')->insert([...$scope, 'generation_attempt_id' => $attemptId, 'base_input_version' => 'sha256:'.str_repeat('a', 64), 'stage' => 'understand_documents', 'input_version' => 'sha256:'.str_repeat('b', 64), 'status' => 'pending', 'created_at' => now(), 'updated_at' => now()]));
+        $this->assertSourceMutation($session, 'checkpoint insert', static fn () => DB::table('estimate_generation_pipeline_checkpoints')->insert([...$scope, 'generation_attempt_id' => $attemptId, 'base_input_version' => 'sha256:'.str_repeat('a', 64), 'stage' => 'understand_documents', 'input_version' => 'sha256:'.str_repeat('b', 64), 'status' => 'running', 'claim_token' => (string) Str::uuid(), 'lease_expires_at' => now()->addHour(), 'started_at' => now(), 'created_at' => now(), 'updated_at' => now()]));
         $this->assertSourceMutation($session, 'processing unit insert', static fn () => DB::table('estimate_generation_processing_units')->insert([...$scope, 'document_id' => $documentId, 'unit_type' => 'pdf_page', 'unit_index' => 1, 'source_version' => 'sha256:'.str_repeat('c', 64), 'status' => 'pending', 'created_at' => now(), 'updated_at' => now()]));
         $this->assertSourceMutation($session, 'finalization outbox insert', static fn () => DB::table('estimate_generation_finalization_outbox')->insert([...$scope, 'generation_attempt_id' => $attemptId, 'event_type' => 'completed', 'idempotency_key' => hash('sha256', 'snapshot-matrix'), 'status' => 'pending', 'available_at' => now(), 'created_at' => now(), 'updated_at' => now()]));
     }

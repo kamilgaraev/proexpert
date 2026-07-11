@@ -149,6 +149,8 @@ use Illuminate\Support\ServiceProvider;
 
 class EstimateGenerationServiceProvider extends ServiceProvider
 {
+    public const MINIMUM_PIPELINE_LEASE_SECONDS = 2100;
+
     public function register(): void
     {
         $this->app->singleton(SessionOperationalSnapshotBuilder::class, BuildSessionOperationalSnapshot::class);
@@ -208,7 +210,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             failureRecorder: $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder::class),
             failureWorkflowHandler: $app->make(FailureWorkflowHandler::class),
             clock: static fn (): \DateTimeImmutable => new \DateTimeImmutable,
-            leaseSeconds: max(2100, (int) config('estimate-generation.generation.pipeline_lease_seconds', 2100)),
+            leaseSeconds: max(self::MINIMUM_PIPELINE_LEASE_SECONDS, (int) config(
+                'estimate-generation.generation.pipeline_lease_seconds',
+                self::MINIMUM_PIPELINE_LEASE_SECONDS,
+            )),
         ));
         $this->app->singleton(RerankWireClient::class, TimewebRerankWireClient::class);
         $this->app->singleton(OcrDocumentStorageService::class);

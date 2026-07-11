@@ -4,14 +4,18 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages;
 
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
-use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineLeaseHeartbeat;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RenewsPipelineLease;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 
-final readonly class MatchNormativesStage implements PipelineStage
+final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
 {
+    use RenewsPipelineLease;
+
     public function __construct(private ResourceAssemblyService $matcher, private StageResultFactory $results) {}
 
     public function stage(): ProcessingStage
@@ -20,6 +24,20 @@ final readonly class MatchNormativesStage implements PipelineStage
     }
 
     public function execute(PipelineContext $context): PipelineStageResult
+    {
+        return $this->executeStage($context);
+    }
+
+    public function executeWithHeartbeat(PipelineContext $context, PipelineLeaseHeartbeat $heartbeat): PipelineStageResult
+    {
+        self::renewLease($heartbeat);
+        $result = $this->executeStage($context, $heartbeat);
+        self::renewLease($heartbeat);
+
+        return $result;
+    }
+
+    private function executeStage(PipelineContext $context, ?PipelineLeaseHeartbeat $heartbeat = null): PipelineStageResult
     {
         $data = $context->priorOutputs->payload(ProcessingStage::PlanWorkItems);
         $regionalContext = $data['regional_context'] ?? [];
@@ -39,6 +57,8 @@ final readonly class MatchNormativesStage implements PipelineStage
                         'section_title' => $section['title'] ?? null,
                         'source_refs' => $section['source_refs'] ?? $localEstimate['source_refs'] ?? [],
                         'regional_context' => $regionalContext,
+                        'progress_callback' => $heartbeat === null ? null : static fn () => self::renewLease($heartbeat),
+                        'heartbeat_callback' => $heartbeat === null ? null : static fn () => self::renewLease($heartbeat),
                     ],
                 );
             }

@@ -729,11 +729,19 @@ Expected: только целевые registrations/tests до удаления.
 - [ ] **Step 4: Выполнить полный gate**
 
 ```bash
-php artisan test tests/Unit/EstimateGeneration/Pipeline tests/Unit/EstimateGeneration/Observability tests/Feature/EstimateGeneration/Pipeline tests/Feature/EstimateGeneration/EstimateGenerationUsageLedgerTest.php tests/Architecture/EstimateGenerationPipelineArchitectureTest.php
+php artisan test tests/Unit/EstimateGeneration/Pipeline tests/Unit/EstimateGeneration/Observability tests/Architecture/EstimateGenerationPipelineArchitectureTest.php tests/Architecture/EstimateGenerationProductionReadinessTest.php tests/Architecture/EstimateGenerationPlan2CorrectiveContractTest.php
 vendor/bin/phpstan analyse app/BusinessModules/Addons/EstimateGeneration/Pipeline app/BusinessModules/Addons/EstimateGeneration/Evidence app/BusinessModules/Addons/EstimateGeneration/Observability app/BusinessModules/Addons/EstimateGeneration/Application app/BusinessModules/Addons/EstimateGeneration/Http --memory-limit=1G
 ```
 
 Expected: `0 failures`, `No errors`.
+
+PostgreSQL contracts are a separate opt-in deployment gate and are not part of the local DB-less command:
+
+```bash
+RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT=1 php artisan test --group=postgres-contract
+```
+
+Expected in an isolated migrated PostgreSQL environment: tenant composite foreign keys, lease/contention, snapshot watermark, source query budget and cascade contracts pass.
 
 - [ ] **Step 5: Проверить legacy absence**
 

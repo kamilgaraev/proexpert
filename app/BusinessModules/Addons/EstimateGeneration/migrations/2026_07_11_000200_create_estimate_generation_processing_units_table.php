@@ -18,14 +18,19 @@ return new class extends Migration
             $table->string('units_reconcile_claim_token', 36)->nullable()->after('units_reconciled_source_version');
             $table->timestampTz('units_reconcile_lease_expires_at')->nullable()->after('units_reconcile_claim_token');
             $table->index(['id', 'source_version'], 'eg_documents_source_idx');
+            $table->unique(['id', 'organization_id', 'project_id', 'session_id'], 'eg_documents_tenant_scope_uq');
+        });
+
+        Schema::table('estimate_generation_document_pages', function (Blueprint $table): void {
+            $table->unique(['id', 'organization_id', 'project_id', 'session_id', 'document_id'], 'eg_pages_tenant_scope_uq');
         });
 
         Schema::create('estimate_generation_processing_units', function (Blueprint $table): void {
             $table->id();
-            $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('project_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('session_id')->constrained('estimate_generation_sessions')->cascadeOnDelete();
-            $table->foreignId('document_id')->constrained('estimate_generation_documents')->cascadeOnDelete();
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('project_id');
+            $table->unsignedBigInteger('session_id');
+            $table->unsignedBigInteger('document_id');
             $table->string('unit_type', 40);
             $table->unsignedInteger('unit_index');
             $table->string('source_version', 80);
@@ -50,17 +55,29 @@ return new class extends Migration
                 ['document_id', 'unit_type', 'unit_index', 'source_version'],
                 'eg_processing_units_identity_uq',
             );
+            $table->unique(['id', 'organization_id', 'project_id', 'session_id', 'document_id'], 'eg_units_tenant_scope_uq');
+            $table->foreign(['session_id', 'organization_id', 'project_id'], 'eg_units_session_scope_fk')
+                ->references(['id', 'organization_id', 'project_id'])->on('estimate_generation_sessions')->cascadeOnDelete();
+            $table->foreign(['document_id', 'organization_id', 'project_id', 'session_id'], 'eg_units_document_scope_fk')
+                ->references(['id', 'organization_id', 'project_id', 'session_id'])->on('estimate_generation_documents')->cascadeOnDelete();
             $table->index(['session_id', 'source_version', 'status'], 'eg_units_session_source_status_idx');
             $table->index(['status', 'lease_expires_at'], 'eg_units_status_lease_idx');
             $table->index(['organization_id', 'project_id', 'document_id'], 'eg_units_tenant_document_idx');
         });
 
         Schema::table('estimate_generation_document_pages', function (Blueprint $table): void {
-            $table->foreignId('processing_unit_id')->nullable()
-                ->constrained('estimate_generation_processing_units')->nullOnDelete();
+            $table->unsignedBigInteger('processing_unit_id')->nullable();
             $table->string('source_version', 80)->nullable();
             $table->string('output_version', 80)->nullable();
             $table->unique('processing_unit_id', 'eg_document_pages_unit_uq');
+            $table->foreign('processing_unit_id', 'eg_pages_unit_id_fk')
+                ->references('id')->on('estimate_generation_processing_units')->nullOnDelete();
+            $table->foreign(
+                ['processing_unit_id', 'organization_id', 'project_id', 'session_id', 'document_id'],
+                'eg_pages_unit_scope_fk',
+            )->references(
+                ['id', 'organization_id', 'project_id', 'session_id', 'document_id'],
+            )->on('estimate_generation_processing_units');
         });
 
         if (DB::getDriverName() === 'pgsql') {
@@ -85,13 +102,16 @@ return new class extends Migration
         }
 
         Schema::table('estimate_generation_document_pages', function (Blueprint $table): void {
+            $table->dropForeign('eg_pages_unit_scope_fk');
+            $table->dropForeign('eg_pages_unit_id_fk');
             $table->dropUnique('eg_document_pages_unit_uq');
-            $table->dropConstrainedForeignId('processing_unit_id');
-            $table->dropColumn(['source_version', 'output_version']);
+            $table->dropUnique('eg_pages_tenant_scope_uq');
+            $table->dropColumn(['processing_unit_id', 'source_version', 'output_version']);
         });
         Schema::dropIfExists('estimate_generation_processing_units');
         Schema::table('estimate_generation_documents', function (Blueprint $table): void {
             $table->dropIndex('eg_documents_source_idx');
+            $table->dropUnique('eg_documents_tenant_scope_uq');
             $table->dropColumn(['source_version', 'units_finalized_source_version', 'units_reconciled_source_version', 'units_reconcile_claim_token', 'units_reconcile_lease_expires_at']);
         });
     }

@@ -9,6 +9,17 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 
 final class PipelineBaseInputVersion
 {
+    /** @param list<array{id: int, source_version: string, status: string, derived_version: string}> $documents */
+    public static function fromProjection(array $input, array $documents): string
+    {
+        unset($input['generation_attempt_id'], $input['generation_requested']);
+
+        return 'sha256:'.hash('sha256', CanonicalPipelineJson::encode([
+            'input' => $input,
+            'documents' => $documents,
+        ]));
+    }
+
     public static function fromSession(EstimateGenerationSession $session): string
     {
         $input = is_array($session->input_payload) ? $session->input_payload : [];
@@ -24,10 +35,7 @@ final class PipelineBaseInputVersion
             ->values()
             ->all();
 
-        return 'sha256:'.hash('sha256', CanonicalPipelineJson::encode([
-            'input' => $input,
-            'documents' => $documents,
-        ]));
+        return self::fromProjection($input, $documents);
     }
 
     private static function derivedVersion(object $document): string

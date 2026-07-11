@@ -11,16 +11,6 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::table('estimate_generation_documents', function (Blueprint $table): void {
-            $table->unique(['id', 'organization_id', 'project_id', 'session_id'], 'eg_documents_tenant_scope_uq');
-        });
-        Schema::table('estimate_generation_processing_units', function (Blueprint $table): void {
-            $table->unique(['id', 'organization_id', 'project_id', 'session_id', 'document_id'], 'eg_units_tenant_scope_uq');
-        });
-        Schema::table('estimate_generation_document_pages', function (Blueprint $table): void {
-            $table->unique(['id', 'organization_id', 'project_id', 'session_id', 'document_id'], 'eg_pages_tenant_scope_uq');
-        });
-
         Schema::create('estimate_generation_ai_usage', function (Blueprint $table): void {
             $table->uuid('attempt_id')->primary();
             $table->uuid('correlation_id');
@@ -118,8 +108,5 @@ return new class extends Migration
             DB::statement('DROP FUNCTION IF EXISTS prevent_estimate_generation_ai_usage_mutation() CASCADE');
         }
         Schema::dropIfExists('estimate_generation_ai_usage');
-        Schema::table('estimate_generation_document_pages', fn (Blueprint $table) => $table->dropUnique('eg_pages_tenant_scope_uq'));
-        Schema::table('estimate_generation_processing_units', fn (Blueprint $table) => $table->dropUnique('eg_units_tenant_scope_uq'));
-        Schema::table('estimate_generation_documents', fn (Blueprint $table) => $table->dropUnique('eg_documents_tenant_scope_uq'));
     }
 };

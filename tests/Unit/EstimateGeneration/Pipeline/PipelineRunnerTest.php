@@ -75,6 +75,34 @@ final class PipelineRunnerTest extends TestCase
     }
 
     #[Test]
+    public function paid_stage_is_not_reclaimed_after_five_minutes_inside_production_lease_margin(): void
+    {
+        $stage = new CountingStage(ProcessingStage::UnderstandObject);
+        $context = $this->context();
+        $claim = $this->store->claim(
+            $context,
+            $stage->stage(),
+            $this->clock->now,
+            $this->clock->now->modify('+2100 seconds'),
+        );
+        $this->clock->advance('+301 seconds');
+
+        self::assertSame(CheckpointClaimStatus::Acquired, $claim->status);
+        self::assertNull($this->runner([$stage])->runNext($context));
+        self::assertSame(0, $stage->executions);
+
+        $this->clock->advance('+1800 seconds');
+        $reclaimed = $this->store->claim(
+            $context,
+            $stage->stage(),
+            $this->clock->now,
+            $this->clock->now->modify('+2100 seconds'),
+        );
+        self::assertSame(CheckpointClaimStatus::Acquired, $reclaimed->status);
+        self::assertNotSame($claim->claimToken, $reclaimed->claimToken);
+    }
+
+    #[Test]
     public function busy_prior_stage_blocks_later_stage(): void
     {
         $first = new CountingStage(ProcessingStage::UnderstandDocuments);

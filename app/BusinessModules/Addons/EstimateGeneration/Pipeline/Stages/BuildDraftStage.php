@@ -4,16 +4,19 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages;
 
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
-use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RenewsPipelineLease;
 use Illuminate\Support\Arr;
 
 use function trans_message;
 
-final readonly class BuildDraftStage implements PipelineStage
+final readonly class BuildDraftStage implements LeaseAwarePipelineStage
 {
+    use RenewsPipelineLease;
+
     public function __construct(private StageResultFactory $results) {}
 
     public function stage(): ProcessingStage

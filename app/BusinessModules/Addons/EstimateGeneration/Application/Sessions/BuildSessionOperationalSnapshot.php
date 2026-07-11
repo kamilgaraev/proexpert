@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\OperationalUsageSummary;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DocumentReadinessClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorReadinessEvaluator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\OperationalReadinessInputFactory;
@@ -18,6 +20,21 @@ use stdClass;
 final class BuildSessionOperationalSnapshot implements SessionOperationalSnapshotBuilder
 {
     public const QUERY_BUDGET = 11;
+
+    private const CHECKPOINT_STATUS_VALUES = [
+        CheckpointStatus::Running->value,
+        CheckpointStatus::Completed->value,
+        CheckpointStatus::Failed->value,
+        CheckpointStatus::Invalidated->value,
+    ];
+
+    private const UNIT_STATUS_VALUES = [
+        DocumentProcessingUnitStatus::Pending->value,
+        DocumentProcessingUnitStatus::Running->value,
+        DocumentProcessingUnitStatus::Completed->value,
+        DocumentProcessingUnitStatus::Failed->value,
+        DocumentProcessingUnitStatus::Superseded->value,
+    ];
 
     public function __construct(
         private readonly DatabaseManager $database,
@@ -34,14 +51,15 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
         $projectId = (int) $boundSession->project_id;
         $sessionId = (int) $boundSession->getKey();
         $connection = $this->database->connection();
+        $snapshotAt = CarbonImmutable::now();
 
-        return $connection->transaction(function () use ($connection, $organizationId, $projectId, $sessionId, $permissions): SessionSnapshotData {
+        return $connection->transaction(function () use ($connection, $organizationId, $projectId, $sessionId, $permissions, $snapshotAt): SessionSnapshotData {
             $this->beginConsistentRead($connection);
             $session = $this->session($connection, $organizationId, $projectId, $sessionId);
             $documents = $this->documents($connection, $organizationId, $projectId, $sessionId);
-            $checkpoint = $this->currentCheckpoint($connection, $organizationId, $projectId, $sessionId);
-            $checkpoints = $this->checkpoints($connection, $organizationId, $projectId, $sessionId);
-            $units = $this->units($connection, $organizationId, $projectId, $sessionId);
+            $checkpoint = $this->currentCheckpoint($connection, $organizationId, $projectId, $sessionId, $snapshotAt);
+            $checkpoints = $this->checkpoints($connection, $organizationId, $projectId, $sessionId, $snapshotAt);
+            $units = $this->units($connection, $organizationId, $projectId, $sessionId, $snapshotAt);
             $evidence = $this->evidence($connection, $organizationId, $projectId, $sessionId);
             $usage = $this->usage($connection, $organizationId, $projectId, $sessionId);
             $failures = $this->failures($connection, $organizationId, $projectId, $sessionId);
@@ -131,43 +149,47 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
             ->selectRaw('SUM(CASE WHEN '.$this->documentClassifier->actionRequiredSql().' THEN 1 ELSE 0 END) AS action_required')
             ->selectRaw("SUM(CASE WHEN status = 'ignored' THEN 1 ELSE 0 END) AS ignored")
             ->selectRaw('COALESCE(SUM(page_count), 0) AS pages, COALESCE(SUM(processed_page_count), 0) AS processed_pages')
-            ->selectRaw('COALESCE(SUM(source_version), 0) AS source_versions, COALESCE(SUM(ocr_attempts), 0) AS ocr_attempts'));
+            ->selectRaw("md5(COALESCE(string_agg(id::text || ':' || COALESCE(source_version, ''), '|' ORDER BY id), '')) AS source_versions")
+            ->selectRaw('COALESCE(SUM(ocr_attempts), 0) AS ocr_attempts'));
     }
 
     /** @return array<string, mixed> */
-    private function currentCheckpoint(Connection $connection, int $organizationId, int $projectId, int $sessionId): array
+    private function currentCheckpoint(Connection $connection, int $organizationId, int $projectId, int $sessionId, CarbonImmutable $snapshotAt): array
     {
         $row = $connection->table('estimate_generation_pipeline_checkpoints')
             ->where('organization_id', $organizationId)->where('project_id', $projectId)->where('session_id', $sessionId)
             ->select(['stage', 'status', 'attempt_count', 'lease_expires_at', 'started_at', 'completed_at', 'updated_at'])
-            ->selectRaw('CASE WHEN lease_expires_at IS NULL THEN FALSE ELSE lease_expires_at < CURRENT_TIMESTAMP END AS lease_expired')
+            ->selectRaw(
+                'CASE WHEN status = ? AND lease_expires_at <= ? THEN TRUE ELSE FALSE END AS lease_expired',
+                [CheckpointStatus::Running->value, $snapshotAt],
+            )
             ->orderByDesc('updated_at')->orderByDesc('id')->first();
 
         return $row instanceof stdClass ? $this->row($row) : [];
     }
 
     /** @return array<string, mixed> */
-    private function checkpoints(Connection $connection, int $organizationId, int $projectId, int $sessionId): array
+    private function checkpoints(Connection $connection, int $organizationId, int $projectId, int $sessionId, CarbonImmutable $snapshotAt): array
     {
         return $this->aggregate($connection->table('estimate_generation_pipeline_checkpoints')
             ->where('organization_id', $organizationId)->where('project_id', $projectId)->where('session_id', $sessionId)
             ->selectRaw('COUNT(*) AS total, MAX(id) AS max_id, MAX(updated_at) AS max_updated_at, COALESCE(SUM(attempt_count), 0) AS attempts')
-            ->selectRaw("SUM(CASE WHEN status IN ('pending','retry_scheduled') THEN 1 ELSE 0 END) AS pending")
-            ->selectRaw("SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running")
-            ->selectRaw("SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed")
-            ->selectRaw("SUM(CASE WHEN lease_expires_at < CURRENT_TIMESTAMP AND status = 'running' THEN 1 ELSE 0 END) AS expired"));
+            ->selectRaw('0 AS pending')
+            ->selectRaw('SUM(CASE WHEN status = ? AND lease_expires_at > ? THEN 1 ELSE 0 END) AS running', [CheckpointStatus::Running->value, $snapshotAt])
+            ->selectRaw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS failed', [CheckpointStatus::Failed->value])
+            ->selectRaw('SUM(CASE WHEN status = ? AND lease_expires_at <= ? THEN 1 ELSE 0 END) AS expired', [CheckpointStatus::Running->value, $snapshotAt]));
     }
 
     /** @return array<string, mixed> */
-    private function units(Connection $connection, int $organizationId, int $projectId, int $sessionId): array
+    private function units(Connection $connection, int $organizationId, int $projectId, int $sessionId, CarbonImmutable $snapshotAt): array
     {
         return $this->aggregate($connection->table('estimate_generation_processing_units')
             ->where('organization_id', $organizationId)->where('project_id', $projectId)->where('session_id', $sessionId)
             ->selectRaw('COUNT(*) AS total, MAX(id) AS max_id, MAX(updated_at) AS max_updated_at, COALESCE(SUM(attempt_count), 0) AS attempts, COALESCE(SUM(output_count), 0) AS outputs')
-            ->selectRaw("SUM(CASE WHEN status IN ('pending','queued') THEN 1 ELSE 0 END) AS pending")
-            ->selectRaw("SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS running")
-            ->selectRaw("SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed")
-            ->selectRaw("SUM(CASE WHEN lease_expires_at < CURRENT_TIMESTAMP AND status = 'processing' THEN 1 ELSE 0 END) AS expired"));
+            ->selectRaw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS pending', [DocumentProcessingUnitStatus::Pending->value])
+            ->selectRaw('SUM(CASE WHEN status = ? AND lease_expires_at > ? THEN 1 ELSE 0 END) AS running', [DocumentProcessingUnitStatus::Running->value, $snapshotAt])
+            ->selectRaw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS failed', [DocumentProcessingUnitStatus::Failed->value])
+            ->selectRaw('SUM(CASE WHEN status = ? AND lease_expires_at <= ? THEN 1 ELSE 0 END) AS expired', [DocumentProcessingUnitStatus::Running->value, $snapshotAt]));
     }
 
     /** @return array<string, mixed> */

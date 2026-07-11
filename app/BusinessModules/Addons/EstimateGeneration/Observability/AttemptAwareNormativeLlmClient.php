@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Observability;
 
+use Closure;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
@@ -27,6 +28,9 @@ final readonly class AttemptAwareNormativeLlmClient
     public function chat(array $messages, array $options, array $domainContext): array
     {
         $operation = RerankOperationContext::fromArray($domainContext);
+        $heartbeat = is_callable($domainContext['heartbeat_callback'] ?? null)
+            ? Closure::fromCallable($domainContext['heartbeat_callback'])
+            : null;
         $organizationId = $operation->organizationId;
         $projectId = $operation->projectId;
         $sessionId = $operation->sessionId;
@@ -37,6 +41,7 @@ final readonly class AttemptAwareNormativeLlmClient
         $last = null;
 
         foreach ($models as $index => $model) {
+            $heartbeat?->__invoke();
             $started = hrtime(true);
             $status = 'connection_failed';
             $httpCode = null;
@@ -61,6 +66,7 @@ final readonly class AttemptAwareNormativeLlmClient
                 $last = $exception;
             } finally {
                 $this->record($correlationId, $physicalInvocationId, $organizationId, $projectId, $sessionId, $model, $index + 1, $status, $httpCode, $response, $started);
+                $heartbeat?->__invoke();
             }
         }
 
