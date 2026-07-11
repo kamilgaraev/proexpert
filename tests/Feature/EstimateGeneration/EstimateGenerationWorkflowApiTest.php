@@ -93,6 +93,7 @@ final class EstimateGenerationWorkflowApiTest extends TestCase
             ->assertJsonPath('data.id', 41)
             ->assertJsonPath('data.available_actions.0.action', 'review')
             ->assertJsonPath('data.available_actions.0.method', 'GET')
+            ->assertJsonPath('data.readiness_evaluated', true)
             ->assertJsonMissingPath('data.data');
         self::assertSame(1, $readiness->evaluations);
         self::assertSame(1, $documents->evaluations);
@@ -113,6 +114,8 @@ final class EstimateGenerationWorkflowApiTest extends TestCase
         self::assertCount(2, $payload);
         self::assertSame([], $payload[0]['documents_summary']);
         self::assertSame([], $payload[0]['blocking_issues']);
+        self::assertFalse($payload[0]['readiness_evaluated']);
+        self::assertNotContains('apply', array_column($payload[0]['available_actions'], 'action'));
         self::assertSame(0, $readiness->evaluations);
     }
 

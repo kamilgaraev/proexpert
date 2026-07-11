@@ -60,6 +60,20 @@ final class BuildSessionSnapshotTest extends TestCase
     }
 
     #[Test]
+    public function unevaluated_readiness_never_exposes_apply(): void
+    {
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $this->makeSession(EstimateGenerationStatus::ReadyToApply),
+            permissions: ['estimate_generation.apply', 'estimate_generation.view'],
+            readinessEvaluated: false,
+        );
+
+        self::assertFalse($snapshot->readinessEvaluated);
+        self::assertSame(['review'], array_column($snapshot->availableActions, 'action'));
+        self::assertSame('review', $snapshot->nextAction);
+    }
+
+    #[Test]
     public function review_action_uses_the_same_view_permission_as_its_get_route(): void
     {
         $snapshot = app(BuildSessionSnapshot::class)->handle(
@@ -109,6 +123,7 @@ final class BuildSessionSnapshotTest extends TestCase
         self::assertSame([
             'id', 'status', 'processing_stage', 'processing_progress', 'state_version',
             'available_actions', 'blocking_issues', 'warnings', 'next_action',
+            'readiness_evaluated',
             'documents_summary', 'estimate_summary', 'review_summary',
             'applied_estimate_id', 'updated_at',
         ], array_keys($snapshot->toArray()));

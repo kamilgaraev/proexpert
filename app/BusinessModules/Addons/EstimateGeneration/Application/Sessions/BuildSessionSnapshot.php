@@ -37,13 +37,14 @@ final class BuildSessionSnapshot
         array $permissions,
         array $readinessSummary = [],
         array $documentsSummary = [],
+        bool $readinessEvaluated = true,
     ): SessionSnapshotData {
         $status = $session->status instanceof EstimateGenerationStatus
             ? $session->status
             : EstimateGenerationStatus::from((string) $session->status);
         $blockers = $this->list($readinessSummary['blockers'] ?? []);
         $warnings = $this->list($readinessSummary['warnings'] ?? []);
-        $actions = $this->availableActions($session, $status, $permissions, $blockers);
+        $actions = $this->availableActions($session, $status, $permissions, $blockers, $readinessEvaluated);
         $draft = is_array($session->draft_payload) ? $session->draft_payload : [];
         $metrics = is_array($readinessSummary['metrics'] ?? null) ? $readinessSummary['metrics'] : [];
 
@@ -57,6 +58,7 @@ final class BuildSessionSnapshot
             blockingIssues: $blockers,
             warnings: $warnings,
             nextAction: $actions[0]['action'] ?? null,
+            readinessEvaluated: $readinessEvaluated,
             documentsSummary: $documentsSummary,
             estimateSummary: is_array($draft['quality_summary'] ?? null) ? $draft['quality_summary'] : [],
             reviewSummary: array_filter(
@@ -79,6 +81,7 @@ final class BuildSessionSnapshot
         EstimateGenerationStatus $status,
         array $permissions,
         array $blockers,
+        bool $readinessEvaluated,
     ): array {
         if ($status->isTerminal()) {
             return [];
@@ -90,7 +93,7 @@ final class BuildSessionSnapshot
             if ($permission === null || !in_array($permission, $permissions, true)) {
                 continue;
             }
-            if ($action === EstimateGenerationAction::Apply && $blockers !== []) {
+            if ($action === EstimateGenerationAction::Apply && (!$readinessEvaluated || $blockers !== [])) {
                 continue;
             }
 

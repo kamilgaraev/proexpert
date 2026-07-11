@@ -21,6 +21,7 @@ final class EstimateGenerationSessionListResource extends JsonResource
         return app(BuildSessionSnapshot::class)->handle(
             session: $session,
             permissions: self::permissions($request, $session),
+            readinessEvaluated: false,
         )->toArray();
     }
 
