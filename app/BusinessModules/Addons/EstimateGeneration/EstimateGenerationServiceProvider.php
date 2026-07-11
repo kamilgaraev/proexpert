@@ -7,6 +7,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\BootstrapEstimateGenerationLearningCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\InspectEstimateGenerationProductionCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Contracts\DrawingAnalysisProviderInterface;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EloquentSessionStateStore;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\SessionStateStore;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationTrainingDatasetJob;
@@ -83,6 +85,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(config_path('estimate-generation.php'), 'estimate-generation');
 
         $this->app->singleton(DocumentParsingService::class);
+        $this->app->singleton(SessionStateStore::class, EloquentSessionStateStore::class);
         $this->app->singleton(OcrClientInterface::class, TimewebVisionOcrClient::class);
         $this->app->singleton(OcrDocumentStorageService::class);
         $this->app->singleton(OcrPreflightService::class);

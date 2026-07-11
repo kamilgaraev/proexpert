@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Models;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\Models\Estimate;
 use App\Models\Organization;
 use App\Models\Project;
@@ -29,6 +30,8 @@ class EstimateGenerationSession extends Model
         'problem_flags',
         'applied_estimate_id',
         'last_error',
+        'state_version',
+        'resume_status',
     ];
 
     protected $casts = [
@@ -37,6 +40,11 @@ class EstimateGenerationSession extends Model
         'draft_payload' => 'array',
         'problem_flags' => 'array',
         'processing_progress' => 'integer',
+        'status' => EstimateGenerationStatus::class,
+        'state_version' => 'integer',
+        'applied_estimate_id' => 'integer',
+        'applied_at' => 'immutable_datetime',
+        'resume_status' => EstimateGenerationStatus::class,
     ];
 
     public function organization(): BelongsTo
