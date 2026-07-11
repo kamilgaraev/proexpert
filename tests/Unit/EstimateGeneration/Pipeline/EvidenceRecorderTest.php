@@ -188,6 +188,8 @@ final class EvidenceRecorderTest extends TestCase
             ['type' => EvidenceType::Price, 'value' => ['amount' => 1, 'currency' => 'KEY', 'price_version' => 'price:1']],
             ['sourceType' => EvidenceSourceType::CatalogNorm, 'sourceRef' => 'norm:gesn:sk-proj-secret'],
             ['sourceType' => EvidenceSourceType::PriceSnapshot, 'sourceRef' => 'price:fgiscs:sk-proj-secret'],
+            ['sourceType' => EvidenceSourceType::UserInput, 'sourceRef' => 'input:00000000-0000-0000-0000-000000000000'],
+            ['sourceType' => EvidenceSourceType::UserInput, 'sourceRef' => 'input:12345678-1234-1234-1234-12345678901-'],
         ];
 
         foreach ($invalid as $override) {
@@ -198,6 +200,12 @@ final class EvidenceRecorderTest extends TestCase
                 self::assertTrue(true);
             }
         }
+
+        $accepted = $this->data(
+            sourceType: EvidenceSourceType::UserInput,
+            sourceRef: 'input:550e8400-e29b-41d4-a716-446655440000',
+        );
+        self::assertSame('input:550e8400-e29b-41d4-a716-446655440000', $accepted->sourceRef);
     }
 
     #[Test]
