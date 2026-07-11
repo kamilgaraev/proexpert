@@ -10,6 +10,8 @@ use Symfony\Component\Process\Process;
 
 final readonly class GeometryProcessRunner
 {
+    public function __construct(private ?string $platformFamily = null) {}
+
     /** @param array<int, string> $command @return array{exit_code: int|null, stdout: string, stderr: string} */
     public function run(
         array $command,
@@ -22,15 +24,27 @@ final readonly class GeometryProcessRunner
     ): array {
         $sandbox = getenv('GEOMETRY_SANDBOX_BINARY');
         $limits = $resourceLimits ?? new GeometryResourceLimits;
-        if (PHP_OS_FAMILY === 'Linux') {
-            if (! is_string($sandbox) || ! is_executable($sandbox)) {
-                throw new GeometryExtractionException($errorPrefix.'_geometry_sandbox_unavailable');
+        if (($this->platformFamily ?? PHP_OS_FAMILY) === 'Linux') {
+            if (! is_string($sandbox) || ! $this->isExecutableSandbox($sandbox)) {
+                throw new GeometryExtractionException($errorPrefix.'_runtime_sandbox_unavailable');
             }
 
             return $this->runSandboxed($sandbox, $command, $workspace, $errorPrefix, $timeoutSeconds, $maxOutputBytes, $maxErrorBytes, $limits);
         }
 
+        $environment = getenv('APP_ENV');
+        $localOptIn = getenv('GEOMETRY_ALLOW_UNISOLATED_LOCAL') === '1';
+        if ($environment !== 'testing' && ! ($environment === 'local' && $localOptIn)) {
+            throw new GeometryExtractionException($errorPrefix.'_runtime_platform_unsupported');
+        }
+
         return $this->runBounded($command, $workspace, $errorPrefix, $timeoutSeconds, $maxOutputBytes, $maxErrorBytes);
+    }
+
+    private function isExecutableSandbox(string $sandbox): bool
+    {
+        return is_executable($sandbox)
+            || (PHP_OS_FAMILY === 'Windows' && strtolower(pathinfo($sandbox, PATHINFO_EXTENSION)) === 'cmd' && is_file($sandbox));
     }
 
     /** @param array<int, string> $command @return array{exit_code: int|null, stdout: string, stderr: string} */

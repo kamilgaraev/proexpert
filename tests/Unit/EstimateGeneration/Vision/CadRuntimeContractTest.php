@@ -199,6 +199,18 @@ final class CadRuntimeContractTest extends TestCase
     }
 
     #[Test]
+    public function worker_error_context_rejects_unknown_keys_strings_and_document_content(): void
+    {
+        $script = $this->temporaryScript("import json,sys\nsys.stderr.write(json.dumps({'code':'dwg_completeness_unproven','safe_message':'safe','retryable':False,'context':{'decoder_counts':{'unknown':'document text'},'payload':'secret'}}))\nsys.exit(2)\n");
+        try {
+            $this->expectExceptionMessage('cad_runtime_error_context_invalid');
+            (new CadConversionRuntime('python', $script))->extract(dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/Vision/simple-house.dxf');
+        } finally {
+            @unlink($script);
+        }
+    }
+
+    #[Test]
     public function symlink_source_is_rejected(): void
     {
         $link = tempnam(sys_get_temp_dir(), 'cad-link-');

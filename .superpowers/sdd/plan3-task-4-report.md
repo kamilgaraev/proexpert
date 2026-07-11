@@ -181,3 +181,31 @@ git diff --check: exit 0; only existing Dockerfile CRLF normalization warning.
 No Docker build, database command or migration was executed.
 
 Second corrective implementation commit: `aa10cedd`.
+
+## Third corrective cycle after final review
+
+### Finding → fix evidence
+
+- Closed geometry schema now rejects numeric strings in bounds, invalid optional reference fields and malformed `source_indices`; aggregate scalar and coordinate budgets include nested block members, lineage, segment indices, page boxes/transforms, scale candidates and warning context. The coordinate limit was renamed to reflect component-count semantics.
+- DXF traversal aggregates unsupported entities across layouts and recursively expanded blocks, while DWG JSON traversal reports the same bounded numeric `decoder_counts` and reconciliation shape before a typed blocking failure.
+- `CadConversionRuntime` accepts worker error context only through a closed numeric whitelist. Unknown keys, strings, document fragments, negative values and excessive counters are rejected as `cad_runtime_error_context_invalid`.
+- Runtime isolation is fail-closed on unsupported production platforms. Unsandboxed non-Linux execution is permitted only in the `testing` environment or in `local` with explicit `GEOMETRY_ALLOW_UNISOLATED_LOCAL=1`; Linux sandbox errors now consistently use `*_runtime_sandbox_unavailable`.
+- The bubblewrap network bootstrap is separated into `bootstrap-geometry-sandbox-runtime.sh`; the security assertion is offline and fails with an explicit missing-prerequisite message.
+- A PHP integration test injects only the platform family, enters the real `GeometryProcessRunner::runSandboxed()` branch, crosses a Windows-to-WSL test adapter, runs the production `geometry-sandbox.sh` with bubblewrap, and verifies argument transfer plus stdout, stderr and exit-code 17 mapping.
+
+### Third corrective verification
+
+```text
+LIBREDWG_DWGREAD_BINARY=C:\Users\kamilgaraev\AppData\Local\Temp\libredwg-bin\dwgread.exe vendor/bin/phpunit \
+  CadRuntimeContractTest.php CadProductionRuntimeContractTest.php \
+  DwgDxfGeometryProviderTest.php PdfVectorGeometryProviderTest.php \
+  LegacyPdfGeometryAdapterTest.php VectorGeometryDataContractTest.php \
+  GeometryResourceLimitsTest.php
+Result: 53 tests, 157 assertions, 0 failed, 0 skipped.
+
+PHPStan/Larastan focused production PHP: [OK] No errors.
+Python Black and py_compile: pass.
+Shell syntax for production sandbox, offline harness and bootstrap: pass.
+```
+
+No Docker build, database command or migration was executed.

@@ -186,6 +186,7 @@ def expand_insert(
     dimensions: list[dict[str, Any]],
     layout: str,
     source_member_handle: str | None = None,
+    unsupported_counts: dict[str, int] | None = None,
 ) -> None:
     if depth > max_depth:
         raise SafeFailure("cad_block_depth_exceeded")
@@ -218,6 +219,10 @@ def expand_insert(
         source_handle = str(
             source_entity.dxf.handle or f"{insert.dxf.name}:member:{member_index}"
         )
+        if virtual.dxftype() not in SUPPORTED:
+            if unsupported_counts is not None:
+                unsupported_counts["unknown"] = unsupported_counts.get("unknown", 0) + 1
+            continue
         if virtual.dxftype() == "INSERT":
             expand_insert(
                 virtual,
@@ -229,6 +234,7 @@ def expand_insert(
                 dimensions,
                 layout,
                 source_handle,
+                unsupported_counts,
             )
             continue
         mapped, text, dimension = map_dxf_entity(
@@ -271,13 +277,25 @@ def parse_dxf(path: str, max_depth: int) -> tuple[Any, ...]:
     entities: list[dict[str, Any]] = []
     texts: list[dict[str, Any]] = []
     dimensions: list[dict[str, Any]] = []
+    unsupported_counts: dict[str, int] = {}
+    source_entity_count = 0
     for layout in document.layouts:
         for entity in layout:
+            source_entity_count += 1
             if entity.dxftype() not in SUPPORTED:
-                raise SafeFailure("cad_unsupported_entities")
+                unsupported_counts["unknown"] = unsupported_counts.get("unknown", 0) + 1
+                continue
             if entity.dxftype() == "INSERT":
                 expand_insert(
-                    entity, [], 1, max_depth, entities, texts, dimensions, layout.name
+                    entity,
+                    [],
+                    1,
+                    max_depth,
+                    entities,
+                    texts,
+                    dimensions,
+                    layout.name,
+                    unsupported_counts=unsupported_counts,
                 )
                 continue
             mapped, text, dimension = map_dxf_entity(entity, [], None, layout.name)
@@ -287,6 +305,17 @@ def parse_dxf(path: str, max_depth: int) -> tuple[Any, ...]:
                 texts.append(text)
             if dimension is not None:
                 dimensions.append(dimension)
+    if unsupported_counts:
+        raise SafeFailure(
+            "cad_unsupported_entities",
+            context={
+                "decoder_counts": unsupported_counts,
+                "reconciliation": {
+                    "entity_records": source_entity_count,
+                    "represented_records": len(entities) + len(texts) + len(dimensions),
+                },
+            },
+        )
     if not entities and not texts and not dimensions:
         raise SafeFailure("cad_geometry_empty")
     return unit, status, layers, blocks, entities, texts, dimensions, [], "ezdxf:1.4.4"
@@ -395,6 +424,7 @@ def parse_dwg(
     texts = []
     dimensions = []
     entity_records = 0
+    unsupported_count = 0
     for item in object_records:
         if item.get("object") == "LAYER":
             layers.append(
@@ -408,7 +438,8 @@ def parse_dwg(
             continue
         entity_records += 1
         if entity_type not in SUPPORTED:
-            raise SafeFailure("cad_unsupported_entities")
+            unsupported_count += 1
+            continue
         item_handle = handle(item.get("handle"))
         layer = handle(item.get("layer"))
         base = {
@@ -452,6 +483,18 @@ def parse_dwg(
     if not entities and not texts and not dimensions:
         raise SafeFailure("dwg_geometry_empty")
     represented_records = len(entities) + len(texts) + len(dimensions)
+    if unsupported_count:
+        raise SafeFailure(
+            "cad_unsupported_entities",
+            context={
+                "decoder_counts": {"unknown": unsupported_count},
+                "reconciliation": {
+                    "object_records": len(object_records),
+                    "entity_records": entity_records,
+                    "represented_records": represented_records,
+                },
+            },
+        )
     if represented_records != entity_records:
         raise SafeFailure(
             "dwg_reconciliation_failed",

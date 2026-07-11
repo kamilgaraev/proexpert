@@ -5,15 +5,11 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ROOT="$(mktemp -d /tmp/most-geometry-sandbox.XXXXXX)"
 trap 'rm -rf "$ROOT"' EXIT
 
-mkdir -p "$ROOT/bwrap" "$ROOT/work" "$ROOT/outside"
+mkdir -p "$ROOT/work" "$ROOT/outside"
 if ! command -v bwrap >/dev/null 2>&1; then
-    (
-        cd "$ROOT/bwrap"
-        apt download bubblewrap=0.6.1-1ubuntu0.1 >/dev/null
-        echo 'f75c835d6871d1b36370e12ee82940334b2a9f94efc7b959b5b236447e89743d  bubblewrap_0.6.1-1ubuntu0.1_amd64.deb' | sha256sum -c - >/dev/null
-        dpkg-deb -x bubblewrap_0.6.1-1ubuntu0.1_amd64.deb package
-    )
-    export PATH="$ROOT/bwrap/package/usr/bin:$PATH"
+    BWRAP_BINARY="${GEOMETRY_TEST_BWRAP:-$HOME/.cache/most-geometry-sandbox/bwrap}"
+    test -x "$BWRAP_BINARY" || { echo 'geometry sandbox prerequisite missing; run bootstrap-geometry-sandbox-runtime.sh' >&2; exit 2; }
+    export PATH="$(dirname "$BWRAP_BINARY"):$PATH"
 fi
 
 test "$(bwrap --version)" = 'bubblewrap 0.6.1'

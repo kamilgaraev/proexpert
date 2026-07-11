@@ -57,10 +57,13 @@ final readonly class CadConversionRuntime
             $stderr = $result['stderr'];
             if ($result['exit_code'] !== 0) {
                 $error = json_decode($stderr, true);
+                $safeContext = is_array($error) && is_array($error['context'] ?? null)
+                    ? $this->validatedErrorContext($error['context'])
+                    : [];
                 throw new GeometryExtractionException(
                     is_array($error) && is_string($error['code'] ?? null) ? $error['code'] : 'cad_runtime_failed',
                     is_array($error) && ($error['retryable'] ?? false) === true,
-                    is_array($error) && is_array($error['context'] ?? null) ? $error['context'] : [],
+                    $safeContext,
                 );
             }
             $decoded = json_decode($stdout, true, 32, JSON_THROW_ON_ERROR);
@@ -124,5 +127,31 @@ final readonly class CadConversionRuntime
             $item->isDir() && ! $item->isLink() ? $this->removeDirectory($item->getPathname()) : @unlink($item->getPathname());
         }
         @rmdir($directory);
+    }
+
+    /** @param array<string, mixed> $context @return array<string, array<string, int>> */
+    private function validatedErrorContext(array $context): array
+    {
+        $allowed = [
+            'decoder_counts' => ['unsupported', 'skipped', 'unknown'],
+            'reconciliation' => ['object_records', 'entity_records', 'represented_records'],
+        ];
+        if (count($context) > count($allowed) || array_diff(array_keys($context), array_keys($allowed)) !== []) {
+            throw new GeometryExtractionException('cad_runtime_error_context_invalid');
+        }
+        $validated = [];
+        foreach ($context as $group => $counts) {
+            if (! is_array($counts) || count($counts) > count($allowed[$group]) || array_diff(array_keys($counts), $allowed[$group]) !== []) {
+                throw new GeometryExtractionException('cad_runtime_error_context_invalid');
+            }
+            foreach ($counts as $key => $value) {
+                if (! is_int($value) || $value < 0 || $value > 10_000_000) {
+                    throw new GeometryExtractionException('cad_runtime_error_context_invalid');
+                }
+                $validated[$group][$key] = $value;
+            }
+        }
+
+        return $validated;
     }
 }

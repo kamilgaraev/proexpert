@@ -8,7 +8,9 @@ final readonly class VectorGeometryData
 {
     private const MAX_ITEMS = 100_000;
 
-    private const MAX_POINTS = 500_000;
+    private const MAX_COORDINATE_COMPONENTS = 500_000;
+
+    private const MAX_AGGREGATE_SCALARS = 10_000;
 
     private const MAX_TEXT_LENGTH = 4096;
 
@@ -70,6 +72,9 @@ final readonly class VectorGeometryData
             }
         }
         self::assertDepth($data);
+        if (self::countScalarLeaves($data) > self::MAX_AGGREGATE_SCALARS) {
+            throw new \InvalidArgumentException('geometry_contract_aggregate_limit');
+        }
         self::assertBounds($data['bounds']);
         self::assertCollection($data['layers'], ['name', 'visible'], ['name', 'visible'], 'layer');
         self::assertCollection($data['blocks'], ['name', 'handle', 'owner', 'entities'], ['name', 'handle', 'owner', 'entities'], 'block');
@@ -111,7 +116,8 @@ final readonly class VectorGeometryData
                 }
             }
         }
-        if ($pointCount > self::MAX_POINTS) {
+        $pointCount += self::countTopLevelCoordinates($data);
+        if ($pointCount > self::MAX_COORDINATE_COMPONENTS) {
             throw new \InvalidArgumentException('geometry_contract_points_limit');
         }
 
@@ -142,7 +148,7 @@ final readonly class VectorGeometryData
         if ($bounds === []) {
             return;
         }
-        if (count($bounds) !== 4 || ! is_numeric($bounds[0]) || ! is_numeric($bounds[1]) || ! is_numeric($bounds[2]) || ! is_numeric($bounds[3])) {
+        if (count($bounds) !== 4 || ! self::isFiniteNumber($bounds[0]) || ! self::isFiniteNumber($bounds[1]) || ! self::isFiniteNumber($bounds[2]) || ! self::isFiniteNumber($bounds[3])) {
             throw new \InvalidArgumentException('geometry_contract_bounds_invalid');
         }
         self::assertFinite($bounds);
@@ -177,7 +183,7 @@ final readonly class VectorGeometryData
     private static function countCoordinateValues(array $item): int
     {
         $count = 0;
-        foreach (['points', 'position', 'center', 'definition_points', 'transform', 'transform_lineage', 'bbox'] as $field) {
+        foreach (['position', 'center', 'definition_points', 'transform', 'transform_lineage', 'bbox'] as $field) {
             if (isset($item[$field])) {
                 $count += self::countNumericLeaves($item[$field]);
             }
@@ -186,6 +192,8 @@ final readonly class VectorGeometryData
             foreach ($item['segments'] as $segment) {
                 $count += self::countNumericLeaves($segment['points'] ?? []);
             }
+        } elseif (isset($item['points'])) {
+            $count += self::countNumericLeaves($item['points']);
         }
 
         return $count;
@@ -208,6 +216,11 @@ final readonly class VectorGeometryData
     {
         foreach (['handle', 'type', 'layer'] as $field) {
             if (! is_string($entity[$field]) || $entity[$field] === '') {
+                throw new \InvalidArgumentException('geometry_contract_entity_invalid');
+            }
+        }
+        foreach (['layout', 'owner', 'block', 'source_operator', 'source_member_handle'] as $field) {
+            if (array_key_exists($field, $entity) && (! is_string($entity[$field]) || $entity[$field] === '')) {
                 throw new \InvalidArgumentException('geometry_contract_entity_invalid');
             }
         }
@@ -281,6 +294,17 @@ final readonly class VectorGeometryData
                     'curve' => 4,
                 };
                 if (count($segment['points']) !== $expectedPoints) {
+                    throw new \InvalidArgumentException('geometry_contract_segment_invalid');
+                }
+                $indices = $segment['source_indices'];
+                $expectedIndices = $segment['operator'] === 'curve' ? 3 : 1;
+                if (count($indices) !== $expectedIndices || array_filter($indices, static fn (mixed $value): bool => is_int($value) && $value >= 0) !== $indices
+                    || array_values(array_unique($indices)) !== $indices || $indices !== array_values(array_unique($indices, SORT_NUMERIC))) {
+                    throw new \InvalidArgumentException('geometry_contract_segment_invalid');
+                }
+                $sorted = $indices;
+                sort($sorted, SORT_NUMERIC);
+                if ($sorted !== $indices) {
                     throw new \InvalidArgumentException('geometry_contract_segment_invalid');
                 }
             }
@@ -386,6 +410,7 @@ final readonly class VectorGeometryData
             }
         }
         self::assertCoordinate($text['position']);
+        self::assertOptionalReferences($text, 'geometry_contract_text_invalid');
         if (isset($text['transform'])) {
             self::assertTransform($text['transform']);
         }
@@ -406,6 +431,7 @@ final readonly class VectorGeometryData
             throw new \InvalidArgumentException('geometry_contract_dimension_invalid');
         }
         self::assertCoordinates($dimension['definition_points']);
+        self::assertOptionalReferences($dimension, 'geometry_contract_dimension_invalid');
     }
 
     private static function assertCoordinate(mixed $coordinate): void
@@ -488,5 +514,44 @@ final readonly class VectorGeometryData
                 throw new \InvalidArgumentException('geometry_contract_bounds_invalid');
             }
         }
+    }
+
+    /** @param array<string, mixed> $item */
+    private static function assertOptionalReferences(array $item, string $reason): void
+    {
+        foreach (['owner', 'block', 'source_operator', 'source_member_handle'] as $field) {
+            if (array_key_exists($field, $item) && (! is_string($item[$field]) || $item[$field] === '')) {
+                throw new \InvalidArgumentException($reason);
+            }
+        }
+        if (isset($item['source_lineage']) && (! is_array($item['source_lineage']) || array_filter($item['source_lineage'], static fn (mixed $value): bool => is_string($value) && $value !== '') !== $item['source_lineage'])) {
+            throw new \InvalidArgumentException($reason);
+        }
+    }
+
+    private static function countScalarLeaves(mixed $value): int
+    {
+        if (! is_array($value)) {
+            return 1;
+        }
+
+        return array_sum(array_map(self::countScalarLeaves(...), $value));
+    }
+
+    /** @param array<string, mixed> $data */
+    private static function countTopLevelCoordinates(array $data): int
+    {
+        $count = self::countNumericLeaves($data['bounds']);
+        foreach ($data['pages'] as $page) {
+            $count += self::countNumericLeaves([$page['width'], $page['height'], $page['media_box'], $page['crop_box'], $page['transform']]);
+        }
+        foreach ($data['scale_candidates'] as $candidate) {
+            $count += self::countNumericLeaves([$candidate['value'], $candidate['confidence'] ?? null]);
+        }
+        foreach ($data['warnings'] as $warning) {
+            $count += self::countNumericLeaves($warning['safe_context'] ?? []);
+        }
+
+        return $count;
     }
 }

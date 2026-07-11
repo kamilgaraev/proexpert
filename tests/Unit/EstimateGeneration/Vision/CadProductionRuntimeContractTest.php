@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Vision;
 
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtractionException;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\GeometryProcessRunner;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Process\Process;
@@ -32,7 +34,75 @@ final class CadProductionRuntimeContractTest extends TestCase
         self::assertStringContainsString('--ro-bind / /', file_get_contents($root.'/docker/geometry/geometry-sandbox.sh'));
         self::assertStringContainsString('Corresponding Source', $notice);
         self::assertStringContainsString('memory_limit_kib', file_get_contents($root.'/config/estimate-generation.php'));
-        self::assertStringContainsString('geometry_sandbox_unavailable', file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Vision/Geometry/GeometryProcessRunner.php'));
+        self::assertStringContainsString('runtime_sandbox_unavailable', file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Vision/Geometry/GeometryProcessRunner.php'));
+        self::assertStringContainsString('runtime_platform_unsupported', file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Vision/Geometry/GeometryProcessRunner.php'));
+        self::assertStringNotContainsString('apt download', file_get_contents($root.'/tests/Runtime/geometry-sandbox-runtime.sh'));
+        self::assertStringContainsString('apt download', file_get_contents($root.'/tests/Runtime/bootstrap-geometry-sandbox-runtime.sh'));
+    }
+
+    #[Test]
+    public function non_linux_production_execution_fails_closed(): void
+    {
+        if (PHP_OS_FAMILY === 'Linux') {
+            self::markTestSkipped('Non-Linux production policy test.');
+        }
+
+        $previousEnvironment = getenv('APP_ENV');
+        $previousOptIn = getenv('GEOMETRY_ALLOW_UNISOLATED_LOCAL');
+        putenv('APP_ENV=production');
+        putenv('GEOMETRY_ALLOW_UNISOLATED_LOCAL=1');
+
+        try {
+            $this->expectException(GeometryExtractionException::class);
+            $this->expectExceptionMessage('cad_runtime_platform_unsupported');
+            (new GeometryProcessRunner)->run(
+                [PHP_BINARY, '-r', 'exit(0);'],
+                sys_get_temp_dir(),
+                'cad',
+                1,
+                1024,
+            );
+        } finally {
+            $this->restoreEnvironment('APP_ENV', $previousEnvironment);
+            $this->restoreEnvironment('GEOMETRY_ALLOW_UNISOLATED_LOCAL', $previousOptIn);
+        }
+    }
+
+    #[Test]
+    public function php_runner_maps_wsl_sandbox_output_and_exit_code(): void
+    {
+        if (PHP_OS_FAMILY !== 'Windows') {
+            self::markTestSkipped('WSL bridge integration test.');
+        }
+
+        $root = dirname(__DIR__, 4);
+        $workspace = sys_get_temp_dir().'/most-geometry-runner-'.bin2hex(random_bytes(8));
+        self::assertTrue(mkdir($workspace, 0700));
+        self::assertNotFalse(file_put_contents($workspace.'/worker.sh', "printf runner-ok\nprintf runner-error >&2\nexit 17\n"));
+        $wslWorker = '/mnt/'.strtolower($workspace[0]).str_replace('\\', '/', substr($workspace, 2)).'/worker.sh';
+        (new Process(['wsl.exe', '-d', 'Ubuntu-22.04', '--', 'chmod', '0755', $wslWorker]))->mustRun();
+        $previousSandbox = getenv('GEOMETRY_SANDBOX_BINARY');
+        putenv('GEOMETRY_SANDBOX_BINARY='.$root.'/tests/Runtime/geometry-sandbox-wsl-bridge.cmd');
+
+        try {
+            $result = (new GeometryProcessRunner('Linux'))->run(
+                [$wslWorker],
+                $workspace,
+                'cad',
+                10,
+                1024,
+            );
+
+            self::assertSame(17, $result['exit_code'], $result['stderr']);
+            self::assertSame('runner-ok', $result['stdout']);
+            self::assertSame('runner-error', $result['stderr']);
+        } finally {
+            $this->restoreEnvironment('GEOMETRY_SANDBOX_BINARY', $previousSandbox);
+            @unlink($workspace.'/process.stdout');
+            @unlink($workspace.'/process.stderr');
+            @unlink($workspace.'/worker.sh');
+            @rmdir($workspace);
+        }
     }
 
     #[Test]
@@ -49,5 +119,10 @@ final class CadProductionRuntimeContractTest extends TestCase
         $process->mustRun();
 
         self::assertStringContainsString('geometry sandbox runtime: PASS', $process->getOutput());
+    }
+
+    private function restoreEnvironment(string $name, string|false $value): void
+    {
+        putenv($value === false ? $name : $name.'='.$value);
     }
 }

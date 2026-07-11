@@ -60,6 +60,21 @@ final class VectorGeometryDataContractTest extends TestCase
 
             return $data;
         }, 'geometry_contract_coordinate_invalid'];
+        yield 'bounds reject numeric strings' => [static function (array $data): array {
+            $data['bounds'][0] = '0';
+
+            return $data;
+        }, 'geometry_contract_bounds_invalid'];
+        yield 'optional layout must be string' => [static function (array $data): array {
+            $data['entities'][0]['layout'] = [];
+
+            return $data;
+        }, 'geometry_contract_entity_invalid'];
+        yield 'source indices require ordered unique non-negative integers' => [static function (array $data): array {
+            $data['entities'][0] = ['handle' => 'A1', 'type' => 'path', 'layer' => 'page', 'segments' => [['operator' => 'line', 'points' => [[0, 0], [1, 1]], 'source_indices' => [2, -1], 'closes_subpath' => false]]];
+
+            return $data;
+        }, 'geometry_contract_segment_invalid'];
         yield 'NaN point' => [static function (array $data): array {
             $data['entities'][0]['points'][0][0] = NAN;
 
@@ -91,6 +106,19 @@ final class VectorGeometryDataContractTest extends TestCase
 
             return $data;
         }, 'geometry_contract_depth_invalid'];
+    }
+
+    #[Test]
+    public function aggregate_nested_budget_accepts_near_limit_and_rejects_over_limit(): void
+    {
+        $near = $this->validPayload();
+        $near['blocks'] = [['name' => 'B', 'handle' => 'B1', 'owner' => 'blocks', 'entities' => array_fill(0, 9_800, 'A')]];
+        self::assertSame(1, VectorGeometryData::fromArray($near)->schemaVersion);
+
+        $over = $this->validPayload();
+        $over['blocks'] = [['name' => 'B', 'handle' => 'B1', 'owner' => 'blocks', 'entities' => array_fill(0, 10_100, 'A')]];
+        $this->expectExceptionMessage('geometry_contract_aggregate_limit');
+        VectorGeometryData::fromArray($over);
     }
 
     #[Test]
