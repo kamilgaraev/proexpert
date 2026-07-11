@@ -6,23 +6,16 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 final readonly class DocumentUnitPageReservationPolicy
 {
-    /** @param array<string, mixed> $normalizedPayload */
     public function assertReservable(
-        ?int $processingUnitId,
-        ?string $sourceVersion,
-        ?string $text,
-        ?string $textHash,
-        ?string $outputVersion,
-        array $normalizedPayload,
-        bool $hasLineage,
+        DocumentUnitPageReservationState $state,
         int $unitId,
         string $unitSourceVersion,
     ): void {
-        if ($text !== null || $textHash !== null || $outputVersion !== null || $normalizedPayload !== [] || $hasLineage) {
+        if (! $state->pristine()) {
             throw new DocumentUnitProcessingException('unit_page_lineage_conflict');
         }
-        if (($processingUnitId !== null && $processingUnitId !== $unitId)
-            || ($sourceVersion !== null && $sourceVersion !== $unitSourceVersion)) {
+        if (($state->processingUnitId !== null && $state->processingUnitId !== $unitId)
+            || ($state->sourceVersion !== null && $state->sourceVersion !== $unitSourceVersion)) {
             throw new DocumentUnitProcessingException('unit_page_reservation_conflict');
         }
     }

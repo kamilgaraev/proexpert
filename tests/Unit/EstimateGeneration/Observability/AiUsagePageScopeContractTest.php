@@ -41,7 +41,8 @@ final class AiUsagePageScopeContractTest extends TestCase
         self::assertStringContainsString("'page_id'", (string) $migration);
         self::assertStringContainsString('eg_usage_page_scope_fk', (string) $migration);
         self::assertStringContainsString("'page_id' => \$data->context->pageId", (string) $store);
-        self::assertStringContainsString("->where('page_number', \$unit->unit_index)->lockForUpdate()->first()", (string) $unitStore);
+        self::assertStringContainsString('->createOrFirst(', (string) $unitStore);
+        self::assertStringContainsString('->whereKey($winner->getKey())->lockForUpdate()->firstOrFail()', (string) $unitStore);
     }
 
     #[Test]

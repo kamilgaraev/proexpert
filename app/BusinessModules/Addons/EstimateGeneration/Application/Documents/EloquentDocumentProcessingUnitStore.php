@@ -249,16 +249,13 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
 
     private function pageIdentity(EstimateGenerationProcessingUnit $unit): int
     {
-        $page = $this->pageQuery()->where('document_id', $unit->document_id)
-            ->where('page_number', $unit->unit_index)->lockForUpdate()->first();
-        if (! $page instanceof EstimateGenerationDocumentPage) {
-            $page = $this->pageQuery()->create([
-                'document_id' => $unit->document_id, 'page_number' => $unit->unit_index,
-                'processing_unit_id' => $unit->id, 'source_version' => $unit->source_version,
+        $winner = $this->pageQuery()->createOrFirst(
+            ['document_id' => $unit->document_id, 'page_number' => $unit->unit_index],
+            ['processing_unit_id' => $unit->id, 'source_version' => $unit->source_version,
                 'organization_id' => $unit->organization_id, 'project_id' => $unit->project_id,
-                'session_id' => $unit->session_id, 'normalized_payload' => [], 'quality_flags' => [],
-            ]);
-        }
+                'session_id' => $unit->session_id, 'language_codes' => [], 'normalized_payload' => [], 'quality_flags' => []],
+        );
+        $page = $this->pageQuery()->whereKey($winner->getKey())->lockForUpdate()->firstOrFail();
         if ((int) $page->organization_id !== (int) $unit->organization_id
             || (int) $page->project_id !== (int) $unit->project_id
             || (int) $page->session_id !== (int) $unit->session_id
@@ -266,15 +263,24 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
             throw new DocumentUnitProcessingException('unit_page_scope_mismatch');
         }
         (new DocumentUnitPageReservationPolicy)->assertReservable(
-            processingUnitId: $page->processing_unit_id !== null ? (int) $page->processing_unit_id : null,
-            sourceVersion: $page->source_version !== null ? (string) $page->source_version : null,
-            text: $page->text !== null ? (string) $page->text : null,
-            textHash: $page->text_hash !== null ? (string) $page->text_hash : null,
-            outputVersion: $page->output_version !== null ? (string) $page->output_version : null,
-            normalizedPayload: is_array($page->normalized_payload) ? $page->normalized_payload : [],
-            hasLineage: $this->pageHasLineage($page),
-            unitId: (int) $unit->id,
-            unitSourceVersion: (string) $unit->source_version,
+            new DocumentUnitPageReservationState(
+                processingUnitId: $page->processing_unit_id !== null ? (int) $page->processing_unit_id : null,
+                sourceVersion: $page->source_version !== null ? (string) $page->source_version : null,
+                outputVersion: $page->output_version !== null ? (string) $page->output_version : null,
+                width: $page->width !== null ? (int) $page->width : null,
+                height: $page->height !== null ? (int) $page->height : null,
+                rotation: $page->rotation !== null ? (int) $page->rotation : null,
+                languageCodes: is_array($page->language_codes) ? $page->language_codes : [],
+                text: $page->text !== null ? (string) $page->text : null,
+                textHash: $page->text_hash !== null ? (string) $page->text_hash : null,
+                confidence: $page->confidence !== null ? (float) $page->confidence : null,
+                rawPayloadPath: $page->raw_payload_path !== null ? (string) $page->raw_payload_path : null,
+                normalizedPayload: is_array($page->normalized_payload) ? $page->normalized_payload : [],
+                qualityFlags: is_array($page->quality_flags) ? $page->quality_flags : [],
+                hasLineage: $this->pageHasLineage($page),
+            ),
+            (int) $unit->id,
+            (string) $unit->source_version,
         );
         if ($page->processing_unit_id === null) {
             $page->forceFill(['processing_unit_id' => $unit->id, 'source_version' => $unit->source_version])->save();
