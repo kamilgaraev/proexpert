@@ -4,16 +4,17 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
+use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\NormativeSearchProfileData;
+use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\WorkIntentData;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
-use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeSearchProfileCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
+use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\PackagePlannerService;
-use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\NormativeSearchProfileData;
-use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\WorkIntentData;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -54,10 +55,10 @@ final class EstimateGenerationFullFsnbPricingTest extends TestCase
             'organization_id' => $organization->id,
             'project_id' => $project->id,
             'user_id' => $user->id,
-            'status' => 'analyzed',
+            'status' => 'generating',
             'processing_stage' => 'object_analysis',
             'processing_progress' => 35,
-            'input_payload' => $input,
+            'input_payload' => [...$input, 'generation_attempt_id' => 'full-fsnb-generation'],
             'analysis_payload' => $analysis,
             'problem_flags' => [],
         ]);
@@ -89,12 +90,15 @@ final class EstimateGenerationFullFsnbPricingTest extends TestCase
         self::assertNotContains('missing_resources', $quality['critical_flags']);
         self::assertNotContains('total_out_of_range', $quality['critical_flags']);
         self::assertNotContains('line_total_anomaly', $quality['critical_flags']);
-        self::assertNotSame('blocked', $session->status);
+        self::assertContains($session->status, [
+            EstimateGenerationStatus::EstimateReviewRequired,
+            EstimateGenerationStatus::ReadyToApply,
+        ]);
     }
 
     /**
-     * @param array<string, mixed> $analysis
-     * @param array<int, array{item: array<string, mixed>, context: array<string, mixed>}> $plannedItems
+     * @param  array<string, mixed>  $analysis
+     * @param  array<int, array{item: array<string, mixed>, context: array<string, mixed>}>  $plannedItems
      * @return array<string, mixed>
      */
     private function withTakeoffsForPlannedItems(array $analysis, array $plannedItems): array
@@ -118,7 +122,7 @@ final class EstimateGenerationFullFsnbPricingTest extends TestCase
                 'confidence' => 0.94,
                 'source_refs' => [[
                     'type' => 'test_takeoff',
-                    'value' => 'takeoff-' . ($index + 1),
+                    'value' => 'takeoff-'.($index + 1),
                 ]],
                 'normalized_payload' => [
                     'quantity_key' => $quantityKey,
@@ -136,7 +140,7 @@ final class EstimateGenerationFullFsnbPricingTest extends TestCase
     }
 
     /**
-     * @param array<string, mixed> $analysis
+     * @param  array<string, mixed>  $analysis
      * @return array<int, array{item: array<string, mixed>, context: array<string, mixed>}>
      */
     private function plannedWorkItems(array $analysis): array
@@ -172,7 +176,7 @@ final class EstimateGenerationFullFsnbPricingTest extends TestCase
     }
 
     /**
-     * @param array<string, mixed> $draft
+     * @param  array<string, mixed>  $draft
      * @return array<int, array<string, mixed>>
      */
     private function unpricedItems(array $draft): array
@@ -214,7 +218,7 @@ final class EstimateGenerationFullFsnbPricingTest extends TestCase
     }
 
     /**
-     * @param array<int, array{item: array<string, mixed>, context: array<string, mixed>}> $plannedItems
+     * @param  array<int, array{item: array<string, mixed>, context: array<string, mixed>}>  $plannedItems
      */
     private function seedFsnbCatalogForWorkItems(array $plannedItems): void
     {
@@ -250,7 +254,7 @@ final class EstimateGenerationFullFsnbPricingTest extends TestCase
     }
 
     /**
-     * @param array<string, mixed> $item
+     * @param  array<string, mixed>  $item
      * @return array<string, mixed>
      */
     private function matchingItem(array $item): array
@@ -288,7 +292,7 @@ final class EstimateGenerationFullFsnbPricingTest extends TestCase
         ];
 
         foreach (array_values(array_unique($candidates)) as $candidate) {
-            if ($candidate !== '' && !$this->startsWithAny($candidate, $forbidden)) {
+            if ($candidate !== '' && ! $this->startsWithAny($candidate, $forbidden)) {
                 return $candidate;
             }
         }
@@ -297,7 +301,7 @@ final class EstimateGenerationFullFsnbPricingTest extends TestCase
     }
 
     /**
-     * @param array<int, string> $prefixes
+     * @param  array<int, string>  $prefixes
      */
     private function startsWithAny(string $value, array $prefixes): bool
     {
@@ -351,7 +355,7 @@ final class EstimateGenerationFullFsnbPricingTest extends TestCase
             'collection_id' => $collectionId,
             'parent_id' => null,
             'code' => $code,
-            'name' => 'Section ' . $code,
+            'name' => 'Section '.$code,
             'section_type' => 'collection',
             'depth' => 0,
             'path' => $code,
@@ -368,8 +372,8 @@ final class EstimateGenerationFullFsnbPricingTest extends TestCase
             'code' => $code,
             'name' => $name,
             'unit' => $unit,
-            'section_code' => $sectionPrefix . '-00-000',
-            'section_name' => 'Section ' . $sectionPrefix,
+            'section_code' => $sectionPrefix.'-00-000',
+            'section_name' => 'Section '.$sectionPrefix,
             'work_composition' => json_encode([$name], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE),
             'created_at' => now(),
             'updated_at' => now(),
@@ -382,7 +386,7 @@ final class EstimateGenerationFullFsnbPricingTest extends TestCase
             'estimate_norm_id' => $normId,
             'construction_resource_id' => null,
             'resource_code' => $code,
-            'resource_name' => 'Resource ' . $code,
+            'resource_name' => 'Resource '.$code,
             'unit' => $unit,
             'quantity' => 1.0,
             'resource_type' => 'material',
@@ -397,7 +401,7 @@ final class EstimateGenerationFullFsnbPricingTest extends TestCase
             'dataset_version_id' => $versionId,
             'construction_resource_id' => null,
             'resource_code' => $code,
-            'resource_name' => 'Resource ' . $code,
+            'resource_name' => 'Resource '.$code,
             'unit' => $unit,
             'base_price' => $price,
             'price_type' => 'material',

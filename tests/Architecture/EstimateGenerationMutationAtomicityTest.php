@@ -40,6 +40,16 @@ final class EstimateGenerationMutationAtomicityTest extends TestCase
         self::assertLessThan(strpos($source, 'generationCompleted'), strpos($source, 'syncFromDraft'));
     }
 
+    #[Test]
+    public function manual_ignore_invalidates_session_before_aggregate_reconciliation(): void
+    {
+        $source = $this->source('Application/Documents/IgnoreEstimateGenerationDocument.php');
+
+        self::assertStringContainsString('DB::transaction', $source);
+        self::assertLessThan(strpos($source, '$lockedDocument->forceFill'), strpos($source, '$this->policy->documents'));
+        self::assertLessThan(strpos($source, '$this->reconciler->reconcile'), strpos($source, '$this->reconciler->changed'));
+    }
+
     private function source(string $relative): string
     {
         $source = file_get_contents(dirname(__DIR__, 2).'/app/BusinessModules/Addons/EstimateGeneration/'.$relative);

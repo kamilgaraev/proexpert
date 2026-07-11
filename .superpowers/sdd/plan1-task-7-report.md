@@ -67,3 +67,12 @@ Feature-сценарии `EstimateGenerationFlowTest` и `EstimateGenerationQueu
 - Добавлен architecture gate на тонкие mutation controllers и отсутствие plain Request consumers для typed endpoints.
 
 Финальная DB-less проверка: `31 tests, 145 assertions`, PASS. Targeted PHPStan: PASS, no errors. Pint, `php -l`, `git diff --check`: PASS.
+
+## Финальный lifecycle cleanup
+
+- Manual ignore теперь выполняется в короткой транзакции: session lock и exact version/state check происходят до document side effect; затем `changed()` отзывает активный generation attempt и переводит агрегат в `processing_documents`, после чего `reconcile()` рассчитывает готовность уже на новом состоянии.
+- DB-less workflow tests покрывают ignore/change из `generating`, `input_review_required`, `ready_to_generate`, `estimate_review_required`, `ready_to_apply`; старый attempt token после изменения больше не владеет job.
+- Удалены оставшиеся legacy session statuses из Feature fixtures/assertions, E2E job создается с актуальными `state_version` и `generation_attempt_id`.
+- Добавлен статический gate, различающий session lifecycle от document/package/quality statuses и запрещающий активные one-argument generation jobs.
+
+Итоговая DB-less проверка: `34 tests, 159 assertions`, PASS. Targeted PHPStan: PASS. Pint, `php -l`, `git diff --check`: PASS. DB Feature tests не запускались.

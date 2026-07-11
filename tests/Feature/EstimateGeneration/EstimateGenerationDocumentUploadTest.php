@@ -81,7 +81,8 @@ class EstimateGenerationDocumentUploadTest extends TestCase
             ],
         ]);
 
-        $this->app->instance(OcrClientInterface::class, new class implements OcrClientInterface {
+        $this->app->instance(OcrClientInterface::class, new class implements OcrClientInterface
+        {
             public function recognize(OcrDocumentInput $input): OcrRecognitionResult
             {
                 return new OcrRecognitionResult(
@@ -157,7 +158,8 @@ class EstimateGenerationDocumentUploadTest extends TestCase
             ],
         ]);
 
-        $this->app->instance(OcrClientInterface::class, new class implements OcrClientInterface {
+        $this->app->instance(OcrClientInterface::class, new class implements OcrClientInterface
+        {
             public function recognize(OcrDocumentInput $input): OcrRecognitionResult
             {
                 throw new \RuntimeException('OCR provider must not be called for spreadsheets.');
@@ -209,7 +211,8 @@ class EstimateGenerationDocumentUploadTest extends TestCase
             ],
         ]);
 
-        $this->app->instance(OcrClientInterface::class, new class implements OcrClientInterface {
+        $this->app->instance(OcrClientInterface::class, new class implements OcrClientInterface
+        {
             public function recognize(OcrDocumentInput $input): OcrRecognitionResult
             {
                 throw new \RuntimeException('OCR provider must not be called when PDF text layer is usable.');
@@ -256,7 +259,8 @@ class EstimateGenerationDocumentUploadTest extends TestCase
             ],
         ]);
 
-        $this->app->instance(OcrClientInterface::class, new class implements OcrClientInterface {
+        $this->app->instance(OcrClientInterface::class, new class implements OcrClientInterface
+        {
             public function recognize(OcrDocumentInput $input): OcrRecognitionResult
             {
                 return new OcrRecognitionResult(
@@ -308,8 +312,8 @@ class EstimateGenerationDocumentUploadTest extends TestCase
             'organization_id' => $organization->id,
             'project_id' => $project->id,
             'user_id' => $user->id,
-            'status' => 'created',
-            'processing_stage' => 'created',
+            'status' => 'draft',
+            'processing_stage' => 'draft',
             'processing_progress' => 0,
             'input_payload' => [
                 'description' => 'Склад',
@@ -321,21 +325,21 @@ class EstimateGenerationDocumentUploadTest extends TestCase
     }
 
     /**
-     * @param array<int, array<int, string>> $rows
+     * @param  array<int, array<int, string>>  $rows
      */
     private function spreadsheetContent(array $rows): string
     {
-        $spreadsheet = new Spreadsheet();
+        $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
 
         foreach ($rows as $rowIndex => $row) {
             foreach ($row as $columnIndex => $value) {
-                $cell = Coordinate::stringFromColumnIndex($columnIndex + 1) . ($rowIndex + 1);
+                $cell = Coordinate::stringFromColumnIndex($columnIndex + 1).($rowIndex + 1);
                 $sheet->setCellValue($cell, $value);
             }
         }
 
-        $path = tempnam(sys_get_temp_dir(), 'estimate-generation-document-') . '.xlsx';
+        $path = tempnam(sys_get_temp_dir(), 'estimate-generation-document-').'.xlsx';
         (new Xlsx($spreadsheet))->save($path);
         $spreadsheet->disconnectWorksheets();
 
@@ -346,7 +350,7 @@ class EstimateGenerationDocumentUploadTest extends TestCase
     }
 
     /**
-     * @param array<int, string> $pages
+     * @param  array<int, string>  $pages
      */
     private function pdfContent(array $pages): string
     {
@@ -354,12 +358,12 @@ class EstimateGenerationDocumentUploadTest extends TestCase
 
         foreach ($pages as $index => $text) {
             $style = $index + 1 < count($pages) ? ' style="page-break-after: always;"' : '';
-            $html .= '<div' . $style . '><p>' . htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</p></div>';
+            $html .= '<div'.$style.'><p>'.htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8').'</p></div>';
         }
 
         $html .= '</body></html>';
 
-        $dompdf = new Dompdf();
+        $dompdf = new Dompdf;
         $dompdf->loadHtml($html, 'UTF-8');
         $dompdf->setPaper('A4');
         $dompdf->render();

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentFact;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
@@ -31,8 +32,8 @@ class EstimateGenerationPackageFlowTest extends TestCase
             'organization_id' => $organization->id,
             'project_id' => $project->id,
             'user_id' => $user->id,
-            'status' => 'generated',
-            'processing_stage' => 'generated',
+            'status' => 'ready_to_apply',
+            'processing_stage' => 'ready_to_apply',
             'processing_progress' => 100,
             'input_payload' => [],
             'problem_flags' => [],
@@ -133,10 +134,11 @@ class EstimateGenerationPackageFlowTest extends TestCase
             'organization_id' => $organization->id,
             'project_id' => $project->id,
             'user_id' => $user->id,
-            'status' => 'created',
-            'processing_stage' => 'created',
+            'status' => 'generating',
+            'processing_stage' => 'generating',
             'processing_progress' => 0,
             'input_payload' => [
+                'generation_attempt_id' => 'package-flow-1',
                 'description' => 'Дом 150 м2, 2 этажа, 8 комнат, Татарстан, 1 квартал 2026',
                 'building_type' => 'Жилой',
                 'area' => 150,
@@ -152,7 +154,10 @@ class EstimateGenerationPackageFlowTest extends TestCase
 
         $session = app(EstimateGenerationOrchestrator::class)->generate($session);
 
-        $this->assertContains($session->status, ['ready_for_review', 'review_required', 'blocked']);
+        $this->assertContains($session->status, [
+            EstimateGenerationStatus::EstimateReviewRequired,
+            EstimateGenerationStatus::ReadyToApply,
+        ]);
         $this->assertGreaterThanOrEqual(15, $session->packages()->count());
         $this->assertGreaterThanOrEqual(55, $session->packages()->withCount('items')->get()->sum('items_count'));
         $this->assertGreaterThan(0, $session->packages()->get()->sum(fn ($package): int => (int) ($package->totals['priced_items_count'] ?? 0)));
@@ -162,7 +167,6 @@ class EstimateGenerationPackageFlowTest extends TestCase
             'unit' => 'компл',
             'quantity' => 0.080000,
         ]);
-        $this->assertNotSame('generated', $session->status);
         $this->assertNotEmpty($session->draft_payload['object_profile'] ?? []);
         $this->assertNotEmpty($session->draft_payload['package_plan'] ?? []);
         $this->assertDatabaseMissing('estimate_generation_package_items', [
@@ -183,10 +187,11 @@ class EstimateGenerationPackageFlowTest extends TestCase
             'organization_id' => $organization->id,
             'project_id' => $project->id,
             'user_id' => $user->id,
-            'status' => 'created',
-            'processing_stage' => 'created',
+            'status' => 'generating',
+            'processing_stage' => 'generating',
             'processing_progress' => 0,
             'input_payload' => [
+                'generation_attempt_id' => 'package-flow-2',
                 'description' => 'Нужно сделать смету на небольшой двухэтажный офисно-складской корпус 780 м2 в Татарстане. На первом этаже склад 420 м2 с промышленным бетонным полом, разгрузочной зоной, воротами, пожарной сигнализацией и освещением. На втором этаже офисы 260 м2, переговорная, санузлы, серверная и лестничная клетка. Нужна входная группа, фасад из сэндвич-панелей, плоская кровля, отопление, вентиляция, электрика, водоснабжение, канализация, наружная площадка и подъезд для грузового транспорта.',
                 'building_type' => 'Производственное',
                 'area' => 780,
@@ -234,10 +239,11 @@ class EstimateGenerationPackageFlowTest extends TestCase
             'organization_id' => $organization->id,
             'project_id' => $project->id,
             'user_id' => $user->id,
-            'status' => 'created',
-            'processing_stage' => 'created',
+            'status' => 'generating',
+            'processing_stage' => 'generating',
             'processing_progress' => 0,
             'input_payload' => [
+                'generation_attempt_id' => 'package-flow-3',
                 'description' => '',
                 'regional_context' => [
                     'region_name' => 'Республика Татарстан',
@@ -255,7 +261,7 @@ class EstimateGenerationPackageFlowTest extends TestCase
             'user_id' => $user->id,
             'filename' => 'warehouse-plan.pdf',
             'mime_type' => 'application/pdf',
-            'storage_path' => 'org-' . $organization->id . '/estimate-generation/sessions/' . $session->id . '/documents/warehouse-plan.pdf',
+            'storage_path' => 'org-'.$organization->id.'/estimate-generation/sessions/'.$session->id.'/documents/warehouse-plan.pdf',
             'status' => 'ready',
             'processing_stage' => 'completed',
             'progress_percent' => 100,

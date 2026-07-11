@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
@@ -43,8 +44,8 @@ class EstimateGenerationDocumentE2ETest extends TestCase
             'organization_id' => $organization->id,
             'project_id' => $project->id,
             'user_id' => $user->id,
-            'status' => 'created',
-            'processing_stage' => 'created',
+            'status' => 'draft',
+            'processing_stage' => 'draft',
             'processing_progress' => 0,
             'input_payload' => [
                 'description' => '',
@@ -113,12 +114,20 @@ class EstimateGenerationDocumentE2ETest extends TestCase
         $this->assertSame(202, $generateResponse->getStatusCode());
         Queue::assertPushed(GenerateEstimateDraftJob::class);
 
-        (new GenerateEstimateDraftJob($session->id))->handle(app(EstimateGenerationOrchestrator::class));
+        $session->refresh();
+        (new GenerateEstimateDraftJob(
+            $session->id,
+            $session->state_version,
+            (string) ($session->input_payload['generation_attempt_id'] ?? ''),
+        ))->handle(app(EstimateGenerationOrchestrator::class));
         $session->refresh();
 
         $draft = $session->draft_payload;
 
-        $this->assertContains($session->status, ['ready_for_review', 'review_required', 'blocked']);
+        $this->assertContains($session->status, [
+            EstimateGenerationStatus::EstimateReviewRequired,
+            EstimateGenerationStatus::ReadyToApply,
+        ]);
         $this->assertEquals(1280.0, $draft['object_profile']['area']);
         $this->assertSame($document->id, $draft['traceability']['document_source_refs'][0]['document_id']);
         $this->assertSame($document->id, $draft['local_estimates'][0]['source_refs'][0]['document_id']);

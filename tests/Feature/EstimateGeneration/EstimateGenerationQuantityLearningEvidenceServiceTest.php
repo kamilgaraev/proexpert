@@ -24,7 +24,7 @@ final class EstimateGenerationQuantityLearningEvidenceServiceTest extends TestCa
             'organization_id' => $organization->id,
             'project_id' => $project->id,
             'user_id' => $user->id,
-            'status' => 'analyzed',
+            'status' => 'ready_to_generate',
             'processing_stage' => 'object_analysis',
             'processing_progress' => 35,
             'input_payload' => [],
@@ -103,7 +103,7 @@ final class EstimateGenerationQuantityLearningEvidenceServiceTest extends TestCa
     }
 
     /**
-     * @param array<string, mixed> $overrides
+     * @param  array<string, mixed>  $overrides
      */
     private function learningExample(array $overrides): EstimateGenerationLearningExample
     {

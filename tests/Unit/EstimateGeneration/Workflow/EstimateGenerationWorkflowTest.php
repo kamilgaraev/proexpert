@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Workflow;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\GenerationAttemptGuard;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationTransitionMap;
@@ -59,7 +60,9 @@ final class EstimateGenerationWorkflowTest extends TestCase
     #[Test]
     public function document_change_invalidates_an_active_generation_attempt(): void
     {
-        $store = new InMemorySessionStateStore($this->session(EstimateGenerationStatus::Generating, 4));
+        $generating = $this->session(EstimateGenerationStatus::Generating, 4);
+        $generating->forceFill(['input_payload' => ['generation_attempt_id' => 'active-attempt']]);
+        $store = new InMemorySessionStateStore($generating);
 
         $session = $this->workflow($store)->transition(
             $store->current(),
@@ -70,6 +73,28 @@ final class EstimateGenerationWorkflowTest extends TestCase
         self::assertSame(EstimateGenerationStatus::ProcessingDocuments, $session->status);
         self::assertNull($session->input_payload['generation_attempt_id']);
         self::assertSame(5, $session->state_version);
+        self::assertFalse((new GenerationAttemptGuard)->matches($session, 4, 'active-attempt'));
+    }
+
+    #[Test]
+    public function manual_document_change_reopens_every_non_terminal_review_stage(): void
+    {
+        foreach ([
+            EstimateGenerationStatus::InputReviewRequired,
+            EstimateGenerationStatus::ReadyToGenerate,
+            EstimateGenerationStatus::EstimateReviewRequired,
+            EstimateGenerationStatus::ReadyToApply,
+        ] as $status) {
+            $store = new InMemorySessionStateStore($this->session($status, 2));
+            $session = $this->workflow($store)->transition(
+                $store->current(),
+                EstimateGenerationEvent::DocumentsChanged,
+                ['input_payload' => ['generation_attempt_id' => null]],
+            );
+
+            self::assertSame(EstimateGenerationStatus::ProcessingDocuments, $session->status);
+            self::assertSame(3, $session->state_version);
+        }
     }
 
     #[Test]

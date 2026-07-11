@@ -156,7 +156,7 @@ class EstimateGenerationPackageApiTest extends TestCase
             'organization_id' => $organization->id,
             'project_id' => $project->id,
             'user_id' => $user->id,
-            'status' => 'ready_for_review',
+            'status' => 'ready_to_apply',
             'processing_stage' => 'quality_check',
             'processing_progress' => 100,
             'input_payload' => [

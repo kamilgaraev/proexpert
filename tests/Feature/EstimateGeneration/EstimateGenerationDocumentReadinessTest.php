@@ -34,9 +34,9 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
 
         $this->assertSame(202, $response->getStatusCode());
         $this->assertTrue($payload['success']);
-        $this->assertSame('waiting_for_documents', $payload['data']['status']);
+        $this->assertSame('processing_documents', $payload['data']['status']);
         $this->assertSame(1, $payload['data']['documents_summary']['pending_count']);
-        $this->assertSame('documents_processing', $payload['data']['progress']['stage']);
+        $this->assertSame('processing_documents', $payload['data']['processing_stage']);
         Queue::assertNotPushed(GenerateEstimateDraftJob::class);
     }
 
@@ -85,14 +85,14 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
         $allowedPayload = json_decode($allowed->getContent(), true, 512, JSON_THROW_ON_ERROR);
 
         $this->assertSame(202, $allowed->getStatusCode());
-        $this->assertSame('queued', $allowedPayload['data']['status']);
+        $this->assertSame('generating', $allowedPayload['data']['status']);
         $this->assertSame(1, $allowedPayload['data']['documents_summary']['ignored_count']);
         Queue::assertPushed(GenerateEstimateDraftJob::class);
     }
 
     public function test_status_returns_documents_summary(): void
     {
-        [$user, $project, $session] = $this->makeSession('processing');
+        [$user, $project, $session] = $this->makeSession('processing_documents');
         $this->makeDocument($session, 'ready');
         $request = $this->request('/status', 'GET', $user);
 
@@ -133,7 +133,7 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
     /**
      * @return array{0: User, 1: Project, 2: EstimateGenerationSession}
      */
-    private function makeSession(string $status = 'created'): array
+    private function makeSession(string $status = 'draft'): array
     {
         $organization = Organization::factory()->create();
         $user = User::factory()->create([
