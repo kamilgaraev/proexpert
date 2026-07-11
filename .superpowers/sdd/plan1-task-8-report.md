@@ -28,7 +28,7 @@ RED подтверждён до реализации:
 
 ## Проверки
 
-- DB-less Plan 1 gate после review-fix: `111 passed`, `637 assertions`.
+- DB-less Plan 1 gate после финального review-fix: `116 passed`, `646 assertions`.
 - PHPStan/Larastan по Domain/Application/Http/Learning/Training, composition root и integration adapters: `[OK] No errors`, 80 файлов, `--memory-limit=1G`.
 - Pint: 36 файлов, 16 style issues исправлены; повторный тестовый gate GREEN.
 - `php -l`: все 36 изменённых/новых PHP-файлов без синтаксических ошибок.
@@ -51,3 +51,4 @@ RED подтверждён до реализации:
 - Повтор применения возвращает `failed(applying)` в `ready_to_apply`, не оставляя сессию зависшей.
 - AI-модуль зависит только от собственных портов. Конкретные export/learning/number/training adapters перенесены в `App\\Integrations\\EstimateGeneration`, а bindings находятся в отдельном composition-root provider.
 - Исправлена подпись manifest для `estimate_generation.select_normative`: «Выбор нормативов AI-сметчика».
+- Действие `retry`, опубликованное snapshot для `input_review_required`, подключено к тому же operational use case: `needs_review` и остальные eligible-документы ставятся повторно, `ignored` исключается, пустой набор детерминированно становится готовым либо остаётся бизнес-действуемым; повтор со старой версией не создаёт второй dispatch.

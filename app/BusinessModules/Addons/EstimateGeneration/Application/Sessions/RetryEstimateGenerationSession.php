@@ -36,6 +36,9 @@ final class RetryEstimateGenerationSession
                 if ($session->state_version !== $command->expectedStateVersion) {
                     throw new StaleEstimateGenerationState((int) $session->getKey(), $command->expectedStateVersion);
                 }
+                if ($session->status === EstimateGenerationStatus::InputReviewRequired) {
+                    return $this->retryInputReview($session);
+                }
                 if ($session->status !== EstimateGenerationStatus::Failed) {
                     throw new InvalidEstimateGenerationState($session->status, 'retry');
                 }
@@ -47,6 +50,52 @@ final class RetryEstimateGenerationSession
                     default => throw new InvalidEstimateGenerationState($session->status, 'retry'),
                 };
             },
+        );
+    }
+
+    private function retryInputReview(EstimateGenerationSession $session): EstimateGenerationSession
+    {
+        $documentIds = $session->documents
+            ->filter(static fn ($document): bool => in_array((string) $document->status, [
+                'uploaded', 'queued', 'processing', 'failed', 'needs_review',
+            ], true))
+            ->pluck('id')
+            ->map(static fn ($id): int => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($documentIds === [] && ! $this->hasSufficientGenerationInput($session)) {
+            return $session;
+        }
+
+        $session = $this->workflow->transition($session, EstimateGenerationEvent::Retried, [
+            'processing_stage' => 'processing_documents',
+            'processing_progress' => 5,
+            'last_error' => null,
+        ]);
+
+        if ($documentIds !== []) {
+            $this->dispatcher->dispatchDocuments($documentIds);
+
+            return $session;
+        }
+
+        return $this->workflow->transition($session, EstimateGenerationEvent::DocumentsReady, [
+            'processing_stage' => 'ready_to_generate',
+            'processing_progress' => 35,
+            'last_error' => null,
+        ]);
+    }
+
+    private function hasSufficientGenerationInput(EstimateGenerationSession $session): bool
+    {
+        if (trim((string) ($session->input_payload['description'] ?? '')) !== '') {
+            return true;
+        }
+
+        return $session->documents->contains(
+            static fn ($document): bool => (string) $document->status === 'ready',
         );
     }
 

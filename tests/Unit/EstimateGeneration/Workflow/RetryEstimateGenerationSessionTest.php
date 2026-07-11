@@ -119,6 +119,77 @@ final class RetryEstimateGenerationSessionTest extends TestCase
         }
     }
 
+    #[Test]
+    public function input_review_retry_requeues_needs_review_document(): void
+    {
+        $session = $this->inputReview(['description' => 'Дом']);
+        $session->setRelation('documents', collect([$this->document(8, 'needs_review')]));
+        [$action, , $dispatcher] = $this->action($session);
+
+        $result = $action->handle($this->command());
+
+        self::assertSame(EstimateGenerationStatus::ProcessingDocuments, $result->status);
+        self::assertSame([8], $dispatcher->documents);
+    }
+
+    #[Test]
+    public function input_review_retry_excludes_ignored_and_deduplicates_eligible_documents(): void
+    {
+        $session = $this->inputReview(['description' => 'Дом']);
+        $session->setRelation('documents', collect([
+            $this->document(9, 'ignored'),
+            $this->document(10, 'needs_review'),
+            $this->document(10, 'needs_review'),
+        ]));
+        [$action, , $dispatcher] = $this->action($session);
+
+        $result = $action->handle($this->command());
+
+        self::assertSame(EstimateGenerationStatus::ProcessingDocuments, $result->status);
+        self::assertSame([10], $dispatcher->documents);
+    }
+
+    #[Test]
+    public function input_review_with_only_ignored_documents_and_description_becomes_ready(): void
+    {
+        $session = $this->inputReview(['description' => 'Дом']);
+        $session->setRelation('documents', collect([$this->document(11, 'ignored')]));
+        [$action, , $dispatcher] = $this->action($session);
+
+        $result = $action->handle($this->command());
+
+        self::assertSame(EstimateGenerationStatus::ReadyToGenerate, $result->status);
+        self::assertSame([], $dispatcher->documents);
+    }
+
+    #[Test]
+    public function input_review_without_eligible_documents_or_description_stays_actionable(): void
+    {
+        $session = $this->inputReview([]);
+        [$action, , $dispatcher] = $this->action($session);
+
+        $result = $action->handle($this->command());
+
+        self::assertSame(EstimateGenerationStatus::InputReviewRequired, $result->status);
+        self::assertSame([], $dispatcher->documents);
+    }
+
+    #[Test]
+    public function repeated_input_review_retry_with_original_version_does_not_duplicate_dispatch(): void
+    {
+        $session = $this->inputReview(['description' => 'Дом']);
+        $session->setRelation('documents', collect([$this->document(12, 'needs_review')]));
+        [$action, , $dispatcher] = $this->action($session);
+
+        $action->handle($this->command());
+        try {
+            $action->handle($this->command());
+            self::fail('Expected stale retry rejection.');
+        } catch (StaleEstimateGenerationState) {
+            self::assertSame([12], $dispatcher->documents);
+        }
+    }
+
     /** @return array{RetryEstimateGenerationSession, RetrySessionRepositoryFake, RetryDispatcherFake} */
     private function action(EstimateGenerationSession $session): array
     {
@@ -152,6 +223,23 @@ final class RetryEstimateGenerationSessionTest extends TestCase
             'resume_status' => $resume,
             'state_version' => 3,
             'input_payload' => ['generation_attempt_id' => 'attempt-old'],
+        ]);
+        $session->id = 71;
+        $session->exists = true;
+        $session->setRelation('documents', collect());
+
+        return $session;
+    }
+
+    /** @param array<string, mixed> $input */
+    private function inputReview(array $input): EstimateGenerationSession
+    {
+        $session = new EstimateGenerationSession([
+            'organization_id' => 10,
+            'project_id' => 20,
+            'status' => EstimateGenerationStatus::InputReviewRequired,
+            'state_version' => 3,
+            'input_payload' => $input,
         ]);
         $session->id = 71;
         $session->exists = true;

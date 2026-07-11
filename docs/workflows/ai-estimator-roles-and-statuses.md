@@ -77,6 +77,8 @@
 
 Переходы, отсутствующие в таблице, запрещены. Для `retried` допустимы только сохранённые статусы `processing_documents`, `generating` и `applying`; последний безопасно нормализуется в `ready_to_apply`.
 
+Явный `retried` из `input_review_required` повторно обрабатывает только `uploaded`, `queued`, `processing`, `failed` и `needs_review`. `ignored` не возвращается в очередь. При отсутствии таких документов workflow либо подтверждает готовность входа, либо оставляет сессию в состоянии проверки без зависания в `processing_documents`.
+
 ## Терминальные состояния и инварианты
 
 Метод `isTerminal()` возвращает `true` только для `applied`, `cancelled` и `archived`. `failed` не терминален: его можно повторить, отменить или архивировать.
