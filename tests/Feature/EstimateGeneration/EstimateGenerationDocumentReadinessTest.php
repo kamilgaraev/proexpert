@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
-use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationActionController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDocumentController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationSessionController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\AnalyzeEstimateGenerationRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\GenerateEstimateGenerationRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\IgnoreEstimateGenerationDocumentRequest;
@@ -29,7 +30,7 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
         $this->makeDocument($session, 'queued');
         $request = $this->request('/generate', 'POST', $user, $session);
 
-        $response = app(EstimateGenerationController::class)->generate($request, $project, $session);
+        $response = app(EstimateGenerationActionController::class)->generate($request, $project, $session);
         $payload = json_decode($response->getContent(), true, 512, JSON_THROW_ON_ERROR);
 
         $this->assertSame(202, $response->getStatusCode());
@@ -46,7 +47,7 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
         $this->makeDocument($session, 'processing');
         $request = $this->request('/analyze', 'POST', $user, $session);
 
-        $response = app(EstimateGenerationController::class)->analyze($request, $project, $session);
+        $response = app(EstimateGenerationActionController::class)->analyze($request, $project, $session);
         $payload = json_decode($response->getContent(), true, 512, JSON_THROW_ON_ERROR);
 
         $this->assertSame(409, $response->getStatusCode());
@@ -62,7 +63,7 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
         $document = $this->makeDocument($session, 'failed');
         $generateRequest = $this->request('/generate', 'POST', $user, $session);
 
-        $blocked = app(EstimateGenerationController::class)->generate($generateRequest, $project, $session);
+        $blocked = app(EstimateGenerationActionController::class)->generate($generateRequest, $project, $session);
         $blockedPayload = json_decode($blocked->getContent(), true, 512, JSON_THROW_ON_ERROR);
 
         $this->assertSame(409, $blocked->getStatusCode());
@@ -77,7 +78,7 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
         app(EstimateGenerationDocumentController::class)->ignore($ignoreRequest, $project, $session, $document);
 
         $freshSession = $session->fresh();
-        $allowed = app(EstimateGenerationController::class)->generate(
+        $allowed = app(EstimateGenerationActionController::class)->generate(
             $this->request('/generate', 'POST', $user, $freshSession),
             $project,
             $freshSession,
@@ -96,7 +97,7 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
         $this->makeDocument($session, 'ready');
         $request = $this->request('/status', 'GET', $user);
 
-        $response = app(EstimateGenerationController::class)->status($request, $project, $session);
+        $response = app(EstimateGenerationSessionController::class)->show($request, $project, $session);
         $payload = json_decode($response->getContent(), true, 512, JSON_THROW_ON_ERROR);
 
         $this->assertTrue($payload['success']);
@@ -117,7 +118,7 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
             ],
         ])->save();
 
-        $response = app(EstimateGenerationController::class)->generate(
+        $response = app(EstimateGenerationActionController::class)->generate(
             $this->request('/generate', 'POST', $user, $session->fresh()),
             $project,
             $session->fresh()

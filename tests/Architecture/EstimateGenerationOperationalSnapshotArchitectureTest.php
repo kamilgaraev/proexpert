@@ -1,0 +1,76 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Architecture;
+
+use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\TestCase;
+
+final class EstimateGenerationOperationalSnapshotArchitectureTest extends TestCase
+{
+    #[Test]
+    public function polling_has_one_lightweight_route_and_no_legacy_controller_reference(): void
+    {
+        $routes = $this->source('routes.php');
+
+        self::assertSame(1, substr_count($routes, "Route::get('/{session}/snapshot'"));
+        self::assertStringContainsString('EstimateGenerationSessionController::class', $routes);
+        self::assertStringContainsString('EstimateGenerationActionController::class', $routes);
+        self::assertStringNotContainsString('EstimateGenerationController::class', $routes);
+        self::assertStringContainsString('authorize:estimate_generation.view,project,project', $routes);
+    }
+
+    #[Test]
+    public function builder_uses_bounded_aggregate_queries_and_never_selects_private_payloads(): void
+    {
+        $source = $this->source('Application/Sessions/BuildSessionOperationalSnapshot.php');
+
+        foreach (['count(', 'sum(', 'max(', 'organization_id', 'project_id', 'session_id'] as $needle) {
+            self::assertStringContainsString($needle, strtolower($source));
+        }
+        foreach (['->get()', '->cursor()', 'output_payload', 'safe_context', 'price_snapshot', 'storage_path', 'extracted_text'] as $needle) {
+            self::assertStringNotContainsString($needle, $source);
+        }
+        self::assertLessThanOrEqual(14, substr_count($source, '->first()') + substr_count($source, '->value('));
+        self::assertStringContainsString('REPEATABLE READ', $source);
+        self::assertStringContainsString('READ ONLY', $source);
+        self::assertStringContainsString('COALESCE(input_tokens, 0)', $source);
+        self::assertStringContainsString('COUNT(cost_amount) > 0', $source);
+        self::assertStringContainsString('usage_unavailable', $source);
+        self::assertStringContainsString('facts_summary->', $source);
+        self::assertStringContainsString('outbox_max_updated_at', $source);
+        self::assertStringContainsString('deliveries_max_updated_at', $source);
+        self::assertStringNotContainsString('CURRENT_TIMESTAMP - lease_expires_at', $source);
+    }
+
+    #[Test]
+    public function session_and_action_controllers_have_disjoint_public_ownership(): void
+    {
+        $session = $this->source('Http/Controllers/EstimateGenerationSessionController.php');
+        $action = $this->source('Http/Controllers/EstimateGenerationActionController.php');
+
+        foreach (['index', 'store', 'show', 'snapshot'] as $method) {
+            self::assertStringContainsString('function '.$method.'(', $session);
+            self::assertStringNotContainsString('function '.$method.'(', $action);
+        }
+        foreach (['analyze', 'generate', 'retry', 'cancel', 'archive', 'apply', 'rebuildSection'] as $method) {
+            self::assertStringContainsString('function '.$method.'(', $action);
+            self::assertStringNotContainsString('function '.$method.'(', $session);
+        }
+        self::assertFileDoesNotExist($this->root().'/app/BusinessModules/Addons/EstimateGeneration/Http/Controllers/EstimateGenerationController.php');
+    }
+
+    private function source(string $relative): string
+    {
+        $source = file_get_contents($this->root().'/app/BusinessModules/Addons/EstimateGeneration/'.$relative);
+        self::assertIsString($source);
+
+        return $source;
+    }
+
+    private function root(): string
+    {
+        return dirname(__DIR__, 2);
+    }
+}

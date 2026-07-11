@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
-use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationPackageController;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -45,7 +45,7 @@ class EstimateGenerationPackageApiTest extends TestCase
         $request = Request::create('/packages', 'GET');
         $request->setUserResolver(static fn (): User => $user);
 
-        $response = app(EstimateGenerationController::class)->packages($request, $project, $session);
+        $response = app(EstimateGenerationPackageController::class)->index($request, $project, $session);
         $payload = json_decode($response->getContent(), true, 512, JSON_THROW_ON_ERROR);
 
         $this->assertTrue($payload['success']);
@@ -126,7 +126,7 @@ class EstimateGenerationPackageApiTest extends TestCase
         $request = Request::create('/packages/foundation', 'GET');
         $request->setUserResolver(static fn (): User => $user);
 
-        $response = app(EstimateGenerationController::class)->package($request, $project, $session, $foundation);
+        $response = app(EstimateGenerationPackageController::class)->show($request, $project, $session, $foundation);
         $payload = json_decode($response->getContent(), true, 512, JSON_THROW_ON_ERROR);
 
         $this->assertTrue($payload['success']);

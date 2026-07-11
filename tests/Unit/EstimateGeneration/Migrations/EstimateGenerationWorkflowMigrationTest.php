@@ -123,13 +123,13 @@ final class EstimateGenerationWorkflowMigrationTest extends TestCase
     {
         $controllerSource = (string) file_get_contents(
             dirname(__DIR__, 4)
-            . '/app/BusinessModules/Addons/EstimateGeneration/Http/Controllers/EstimateGenerationController.php'
+            .'/app/BusinessModules/Addons/EstimateGeneration/Http/Controllers/EstimateGenerationSessionController.php'
         );
 
         self::assertStringContainsString('EstimateGenerationStatus::Draft->value', $controllerSource);
 
         $legacyWriters = [];
-        $modulePath = dirname(__DIR__, 4) . '/app/BusinessModules/Addons/EstimateGeneration';
+        $modulePath = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration';
         $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($modulePath));
 
         foreach ($files as $file) {
@@ -155,7 +155,7 @@ final class EstimateGenerationWorkflowMigrationTest extends TestCase
     private function migrationPath(): string
     {
         return dirname(__DIR__, 4)
-            . '/app/BusinessModules/Addons/EstimateGeneration/migrations/'
-            . '2026_07_11_000001_rebuild_estimate_generation_session_workflow.php';
+            .'/app/BusinessModules/Addons/EstimateGeneration/migrations/'
+            .'2026_07_11_000001_rebuild_estimate_generation_session_workflow.php';
     }
 }

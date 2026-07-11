@@ -75,6 +75,9 @@ final class BuildSessionSnapshot
             ),
             appliedEstimateId: $session->applied_estimate_id === null ? null : (int) $session->applied_estimate_id,
             updatedAt: $session->updated_at?->toISOString() ?? '',
+            projectId: (int) $session->project_id,
+            canGenerate: (bool) ($readinessSummary['can_generate'] ?? false),
+            canApply: (bool) ($readinessSummary['can_apply'] ?? false),
         );
     }
 

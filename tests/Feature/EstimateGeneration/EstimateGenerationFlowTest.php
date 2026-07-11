@@ -7,7 +7,8 @@ namespace Tests\Feature\EstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationWorkflow;
-use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationActionController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationSessionController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ApplyEstimateGenerationDraftRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\GenerateEstimateGenerationRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
@@ -54,7 +55,7 @@ final class EstimateGenerationFlowTest extends TestCase
         [$user, $project, $session] = $this->makeSession();
         $this->makeDocument($session, 'processing');
 
-        $response = app(EstimateGenerationController::class)->generate(
+        $response = app(EstimateGenerationActionController::class)->generate(
             $this->generationRequest($user, $session),
             $project,
             $session
@@ -101,7 +102,7 @@ final class EstimateGenerationFlowTest extends TestCase
     {
         [$user, $project, $session] = $this->makeSession('generating', 'resource_enrichment', 71);
 
-        $response = app(EstimateGenerationController::class)->status(
+        $response = app(EstimateGenerationSessionController::class)->show(
             $this->request('/status', 'GET', $user),
             $project,
             $session
@@ -186,7 +187,7 @@ final class EstimateGenerationFlowTest extends TestCase
         $request = ApplyEstimateGenerationDraftRequest::create('/apply', 'POST', ['name' => 'Blocked draft']);
         $request->setUserResolver(static fn (): User => $user);
 
-        $response = app(EstimateGenerationController::class)->apply($request, $project, $session->fresh());
+        $response = app(EstimateGenerationActionController::class)->apply($request, $project, $session->fresh());
         $payload = json_decode($response->getContent(), true, 512, JSON_THROW_ON_ERROR);
 
         $this->assertSame(422, $response->getStatusCode());

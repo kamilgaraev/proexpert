@@ -1,0 +1,59 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Unit\EstimateGeneration\Workflow;
+
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionSnapshotData;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
+use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\TestCase;
+
+final class SessionOperationalSnapshotDataTest extends TestCase
+{
+    #[Test]
+    public function operational_contract_keeps_exact_money_and_only_safe_summaries(): void
+    {
+        $snapshot = new SessionSnapshotData(
+            id: 41,
+            projectId: 17,
+            status: EstimateGenerationStatus::Generating,
+            processingStage: 'match_normatives',
+            processingProgress: 57,
+            stateVersion: 9,
+            operationalVersion: 'sha256:'.str_repeat('a', 64),
+            availableActions: [],
+            blockingIssues: [],
+            warnings: [['code' => 'review', 'message_key' => 'estimate_generation.review']],
+            nextAction: 'wait',
+            readinessEvaluated: true,
+            canGenerate: false,
+            canApply: false,
+            currentCheckpoint: ['stage' => 'match_normatives', 'status' => 'running', 'attempt' => 2, 'lease_expires_at' => '2026-07-11T12:00:00+00:00', 'lease_expired' => false],
+            queueSummary: ['pending' => 3, 'running' => 1],
+            recoverySummary: ['recoverable' => 1, 'next_retry_at' => '2026-07-11T12:00:00+00:00'],
+            documentsSummary: ['total' => 2, 'ready' => 1],
+            estimateSummary: ['items' => 4000000, 'total_cost' => '123456789012345678.12345678', 'currency' => 'RUB'],
+            reviewSummary: ['blocking' => 1],
+            evidenceSummary: ['active' => 8, 'invalidated' => 1],
+            qualitySummary: ['status' => 'review_required'],
+            usageSummary: ['attempts' => 4, 'tokens' => 1200, 'cost_amount' => '0.12345678', 'currency' => 'RUB'],
+            failureSummary: ['active' => 1, 'categories' => ['recoverable' => 1]],
+            appliedEstimateId: null,
+            updatedAt: '2026-07-11T12:00:00+00:00',
+        );
+
+        $payload = $snapshot->toArray();
+
+        self::assertSame(17, $payload['project_id']);
+        self::assertSame('sha256:'.str_repeat('a', 64), $payload['operational_version']);
+        self::assertSame('123456789012345678.12345678', $payload['estimate_summary']['total_cost']);
+        self::assertSame('0.12345678', $payload['usage_summary']['cost_amount']);
+        self::assertSame(4000000, $payload['estimate_summary']['items']);
+        self::assertArrayNotHasKey('lease_age_seconds', $payload['current_checkpoint']);
+        self::assertSame([], array_intersect(
+            ['pages', 'facts', 'text', 'prompt', 'payload', 'storage_path', 'provider_secret'],
+            array_keys($payload),
+        ));
+    }
+}

@@ -6,11 +6,13 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\IgnoreEstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RetryEstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\UploadEstimateGenerationDocuments;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationTransition;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\IgnoreEstimateGenerationDocumentRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\RetryEstimateGenerationDocumentRequest;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\UploadEstimateGenerationDocumentsRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentDetailResource;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentResource;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
@@ -33,7 +35,35 @@ class EstimateGenerationDocumentController extends Controller
         private readonly DocumentGenerationReadinessService $readinessService,
         private readonly RetryEstimateGenerationDocument $retryDocument,
         private readonly IgnoreEstimateGenerationDocument $ignoreDocument,
+        private readonly UploadEstimateGenerationDocuments $uploadDocuments,
     ) {}
+
+    public function upload(UploadEstimateGenerationDocumentsRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse
+    {
+        try {
+            $this->guardSession($request, $project, $session);
+            $result = $this->uploadDocuments->handle(
+                $session,
+                (int) $request->validated('state_version'),
+                $request->file('files', []),
+                $request->user(),
+            );
+
+            return AdminResponse::success([
+                'documents' => EstimateGenerationDocumentResource::collection($result->documents)->resolve(),
+                'documents_summary' => $result->summary,
+            ], trans_message('estimate_generation.documents_uploaded'));
+        } catch (StaleEstimateGenerationState|InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (\Throwable) {
+            Log::error('[EstimateGeneration] Failed to upload documents', [
+                'failure_code' => 'document_upload_failed',
+                'session_id' => $session->id,
+            ]);
+
+            return AdminResponse::error(trans_message('estimate_generation.documents_upload_error'), 500);
+        }
+    }
 
     public function index(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
     {

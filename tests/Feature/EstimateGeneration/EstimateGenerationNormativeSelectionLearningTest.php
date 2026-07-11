@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
-use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationReviewController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\EstimateGenerationFeedbackRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationLearningExample;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
@@ -121,7 +121,7 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
         $request->setUserResolver(static fn (): User => $user);
         $request->validateResolved();
 
-        app(EstimateGenerationController::class)->feedback($request, $project, $session);
+        app(EstimateGenerationReviewController::class)->feedback($request, $project, $session);
 
         $example = EstimateGenerationLearningExample::query()->firstOrFail();
         $currentPackageItem = EstimateGenerationPackageItem::query()
@@ -167,7 +167,7 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
         $request->setUserResolver(static fn (): User => $user);
         $request->validateResolved();
 
-        $response = app(EstimateGenerationController::class)->feedback($request, $project, $session);
+        $response = app(EstimateGenerationReviewController::class)->feedback($request, $project, $session);
 
         $this->assertSame(200, $response->getStatusCode());
         $responsePayload = json_decode($response->getContent(), true, flags: JSON_THROW_ON_ERROR);
@@ -218,7 +218,7 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
         $request->setUserResolver(static fn (): User => $user);
         $request->validateResolved();
 
-        app(EstimateGenerationController::class)->feedback($request, $project, $session);
+        app(EstimateGenerationReviewController::class)->feedback($request, $project, $session);
 
         $example = EstimateGenerationLearningExample::query()->firstOrFail();
         $currentPackageItem = EstimateGenerationPackageItem::query()
@@ -262,7 +262,7 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
         $request->setUserResolver(static fn (): User => $user);
         $request->validateResolved();
 
-        $response = app(EstimateGenerationController::class)->feedback($request, $project, $session);
+        $response = app(EstimateGenerationReviewController::class)->feedback($request, $project, $session);
 
         $this->assertSame(200, $response->getStatusCode());
 

@@ -5,7 +5,8 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
-use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationActionController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationSessionController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\GenerateEstimateGenerationRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -38,7 +39,7 @@ class EstimateGenerationQueueTest extends TestCase
         $request->setContainer($this->app)->setRedirector($this->app['redirect']);
         $request->setUserResolver(static fn (): User => $user);
 
-        $response = app(EstimateGenerationController::class)->generate($request, $project, $session);
+        $response = app(EstimateGenerationActionController::class)->generate($request, $project, $session);
         $payload = json_decode($response->getContent(), true, 512, JSON_THROW_ON_ERROR);
 
         $this->assertSame(202, $response->getStatusCode());
@@ -232,7 +233,7 @@ class EstimateGenerationQueueTest extends TestCase
         $request = Request::create('/status', 'GET');
         $request->setUserResolver(static fn (): User => $user);
 
-        $response = app(EstimateGenerationController::class)->status($request, $project, $session);
+        $response = app(EstimateGenerationSessionController::class)->show($request, $project, $session);
         $payload = json_decode($response->getContent(), true, 512, JSON_THROW_ON_ERROR);
 
         $this->assertTrue($payload['success']);

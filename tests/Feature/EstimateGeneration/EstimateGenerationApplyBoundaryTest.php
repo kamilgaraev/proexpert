@@ -100,7 +100,7 @@ final class EstimateGenerationApplyBoundaryTest extends TestCase
     public function controller_delegates_apply_and_contains_no_persistence_or_status_mutation(): void
     {
         $source = file_get_contents(
-            dirname(__DIR__, 3).'/app/BusinessModules/Addons/EstimateGeneration/Http/Controllers/EstimateGenerationController.php',
+            dirname(__DIR__, 3).'/app/BusinessModules/Addons/EstimateGeneration/Http/Controllers/EstimateGenerationActionController.php',
         );
 
         self::assertIsString($source);

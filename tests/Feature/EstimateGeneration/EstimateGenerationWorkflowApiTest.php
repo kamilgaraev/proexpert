@@ -6,7 +6,8 @@ namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
-use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationActionController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationSessionController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionListResource;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionResource;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -58,7 +59,7 @@ final class EstimateGenerationWorkflowApiTest extends TestCase
         $route = '/_contract/foreign/'.$method.'/projects/{project}/sessions/{session}';
         Route::bind('project', static fn (): Project => $project);
         Route::bind('session', static fn (): EstimateGenerationSession => $session);
-        Route::post($route, [EstimateGenerationController::class, $method])
+        Route::post($route, [EstimateGenerationActionController::class, $method])
             ->middleware(SubstituteBindings::class);
         $this->actingAs($user);
 
@@ -131,7 +132,7 @@ final class EstimateGenerationWorkflowApiTest extends TestCase
         Route::bind('session', static fn (): EstimateGenerationSession => $session);
         Route::get(
             '/_contract/projects/{project}/estimate-generation/sessions/{session}',
-            [EstimateGenerationController::class, 'show'],
+            [EstimateGenerationSessionController::class, 'show'],
         )->middleware(SubstituteBindings::class);
         $this->actingAs($user);
 

@@ -15,7 +15,13 @@ final class EstimateGenerationThinControllerTest extends TestCase
     #[Test]
     public function mutation_controllers_do_not_own_workflow_readiness_or_queue_logic(): void
     {
-        foreach (['EstimateGenerationController.php', 'EstimateGenerationDocumentController.php'] as $file) {
+        foreach ([
+            'EstimateGenerationSessionController.php',
+            'EstimateGenerationActionController.php',
+            'EstimateGenerationDocumentController.php',
+            'EstimateGenerationPackageController.php',
+            'EstimateGenerationReviewController.php',
+        ] as $file) {
             $source = file_get_contents($this->root().'/app/BusinessModules/Addons/EstimateGeneration/Http/Controllers/'.$file);
             self::assertIsString($source);
             self::assertStringNotContainsString('::dispatch(', $source);

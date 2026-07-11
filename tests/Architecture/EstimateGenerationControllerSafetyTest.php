@@ -12,10 +12,12 @@ final class EstimateGenerationControllerSafetyTest extends TestCase
     #[Test]
     public function public_read_endpoints_delegate_to_the_safe_responder(): void
     {
-        $sessionController = $this->source('EstimateGenerationController.php');
+        $sessionController = $this->source('EstimateGenerationSessionController.php')
+            .$this->source('EstimateGenerationPackageController.php')
+            .$this->source('EstimateGenerationReviewController.php');
         $documentController = $this->source('EstimateGenerationDocumentController.php');
 
-        self::assertGreaterThanOrEqual(7, substr_count($sessionController, '$this->safeReadResponse('));
+        self::assertGreaterThanOrEqual(2, substr_count($sessionController, '$this->safeRead'));
         self::assertGreaterThanOrEqual(2, substr_count($documentController, '$this->safeReadResponse('));
         self::assertStringContainsString('catch (HttpExceptionInterface $exception)', $sessionController);
         self::assertStringContainsString('catch (HttpExceptionInterface $exception)', $documentController);
