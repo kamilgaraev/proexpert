@@ -71,4 +71,7 @@ return [
     'training' => [
         'max_dataset_jobs_per_minute' => (int) env('ESTIMATE_GENERATION_TRAINING_MAX_DATASET_JOBS_PER_MINUTE', 2),
     ],
+    'benchmark' => [
+        'acceptance_manifest' => $envValue('ESTIMATE_GENERATION_ACCEPTANCE_BENCHMARK_MANIFEST'),
+    ],
 ];

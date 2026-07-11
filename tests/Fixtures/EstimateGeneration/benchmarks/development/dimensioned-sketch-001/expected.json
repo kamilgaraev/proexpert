@@ -1,0 +1,1 @@
+{"schema_version":1,"expected":{"sheet_type":"dimensioned_sketch","room_cells":["d-r1"],"wall_cells":["d-w1","d-w2"],"opening_ids":["d-o1"],"areas":{"d-r1":"14"},"quantities":{"d-wall":"15"},"work_ids":["d-work"],"normative_rankings":{"d-work":["d-norm"]},"costs":{"d-work":"140"},"applicable_item_ids":["d-work"],"evidence_ids_by_item":{"d-work":["d-e1"]}}}

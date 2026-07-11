@@ -36,8 +36,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateG
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\LaravelEstimateGenerationRetryDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryableEstimateGenerationSessionRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkAdapterRegistry;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunner;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\Metrics\MetricRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\BootstrapEstimateGenerationLearningCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\InspectEstimateGenerationProductionCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\RunEstimateGenerationBenchmarkCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Contracts\DrawingAnalysisProviderInterface;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EloquentSessionStateStore;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\SessionStateStore;
@@ -155,6 +159,21 @@ class EstimateGenerationServiceProvider extends ServiceProvider
     {
         $this->app->singleton(SessionOperationalSnapshotBuilder::class, BuildSessionOperationalSnapshot::class);
         $this->mergeConfigFrom(config_path('estimate-generation.php'), 'estimate-generation');
+        $this->app->singleton(MetricRegistry::class, static fn (): MetricRegistry => MetricRegistry::standard());
+        $this->app->singleton(BenchmarkRunner::class);
+        $this->app->singleton(BenchmarkAdapterRegistry::class, static fn (): BenchmarkAdapterRegistry => new BenchmarkAdapterRegistry([]));
+        $this->app->singleton(RunEstimateGenerationBenchmarkCommand::class, fn ($app): RunEstimateGenerationBenchmarkCommand => new RunEstimateGenerationBenchmarkCommand(
+            $app->make(BenchmarkRunner::class),
+            $app->make(BenchmarkAdapterRegistry::class),
+            base_path('tests/Fixtures/EstimateGeneration/benchmarks/manifest.json'),
+            base_path('tests/Fixtures/EstimateGeneration/benchmarks'),
+            storage_path('app/benchmarks'),
+            acceptanceManifestLocator: (static function (): ?string {
+                $locator = config('estimate-generation.benchmark.acceptance_manifest');
+
+                return is_string($locator) ? $locator : null;
+            })(),
+        ));
 
         $this->app->singleton(DocumentParsingService::class);
         $this->app->singleton(MetadataDocumentUnitDetector::class);
@@ -306,6 +325,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $this->commands([
                 BootstrapEstimateGenerationLearningCommand::class,
                 InspectEstimateGenerationProductionCommand::class,
+                RunEstimateGenerationBenchmarkCommand::class,
                 ClassifyEstimateNormativesCommand::class,
                 ImportEstimateNormativesCommand::class,
                 InspectEstimateNormativesCommand::class,

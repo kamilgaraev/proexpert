@@ -1,0 +1,1 @@
+{"schema_version":1,"expected":{"sheet_type":"cad_plan","room_cells":["x-r1"],"wall_cells":["x-w1","x-w2"],"opening_ids":["x-o1"],"areas":{"x-r1":"16"},"quantities":{"x-wall":"16"},"work_ids":["x-work"],"normative_rankings":{"x-work":["x-norm"]},"costs":{"x-work":"160"},"applicable_item_ids":["x-work"],"evidence_ids_by_item":{"x-work":["x-e1"]}}}

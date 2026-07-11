@@ -1,0 +1,1 @@
+{"schema_version":1,"expected":{"sheet_type":"floor_plan","room_cells":["v-r1","v-r2"],"wall_cells":["v-w1","v-w2"],"opening_ids":["v-o1"],"areas":{"v-r1":"12","v-r2":"8"},"quantities":{"v-wall":"30"},"work_ids":["v-work"],"normative_rankings":{"v-work":["v-norm"]},"costs":{"v-work":"100"},"applicable_item_ids":["v-work"],"evidence_ids_by_item":{"v-work":["v-e1"]}}}
