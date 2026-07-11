@@ -37,15 +37,15 @@ final readonly class EloquentPipelineExecutionPlanner implements PipelineExecuti
             ->where('d.organization_id', $snapshot->organizationId)
             ->where('d.project_id', $snapshot->projectId)
             ->where('d.session_id', $snapshot->sessionId)
-            ->select(['d.id', 'd.status', 'd.source_version', 'd.checksum_sha256'])
-            ->selectRaw($this->derivedVersionSql())
+            ->select(['d.id', 'd.status', 'd.source_version', 'd.checksum_sha256', 'd.structured_payload', 'd.facts_summary', 'd.quality_score', 'd.quality_level', 'd.quality_flags'])
             ->orderBy('d.id')
             ->limit(self::MAX_DOCUMENT_PROJECTIONS + 1)
             ->get();
         if ($rows->count() > self::MAX_DOCUMENT_PROJECTIONS) {
             throw new PipelineStageException(FailureCategory::UserActionRequired, 'pipeline_source_too_large');
         }
-        $documents = $rows->map(static function (object $row): array {
+        $derivedVersions = $this->derivedVersions($session, $snapshot, $rows->all());
+        $documents = $rows->map(static function (object $row) use ($derivedVersions): array {
             $sourceVersion = (string) $row->source_version;
 
             return [
@@ -54,7 +54,7 @@ final readonly class EloquentPipelineExecutionPlanner implements PipelineExecuti
                     ? $sourceVersion
                     : 'sha256:'.strtolower((string) $row->checksum_sha256),
                 'status' => (string) $row->status,
-                'derived_version' => 'sha256:'.hash('sha256', (string) $row->derived_version),
+                'derived_version' => $derivedVersions[(int) $row->id],
             ];
         })->all();
         $baseInputVersion = PipelineBaseInputVersion::fromProjection(
@@ -75,20 +75,55 @@ final readonly class EloquentPipelineExecutionPlanner implements PipelineExecuti
         return $this->resolver->next($seed, $this->outputs->priorOutputs($seed));
     }
 
-    private function derivedVersionSql(): string
+    /** @param list<object> $documents @return array<int, string> */
+    private function derivedVersions(EstimateGenerationSession $session, FailureExecutionSnapshot $snapshot, array $documents): array
     {
-        return <<<'SQL'
-            md5(
-                COALESCE(d.structured_payload::text, '') || '|' ||
-                COALESCE(d.facts_summary::text, '') || '|' ||
-                COALESCE(d.quality_score::text, '') || '|' ||
-                COALESCE(d.quality_level, '') || '|' ||
-                COALESCE(d.quality_flags::text, '') || '|' ||
-                COALESCE((SELECT md5(string_agg(f.id::text || ':' || md5(to_jsonb(f)::text), '|' ORDER BY f.id)) FROM estimate_generation_document_facts f WHERE f.document_id = d.id AND f.organization_id = d.organization_id AND f.project_id = d.project_id AND f.session_id = d.session_id), '') || '|' ||
-                COALESCE((SELECT md5(string_agg(e.id::text || ':' || md5(to_jsonb(e)::text), '|' ORDER BY e.id)) FROM estimate_generation_drawing_elements e WHERE e.document_id = d.id AND e.organization_id = d.organization_id AND e.project_id = d.project_id AND e.session_id = d.session_id), '') || '|' ||
-                COALESCE((SELECT md5(string_agg(q.id::text || ':' || md5(to_jsonb(q)::text), '|' ORDER BY q.id)) FROM estimate_generation_quantity_takeoffs q WHERE q.document_id = d.id AND q.organization_id = d.organization_id AND q.project_id = d.project_id AND q.session_id = d.session_id), '') || '|' ||
-                COALESCE((SELECT md5(string_agg(s.id::text || ':' || md5(to_jsonb(s)::text), '|' ORDER BY s.id)) FROM estimate_generation_scope_inferences s WHERE s.document_id = d.id AND s.organization_id = d.organization_id AND s.project_id = d.project_id AND s.session_id = d.session_id), '')
-            ) AS derived_version
-            SQL;
+        $connection = $session->getConnection();
+        $definitions = $this->relationDefinitions();
+        $countQueries = array_map(fn (array $definition) => $connection->table($definition[0])
+            ->where('organization_id', $snapshot->organizationId)->where('project_id', $snapshot->projectId)
+            ->where('session_id', $snapshot->sessionId)->selectRaw('COUNT(*) AS source_count'), $definitions);
+        $union = array_shift($countQueries);
+        foreach ($countQueries as $query) {
+            $union->unionAll($query);
+        }
+        $counts = $connection->query()->fromSub($union, 'source_counts')
+            ->selectRaw('COALESCE(SUM(source_count), 0) AS total_count, COALESCE(MAX(source_count), 0) AS maximum_count')->first();
+        $hasher = new BoundedSourceVersionHasher;
+        $hasher->assertCounts((int) $counts->total_count, (int) $counts->maximum_count);
+
+        foreach ($documents as $document) {
+            $hasher->start((int) $document->id, [
+                'structured_payload' => $document->structured_payload, 'facts_summary' => $document->facts_summary,
+                'quality_score' => $document->quality_score, 'quality_level' => $document->quality_level,
+                'quality_flags' => $document->quality_flags,
+            ]);
+        }
+        foreach ($definitions as [$table, $columns]) {
+            foreach ($connection->table($table)->where('organization_id', $snapshot->organizationId)
+                ->where('project_id', $snapshot->projectId)->where('session_id', $snapshot->sessionId)
+                ->select($columns)->orderBy('document_id')->orderBy('id')->cursor() as $row) {
+                $documentId = (int) $row->document_id;
+                $hasher->update($documentId, get_object_vars($row));
+            }
+        }
+
+        return $hasher->finish();
+    }
+
+    /** @return list<array{string, list<string>}> */
+    private function relationDefinitions(): array
+    {
+        return [
+            ['estimate_generation_document_facts', ['id', 'document_id', 'page_id', 'fact_type', 'scope_key', 'label', 'value_text', 'value_number', 'unit', 'confidence', 'source_ref', 'normalized_payload']],
+            ['estimate_generation_drawing_elements', ['id', 'document_id', 'page_id', 'type', 'label', 'value_text', 'value_number', 'unit', 'bbox', 'geometry', 'confidence', 'source_ref', 'normalized_payload']],
+            ['estimate_generation_quantity_takeoffs', ['id', 'document_id', 'page_id', 'source_element_ids', 'scope_key', 'work_intent', 'name', 'unit', 'quantity', 'formula', 'confidence', 'source_refs', 'normalized_payload']],
+            ['estimate_generation_scope_inferences', ['id', 'document_id', 'page_id', 'inference_type', 'title', 'description', 'source_refs', 'normative_basis', 'work_intent', 'confidence', 'review_required', 'accepted_at']],
+        ];
+    }
+
+    private function tooLarge(): never
+    {
+        throw new PipelineStageException(FailureCategory::UserActionRequired, 'pipeline_source_too_large');
     }
 }

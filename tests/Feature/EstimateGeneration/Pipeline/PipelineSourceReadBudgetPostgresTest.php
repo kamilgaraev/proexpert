@@ -44,6 +44,7 @@ final class PipelineSourceReadBudgetPostgresTest extends TestCase
             });
             self::assertSame([], $gateway->source($context)['documents']);
             self::assertCount(6, $queries);
+            self::assertSame([], array_values(array_filter($queries, static fn (string $sql): bool => str_contains(strtolower($sql), 'string_agg') || str_contains(strtolower($sql), 'to_jsonb'))));
 
             $rows = [];
             for ($index = 1; $index <= EloquentGenerationPipelineDataGateway::MAX_DOCUMENTS + 1; $index++) {

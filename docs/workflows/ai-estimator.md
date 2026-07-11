@@ -140,6 +140,16 @@ Horizon обслуживает три очереди соединения `redis
 
 Локально эти тесты не запускаются без отдельного PostgreSQL-окружения и миграций. Их пропуск не считается подтверждением контракта БД.
 
+Полный PostgreSQL gate состоит ровно из трёх команд в изолированном мигрированном окружении:
+
+```bash
+RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT=1 php artisan test --group=postgres-contract
+RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT=1 php artisan test --group=postgres
+RUN_POSTGRES_CONTENTION_TESTS=1 RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT=1 php artisan test --group=postgres-contention
+```
+
+Первая команда проверяет схемы, tenant-связи, журналы, evidence и лимиты источника; вторая — snapshot/ETag; третья — конкурентные checkpoint, artifact и evidence сценарии. Эти команды покрывают все 20 opt-in тестовых методов и не входят в DB-less gate.
+
 ## Production-границы чтения и tenant-связей
 
 Источник расчёта читается потоково и без загрузки полного графа Eloquent: не более 500 документов, 10 000 производных строк и 6 МиБ сериализованных исходных данных. Превышение любого лимита завершает этап с безопасной пользовательской ошибкой `pipeline_source_too_large`; частичный результат не публикуется. Число запросов чтения источника постоянно и не растёт вместе с числом документов.

@@ -739,9 +739,11 @@ PostgreSQL contracts are a separate opt-in deployment gate and are not part of t
 
 ```bash
 RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT=1 php artisan test --group=postgres-contract
+RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT=1 php artisan test --group=postgres
+RUN_POSTGRES_CONTENTION_TESTS=1 RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT=1 php artisan test --group=postgres-contention
 ```
 
-Expected in an isolated migrated PostgreSQL environment: tenant composite foreign keys, lease/contention, snapshot watermark, source query budget and cascade contracts pass.
+These three commands are the complete opt-in inventory: `postgres-contract` covers schema, tenant, usage, failure, evidence and bounded-source contracts; `postgres` covers snapshot/ETag; `postgres-contention` covers checkpoint, artifact and evidence concurrency. Run all commands only in an isolated migrated PostgreSQL environment. Together they currently map all 20 opt-in test methods; none is part of the DB-less gate.
 
 - [ ] **Step 5: Проверить legacy absence**
 

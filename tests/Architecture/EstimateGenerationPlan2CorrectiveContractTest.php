@@ -41,6 +41,13 @@ final class EstimateGenerationPlan2CorrectiveContractTest extends TestCase
         $gateway = $this->source('Pipeline/EloquentGenerationPipelineDataGateway.php');
 
         self::assertStringNotContainsString('->with([', $planner);
+        self::assertStringNotContainsString('string_agg', $planner);
+        self::assertStringNotContainsString('to_jsonb', $planner);
+        self::assertStringContainsString("selectRaw('COUNT(*) AS source_count')", $planner);
+        self::assertStringContainsString('BoundedSourceVersionHasher', $planner);
+        self::assertStringContainsString("hash_init('sha256')", $this->source('Pipeline/BoundedSourceVersionHasher.php'));
+        self::assertStringContainsString("orderBy('document_id')->orderBy('id')->cursor()", $planner);
+        self::assertLessThan(strpos($planner, '->cursor()'), strpos($planner, "selectRaw('COUNT(*) AS source_count')"));
         self::assertStringNotContainsString('documents.facts', $planner);
         self::assertStringNotContainsString('documents.drawingElements', $planner);
         self::assertStringNotContainsString('documents.quantityTakeoffs', $planner);
