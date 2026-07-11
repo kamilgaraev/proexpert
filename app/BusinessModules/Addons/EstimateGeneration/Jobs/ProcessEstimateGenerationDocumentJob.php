@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Jobs;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\CreateDocumentProcessingUnits;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentProcessingStatusService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -57,5 +58,21 @@ final class ProcessEstimateGenerationDocumentJob implements ShouldQueue
         }
 
         $creator->handle($document);
+    }
+
+    public function failed(\Throwable $error): void
+    {
+        $document = EstimateGenerationDocument::query()->find($this->documentId);
+
+        if (! $document instanceof EstimateGenerationDocument || in_array($document->status, ['ready', 'ignored'], true)) {
+            return;
+        }
+
+        app(DocumentProcessingStatusService::class)->markFailed(
+            $document,
+            'document_manifest_job_failed',
+            'estimate_generation.ocr_provider_error',
+            ['failure_fingerprint' => hash('sha256', $error::class)],
+        );
     }
 }

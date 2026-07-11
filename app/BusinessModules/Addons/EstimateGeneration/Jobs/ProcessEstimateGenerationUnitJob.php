@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Jobs;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitClaimStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -23,7 +24,7 @@ final class ProcessEstimateGenerationUnitJob implements ShouldQueue
 
     public const QUEUE = 'estimate-generation-units';
 
-    public int $tries = 3;
+    public int $tries = 20;
 
     public int $timeout = 1800;
 
@@ -56,7 +57,16 @@ final class ProcessEstimateGenerationUnitJob implements ShouldQueue
 
     public function handle(ProcessDocumentUnit $processor): void
     {
-        $processor->handle($this->unitId, $this->sourceVersion);
+        $outcome = $processor->handle($this->unitId, $this->sourceVersion);
+
+        if ($outcome->status === DocumentProcessingUnitClaimStatus::Busy && $outcome->retryAt !== null) {
+            $this->release(max(1, now()->diffInSeconds($outcome->retryAt, false)));
+        }
+    }
+
+    public function retryUntil(): \DateTimeInterface
+    {
+        return now()->addHours(6);
     }
 
     public function failed(\Throwable $error): void
@@ -65,5 +75,7 @@ final class ProcessEstimateGenerationUnitJob implements ShouldQueue
             'unit_id' => $this->unitId,
             'failure_fingerprint' => hash('sha256', $error::class),
         ]);
+
+        RecoverEstimateGenerationUnitsJob::dispatch()->delay(now()->addMinute());
     }
 }

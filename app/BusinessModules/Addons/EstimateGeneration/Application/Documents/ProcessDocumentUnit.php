@@ -17,9 +17,10 @@ final readonly class ProcessDocumentUnit
         private DocumentProcessingUnitStore $store,
         private DocumentUnitProcessor $processor,
         private DocumentUnitAggregateReconciler $reconciler,
+        private ?DocumentUnitExhaustionHandler $exhaustion = null,
     ) {}
 
-    public function handle(int $unitId, string $sourceVersion): void
+    public function handle(int $unitId, string $sourceVersion): DocumentUnitProcessOutcome
     {
         $now = now()->toDateTimeImmutable();
         $claim = $this->store->claim(
@@ -30,8 +31,23 @@ final readonly class ProcessDocumentUnit
             self::MAX_ATTEMPTS,
         );
 
-        if (! $claim->acquired) {
-            return;
+        if ($claim->status === DocumentProcessingUnitClaimStatus::AlreadyCompleted) {
+            $record = $this->store->find($unitId);
+            if ($record !== null) {
+                $this->reconciler->reconcile($record->documentId, $sourceVersion);
+            }
+
+            return new DocumentUnitProcessOutcome($claim->status);
+        }
+
+        if ($claim->status === DocumentProcessingUnitClaimStatus::Exhausted) {
+            $this->exhaustion?->handle($unitId);
+
+            return new DocumentUnitProcessOutcome($claim->status);
+        }
+
+        if (! $claim->acquired()) {
+            return new DocumentUnitProcessOutcome($claim->status, $claim->busyUntil);
         }
 
         $context = $this->store->executionContext($claim);
@@ -39,7 +55,7 @@ final readonly class ProcessDocumentUnit
         if ($context === null) {
             $this->store->fail($claim, 'unit_scope_missing', hash('sha256', 'unit_scope_missing'), now()->toDateTimeImmutable());
 
-            return;
+            return new DocumentUnitProcessOutcome(DocumentProcessingUnitClaimStatus::Stale);
         }
 
         try {
@@ -52,18 +68,15 @@ final readonly class ProcessDocumentUnit
             if (! $this->store->publish($claim, $output, now()->toDateTimeImmutable())) {
                 throw new LogicException('Document processing unit ownership was lost before publication.');
             }
-
-            $this->reconciler->reconcile($context->documentId, $sourceVersion);
         } catch (Throwable $error) {
             $code = $error instanceof DocumentUnitProcessingException ? $error->safeCode : 'unit_processing_failed';
-            $this->store->fail(
-                $claim,
-                $code,
-                hash('sha256', $error::class.'|'.$code),
-                now()->toDateTimeImmutable(),
-            );
+            $this->store->fail($claim, $code, hash('sha256', $error::class.'|'.$code), now()->toDateTimeImmutable());
 
             throw $error;
         }
+
+        $this->reconciler->reconcile($context->documentId, $sourceVersion);
+
+        return new DocumentUnitProcessOutcome(DocumentProcessingUnitClaimStatus::Acquired);
     }
 }

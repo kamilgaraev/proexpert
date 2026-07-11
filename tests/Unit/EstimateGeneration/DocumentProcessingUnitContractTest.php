@@ -5,15 +5,21 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ArtifactDocumentUnitDetector;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DispatchDocumentProcessingUnits;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentManifestNeedsReview;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitClaimStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceManifestStorage;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitAggregateReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitData;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitDispatchCandidate;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitDispatchStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExecutionContext;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExhaustionHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitOutput;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProcessor;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EstimateGenerationUnitJobDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\InMemoryDocumentProcessingUnitStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\MetadataDocumentUnitDetector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit;
@@ -25,6 +31,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocum
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\PdfTextLayerExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\SpreadsheetDocumentExtractor;
 use DateTimeImmutable;
+use Illuminate\Support\Carbon;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -64,8 +71,8 @@ final class DocumentProcessingUnitContractTest extends TestCase
         $first = $store->claim($unit->id, 'sha256:source', $now, $now->modify('+30 seconds'), 3);
         $second = $store->claim($unit->id, 'sha256:source', $now, $now->modify('+30 seconds'), 3);
 
-        self::assertTrue($first->acquired);
-        self::assertFalse($second->acquired);
+        self::assertTrue($first->acquired());
+        self::assertFalse($second->acquired());
         self::assertFalse($store->complete($first, 'v1', 1, $now->modify('+31 seconds')));
         self::assertSame(DocumentProcessingUnitStatus::Running, $store->find($unit->id)?->status);
     }
@@ -89,7 +96,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
             $now->modify('+2 seconds'),
             $now->modify('+32 seconds'),
             3,
-        )->acquired);
+        )->acquired());
         self::assertSame('output-v1', $store->find($unit->id)?->outputVersion);
         self::assertSame(1, $store->find($unit->id)?->outputCount);
     }
@@ -109,7 +116,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
             3,
         );
 
-        self::assertFalse($claim->acquired);
+        self::assertFalse($claim->acquired());
         self::assertSame(DocumentProcessingUnitStatus::Superseded, $store->find($old->id)?->status);
     }
 
@@ -192,7 +199,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
         $usecase->handle($unit->id, 'source');
 
         self::assertSame(1, $processor->calls);
-        self::assertSame(1, $reconciler->calls);
+        self::assertSame(2, $reconciler->calls);
         self::assertSame('output', $store->find($unit->id)?->outputVersion);
         self::assertSame(1, $store->find($unit->id)?->outputCount);
     }
@@ -387,5 +394,212 @@ final class DocumentProcessingUnitContractTest extends TestCase
         $this->expectExceptionMessage('estimate_generation.document_unit_scope_invalid');
 
         S3DocumentUnitContentReader::assertOrganizationPath('org-99/manifest/page.txt', 10);
+    }
+
+    #[Test]
+    public function published_unit_is_not_failed_when_finalization_throws_and_retry_only_finalizes(): void
+    {
+        $store = new InMemoryDocumentProcessingUnitStore;
+        $unit = $store->create(1, 2, 3, 4, new DocumentUnitData(DocumentUnitType::PdfPage, 1, 'source'));
+        $processor = new class implements DocumentUnitProcessor
+        {
+            public int $calls = 0;
+
+            public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
+            {
+                $this->calls++;
+
+                return new DocumentUnitOutput('output', 'page');
+            }
+        };
+        $reconciler = new class implements DocumentUnitAggregateReconciler
+        {
+            public int $calls = 0;
+
+            public function reconcile(int $documentId, string $sourceVersion): void
+            {
+                if (++$this->calls === 1) {
+                    throw new \RuntimeException('finalizer unavailable');
+                }
+            }
+        };
+        $usecase = new ProcessDocumentUnit($store, $processor, $reconciler);
+
+        try {
+            $usecase->handle($unit->id, 'source');
+            self::fail('First finalization must fail.');
+        } catch (\RuntimeException) {
+        }
+
+        self::assertSame(DocumentProcessingUnitStatus::Completed, $store->find($unit->id)?->status);
+        self::assertNull($store->find($unit->id)?->failureCode);
+        $outcome = $usecase->handle($unit->id, 'source');
+
+        self::assertSame(DocumentProcessingUnitClaimStatus::AlreadyCompleted, $outcome->status);
+        self::assertSame(1, $processor->calls);
+        self::assertSame(2, $reconciler->calls);
+    }
+
+    #[Test]
+    public function durable_dispatch_repair_requeues_candidates_after_partial_enqueue(): void
+    {
+        $store = new class implements DocumentUnitDispatchStore
+        {
+            /** @var list<DocumentUnitDispatchCandidate> */
+            public array $due;
+
+            /** @var list<int> */
+            public array $marked = [];
+
+            public function __construct()
+            {
+                $this->due = [new DocumentUnitDispatchCandidate(1, 'source'), new DocumentUnitDispatchCandidate(2, 'source')];
+            }
+
+            public function dueForDocument(int $documentId, string $sourceVersion, DateTimeImmutable $now, int $limit): array
+            {
+                return $this->due;
+            }
+
+            public function dueForRecovery(DateTimeImmutable $now, int $limit): array
+            {
+                return array_values(array_filter($this->due, fn (DocumentUnitDispatchCandidate $candidate): bool => ! in_array($candidate->unitId, $this->marked, true)));
+            }
+
+            public function markDispatched(int $unitId, DateTimeImmutable $now, DateTimeImmutable $nextDispatchAt): void
+            {
+                $this->marked[] = $unitId;
+            }
+        };
+        $jobs = new class implements EstimateGenerationUnitJobDispatcher
+        {
+            /** @var list<int> */
+            public array $ids = [];
+
+            public bool $failSecond = true;
+
+            public function dispatch(int $unitId, string $sourceVersion): void
+            {
+                if ($unitId === 2 && $this->failSecond) {
+                    throw new \RuntimeException('queue unavailable');
+                }
+
+                $this->ids[] = $unitId;
+            }
+        };
+        $dispatcher = new DispatchDocumentProcessingUnits($store, $jobs);
+
+        try {
+            $dispatcher->forDocument(4, 'source');
+            self::fail('Partial enqueue must expose transient queue failure.');
+        } catch (\RuntimeException) {
+        }
+        $jobs->failSecond = false;
+        $recovered = $dispatcher->recover();
+
+        self::assertSame(1, $recovered);
+        self::assertSame([1, 2], $jobs->ids);
+        self::assertSame([1, 2], $store->marked);
+    }
+
+    #[Test]
+    public function busy_unit_is_released_until_lease_then_reclaimed(): void
+    {
+        Carbon::setTestNow('2026-07-11 10:00:00');
+        $store = new InMemoryDocumentProcessingUnitStore;
+        $unit = $store->create(1, 2, 3, 4, new DocumentUnitData(DocumentUnitType::Sketch, 1, 'source'));
+        $now = Carbon::now()->toDateTimeImmutable();
+        $store->claim($unit->id, 'source', $now, $now->modify('+60 seconds'), 3);
+        $processor = new class implements DocumentUnitProcessor
+        {
+            public int $calls = 0;
+
+            public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
+            {
+                $this->calls++;
+
+                return new DocumentUnitOutput('output', 'sketch');
+            }
+        };
+        $reconciler = new class implements DocumentUnitAggregateReconciler
+        {
+            public function reconcile(int $documentId, string $sourceVersion): void {}
+        };
+        $usecase = new ProcessDocumentUnit($store, $processor, $reconciler);
+
+        $busy = $usecase->handle($unit->id, 'source');
+        self::assertSame(DocumentProcessingUnitClaimStatus::Busy, $busy->status);
+        self::assertNotNull($busy->retryAt);
+        self::assertSame(0, $processor->calls);
+
+        Carbon::setTestNow('2026-07-11 10:01:01');
+        $completed = $usecase->handle($unit->id, 'source');
+        Carbon::setTestNow();
+
+        self::assertSame(DocumentProcessingUnitClaimStatus::Acquired, $completed->status);
+        self::assertSame(1, $processor->calls);
+        self::assertSame(2, $store->find($unit->id)?->attemptCount);
+    }
+
+    #[Test]
+    public function exhausted_unit_invokes_actionable_handler_instead_of_silent_success(): void
+    {
+        $store = new InMemoryDocumentProcessingUnitStore;
+        $unit = $store->create(1, 2, 3, 4, new DocumentUnitData(DocumentUnitType::RasterImage, 1, 'source'));
+        $now = new DateTimeImmutable('2026-07-11T10:00:00+00:00');
+
+        for ($attempt = 0; $attempt < ProcessDocumentUnit::MAX_ATTEMPTS; $attempt++) {
+            $claim = $store->claim($unit->id, 'source', $now, $now->modify('+60 seconds'), ProcessDocumentUnit::MAX_ATTEMPTS);
+            $store->fail($claim, 'failed', hash('sha256', 'failed'), $now->modify('+1 second'));
+        }
+
+        $processor = new class implements DocumentUnitProcessor
+        {
+            public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
+            {
+                throw new \LogicException('must not process exhausted unit');
+            }
+        };
+        $reconciler = new class implements DocumentUnitAggregateReconciler
+        {
+            public function reconcile(int $documentId, string $sourceVersion): void {}
+        };
+        $handler = new class implements DocumentUnitExhaustionHandler
+        {
+            public int $calls = 0;
+
+            public function handle(int $unitId): void
+            {
+                $this->calls++;
+            }
+        };
+
+        $outcome = (new ProcessDocumentUnit($store, $processor, $reconciler, $handler))->handle($unit->id, 'source');
+
+        self::assertSame(DocumentProcessingUnitClaimStatus::Exhausted, $outcome->status);
+        self::assertSame(1, $handler->calls);
+    }
+
+    #[Test]
+    public function production_store_and_finalizer_keep_connection_and_source_fences(): void
+    {
+        $store = file_get_contents(__DIR__.'/../../../app/BusinessModules/Addons/EstimateGeneration/Application/Documents/EloquentDocumentProcessingUnitStore.php');
+        $finalizer = file_get_contents(__DIR__.'/../../../app/BusinessModules/Addons/EstimateGeneration/Application/Documents/EloquentDocumentUnitAggregateReconciler.php');
+        $provider = file_get_contents(__DIR__.'/../../../app/BusinessModules/Addons/EstimateGeneration/EstimateGenerationServiceProvider.php');
+
+        self::assertIsString($store);
+        self::assertStringNotContainsString('EstimateGenerationProcessingUnit::query()', $store);
+        self::assertStringNotContainsString('EstimateGenerationDocumentPage::query()', $store);
+        self::assertStringContainsString('setConnection($this->database->getName())', $store);
+        self::assertStringContainsString("->where('organization_id', \$unit->organization_id)", $store);
+        self::assertStringContainsString("->where('source_version', \$unit->source_version)", $store);
+        self::assertIsString($finalizer);
+        self::assertStringContainsString("->whereIn('processing_unit_id', \$currentUnitIds)", $finalizer);
+        self::assertStringContainsString("->where('source_version', \$sourceVersion)", $finalizer);
+        self::assertStringContainsString("whereNotIn('processing_unit_id', \$currentUnitIds)", $finalizer);
+        self::assertStringContainsString("'units_finalized_source_version' => \$sourceVersion", $finalizer);
+        self::assertIsString($provider);
+        self::assertStringContainsString('RecoverEstimateGenerationUnitsJob', $provider);
+        self::assertStringContainsString('->everyMinute()', $provider);
     }
 }

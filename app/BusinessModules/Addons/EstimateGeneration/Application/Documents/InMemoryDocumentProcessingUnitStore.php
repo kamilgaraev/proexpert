@@ -39,7 +39,7 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
     {
         $record = $this->find($claim->unitId);
 
-        if ($record === null || ! $claim->acquired || $record->claimToken !== $claim->token) {
+        if ($record === null || ! $claim->acquired() || $record->claimToken !== $claim->token) {
             return null;
         }
 
@@ -63,16 +63,20 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
     {
         $record = $this->find($unitId);
 
-        if ($record === null || $record->unit->sourceVersion !== $sourceVersion || $record->status === DocumentProcessingUnitStatus::Superseded || $record->status === DocumentProcessingUnitStatus::Completed) {
-            return new DocumentProcessingUnitClaim($unitId, false);
+        if ($record === null || $record->unit->sourceVersion !== $sourceVersion || $record->status === DocumentProcessingUnitStatus::Superseded) {
+            return new DocumentProcessingUnitClaim($unitId, DocumentProcessingUnitClaimStatus::Stale);
+        }
+
+        if ($record->status === DocumentProcessingUnitStatus::Completed) {
+            return new DocumentProcessingUnitClaim($unitId, DocumentProcessingUnitClaimStatus::AlreadyCompleted);
         }
 
         if ($record->status === DocumentProcessingUnitStatus::Running && $record->leaseExpiresAt > $now) {
-            return new DocumentProcessingUnitClaim($unitId, false);
+            return new DocumentProcessingUnitClaim($unitId, DocumentProcessingUnitClaimStatus::Busy, busyUntil: $record->leaseExpiresAt);
         }
 
         if ($record->attemptCount >= $maxAttempts || $leaseExpiresAt <= $now) {
-            return new DocumentProcessingUnitClaim($unitId, false);
+            return new DocumentProcessingUnitClaim($unitId, DocumentProcessingUnitClaimStatus::Exhausted);
         }
 
         $record->status = DocumentProcessingUnitStatus::Running;
@@ -82,7 +86,16 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
         $record->failureCode = null;
         $record->failureFingerprint = null;
 
-        return new DocumentProcessingUnitClaim($unitId, true, $record->claimToken);
+        return new DocumentProcessingUnitClaim(
+            $unitId,
+            DocumentProcessingUnitClaimStatus::Acquired,
+            $record->claimToken,
+            organizationId: $record->organizationId,
+            projectId: $record->projectId,
+            sessionId: $record->sessionId,
+            documentId: $record->documentId,
+            sourceVersion: $record->unit->sourceVersion,
+        );
     }
 
     public function complete(DocumentProcessingUnitClaim $claim, string $outputVersion, int $outputCount, DateTimeImmutable $now): bool
@@ -151,7 +164,7 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
     private function owns(?DocumentProcessingUnitRecord $record, DocumentProcessingUnitClaim $claim, DateTimeImmutable $now): bool
     {
         return $record !== null
-            && $claim->acquired
+            && $claim->acquired()
             && $record->status === DocumentProcessingUnitStatus::Running
             && $record->claimToken === $claim->token
             && $record->leaseExpiresAt !== null

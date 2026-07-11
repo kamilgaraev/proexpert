@@ -53,6 +53,10 @@ final class RetryEstimateGenerationDocument
                 'extracted_text' => null,
                 'structured_payload' => [],
                 'processed_page_count' => 0,
+                'units_finalized_source_version' => null,
+                'units_reconciled_source_version' => null,
+                'units_reconcile_claim_token' => null,
+                'units_reconcile_lease_expires_at' => null,
                 'meta' => [
                     ...(is_array($lockedDocument->meta) ? $lockedDocument->meta : []),
                     'retry_requested_at' => now()->toISOString(),

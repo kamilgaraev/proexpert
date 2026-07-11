@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
-use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentProcessingStatusService;
@@ -17,6 +16,7 @@ final readonly class CreateDocumentProcessingUnits
     public function __construct(
         private DocumentUnitDetector $detector,
         private DocumentProcessingStatusService $status,
+        private DispatchDocumentProcessingUnits $dispatcher,
     ) {}
 
     /** @return Collection<int, EstimateGenerationProcessingUnit> */
@@ -45,19 +45,22 @@ final readonly class CreateDocumentProcessingUnits
             ->get();
 
         if ($existing->isNotEmpty()) {
+            $this->dispatcher->forDocument((int) $document->id, $sourceVersion);
+
             return $existing;
         }
 
         try {
             $units = DocumentUnitData::normalize($this->detector->detect($document, $sourceVersion));
+            if ($units === []) {
+                throw new DocumentManifestNeedsReview('document_units_empty');
+            }
         } catch (DocumentManifestNeedsReview $error) {
             $this->status->markNeedsReview($document, 0.0, [$error->safeCode], [], 'unusable');
 
             return collect();
         }
-        $newUnitIds = [];
-
-        $models = DB::transaction(function () use ($document, $sourceVersion, $units, &$newUnitIds): Collection {
+        $models = DB::transaction(function () use ($document, $sourceVersion, $units): Collection {
             EstimateGenerationProcessingUnit::query()
                 ->where('organization_id', $document->organization_id)
                 ->where('project_id', $document->project_id)
@@ -72,10 +75,19 @@ final readonly class CreateDocumentProcessingUnits
                     'updated_at' => now(),
                 ]);
 
-            $document->forceFill(['source_version' => $sourceVersion])->save();
+            $sourceChanged = (string) $document->source_version !== $sourceVersion;
+            $document->forceFill([
+                'source_version' => $sourceVersion,
+                ...($sourceChanged ? [
+                    'units_finalized_source_version' => null,
+                    'units_reconciled_source_version' => null,
+                    'units_reconcile_claim_token' => null,
+                    'units_reconcile_lease_expires_at' => null,
+                ] : []),
+            ])->save();
 
             foreach ($units as $unit) {
-                $inserted = DB::table('estimate_generation_processing_units')->insertOrIgnore([
+                DB::table('estimate_generation_processing_units')->insertOrIgnore([
                     'organization_id' => $document->organization_id,
                     'project_id' => $document->project_id,
                     'session_id' => $document->session_id,
@@ -92,14 +104,6 @@ final readonly class CreateDocumentProcessingUnits
                     'updated_at' => now(),
                 ]);
 
-                if ($inserted === 1) {
-                    $newUnitIds[] = (int) EstimateGenerationProcessingUnit::query()
-                        ->where('document_id', $document->id)
-                        ->where('unit_type', $unit->type->value)
-                        ->where('unit_index', $unit->index)
-                        ->where('source_version', $sourceVersion)
-                        ->value('id');
-                }
             }
 
             return EstimateGenerationProcessingUnit::query()
@@ -113,12 +117,7 @@ final readonly class CreateDocumentProcessingUnits
                 ->get();
         }, 3);
 
-        foreach (array_values(array_unique($newUnitIds)) as $unitId) {
-            ProcessEstimateGenerationUnitJob::dispatch($unitId, $sourceVersion)
-                ->onConnection(ProcessEstimateGenerationUnitJob::CONNECTION)
-                ->onQueue(ProcessEstimateGenerationUnitJob::QUEUE)
-                ->afterCommit();
-        }
+        $this->dispatcher->forDocument((int) $document->id, $sourceVersion);
 
         return $models;
     }

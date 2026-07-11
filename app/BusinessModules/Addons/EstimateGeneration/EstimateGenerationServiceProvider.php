@@ -14,9 +14,15 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Document
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitAggregateReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitContentReader;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitDetector;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitDispatchStore;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExhaustionHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProcessor;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentProcessingUnitStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentUnitAggregateReconciler;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentUnitDispatchStore;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentUnitExhaustionHandler;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EstimateGenerationUnitJobDispatcher;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\LaravelEstimateGenerationUnitJobDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\MetadataDocumentUnitDetector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\OcrDocumentUnitProcessor;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\S3DocumentSourceManifestStorage;
@@ -34,6 +40,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationTrainingDatasetJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob;
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverEstimateGenerationUnitsJob;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ClassifyEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ImportEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\InspectEstimateNormativesCommand;
@@ -94,6 +101,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyServi
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 
@@ -108,6 +116,9 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(DocumentSourceManifestStorage::class, S3DocumentSourceManifestStorage::class);
         $this->app->singleton(DocumentUnitDetector::class, ArtifactDocumentUnitDetector::class);
         $this->app->singleton(DocumentProcessingUnitStore::class, EloquentDocumentProcessingUnitStore::class);
+        $this->app->singleton(DocumentUnitDispatchStore::class, EloquentDocumentUnitDispatchStore::class);
+        $this->app->singleton(EstimateGenerationUnitJobDispatcher::class, LaravelEstimateGenerationUnitJobDispatcher::class);
+        $this->app->singleton(DocumentUnitExhaustionHandler::class, EloquentDocumentUnitExhaustionHandler::class);
         $this->app->singleton(DocumentUnitContentReader::class, S3DocumentUnitContentReader::class);
         $this->app->singleton(DocumentUnitProcessor::class, OcrDocumentUnitProcessor::class);
         $this->app->singleton(DocumentUnitAggregateReconciler::class, EloquentDocumentUnitAggregateReconciler::class);
@@ -190,6 +201,12 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         }
 
         if ($this->app->runningInConsole()) {
+            $this->app->booted(function (): void {
+                $this->app->make(Schedule::class)
+                    ->job(new RecoverEstimateGenerationUnitsJob)
+                    ->everyMinute()
+                    ->withoutOverlapping();
+            });
             $this->commands([
                 BootstrapEstimateGenerationLearningCommand::class,
                 InspectEstimateGenerationProductionCommand::class,

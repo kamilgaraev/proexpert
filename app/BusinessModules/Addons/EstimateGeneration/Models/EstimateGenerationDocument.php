@@ -26,6 +26,10 @@ class EstimateGenerationDocument extends Model
         'file_size_bytes',
         'checksum_sha256',
         'source_version',
+        'units_finalized_source_version',
+        'units_reconciled_source_version',
+        'units_reconcile_claim_token',
+        'units_reconcile_lease_expires_at',
         'page_count',
         'processed_page_count',
         'ocr_provider',
@@ -61,6 +65,7 @@ class EstimateGenerationDocument extends Model
         'ocr_started_at' => 'datetime',
         'ocr_finished_at' => 'datetime',
         'ignored_at' => 'datetime',
+        'units_reconcile_lease_expires_at' => 'immutable_datetime',
     ];
 
     public function session(): BelongsTo
