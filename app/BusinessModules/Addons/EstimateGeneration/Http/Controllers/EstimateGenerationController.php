@@ -6,13 +6,13 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimate;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\UploadEstimateGenerationDocuments;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\AnalyzeEstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RebuildGeneratedSection;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RequestEstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Review\RecordEstimateGenerationFeedback;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Review\SelectNormativeCandidate;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\CreateEstimateGenerationSession;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
-use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationTransition;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
@@ -29,20 +29,15 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\UploadEstimateGe
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentResource;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionListResource;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionResource;
-use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
-use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationExcelExportService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationFinalWorkItemGuard;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationReviewItemService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateManualSearchService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorReadinessService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
@@ -50,7 +45,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -59,23 +53,20 @@ use function trans_message;
 class EstimateGenerationController extends Controller
 {
     public function __construct(
-        protected EstimateGenerationOrchestrator $orchestrator,
-        protected DocumentParsingService $documentParsingService,
         protected ApplyGeneratedEstimate $applyGeneratedEstimate,
         protected EstimateGenerationExcelExportService $excelExportService,
         protected EstimateGenerationRegionalContextResolver $regionalContextResolver,
         protected EstimateGenerationFinalWorkItemGuard $finalWorkItemGuard,
         protected EstimateGenerationPackagePresenter $packagePresenter,
-        protected DocumentGenerationReadinessService $documentReadinessService,
-        protected EstimatorReadinessService $estimatorReadinessService,
         protected NormativeCandidateManualSearchService $candidateManualSearchService,
         protected EstimateGenerationReviewItemService $reviewItemService,
         protected CreateEstimateGenerationSession $createSession,
-        protected AdvanceEstimateGeneration $advanceGeneration,
-        protected EstimateGenerationMutationPolicy $mutationPolicy,
         protected SelectNormativeCandidate $selectNormativeCandidate,
         protected RecordEstimateGenerationFeedback $recordFeedback,
         protected RebuildGeneratedSection $rebuildGeneratedSection,
+        protected UploadEstimateGenerationDocuments $uploadDocumentsAction,
+        protected AnalyzeEstimateGenerationSession $analyzeSession,
+        protected RequestEstimateGeneration $requestGeneration,
     ) {}
 
     public function index(Request $request, Project $project): JsonResponse
@@ -139,17 +130,16 @@ class EstimateGenerationController extends Controller
     {
         try {
             $this->guardSession($request, $project, $session);
-            $this->mutationPolicy->documents($session, (int) $request->validated('state_version'));
-
-            $documents = $this->documentParsingService->storeParsedDocuments(
+            $result = $this->uploadDocumentsAction->handle(
                 $session,
+                (int) $request->validated('state_version'),
                 $request->file('files', []),
-                $request->user()
+                $request->user(),
             );
 
             return AdminResponse::success([
-                'documents' => EstimateGenerationDocumentResource::collection($documents)->resolve(),
-                'documents_summary' => $this->documentReadinessService->evaluate($session->fresh(['documents']))['summary'],
+                'documents' => EstimateGenerationDocumentResource::collection($result->documents)->resolve(),
+                'documents_summary' => $result->summary,
             ], trans_message('estimate_generation.documents_uploaded'));
         } catch (StaleEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
@@ -169,33 +159,19 @@ class EstimateGenerationController extends Controller
     {
         try {
             $this->guardSession($request, $project, $session);
-            $this->mutationPolicy->analyze($session, (int) $request->validated('state_version'));
-
-            $readiness = $this->documentReadinessService->evaluate($session->load('documents'));
-
-            if (! $readiness['can_analyze']) {
+            $result = $this->analyzeSession->handle($session, (int) $request->validated('state_version'));
+            if (! $result->successful) {
                 return AdminResponse::error(
-                    trans_message($readiness['blocking_message_key'] ?? 'estimate_generation.documents_processing'),
-                    409,
+                    trans_message($result->messageKey),
+                    $result->httpStatus,
                     null,
-                    ['documents_summary' => $readiness['summary']]
+                    $result->context,
                 );
             }
-
-            if (! $this->hasGenerationInput($session, $readiness['summary'])) {
-                return AdminResponse::error(
-                    trans_message('estimate_generation.input_required'),
-                    422,
-                    null,
-                    ['documents_summary' => $readiness['summary']]
-                );
-            }
-
-            $session = $this->orchestrator->analyze($session);
 
             return AdminResponse::success(
-                $this->sessionPayload($session->load('documents')),
-                trans_message('estimate_generation.analysis_completed')
+                $this->sessionPayload($result->session->load('documents')),
+                trans_message($result->messageKey),
             );
         } catch (StaleEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
@@ -215,85 +191,24 @@ class EstimateGenerationController extends Controller
     {
         try {
             $this->guardSession($request, $project, $session);
-            $this->mutationPolicy->generate($session, (int) $request->validated('state_version'));
-            if ($session->status === EstimateGenerationStatus::Generating) {
-                return AdminResponse::success(
-                    $this->sessionPayload($session),
-                    trans_message('estimate_generation.generation_queued'),
-                    202,
-                );
-            }
-            $generationMode = EstimateGenerationMode::fromInput(
-                $request->input('generation_mode', $session->input_payload['generation_mode'] ?? null)
-            )->value;
-
-            if (($session->input_payload['generation_mode'] ?? null) !== $generationMode) {
-                $session = $this->advanceGeneration->update($session, [
-                    EstimateGenerationStatus::Draft,
-                    EstimateGenerationStatus::ProcessingDocuments,
-                    EstimateGenerationStatus::ReadyToGenerate,
-                    EstimateGenerationStatus::EstimateReviewRequired,
-                    EstimateGenerationStatus::ReadyToApply,
-                ], [
-                    'input_payload' => [
-                        ...($session->input_payload ?? []),
-                        'generation_mode' => $generationMode,
-                    ],
-                ]);
-            }
-
-            $readiness = $this->documentReadinessService->evaluate($session->load('documents'));
-
-            if (! $readiness['can_generate']) {
-                if ($this->canWaitForDocuments($session, $readiness['summary'])) {
-                    $session = $this->advanceGeneration->documentsStarted($session, [
-                        'input_payload' => [
-                            ...($session->input_payload ?? []),
-                            'generation_requested' => true,
-                        ],
-                    ]);
-
-                    return AdminResponse::success(
-                        $this->sessionPayload($session->fresh(['documents'])),
-                        trans_message('estimate_generation.generation_waiting_for_documents'),
-                        202
-                    );
-                }
-
+            $result = $this->requestGeneration->handle(
+                $session,
+                (int) $request->validated('state_version'),
+                $request->validated('generation_mode'),
+            );
+            if (! $result->successful) {
                 return AdminResponse::error(
-                    trans_message($readiness['blocking_message_key'] ?? 'estimate_generation.documents_require_action'),
-                    409,
+                    trans_message($result->messageKey),
+                    $result->httpStatus,
                     null,
-                    ['documents_summary' => $readiness['summary']]
+                    $result->context,
                 );
-            }
-
-            if (! $this->hasGenerationInput($session, $readiness['summary'])) {
-                return AdminResponse::error(
-                    trans_message('estimate_generation.input_required'),
-                    422,
-                    null,
-                    ['documents_summary' => $readiness['summary']]
-                );
-            }
-
-            $session = $this->advanceGeneration->documentsReady($session);
-            if (in_array($session->status->value, [
-                'ready_to_generate',
-                'estimate_review_required',
-                'ready_to_apply',
-            ], true)) {
-                $attemptId = (string) Str::uuid();
-                $session = $this->advanceGeneration->generationStarted($session, $attemptId);
-                GenerateEstimateDraftJob::dispatch($session->id, $session->state_version, $attemptId)
-                    ->onQueue(GenerateEstimateDraftJob::QUEUE)
-                    ->afterCommit();
             }
 
             return AdminResponse::success(
-                $this->sessionPayload($session->fresh(['documents'])),
-                trans_message('estimate_generation.generation_queued'),
-                202
+                $this->sessionPayload($result->session->fresh(['documents']) ?? $result->session),
+                trans_message($result->messageKey),
+                $result->httpStatus,
             );
         } catch (StaleEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
@@ -672,29 +587,5 @@ class EstimateGenerationController extends Controller
                 ->withCount(['pages', 'facts', 'drawingElements', 'quantityTakeoffs', 'scopeInferences'])
                 ->orderBy('id'),
         ]);
-    }
-
-    /**
-     * @param  array<string, mixed>  $documentsSummary
-     */
-    private function hasGenerationInput(EstimateGenerationSession $session, array $documentsSummary): bool
-    {
-        $description = trim((string) ($session->input_payload['description'] ?? ''));
-
-        return $description !== '' || (int) ($documentsSummary['ready_count'] ?? 0) > 0;
-    }
-
-    /**
-     * @param  array<string, mixed>  $documentsSummary
-     */
-    private function canWaitForDocuments(EstimateGenerationSession $session, array $documentsSummary): bool
-    {
-        if ((int) ($documentsSummary['pending_count'] ?? 0) <= 0 || (int) ($documentsSummary['action_required_count'] ?? 0) > 0) {
-            return false;
-        }
-
-        $description = trim((string) ($session->input_payload['description'] ?? ''));
-
-        return $description !== '' || (int) ($documentsSummary['total'] ?? 0) > 0;
     }
 }

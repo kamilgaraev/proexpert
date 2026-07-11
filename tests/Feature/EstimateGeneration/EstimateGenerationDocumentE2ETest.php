@@ -8,6 +8,8 @@ use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\AnalyzeEstimateGenerationRequest;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\GenerateEstimateGenerationRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
@@ -56,7 +58,8 @@ class EstimateGenerationDocumentE2ETest extends TestCase
             'problem_flags' => [],
         ]);
 
-        $this->app->instance(OcrClientInterface::class, new class implements OcrClientInterface {
+        $this->app->instance(OcrClientInterface::class, new class implements OcrClientInterface
+        {
             public function recognize(OcrDocumentInput $input): OcrRecognitionResult
             {
                 return new OcrRecognitionResult(
@@ -94,7 +97,7 @@ class EstimateGenerationDocumentE2ETest extends TestCase
         $this->assertEquals(1280.0, $document->facts_summary['total_area_m2']);
 
         $analyzeResponse = app(EstimateGenerationController::class)->analyze(
-            $this->request('/analyze', 'POST', $user),
+            $this->request('/analyze', 'POST', $user, $session->fresh()),
             $project,
             $session->fresh()
         );
@@ -102,7 +105,7 @@ class EstimateGenerationDocumentE2ETest extends TestCase
         $this->assertSame(200, $analyzeResponse->getStatusCode());
 
         $generateResponse = app(EstimateGenerationController::class)->generate(
-            $this->request('/generate', 'POST', $user),
+            $this->request('/generate', 'POST', $user, $session->fresh()),
             $project,
             $session->fresh()
         );
@@ -122,9 +125,17 @@ class EstimateGenerationDocumentE2ETest extends TestCase
         $this->assertSame($document->id, $draft['local_estimates'][0]['sections'][0]['work_items'][0]['source_refs'][0]['document_id']);
     }
 
-    private function request(string $uri, string $method, User $user): Request
+    private function request(string $uri, string $method, User $user, EstimateGenerationSession $session): Request
     {
-        $request = Request::create($uri, $method);
+        $data = ['state_version' => $session->state_version];
+        $request = match ($uri) {
+            '/analyze' => AnalyzeEstimateGenerationRequest::create($uri, $method, $data),
+            '/generate' => GenerateEstimateGenerationRequest::create($uri, $method, $data),
+            default => Request::create($uri, $method, $data),
+        };
+        if ($request instanceof GenerateEstimateGenerationRequest || $request instanceof AnalyzeEstimateGenerationRequest) {
+            $request->setContainer($this->app)->setRedirector($this->app['redirect']);
+        }
         $request->setUserResolver(static fn (): User => $user);
 
         return $request;

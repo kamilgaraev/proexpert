@@ -58,3 +58,12 @@ Feature-сценарии `EstimateGenerationFlowTest` и `EstimateGenerationQueu
 - Architecture boundary расширен на все управляемые поля сессии; adversarial AST fixtures проверяют aliases, variable attribute arrays, relation chains, dynamic properties, array access, increment/unset и `setAttribute`.
 
 Повторная DB-less проверка: `27 tests, 94 assertions`, PASS. Targeted PHPStan: PASS, no errors. Pint, `php -l`, `git diff --check`: PASS.
+
+## Финальное исправление HTTP/application boundary
+
+- Upload, analyze, generation request, document retry и document ignore вынесены в отдельные application use cases с типизированными result DTO. Контроллеры больше не содержат readiness, workflow, queue dispatch, document mutation или transaction logic.
+- Повторный generation POST для активного `generating` attempt идемпотентен: допускает исходную версию запроса после собственных progress-CAS, возвращает текущий snapshot `202` и не создает второй job. `generating` без attempt token отклоняется конфликтом.
+- Все прямые Feature-вызовы typed analyze/generate requests и document/review mutations обновлены: передают `state_version`, используют соответствующий FormRequest, container и redirector. DB Feature tests статически проверены (`php -l`), но не запускались согласно DB caveat.
+- Добавлен architecture gate на тонкие mutation controllers и отсутствие plain Request consumers для typed endpoints.
+
+Финальная DB-less проверка: `31 tests, 145 assertions`, PASS. Targeted PHPStan: PASS, no errors. Pint, `php -l`, `git diff --check`: PASS.

@@ -33,7 +33,7 @@ class EstimateGenerationDocumentApiTest extends TestCase
             'session_id' => $session->id,
             'page_number' => 1,
             'text' => 'Склад 1200 м2',
-            'raw_payload_path' => 'org-' . $session->organization_id . '/raw/provider.json',
+            'raw_payload_path' => 'org-'.$session->organization_id.'/raw/provider.json',
             'normalized_payload' => ['blocks' => []],
             'quality_flags' => [],
         ]);
@@ -76,7 +76,8 @@ class EstimateGenerationDocumentApiTest extends TestCase
 
         [$user, $project, $session] = $this->makeSession();
         $document = $this->makeDocument($session, 'failed');
-        $request = RetryEstimateGenerationDocumentRequest::create('/retry', 'POST', ['reason' => 'Повторить']);
+        $request = RetryEstimateGenerationDocumentRequest::create('/retry', 'POST', ['state_version' => $session->state_version, 'reason' => 'Повторить']);
+        $request->setContainer($this->app)->setRedirector($this->app['redirect']);
         $request->setUserResolver(static fn (): User => $user);
 
         $response = app(EstimateGenerationDocumentController::class)->retry($request, $project, $session, $document);
@@ -104,7 +105,8 @@ class EstimateGenerationDocumentApiTest extends TestCase
 
         [$user, $project, $session] = $this->makeSession();
         $document = $this->makeDocument($session, 'ready');
-        $request = RetryEstimateGenerationDocumentRequest::create('/retry', 'POST', ['reason' => 'Повторить']);
+        $request = RetryEstimateGenerationDocumentRequest::create('/retry', 'POST', ['state_version' => $session->state_version, 'reason' => 'Повторить']);
+        $request->setContainer($this->app)->setRedirector($this->app['redirect']);
         $request->setUserResolver(static fn (): User => $user);
 
         $response = app(EstimateGenerationDocumentController::class)->retry($request, $project, $session, $document);
@@ -122,7 +124,8 @@ class EstimateGenerationDocumentApiTest extends TestCase
         $processing = $this->makeDocument($session, 'processing');
         $ready = $this->makeDocument($session, 'ready');
         $failed = $this->makeDocument($session, 'failed');
-        $request = IgnoreEstimateGenerationDocumentRequest::create('/ignore', 'POST', ['reason' => 'Не учитывать']);
+        $request = IgnoreEstimateGenerationDocumentRequest::create('/ignore', 'POST', ['state_version' => $session->state_version, 'reason' => 'Не учитывать']);
+        $request->setContainer($this->app)->setRedirector($this->app['redirect']);
         $request->setUserResolver(static fn (): User => $user);
 
         $notAllowed = app(EstimateGenerationDocumentController::class)->ignore($request, $project, $session, $processing);
@@ -202,9 +205,9 @@ class EstimateGenerationDocumentApiTest extends TestCase
             'organization_id' => $session->organization_id,
             'project_id' => $session->project_id,
             'user_id' => $session->user_id,
-            'filename' => $status . '-document.pdf',
+            'filename' => $status.'-document.pdf',
             'mime_type' => 'application/pdf',
-            'storage_path' => 'org-' . $session->organization_id . '/estimate-generation/documents/' . $status . '.pdf',
+            'storage_path' => 'org-'.$session->organization_id.'/estimate-generation/documents/'.$status.'.pdf',
             'status' => $status,
             'processing_stage' => $processingStage,
             'progress_percent' => $status === 'ready' ? 100 : 30,

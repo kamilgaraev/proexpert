@@ -6,6 +6,7 @@ namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\GenerateEstimateGenerationRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNotificationService;
@@ -28,7 +29,10 @@ class EstimateGenerationQueueTest extends TestCase
         Queue::fake();
 
         [$user, $project, $session] = $this->makeGenerationSession('ready_to_generate');
-        $request = Request::create('/generate', 'POST');
+        $request = GenerateEstimateGenerationRequest::create('/generate', 'POST', [
+            'state_version' => $session->state_version,
+        ]);
+        $request->setContainer($this->app)->setRedirector($this->app['redirect']);
         $request->setUserResolver(static fn (): User => $user);
 
         $response = app(EstimateGenerationController::class)->generate($request, $project, $session);

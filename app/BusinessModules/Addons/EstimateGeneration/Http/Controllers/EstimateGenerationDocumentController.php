@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileEstimateGenerationDocuments;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\IgnoreEstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\RetryEstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationTransition;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
@@ -13,7 +13,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\IgnoreEstimateGe
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\RetryEstimateGenerationDocumentRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentDetailResource;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentResource;
-use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
@@ -23,19 +22,16 @@ use App\Models\Project;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 use function trans_message;
 
 class EstimateGenerationDocumentController extends Controller
 {
-    private const RETRYABLE_STATUSES = ['ready', 'failed', 'needs_review', 'ignored'];
-
-    private const IGNORABLE_STATUSES = ['ready', 'failed', 'needs_review'];
-
     public function __construct(
         private readonly DocumentGenerationReadinessService $readinessService,
-        private readonly ReconcileEstimateGenerationDocuments $documentReconciler,
-        private readonly EstimateGenerationMutationPolicy $mutationPolicy,
+        private readonly RetryEstimateGenerationDocument $retryDocument,
+        private readonly IgnoreEstimateGenerationDocument $ignoreDocument,
     ) {}
 
     public function index(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
@@ -80,45 +76,19 @@ class EstimateGenerationDocumentController extends Controller
         $this->guardDocument($request, $project, $session, $document);
 
         try {
-            $this->mutationPolicy->documents($session, (int) $request->validated('state_version'));
-            $this->documentReconciler->assertMutable($session);
-            if (! in_array((string) $document->status, self::RETRYABLE_STATUSES, true)) {
-                return AdminResponse::error(trans_message('estimate_generation.document_retry_not_allowed'), 422);
-            }
-
-            $meta = is_array($document->meta) ? $document->meta : [];
-            $reason = $request->input('reason');
-
-            $document->forceFill([
-                'status' => 'queued',
-                'processing_stage' => 'stored',
-                'progress_percent' => 0,
-                'ocr_started_at' => null,
-                'ocr_finished_at' => null,
-                'error_code' => null,
-                'error_message_key' => null,
-                'error_context' => null,
-                'ignored_at' => null,
-                'meta' => [
-                    ...$meta,
-                    'retry_requested_at' => now()->toISOString(),
-                    'retry_reason' => is_string($reason) && $reason !== '' ? mb_substr($reason, 0, 500) : null,
-                ],
-            ])->save();
-
-            $this->documentReconciler->changed($session);
-
-            ProcessEstimateGenerationDocumentJob::dispatch($document->id)
-                ->onConnection(ProcessEstimateGenerationDocumentJob::CONNECTION)
-                ->onQueue(ProcessEstimateGenerationDocumentJob::QUEUE)
-                ->afterCommit();
-
-            $session = $session->fresh(['documents']);
+            $result = $this->retryDocument->handle(
+                $session,
+                $document,
+                (int) $request->validated('state_version'),
+                $request->validated('reason'),
+            );
 
             return AdminResponse::success([
-                'document' => (new EstimateGenerationDocumentResource($document->fresh()))->resolve(),
-                'documents_summary' => $this->readinessService->evaluate($session)['summary'],
-            ], trans_message('estimate_generation.document_retry_queued'));
+                'document' => (new EstimateGenerationDocumentResource($result->document))->resolve(),
+                'documents_summary' => $result->summary,
+            ], trans_message($result->messageKey));
+        } catch (ValidationException $e) {
+            return AdminResponse::error($e->getMessage(), 422, $e->errors());
         } catch (StaleEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
@@ -143,35 +113,19 @@ class EstimateGenerationDocumentController extends Controller
         $this->guardDocument($request, $project, $session, $document);
 
         try {
-            $this->mutationPolicy->documents($session, (int) $request->validated('state_version'));
-            $this->documentReconciler->assertMutable($session);
-            if (! in_array((string) $document->status, self::IGNORABLE_STATUSES, true)) {
-                return AdminResponse::error(trans_message('estimate_generation.document_ignore_not_allowed'), 422);
-            }
-
-            $meta = is_array($document->meta) ? $document->meta : [];
-            $reason = $request->input('reason');
-
-            $document->forceFill([
-                'status' => 'ignored',
-                'processing_stage' => 'completed',
-                'progress_percent' => 100,
-                'ignored_at' => now(),
-                'meta' => [
-                    ...$meta,
-                    'ignored_reason' => is_string($reason) && $reason !== '' ? mb_substr($reason, 0, 500) : null,
-                    'ignored_at' => now()->toISOString(),
-                ],
-            ])->save();
-
-            $this->documentReconciler->reconcile($session);
-
-            $session = $session->fresh(['documents']);
+            $result = $this->ignoreDocument->handle(
+                $session,
+                $document,
+                (int) $request->validated('state_version'),
+                $request->validated('reason'),
+            );
 
             return AdminResponse::success([
-                'document' => (new EstimateGenerationDocumentResource($document->fresh()))->resolve(),
-                'documents_summary' => $this->readinessService->evaluate($session)['summary'],
-            ], trans_message('estimate_generation.document_ignored'));
+                'document' => (new EstimateGenerationDocumentResource($result->document))->resolve(),
+                'documents_summary' => $result->summary,
+            ], trans_message($result->messageKey));
+        } catch (ValidationException $e) {
+            return AdminResponse::error($e->getMessage(), 422, $e->errors());
         } catch (StaleEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {

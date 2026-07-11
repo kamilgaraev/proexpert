@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenera
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationWorkflow;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ApplyEstimateGenerationDraftRequest;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\GenerateEstimateGenerationRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
@@ -54,7 +55,7 @@ final class EstimateGenerationFlowTest extends TestCase
         $this->makeDocument($session, 'processing');
 
         $response = app(EstimateGenerationController::class)->generate(
-            $this->request('/generate', 'POST', $user),
+            $this->generationRequest($user, $session),
             $project,
             $session
         );
@@ -259,6 +260,17 @@ final class EstimateGenerationFlowTest extends TestCase
     private function request(string $uri, string $method, User $user): Request
     {
         $request = Request::create($uri, $method);
+        $request->setUserResolver(static fn (): User => $user);
+
+        return $request;
+    }
+
+    private function generationRequest(User $user, EstimateGenerationSession $session): GenerateEstimateGenerationRequest
+    {
+        $request = GenerateEstimateGenerationRequest::create('/generate', 'POST', [
+            'state_version' => $session->state_version,
+        ]);
+        $request->setContainer($this->app)->setRedirector($this->app['redirect']);
         $request->setUserResolver(static fn (): User => $user);
 
         return $request;

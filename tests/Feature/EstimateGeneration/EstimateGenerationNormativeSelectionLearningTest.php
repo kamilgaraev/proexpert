@@ -105,6 +105,7 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
         ])->save();
 
         $request = EstimateGenerationFeedbackRequest::create('/feedback', 'POST', [
+            'state_version' => $session->state_version,
             'feedback_type' => 'normative_rejection',
             'work_item_key' => 'foundation.concrete',
             'payload' => [
@@ -114,6 +115,7 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
             ],
             'comments' => 'Нужно выбрать другую норму',
         ]);
+        $request->setContainer($this->app)->setRedirector($this->app['redirect']);
         $request->setContainer(app());
         $request->setRedirector(app('redirect'));
         $request->setUserResolver(static fn (): User => $user);
@@ -148,6 +150,7 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
         ])->save();
 
         $request = EstimateGenerationFeedbackRequest::create('/feedback', 'POST', [
+            'state_version' => $session->state_version,
             'feedback_type' => 'normative_rejection',
             'work_item_key' => 'foundation.concrete',
             'payload' => [
@@ -158,6 +161,7 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
             ],
             'comments' => 'Manual search result is not suitable.',
         ]);
+        $request->setContainer($this->app)->setRedirector($this->app['redirect']);
         $request->setContainer(app());
         $request->setRedirector(app('redirect'));
         $request->setUserResolver(static fn (): User => $user);
@@ -199,6 +203,7 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
         ])->save();
 
         $request = EstimateGenerationFeedbackRequest::create('/feedback', 'POST', [
+            'state_version' => $session->state_version,
             'feedback_type' => 'normative_confirmation',
             'work_item_key' => 'roof.insulation',
             'payload' => [
@@ -207,6 +212,7 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
             ],
             'comments' => 'Checked by estimator.',
         ]);
+        $request->setContainer($this->app)->setRedirector($this->app['redirect']);
         $request->setContainer(app());
         $request->setRedirector(app('redirect'));
         $request->setUserResolver(static fn (): User => $user);
@@ -240,6 +246,7 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
         ])->save();
 
         $request = EstimateGenerationFeedbackRequest::create('/feedback', 'POST', [
+            'state_version' => $session->state_version,
             'feedback_type' => 'quantity_confirmation',
             'work_item_key' => 'rough.walls',
             'payload' => [
@@ -249,6 +256,7 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
             ],
             'comments' => 'Проверил площадь стен по планировке.',
         ]);
+        $request->setContainer($this->app)->setRedirector($this->app['redirect']);
         $request->setContainer(app());
         $request->setRedirector(app('redirect'));
         $request->setUserResolver(static fn (): User => $user);
@@ -471,7 +479,7 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
     {
         $versionId = (int) DB::table('estimate_dataset_versions')->insertGetId([
             'source_type' => 'fsnb_2022',
-            'version_key' => 'test-' . Str::uuid(),
+            'version_key' => 'test-'.Str::uuid(),
             'bucket' => 'test-bucket',
             'prefix' => 'test-prefix',
             'status' => 'parsed',

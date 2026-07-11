@@ -6,6 +6,8 @@ namespace Tests\Feature\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDocumentController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\AnalyzeEstimateGenerationRequest;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\GenerateEstimateGenerationRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\IgnoreEstimateGenerationDocumentRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
@@ -25,7 +27,7 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
 
         [$user, $project, $session] = $this->makeSession();
         $this->makeDocument($session, 'queued');
-        $request = $this->request('/generate', 'POST', $user);
+        $request = $this->request('/generate', 'POST', $user, $session);
 
         $response = app(EstimateGenerationController::class)->generate($request, $project, $session);
         $payload = json_decode($response->getContent(), true, 512, JSON_THROW_ON_ERROR);
@@ -42,7 +44,7 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
     {
         [$user, $project, $session] = $this->makeSession();
         $this->makeDocument($session, 'processing');
-        $request = $this->request('/analyze', 'POST', $user);
+        $request = $this->request('/analyze', 'POST', $user, $session);
 
         $response = app(EstimateGenerationController::class)->analyze($request, $project, $session);
         $payload = json_decode($response->getContent(), true, 512, JSON_THROW_ON_ERROR);
@@ -58,7 +60,7 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
 
         [$user, $project, $session] = $this->makeSession();
         $document = $this->makeDocument($session, 'failed');
-        $generateRequest = $this->request('/generate', 'POST', $user);
+        $generateRequest = $this->request('/generate', 'POST', $user, $session);
 
         $blocked = app(EstimateGenerationController::class)->generate($generateRequest, $project, $session);
         $blockedPayload = json_decode($blocked->getContent(), true, 512, JSON_THROW_ON_ERROR);
@@ -66,11 +68,20 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
         $this->assertSame(409, $blocked->getStatusCode());
         $this->assertSame(1, $blockedPayload['documents_summary']['action_required_count']);
 
-        $ignoreRequest = IgnoreEstimateGenerationDocumentRequest::create('/ignore', 'POST', ['reason' => 'Не нужен для этой сметы']);
+        $ignoreRequest = IgnoreEstimateGenerationDocumentRequest::create('/ignore', 'POST', [
+            'state_version' => $session->state_version,
+            'reason' => 'Не нужен для этой сметы',
+        ]);
+        $ignoreRequest->setContainer($this->app)->setRedirector($this->app['redirect']);
         $ignoreRequest->setUserResolver(static fn (): User => $user);
         app(EstimateGenerationDocumentController::class)->ignore($ignoreRequest, $project, $session, $document);
 
-        $allowed = app(EstimateGenerationController::class)->generate($generateRequest, $project, $session->fresh());
+        $freshSession = $session->fresh();
+        $allowed = app(EstimateGenerationController::class)->generate(
+            $this->request('/generate', 'POST', $user, $freshSession),
+            $project,
+            $freshSession,
+        );
         $allowedPayload = json_decode($allowed->getContent(), true, 512, JSON_THROW_ON_ERROR);
 
         $this->assertSame(202, $allowed->getStatusCode());
@@ -107,7 +118,7 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
         ])->save();
 
         $response = app(EstimateGenerationController::class)->generate(
-            $this->request('/generate', 'POST', $user),
+            $this->request('/generate', 'POST', $user, $session->fresh()),
             $project,
             $session->fresh()
         );
@@ -154,9 +165,9 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
             'organization_id' => $session->organization_id,
             'project_id' => $session->project_id,
             'user_id' => $session->user_id,
-            'filename' => $status . '-document.pdf',
+            'filename' => $status.'-document.pdf',
             'mime_type' => 'application/pdf',
-            'storage_path' => 'org-' . $session->organization_id . '/estimate-generation/documents/' . $status . '.pdf',
+            'storage_path' => 'org-'.$session->organization_id.'/estimate-generation/documents/'.$status.'.pdf',
             'status' => $status,
             'processing_stage' => $status,
             'progress_percent' => $status === 'ready' ? 100 : 30,
@@ -177,9 +188,17 @@ class EstimateGenerationDocumentReadinessTest extends TestCase
         ]);
     }
 
-    private function request(string $uri, string $method, User $user): Request
+    private function request(string $uri, string $method, User $user, ?EstimateGenerationSession $session = null): Request
     {
-        $request = Request::create($uri, $method);
+        $data = $session === null ? [] : ['state_version' => $session->state_version];
+        $request = match ($uri) {
+            '/generate' => GenerateEstimateGenerationRequest::create($uri, $method, $data),
+            '/analyze' => AnalyzeEstimateGenerationRequest::create($uri, $method, $data),
+            default => Request::create($uri, $method, $data),
+        };
+        if ($request instanceof GenerateEstimateGenerationRequest || $request instanceof AnalyzeEstimateGenerationRequest) {
+            $request->setContainer($this->app)->setRedirector($this->app['redirect']);
+        }
         $request->setUserResolver(static fn (): User => $user);
 
         return $request;
