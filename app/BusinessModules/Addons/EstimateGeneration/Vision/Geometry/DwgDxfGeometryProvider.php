@@ -18,6 +18,7 @@ final readonly class DwgDxfGeometryProvider implements CadGeometryProvider
         private BoundedStorageReader $reader,
         private CadConversionRuntime $runtime,
         private int $maxInputBytes = 52_428_800,
+        private string $workspaceRoot = '',
     ) {}
 
     public function extract(string $storageKey, Organization $organization): VectorGeometryData
@@ -39,8 +40,11 @@ final readonly class DwgDxfGeometryProvider implements CadGeometryProvider
         } catch (\Throwable) {
             throw new GeometryExtractionException('cad_source_read_failed', true);
         }
-        $directory = sys_get_temp_dir().DIRECTORY_SEPARATOR.'most-cad-source-'.bin2hex(random_bytes(12));
-        mkdir($directory, 0700);
+        $root = $this->workspaceRoot !== '' ? $this->workspaceRoot : sys_get_temp_dir();
+        $directory = $root.DIRECTORY_SEPARATOR.'most-cad-source-'.bin2hex(random_bytes(12));
+        if (! @mkdir($directory, 0700)) {
+            throw new GeometryExtractionException('cad_workspace_failed');
+        }
         $path = $directory.DIRECTORY_SEPARATOR.'source.'.$extension;
         try {
             if (file_put_contents($path, $content, LOCK_EX) !== strlen($content)) {

@@ -142,6 +142,21 @@ final class PdfVectorGeometryProviderTest extends TestCase
         }
     }
 
+    #[Test]
+    public function workspace_creation_failure_is_typed(): void
+    {
+        $pdf = tempnam(sys_get_temp_dir(), 'safe-pdf-').'.pdf';
+        $invalidRoot = tempnam(sys_get_temp_dir(), 'pdf-root-file-');
+        file_put_contents($pdf, $this->pdf('0 0 m 1 0 l S'));
+        try {
+            $this->expectExceptionMessage('pdf_workspace_failed');
+            (new PdfVectorGeometryProvider('python', workspaceRoot: $invalidRoot))->extractLocal($pdf);
+        } finally {
+            @unlink($pdf);
+            @unlink($invalidRoot);
+        }
+    }
+
     private function pdf(string $stream): string
     {
         $objects = [

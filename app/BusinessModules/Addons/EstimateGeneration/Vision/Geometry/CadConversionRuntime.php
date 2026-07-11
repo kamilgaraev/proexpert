@@ -16,6 +16,7 @@ final readonly class CadConversionRuntime
         private int $timeoutSeconds = 45,
         private int $maxInputBytes = 52_428_800,
         private int $maxOutputBytes = 16_777_216,
+        private ?GeometryResourceLimits $resourceLimits = null,
     ) {}
 
     public function extract(string $inputPath): VectorGeometryData
@@ -50,6 +51,7 @@ final readonly class CadConversionRuntime
                 'cad',
                 $this->timeoutSeconds,
                 $this->maxOutputBytes,
+                resourceLimits: $this->resourceLimits,
             );
             $stdout = $result['stdout'];
             $stderr = $result['stderr'];
@@ -57,7 +59,8 @@ final readonly class CadConversionRuntime
                 $error = json_decode($stderr, true);
                 throw new GeometryExtractionException(
                     is_array($error) && is_string($error['code'] ?? null) ? $error['code'] : 'cad_runtime_failed',
-                    is_array($error) && ($error['retryable'] ?? false) === true
+                    is_array($error) && ($error['retryable'] ?? false) === true,
+                    is_array($error) && is_array($error['context'] ?? null) ? $error['context'] : [],
                 );
             }
             $decoded = json_decode($stdout, true, 32, JSON_THROW_ON_ERROR);

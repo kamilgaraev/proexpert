@@ -422,7 +422,17 @@ def legacy(contract: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]
         if args.render_preview and args.preview_dir:
             import pypdfium2 as pdfium
 
-            output = Path(args.preview_dir) / f"page_{page_number}.png"
+            if not args.workspace:
+                raise SafeFailure("pdf_preview_workspace_required")
+            workspace = os.path.realpath(args.workspace)
+            preview_directory = os.path.realpath(args.preview_dir)
+            if os.path.commonpath([workspace, preview_directory]) != workspace:
+                raise SafeFailure("pdf_preview_path_invalid")
+            safe_filename = "".join(
+                character if character.isalnum() or character in {"-", "_"} else "_"
+                for character in (args.filename or os.path.basename(args.input))
+            )[:80]
+            output = Path(preview_directory) / f"{safe_filename}_page_{page_number}.png"
             output.parent.mkdir(parents=True, exist_ok=True)
             document = pdfium.PdfDocument(args.input)
             bitmap = document[page_number - 1].render(scale=1)
@@ -475,7 +485,7 @@ def legacy(contract: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]
             }
         )
     return {
-        "provider": "pypdfium2",
+        "provider": "pymupdf",
         "model": "geometry_v1",
         "pages": pages,
         "metadata": {
@@ -483,6 +493,8 @@ def legacy(contract: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]
             "processed_page_count": len(pages),
             "filename": args.filename or os.path.basename(args.input),
             "pypdfium2_version": "5.8.0",
+            "actual_provider": "pypdfium2",
+            "actual_runtime_version": "5.8.0",
         },
     }
 
@@ -525,26 +537,49 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except SafeFailure as exception:
-        sys.stderr.write(
-            json.dumps(
-                {
-                    "code": exception.code,
-                    "safe_message": "Не удалось безопасно обработать документ.",
-                    "retryable": False,
-                },
-                ensure_ascii=False,
+        if "--contract-vector" not in sys.argv:
+            error = (
+                "pymupdf_unavailable"
+                if exception.code == "pypdfium2_unavailable"
+                else exception.code
             )
-        )
+            sys.stderr.write(
+                json.dumps(
+                    {"error": error, "message": "PDF geometry extraction failed."},
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            sys.stderr.write(
+                json.dumps(
+                    {
+                        "code": exception.code,
+                        "safe_message": "Не удалось безопасно обработать документ.",
+                        "retryable": False,
+                    },
+                    ensure_ascii=False,
+                )
+            )
         raise SystemExit(2)
     except Exception:
-        sys.stderr.write(
-            json.dumps(
-                {
-                    "code": "pdf_parse_failed",
-                    "safe_message": "Не удалось безопасно обработать документ.",
-                    "retryable": False,
-                },
-                ensure_ascii=False,
+        if "--contract-vector" not in sys.argv:
+            sys.stderr.write(
+                json.dumps(
+                    {
+                        "error": "pdf_geometry_extract_failed",
+                        "message": "PDF geometry extraction failed.",
+                    }
+                )
             )
-        )
+        else:
+            sys.stderr.write(
+                json.dumps(
+                    {
+                        "code": "pdf_parse_failed",
+                        "safe_message": "Не удалось безопасно обработать документ.",
+                        "retryable": False,
+                    },
+                    ensure_ascii=False,
+                )
+            )
         raise SystemExit(2)

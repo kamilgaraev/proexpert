@@ -30,6 +30,36 @@ final class VectorGeometryDataContractTest extends TestCase
 
             return $data;
         }, 'geometry_contract_blocking_warning'];
+        yield 'layer visible must be boolean' => [static function (array $data): array {
+            $data['layers'][0]['visible'] = 'yes';
+
+            return $data;
+        }, 'geometry_contract_layer_invalid'];
+        yield 'page number must be integer' => [static function (array $data): array {
+            $data['pages'] = [['page_number' => '1', 'width' => 10, 'height' => 10, 'rotation' => 0, 'media_box' => [0, 0, 10, 10], 'crop_box' => [0, 0, 10, 10], 'transform' => [1, 0, 0, 1, 0, 0], 'classification' => 'vector']];
+
+            return $data;
+        }, 'geometry_contract_page_invalid'];
+        yield 'point must contain two finite numbers' => [static function (array $data): array {
+            $data['entities'][0]['points'][0] = [0];
+
+            return $data;
+        }, 'geometry_contract_coordinate_invalid'];
+        yield 'line requires exactly two points' => [static function (array $data): array {
+            unset($data['entities'][0]['points']);
+
+            return $data;
+        }, 'geometry_contract_entity_geometry_invalid'];
+        yield 'insert requires block and 4x4 transform' => [static function (array $data): array {
+            $data['entities'][0] = ['handle' => 'A1', 'type' => 'insert', 'layer' => 'WALLS', 'layout' => 'Model'];
+
+            return $data;
+        }, 'geometry_contract_entity_geometry_invalid'];
+        yield 'text position is coordinate pair' => [static function (array $data): array {
+            $data['texts'][0]['position'] = ['x', 0];
+
+            return $data;
+        }, 'geometry_contract_coordinate_invalid'];
         yield 'NaN point' => [static function (array $data): array {
             $data['entities'][0]['points'][0][0] = NAN;
 

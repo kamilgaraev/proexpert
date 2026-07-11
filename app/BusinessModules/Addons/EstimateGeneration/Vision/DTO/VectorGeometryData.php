@@ -73,12 +73,17 @@ final readonly class VectorGeometryData
         self::assertBounds($data['bounds']);
         self::assertCollection($data['layers'], ['name', 'visible'], ['name', 'visible'], 'layer');
         self::assertCollection($data['blocks'], ['name', 'handle', 'owner', 'entities'], ['name', 'handle', 'owner', 'entities'], 'block');
-        self::assertCollection($data['entities'], ['handle', 'type', 'layer'], ['handle', 'type', 'layer', 'points', 'segments', 'center', 'radius', 'start_angle', 'end_angle', 'closed', 'block', 'transform', 'transform_lineage', 'source_lineage', 'layout', 'owner', 'bbox', 'style'], 'entity');
-        self::assertCollection($data['texts'], ['handle', 'type', 'layer', 'text', 'position', 'layout'], ['handle', 'type', 'layer', 'text', 'position', 'layout', 'source_operator', 'transform', 'owner', 'bbox'], 'text');
-        self::assertCollection($data['dimensions'], ['handle', 'type', 'layer', 'text', 'layout'], ['handle', 'type', 'layer', 'text', 'layout', 'definition_points', 'transform', 'owner'], 'dimension');
+        self::assertCollection($data['entities'], ['handle', 'type', 'layer'], ['handle', 'type', 'layer', 'points', 'segments', 'center', 'radius', 'start_angle', 'end_angle', 'closed', 'block', 'transform', 'transform_lineage', 'source_lineage', 'source_member_handle', 'layout', 'owner', 'bbox', 'style'], 'entity');
+        self::assertCollection($data['texts'], ['handle', 'type', 'layer', 'text', 'position', 'layout'], ['handle', 'type', 'layer', 'text', 'position', 'layout', 'source_operator', 'source_lineage', 'source_member_handle', 'block', 'transform', 'owner', 'bbox'], 'text');
+        self::assertCollection($data['dimensions'], ['handle', 'type', 'layer', 'text', 'layout'], ['handle', 'type', 'layer', 'text', 'layout', 'definition_points', 'source_lineage', 'source_member_handle', 'block', 'transform', 'owner'], 'dimension');
         self::assertCollection($data['pages'], ['page_number', 'width', 'height', 'rotation', 'media_box', 'crop_box', 'transform', 'classification'], ['page_number', 'width', 'height', 'rotation', 'media_box', 'crop_box', 'transform', 'classification'], 'page');
         self::assertCollection($data['scale_candidates'], ['value', 'source'], ['value', 'source', 'confidence'], 'scale_candidate');
         self::assertCollection($data['warnings'], ['code'], ['code', 'count', 'safe_context'], 'warning');
+        self::assertLayers($data['layers']);
+        self::assertBlocks($data['blocks']);
+        self::assertPages($data['pages']);
+        self::assertScaleCandidates($data['scale_candidates']);
+        self::assertWarnings($data['warnings']);
         foreach ($data['warnings'] as $warning) {
             if (in_array($warning['code'], ['unsupported_entities', 'unknown_entities', 'skipped_entities', 'partial_geometry'], true)) {
                 throw new \InvalidArgumentException('geometry_contract_blocking_warning');
@@ -96,9 +101,13 @@ final readonly class VectorGeometryData
                 if (isset($item['text']) && (! is_string($item['text']) || mb_strlen($item['text']) > self::MAX_TEXT_LENGTH)) {
                     throw new \InvalidArgumentException('geometry_contract_text_invalid');
                 }
-                $pointCount += self::countPoints($item);
+                $pointCount += self::countCoordinateValues($item);
                 if ($collection === 'entities') {
                     self::assertEntityDetails($item);
+                } elseif ($collection === 'texts') {
+                    self::assertTextDetails($item);
+                } else {
+                    self::assertDimensionDetails($item);
                 }
             }
         }
@@ -165,21 +174,91 @@ final readonly class VectorGeometryData
     }
 
     /** @param array<string, mixed> $item */
-    private static function countPoints(array $item): int
+    private static function countCoordinateValues(array $item): int
     {
-        $count = is_array($item['points'] ?? null) ? count($item['points']) : 0;
+        $count = 0;
+        foreach (['points', 'position', 'center', 'definition_points', 'transform', 'transform_lineage', 'bbox'] as $field) {
+            if (isset($item[$field])) {
+                $count += self::countNumericLeaves($item[$field]);
+            }
+        }
         if (is_array($item['segments'] ?? null)) {
             foreach ($item['segments'] as $segment) {
-                $count += is_array($segment['points'] ?? null) ? count($segment['points']) : 0;
+                $count += self::countNumericLeaves($segment['points'] ?? []);
             }
         }
 
         return $count;
     }
 
+    private static function countNumericLeaves(mixed $value): int
+    {
+        if (is_int($value) || is_float($value)) {
+            return 1;
+        }
+        if (! is_array($value)) {
+            return 0;
+        }
+
+        return array_sum(array_map(self::countNumericLeaves(...), $value));
+    }
+
     /** @param array<string, mixed> $entity */
     private static function assertEntityDetails(array $entity): void
     {
+        foreach (['handle', 'type', 'layer'] as $field) {
+            if (! is_string($entity[$field]) || $entity[$field] === '') {
+                throw new \InvalidArgumentException('geometry_contract_entity_invalid');
+            }
+        }
+        $type = $entity['type'];
+        if (! in_array($type, ['line', 'arc', 'circle', 'lwpolyline', 'polyline', 'insert', 'path'], true)) {
+            throw new \InvalidArgumentException('geometry_contract_entity_geometry_invalid');
+        }
+        if ($type === 'line' && (! is_array($entity['points'] ?? null) || count($entity['points']) !== 2)) {
+            throw new \InvalidArgumentException('geometry_contract_entity_geometry_invalid');
+        }
+        if (in_array($type, ['lwpolyline', 'polyline'], true)
+            && (! is_array($entity['points'] ?? null) || count($entity['points']) < 2 || ! is_bool($entity['closed'] ?? null))) {
+            throw new \InvalidArgumentException('geometry_contract_entity_geometry_invalid');
+        }
+        if (in_array($type, ['arc', 'circle'], true)) {
+            self::assertCoordinate($entity['center'] ?? null);
+            if (! self::isFiniteNumber($entity['radius'] ?? null) || (float) $entity['radius'] <= 0) {
+                throw new \InvalidArgumentException('geometry_contract_entity_geometry_invalid');
+            }
+            if ($type === 'arc' && (! self::isFiniteNumber($entity['start_angle'] ?? null) || ! self::isFiniteNumber($entity['end_angle'] ?? null))) {
+                throw new \InvalidArgumentException('geometry_contract_entity_geometry_invalid');
+            }
+        }
+        if ($type === 'insert') {
+            if (! is_string($entity['block'] ?? null) || $entity['block'] === '' || ! self::isMatrix44($entity['transform'] ?? null)) {
+                throw new \InvalidArgumentException('geometry_contract_entity_geometry_invalid');
+            }
+        }
+        if ($type === 'path' && (! is_array($entity['segments'] ?? null) || $entity['segments'] === [])) {
+            throw new \InvalidArgumentException('geometry_contract_entity_geometry_invalid');
+        }
+        if (isset($entity['points'])) {
+            self::assertCoordinates($entity['points']);
+        }
+        if (isset($entity['transform']) && $type !== 'insert') {
+            self::assertTransform($entity['transform']);
+        }
+        if (isset($entity['transform_lineage'])) {
+            if (! is_array($entity['transform_lineage'])) {
+                throw new \InvalidArgumentException('geometry_contract_transform_invalid');
+            }
+            foreach ($entity['transform_lineage'] as $transform) {
+                self::assertTransform($transform);
+            }
+        }
+        if (isset($entity['source_member_handle']) && (! is_string($entity['source_member_handle']) || $entity['source_member_handle'] === '')) {
+            throw new \InvalidArgumentException('geometry_contract_entity_invalid');
+        }
+        if (isset($entity['source_lineage']) && (! is_array($entity['source_lineage']) || array_filter($entity['source_lineage'], 'is_string') !== $entity['source_lineage'])) {
+            throw new \InvalidArgumentException('geometry_contract_entity_invalid');
+        }
         if (isset($entity['segments'])) {
             if (! is_array($entity['segments'])) {
                 throw new \InvalidArgumentException('geometry_contract_segment_invalid');
@@ -195,6 +274,15 @@ final readonly class VectorGeometryData
                     || ! is_bool($segment['closes_subpath'])) {
                     throw new \InvalidArgumentException('geometry_contract_segment_invalid');
                 }
+                self::assertCoordinates($segment['points']);
+                $expectedPoints = match ($segment['operator']) {
+                    'move' => 1,
+                    'line' => 2,
+                    'curve' => 4,
+                };
+                if (count($segment['points']) !== $expectedPoints) {
+                    throw new \InvalidArgumentException('geometry_contract_segment_invalid');
+                }
             }
         }
         if (isset($entity['style'])) {
@@ -202,9 +290,201 @@ final readonly class VectorGeometryData
             if (! is_array($entity['style']) || array_diff(array_keys($entity['style']), $allowed) !== []) {
                 throw new \InvalidArgumentException('geometry_contract_style_invalid');
             }
+            if (! is_int($entity['style']['fill_mode'] ?? null) || ! is_bool($entity['style']['stroke'] ?? null)
+                || ! self::isFiniteNumber($entity['style']['stroke_width'] ?? null) || (float) $entity['style']['stroke_width'] < 0
+                || ! is_int($entity['style']['line_cap'] ?? null) || ! is_int($entity['style']['line_join'] ?? null)) {
+                throw new \InvalidArgumentException('geometry_contract_style_invalid');
+            }
+            foreach (['fill_rgba', 'stroke_rgba'] as $color) {
+                if ($entity['style'][$color] !== null && ! self::isRgba($entity['style'][$color])) {
+                    throw new \InvalidArgumentException('geometry_contract_style_invalid');
+                }
+            }
         }
         if (isset($entity['bbox'])) {
             if (! is_array($entity['bbox']) || array_diff(array_keys($entity['bbox']), ['x', 'y', 'width', 'height']) !== []) {
+                throw new \InvalidArgumentException('geometry_contract_bounds_invalid');
+            }
+            foreach (['x', 'y', 'width', 'height'] as $field) {
+                if (! self::isFiniteNumber($entity['bbox'][$field] ?? null)) {
+                    throw new \InvalidArgumentException('geometry_contract_bounds_invalid');
+                }
+            }
+            if ((float) $entity['bbox']['width'] < 0 || (float) $entity['bbox']['height'] < 0) {
+                throw new \InvalidArgumentException('geometry_contract_bounds_invalid');
+            }
+        }
+    }
+
+    /** @param array<int, array<string, mixed>> $layers */
+    private static function assertLayers(array $layers): void
+    {
+        foreach ($layers as $layer) {
+            if (! is_string($layer['name']) || $layer['name'] === '' || ! is_bool($layer['visible'])) {
+                throw new \InvalidArgumentException('geometry_contract_layer_invalid');
+            }
+        }
+    }
+
+    /** @param array<int, array<string, mixed>> $blocks */
+    private static function assertBlocks(array $blocks): void
+    {
+        foreach ($blocks as $block) {
+            if (! is_string($block['name']) || $block['name'] === '' || ! is_string($block['handle']) || $block['handle'] === ''
+                || ! is_string($block['owner']) || ! is_array($block['entities'])
+                || array_filter($block['entities'], 'is_string') !== $block['entities']) {
+                throw new \InvalidArgumentException('geometry_contract_block_invalid');
+            }
+        }
+    }
+
+    /** @param array<int, array<string, mixed>> $pages */
+    private static function assertPages(array $pages): void
+    {
+        foreach ($pages as $page) {
+            if (! is_int($page['page_number']) || $page['page_number'] < 1
+                || ! self::isFiniteNumber($page['width']) || (float) $page['width'] <= 0
+                || ! self::isFiniteNumber($page['height']) || (float) $page['height'] <= 0
+                || ! is_int($page['rotation']) || ! in_array($page['rotation'], [0, 90, 180, 270], true)
+                || ! in_array($page['classification'], ['vector', 'raster', 'mixed', 'empty'], true)) {
+                throw new \InvalidArgumentException('geometry_contract_page_invalid');
+            }
+            self::assertBox($page['media_box']);
+            self::assertBox($page['crop_box']);
+            self::assertTransform($page['transform']);
+        }
+    }
+
+    /** @param array<int, array<string, mixed>> $candidates */
+    private static function assertScaleCandidates(array $candidates): void
+    {
+        foreach ($candidates as $candidate) {
+            if (! self::isFiniteNumber($candidate['value']) || (float) $candidate['value'] <= 0 || ! is_string($candidate['source'])
+                || (isset($candidate['confidence']) && (! self::isFiniteNumber($candidate['confidence']) || (float) $candidate['confidence'] < 0 || (float) $candidate['confidence'] > 1))) {
+                throw new \InvalidArgumentException('geometry_contract_scale_candidate_invalid');
+            }
+        }
+    }
+
+    /** @param array<int, array<string, mixed>> $warnings */
+    private static function assertWarnings(array $warnings): void
+    {
+        foreach ($warnings as $warning) {
+            if (! is_string($warning['code']) || $warning['code'] === ''
+                || (isset($warning['count']) && (! is_int($warning['count']) || $warning['count'] < 0))) {
+                throw new \InvalidArgumentException('geometry_contract_warning_invalid');
+            }
+        }
+    }
+
+    /** @param array<string, mixed> $text */
+    private static function assertTextDetails(array $text): void
+    {
+        foreach (['handle', 'type', 'layer', 'text', 'layout'] as $field) {
+            if (! is_string($text[$field])) {
+                throw new \InvalidArgumentException('geometry_contract_text_invalid');
+            }
+        }
+        self::assertCoordinate($text['position']);
+        if (isset($text['transform'])) {
+            self::assertTransform($text['transform']);
+        }
+        if (isset($text['bbox'])) {
+            self::assertBbox($text['bbox']);
+        }
+    }
+
+    /** @param array<string, mixed> $dimension */
+    private static function assertDimensionDetails(array $dimension): void
+    {
+        foreach (['handle', 'type', 'layer', 'text', 'layout'] as $field) {
+            if (! is_string($dimension[$field])) {
+                throw new \InvalidArgumentException('geometry_contract_dimension_invalid');
+            }
+        }
+        if (! is_array($dimension['definition_points'] ?? null) || count($dimension['definition_points']) < 2 || count($dimension['definition_points']) > 4) {
+            throw new \InvalidArgumentException('geometry_contract_dimension_invalid');
+        }
+        self::assertCoordinates($dimension['definition_points']);
+    }
+
+    private static function assertCoordinate(mixed $coordinate): void
+    {
+        if (! is_array($coordinate) || count($coordinate) !== 2 || ! self::isFiniteNumber($coordinate[0] ?? null) || ! self::isFiniteNumber($coordinate[1] ?? null)) {
+            throw new \InvalidArgumentException('geometry_contract_coordinate_invalid');
+        }
+    }
+
+    /** @param array<int, mixed> $coordinates */
+    private static function assertCoordinates(array $coordinates): void
+    {
+        foreach ($coordinates as $coordinate) {
+            self::assertCoordinate($coordinate);
+        }
+    }
+
+    private static function assertBox(mixed $box): void
+    {
+        if (! is_array($box) || count($box) !== 4) {
+            throw new \InvalidArgumentException('geometry_contract_bounds_invalid');
+        }
+        self::assertBounds($box);
+    }
+
+    private static function assertTransform(mixed $transform): void
+    {
+        if (! is_array($transform)) {
+            throw new \InvalidArgumentException('geometry_contract_transform_invalid');
+        }
+        if (count($transform) === 6 && array_reduce($transform, static fn (bool $valid, mixed $value): bool => $valid && self::isFiniteNumber($value), true)) {
+            return;
+        }
+        if (self::isMatrix44($transform)) {
+            return;
+        }
+        throw new \InvalidArgumentException('geometry_contract_transform_invalid');
+    }
+
+    private static function isMatrix44(mixed $matrix): bool
+    {
+        if (! is_array($matrix) || count($matrix) !== 4) {
+            return false;
+        }
+        foreach ($matrix as $row) {
+            if (! is_array($row) || count($row) !== 4) {
+                return false;
+            }
+            foreach ($row as $value) {
+                if (! self::isFiniteNumber($value)) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static function isFiniteNumber(mixed $value): bool
+    {
+        return (is_int($value) || is_float($value)) && is_finite((float) $value);
+    }
+
+    private static function isRgba(mixed $value): bool
+    {
+        if (! is_array($value) || count($value) !== 4) {
+            return false;
+        }
+
+        return array_reduce($value, static fn (bool $valid, mixed $channel): bool => $valid && is_int($channel) && $channel >= 0 && $channel <= 255, true);
+    }
+
+    private static function assertBbox(mixed $bbox): void
+    {
+        if (! is_array($bbox) || array_diff(array_keys($bbox), ['x', 'y', 'width', 'height']) !== []) {
+            throw new \InvalidArgumentException('geometry_contract_bounds_invalid');
+        }
+        foreach (['x', 'y', 'width', 'height'] as $field) {
+            if (! self::isFiniteNumber($bbox[$field] ?? null)) {
                 throw new \InvalidArgumentException('geometry_contract_bounds_invalid');
             }
         }

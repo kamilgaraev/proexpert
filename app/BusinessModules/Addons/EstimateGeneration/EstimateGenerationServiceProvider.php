@@ -156,6 +156,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorRead
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionResponseBodyReader;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\GeometryResourceLimits;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPreprocessor;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Providers\BoundedVisionResponseBodyReader;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Providers\TimewebVisionProvider;
@@ -183,6 +184,12 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(AcceptanceBenchmarkCorpusLoader::class);
         $this->app->singleton(BenchmarkRunner::class);
         $this->app->singleton(RasterPreprocessor::class);
+        $this->app->singleton(GeometryResourceLimits::class, static fn (): GeometryResourceLimits => new GeometryResourceLimits(
+            memoryLimitKiB: (int) config('estimate-generation.vision.geometry_runtime.memory_limit_kib'),
+            cpuLimitSeconds: (int) config('estimate-generation.vision.geometry_runtime.cpu_limit_seconds'),
+            fileSizeLimitBytes: (int) config('estimate-generation.vision.geometry_runtime.file_size_limit_bytes'),
+            openFileLimit: (int) config('estimate-generation.vision.geometry_runtime.open_file_limit'),
+        ));
         $this->app->singleton(VisionResponseBodyReader::class, BoundedVisionResponseBodyReader::class);
         $this->app->singleton(TimewebVisionProvider::class);
         $this->app->singleton(VisionProvider::class, TimewebVisionProvider::class);

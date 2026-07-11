@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration\Vision;
 
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\Process\Process;
 
 final class CadProductionRuntimeContractTest extends TestCase
 {
@@ -30,5 +31,23 @@ final class CadProductionRuntimeContractTest extends TestCase
         self::assertStringContainsString('geometry-sandbox', $dockerfile);
         self::assertStringContainsString('--ro-bind / /', file_get_contents($root.'/docker/geometry/geometry-sandbox.sh'));
         self::assertStringContainsString('Corresponding Source', $notice);
+        self::assertStringContainsString('memory_limit_kib', file_get_contents($root.'/config/estimate-generation.php'));
+        self::assertStringContainsString('geometry_sandbox_unavailable', file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Vision/Geometry/GeometryProcessRunner.php'));
+    }
+
+    #[Test]
+    public function sandbox_executable_denies_outside_writes_and_enforces_limits(): void
+    {
+        $root = dirname(__DIR__, 4);
+        if (PHP_OS_FAMILY === 'Windows') {
+            $path = '/mnt/'.strtolower($root[0]).str_replace('\\', '/', substr($root, 2)).'/tests/Runtime/geometry-sandbox-runtime.sh';
+            $process = new Process(['wsl.exe', '-d', 'Ubuntu-22.04', '--', 'bash', $path]);
+        } else {
+            $process = new Process(['bash', $root.'/tests/Runtime/geometry-sandbox-runtime.sh']);
+        }
+        $process->setTimeout(120);
+        $process->mustRun();
+
+        self::assertStringContainsString('geometry sandbox runtime: PASS', $process->getOutput());
     }
 }

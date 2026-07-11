@@ -20,6 +20,8 @@ final readonly class PdfVectorGeometryProvider
         private int $maxOutputBytes = 16_777_216,
         private ?FileService $fileService = null,
         private ?BoundedStorageReader $reader = null,
+        private ?GeometryResourceLimits $resourceLimits = null,
+        private string $workspaceRoot = '',
     ) {}
 
     public function extract(string $storageKey, Organization $organization): VectorGeometryData
@@ -65,11 +67,16 @@ final readonly class PdfVectorGeometryProvider
         if (! is_int($size) || $size < 1 || $size > $this->maxInputBytes || $magic !== '%PDF-') {
             throw new GeometryExtractionException('pdf_signature_mismatch');
         }
-        $workspace = sys_get_temp_dir().DIRECTORY_SEPARATOR.'most-pdf-'.bin2hex(random_bytes(12));
-        mkdir($workspace, 0700);
+        $root = $this->workspaceRoot !== '' ? $this->workspaceRoot : sys_get_temp_dir();
+        $workspace = $root.DIRECTORY_SEPARATOR.'most-pdf-'.bin2hex(random_bytes(12));
+        if (! @mkdir($workspace, 0700)) {
+            throw new GeometryExtractionException('pdf_workspace_failed');
+        }
         $copy = $workspace.DIRECTORY_SEPARATOR.'source.pdf';
         try {
-            copy($real, $copy);
+            if (! copy($real, $copy)) {
+                throw new GeometryExtractionException('pdf_source_copy_failed');
+            }
             $script = $this->scriptPath !== '' ? $this->scriptPath : dirname(__DIR__, 2).'/bin/pdf_geometry_extract.py';
             $result = (new GeometryProcessRunner)->run(
                 [$this->pythonBinary, $script, '--input', $copy, '--workspace', $workspace, '--contract-vector'],
@@ -77,6 +84,7 @@ final readonly class PdfVectorGeometryProvider
                 'pdf',
                 $this->timeoutSeconds,
                 $this->maxOutputBytes,
+                resourceLimits: $this->resourceLimits,
             );
             if ($result['exit_code'] !== 0) {
                 $error = json_decode($result['stderr'], true);

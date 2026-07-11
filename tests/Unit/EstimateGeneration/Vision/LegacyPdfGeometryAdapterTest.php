@@ -22,12 +22,89 @@ final class LegacyPdfGeometryAdapterTest extends TestCase
             $payload = json_decode($process->getOutput(), true, 32, JSON_THROW_ON_ERROR);
             $element = $payload['pages'][0]['vector_elements'][0];
 
-            self::assertSame('pypdfium2', $payload['provider']);
+            self::assertSame('pymupdf', $payload['provider']);
+            self::assertSame('pypdfium2', $payload['metadata']['actual_provider']);
             self::assertSame([[10.0, 20.0], [110.0, 20.0]], $element['geometry']['points']);
             self::assertSame(['x' => 10.0, 'y' => 20.0, 'width' => 100.0, 'height' => 0.0], $element['bbox']);
             self::assertSame(2.0, $element['style']['stroke_width']);
             self::assertSame(1, $payload['pages'][0]['visual_metrics']['path_count']);
             self::assertGreaterThanOrEqual(2, $payload['pages'][0]['visual_metrics']['line_count']);
+            self::assertSame('geometry_only', $payload['pages'][0]['page_role']);
+            self::assertContains('plan_candidate', $payload['pages'][0]['signals']);
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    #[Test]
+    public function legacy_preview_stays_in_workspace_and_keeps_filename_convention(): void
+    {
+        $root = sys_get_temp_dir().DIRECTORY_SEPARATOR.'legacy-preview-'.bin2hex(random_bytes(6));
+        mkdir($root, 0700);
+        $pdf = $root.DIRECTORY_SEPARATOR.'source.pdf';
+        $preview = $root.DIRECTORY_SEPARATOR.'preview';
+        file_put_contents($pdf, $this->pdf('0 0 m 10 0 l S'));
+        $script = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/bin/pdf_geometry_extract.py';
+        try {
+            $process = new Process(['python', $script, '--input', $pdf, '--workspace', $root, '--filename', 'plan.pdf', '--preview-dir', $preview, '--render-preview']);
+            $process->mustRun();
+            $payload = json_decode($process->getOutput(), true, 32, JSON_THROW_ON_ERROR);
+            self::assertSame(realpath($preview).DIRECTORY_SEPARATOR.'plan_pdf_page_1.png', $payload['pages'][0]['preview']['path']);
+            self::assertFileExists($payload['pages'][0]['preview']['path']);
+
+            $outside = sys_get_temp_dir().DIRECTORY_SEPARATOR.'escaped-preview-'.bin2hex(random_bytes(4));
+            $escaped = new Process(['python', $script, '--input', $pdf, '--workspace', $root, '--preview-dir', $outside, '--render-preview']);
+            $escaped->run();
+            self::assertFalse($escaped->isSuccessful());
+            self::assertStringContainsString('pdf_preview_path_invalid', $escaped->getErrorOutput());
+            self::assertDirectoryDoesNotExist($outside);
+
+            mkdir($outside, 0700);
+            $previewLink = $root.DIRECTORY_SEPARATOR.'preview-link';
+            if (! @symlink($outside, $previewLink)) {
+                $junction = new Process([
+                    'powershell',
+                    '-NoProfile',
+                    '-Command',
+                    '& { param($path, $target) New-Item -ItemType Junction -Path $path -Target $target | Out-Null }',
+                    $previewLink,
+                    $outside,
+                ]);
+                $junction->mustRun();
+            }
+            $linked = new Process(['python', $script, '--input', $pdf, '--workspace', $root, '--preview-dir', $previewLink, '--render-preview']);
+            $linked->run();
+            self::assertFalse($linked->isSuccessful());
+            self::assertStringContainsString('pdf_preview_path_invalid', $linked->getErrorOutput());
+            @rmdir($previewLink);
+            @rmdir($outside);
+        } finally {
+            if (isset($previewLink)) {
+                @rmdir($previewLink);
+            }
+            if (isset($outside)) {
+                @rmdir($outside);
+            }
+            foreach (glob($preview.DIRECTORY_SEPARATOR.'*') ?: [] as $file) {
+                @unlink($file);
+            }
+            @rmdir($preview);
+            @unlink($pdf);
+            @rmdir($root);
+        }
+    }
+
+    #[Test]
+    public function legacy_missing_runtime_keeps_pymupdf_error_identifier(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'legacy-error-').'.pdf';
+        file_put_contents($path, $this->pdf('0 0 m 1 0 l S'));
+        try {
+            $script = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/bin/pdf_geometry_extract.py';
+            $process = new Process(['python', '-S', $script, '--input', $path]);
+            $process->run();
+            self::assertFalse($process->isSuccessful());
+            self::assertStringContainsString('pymupdf_unavailable', $process->getErrorOutput());
         } finally {
             @unlink($path);
         }

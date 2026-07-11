@@ -31,10 +31,16 @@ SUPPORTED = {
 
 
 class SafeFailure(Exception):
-    def __init__(self, code: str, retryable: bool = False):
+    def __init__(
+        self,
+        code: str,
+        retryable: bool = False,
+        context: dict[str, Any] | None = None,
+    ):
         super().__init__(code)
         self.code = code
         self.retryable = retryable
+        self.context = context or {}
 
 
 def sha256_file(path: str) -> str:
@@ -67,8 +73,10 @@ def source_unit(code: Any) -> tuple[str | None, str]:
     return unit, "confirmed" if unit else "unknown"
 
 
-def entity_handle(entity: Any, lineage: list[str]) -> str:
-    own = str(entity.dxf.handle or entity.dxftype())
+def entity_handle(
+    entity: Any, lineage: list[str], source_member_handle: str | None = None
+) -> str:
+    own = source_member_handle or str(entity.dxf.handle or entity.dxftype())
     return "/".join([*lineage, own])
 
 
@@ -77,10 +85,15 @@ def matrix_payload(matrix: Any) -> list[list[float]]:
 
 
 def map_dxf_entity(
-    entity: Any, lineage: list[str], block: str | None, layout: str
+    entity: Any,
+    lineage: list[str],
+    block: str | None,
+    layout: str,
+    source_member_handle: str | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None]:
     entity_type = entity.dxftype()
-    item_handle = entity_handle(entity, lineage)
+    member_handle = source_member_handle or str(entity.dxf.handle or entity_type)
+    item_handle = entity_handle(entity, lineage, member_handle)
     layer = str(entity.dxf.get("layer", "0"))
     owner = lineage[-1] if lineage else layout
     base: dict[str, Any] = {
@@ -89,7 +102,8 @@ def map_dxf_entity(
         "layer": layer,
         "layout": layout,
         "owner": owner,
-        "source_lineage": [*lineage, str(entity.dxf.handle or entity_type)],
+        "source_lineage": [*lineage, member_handle],
+        "source_member_handle": member_handle,
     }
     if block is not None:
         base["block"] = block
@@ -126,12 +140,16 @@ def map_dxf_entity(
             "position": point(entity.dxf.insert),
             "layout": layout,
             "owner": owner,
+            "source_lineage": [*lineage, member_handle],
+            "source_member_handle": member_handle,
             "transform": (
                 [number(value) for value in entity.get_wcs_transform().m]
                 if hasattr(entity, "get_wcs_transform")
                 else [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
             ),
         }
+        if block is not None:
+            text["block"] = block
         return None, text, None
     if entity_type == "DIMENSION":
         points = []
@@ -148,8 +166,12 @@ def map_dxf_entity(
             "text": str(entity.dxf.get("text", "")),
             "layout": layout,
             "owner": owner,
+            "source_lineage": [*lineage, member_handle],
+            "source_member_handle": member_handle,
             "definition_points": points,
         }
+        if block is not None:
+            dimension["block"] = block
         return None, None, dimension
     raise SafeFailure("cad_unsupported_entities")
 
@@ -163,11 +185,13 @@ def expand_insert(
     texts: list[dict[str, Any]],
     dimensions: list[dict[str, Any]],
     layout: str,
+    source_member_handle: str | None = None,
 ) -> None:
     if depth > max_depth:
         raise SafeFailure("cad_block_depth_exceeded")
-    insert_handle = entity_handle(insert, lineage)
-    own_lineage = [*lineage, str(insert.dxf.handle or insert.dxf.name)]
+    member_handle = source_member_handle or str(insert.dxf.handle or insert.dxf.name)
+    insert_handle = entity_handle(insert, lineage, member_handle)
+    own_lineage = [*lineage, member_handle]
     entities.append(
         {
             "handle": insert_handle,
@@ -178,15 +202,22 @@ def expand_insert(
             "source_lineage": own_lineage,
             "layout": layout,
             "owner": lineage[-1] if lineage else layout,
+            "source_member_handle": member_handle,
         }
     )
     try:
         virtual_entities = list(insert.virtual_entities())
+        source_entities = list(insert.block())
     except Exception as exception:
         raise SafeFailure("cad_required_entity_incomplete") from exception
-    if not virtual_entities:
+    if not virtual_entities or len(virtual_entities) != len(source_entities):
         raise SafeFailure("cad_required_entity_incomplete")
-    for virtual in virtual_entities:
+    for member_index, (virtual, source_entity) in enumerate(
+        zip(virtual_entities, source_entities, strict=True)
+    ):
+        source_handle = str(
+            source_entity.dxf.handle or f"{insert.dxf.name}:member:{member_index}"
+        )
         if virtual.dxftype() == "INSERT":
             expand_insert(
                 virtual,
@@ -197,10 +228,11 @@ def expand_insert(
                 texts,
                 dimensions,
                 layout,
+                source_handle,
             )
             continue
         mapped, text, dimension = map_dxf_entity(
-            virtual, own_lineage, str(insert.dxf.name), layout
+            virtual, own_lineage, str(insert.dxf.name), layout, source_handle
         )
         if mapped is not None:
             entities.append(mapped)
@@ -286,6 +318,26 @@ def checked_libredwg_version(binary: str, workspace: str) -> None:
         raise SafeFailure("libredwg_version_mismatch")
 
 
+def diagnostic_counts(diagnostic: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for category in ("unsupported", "skipped", "unknown"):
+        explicit = [
+            int(value)
+            for value in re.findall(
+                rf"{category}(?:\s+entities?)?\s*[:=]\s*(\d+)",
+                diagnostic,
+                flags=re.IGNORECASE,
+            )
+        ]
+        if explicit:
+            counts[category] = sum(explicit)
+            continue
+        occurrences = len(re.findall(rf"\b{category}\b", diagnostic, re.IGNORECASE))
+        if occurrences:
+            counts[category] = occurrences
+    return counts
+
+
 def parse_dwg(
     path: str, binary: str, workspace: str, max_output_bytes: int
 ) -> tuple[Any, ...]:
@@ -311,25 +363,39 @@ def parse_dwg(
         or os.path.getsize(error_path) > 8192
     ):
         raise SafeFailure("cad_output_oversize")
-    diagnostic = Path(error_path).read_text(encoding="utf-8", errors="replace").lower()
+    diagnostic = Path(error_path).read_text(encoding="utf-8", errors="replace")
     if process.returncode != 0:
         raise SafeFailure("dwg_decode_failed")
-    if any(
-        marker in diagnostic
-        for marker in ("unknown", "unsupported", "skipped", "error", "warning")
-    ):
-        raise SafeFailure("dwg_completeness_unproven")
+    counts = diagnostic_counts(diagnostic)
     try:
         data = json.loads(Path(json_path).read_text(encoding="utf-8"))
     except Exception as exception:
         raise SafeFailure("dwg_contract_invalid") from exception
+    object_records = data.get("OBJECTS", [])
+    if not isinstance(object_records, list):
+        raise SafeFailure("dwg_contract_invalid")
+    raw_entity_records = sum(
+        1 for item in object_records if isinstance(item, dict) and item.get("entity")
+    )
+    if counts or re.search(r"\b(?:error|warning)\b", diagnostic, re.IGNORECASE):
+        raise SafeFailure(
+            "dwg_completeness_unproven",
+            context={
+                "decoder_counts": counts,
+                "reconciliation": {
+                    "object_records": len(object_records),
+                    "entity_records": raw_entity_records,
+                },
+            },
+        )
     if data.get("created_by") != "LibreDWG 0.13.4":
         raise SafeFailure("libredwg_provenance_invalid")
     layers = []
     entities = []
     texts = []
     dimensions = []
-    for item in data.get("OBJECTS", []):
+    entity_records = 0
+    for item in object_records:
         if item.get("object") == "LAYER":
             layers.append(
                 {
@@ -340,6 +406,7 @@ def parse_dwg(
         entity_type = item.get("entity")
         if not entity_type:
             continue
+        entity_records += 1
         if entity_type not in SUPPORTED:
             raise SafeFailure("cad_unsupported_entities")
         item_handle = handle(item.get("handle"))
@@ -384,6 +451,16 @@ def parse_dwg(
             raise SafeFailure("cad_required_entity_incomplete")
     if not entities and not texts and not dimensions:
         raise SafeFailure("dwg_geometry_empty")
+    represented_records = len(entities) + len(texts) + len(dimensions)
+    if represented_records != entity_records:
+        raise SafeFailure(
+            "dwg_reconciliation_failed",
+            context={
+                "object_records": len(data.get("OBJECTS", [])),
+                "entity_records": entity_records,
+                "represented_records": represented_records,
+            },
+        )
     measurement = data.get("Template", {}).get("MEASUREMENT", 0)
     unit, status = ("mm", "confirmed") if measurement == 1 else (None, "unknown")
     return unit, status, layers, [], entities, texts, dimensions, [], "libredwg:0.13.4"
@@ -467,6 +544,7 @@ if __name__ == "__main__":
                     "code": exception.code,
                     "safe_message": "Не удалось безопасно обработать чертёж.",
                     "retryable": exception.retryable,
+                    "context": exception.context,
                 },
                 ensure_ascii=False,
             )
@@ -479,6 +557,7 @@ if __name__ == "__main__":
                     "code": "cad_parse_failed",
                     "safe_message": "Не удалось безопасно обработать чертёж.",
                     "retryable": False,
+                    "context": {},
                 },
                 ensure_ascii=False,
             )

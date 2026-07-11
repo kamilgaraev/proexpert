@@ -54,13 +54,18 @@ final class CadRuntimeContractTest extends TestCase
     #[Test]
     public function nested_insert_is_expanded_with_transform_and_lineage(): void
     {
-        $path = $this->generatedDxf("inner=doc.blocks.new('INNER'); inner.add_line((0,0),(10,0)); outer=doc.blocks.new('OUTER'); outer.add_blockref('INNER',(5,0)); msp.add_blockref('OUTER',(100,50),dxfattribs={'rotation':90})");
+        $path = $this->generatedDxf("inner=doc.blocks.new('INNER'); inner.add_line((0,0),(10,0)); inner.add_line((0,2),(10,2)); outer=doc.blocks.new('OUTER'); outer.add_blockref('INNER',(5,0)); msp.add_blockref('OUTER',(100,50),dxfattribs={'rotation':90}); msp.add_blockref('OUTER',(200,50),dxfattribs={'rotation':90})");
         try {
             $result = $this->runtime()->extract($path);
-            $line = array_values(array_filter($result->entities, static fn (array $entity): bool => $entity['type'] === 'line'))[0];
-            self::assertSame([[100.0, 55.0], [100.0, 65.0]], $line['points']);
-            self::assertCount(3, $line['source_lineage']);
-            self::assertSame('INNER', $line['block']);
+            $lines = array_values(array_filter($result->entities, static fn (array $entity): bool => $entity['type'] === 'line'));
+            self::assertCount(4, $lines);
+            self::assertSame([[100.0, 55.0], [100.0, 65.0]], $lines[0]['points']);
+            self::assertSame([[98.0, 55.0], [98.0, 65.0]], $lines[1]['points']);
+            self::assertSame([[200.0, 55.0], [200.0, 65.0]], $lines[2]['points']);
+            self::assertCount(4, array_unique(array_column($lines, 'handle')));
+            self::assertCount(2, array_unique(array_column($lines, 'source_member_handle')));
+            self::assertCount(3, $lines[0]['source_lineage']);
+            self::assertSame('INNER', $lines[0]['block']);
             self::assertNotEmpty($result->blocks);
         } finally {
             @unlink($path);
@@ -160,6 +165,36 @@ final class CadRuntimeContractTest extends TestCase
             self::assertSame(80.0, $arc['end_angle']);
         } finally {
             @unlink($path);
+        }
+    }
+
+    #[Test]
+    public function libredwg_diagnostics_are_reconciled_into_structured_counts(): void
+    {
+        $script = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/bin/cad_geometry_extract.py';
+        $code = "import importlib.util,json; s=importlib.util.spec_from_file_location('cad',r'".str_replace("'", "''", $script)."'); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(json.dumps(m.diagnostic_counts('unsupported entities: 3\\nskipped entity\\nunknown object\\nunknown object')))";
+        $process = new \Symfony\Component\Process\Process(['python', '-c', $code]);
+        $process->mustRun();
+
+        self::assertSame(
+            ['unsupported' => 3, 'skipped' => 1, 'unknown' => 2],
+            json_decode($process->getOutput(), true, 16, JSON_THROW_ON_ERROR),
+        );
+    }
+
+    #[Test]
+    public function blocking_decoder_counts_are_available_on_typed_failure(): void
+    {
+        $script = $this->temporaryScript("import json,sys\nsys.stderr.write(json.dumps({'code':'dwg_completeness_unproven','safe_message':'safe','retryable':False,'context':{'decoder_counts':{'unknown':2},'reconciliation':{'entity_records':5,'represented_records':3}}}))\nsys.exit(2)\n");
+        try {
+            (new CadConversionRuntime('python', $script))->extract(dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/Vision/simple-house.dxf');
+            self::fail('Blocking decoder diagnostics must fail.');
+        } catch (\App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtractionException $exception) {
+            self::assertSame('dwg_completeness_unproven', $exception->reason);
+            self::assertSame(2, $exception->safeContext['decoder_counts']['unknown']);
+            self::assertSame(5, $exception->safeContext['reconciliation']['entity_records']);
+        } finally {
+            @unlink($script);
         }
     }
 

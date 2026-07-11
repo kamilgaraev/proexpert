@@ -10,7 +10,9 @@ final class GeometryExtractionException extends RuntimeException
 {
     public function __construct(
         public readonly string $reason,
-        public readonly bool $retryable = false
+        public readonly bool $retryable = false,
+        /** @var array<string, mixed> */
+        public readonly array $safeContext = [],
     ) {
         parent::__construct($reason);
     }

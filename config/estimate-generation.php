@@ -29,6 +29,12 @@ return [
             'max_dimension' => (int) env('ESTIMATE_GENERATION_VISION_MAX_DIMENSION', 4096),
             'version' => 'raster-preprocessor:v1',
         ],
+        'geometry_runtime' => [
+            'memory_limit_kib' => (int) env('ESTIMATE_GENERATION_GEOMETRY_MEMORY_LIMIT_KIB', 524_288),
+            'cpu_limit_seconds' => (int) env('ESTIMATE_GENERATION_GEOMETRY_CPU_LIMIT_SECONDS', 45),
+            'file_size_limit_bytes' => (int) env('ESTIMATE_GENERATION_GEOMETRY_FILE_SIZE_LIMIT_BYTES', 16_777_216),
+            'open_file_limit' => (int) env('ESTIMATE_GENERATION_GEOMETRY_OPEN_FILE_LIMIT', 64),
+        ],
         'pricing' => [
             'input_per_million' => $envValue('ESTIMATE_GENERATION_VISION_PRICE_INPUT_PER_MILLION'),
             'cached_input_per_million' => $envValue('ESTIMATE_GENERATION_VISION_PRICE_CACHED_INPUT_PER_MILLION'),

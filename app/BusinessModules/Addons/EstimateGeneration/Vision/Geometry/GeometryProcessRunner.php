@@ -18,10 +18,16 @@ final readonly class GeometryProcessRunner
         int $timeoutSeconds,
         int $maxOutputBytes,
         int $maxErrorBytes = 8192,
+        ?GeometryResourceLimits $resourceLimits = null,
     ): array {
         $sandbox = getenv('GEOMETRY_SANDBOX_BINARY');
-        if (PHP_OS_FAMILY === 'Linux' && is_string($sandbox) && is_executable($sandbox)) {
-            return $this->runSandboxed($sandbox, $command, $workspace, $errorPrefix, $timeoutSeconds, $maxOutputBytes, $maxErrorBytes);
+        $limits = $resourceLimits ?? new GeometryResourceLimits;
+        if (PHP_OS_FAMILY === 'Linux') {
+            if (! is_string($sandbox) || ! is_executable($sandbox)) {
+                throw new GeometryExtractionException($errorPrefix.'_geometry_sandbox_unavailable');
+            }
+
+            return $this->runSandboxed($sandbox, $command, $workspace, $errorPrefix, $timeoutSeconds, $maxOutputBytes, $maxErrorBytes, $limits);
         }
 
         return $this->runBounded($command, $workspace, $errorPrefix, $timeoutSeconds, $maxOutputBytes, $maxErrorBytes);
@@ -70,12 +76,12 @@ final readonly class GeometryProcessRunner
     }
 
     /** @param array<int, string> $command @return array{exit_code: int|null, stdout: string, stderr: string} */
-    private function runSandboxed(string $sandbox, array $command, string $workspace, string $prefix, int $timeout, int $maxOutput, int $maxError): array
+    private function runSandboxed(string $sandbox, array $command, string $workspace, string $prefix, int $timeout, int $maxOutput, int $maxError, GeometryResourceLimits $limits): array
     {
         $stdoutPath = $workspace.DIRECTORY_SEPARATOR.'process.stdout';
         $stderrPath = $workspace.DIRECTORY_SEPARATOR.'process.stderr';
-        $fileBlocks = (int) ceil(max($maxOutput, $maxError) / 512);
-        $sandboxCommand = [$sandbox, $workspace, $stdoutPath, $stderrPath, (string) $timeout, '524288', (string) $timeout, (string) $fileBlocks, '64', ...$command];
+        [$memoryLimit, $cpuLimit, $fileLimit, $openFileLimit] = $limits->sandboxArguments();
+        $sandboxCommand = [$sandbox, $workspace, $stdoutPath, $stderrPath, (string) $timeout, $memoryLimit, $cpuLimit, $fileLimit, $openFileLimit, ...$command];
         $process = new Process($sandboxCommand, $workspace);
         $process->disableOutput();
         $process->setTimeout($timeout + 2);

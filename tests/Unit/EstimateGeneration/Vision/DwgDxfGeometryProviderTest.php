@@ -60,4 +60,34 @@ final class DwgDxfGeometryProviderTest extends TestCase
         $this->expectExceptionMessage('cad_storage_scope_invalid');
         $provider->extract('../org-42/drawings/house.dxf', $organization);
     }
+
+    #[Test]
+    public function provider_reports_workspace_creation_failure(): void
+    {
+        $root = dirname(__DIR__, 4);
+        $content = file_get_contents($root.'/tests/Fixtures/EstimateGeneration/Vision/simple-house.dxf');
+        $disk = Mockery::mock(Filesystem::class);
+        $disk->shouldReceive('size')->once()->andReturn(strlen($content));
+        $stream = fopen('php://temp', 'w+b');
+        fwrite($stream, $content);
+        rewind($stream);
+        $disk->shouldReceive('readStream')->once()->andReturn($stream);
+        $files = Mockery::mock(FileService::class);
+        $files->shouldReceive('disk')->once()->andReturn($disk);
+        $organization = new Organization;
+        $organization->id = 42;
+        $invalidRoot = tempnam(sys_get_temp_dir(), 'cad-root-file-');
+        try {
+            $provider = new DwgDxfGeometryProvider(
+                $files,
+                new BoundedStorageReader,
+                new CadConversionRuntime('python', $root.'/app/BusinessModules/Addons/EstimateGeneration/bin/cad_geometry_extract.py'),
+                workspaceRoot: $invalidRoot,
+            );
+            $this->expectExceptionMessage('cad_workspace_failed');
+            $provider->extract('org-42/drawings/house.dxf', $organization);
+        } finally {
+            @unlink($invalidRoot);
+        }
+    }
 }
