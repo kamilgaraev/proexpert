@@ -31,4 +31,20 @@ final class BuildingModelMigrationContractTest extends TestCase
             self::assertStringContainsString($required, $source);
         }
     }
+
+    #[Test]
+    public function postgres_contention_test_always_releases_dynamic_connections_and_isolates_nested_assumption_validation(): void
+    {
+        $source = (string) file_get_contents(
+            dirname(__DIR__, 4).'/tests/Feature/EstimateGeneration/BuildingModel/EstimateGenerationBuildingModelPostgresTest.php'
+        );
+
+        self::assertStringContainsString('private function releaseConnection(string $name): void', $source);
+        self::assertStringContainsString('DB::disconnect($name)', $source);
+        self::assertStringContainsString('DB::purge($name)', $source);
+        self::assertStringContainsString('unset($connections[$name])', $source);
+        self::assertGreaterThanOrEqual(6, substr_count($source, '$this->releaseConnection('));
+        self::assertStringContainsString("'assumptions' => json_encode(\$unsafeAssumptions", $source);
+        self::assertStringContainsString("'model' => json_encode([...\$model, 'assumptions' => \$unsafeAssumptions]", $source);
+    }
 }

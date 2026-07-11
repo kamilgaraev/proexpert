@@ -53,14 +53,16 @@ final class EstimateGenerationBuildingModelPostgresTest extends TestCase
         }
         $firstName = 'building_model_a_'.strtolower(Str::random(8));
         $secondName = 'building_model_b_'.strtolower(Str::random(8));
-        $first = $this->independentConnection($firstName);
+        $first = null;
         $pid = null;
         try {
+            $first = $this->independentConnection($firstName);
             $first->beginTransaction();
             $winner = $this->repository($first)->store($fixture['context'], $this->model($fixture['evidence_id'], 2.8));
             self::assertTrue($winner->created);
             $pid = pcntl_fork();
             if ($pid === -1) {
+                $pid = null;
                 throw new RuntimeException('Unable to fork building model contention writer.');
             }
             if ($pid === 0) {
@@ -83,19 +85,17 @@ final class EstimateGenerationBuildingModelPostgresTest extends TestCase
             $this->expectException(BuildingModelContentCollision::class);
             $this->repository(DB::connection())->store($fixture['context'], $this->model($fixture['evidence_id'], 3.0));
         } finally {
-            if ($first->transactionLevel() > 0) {
+            if ($first instanceof Connection && $first->transactionLevel() > 0) {
                 $first->rollBack();
             }
-            if ($pid !== null) {
-                posix_kill($pid, SIGKILL);
-                pcntl_waitpid($pid, $status);
-            }
+            $this->terminateChild($pid);
             foreach ($sockets as $socket) {
                 if (is_resource($socket)) {
                     fclose($socket);
                 }
             }
-            DB::disconnect($firstName);
+            $this->releaseConnection($firstName);
+            $this->releaseConnection($secondName);
             $this->cleanup($fixture);
         }
     }
@@ -114,6 +114,7 @@ final class EstimateGenerationBuildingModelPostgresTest extends TestCase
             $assumptions = json_decode((string) $row['assumptions'], true, flags: JSON_THROW_ON_ERROR);
             $metrics = json_decode((string) $row['metrics'], true, flags: JSON_THROW_ON_ERROR);
             $scaleMissing = [['code' => 'scale_missing', 'severity' => 'blocking', 'affected_keys' => ['floor-1'], 'evidence_ids' => [$fixture['evidence_id']], 'requires_confirmation' => true]];
+            $unsafeAssumptions = [...$assumptions, ['code' => 'scale_missing', 'severity' => 'blocking', 'affected_keys' => ['floor-1'], 'evidence_ids' => [$fixture['evidence_id']], 'requires_confirmation' => true, 'prompt' => 'secret']];
 
             $missingUnit = $model;
             unset($missingUnit['unit']);
@@ -134,7 +135,7 @@ final class EstimateGenerationBuildingModelPostgresTest extends TestCase
                 'metrics extra key' => ['metrics' => json_encode([...$metrics, 'prompt' => 1], JSON_THROW_ON_ERROR), 'model' => json_encode([...$model, 'metrics' => [...$metrics, 'prompt' => 1]], JSON_THROW_ON_ERROR)],
                 'metrics wrong type' => ['metrics' => json_encode([...$metrics, 'minimum_confidence' => 'high'], JSON_THROW_ON_ERROR), 'model' => json_encode([...$model, 'metrics' => [...$metrics, 'minimum_confidence' => 'high']], JSON_THROW_ON_ERROR)],
                 'assumptions wrong type' => ['assumptions' => '{}', 'model' => json_encode([...$model, 'assumptions' => (object) []], JSON_THROW_ON_ERROR)],
-                'unsafe assumption key' => ['assumptions' => json_encode([...$assumptions, ['code' => 'scale_missing', 'severity' => 'blocking', 'affected_keys' => ['floor-1'], 'evidence_ids' => [$fixture['evidence_id']], 'requires_confirmation' => true, 'prompt' => 'secret']], JSON_THROW_ON_ERROR)],
+                'unsafe assumption key' => ['assumptions' => json_encode($unsafeAssumptions, JSON_THROW_ON_ERROR), 'model' => json_encode([...$model, 'assumptions' => $unsafeAssumptions], JSON_THROW_ON_ERROR)],
             ];
             foreach ($variants as $name => $changes) {
                 $this->assertRejected($name, [...$row, 'input_version' => 'sha256:'.hash('sha256', $name), ...$changes]);
@@ -172,16 +173,22 @@ final class EstimateGenerationBuildingModelPostgresTest extends TestCase
         if ($sockets === false) {
             throw new RuntimeException('Unable to create evidence invalidation barrier.');
         }
-        $name = 'building_model_invalidate_'.strtolower(Str::random(8));
-        $first = $this->independentConnection('building_model_insert_'.strtolower(Str::random(8)));
+        $childName = 'building_model_invalidate_'.strtolower(Str::random(8));
+        $firstName = 'building_model_insert_'.strtolower(Str::random(8));
+        $first = null;
         $pid = null;
         try {
+            $first = $this->independentConnection($firstName);
             $first->beginTransaction();
             $this->repository($first)->store($fixture['context'], $this->model($fixture['evidence_id'], 2.8));
             $pid = pcntl_fork();
+            if ($pid === -1) {
+                $pid = null;
+                throw new RuntimeException('Unable to fork evidence invalidation writer.');
+            }
             if ($pid === 0) {
                 fclose($sockets[0]);
-                $this->runInvalidationChild($sockets[1], $name, $fixture);
+                $this->runInvalidationChild($sockets[1], $childName, $fixture);
             }
             self::assertGreaterThan(0, $pid);
             fclose($sockets[1]);
@@ -194,18 +201,17 @@ final class EstimateGenerationBuildingModelPostgresTest extends TestCase
             $pid = null;
             self::assertNull($this->repository(DB::connection())->current($fixture['context']));
         } finally {
-            if ($first->transactionLevel() > 0) {
+            if ($first instanceof Connection && $first->transactionLevel() > 0) {
                 $first->rollBack();
             }
-            if ($pid !== null) {
-                posix_kill($pid, SIGKILL);
-                pcntl_waitpid($pid, $status);
-            }
+            $this->terminateChild($pid);
             foreach ($sockets as $socket) {
                 if (is_resource($socket)) {
                     fclose($socket);
                 }
             }
+            $this->releaseConnection($firstName);
+            $this->releaseConnection($childName);
             $this->cleanup($fixture);
         }
     }
@@ -217,10 +223,12 @@ final class EstimateGenerationBuildingModelPostgresTest extends TestCase
         if ($sockets === false) {
             throw new RuntimeException('Unable to create evidence insert barrier.');
         }
-        $name = 'building_model_store_'.strtolower(Str::random(8));
-        $first = $this->independentConnection('building_model_invalidation_'.strtolower(Str::random(8)));
+        $childName = 'building_model_store_'.strtolower(Str::random(8));
+        $firstName = 'building_model_invalidation_'.strtolower(Str::random(8));
+        $first = null;
         $pid = null;
         try {
+            $first = $this->independentConnection($firstName);
             $first->beginTransaction();
             $invalidated = (new EvidenceInvalidator(new EloquentEvidenceRepository($first)))->invalidateSource(
                 $fixture['organization_id'], $fixture['project_id'], $fixture['session_id'], EvidenceSourceType::Document,
@@ -228,9 +236,13 @@ final class EstimateGenerationBuildingModelPostgresTest extends TestCase
             );
             self::assertSame(1, $invalidated);
             $pid = pcntl_fork();
+            if ($pid === -1) {
+                $pid = null;
+                throw new RuntimeException('Unable to fork building model writer.');
+            }
             if ($pid === 0) {
                 fclose($sockets[0]);
-                $this->runStoreChild($sockets[1], $name, $fixture);
+                $this->runStoreChild($sockets[1], $childName, $fixture);
             }
             self::assertGreaterThan(0, $pid);
             fclose($sockets[1]);
@@ -244,18 +256,17 @@ final class EstimateGenerationBuildingModelPostgresTest extends TestCase
             self::assertSame(InvalidArgumentException::class, $result['error'] ?? null);
             self::assertSame(0, DB::table('estimate_generation_building_models')->where('session_id', $fixture['session_id'])->count());
         } finally {
-            if ($first->transactionLevel() > 0) {
+            if ($first instanceof Connection && $first->transactionLevel() > 0) {
                 $first->rollBack();
             }
-            if ($pid !== null) {
-                posix_kill($pid, SIGKILL);
-                pcntl_waitpid($pid, $status);
-            }
+            $this->terminateChild($pid);
             foreach ($sockets as $socket) {
                 if (is_resource($socket)) {
                     fclose($socket);
                 }
             }
+            $this->releaseConnection($firstName);
+            $this->releaseConnection($childName);
             $this->cleanup($fixture);
         }
     }
@@ -272,7 +283,7 @@ final class EstimateGenerationBuildingModelPostgresTest extends TestCase
             $exit = 1;
             fwrite($socket, json_encode(['error' => $error::class, 'code' => $error->getCode()], JSON_THROW_ON_ERROR)."\n");
         } finally {
-            DB::disconnect($connectionName);
+            $this->releaseConnection($connectionName);
             fclose($socket);
         }
         exit($exit);
@@ -293,7 +304,7 @@ final class EstimateGenerationBuildingModelPostgresTest extends TestCase
             fwrite($socket, json_encode(['error' => $error::class], JSON_THROW_ON_ERROR)."\n");
             $exit = 1;
         } finally {
-            DB::disconnect($connectionName);
+            $this->releaseConnection($connectionName);
             fclose($socket);
         }
         exit($exit);
@@ -311,7 +322,7 @@ final class EstimateGenerationBuildingModelPostgresTest extends TestCase
             fwrite($socket, json_encode(['error' => $error::class], JSON_THROW_ON_ERROR)."\n");
             $exit = 1;
         } finally {
-            DB::disconnect($connectionName);
+            $this->releaseConnection($connectionName);
             fclose($socket);
         }
         exit($exit);
@@ -436,6 +447,31 @@ final class EstimateGenerationBuildingModelPostgresTest extends TestCase
         DB::purge($name);
 
         return DB::connection($name);
+    }
+
+    private function releaseConnection(string $name): void
+    {
+        DB::disconnect($name);
+        DB::purge($name);
+        $connections = config('database.connections', []);
+        if (is_array($connections)) {
+            unset($connections[$name]);
+            config(['database.connections' => $connections]);
+        }
+    }
+
+    private function terminateChild(?int &$pid): void
+    {
+        if ($pid === null || $pid < 1) {
+            $pid = null;
+
+            return;
+        }
+        if (function_exists('posix_kill')) {
+            @posix_kill($pid, SIGKILL);
+        }
+        pcntl_waitpid($pid, $status);
+        $pid = null;
     }
 
     private function readable(mixed $socket, int $seconds, int $microseconds): bool
