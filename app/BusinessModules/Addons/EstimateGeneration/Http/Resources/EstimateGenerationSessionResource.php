@@ -4,120 +4,78 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Resources;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionSnapshotData;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorReadinessService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Throwable;
 
-use function trans_message;
-
-/**
- * @mixin EstimateGenerationSession
- */
-class EstimateGenerationSessionResource extends JsonResource
+final class EstimateGenerationSessionResource extends JsonResource
 {
+    /** @return array<string, mixed> */
     public function toArray(Request $request): array
     {
+        if ($this->resource instanceof SessionSnapshotData) {
+            return $this->resource->toArray();
+        }
+
         /** @var EstimateGenerationSession $session */
         $session = $this->resource;
-        $input = $session->input_payload ?? [];
-        $analysis = $session->analysis_payload ?? [];
-        $draft = $session->draft_payload ?? [];
-        $regionalContext = $input['regional_context'] ?? $analysis['regional_context'] ?? null;
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $session,
+            permissions: $this->permissions($request, $session),
+            readinessSummary: app(EstimatorReadinessService::class)->evaluate($session),
+            documentsSummary: $this->documentsSummary($session),
+        );
 
-        return [
-            'id' => $session->id,
-            'status' => $session->status,
-            'processing_stage' => $session->processing_stage,
-            'processing_progress' => $session->processing_progress,
-            'progress' => self::progressPayload($session),
-            'generation_mode' => $input['generation_mode'] ?? $draft['generation_mode'] ?? 'strict_documents',
-            'document_requirements' => $draft['document_requirements'] ?? null,
-            'input' => $input,
-            'analysis' => $analysis,
-            'regional_context' => $regionalContext,
-            'estimator_readiness' => app(EstimatorReadinessService::class)->evaluate($session),
-            'problem_flags' => $session->problem_flags ?? [],
-            'applied_estimate_id' => $session->applied_estimate_id,
-            'last_error' => $session->last_error,
-            'documents' => $this->whenLoaded('documents', function (): array {
-                return EstimateGenerationDocumentResource::collection($this->documents)->resolve();
-            }, []),
-            'created_at' => $session->created_at,
-            'updated_at' => $session->updated_at,
-        ];
+        return $snapshot->toArray();
     }
 
-    /**
-     * @return array<string, mixed>
-     */
-    public static function progressPayload(EstimateGenerationSession $session): array
+    /** @return list<string> */
+    private function permissions(Request $request, EstimateGenerationSession $session): array
     {
-        $stage = self::normalizedStage($session);
-        $percent = (int) ($session->processing_progress ?? 0);
-
-        if ($stage === 'ready_for_review') {
-            $percent = 100;
+        $user = $request->user();
+        if ($user === null) {
+            return [];
         }
 
-        if ($stage === 'failed') {
-            $percent = 0;
+        $cacheKey = 'estimate_generation_permissions_' . (int) $session->project_id;
+        $cached = $request->attributes->get($cacheKey);
+        if (is_array($cached)) {
+            return array_values(array_filter($cached, 'is_string'));
         }
 
-        return [
-            'stage' => $stage,
-            'percent' => max(0, min($percent, 100)),
-            'title' => trans_message('estimate_generation.stage_' . $stage),
-            'description' => trans_message('estimate_generation.stage_' . $stage . '_description'),
-            'can_close_page' => self::canClosePage($session),
-            'user_action' => self::userAction($session),
-        ];
+        $permissions = [];
+        foreach ([
+            'estimate_generation.upload_documents',
+            'estimate_generation.generate',
+            'estimate_generation.review',
+            'estimate_generation.apply',
+        ] as $permission) {
+            try {
+                if ($user->hasPermission($permission, ['project_id' => (int) $session->project_id])) {
+                    $permissions[] = $permission;
+                }
+            } catch (Throwable) {
+                continue;
+            }
+        }
+
+        $request->attributes->set($cacheKey, $permissions);
+
+        return $permissions;
     }
 
-    private static function normalizedStage(EstimateGenerationSession $session): string
+    /** @return array<string, mixed> */
+    private function documentsSummary(EstimateGenerationSession $session): array
     {
-        $status = (string) $session->status;
-        $stage = (string) ($session->processing_stage ?? '');
-
-        if ($status === 'failed') {
-            return 'failed';
+        if (!$session->relationLoaded('documents')) {
+            return [];
         }
 
-        if ($status === 'blocked') {
-            return 'blocked';
-        }
-
-        if (in_array($status, ['ready_for_review', 'review_required'], true)) {
-            return 'ready_for_review';
-        }
-
-        if ($status === 'waiting_for_documents') {
-            return 'documents_processing';
-        }
-
-        return match ($stage) {
-            'documents_processing' => 'documents_processing',
-            'object_understanding', 'object_analysis', 'analyzed' => 'object_analysis',
-            'queued', 'draft_generation', 'package_planning' => 'package_planning',
-            'work_generation' => 'work_generation',
-            'normative_matching' => 'normative_matching',
-            'resource_enrichment' => 'resource_enrichment',
-            'validation_and_normalization' => 'validation_and_normalization',
-            default => $status === 'created' ? 'object_analysis' : 'package_planning',
-        };
-    }
-
-    private static function canClosePage(EstimateGenerationSession $session): bool
-    {
-        return !in_array((string) $session->status, ['failed'], true);
-    }
-
-    private static function userAction(EstimateGenerationSession $session): string
-    {
-        return match ((string) $session->status) {
-            'failed' => 'retry',
-            'blocked', 'review_required', 'ready_for_review' => 'review',
-            default => 'wait',
-        };
+        return app(DocumentGenerationReadinessService::class)->evaluate($session)['summary'] ?? [];
     }
 }

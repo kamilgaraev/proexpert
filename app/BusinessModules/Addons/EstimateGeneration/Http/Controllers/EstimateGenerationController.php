@@ -283,23 +283,8 @@ class EstimateGenerationController extends Controller
     public function status(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
     {
         $this->guardSession($request, $project, $session);
-        $this->loadSessionDocumentsForReadiness($session);
-        $packages = $session->packages()->get();
-        $documentsSummary = $this->documentReadinessService->evaluate($session)['summary'];
 
-        return AdminResponse::success([
-            'id' => $session->id,
-            'status' => $session->status,
-            'processing_stage' => $session->processing_stage,
-            'processing_progress' => $session->processing_progress,
-            'progress' => EstimateGenerationSessionResource::progressPayload($session),
-            'packages_summary' => $this->packagePresenter->collection($packages)['summary'],
-            'documents_summary' => $documentsSummary,
-            'estimator_readiness' => $this->estimatorReadinessService->evaluate($session),
-            'problem_flags_count' => count($session->problem_flags ?? []),
-            'last_error' => $session->last_error,
-            'updated_at' => $session->updated_at?->toISOString(),
-        ]);
+        return AdminResponse::success($this->sessionPayload($session));
     }
 
     public function packages(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse

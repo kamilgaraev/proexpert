@@ -177,4 +177,10 @@ return [
     'training_quality_accepted' => 'Принято',
     'training_quality_needs_review' => 'Нужна проверка',
     'training_quality_failed' => 'Ошибка',
+    'action_upload_documents' => 'Загрузить документы',
+    'action_start_document_processing' => 'Начать обработку документов',
+    'action_generate' => 'Сформировать смету',
+    'action_review' => 'Проверить смету',
+    'action_apply' => 'Создать смету проекта',
+    'action_retry' => 'Повторить обработку',
 ];
