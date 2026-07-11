@@ -176,7 +176,7 @@ final class EstimateGenerationWorkflowTest extends TestCase
     }
 
     #[Test]
-    public function retried_resumes_allowed_status_and_clears_resume_status(): void
+    public function retried_apply_returns_to_ready_state_and_clears_resume_status(): void
     {
         $store = new InMemorySessionStateStore($this->session(
             EstimateGenerationStatus::Failed,
@@ -186,7 +186,7 @@ final class EstimateGenerationWorkflowTest extends TestCase
 
         $updated = $this->workflow($store)->transition($store->current(), EstimateGenerationEvent::Retried);
 
-        self::assertSame(EstimateGenerationStatus::Applying, $updated->status);
+        self::assertSame(EstimateGenerationStatus::ReadyToApply, $updated->status);
         self::assertNull($updated->resume_status);
         self::assertSame(8, $updated->state_version);
     }

@@ -132,6 +132,19 @@ PHP;
         self::assertSame([], $this->analyzer($this->projectSources())->mutations($source));
     }
 
+    #[Test]
+    public function ai_module_depends_on_ports_not_budget_estimate_concretes(): void
+    {
+        $violations = [];
+        foreach ($this->projectSources() as $path => $source) {
+            if (str_contains($source, 'BusinessModules\\Features\\BudgetEstimates')) {
+                $violations[] = $path;
+            }
+        }
+
+        self::assertSame([], $violations);
+    }
+
     /** @param array<string, string> $sources */
     private function analyzer(array $sources): OrdinaryEstimateBoundaryAnalyzer
     {

@@ -9,7 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNo
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
-use App\BusinessModules\Features\BudgetEstimates\Integrations\EstimateGeneration\EstimateGenerationLearningBootstrapService;
+use App\Integrations\EstimateGeneration\EstimateGenerationLearningBootstrapService;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\EstimateSection;

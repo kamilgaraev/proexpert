@@ -83,7 +83,9 @@ final class EstimateGenerationTransitionMap
                 throw new InvalidEstimateGenerationTransition($status, $event);
             }
 
-            return $resumeStatus;
+            return $resumeStatus === EstimateGenerationStatus::Applying
+                ? EstimateGenerationStatus::ReadyToApply
+                : $resumeStatus;
         }
 
         return EstimateGenerationStatus::from($target);

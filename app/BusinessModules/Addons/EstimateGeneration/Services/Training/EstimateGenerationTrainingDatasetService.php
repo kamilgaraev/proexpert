@@ -12,8 +12,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateNorm
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
-use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportFormatDetector;
-use App\BusinessModules\Features\BudgetEstimates\Services\Import\Runtime\ImportFormatRegistry;
 use App\Models\ImportSession;
 use App\Models\Organization;
 use App\Models\Project;
@@ -30,21 +28,20 @@ final class EstimateGenerationTrainingDatasetService
 {
     public function __construct(
         private readonly FileService $fileService,
-        private readonly ImportFormatDetector $formatDetector,
-        private readonly ImportFormatRegistry $formatRegistry,
+        private readonly TrainingEstimateRowsReader $rowsReader,
         private readonly TrainingEstimateRowNormalizer $rowNormalizer,
         private readonly WorkIntentClassifier $workIntentClassifier,
         private readonly EstimateGenerationLearningRecorder $learningRecorder,
     ) {}
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      */
     public function createFromFilament(array $data, ?SystemAdmin $actor): EstimateGenerationTrainingDataset
     {
         $organization = Organization::query()->find((int) ($data['organization_id'] ?? 0));
 
-        if (!$organization instanceof Organization) {
+        if (! $organization instanceof Organization) {
             throw ValidationException::withMessages([
                 'organization_id' => [trans_message('estimate_generation.training_organization_required')],
             ]);
@@ -52,7 +49,7 @@ final class EstimateGenerationTrainingDatasetService
 
         $referenceFile = $data['reference_estimate_file'] ?? null;
 
-        if (!$referenceFile instanceof TemporaryUploadedFile) {
+        if (! $referenceFile instanceof TemporaryUploadedFile) {
             throw ValidationException::withMessages([
                 'reference_estimate_file' => [trans_message('estimate_generation.training_reference_estimate_required')],
             ]);
@@ -65,7 +62,7 @@ final class EstimateGenerationTrainingDatasetService
                 ->where('organization_id', (int) $organization->id)
                 ->find($projectId);
 
-            if (!$project instanceof Project) {
+            if (! $project instanceof Project) {
                 throw ValidationException::withMessages([
                     'project_id' => [trans_message('estimate_generation.training_project_not_found')],
                 ]);
@@ -130,7 +127,7 @@ final class EstimateGenerationTrainingDatasetService
             ->where('file_role', EstimateGenerationTrainingFile::ROLE_REFERENCE_ESTIMATE)
             ->first();
 
-        if (!$referenceFile instanceof EstimateGenerationTrainingFile) {
+        if (! $referenceFile instanceof EstimateGenerationTrainingFile) {
             throw new \RuntimeException(trans_message('estimate_generation.training_reference_estimate_required'));
         }
 
@@ -183,15 +180,7 @@ final class EstimateGenerationTrainingDatasetService
         string $tempPath
     ): array {
         $session = $this->temporaryImportSession($dataset, $referenceFile);
-        $detection = $this->formatDetector->detect($session, $tempPath);
-
-        if ($detection === null || $detection->confidence <= 0.0) {
-            throw new \RuntimeException(trans_message('estimate_generation.training_format_not_detected'));
-        }
-
-        $handler = $this->formatRegistry->bySlug($detection->formatSlug);
-        $structure = $handler->detectStructure($session, $tempPath);
-        $preview = $handler->preview($session, $tempPath, $structure);
+        $rows = $this->rowsReader->rows($session, $tempPath);
         $stats = [
             'uploaded_files' => $dataset->files()->count(),
             'parsed_rows' => 0,
@@ -203,12 +192,13 @@ final class EstimateGenerationTrainingDatasetService
             'learning_examples_total' => 0,
         ];
 
-        foreach ($preview->items as $row) {
+        foreach ($rows as $row) {
             $stats['parsed_rows']++;
             $trainingExample = $this->upsertTrainingExample($dataset, $referenceFile, is_array($row) ? $row : (array) $row);
 
             if ($trainingExample->status !== EstimateGenerationTrainingExample::STATUS_ACCEPTED) {
                 $stats['skipped_rows']++;
+
                 continue;
             }
 
@@ -217,12 +207,14 @@ final class EstimateGenerationTrainingDatasetService
             if ($recorded['status'] === 'norm_not_found') {
                 $stats['norm_not_found_rows']++;
                 $stats['skipped_rows']++;
+
                 continue;
             }
 
             if ($recorded['status'] === 'unit_mismatch') {
                 $stats['unit_mismatch_rows']++;
                 $stats['skipped_rows']++;
+
                 continue;
             }
 
@@ -235,7 +227,7 @@ final class EstimateGenerationTrainingDatasetService
     }
 
     /**
-     * @param array<string, mixed> $row
+     * @param  array<string, mixed>  $row
      */
     private function upsertTrainingExample(
         EstimateGenerationTrainingDataset $dataset,
@@ -286,7 +278,7 @@ final class EstimateGenerationTrainingDatasetService
             ->latest('id')
             ->first();
 
-        if (!$norm instanceof EstimateNorm) {
+        if (! $norm instanceof EstimateNorm) {
             $this->markTrainingExample($trainingExample, EstimateGenerationTrainingExample::STATUS_SKIPPED, ['norm_not_found']);
 
             return ['status' => 'norm_not_found', 'created' => 0];
@@ -295,7 +287,7 @@ final class EstimateGenerationTrainingDatasetService
         $flags = array_map('strval', $trainingExample->quality_flags ?? []);
         $workUnit = $trainingExample->work_unit;
 
-        if ($workUnit === null || !NormativeUnitNormalizer::compatible($workUnit, (string) $norm->unit)) {
+        if ($workUnit === null || ! NormativeUnitNormalizer::compatible($workUnit, (string) $norm->unit)) {
             $this->markTrainingExample($trainingExample, EstimateGenerationTrainingExample::STATUS_SKIPPED, ['unit_mismatch']);
 
             return ['status' => 'unit_mismatch', 'created' => 0];
@@ -379,7 +371,7 @@ final class EstimateGenerationTrainingDatasetService
     }
 
     /**
-     * @param array<int, string> $extraFlags
+     * @param  array<int, string>  $extraFlags
      */
     private function markTrainingExample(EstimateGenerationTrainingExample $trainingExample, string $status, array $extraFlags): void
     {
@@ -393,7 +385,7 @@ final class EstimateGenerationTrainingDatasetService
     }
 
     /**
-     * @param array<int, TemporaryUploadedFile>|TemporaryUploadedFile|mixed $files
+     * @param  array<int, TemporaryUploadedFile>|TemporaryUploadedFile|mixed  $files
      */
     private function storeUploadedFiles(
         EstimateGenerationTrainingDataset $dataset,
@@ -417,12 +409,12 @@ final class EstimateGenerationTrainingDatasetService
         string $role
     ): EstimateGenerationTrainingFile {
         $extension = strtolower($file->getClientOriginalExtension() ?: pathinfo($file->getClientOriginalName(), PATHINFO_EXTENSION));
-        $filename = (string) Str::uuid() . ($extension !== '' ? ".{$extension}" : '');
+        $filename = (string) Str::uuid().($extension !== '' ? ".{$extension}" : '');
         $directory = "estimate-generation/training-datasets/{$dataset->uuid}/{$role}";
         $storagePath = OrganizationStoragePath::forOrganization((int) $organization->id, "{$directory}/{$filename}");
         $realPath = $file->getRealPath();
 
-        if ($realPath === false || !is_file($realPath)) {
+        if ($realPath === false || ! is_file($realPath)) {
             throw ValidationException::withMessages([
                 'reference_estimate_file' => [trans_message('estimate_generation.training_upload_failed')],
             ]);
@@ -457,10 +449,10 @@ final class EstimateGenerationTrainingDatasetService
     private function downloadToTemp(EstimateGenerationTrainingFile $file): string
     {
         $extension = strtolower(pathinfo($file->storage_path, PATHINFO_EXTENSION));
-        $tempPath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . (string) Str::uuid() . ($extension !== '' ? ".{$extension}" : '');
+        $tempPath = sys_get_temp_dir().DIRECTORY_SEPARATOR.(string) Str::uuid().($extension !== '' ? ".{$extension}" : '');
         $organization = $file->organization;
 
-        if (!$organization instanceof Organization) {
+        if (! $organization instanceof Organization) {
             throw new \RuntimeException(trans_message('estimate_generation.training_organization_required'));
         }
 
@@ -497,7 +489,7 @@ final class EstimateGenerationTrainingDatasetService
     }
 
     /**
-     * @param array<string, mixed> $normalized
+     * @param  array<string, mixed>  $normalized
      * @return array<int, array<string, mixed>>
      */
     private function sourceRefs(
@@ -530,7 +522,7 @@ final class EstimateGenerationTrainingDatasetService
 
     private function nullableInt(mixed $value): ?int
     {
-        if (!is_numeric($value) || (int) $value <= 0) {
+        if (! is_numeric($value) || (int) $value <= 0) {
             return null;
         }
 

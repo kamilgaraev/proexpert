@@ -28,8 +28,8 @@ RED подтверждён до реализации:
 
 ## Проверки
 
-- DB-less Plan 1 gate: `98 passed`, `586 assertions`.
-- PHPStan/Larastan по Domain/Application/Http/Learning и новым integration adapters: `[OK] No errors`, 67 файлов, `--memory-limit=1G`.
+- DB-less Plan 1 gate после review-fix: `111 passed`, `637 assertions`.
+- PHPStan/Larastan по Domain/Application/Http/Learning/Training, composition root и integration adapters: `[OK] No errors`, 80 файлов, `--memory-limit=1G`.
 - Pint: 36 файлов, 16 style issues исправлены; повторный тестовый gate GREEN.
 - `php -l`: все 36 изменённых/новых PHP-файлов без синтаксических ошибок.
 - `git diff --check`: чисто.
@@ -41,3 +41,13 @@ RED подтверждён до реализации:
 ## Особое замечание окружения
 
 Один ранний запуск существующего model unit test через базовый проектный `Tests\\TestCase` неожиданно активировал migration hooks тестового окружения. После обнаружения такие тесты исключены; финальные проверки выполнялись только подтверждённо DB-less наборами. Команды `artisan migrate`, DB artisan и production-записи не выполнялись.
+
+## Исправления после code review
+
+- Tenant guard для confirm/retry/cancel/archive проверен через реальные временные HTTP routes: чужая организация получает стандартизированный `403`, а не `500`; 404/HTTP semantics не поглощаются generic error handler.
+- `/retry` выделен в authoritative application use case со scoped `organization_id`/`project_id`, транзакционной блокировкой и CAS.
+- Повтор документов ставит после commit только pending/failed IDs, не считает `ignored` блокером и переводит `needs_review` в ручную проверку.
+- Повтор генерации ротирует attempt token и ставит ровно одну job после commit; stale version не создаёт dispatch.
+- Повтор применения возвращает `failed(applying)` в `ready_to_apply`, не оставляя сессию зависшей.
+- AI-модуль зависит только от собственных портов. Конкретные export/learning/number/training adapters перенесены в `App\\Integrations\\EstimateGeneration`, а bindings находятся в отдельном composition-root provider.
+- Исправлена подпись manifest для `estimate_generation.select_normative`: «Выбор нормативов AI-сметчика».

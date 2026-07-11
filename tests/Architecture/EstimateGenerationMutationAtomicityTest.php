@@ -50,6 +50,20 @@ final class EstimateGenerationMutationAtomicityTest extends TestCase
         self::assertLessThan(strpos($source, '$this->reconciler->reconcile'), strpos($source, '$this->reconciler->changed'));
     }
 
+    #[Test]
+    public function retry_scopes_and_locks_session_while_dispatchers_use_after_commit(): void
+    {
+        $repository = $this->source('Application/Sessions/EloquentRetryableEstimateGenerationSessionRepository.php');
+        $dispatcher = $this->source('Application/Sessions/LaravelEstimateGenerationRetryDispatcher.php');
+
+        self::assertStringContainsString('DB::transaction', $repository);
+        self::assertStringContainsString("->where('organization_id', \$organizationId)", $repository);
+        self::assertStringContainsString("->where('project_id', \$projectId)", $repository);
+        self::assertStringContainsString('->lockForUpdate()', $repository);
+        self::assertStringContainsString('->firstOrFail()', $repository);
+        self::assertSame(2, substr_count($dispatcher, '->afterCommit()'));
+    }
+
     private function source(string $relative): string
     {
         $source = file_get_contents(dirname(__DIR__, 2).'/app/BusinessModules/Addons/EstimateGeneration/'.$relative);

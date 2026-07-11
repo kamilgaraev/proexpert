@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\BusinessModules\Features\BudgetEstimates\Integrations\EstimateGeneration;
+namespace App\Integrations\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\OrdinaryEstimateNumberLookup;
 use App\Models\Estimate;

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Console\Commands;
 
-use App\BusinessModules\Features\BudgetEstimates\Integrations\EstimateGeneration\EstimateGenerationLearningBootstrapService;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Learning\EstimateGenerationLearningBootstrapper;
 use Illuminate\Console\Command;
 
 final class BootstrapEstimateGenerationLearningCommand extends Command
@@ -22,7 +22,7 @@ final class BootstrapEstimateGenerationLearningCommand extends Command
 
     protected $description = 'Bootstrap estimate generation learning examples from already imported estimates.';
 
-    public function handle(EstimateGenerationLearningBootstrapService $bootstrapService): int
+    public function handle(EstimateGenerationLearningBootstrapper $bootstrapService): int
     {
         $minQuality = $this->floatOption('min-quality', 0.85);
 

@@ -2,14 +2,15 @@
 
 declare(strict_types=1);
 
-namespace App\BusinessModules\Features\BudgetEstimates\Integrations\EstimateGeneration;
+namespace App\Integrations\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Export\EstimateGenerationExporter;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationFinalWorkItemGuard;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\ExcelEstimateBuilder;
 use App\Models\Estimate;
 
-class EstimateGenerationExcelExportService
+final class EstimateGenerationExcelExportService implements EstimateGenerationExporter
 {
     private ?EstimateGenerationFinalWorkItemGuard $finalWorkItemGuard = null;
 

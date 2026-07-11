@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerat
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorReadinessService;
+use App\Domain\Authorization\Services\AuthorizationService;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
 use App\Models\User;
@@ -21,22 +22,70 @@ use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Support\Facades\Route;
+use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 
 final class EstimateGenerationWorkflowApiTest extends TestCase
 {
     public function createApplication()
     {
-        $app = require dirname(__DIR__, 3) . '/bootstrap/app.php';
+        $app = require dirname(__DIR__, 3).'/bootstrap/app.php';
         $app->make(Kernel::class)->bootstrap();
 
         return $app;
     }
 
     #[Test]
+    #[DataProvider('tenantGuardedTransitions')]
+    public function foreign_tenant_transition_returns_403_not_500(string $method): void
+    {
+        $user = new TestPermissionUser(['estimate_generation.review', 'estimate_generation.generate']);
+        $user->forceFill(['id' => 5, 'current_organization_id' => 10]);
+        $project = new Project;
+        $project->id = 20;
+        $session = new EstimateGenerationSession([
+            'organization_id' => 999,
+            'project_id' => 20,
+            'status' => EstimateGenerationStatus::Failed,
+            'state_version' => 3,
+        ]);
+        $session->id = 71;
+        $session->exists = true;
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->shouldReceive('can')->once()->andReturnTrue();
+        $this->app->instance(AuthorizationService::class, $authorization);
+        $route = '/_contract/foreign/'.$method.'/projects/{project}/sessions/{session}';
+        Route::bind('project', static fn (): Project => $project);
+        Route::bind('session', static fn (): EstimateGenerationSession => $session);
+        Route::post($route, [EstimateGenerationController::class, $method])
+            ->middleware(SubstituteBindings::class);
+        $this->actingAs($user);
+
+        $response = $this->postJson(str_replace(
+            ['{project}', '{session}'],
+            ['20', '71'],
+            $route,
+        ), ['state_version' => 3]);
+
+        $response->assertForbidden()
+            ->assertJsonPath('success', false);
+    }
+
+    public static function tenantGuardedTransitions(): array
+    {
+        return [
+            'confirm' => ['confirmInput'],
+            'retry' => ['retry'],
+            'cancel' => ['cancel'],
+            'archive' => ['archive'],
+        ];
+    }
+
+    #[Test]
     public function admin_response_wraps_snapshot_exactly_once(): void
     {
-        $session = new EstimateGenerationSession();
+        $session = new EstimateGenerationSession;
         $session->forceFill([
             'id' => 41,
             'project_id' => 17,
@@ -67,15 +116,15 @@ final class EstimateGenerationWorkflowApiTest extends TestCase
     #[Test]
     public function real_http_route_returns_standardized_snapshot_and_route_aligned_review_permission(): void
     {
-        $project = new Project();
+        $project = new Project;
         $project->forceFill(['id' => 17]);
         $session = $this->makeSession(41);
         $session->forceFill(['organization_id' => 9]);
         $session->setRelation('documents', collect());
         $user = new TestPermissionUser(['estimate_generation.view']);
         $user->forceFill(['id' => 3, 'current_organization_id' => 9]);
-        $readiness = new CountingEstimatorReadinessService();
-        $documents = new CountingDocumentReadinessService();
+        $readiness = new CountingEstimatorReadinessService;
+        $documents = new CountingDocumentReadinessService;
         $this->app->instance(EstimatorReadinessService::class, $readiness);
         $this->app->instance(DocumentGenerationReadinessService::class, $documents);
         Route::bind('project', static fn (): Project => $project);
@@ -102,7 +151,7 @@ final class EstimateGenerationWorkflowApiTest extends TestCase
     #[Test]
     public function list_collection_does_not_resolve_heavy_readiness_dependencies(): void
     {
-        $readiness = new CountingEstimatorReadinessService();
+        $readiness = new CountingEstimatorReadinessService;
         $this->app->instance(EstimatorReadinessService::class, $readiness);
 
         $request = Request::create('/api/v1/admin/projects/17/estimate-generation/sessions', 'GET');
@@ -121,7 +170,7 @@ final class EstimateGenerationWorkflowApiTest extends TestCase
 
     private function makeSession(int $id): EstimateGenerationSession
     {
-        $session = new EstimateGenerationSession();
+        $session = new EstimateGenerationSession;
         $session->forceFill([
             'id' => $id,
             'project_id' => 17,

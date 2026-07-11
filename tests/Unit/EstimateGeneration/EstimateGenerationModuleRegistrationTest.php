@@ -18,6 +18,10 @@ final class EstimateGenerationModuleRegistrationTest extends TestCase
             $providers
         );
         self::assertStringNotContainsString('AIEstimatesServiceProvider', $providers);
+        self::assertStringContainsString(
+            'App\\Providers\\EstimateGenerationIntegrationServiceProvider::class',
+            $providers,
+        );
     }
 
     public function test_ai_estimates_manifest_points_to_estimate_generation_module(): void
@@ -49,6 +53,11 @@ final class EstimateGenerationModuleRegistrationTest extends TestCase
         sort($actualPermissions);
 
         self::assertSame($expectedPermissions, $actualPermissions);
+        $descriptions = array_column($manifest['permissions'] ?? [], 'description', 'name');
+        self::assertSame(
+            'Выбор нормативов AI-сметчика',
+            $descriptions['estimate_generation.select_normative'] ?? null,
+        );
     }
 
     public function test_legacy_ai_estimates_directory_is_removed(): void

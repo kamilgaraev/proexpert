@@ -7,12 +7,15 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimate;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\UploadEstimateGenerationDocuments;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Export\EstimateGenerationExporter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\AnalyzeEstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RebuildGeneratedSection;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RequestEstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Review\RecordEstimateGenerationFeedback;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Review\SelectNormativeCandidate;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\CreateEstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryEstimateGenerationSessionCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\TransitionEstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationState;
@@ -41,7 +44,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPac
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationReviewItemService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateManualSearchService;
-use App\BusinessModules\Features\BudgetEstimates\Integrations\EstimateGeneration\EstimateGenerationExcelExportService;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
@@ -59,7 +61,7 @@ class EstimateGenerationController extends Controller
 {
     public function __construct(
         protected ApplyGeneratedEstimate $applyGeneratedEstimate,
-        protected EstimateGenerationExcelExportService $excelExportService,
+        protected EstimateGenerationExporter $excelExportService,
         protected EstimateGenerationRegionalContextResolver $regionalContextResolver,
         protected EstimateGenerationFinalWorkItemGuard $finalWorkItemGuard,
         protected EstimateGenerationPackagePresenter $packagePresenter,
@@ -73,6 +75,7 @@ class EstimateGenerationController extends Controller
         protected AnalyzeEstimateGenerationSession $analyzeSession,
         protected RequestEstimateGeneration $requestGeneration,
         protected TransitionEstimateGenerationSession $transitionSession,
+        protected RetryEstimateGenerationSession $retrySession,
     ) {}
 
     public function index(Request $request, Project $project): JsonResponse
@@ -245,14 +248,37 @@ class EstimateGenerationController extends Controller
 
     public function retry(ControlEstimateGenerationSessionRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse
     {
-        return $this->transitionSessionResponse(
-            $request,
-            $project,
-            $session,
-            EstimateGenerationEvent::Retried,
-            'estimate_generation.session_retried',
-            'retry session',
-        );
+        try {
+            $this->guardSession($request, $project, $session);
+            $updated = $this->retrySession->handle(new RetryEstimateGenerationSessionCommand(
+                (int) $session->getKey(),
+                (int) $request->user()->current_organization_id,
+                (int) $project->getKey(),
+                (int) $request->validated('state_version'),
+            ));
+
+            return AdminResponse::success(
+                $this->sessionPayload($updated),
+                trans_message('estimate_generation.session_retried'),
+            );
+        } catch (StaleEstimateGenerationState|InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (HttpExceptionInterface $exception) {
+            return AdminResponse::error(
+                $exception->getMessage() !== ''
+                    ? $exception->getMessage()
+                    : trans_message('estimate_generation.access_denied'),
+                $exception->getStatusCode(),
+            );
+        } catch (\Throwable $exception) {
+            Log::error('[EstimateGeneration] Session retry failed', [
+                'project_id' => $project->id,
+                'session_id' => $session->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return AdminResponse::error(trans_message('estimate_generation.session_transition_error'), 500);
+        }
     }
 
     public function cancel(ControlEstimateGenerationSessionRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse
@@ -620,6 +646,13 @@ class EstimateGenerationController extends Controller
             );
         } catch (StaleEstimateGenerationState|InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (HttpExceptionInterface $exception) {
+            return AdminResponse::error(
+                $exception->getMessage() !== ''
+                    ? $exception->getMessage()
+                    : trans_message('estimate_generation.access_denied'),
+                $exception->getStatusCode(),
+            );
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Session transition failed', [
                 'operation' => $operation,

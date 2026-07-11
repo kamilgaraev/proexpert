@@ -2,15 +2,16 @@
 
 declare(strict_types=1);
 
-namespace App\BusinessModules\Features\BudgetEstimates\Integrations\EstimateGeneration;
+namespace App\Integrations\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Learning\EstimateGenerationLearningBootstrapper;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationLearningExample;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder;
 use App\Models\Estimate;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
-final class EstimateGenerationLearningBootstrapService
+final class EstimateGenerationLearningBootstrapService implements EstimateGenerationLearningBootstrapper
 {
     private const DEFAULT_CHUNK_SIZE = 100;
 

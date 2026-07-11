@@ -67,13 +67,15 @@
 | `ready_to_apply` | `cancelled` | `cancelled` |
 | `applying` | `apply_completed` | `applied` |
 | `applying` | `failed` | `failed` |
-| `failed` | `retried` | сохранённый активный статус |
+| `failed` | `retried` после обработки документов | `processing_documents`, `input_review_required` или `ready_to_generate` по состоянию документов |
+| `failed` | `retried` после генерации | `generating` с новой попыткой |
+| `failed` | `retried` после применения | `ready_to_apply` |
 | `failed` | `cancelled` | `cancelled` |
 | `failed` | `archived` | `archived` |
 | `cancelled` | `archived` | `archived` |
 | `applied` | `archived` | `archived` |
 
-Переходы, отсутствующие в таблице, запрещены. Для `retried` допустимы только сохранённые статусы `processing_documents`, `generating` и `applying`.
+Переходы, отсутствующие в таблице, запрещены. Для `retried` допустимы только сохранённые статусы `processing_documents`, `generating` и `applying`; последний безопасно нормализуется в `ready_to_apply`.
 
 ## Терминальные состояния и инварианты
 

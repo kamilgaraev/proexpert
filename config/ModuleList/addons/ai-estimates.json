@@ -64,7 +64,7 @@
     },
     {
       "name": "estimate_generation.select_normative",
-      "description": "Настройка AI-сметчика"
+      "description": "Выбор нормативов AI-сметчика"
     }
   ],
   "limits": {
