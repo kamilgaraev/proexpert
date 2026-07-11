@@ -31,7 +31,7 @@ class SyncFgiscsBuildingResourcePricesCommand extends Command
                 bucket: (string) $this->option('bucket'),
                 periodId: $this->option('period-id') !== null ? (int) $this->option('period-id') : null,
                 force: (bool) $this->option('force'),
-                withSplitForm: !(bool) $this->option('without-split-form'),
+                withSplitForm: ! (bool) $this->option('without-split-form'),
                 progress: $progress,
             );
 
@@ -41,14 +41,14 @@ class SyncFgiscsBuildingResourcePricesCommand extends Command
 
             return self::SUCCESS;
         } catch (Throwable $exception) {
-            $this->error($exception->getMessage());
+            $this->error(trans_message('estimate_generation.operation_error'));
 
             return self::FAILURE;
         }
     }
 
     /**
-     * @param array<string, mixed> $result
+     * @param  array<string, mixed>  $result
      * @return array<int, array{0:string,1:string}>
      */
     private function summaryRows(array $result): array

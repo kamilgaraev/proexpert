@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline;
 
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
@@ -31,11 +32,11 @@ final class PipelineRunner
     public function __construct(
         private readonly PipelineRegistry $registry,
         private readonly PipelineCheckpointStore $checkpointStore,
+        private readonly FailureRecorder $failureRecorder,
+        private readonly FailureWorkflowHandler $failureWorkflowHandler,
         callable $clock,
         private readonly int $leaseSeconds = self::DEFAULT_LEASE_SECONDS,
         ?PipelineFailureObserver $failureObserver = null,
-        private readonly ?FailureRecorder $failureRecorder = null,
-        private readonly ?FailureWorkflowHandler $failureWorkflowHandler = null,
     ) {
         if ($leaseSeconds <= 0) {
             throw new InvalidArgumentException('Pipeline checkpoint lease must be positive.');
@@ -89,17 +90,17 @@ final class PipelineRunner
             }
 
             try {
-                $this->failureRecorder?->resolveActive($this->failureContext($claim));
+                $this->failureRecorder->resolveActive($this->failureContext($claim));
             } catch (Throwable) {
             }
 
             return $result;
         } catch (Throwable $error) {
-            $failure = $this->failureRecorder?->capture($error, $this->failureContext($claim));
+            $failure = $this->failureRecorder->capture($error, $this->failureContext($claim));
             $recorded = $this->recordFailureWithoutMasking($claim, $error);
-            if ($recorded && $failure !== null) {
+            if ($recorded) {
                 try {
-                    $this->failureWorkflowHandler?->handle($failure, $claim->context->stateVersion);
+                    $this->failureWorkflowHandler->handle($failure, $claim->context->stateVersion);
                 } catch (Throwable) {
                 }
             }
@@ -157,7 +158,15 @@ final class PipelineRunner
             stage: $claim->stage,
             operation: 'run_stage',
             attempt: $claim->attempt,
-            correlationId: (string) $claim->claimToken,
+            correlationId: AiOperationContext::deterministicId(sprintf(
+                'pipeline|%d|%s|%s',
+                $claim->context->sessionId,
+                $claim->stage->value,
+                $claim->context->inputVersion,
+            )),
+            eventId: (string) $claim->claimToken,
+            expectedSessionStateVersion: $claim->context->stateVersion,
+            expectedSessionStatus: $claim->context->sessionStatus,
             checkpointId: $claim->checkpointId,
         );
     }

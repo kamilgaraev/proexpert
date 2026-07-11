@@ -9,8 +9,8 @@ use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 use Throwable;
 
 use function trans_message;
@@ -37,9 +37,7 @@ class EstimateNormativeStatusController extends Controller
             throw $exception;
         } catch (Throwable $exception) {
             Log::error('[EstimateNormatives] Failed to load import status', [
-                'source' => $request->input('source'),
-                'version' => $request->input('version'),
-                'error' => $exception->getMessage(),
+                'failure_code' => 'normative_status_failed',
             ]);
 
             return AdminResponse::error(trans_message('auth.server_error'), 500);

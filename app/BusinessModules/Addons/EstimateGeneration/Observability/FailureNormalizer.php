@@ -10,7 +10,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateG
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageException;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrConfigurationException;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrProviderException;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\PdfGeometryExtractionException;
 use Throwable;
 
 final readonly class FailureNormalizer
@@ -30,7 +29,6 @@ final readonly class FailureNormalizer
                 ['http_code' => $error->httpCode, 'status' => $error->attemptStatus],
             ],
             $error instanceof DocumentManifestNeedsReview => [FailureCategory::UserActionRequired, 'document_manifest_review_required', []],
-            $error instanceof PdfGeometryExtractionException => [FailureCategory::UserActionRequired, 'drawing_geometry_unreadable', []],
             $error instanceof DocumentUnitProcessingException => [
                 $this->unitCategory($error->safeCode),
                 $this->safeKnownCode($error->safeCode, 'unit_processing_failed'),

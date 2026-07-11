@@ -20,6 +20,10 @@ final readonly class FailureData
         if (preg_match('/\A[a-z][a-z0-9_]{0,79}\z/', $code) !== 1) {
             throw new InvalidArgumentException('Invalid failure code.');
         }
+        if ((new SensitiveDiagnosticSanitizer)->sanitize($safeContext) !== $safeContext
+            || strlen(json_encode($safeContext, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES)) > 2048) {
+            throw new InvalidArgumentException('Failure safe context violates the closed diagnostic contract.');
+        }
 
         $this->fingerprint = $this->buildFingerprint();
     }

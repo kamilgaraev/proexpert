@@ -2,49 +2,25 @@
 
 ## Результат
 
-- Добавлен tenant-scoped журнал нормализованных сбоев AI‑сметчика с закрытыми категориями `recoverable`, `user_action_required`, `terminal`.
-- Добавлены typed mapping для OCR, reranker, pipeline claim/contract, storage, configuration, validation и document unit claim/lineage ошибок; неизвестные исключения сводятся к `unexpected_internal_failure`.
-- Fingerprint не зависит от throwable message, prompt, документа или персональных данных.
-- Добавлен рекурсивный closed-allowlist sanitizer с ограничениями глубины, ширины и строки, фильтрацией не-JSON значений и token-like строк.
-- Aggregate failure и immutable occurrence history разделены. `event_id` делает повторную доставку одного logical failure идемпотентной, а новый physical failure атомарно увеличивает occurrence count.
-- Record/resolve/reopen выполняются через PostgreSQL invoker functions и controlled mutation triggers. Добавлены composite tenant FKs, CHECK constraints, индексы и cascade lifecycle.
-- PipelineRunner, unit OCR, document manifest job и generation failed hook подключены к ledger. Recorder/handler failure не заменяет исходный throwable и не меняет retry semantics.
-- Recoverable не меняет workflow; user-action переводит документную или generation стадию в review; terminal переводит сессию в failed только через workflow и сохраняет safe `failure_code`.
-- Успешный повтор закрывает активные occurrences без удаления истории. Повтор после resolve переоткрывает aggregate.
-- Raw throwable message удалён из runtime job/log/notification/session/checkpoint diagnostic paths. Обычные сметы и shared AI Assistant не изменялись.
-
-## TDD
-
-RED был зафиксирован до production implementation:
-
-- отсутствовали `SensitiveDiagnosticSanitizer`, `FailureCategory`, `FailureNormalizer`;
-- отсутствовали `FailureStore`, recorder non-masking и controlled resolve;
-- отсутствовали persistence schema/model/store;
-- `PipelineFailureDetails` менял fingerprint при изменении throwable message;
-- unit recovery не записывал failure и не закрывал его после успешного retry;
-- отсутствовал typed workflow handler.
-
-После каждого RED добавлялся минимальный contract, затем выполнялся GREEN и regression.
+- Диагностика AI-сметчика переведена на неизменяемый журнал: идентичность сбоя, события возникновения и закрытия разделены, а текущее состояние вычисляется представлением PostgreSQL.
+- Повторная доставка одного события идемпотентна благодаря стабильному `event_id`; отдельная попытка получает новый идентификатор.
+- Закрытие сбоя привязано к точной последовательности возникновения, tenant-границы защищены составными внешними ключами и ограничениями.
+- Добавлен строгий workflow fence: устаревшие, завершённые и сменившие версию сессии фоновые задачи не меняют состояние.
+- Recorder и workflow handler обязательны в pipeline, unit processing и OCR/geometry processing; ошибка наблюдаемости не подменяет исходное исключение.
+- Контекст диагностики ограничен закрытым набором безопасных скалярных полей, диапазонами и лимитом JSON. Секреты, пути, токены и произвольные строки отбрасываются.
+- Raw throwable messages удалены из логов, API, уведомлений, checkpoint и session diagnostics модуля.
+- OCR и извлечение геометрии используют типизированные категории ошибок и сохраняют retry-семантику.
+- Обычные сметы и shared AI Assistant не изменялись.
 
 ## Проверки
 
-- DB-less regression: `141 passed (564 assertions)`.
-- PHPStan/Larastan, 137 затронутых backend files, `--memory-limit=1G`: `No errors`.
-- Pint: `45 files`, `10 style issues fixed`, повторный тестовый gate GREEN.
-- `php -l`: все изменённые PHP-файлы без синтаксических ошибок.
-- `git diff --check`: чисто.
+- DB-less regression после Pint: `158 passed (964 assertions)`.
+- PHPStan/Larastan по затронутым областям с `--memory-limit=1G`: `No errors`.
+- `php -l`: 44 изменённых PHP-файла без синтаксических ошибок.
+- `git diff --check`: замечаний нет.
 
 ## PostgreSQL-only
 
-Написан opt-in `EstimateGenerationFailureLedgerPostgresTest`, но локально не запускался:
+Добавлен opt-in контрактный тест неизменяемого журнала: идемпотентность, contention, resolve/reopen, tenant/privacy constraints, запрет изменения истории и cascade lifecycle.
 
-- committed-winner contention на двух независимых connections;
-- повтор одного `event_id` не увеличивает occurrence;
-- новые events увеличивают aggregate и сохраняют immutable history;
-- resolve/reopen;
-- tenant/privacy/collision/controlled mutation constraints;
-- session cascade и disposable fixture cleanup.
-
-Для запуска требуется изолированное PostgreSQL-окружение и `RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT=1`.
-
-Миграции локально не запускались.
+Тест локально не запускался, поскольку требует изолированного PostgreSQL и `RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT=1`. Миграции и команды, открывающие подключение к БД, не запускались.

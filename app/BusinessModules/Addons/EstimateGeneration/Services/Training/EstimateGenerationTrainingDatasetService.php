@@ -154,13 +154,14 @@ final class EstimateGenerationTrainingDatasetService
             $dataset->forceFill([
                 'status' => EstimateGenerationTrainingDataset::STATUS_FAILED,
                 'quality_status' => 'failed',
-                'error_message' => $e->getMessage(),
+                'error_message' => 'training_dataset_processing_failed',
                 'processed_at' => now(),
             ])->save();
 
             Log::error('[EstimateGenerationTraining] Dataset processing failed', [
                 'dataset_id' => $dataset->id,
-                'error' => $e->getMessage(),
+                'failure_code' => 'training_dataset_processing_failed',
+                'failure_fingerprint' => hash('sha256', $e::class.'|'.(string) $e->getCode()),
             ]);
 
             throw $e;

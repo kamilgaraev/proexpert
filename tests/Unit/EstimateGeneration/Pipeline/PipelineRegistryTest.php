@@ -105,13 +105,13 @@ final class PipelineRegistryTest extends TestCase
     ): void {
         $this->expectException(InvalidArgumentException::class);
 
-        new PipelineContext($sessionId, $organizationId, $projectId, $stateVersion, $inputVersion);
+        new PipelineContext($sessionId, $organizationId, $projectId, $stateVersion, $inputVersion, 'generating');
     }
 
     #[Test]
     public function context_preserves_strict_readonly_values(): void
     {
-        $context = new PipelineContext(1, 2, 3, 0, 'sha256:input');
+        $context = new PipelineContext(1, 2, 3, 0, 'sha256:input', 'generating');
 
         self::assertSame(1, $context->sessionId);
         self::assertSame(2, $context->organizationId);
@@ -125,7 +125,7 @@ final class PipelineRegistryTest extends TestCase
     {
         $version = str_repeat('я', 80);
 
-        self::assertSame($version, (new PipelineContext(1, 2, 3, 0, $version))->inputVersion);
+        self::assertSame($version, (new PipelineContext(1, 2, 3, 0, $version, 'generating'))->inputVersion);
         self::assertSame(
             $version,
             (new PipelineStageResult(ProcessingStage::BuildDraft, $version, [], []))->outputVersion,
@@ -137,7 +137,7 @@ final class PipelineRegistryTest extends TestCase
     {
         $this->expectException(InvalidArgumentException::class);
 
-        new PipelineContext(1, 2, 3, 0, str_repeat('я', 81));
+        new PipelineContext(1, 2, 3, 0, str_repeat('я', 81), 'generating');
     }
 
     #[Test]

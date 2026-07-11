@@ -83,7 +83,7 @@ class ImportEstimateNormativesCommand extends Command
 
             return self::SUCCESS;
         } catch (Throwable $exception) {
-            $this->error($exception->getMessage());
+            $this->error(trans_message('estimate_generation.operation_error'));
 
             return self::FAILURE;
         }

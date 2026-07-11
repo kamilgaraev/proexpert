@@ -275,6 +275,7 @@ final class EloquentPipelineCheckpointPostgresContentionTest extends TestCase
             $project->id,
             0,
             sprintf('contention:%s:%s', $case, strtolower((string) Str::uuid())),
+            'draft',
         );
 
         return [$context, [

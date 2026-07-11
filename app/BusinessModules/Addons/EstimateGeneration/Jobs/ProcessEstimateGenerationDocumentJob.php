@@ -19,6 +19,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\Middleware\RateLimited;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
+use Illuminate\Support\Str;
 
 final class ProcessEstimateGenerationDocumentJob implements ShouldQueue
 {
@@ -34,8 +35,14 @@ final class ProcessEstimateGenerationDocumentJob implements ShouldQueue
 
     public int $timeout = 120;
 
+    private readonly string $failureEventId;
+
+    private readonly string $failureCorrelationId;
+
     public function __construct(private readonly int $documentId)
     {
+        $this->failureEventId = (string) Str::uuid();
+        $this->failureCorrelationId = AiOperationContext::deterministicId('document-manifest|'.$documentId);
         $this->onConnection(self::CONNECTION);
         $this->onQueue(self::QUEUE);
     }
@@ -74,12 +81,6 @@ final class ProcessEstimateGenerationDocumentJob implements ShouldQueue
             return;
         }
 
-        $correlationId = AiOperationContext::deterministicId(sprintf(
-            'document-manifest|%d|%d|%s',
-            $this->documentId,
-            max(1, $this->attempts()),
-            (string) ($document->source_version ?? 'missing'),
-        ));
         $failure = app(FailureRecorder::class)->capture($error, new FailureContext(
             organizationId: (int) $document->organization_id,
             projectId: (int) $document->project_id,
@@ -87,7 +88,10 @@ final class ProcessEstimateGenerationDocumentJob implements ShouldQueue
             stage: ProcessingStage::UnderstandDocuments,
             operation: 'create_units',
             attempt: max(1, $this->attempts()),
-            correlationId: $correlationId,
+            correlationId: $this->failureCorrelationId,
+            eventId: $this->failureEventId,
+            expectedSessionStateVersion: $document->session instanceof EstimateGenerationSession ? (int) $document->session->state_version : null,
+            expectedSessionStatus: $document->session instanceof EstimateGenerationSession ? $document->session->status->value : null,
             documentId: (int) $document->getKey(),
         ));
         try {

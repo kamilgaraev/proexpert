@@ -119,7 +119,7 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
         }
 
         $diagnostics = array_filter(
-            [...$exception->errorInfo, $exception->getMessage()],
+            [...$exception->errorInfo, (string) $exception->getCode()],
             static fn (mixed $value): bool => is_string($value),
         );
 

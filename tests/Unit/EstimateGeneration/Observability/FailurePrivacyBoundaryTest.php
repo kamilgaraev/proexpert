@@ -6,27 +6,40 @@ namespace Tests\Unit\EstimateGeneration\Observability;
 
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+use RecursiveDirectoryIterator;
+use RecursiveIteratorIterator;
 
 final class FailurePrivacyBoundaryTest extends TestCase
 {
     #[Test]
-    public function runtime_failure_hooks_never_persist_log_or_notify_with_throwable_messages(): void
+    public function entire_module_never_reads_raw_throwable_diagnostics(): void
     {
-        foreach ([
-            'Application/Sessions/AdvanceEstimateGeneration.php',
-            'Jobs/GenerateEstimateDraftJob.php',
-            'Jobs/ProcessEstimateGenerationDocumentJob.php',
-            'Jobs/ProcessEstimateGenerationUnitJob.php',
-            'Pipeline/PipelineFailureDetails.php',
-            'Services/EstimateGenerationNotificationService.php',
-            'Services/Ocr/OcrDocumentProcessor.php',
-            'Services/Ocr/PdfTextLayerExtractor.php',
-        ] as $relativePath) {
-            $source = file_get_contents(dirname(__DIR__, 4)
-                .'/app/BusinessModules/Addons/EstimateGeneration/'.$relativePath);
+        $root = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration';
+        $violations = [];
+        foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root)) as $file) {
+            if (! $file->isFile() || $file->getExtension() !== 'php') {
+                continue;
+            }
+            $source = file_get_contents($file->getPathname());
             self::assertIsString($source);
-            self::assertStringNotContainsString('->getMessage()', $source, $relativePath);
-            self::assertStringNotContainsString("'error' =>", $source, $relativePath);
+            foreach (['->getMessage()', '->getTrace()', '->getTraceAsString()', "'trace' =>", '"trace" =>'] as $forbidden) {
+                if (str_contains($source, $forbidden)) {
+                    $violations[] = str_replace('\\', '/', substr($file->getPathname(), strlen($root) + 1)).':'.$forbidden;
+                }
+            }
+            preg_match_all('/Log::(?:error|warning|info|debug)\s*\(.*?\);/s', $source, $logs);
+            foreach ($logs[0] ?? [] as $logCall) {
+                foreach (['prompt', 'filename', 'file_name', 'path', 'token', 'authorization', 'api_key', 'request', 'response', 'content', 'error', 'message'] as $key) {
+                    if (str_contains(strtolower($logCall), "'{$key}' =>") || str_contains(strtolower($logCall), '"'.$key.'" =>')) {
+                        $violations[] = str_replace('\\', '/', substr($file->getPathname(), strlen($root) + 1)).':log-'.$key;
+                    }
+                }
+                if (str_contains($logCall, '$request->')) {
+                    $violations[] = str_replace('\\', '/', substr($file->getPathname(), strlen($root) + 1)).':log-request-value';
+                }
+            }
         }
+
+        self::assertSame([], $violations, implode("\n", $violations));
     }
 }

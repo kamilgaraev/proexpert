@@ -97,14 +97,14 @@ class EstimateGenerationDocumentController extends Controller
                 'documents_summary' => $result->summary,
             ], trans_message($result->messageKey));
         } catch (ValidationException $e) {
-            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+            return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $e->errors());
         } catch (StaleEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Document retry failed', [
-                'error' => $e->getMessage(),
+                'failure_code' => 'document_retry_failed',
                 'session_id' => $session->id,
                 'document_id' => $document->id,
             ]);
@@ -134,14 +134,14 @@ class EstimateGenerationDocumentController extends Controller
                 'documents_summary' => $result->summary,
             ], trans_message($result->messageKey));
         } catch (ValidationException $e) {
-            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+            return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $e->errors());
         } catch (StaleEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Document ignore failed', [
-                'error' => $e->getMessage(),
+                'failure_code' => 'document_ignore_failed',
                 'session_id' => $session->id,
                 'document_id' => $document->id,
             ]);
@@ -190,7 +190,7 @@ class EstimateGenerationDocumentController extends Controller
             Log::error('[EstimateGeneration] Document read endpoint failed', [
                 ...$context,
                 'operation' => $operation,
-                'error' => $exception->getMessage(),
+                'failure_code' => 'document_read_failed',
             ]);
 
             return AdminResponse::error(trans_message('estimate_generation.read_error'), 500);

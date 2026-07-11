@@ -83,7 +83,7 @@ final class AiUsagePageScopeContractTest extends TestCase
         };
         $context = new DocumentUnitExecutionContext(
             5, 1, 2, 3, 4, DocumentUnitType::RasterImage, 1, 'source-v1', [], 'memory://document',
-            'image/png', 'fixture.png', '018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c', 1, pageId: 99,
+            'image/png', 'fixture.png', '018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c', 1, 0, 'processing_documents', pageId: 99,
         );
 
         (new OcrDocumentUnitProcessor($reader, $ocr))->process($context);
@@ -99,7 +99,7 @@ final class AiUsagePageScopeContractTest extends TestCase
         $policy = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Application/Documents/DocumentUnitPageReservationPolicy.php');
 
         self::assertStringContainsString('return $this->database->transaction(function () use ($claim): DocumentUnitExecutionContext', (string) $source);
-        self::assertStringContainsString("->with('document')->lockForUpdate()->find(\$claim->unitId)", (string) $source);
+        self::assertStringContainsString("->with('document.session')->lockForUpdate()->find(\$claim->unitId)", (string) $source);
         self::assertStringContainsString('DocumentProcessingUnitStatus::Running', (string) $source);
         self::assertStringContainsString("throw new DocumentUnitProcessingException('unit_claim_lost')", (string) $source);
         self::assertStringContainsString('(new DocumentUnitExecutionOwnershipGuard)->assertOwned(', (string) $source);

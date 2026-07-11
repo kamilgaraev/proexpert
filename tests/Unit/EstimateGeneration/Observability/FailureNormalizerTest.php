@@ -124,6 +124,7 @@ final class FailureNormalizerTest extends TestCase
             operation: 'process_unit',
             attempt: 1,
             correlationId: '018f4a20-3f4c-7a11-8a22-123456789abc',
+            eventId: '018f4a20-3f4c-7a11-8a22-123456789abd',
             documentId: 1000,
             unitId: 1001,
         );

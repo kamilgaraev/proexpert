@@ -32,8 +32,7 @@ class FgiscsRegionalPriceUpdateService
         private readonly EstimateSourceStorageService $storageService,
         private readonly RegionalPriceQualityService $qualityService,
         private readonly RegionalPriceActivationService $activationService,
-    ) {
-    }
+    ) {}
 
     /**
      * @return array<string, mixed>
@@ -119,7 +118,7 @@ class FgiscsRegionalPriceUpdateService
                     'status' => RegionalPriceStatus::FAILED->value,
                     'subject_id' => $subject['id'],
                     'region' => $subject['name'],
-                    'error' => $exception->getMessage(),
+                    'failure_code' => 'fgiscs_region_update_failed',
                 ];
             }
         }
@@ -144,7 +143,7 @@ class FgiscsRegionalPriceUpdateService
         $results = [];
 
         foreach ($periods as $index => $period) {
-            $results[] = $this->syncPeriod($bucket, $region, $priceZone, $period, $latestOnly, !$allPeriods || $index === 0, $force, $progress);
+            $results[] = $this->syncPeriod($bucket, $region, $priceZone, $period, $latestOnly, ! $allPeriods || $index === 0, $force, $progress);
         }
 
         return $results;
@@ -157,7 +156,7 @@ class FgiscsRegionalPriceUpdateService
     {
         $versionKey = $this->versionKey($period, $region, $priceZone);
         $prefix = $this->prefix($period, (int) $region->fgiscs_subject_id, (int) $priceZone->fgiscs_price_zone_id);
-        $fileKey = $prefix . 'worker-salary.xlsx';
+        $fileKey = $prefix.'worker-salary.xlsx';
 
         $datasetVersion = EstimateDatasetVersion::query()->updateOrCreate(
             [
@@ -202,7 +201,7 @@ class FgiscsRegionalPriceUpdateService
             ]
         );
 
-        if (!$force && in_array($regionalVersion->status, [RegionalPriceStatus::ACTIVE, RegionalPriceStatus::CHECKED, RegionalPriceStatus::PARSED], true)) {
+        if (! $force && in_array($regionalVersion->status, [RegionalPriceStatus::ACTIVE, RegionalPriceStatus::CHECKED, RegionalPriceStatus::PARSED], true)) {
             return [
                 'skipped' => true,
                 'reason' => 'period_already_imported',
@@ -239,7 +238,7 @@ class FgiscsRegionalPriceUpdateService
             $stats = $this->importWorkerSalaryContent($download->content, $datasetVersion, $regionalVersion);
             $quality = $this->qualityService->checkWorkerSalaryVersion($regionalVersion);
 
-            if (!$quality['passed']) {
+            if (! $quality['passed']) {
                 $regionalVersion->update([
                     'status' => RegionalPriceStatus::FAILED->value,
                     'metadata' => array_merge($regionalVersion->metadata ?? [], ['quality' => $quality]),
@@ -286,7 +285,7 @@ class FgiscsRegionalPriceUpdateService
                 'status' => RegionalPriceStatus::UNAVAILABLE->value,
                 'errors_count' => 0,
                 'metadata' => array_merge($regionalVersion->metadata ?? [], [
-                    'unavailable_reason' => $exception->getMessage(),
+                    'unavailable_reason' => 'fgiscs_region_unavailable',
                     'http_status' => $exception->statusCode,
                     'response_body' => $exception->responseBody,
                 ]),
@@ -296,7 +295,7 @@ class FgiscsRegionalPriceUpdateService
                 'errors_count' => 0,
                 'finished_at' => now(),
                 'meta' => array_merge($datasetVersion->meta ?? [], [
-                    'unavailable_reason' => $exception->getMessage(),
+                    'unavailable_reason' => 'fgiscs_region_unavailable',
                     'http_status' => $exception->statusCode,
                 ]),
             ]);
@@ -310,14 +309,14 @@ class FgiscsRegionalPriceUpdateService
                 'version_id' => $regionalVersion->id,
                 'version_key' => $versionKey,
                 'period' => $period->name,
-                'message' => $exception->getMessage(),
+                'message' => 'fgiscs_region_update_failed',
                 'http_status' => $exception->statusCode,
             ];
         } catch (Throwable $exception) {
             $regionalVersion->update([
                 'status' => RegionalPriceStatus::FAILED->value,
                 'errors_count' => max(1, (int) $regionalVersion->errors_count),
-                'metadata' => array_merge($regionalVersion->metadata ?? [], ['error' => $exception->getMessage()]),
+                'metadata' => array_merge($regionalVersion->metadata ?? [], ['failure_code' => 'fgiscs_region_update_failed']),
             ]);
             $datasetVersion->update([
                 'status' => EstimateImportStatus::FAILED->value,
@@ -336,7 +335,7 @@ class FgiscsRegionalPriceUpdateService
     {
         $regionalVersion->update(['status' => RegionalPriceStatus::PARSING->value]);
 
-        $path = tempnam(sys_get_temp_dir(), 'fgiscs-worker-salary-') . '.xlsx';
+        $path = tempnam(sys_get_temp_dir(), 'fgiscs-worker-salary-').'.xlsx';
         file_put_contents($path, $content);
 
         $rowsRead = 0;
@@ -353,7 +352,7 @@ class FgiscsRegionalPriceUpdateService
                 foreach ($this->parser->parse($path) as $dto) {
                     $rowsRead++;
 
-                    if (!$dto instanceof LaborPriceDTO) {
+                    if (! $dto instanceof LaborPriceDTO) {
                         continue;
                     }
 
@@ -498,7 +497,7 @@ class FgiscsRegionalPriceUpdateService
     }
 
     /**
-     * @param array<string, mixed> $payload
+     * @param  array<string, mixed>  $payload
      */
     private function report(?callable $progress, string $event, array $payload): void
     {

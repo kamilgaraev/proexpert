@@ -41,7 +41,7 @@ class SyncFgiscsRegionalPricesCommand extends Command
 
             return self::SUCCESS;
         } catch (Throwable $exception) {
-            $this->error($exception->getMessage());
+            $this->error(trans_message('estimate_generation.operation_error'));
 
             return self::FAILURE;
         }
@@ -61,7 +61,7 @@ class SyncFgiscsRegionalPricesCommand extends Command
             return $service->syncAllRegions(
                 bucket: $bucket,
                 periodId: $periodId,
-                latestOnly: !(bool) $this->option('all-periods'),
+                latestOnly: ! (bool) $this->option('all-periods'),
                 allPeriods: $allPeriods,
                 force: $force,
                 limit: $this->option('limit') !== null ? (int) $this->option('limit') : null,
@@ -73,7 +73,7 @@ class SyncFgiscsRegionalPricesCommand extends Command
             return $service->syncSupportedRegions(
                 bucket: $bucket,
                 periodId: $periodId,
-                latestOnly: !(bool) $this->option('all-periods'),
+                latestOnly: ! (bool) $this->option('all-periods'),
                 allPeriods: $allPeriods,
                 force: $force,
                 progress: $progress,
@@ -85,7 +85,7 @@ class SyncFgiscsRegionalPricesCommand extends Command
                 subjectId: (int) $this->option('subject-id'),
                 bucket: $bucket,
                 periodId: $periodId,
-                latestOnly: !(bool) $this->option('all-periods'),
+                latestOnly: ! (bool) $this->option('all-periods'),
                 allPeriods: $allPeriods,
                 force: $force,
                 progress: $progress,
@@ -100,7 +100,7 @@ class SyncFgiscsRegionalPricesCommand extends Command
             $service->syncTatarstan(
                 bucket: $bucket,
                 periodId: $periodId,
-                latestOnly: !(bool) $this->option('all-periods'),
+                latestOnly: ! (bool) $this->option('all-periods'),
                 force: $force,
                 progress: $progress,
             ),
@@ -108,7 +108,7 @@ class SyncFgiscsRegionalPricesCommand extends Command
     }
 
     /**
-     * @param array<int, array<string, mixed>> $results
+     * @param  array<int, array<string, mixed>>  $results
      * @return array<int, array{0:string,1:string}>
      */
     private function summaryRows(array $results): array

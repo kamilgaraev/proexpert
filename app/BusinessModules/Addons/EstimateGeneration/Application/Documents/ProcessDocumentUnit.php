@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
@@ -22,9 +23,9 @@ final readonly class ProcessDocumentUnit
         private DocumentProcessingUnitStore $store,
         private DocumentUnitProcessor $processor,
         private DocumentUnitAggregateReconciler $reconciler,
+        private FailureRecorder $failureRecorder,
+        private FailureWorkflowHandler $failureWorkflowHandler,
         private ?DocumentUnitExhaustionHandler $exhaustion = null,
-        private ?FailureRecorder $failureRecorder = null,
-        private ?FailureWorkflowHandler $failureWorkflowHandler = null,
     ) {}
 
     public function handle(int $unitId, string $sourceVersion): DocumentUnitProcessOutcome
@@ -77,16 +78,16 @@ final readonly class ProcessDocumentUnit
             }
 
             try {
-                $this->failureRecorder?->resolveActive($this->failureContext($context));
+                $this->failureRecorder->resolveActive($this->failureContext($context));
             } catch (Throwable) {
             }
         } catch (Throwable $error) {
             $code = $error instanceof DocumentUnitProcessingException ? $error->safeCode : 'unit_processing_failed';
             $failed = $this->store->fail($claim, $code, hash('sha256', $error::class.'|'.$code), now()->toDateTimeImmutable());
-            $failure = $this->failureRecorder?->capture($error, $this->failureContext($context));
-            if ($failed && $failure !== null) {
+            $failure = $this->failureRecorder->capture($error, $this->failureContext($context));
+            if ($failed) {
                 try {
-                    $this->failureWorkflowHandler?->handle($failure);
+                    $this->failureWorkflowHandler->handle($failure);
                 } catch (Throwable) {
                 }
             }
@@ -108,7 +109,14 @@ final readonly class ProcessDocumentUnit
             stage: ProcessingStage::UnderstandDocuments,
             operation: 'process_unit',
             attempt: $context->unitAttemptCount,
-            correlationId: $context->claimToken,
+            correlationId: AiOperationContext::deterministicId(sprintf(
+                'unit|%d|%s',
+                $context->unitId,
+                $context->sourceVersion,
+            )),
+            eventId: $context->claimToken,
+            expectedSessionStateVersion: $context->sessionStateVersion,
+            expectedSessionStatus: $context->sessionStatus,
             documentId: $context->documentId,
             pageId: $context->pageId,
             unitId: $context->unitId,

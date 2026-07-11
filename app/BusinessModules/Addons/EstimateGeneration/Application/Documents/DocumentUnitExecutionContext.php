@@ -22,6 +22,8 @@ final readonly class DocumentUnitExecutionContext
         public string $filename,
         public string $claimToken,
         public int $unitAttemptCount,
+        public int $sessionStateVersion,
+        public string $sessionStatus,
         public ?int $pageId = null,
     ) {}
 }

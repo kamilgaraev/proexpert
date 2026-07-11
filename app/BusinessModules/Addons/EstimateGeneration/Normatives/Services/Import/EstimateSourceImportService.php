@@ -86,7 +86,7 @@ class EstimateSourceImportService
                 'files_count' => count($files),
                 'errors_count' => 1,
             ]);
-            $this->recordImportError($datasetVersion, $prefix, 'error', $exception->getMessage());
+            $this->recordImportError($datasetVersion, $prefix, 'error', 'estimate_source_import_failed');
 
             throw $exception;
         }
@@ -101,11 +101,10 @@ class EstimateSourceImportService
         string $bucket,
         string $fileKey,
         ?callable $progress = null
-    ): array
-    {
+    ): array {
         $extension = mb_strtolower(pathinfo($fileKey, PATHINFO_EXTENSION));
 
-        if (!in_array($extension, ['csv', 'xml', 'xlsx', 'xls'], true)) {
+        if (! in_array($extension, ['csv', 'xml', 'xlsx', 'xls'], true)) {
             return ['rows_read' => 0, 'rows_imported' => 0, 'errors_count' => 0];
         }
 
@@ -140,8 +139,7 @@ class EstimateSourceImportService
         string $localPath,
         string $fileKey,
         ?callable $progress = null
-    ): array
-    {
+    ): array {
         $rowsRead = 0;
         $rowsImported = 0;
         $errorsCount = 0;
@@ -149,7 +147,7 @@ class EstimateSourceImportService
         foreach ($this->ksrCsvParser->parse($localPath) as $resource) {
             $rowsRead++;
 
-            if (!$resource instanceof KsrResourceDTO) {
+            if (! $resource instanceof KsrResourceDTO) {
                 continue;
             }
 
@@ -171,7 +169,7 @@ class EstimateSourceImportService
                 $this->reportRowsProgress($progress, $fileKey, $rowsRead, $rowsImported, $errorsCount);
             } catch (Throwable $exception) {
                 $errorsCount++;
-                $this->recordImportError($datasetVersion, $fileKey, 'error', $exception->getMessage(), $rowsRead, [
+                $this->recordImportError($datasetVersion, $fileKey, 'error', 'estimate_source_import_failed', $rowsRead, [
                     'resource' => $resource->toArray(),
                 ]);
             }
@@ -192,8 +190,7 @@ class EstimateSourceImportService
         string $localPath,
         string $fileKey,
         ?callable $progress = null
-    ): array
-    {
+    ): array {
         $rowsRead = 0;
         $rowsImported = 0;
         $errorsCount = 0;
@@ -203,7 +200,7 @@ class EstimateSourceImportService
         foreach ($this->fsnbXmlParser->parse($localPath) as $norm) {
             $rowsRead++;
 
-            if (!$norm instanceof FsnbNormDTO) {
+            if (! $norm instanceof FsnbNormDTO) {
                 continue;
             }
 
@@ -240,7 +237,7 @@ class EstimateSourceImportService
                 });
             } catch (Throwable $exception) {
                 $errorsCount++;
-                $this->recordImportError($datasetVersion, $fileKey, 'error', $exception->getMessage(), $rowsRead, [
+                $this->recordImportError($datasetVersion, $fileKey, 'error', 'estimate_source_import_failed', $rowsRead, [
                     'norm' => $norm->toArray(),
                 ]);
             }
@@ -261,8 +258,7 @@ class EstimateSourceImportService
         string $localPath,
         string $fileKey,
         ?callable $progress = null
-    ): array
-    {
+    ): array {
         $rowsRead = 0;
         $rowsImported = 0;
         $errorsCount = 0;
@@ -273,7 +269,7 @@ class EstimateSourceImportService
         foreach ($this->fsbcXmlParser->parse($localPath) as $price) {
             $rowsRead++;
 
-            if (!$price instanceof FsbcPriceDTO) {
+            if (! $price instanceof FsbcPriceDTO) {
                 continue;
             }
 
@@ -304,7 +300,7 @@ class EstimateSourceImportService
                 $this->reportRowsProgress($progress, $fileKey, $rowsRead, $rowsImported, $errorsCount);
             } catch (Throwable $exception) {
                 $errorsCount++;
-                $this->recordImportError($datasetVersion, $fileKey, 'error', $exception->getMessage(), $rowsRead, [
+                $this->recordImportError($datasetVersion, $fileKey, 'error', 'estimate_source_import_failed', $rowsRead, [
                     'price' => $price->toArray(),
                 ]);
             }
@@ -333,7 +329,7 @@ class EstimateSourceImportService
         foreach ($this->laborPriceSpreadsheetParser->parse($localPath) as $price) {
             $rowsRead++;
 
-            if (!$price instanceof LaborPriceDTO) {
+            if (! $price instanceof LaborPriceDTO) {
                 continue;
             }
 
@@ -360,7 +356,7 @@ class EstimateSourceImportService
                 $this->reportRowsProgress($progress, $fileKey, $rowsRead, $rowsImported, $errorsCount);
             } catch (Throwable $exception) {
                 $errorsCount++;
-                $this->recordImportError($datasetVersion, $fileKey, 'error', $exception->getMessage(), $rowsRead, [
+                $this->recordImportError($datasetVersion, $fileKey, 'error', 'estimate_source_import_failed', $rowsRead, [
                     'price' => $price->toArray(),
                 ]);
             }
@@ -403,7 +399,7 @@ class EstimateSourceImportService
     }
 
     /**
-     * @param array<string, int> $stats
+     * @param  array<string, int>  $stats
      */
     private function markDatasetVersionFinished(EstimateDatasetVersion $datasetVersion, string $status, array $stats): void
     {
@@ -417,7 +413,7 @@ class EstimateSourceImportService
     }
 
     /**
-     * @param array<string, mixed>|null $rawFragment
+     * @param  array<string, mixed>|null  $rawFragment
      */
     private function recordImportError(
         EstimateDatasetVersion $datasetVersion,
@@ -426,8 +422,7 @@ class EstimateSourceImportService
         string $message,
         ?int $rowNumber = null,
         ?array $rawFragment = null
-    ): void
-    {
+    ): void {
         EstimateImportError::query()->create([
             'dataset_version_id' => $datasetVersion->id,
             'source_file' => $sourceFile,
@@ -456,7 +451,7 @@ class EstimateSourceImportService
     }
 
     /**
-     * @param array<int, array{code?: ?string, name?: ?string, type?: ?string}> $sections
+     * @param  array<int, array{code?: ?string, name?: ?string, type?: ?string}>  $sections
      */
     private function resolveSectionChain(EstimateNormCollection $collection, array $sections): ?EstimateNormSection
     {
@@ -538,7 +533,7 @@ class EstimateSourceImportService
             throw new RuntimeException('Unable to create temporary file for estimate source import.');
         }
 
-        $targetPath = $localPath . '.' . $extension;
+        $targetPath = $localPath.'.'.$extension;
         rename($localPath, $targetPath);
         $target = fopen($targetPath, 'wb');
 
@@ -637,7 +632,7 @@ class EstimateSourceImportService
     }
 
     /**
-     * @param array<string, mixed>|null $rawData
+     * @param  array<string, mixed>|null  $rawData
      */
     private function extractOkpd2(?array $rawData): ?string
     {
@@ -649,7 +644,7 @@ class EstimateSourceImportService
 
         $row = $rawData['row'] ?? null;
 
-        if (!is_array($row)) {
+        if (! is_array($row)) {
             return null;
         }
 
@@ -693,7 +688,7 @@ class EstimateSourceImportService
     }
 
     /**
-     * @param array<string, mixed> $payload
+     * @param  array<string, mixed>  $payload
      */
     private function reportProgress(?callable $progress, string $event, array $payload): void
     {

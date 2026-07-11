@@ -17,6 +17,9 @@ final readonly class FailureContext
         public string $operation,
         public int $attempt,
         public string $correlationId,
+        public string $eventId,
+        public ?int $expectedSessionStateVersion = null,
+        public ?string $expectedSessionStatus = null,
         public ?int $documentId = null,
         public ?int $pageId = null,
         public ?int $unitId = null,
@@ -38,7 +41,7 @@ final readonly class FailureContext
         if (preg_match('/\A[a-z][a-z0-9_]{0,39}\z/', $operation) !== 1) {
             throw new InvalidArgumentException('Invalid failure operation.');
         }
-        if (! self::isUuid($correlationId) || ($usageAttemptId !== null && ! self::isUuid($usageAttemptId))) {
+        if (! self::isUuid($correlationId) || ! self::isUuid($eventId) || ($usageAttemptId !== null && ! self::isUuid($usageAttemptId))) {
             throw new InvalidArgumentException('Invalid failure correlation identifier.');
         }
         if ($provider !== null && preg_match('/\A[a-z0-9._-]{1,80}\z/', $provider) !== 1) {
@@ -49,6 +52,11 @@ final readonly class FailureContext
         }
         if (($pageId !== null || $unitId !== null) && $documentId === null) {
             throw new InvalidArgumentException('Failure page and unit scopes require a document.');
+        }
+        if (($expectedSessionStateVersion === null) !== ($expectedSessionStatus === null)
+            || ($expectedSessionStateVersion !== null && $expectedSessionStateVersion < 0)
+            || ($expectedSessionStatus !== null && preg_match('/\A[a-z][a-z0-9_]{0,39}\z/', $expectedSessionStatus) !== 1)) {
+            throw new InvalidArgumentException('Failure workflow fence is incomplete or invalid.');
         }
     }
 

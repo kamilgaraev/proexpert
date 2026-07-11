@@ -128,7 +128,7 @@ class EstimateGenerationController extends Controller
             );
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Failed to create session', [
-                'error' => $e->getMessage(),
+                'failure_code' => 'session_create_failed',
                 'project_id' => $project->id,
             ]);
 
@@ -157,7 +157,7 @@ class EstimateGenerationController extends Controller
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Failed to upload documents', [
-                'error' => $e->getMessage(),
+                'failure_code' => 'document_upload_failed',
                 'session_id' => $session->id,
             ]);
 
@@ -189,7 +189,7 @@ class EstimateGenerationController extends Controller
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Analyze failed', [
-                'error' => $e->getMessage(),
+                'failure_code' => 'analysis_failed',
                 'session_id' => $session->id,
             ]);
 
@@ -226,7 +226,7 @@ class EstimateGenerationController extends Controller
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Generate failed', [
-                'error' => $e->getMessage(),
+                'failure_code' => 'generation_request_failed',
                 'session_id' => $session->id,
             ]);
 
@@ -265,16 +265,14 @@ class EstimateGenerationController extends Controller
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (HttpExceptionInterface $exception) {
             return AdminResponse::error(
-                $exception->getMessage() !== ''
-                    ? $exception->getMessage()
-                    : trans_message('estimate_generation.access_denied'),
+                trans_message('estimate_generation.access_denied'),
                 $exception->getStatusCode(),
             );
         } catch (\Throwable $exception) {
             Log::error('[EstimateGeneration] Session retry failed', [
                 'project_id' => $project->id,
                 'session_id' => $session->id,
-                'error' => $exception->getMessage(),
+                'failure_code' => 'session_retry_failed',
             ]);
 
             return AdminResponse::error(trans_message('estimate_generation.session_transition_error'), 500);
@@ -436,7 +434,7 @@ class EstimateGenerationController extends Controller
                 ->header('Content-Disposition', "attachment; filename=\"{$filename}\"; filename*=UTF-8''{$encodedFilename}");
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Export failed', [
-                'error' => $e->getMessage(),
+                'failure_code' => 'export_failed',
                 'session_id' => $session->id,
             ]);
 
@@ -462,14 +460,14 @@ class EstimateGenerationController extends Controller
 
             return AdminResponse::success($result->toArray(), trans_message('estimate_generation.draft_applied'));
         } catch (ValidationException $e) {
-            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+            return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $e->errors());
         } catch (StaleEstimateGenerationState $e) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (InvalidEstimateGenerationTransition $e) {
             return AdminResponse::error(trans_message('estimate_generation.apply_not_ready'), 422);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Apply failed', [
-                'error' => $e->getMessage(),
+                'failure_code' => 'apply_failed',
                 'session_id' => $session->id,
             ]);
 
@@ -509,14 +507,14 @@ class EstimateGenerationController extends Controller
                 trans_message('estimate_generation.normative_candidate_selected')
             );
         } catch (ValidationException $e) {
-            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+            return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $e->errors());
         } catch (StaleEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Normative candidate selection failed', [
-                'error' => $e->getMessage(),
+                'failure_code' => 'normative_selection_failed',
                 'session_id' => $session->id,
             ]);
 
@@ -540,10 +538,10 @@ class EstimateGenerationController extends Controller
                 (int) ($validated['limit'] ?? 10)
             ));
         } catch (ValidationException $e) {
-            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+            return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $e->errors());
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Normative candidate search failed', [
-                'error' => $e->getMessage(),
+                'failure_code' => 'normative_search_failed',
                 'session_id' => $session->id,
             ]);
 
@@ -568,7 +566,7 @@ class EstimateGenerationController extends Controller
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Rebuild section failed', [
-                'error' => $e->getMessage(),
+                'failure_code' => 'section_rebuild_failed',
                 'session_id' => $session->id,
             ]);
 
@@ -597,14 +595,14 @@ class EstimateGenerationController extends Controller
                 trans_message('estimate_generation.feedback_saved')
             );
         } catch (ValidationException $e) {
-            return AdminResponse::error($e->getMessage(), 422, $e->errors());
+            return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $e->errors());
         } catch (StaleEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Feedback failed', [
-                'error' => $e->getMessage(),
+                'failure_code' => 'feedback_failed',
                 'session_id' => $session->id,
             ]);
 
@@ -648,9 +646,7 @@ class EstimateGenerationController extends Controller
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (HttpExceptionInterface $exception) {
             return AdminResponse::error(
-                $exception->getMessage() !== ''
-                    ? $exception->getMessage()
-                    : trans_message('estimate_generation.access_denied'),
+                trans_message('estimate_generation.access_denied'),
                 $exception->getStatusCode(),
             );
         } catch (\Throwable $e) {
@@ -658,7 +654,7 @@ class EstimateGenerationController extends Controller
                 'operation' => $operation,
                 'project_id' => $project->id,
                 'session_id' => $session->id,
-                'error' => $e->getMessage(),
+                'failure_code' => 'session_transition_failed',
             ]);
 
             return AdminResponse::error(trans_message('estimate_generation.session_transition_error'), 500);
@@ -676,7 +672,7 @@ class EstimateGenerationController extends Controller
             Log::error('[EstimateGeneration] Read endpoint failed', [
                 ...$context,
                 'operation' => $operation,
-                'error' => $exception->getMessage(),
+                'failure_code' => 'read_endpoint_failed',
             ]);
 
             return AdminResponse::error(trans_message('estimate_generation.read_error'), 500);

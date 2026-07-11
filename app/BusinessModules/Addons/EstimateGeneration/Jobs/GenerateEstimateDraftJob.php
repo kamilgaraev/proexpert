@@ -21,6 +21,7 @@ use Illuminate\Queue\Middleware\RateLimited;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class GenerateEstimateDraftJob implements ShouldQueue
 {
@@ -41,11 +42,21 @@ class GenerateEstimateDraftJob implements ShouldQueue
 
     public bool $failOnTimeout = true;
 
+    private readonly string $failureEventId;
+
+    private readonly string $failureCorrelationId;
+
     public function __construct(
         private readonly int $sessionId,
         private readonly ?int $expectedStateVersion = null,
         private readonly ?string $attemptId = null,
     ) {
+        $this->failureEventId = (string) Str::uuid();
+        $this->failureCorrelationId = AiOperationContext::deterministicId(sprintf(
+            'generate-draft-correlation|%d|%s',
+            $this->sessionId,
+            $this->attemptId ?? 'missing',
+        ));
         $this->onConnection(self::CONNECTION);
         $this->onQueue(self::QUEUE);
     }
@@ -102,12 +113,6 @@ class GenerateEstimateDraftJob implements ShouldQueue
         if ($session instanceof EstimateGenerationSession
             && app(GenerationAttemptGuard::class)->matches($session, null, $this->attemptId)) {
             try {
-                $correlationId = AiOperationContext::deterministicId(sprintf(
-                    'generate-draft|%d|%s|%d',
-                    $this->sessionId,
-                    $this->attemptId ?? 'missing',
-                    (int) $session->state_version,
-                ));
                 $failure = app(FailureRecorder::class)->capture($exception, new FailureContext(
                     organizationId: (int) $session->organization_id,
                     projectId: (int) $session->project_id,
@@ -115,7 +120,10 @@ class GenerateEstimateDraftJob implements ShouldQueue
                     stage: ProcessingStage::BuildDraft,
                     operation: 'generate_draft',
                     attempt: max(1, $this->attempts()),
-                    correlationId: $correlationId,
+                    correlationId: $this->failureCorrelationId,
+                    eventId: $this->failureEventId,
+                    expectedSessionStateVersion: (int) $session->state_version,
+                    expectedSessionStatus: $session->status->value,
                 ));
                 $session = app(AdvanceEstimateGeneration::class)->failed($session, $failure->code);
                 app(EstimateGenerationNotificationService::class)->notifyFailed($session);

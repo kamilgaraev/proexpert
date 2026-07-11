@@ -11,19 +11,12 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::table('estimate_generation_sessions', function (Blueprint $table): void {
-            $table->string('failure_code', 80)->nullable()->after('last_error');
-        });
-        Schema::table('estimate_generation_pipeline_checkpoints', function (Blueprint $table): void {
-            $table->unique(['id', 'session_id'], 'eg_checkpoints_session_scope_uq');
-        });
-        Schema::table('estimate_generation_ai_usage', function (Blueprint $table): void {
-            $table->unique(['attempt_id', 'organization_id', 'project_id', 'session_id'], 'eg_usage_attempt_tenant_scope_uq');
-        });
+        Schema::table('estimate_generation_pipeline_checkpoints', fn (Blueprint $table) => $table->unique(['id', 'session_id'], 'eg_checkpoints_session_scope_uq'));
+        Schema::table('estimate_generation_ai_usage', fn (Blueprint $table) => $table->unique(['attempt_id', 'organization_id', 'project_id', 'session_id'], 'eg_usage_attempt_tenant_scope_uq'));
 
-        Schema::create('estimate_generation_failures', function (Blueprint $table): void {
+        Schema::create('estimate_generation_failure_identities', function (Blueprint $table): void {
             $table->uuid('id')->primary();
-            $table->char('fingerprint', 71);
+            $table->char('fingerprint', 71)->unique('eg_failure_identities_fingerprint_uq');
             $table->unsignedBigInteger('organization_id');
             $table->unsignedBigInteger('project_id');
             $table->unsignedBigInteger('session_id');
@@ -32,239 +25,135 @@ return new class extends Migration
             $table->unsignedBigInteger('unit_id')->nullable();
             $table->unsignedBigInteger('checkpoint_id')->nullable();
             $table->uuid('usage_attempt_id')->nullable();
-            $table->uuid('correlation_id');
             $table->string('stage', 40);
             $table->string('operation', 40);
             $table->string('provider', 80)->nullable();
             $table->string('model', 160)->nullable();
             $table->string('category', 24);
             $table->string('code', 80);
-            $table->unsignedInteger('attempt');
-            $table->jsonb('safe_context')->default('{}');
-            $table->unsignedBigInteger('occurrence_count')->default(1);
-            $table->timestampTz('first_seen_at');
-            $table->timestampTz('last_seen_at');
-            $table->timestampTz('resolved_at')->nullable();
-            $table->string('resolution_code', 80)->nullable();
-
-            $table->unique('fingerprint', 'eg_failures_identity_uq');
-            $table->index(['organization_id', 'session_id', 'resolved_at', 'last_seen_at'], 'eg_failures_org_session_active_idx');
-            $table->index(['category', 'stage', 'last_seen_at'], 'eg_failures_category_stage_date_idx');
-            $table->index(['code', 'last_seen_at'], 'eg_failures_code_date_idx');
-            $table->index(['provider', 'model', 'last_seen_at'], 'eg_failures_provider_model_date_idx');
-
-            $table->foreign(['session_id', 'organization_id', 'project_id'], 'eg_failures_session_scope_fk')
-                ->references(['id', 'organization_id', 'project_id'])->on('estimate_generation_sessions')->cascadeOnDelete();
-            $table->foreign(['document_id', 'organization_id', 'project_id', 'session_id'], 'eg_failures_document_scope_fk')
-                ->references(['id', 'organization_id', 'project_id', 'session_id'])->on('estimate_generation_documents')->cascadeOnDelete();
-            $table->foreign(['page_id', 'organization_id', 'project_id', 'session_id', 'document_id'], 'eg_failures_page_scope_fk')
-                ->references(['id', 'organization_id', 'project_id', 'session_id', 'document_id'])->on('estimate_generation_document_pages')->cascadeOnDelete();
-            $table->foreign(['unit_id', 'organization_id', 'project_id', 'session_id', 'document_id'], 'eg_failures_unit_scope_fk')
-                ->references(['id', 'organization_id', 'project_id', 'session_id', 'document_id'])->on('estimate_generation_processing_units')->cascadeOnDelete();
-            $table->foreign(['checkpoint_id', 'session_id'], 'eg_failures_checkpoint_scope_fk')
-                ->references(['id', 'session_id'])->on('estimate_generation_pipeline_checkpoints')->cascadeOnDelete();
-            $table->foreign(['usage_attempt_id', 'organization_id', 'project_id', 'session_id'], 'eg_failures_usage_scope_fk')
-                ->references(['attempt_id', 'organization_id', 'project_id', 'session_id'])->on('estimate_generation_ai_usage')->cascadeOnDelete();
+            $table->timestampTz('created_at');
+            $table->unique(['id', 'organization_id', 'project_id', 'session_id', 'fingerprint'], 'eg_failure_identities_tenant_uq');
+            $table->index(['organization_id', 'session_id', 'created_at'], 'eg_failure_identities_org_session_idx');
+            $table->foreign(['session_id', 'organization_id', 'project_id'], 'eg_failure_identities_session_fk')->references(['id', 'organization_id', 'project_id'])->on('estimate_generation_sessions')->cascadeOnDelete();
+            $table->foreign(['document_id', 'organization_id', 'project_id', 'session_id'], 'eg_failure_identities_document_fk')->references(['id', 'organization_id', 'project_id', 'session_id'])->on('estimate_generation_documents')->cascadeOnDelete();
+            $table->foreign(['page_id', 'organization_id', 'project_id', 'session_id', 'document_id'], 'eg_failure_identities_page_fk')->references(['id', 'organization_id', 'project_id', 'session_id', 'document_id'])->on('estimate_generation_document_pages')->cascadeOnDelete();
+            $table->foreign(['unit_id', 'organization_id', 'project_id', 'session_id', 'document_id'], 'eg_failure_identities_unit_fk')->references(['id', 'organization_id', 'project_id', 'session_id', 'document_id'])->on('estimate_generation_processing_units')->cascadeOnDelete();
+            $table->foreign(['checkpoint_id', 'session_id'], 'eg_failure_identities_checkpoint_fk')->references(['id', 'session_id'])->on('estimate_generation_pipeline_checkpoints')->cascadeOnDelete();
+            $table->foreign(['usage_attempt_id', 'organization_id', 'project_id', 'session_id'], 'eg_failure_identities_usage_fk')->references(['attempt_id', 'organization_id', 'project_id', 'session_id'])->on('estimate_generation_ai_usage')->cascadeOnDelete();
         });
-        Schema::create('estimate_generation_failure_occurrences', function (Blueprint $table): void {
-            $table->uuid('event_id')->primary();
+
+        Schema::create('estimate_generation_failure_events', function (Blueprint $table): void {
+            $table->bigIncrements('sequence');
+            $table->uuid('event_id')->unique('eg_failure_events_event_uq');
+            $table->uuid('correlation_id');
             $table->uuid('failure_id');
             $table->char('fingerprint', 71);
-            $table->timestampTz('seen_at');
-            $table->foreign('failure_id', 'eg_failure_occurrences_failure_fk')
-                ->references('id')->on('estimate_generation_failures')->cascadeOnDelete();
-            $table->index(['failure_id', 'seen_at'], 'eg_failure_occurrences_failure_date_idx');
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('project_id');
+            $table->unsignedBigInteger('session_id');
+            $table->string('event_type', 16);
+            $table->unsignedInteger('attempt');
+            $table->jsonb('safe_context')->default('{}');
+            $table->string('resolution_code', 80)->nullable();
+            $table->unsignedBigInteger('resolves_through_sequence')->nullable();
+            $table->timestampTz('recorded_at');
+            $table->foreign(['failure_id', 'organization_id', 'project_id', 'session_id', 'fingerprint'], 'eg_failure_events_identity_fk')
+                ->references(['id', 'organization_id', 'project_id', 'session_id', 'fingerprint'])->on('estimate_generation_failure_identities')->cascadeOnDelete();
+            $table->unique(['sequence', 'failure_id'], 'eg_failure_events_sequence_identity_uq');
+            $table->foreign(['resolves_through_sequence', 'failure_id'], 'eg_failure_events_resolution_target_fk')
+                ->references(['sequence', 'failure_id'])->on('estimate_generation_failure_events');
+            $table->index(['failure_id', 'sequence'], 'eg_failure_events_failure_sequence_idx');
+            $table->index(['organization_id', 'session_id', 'sequence'], 'eg_failure_events_org_session_idx');
         });
 
         if (DB::getDriverName() !== 'pgsql') {
             return;
         }
 
-        DB::statement("ALTER TABLE estimate_generation_failures ADD CONSTRAINT eg_failures_category_ck CHECK (category IN ('recoverable','user_action_required','terminal'))");
-        DB::statement("ALTER TABLE estimate_generation_failures ADD CONSTRAINT eg_failures_identifier_ck CHECK (fingerprint ~ '^sha256:[0-9a-f]{64}$' AND stage ~ '^[a-z][a-z0-9_]{0,39}$' AND operation ~ '^[a-z][a-z0-9_]{0,39}$' AND code ~ '^[a-z][a-z0-9_]{0,79}$' AND (resolution_code IS NULL OR resolution_code ~ '^[a-z][a-z0-9_]{0,79}$'))");
-        DB::statement("ALTER TABLE estimate_generation_failures ADD CONSTRAINT eg_failures_provider_model_ck CHECK ((provider IS NULL OR provider ~ '^[a-z0-9._-]{1,80}$') AND (model IS NULL OR model ~ '^[A-Za-z0-9._/-]{1,160}$'))");
-        DB::statement('ALTER TABLE estimate_generation_failures ADD CONSTRAINT eg_failures_occurrence_ck CHECK (occurrence_count >= 1 AND attempt >= 1)');
-        DB::statement('ALTER TABLE estimate_generation_failures ADD CONSTRAINT eg_failures_timestamp_ck CHECK (first_seen_at <= last_seen_at AND (resolved_at IS NULL OR resolved_at >= first_seen_at) AND ((resolved_at IS NULL) = (resolution_code IS NULL)))');
-        DB::statement("ALTER TABLE estimate_generation_failures ADD CONSTRAINT eg_failures_safe_context_closed_ck CHECK (jsonb_typeof(safe_context) = 'object' AND (safe_context - ARRAY['provider_code','http_class','http_code','status','safe_code','retry_after_seconds','attempt','operation','stage','reason','validation_code','storage_code','claim_status','lineage_code','failure_fingerprint','nested']) = '{}'::jsonb)");
-        DB::statement("ALTER TABLE estimate_generation_failures ADD CONSTRAINT eg_failures_safe_context_nested_closed_ck CHECK (NOT (safe_context ? 'nested') OR (jsonb_typeof(safe_context->'nested') = 'object' AND ((safe_context->'nested') - ARRAY['provider_code','http_class','http_code','status','safe_code','retry_after_seconds','attempt','operation','stage','reason','validation_code','storage_code','claim_status','lineage_code','failure_fingerprint']) = '{}'::jsonb))");
-        DB::statement('ALTER TABLE estimate_generation_failures ADD CONSTRAINT eg_failures_safe_context_size_ck CHECK (octet_length(safe_context::text) <= 4096)');
-        DB::statement("ALTER TABLE estimate_generation_failures ADD CONSTRAINT eg_failures_safe_context_privacy_ck CHECK (NOT (safe_context ?| ARRAY['prompt','request','response','content','filename','path','authorization','api_key','token','secret']) AND lower(safe_context::text) !~ '(prompt|request|response|content|filename|file_name|path|authorization|api_key|apikey|token|secret|password|cookie|bearer|eyj[a-z0-9_-]{8,}\\.|sk-[a-z0-9]{8,})')");
-        DB::statement('ALTER TABLE estimate_generation_failures ADD CONSTRAINT eg_failures_scope_ck CHECK ((page_id IS NULL OR document_id IS NOT NULL) AND (unit_id IS NULL OR document_id IS NOT NULL))');
-        DB::statement("ALTER TABLE estimate_generation_failures ADD CONSTRAINT eg_failures_uuid_ck CHECK (id <> '00000000-0000-0000-0000-000000000000'::uuid AND correlation_id <> '00000000-0000-0000-0000-000000000000'::uuid)");
-        DB::statement("ALTER TABLE estimate_generation_failure_occurrences ADD CONSTRAINT eg_failure_occurrences_fingerprint_ck CHECK (fingerprint ~ '^sha256:[0-9a-f]{64}$')");
+        DB::statement("ALTER TABLE public.estimate_generation_failure_identities ADD CONSTRAINT eg_failure_identities_category_ck CHECK (category IN ('recoverable','user_action_required','terminal'))");
+        DB::statement("ALTER TABLE public.estimate_generation_failure_identities ADD CONSTRAINT eg_failure_identities_identifier_ck CHECK (fingerprint ~ '^sha256:[0-9a-f]{64}$' AND stage ~ '^[a-z][a-z0-9_]{0,39}$' AND operation ~ '^[a-z][a-z0-9_]{0,39}$' AND code ~ '^[a-z][a-z0-9_]{0,79}$')");
+        DB::statement("ALTER TABLE public.estimate_generation_failure_identities ADD CONSTRAINT eg_failure_identities_provider_model_ck CHECK ((provider IS NULL OR provider ~ '^[a-z0-9._-]{1,80}$') AND (model IS NULL OR model ~ '^[A-Za-z0-9._/-]{1,160}$'))");
+        DB::statement('ALTER TABLE public.estimate_generation_failure_identities ADD CONSTRAINT eg_failure_identities_scope_ck CHECK ((page_id IS NULL OR document_id IS NOT NULL) AND (unit_id IS NULL OR document_id IS NOT NULL))');
+        DB::statement("ALTER TABLE public.estimate_generation_failure_identities ADD CONSTRAINT eg_failure_identities_uuid_ck CHECK (id <> '00000000-0000-0000-0000-000000000000'::uuid)");
+        DB::statement("ALTER TABLE public.estimate_generation_failure_events ADD CONSTRAINT eg_failure_events_type_ck CHECK (event_type IN ('occurred','resolved'))");
+        DB::statement("ALTER TABLE public.estimate_generation_failure_events ADD CONSTRAINT eg_failure_events_identifier_ck CHECK (fingerprint ~ '^sha256:[0-9a-f]{64}$' AND (resolution_code IS NULL OR resolution_code ~ '^[a-z][a-z0-9_]{0,79}$'))");
+        DB::statement('ALTER TABLE public.estimate_generation_failure_events ADD CONSTRAINT eg_failure_events_attempt_ck CHECK (attempt BETWEEN 1 AND 1000)');
+        DB::statement("ALTER TABLE public.estimate_generation_failure_events ADD CONSTRAINT eg_failure_events_resolution_ck CHECK ((event_type = 'occurred' AND resolution_code IS NULL AND resolves_through_sequence IS NULL) OR (event_type = 'resolved' AND resolution_code IS NOT NULL AND resolves_through_sequence IS NOT NULL AND resolves_through_sequence > 0 AND safe_context = '{}'::jsonb))");
+        DB::statement("ALTER TABLE public.estimate_generation_failure_events ADD CONSTRAINT eg_failure_events_safe_context_closed_ck CHECK (jsonb_typeof(safe_context) = 'object' AND (safe_context - ARRAY['provider_code','http_class','http_code','status','safe_code','retry_after_seconds','attempt','validation_code','storage_code','claim_status','lineage_code','failure_fingerprint']) = '{}'::jsonb)");
+        DB::statement('ALTER TABLE public.estimate_generation_failure_events ADD CONSTRAINT eg_failure_events_safe_context_size_ck CHECK (octet_length(safe_context::text) <= 2048)');
+        DB::statement("ALTER TABLE public.estimate_generation_failure_events ADD CONSTRAINT eg_failure_events_safe_context_values_ck CHECK ((NOT safe_context ? 'provider_code' OR safe_context->>'provider_code' ~ '^[a-z][a-z0-9._-]{0,79}$') AND (NOT safe_context ? 'http_class' OR safe_context->>'http_class' ~ '^[1-5]xx$') AND (NOT safe_context ? 'http_code' OR (jsonb_typeof(safe_context->'http_code') = 'number' AND (safe_context->>'http_code')::integer BETWEEN 100 AND 599)) AND (NOT safe_context ? 'status' OR safe_context->>'status' ~ '^[a-z][a-z0-9_]{0,39}$') AND (NOT safe_context ? 'safe_code' OR safe_context->>'safe_code' ~ '^[a-z][a-z0-9_]{0,79}$') AND (NOT safe_context ? 'retry_after_seconds' OR (jsonb_typeof(safe_context->'retry_after_seconds') = 'number' AND (safe_context->>'retry_after_seconds')::integer BETWEEN 0 AND 86400)) AND (NOT safe_context ? 'attempt' OR (jsonb_typeof(safe_context->'attempt') = 'number' AND (safe_context->>'attempt')::integer BETWEEN 1 AND 1000)) AND (NOT safe_context ? 'failure_fingerprint' OR safe_context->>'failure_fingerprint' ~ '^sha256:[0-9a-f]{64}$') AND (NOT safe_context ? 'validation_code' OR safe_context->>'validation_code' ~ '^[a-z][a-z0-9_]{0,79}$') AND (NOT safe_context ? 'storage_code' OR safe_context->>'storage_code' ~ '^[a-z][a-z0-9_]{0,79}$') AND (NOT safe_context ? 'claim_status' OR safe_context->>'claim_status' IN ('lost','expired','stale','busy')) AND (NOT safe_context ? 'lineage_code' OR safe_context->>'lineage_code' ~ '^[a-z][a-z0-9_]{0,79}$'))");
+        DB::statement("ALTER TABLE public.estimate_generation_failure_events ADD CONSTRAINT eg_failure_events_safe_context_privacy_ck CHECK (lower(safe_context::text) !~ '(prompt|request|response|content|filename|file_name|path|authorization|api_key|apikey|token|secret|password|cookie|bearer|eyj[a-z0-9_-]{8,}\\.|akia[0-9a-z]{12,}|gh[pousr]_[0-9a-z]{12,}|sk-[0-9a-z]{8,})')");
+        DB::statement("ALTER TABLE public.estimate_generation_failure_events ADD CONSTRAINT eg_failure_events_uuid_ck CHECK (event_id <> '00000000-0000-0000-0000-000000000000'::uuid AND correlation_id <> '00000000-0000-0000-0000-000000000000'::uuid)");
 
         DB::unprepared(<<<'SQL'
-            CREATE FUNCTION prevent_estimate_generation_failure_mutation() RETURNS trigger AS $$
+            CREATE FUNCTION public.prevent_estimate_generation_failure_history_mutation() RETURNS trigger AS $$
             BEGIN
-                IF pg_trigger_depth() = 1 AND COALESCE(current_setting('app.eg_failure_mutation', true), '') NOT IN ('record', 'resolve') THEN
-                    RAISE EXCEPTION 'estimate_generation_failures has controlled mutation paths';
+                IF pg_trigger_depth() = 1 THEN
+                    RAISE EXCEPTION 'estimate generation failure history is append-only';
                 END IF;
-                RETURN COALESCE(NEW, OLD);
+                RETURN OLD;
             END;
-            $$ LANGUAGE plpgsql;
+            $$ LANGUAGE plpgsql SET search_path = pg_catalog, public;
 
-            CREATE TRIGGER eg_failures_controlled_mutation_guard
-            BEFORE INSERT OR UPDATE OR DELETE ON estimate_generation_failures
-            FOR EACH ROW EXECUTE FUNCTION prevent_estimate_generation_failure_mutation();
+            CREATE TRIGGER eg_failure_identities_append_only_guard BEFORE UPDATE OR DELETE ON public.estimate_generation_failure_identities
+            FOR EACH ROW EXECUTE FUNCTION public.prevent_estimate_generation_failure_history_mutation();
+            CREATE TRIGGER eg_failure_events_append_only_guard BEFORE UPDATE OR DELETE ON public.estimate_generation_failure_events
+            FOR EACH ROW EXECUTE FUNCTION public.prevent_estimate_generation_failure_history_mutation();
 
-            CREATE FUNCTION prevent_estimate_generation_failure_occurrence_mutation() RETURNS trigger AS $$
+            CREATE FUNCTION public.validate_estimate_generation_failure_resolution() RETURNS trigger AS $$
             BEGIN
-                IF pg_trigger_depth() = 1 AND COALESCE(current_setting('app.eg_failure_mutation', true), '') <> 'record' THEN
-                    RAISE EXCEPTION 'estimate_generation_failure_occurrences is immutable';
+                IF NEW.event_type = 'resolved' AND NOT EXISTS (
+                    SELECT 1 FROM public.estimate_generation_failure_events target
+                    WHERE target.sequence = NEW.resolves_through_sequence
+                      AND target.failure_id = NEW.failure_id
+                      AND target.event_type = 'occurred'
+                      AND target.sequence < NEW.sequence
+                ) THEN
+                    RAISE EXCEPTION 'resolution must reference an existing occurrence of the same failure';
                 END IF;
-                RETURN COALESCE(NEW, OLD);
+                RETURN NEW;
             END;
-            $$ LANGUAGE plpgsql;
+            $$ LANGUAGE plpgsql SET search_path = pg_catalog, public;
 
-            CREATE TRIGGER eg_failure_occurrences_immutable_guard
-            BEFORE INSERT OR UPDATE OR DELETE ON estimate_generation_failure_occurrences
-            FOR EACH ROW EXECUTE FUNCTION prevent_estimate_generation_failure_occurrence_mutation();
+            CREATE TRIGGER eg_failure_events_resolution_target_guard BEFORE INSERT ON public.estimate_generation_failure_events
+            FOR EACH ROW EXECUTE FUNCTION public.validate_estimate_generation_failure_resolution();
 
-            CREATE FUNCTION record_estimate_generation_failure(payload jsonb) RETURNS text AS $$
-            DECLARE
-                result_fingerprint text;
-                aggregate_created boolean := false;
-                occurrence_created boolean := false;
-                occurrence_fingerprint text;
-            BEGIN
-                PERFORM set_config('app.eg_failure_mutation', 'record', true);
-                INSERT INTO estimate_generation_failures (
-                    id, fingerprint, organization_id, project_id, session_id, document_id, page_id, unit_id,
-                    checkpoint_id, usage_attempt_id, correlation_id, stage, operation, provider, model, category,
-                    code, attempt, safe_context, occurrence_count, first_seen_at, last_seen_at
-                ) VALUES (
-                    (payload->>'id')::uuid, payload->>'fingerprint', (payload->>'organization_id')::bigint,
-                    (payload->>'project_id')::bigint, (payload->>'session_id')::bigint,
-                    (payload->>'document_id')::bigint, (payload->>'page_id')::bigint, (payload->>'unit_id')::bigint,
-                    (payload->>'checkpoint_id')::bigint, (payload->>'usage_attempt_id')::uuid,
-                    (payload->>'correlation_id')::uuid, payload->>'stage', payload->>'operation',
-                    payload->>'provider', payload->>'model', payload->>'category', payload->>'code',
-                    (payload->>'attempt')::integer, COALESCE(payload->'safe_context', '{}'::jsonb), 1,
-                    (payload->>'seen_at')::timestamptz, (payload->>'seen_at')::timestamptz
-                )
-                ON CONFLICT (fingerprint) DO NOTHING
-                RETURNING fingerprint, true INTO result_fingerprint, aggregate_created;
+            REVOKE ALL ON FUNCTION public.prevent_estimate_generation_failure_history_mutation() FROM PUBLIC;
+            REVOKE ALL ON FUNCTION public.validate_estimate_generation_failure_resolution() FROM PUBLIC;
 
-                IF result_fingerprint IS NULL THEN
-                    SELECT fingerprint INTO result_fingerprint
-                    FROM estimate_generation_failures
-                    WHERE fingerprint = payload->>'fingerprint'
-                      AND organization_id = (payload->>'organization_id')::bigint
-                      AND project_id = (payload->>'project_id')::bigint
-                      AND session_id = (payload->>'session_id')::bigint
-                      AND document_id IS NOT DISTINCT FROM (payload->>'document_id')::bigint
-                      AND page_id IS NOT DISTINCT FROM (payload->>'page_id')::bigint
-                      AND unit_id IS NOT DISTINCT FROM (payload->>'unit_id')::bigint
-                      AND stage = payload->>'stage'
-                      AND operation = payload->>'operation'
-                      AND provider IS NOT DISTINCT FROM payload->>'provider'
-                      AND model IS NOT DISTINCT FROM payload->>'model'
-                      AND category = payload->>'category'
-                      AND code = payload->>'code';
-                    IF result_fingerprint IS NULL THEN
-                        RAISE EXCEPTION 'failure fingerprint collision';
-                    END IF;
-                END IF;
-
-                INSERT INTO estimate_generation_failure_occurrences (event_id, failure_id, fingerprint, seen_at)
-                VALUES ((payload->>'correlation_id')::uuid, (payload->>'id')::uuid, payload->>'fingerprint', (payload->>'seen_at')::timestamptz)
-                ON CONFLICT (event_id) DO NOTHING
-                RETURNING true INTO occurrence_created;
-
-                IF NOT occurrence_created THEN
-                    SELECT fingerprint INTO occurrence_fingerprint
-                    FROM estimate_generation_failure_occurrences
-                    WHERE event_id = (payload->>'correlation_id')::uuid;
-                    IF occurrence_fingerprint IS NULL OR occurrence_fingerprint <> payload->>'fingerprint' THEN
-                        RAISE EXCEPTION 'failure event collision';
-                    END IF;
-                ELSIF NOT aggregate_created THEN
-                    UPDATE estimate_generation_failures SET
-                        occurrence_count = occurrence_count + 1,
-                        last_seen_at = GREATEST(last_seen_at, (payload->>'seen_at')::timestamptz),
-                        attempt = GREATEST(attempt, (payload->>'attempt')::integer),
-                        correlation_id = (payload->>'correlation_id')::uuid,
-                        safe_context = COALESCE(payload->'safe_context', '{}'::jsonb),
-                        resolved_at = NULL,
-                        resolution_code = NULL
-                    WHERE fingerprint = payload->>'fingerprint';
-                END IF;
-                PERFORM set_config('app.eg_failure_mutation', '', true);
-                RETURN result_fingerprint;
-            END;
-            $$ LANGUAGE plpgsql;
-
-            CREATE FUNCTION resolve_estimate_generation_failure(
-                target_organization_id bigint,
-                target_project_id bigint,
-                target_session_id bigint,
-                target_fingerprint text,
-                target_resolution_code text,
-                target_resolved_at timestamptz
-            ) RETURNS boolean AS $$
-            DECLARE
-                changed integer;
-            BEGIN
-                PERFORM set_config('app.eg_failure_mutation', 'resolve', true);
-                UPDATE estimate_generation_failures
-                SET resolved_at = target_resolved_at, resolution_code = target_resolution_code
-                WHERE organization_id = target_organization_id
-                  AND project_id = target_project_id
-                  AND session_id = target_session_id
-                  AND fingerprint = target_fingerprint
-                  AND resolved_at IS NULL;
-                GET DIAGNOSTICS changed = ROW_COUNT;
-                PERFORM set_config('app.eg_failure_mutation', '', true);
-                RETURN changed = 1;
-            END;
-            $$ LANGUAGE plpgsql;
-
-            CREATE FUNCTION resolve_active_estimate_generation_failures(
-                target_organization_id bigint,
-                target_project_id bigint,
-                target_session_id bigint,
-                target_document_id bigint,
-                target_unit_id bigint,
-                target_stage text,
-                target_operation text,
-                target_resolution_code text,
-                target_resolved_at timestamptz
-            ) RETURNS integer AS $$
-            DECLARE
-                changed integer;
-            BEGIN
-                PERFORM set_config('app.eg_failure_mutation', 'resolve', true);
-                UPDATE estimate_generation_failures
-                SET resolved_at = target_resolved_at, resolution_code = target_resolution_code
-                WHERE organization_id = target_organization_id
-                  AND project_id = target_project_id
-                  AND session_id = target_session_id
-                  AND document_id IS NOT DISTINCT FROM target_document_id
-                  AND unit_id IS NOT DISTINCT FROM target_unit_id
-                  AND stage = target_stage
-                  AND operation = target_operation
-                  AND resolved_at IS NULL;
-                GET DIAGNOSTICS changed = ROW_COUNT;
-                PERFORM set_config('app.eg_failure_mutation', '', true);
-                RETURN changed;
-            END;
-            $$ LANGUAGE plpgsql;
+            CREATE VIEW public.estimate_generation_failures AS
+            WITH occurrences AS (
+                SELECT failure_id, MIN(recorded_at) AS first_seen_at, MAX(recorded_at) AS last_seen_at, COUNT(*)::bigint AS occurrence_count
+                FROM public.estimate_generation_failure_events WHERE event_type = 'occurred' GROUP BY failure_id
+            ), latest_occurrence AS (
+                SELECT DISTINCT ON (failure_id) * FROM public.estimate_generation_failure_events
+                WHERE event_type = 'occurred' ORDER BY failure_id, sequence DESC
+            ), latest_resolution AS (
+                SELECT DISTINCT ON (failure_id) * FROM public.estimate_generation_failure_events
+                WHERE event_type = 'resolved' ORDER BY failure_id, sequence DESC
+            )
+            SELECT i.*, latest_occurrence.correlation_id, latest_occurrence.attempt, latest_occurrence.safe_context,
+                occurrences.occurrence_count, occurrences.first_seen_at, occurrences.last_seen_at,
+                CASE WHEN latest_resolution.resolves_through_sequence >= latest_occurrence.sequence THEN latest_resolution.recorded_at ELSE NULL END AS resolved_at,
+                CASE WHEN latest_resolution.resolves_through_sequence >= latest_occurrence.sequence THEN latest_resolution.resolution_code ELSE NULL END AS resolution_code,
+                latest_occurrence.sequence AS latest_occurrence_sequence
+            FROM public.estimate_generation_failure_identities i
+            JOIN occurrences ON occurrences.failure_id = i.id
+            JOIN latest_occurrence ON latest_occurrence.failure_id = i.id
+            LEFT JOIN latest_resolution ON latest_resolution.failure_id = i.id;
             SQL);
     }
 
     public function down(): void
     {
         if (DB::getDriverName() === 'pgsql') {
-            DB::statement('DROP FUNCTION IF EXISTS resolve_active_estimate_generation_failures(bigint,bigint,bigint,bigint,bigint,text,text,text,timestamptz)');
-            DB::statement('DROP FUNCTION IF EXISTS resolve_estimate_generation_failure(bigint,bigint,bigint,text,text,timestamptz)');
-            DB::statement('DROP FUNCTION IF EXISTS record_estimate_generation_failure(jsonb)');
-            DB::statement('DROP FUNCTION IF EXISTS prevent_estimate_generation_failure_mutation() CASCADE');
-            DB::statement('DROP FUNCTION IF EXISTS prevent_estimate_generation_failure_occurrence_mutation() CASCADE');
+            DB::statement('DROP VIEW IF EXISTS public.estimate_generation_failures');
+            DB::statement('DROP FUNCTION IF EXISTS public.validate_estimate_generation_failure_resolution() CASCADE');
+            DB::statement('DROP FUNCTION IF EXISTS public.prevent_estimate_generation_failure_history_mutation() CASCADE');
         }
-        Schema::dropIfExists('estimate_generation_failure_occurrences');
-        Schema::dropIfExists('estimate_generation_failures');
+        Schema::dropIfExists('estimate_generation_failure_events');
+        Schema::dropIfExists('estimate_generation_failure_identities');
         Schema::table('estimate_generation_ai_usage', fn (Blueprint $table) => $table->dropUnique('eg_usage_attempt_tenant_scope_uq'));
         Schema::table('estimate_generation_pipeline_checkpoints', fn (Blueprint $table) => $table->dropUnique('eg_checkpoints_session_scope_uq'));
-        Schema::table('estimate_generation_sessions', fn (Blueprint $table) => $table->dropColumn('failure_code'));
     }
 };

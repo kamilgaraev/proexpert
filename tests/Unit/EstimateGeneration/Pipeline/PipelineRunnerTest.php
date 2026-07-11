@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Pipeline;
 
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointClaimStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
@@ -363,6 +368,8 @@ final class PipelineRunnerTest extends TestCase
         return new PipelineRunner(
             new PipelineRegistry($stages),
             $this->store,
+            new FailureRecorder(new NullPipelineFailureStore),
+            new NullPipelineFailureWorkflowHandler,
             fn (): DateTimeImmutable => $this->clock->now,
             60,
             $observer,
@@ -371,13 +378,33 @@ final class PipelineRunnerTest extends TestCase
 
     private function context(int $stateVersion = 3): PipelineContext
     {
-        return new PipelineContext(10, 20, 30, $stateVersion, 'sha256:a');
+        return new PipelineContext(10, 20, 30, $stateVersion, 'sha256:a', 'generating');
     }
 
     private function stageResult(ProcessingStage $stage): PipelineStageResult
     {
         return new PipelineStageResult($stage, 'sha256:out', ['items' => 1], ['check']);
     }
+}
+
+final class NullPipelineFailureStore implements FailureStore
+{
+    public function record(FailureData $failure, DateTimeImmutable $seenAt): void {}
+
+    public function resolve(FailureContext $context, string $fingerprint, string $resolutionCode, DateTimeImmutable $resolvedAt): bool
+    {
+        return false;
+    }
+
+    public function resolveActive(FailureContext $context, string $resolutionCode, DateTimeImmutable $resolvedAt): int
+    {
+        return 0;
+    }
+}
+
+final class NullPipelineFailureWorkflowHandler implements FailureWorkflowHandler
+{
+    public function handle(FailureData $failure, ?int $expectedStateVersion = null): void {}
 }
 
 final class MutableClock

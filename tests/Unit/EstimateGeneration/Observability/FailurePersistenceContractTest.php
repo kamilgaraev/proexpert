@@ -21,27 +21,31 @@ final class FailurePersistenceContractTest extends TestCase
 
         self::assertIsString($source);
         foreach ([
-            'eg_failures_session_scope_fk',
-            'eg_failures_document_scope_fk',
-            'eg_failures_unit_scope_fk',
-            'eg_failures_page_scope_fk',
-            'eg_failures_category_ck',
-            'eg_failures_safe_context_closed_ck',
-            'eg_failures_safe_context_size_ck',
-            'eg_failures_occurrence_ck',
-            'eg_failures_timestamp_ck',
-            'eg_failures_identity_uq',
-            'estimate_generation_failure_occurrences',
-            'eg_failure_occurrences_immutable_guard',
-            'ON CONFLICT (event_id) DO NOTHING',
-            'prevent_estimate_generation_failure_mutation',
-            'resolve_estimate_generation_failure',
+            'eg_failure_identities_session_fk',
+            'eg_failure_identities_document_fk',
+            'eg_failure_identities_unit_fk',
+            'eg_failure_identities_page_fk',
+            'eg_failure_identities_category_ck',
+            'eg_failure_events_safe_context_closed_ck',
+            'eg_failure_events_safe_context_size_ck',
+            'eg_failure_events_attempt_ck',
+            'eg_failure_events_resolution_ck',
+            'estimate_generation_failure_events',
+            'eg_failure_events_append_only_guard',
+            'bigIncrements',
+            'latest_occurrence_sequence',
+            'resolves_through_sequence',
+            'CREATE VIEW public.estimate_generation_failures',
         ] as $required) {
             self::assertStringContainsString($required, $source);
         }
         foreach (['prompt', 'request', 'response', 'content', 'filename', 'path', 'authorization', 'api_key', 'token', 'secret'] as $forbidden) {
-            self::assertStringContainsString("'$forbidden'", $source);
+            self::assertStringContainsString($forbidden, $source);
         }
+        self::assertStringNotContainsString('app.eg_failure_mutation', $source);
+        self::assertStringNotContainsString('SECURITY DEFINER', $source);
+        self::assertStringContainsString('SET search_path = pg_catalog, public', $source);
+        self::assertStringContainsString('REVOKE ALL ON FUNCTION', $source);
     }
 
     #[Test]
@@ -49,5 +53,30 @@ final class FailurePersistenceContractTest extends TestCase
     {
         self::assertSame('estimate_generation_failures', (new EstimateGenerationFailure)->getTable());
         self::assertTrue((new ReflectionClass(EloquentFailureStore::class))->implementsInterface(FailureStore::class));
+    }
+
+    #[Test]
+    public function task_six_migration_reuses_plan_one_failure_code_without_duplicate_add_or_drop(): void
+    {
+        $migration = $this->migrationSource();
+        $planOne = file_get_contents(dirname(__DIR__, 4)
+            .'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000001_rebuild_estimate_generation_session_workflow.php');
+
+        self::assertIsString($planOne);
+        self::assertStringContainsString("string('failure_code', 100)", $planOne);
+        self::assertStringNotContainsString("Schema::table('estimate_generation_sessions'", $migration);
+        self::assertLessThan(0, strcmp(
+            '2026_07_11_000001_rebuild_estimate_generation_session_workflow.php',
+            '2026_07_11_000500_create_estimate_generation_failures_table.php',
+        ));
+    }
+
+    private function migrationSource(): string
+    {
+        $source = file_get_contents(dirname(__DIR__, 4)
+            .'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000500_create_estimate_generation_failures_table.php');
+        self::assertIsString($source);
+
+        return $source;
     }
 }

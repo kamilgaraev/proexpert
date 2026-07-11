@@ -28,6 +28,11 @@ use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\PdfTextLayerExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\SpreadsheetDocumentExtractor;
 use DateTimeImmutable;
@@ -193,7 +198,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
                 $this->calls++;
             }
         };
-        $usecase = new ProcessDocumentUnit($store, $processor, $reconciler);
+        $usecase = $this->processUnit($store, $processor, $reconciler);
 
         $usecase->handle($unit->id, 'source');
         $usecase->handle($unit->id, 'source');
@@ -231,7 +236,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
                 $this->calls++;
             }
         };
-        $usecase = new ProcessDocumentUnit($store, $processor, $reconciler);
+        $usecase = $this->processUnit($store, $processor, $reconciler);
 
         try {
             $usecase->handle($unit->id, 'source');
@@ -281,7 +286,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
         };
 
         try {
-            (new ProcessDocumentUnit($store, $processor, $reconciler))->handle($unit->id, 'source');
+            $this->processUnit($store, $processor, $reconciler)->handle($unit->id, 'source');
             self::fail('Mismatched output must fail.');
         } catch (\RuntimeException $error) {
             self::assertSame('unit_output_identity_mismatch', $error->getMessage());
@@ -423,7 +428,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
                 }
             }
         };
-        $usecase = new ProcessDocumentUnit($store, $processor, $reconciler);
+        $usecase = $this->processUnit($store, $processor, $reconciler);
 
         try {
             $usecase->handle($unit->id, 'source');
@@ -525,7 +530,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
         {
             public function reconcile(int $documentId, string $sourceVersion): void {}
         };
-        $usecase = new ProcessDocumentUnit($store, $processor, $reconciler);
+        $usecase = $this->processUnit($store, $processor, $reconciler);
 
         $busy = $usecase->handle($unit->id, 'source');
         self::assertSame(DocumentProcessingUnitClaimStatus::Busy, $busy->status);
@@ -574,7 +579,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
             }
         };
 
-        $outcome = (new ProcessDocumentUnit($store, $processor, $reconciler, $handler))->handle($unit->id, 'source');
+        $outcome = $this->processUnit($store, $processor, $reconciler, $handler)->handle($unit->id, 'source');
 
         self::assertSame(DocumentProcessingUnitClaimStatus::Exhausted, $outcome->status);
         self::assertSame(1, $handler->calls);
@@ -601,5 +606,33 @@ final class DocumentProcessingUnitContractTest extends TestCase
         self::assertIsString($provider);
         self::assertStringContainsString('RecoverEstimateGenerationUnitsJob', $provider);
         self::assertStringContainsString('->everyMinute()', $provider);
+    }
+
+    private function processUnit(
+        InMemoryDocumentProcessingUnitStore $store,
+        DocumentUnitProcessor $processor,
+        DocumentUnitAggregateReconciler $reconciler,
+        ?DocumentUnitExhaustionHandler $exhaustion = null,
+    ): ProcessDocumentUnit {
+        $failures = new class implements FailureStore
+        {
+            public function record(FailureData $failure, DateTimeImmutable $seenAt): void {}
+
+            public function resolve(FailureContext $context, string $fingerprint, string $resolutionCode, DateTimeImmutable $resolvedAt): bool
+            {
+                return false;
+            }
+
+            public function resolveActive(FailureContext $context, string $resolutionCode, DateTimeImmutable $resolvedAt): int
+            {
+                return 0;
+            }
+        };
+        $workflow = new class implements FailureWorkflowHandler
+        {
+            public function handle(FailureData $failure, ?int $expectedStateVersion = null): void {}
+        };
+
+        return new ProcessDocumentUnit($store, $processor, $reconciler, new FailureRecorder($failures), $workflow, $exhaustion);
     }
 }

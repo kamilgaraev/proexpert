@@ -161,7 +161,7 @@ final class EloquentPipelineCheckpointStoreTest extends TestCase
             'input_payload' => [],
             'state_version' => 0,
         ]);
-        $context = new PipelineContext($session->id, $organization->id, $project->id, 0, 'sha256:input');
+        $context = new PipelineContext($session->id, $organization->id, $project->id, 0, 'sha256:input', 'generating');
 
         return [new EloquentPipelineCheckpointStore(DB::connection()), $context];
     }

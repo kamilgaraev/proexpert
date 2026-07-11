@@ -41,7 +41,7 @@ class ClassifyEstimateNormativesCommand extends Command
                 fn (string $event, array $payload): null => $this->reportProgress($event, $payload, $startedAt)
             );
         } catch (RuntimeException $exception) {
-            $this->error($exception->getMessage());
+            $this->error(trans_message('estimate_generation.operation_error'));
 
             return self::FAILURE;
         }
@@ -78,7 +78,7 @@ class ClassifyEstimateNormativesCommand extends Command
     }
 
     /**
-     * @param array<string, mixed> $payload
+     * @param  array<string, mixed>  $payload
      */
     private function reportProgress(string $event, array $payload, float $startedAt): null
     {

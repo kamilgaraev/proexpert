@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use DateTimeImmutable;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Eloquent\Builder;
@@ -40,11 +41,12 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
         }
 
         return $this->database->transaction(function () use ($claim): DocumentUnitExecutionContext {
-            $unit = $this->query()->with('document')->lockForUpdate()->find($claim->unitId);
+            $unit = $this->query()->with('document.session')->lockForUpdate()->find($claim->unitId);
             $now = now()->toDateTimeImmutable();
 
             if (! $unit instanceof EstimateGenerationProcessingUnit
                 || ! $unit->document instanceof EstimateGenerationDocument
+                || ! $unit->document->session instanceof EstimateGenerationSession
                 || ! $this->isCurrent($unit, (string) $claim->sourceVersion)) {
                 throw new DocumentUnitProcessingException('unit_claim_lost');
             }
@@ -77,6 +79,8 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                 (string) $unit->document->filename,
                 (string) $unit->claim_token,
                 (int) $unit->attempt_count,
+                (int) $unit->document->session->state_version,
+                $unit->document->session->status->value,
                 $pageId,
             );
         }, 3);

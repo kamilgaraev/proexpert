@@ -11,7 +11,7 @@ use Throwable;
 
 final class KsrCsvParser
 {
-    private const DELIMITERS = [";", ",", "\t"];
+    private const DELIMITERS = [';', ',', "\t"];
 
     public function parse(string $filePath): iterable
     {
@@ -55,6 +55,7 @@ final class KsrCsvParser
 
                 if ($result === false) {
                     $skipped++;
+
                     continue;
                 }
 
@@ -63,7 +64,7 @@ final class KsrCsvParser
                 $failed++;
                 $errors[] = [
                     'row' => $processed,
-                    'message' => $exception->getMessage(),
+                    'message' => 'ksr_row_parse_failed',
                 ];
             }
         }
@@ -242,7 +243,7 @@ final class KsrCsvParser
 
     private function cell(array $row, ?int $index): ?string
     {
-        if ($index === null || !array_key_exists($index, $row)) {
+        if ($index === null || ! array_key_exists($index, $row)) {
             return null;
         }
 
@@ -274,7 +275,7 @@ final class KsrCsvParser
         $handle = @fopen($filePath, 'rb');
 
         if ($handle === false) {
-            throw new RuntimeException('Cannot open file: ' . $filePath);
+            throw new RuntimeException('Cannot open file: '.$filePath);
         }
 
         return $handle;

@@ -32,7 +32,7 @@ class QualityEstimateNormativesCommand extends Command
         try {
             $report = $qualityService->analyze($source, $versionKey, $limit);
         } catch (RuntimeException $exception) {
-            $this->error($exception->getMessage());
+            $this->error(trans_message('estimate_generation.operation_error'));
 
             return self::FAILURE;
         }
@@ -48,7 +48,7 @@ class QualityEstimateNormativesCommand extends Command
     }
 
     /**
-     * @param array<string, mixed> $version
+     * @param  array<string, mixed>  $version
      */
     private function renderVersion(array $version): void
     {
@@ -69,7 +69,7 @@ class QualityEstimateNormativesCommand extends Command
     }
 
     /**
-     * @param array<string, mixed> $totals
+     * @param  array<string, mixed>  $totals
      */
     private function renderTotals(array $totals): void
     {
@@ -100,7 +100,7 @@ class QualityEstimateNormativesCommand extends Command
     }
 
     /**
-     * @param array<int, array<string, mixed>> $collections
+     * @param  array<int, array<string, mixed>>  $collections
      */
     private function renderCollections(array $collections): void
     {
@@ -128,7 +128,7 @@ class QualityEstimateNormativesCommand extends Command
     }
 
     /**
-     * @param array<int, array<string, mixed>> $resourceTypes
+     * @param  array<int, array<string, mixed>>  $resourceTypes
      */
     private function renderResourceTypes(array $resourceTypes): void
     {
@@ -152,7 +152,7 @@ class QualityEstimateNormativesCommand extends Command
     }
 
     /**
-     * @param array<int, array<string, mixed>> $resources
+     * @param  array<int, array<string, mixed>>  $resources
      */
     private function renderUnlinkedResources(array $resources): void
     {
@@ -180,7 +180,7 @@ class QualityEstimateNormativesCommand extends Command
     }
 
     /**
-     * @param array<int, array<string, mixed>> $norms
+     * @param  array<int, array<string, mixed>>  $norms
      */
     private function renderProblemNorms(array $norms): void
     {

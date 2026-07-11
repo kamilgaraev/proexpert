@@ -12,19 +12,24 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocum
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentFact;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentUnderstandingSummaryBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DrawingUnderstandingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrConfigurationException;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrProviderException;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\PdfGeometryExtractionException;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryExtractionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryRecognitionMerger;
 use App\Services\Storage\FileService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Throwable;
 
 class OcrDocumentProcessor
@@ -44,11 +49,20 @@ class OcrDocumentProcessor
         private readonly DrawingUnderstandingService $drawingUnderstandingService,
         private readonly DocumentUnderstandingSummaryBuilder $documentUnderstandingSummaryBuilder,
         private readonly EstimatorScopeInferenceService $scopeInferenceService,
+        private readonly FailureRecorder $failureRecorder,
+        private readonly FailureWorkflowHandler $failureWorkflowHandler,
     ) {}
 
     public function process(EstimateGenerationDocument $document): EstimateGenerationDocument
     {
         $startedAt = microtime(true);
+        $document->loadMissing('session');
+        $eventId = (string) Str::uuid();
+        $correlationId = AiOperationContext::deterministicId(sprintf(
+            'whole-document|%d|%s',
+            (int) $document->getKey(),
+            (string) ($document->source_version ?? 'missing'),
+        ));
 
         try {
             $this->statusService->markProcessing($document, 'preflight', 10);
@@ -95,15 +109,23 @@ class OcrDocumentProcessor
 
             return $document->refresh();
         } catch (OcrProviderException $exception) {
+            $failure = $this->captureFailure($document, $exception, $eventId, $correlationId);
+            if ($failure->category === FailureCategory::Recoverable) {
+                throw $exception;
+            }
             $this->statusService->markFailed(
                 $document,
-                $exception->providerCode ?? 'ocr_provider_error',
+                $failure->code,
                 $exception->messageKey,
-                $exception->context,
+                $failure->safeContext,
             );
 
             return $document->refresh();
         } catch (Throwable $exception) {
+            $failure = $this->captureFailure($document, $exception, $eventId, $correlationId);
+            if ($failure->category === FailureCategory::Recoverable) {
+                throw $exception;
+            }
             Log::error('[EstimateGeneration OCR] Document processing failed', [
                 'document_id' => $document->id,
                 'session_id' => $document->session_id,
@@ -113,7 +135,7 @@ class OcrDocumentProcessor
 
             $this->statusService->markFailed(
                 $document,
-                'ocr_processing_error',
+                $failure->code,
                 'estimate_generation.ocr_provider_error',
             );
 
@@ -186,16 +208,36 @@ class OcrDocumentProcessor
             return null;
         }
 
-        try {
-            return $this->pdfGeometryExtractor->extract($content, $filename);
-        } catch (PdfGeometryExtractionException $exception) {
-            Log::info('[EstimateGeneration OCR] PDF geometry extraction skipped', [
-                'failure_code' => 'drawing_geometry_unreadable',
-                'failure_fingerprint' => hash('sha256', $exception::class.'|'.(string) $exception->getCode()),
-            ]);
+        return $this->pdfGeometryExtractor->extract($content, $filename);
+    }
 
-            return null;
+    private function captureFailure(
+        EstimateGenerationDocument $document,
+        Throwable $error,
+        string $eventId,
+        string $correlationId,
+    ): \App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData {
+        $session = $document->session;
+        $failure = $this->failureRecorder->capture($error, new FailureContext(
+            organizationId: (int) $document->organization_id,
+            projectId: (int) $document->project_id,
+            sessionId: (int) $document->session_id,
+            stage: ProcessingStage::UnderstandDocuments,
+            operation: 'process_document',
+            attempt: max(1, (int) $document->ocr_attempts),
+            correlationId: $correlationId,
+            eventId: $eventId,
+            expectedSessionStateVersion: $session !== null ? (int) $session->state_version : null,
+            expectedSessionStatus: $session !== null ? $session->status->value : null,
+            documentId: (int) $document->getKey(),
+            provider: (string) config('estimate-generation.ocr.provider', 'timeweb'),
+        ));
+        try {
+            $this->failureWorkflowHandler->handle($failure);
+        } catch (Throwable) {
         }
+
+        return $failure;
     }
 
     private function recognitionStage(EstimateGenerationDocument $document): string
