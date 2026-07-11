@@ -47,7 +47,7 @@
 - Consumes: текущие маршруты и зависимости `EstimateGeneration`.
 - Produces: документированный baseline и автоматический boundary test, запрещающий AI-коду произвольные записи в обычные сметы.
 
-- [ ] **Step 1: Написать падающий architecture test**
+- [ ] **Step 1: Написать architecture test с точным временным allow-list**
 
 ```php
 <?php
@@ -61,6 +61,20 @@ use Tests\TestCase;
 
 final class EstimateGenerationOrdinaryEstimateBoundaryTest extends TestCase
 {
+    private const LEGACY_ALLOWLIST = [
+        'Models/EstimateGenerationLearningExample.php',
+        'Models/EstimateGenerationSession.php',
+        'Services/EstimateDraftPersistenceService.php',
+        'Services/EstimateGenerationExcelExportService.php',
+        'Services/Learning/EstimateGenerationLearningBootstrapService.php',
+        'Services/Learning/EstimateGenerationLearningRecorder.php',
+        'Services/Learning/EstimateLearningExampleExtractor.php',
+    ];
+
+    public function refreshDatabase(): void
+    {
+    }
+
     #[Test]
     public function only_apply_use_case_may_reference_ordinary_estimate_models(): void
     {
@@ -74,14 +88,21 @@ final class EstimateGenerationOrdinaryEstimateBoundaryTest extends TestCase
             }
 
             $path = str_replace('\\', '/', $file->getPathname());
+            $relativePath = ltrim(substr($path, strlen(str_replace('\\', '/', $root))), '/');
             $source = (string) file_get_contents($file->getPathname());
 
             if ($path !== $allowed && preg_match('/App\\\\Models\\\\(Estimate|EstimateItem|EstimateSection)\\b/', $source) === 1) {
-                $violations[] = $path;
+                $violations[] = $relativePath;
             }
         }
 
-        self::assertSame([], $violations);
+        sort($violations);
+
+        self::assertSame(
+            self::LEGACY_ALLOWLIST,
+            $violations,
+            'Обновите временный LEGACY_ALLOWLIST при удалении старых зависимостей; новые зависимости от обычных смет запрещены.'
+        );
     }
 }
 ```
@@ -90,7 +111,7 @@ final class EstimateGenerationOrdinaryEstimateBoundaryTest extends TestCase
 
 Run: `php artisan test tests/Architecture/EstimateGenerationOrdinaryEstimateBoundaryTest.php`
 
-Expected: FAIL со списком текущих классов, напрямую использующих модели обычных смет. Этот красный тест остается контрольной целью Plan 1 и не отключается.
+Expected для RED: FAIL со списком текущих классов, напрямую использующих модели обычных смет. После фиксации точного `LEGACY_ALLOWLIST` тест обязан быть зеленым: новые нарушения запрещены, а удаление старого нарушения требует одновременного удаления соответствующей записи allow-list. К завершению Plan 1 allow-list должен стать пустым; единственный writer разрешен только по точному пути `Application/Apply/ApplyGeneratedEstimate.php`.
 
 - [ ] **Step 3: Снять read-only baseline production**
 
@@ -115,7 +136,7 @@ Expected: JSON с агрегатами и timestamp выборки; никаки
 ## Метрики, которые пока не собираются
 ```
 
-- [ ] **Step 5: Зафиксировать baseline и красный boundary test**
+- [ ] **Step 5: Зафиксировать baseline и зеленый boundary test с временным allow-list**
 
 ```bash
 git add tests/Architecture/EstimateGenerationOrdinaryEstimateBoundaryTest.php docs/ai-estimator/baselines/2026-07-11-production-baseline.md
