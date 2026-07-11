@@ -129,3 +129,55 @@ git diff --check: exit 0 (Git reports only the existing Dockerfile CRLF normaliz
 Docker build and database-backed Laravel tests were not run because the task expressly forbids Docker builds and DB/migration commands. The compatibility regression is therefore provided as a pure PHPUnit/process test that exercises the real Python adapter without Laravel database bootstrap.
 
 Corrective implementation commit: `8afd261c`.
+
+## Second corrective cycle after follow-up review
+
+### Remaining finding → final fix evidence
+
+- Important: repeated/nested block members lost stable identity. DXF expansion now pairs every virtual entity with the originating block definition member, uses the original member handle (or deterministic block/member index only when the source has none), and combines it with the full insert-instance chain. Repeating the same nested two-LINE block twice yields four unique instance handles, two stable `source_member_handle` values and distinct transformed coordinates; lineage is also carried by block TEXT/MTEXT and DIMENSION records.
+- Important: nested schema types/invariants were permissive. `VectorGeometryData` now enforces strict primitive types for every collection, typed layer/block/page/scale/warning fields, exact coordinate pairs and boxes, affine/4x4 transforms, RGBA/style values, allowed entity types and type-specific geometry: LINE exactly two points, polylines at least two plus boolean closed, ARC/CIRCLE center/radius/angles, INSERT block+4x4 transform and PATH non-empty typed segments. All coordinate-bearing fields, including positions, definition points, transforms, transform lineage, bboxes and segment points, contribute to the global limit.
+- Important: LibreDWG completeness diagnostics were generic. Bounded stderr is parsed into structured `unsupported`, `skipped` and `unknown` counts; JSON object/entity totals are reconciled against represented records. Blocking failures expose only bounded numeric `safeContext` through `GeometryExtractionException`, with no path/document/command content. Tests prove both count parsing and context propagation.
+- Important: Linux could fall back unsandboxed. `GeometryProcessRunner` now fails closed on every Linux host when `GEOMETRY_SANDBOX_BINARY` is missing or non-executable; unsandboxed bounded execution remains explicitly non-Linux-only for local compatibility.
+- Important: resource limits were hardcoded. Validated `GeometryResourceLimits` is bound from `estimate-generation.vision.geometry_runtime` config and passed through PDF/CAD runtimes into sandbox VM/CPU/file/open-file arguments. Zero, negative, undersized and excessive values are rejected before process start.
+- Important: preview output escaped workspace. Legacy preview now requires `--workspace`, resolves both paths, rejects direct traversal and symlink/junction escapes, and writes only under the ephemeral workspace using the original sanitized `{filename}_page_{n}.png` convention.
+- Important: ordinary PDF geometry contract changed. Legacy adapter again reports top-level provider `pymupdf`, retains old `pymupdf_unavailable` and generic error identifiers, page role/signals/geometry metrics/preview naming, while actual `pypdfium2` runtime provenance is isolated in metadata.
+- Important: production security test was string-only. `CadProductionRuntimeContractTest` now executes `tests/Runtime/geometry-sandbox-runtime.sh` through WSL/POSIX. The harness downloads the pinned Ubuntu bubblewrap package, verifies its SHA-256, runs a real namespace smoke test, then proves workspace write success, outside-write denial, output-symlink safety, bounded stdout/stderr/child files, CPU, VM, open-file and wall-clock limits, plus invalid/colliding argument rejection. It is an executable boundary test, not a Docker build or string assertion.
+- Minor: PDF inner copy is checked and returns `pdf_source_copy_failed`; PDF and CAD provider workspace creation is checked and returns typed workspace failures. Provider tests force invalid workspace roots to verify both paths.
+- Minor: Python sandbox output redirection no longer follows attacker-planted final-path symlinks. It captures into unpredictable `mktemp` files and atomically renames them over final names after the child exits; the executable harness verifies an outside victim remains unchanged.
+
+### Second corrective RED evidence
+
+```text
+Nested repeated INSERT test: failed with cad_runtime_contract_invalid from duplicate virtual LINE handles.
+VectorGeometryDataContractTest: 6 added type/invariant cases all failed to throw.
+GeometryResourceLimits/CadProduction tests: 2 errors + 2 failures before limits class/config/runtime harness existed.
+LegacyPdfGeometryAdapterTest: 3/3 failed for provider identifier, preview filename and missing-runtime error identifier.
+```
+
+### Second corrective final verification
+
+```text
+LIBREDWG_DWGREAD_BINARY=<official LibreDWG 0.13.4>/dwgread.exe vendor/bin/phpunit \
+  CadRuntimeContractTest.php CadProductionRuntimeContractTest.php \
+  DwgDxfGeometryProviderTest.php PdfVectorGeometryProviderTest.php \
+  LegacyPdfGeometryAdapterTest.php VectorGeometryDataContractTest.php \
+  GeometryResourceLimitsTest.php
+Result: 46 tests, 138 assertions, 0 failed, 0 skipped.
+
+Executable sandbox gate within the matrix:
+- real bubblewrap 0.6.1 namespace smoke: PASS;
+- outside-write and symlink victim protection: PASS;
+- stdout/stderr/child-file, CPU, VM, NOFILE and wall limits: PASS.
+
+PHPStan/Larastan changed production PHP: [OK] No errors.
+Pint focused production/tests: PASS, 36 files.
+php -l all changed PHP/config: no syntax errors.
+python -m py_compile: exit 0.
+python -m black --check: both workers unchanged/pass.
+sh -n sandbox and executable harness: exit 0.
+git diff --check: exit 0; only existing Dockerfile CRLF normalization warning.
+```
+
+No Docker build, database command or migration was executed.
+
+Second corrective implementation commit: `aa10cedd`.
