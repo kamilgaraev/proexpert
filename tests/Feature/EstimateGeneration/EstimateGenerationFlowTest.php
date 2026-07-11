@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileEstimateGenerationDocuments;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationWorkflow;
@@ -16,7 +17,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocum
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentProcessingStatusService;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -81,15 +81,24 @@ final class EstimateGenerationFlowTest extends TestCase
         ]])->save();
         $document = $this->makeDocument($session, 'processing');
 
-        app(DocumentProcessingStatusService::class)->markReady($document, 0.9, 'good', [
-            'document_understanding' => [
-                'role_for_estimation' => 'drawing_architecture',
-                'extracted_capabilities' => [
-                    'has_quantities' => true,
-                    'requires_manual_review' => false,
+        $document->forceFill([
+            'status' => 'ready',
+            'processing_stage' => 'completed',
+            'progress_percent' => 100,
+            'quality_score' => 0.9,
+            'quality_level' => 'good',
+            'facts_summary' => [
+                'document_understanding' => [
+                    'role_for_estimation' => 'drawing_architecture',
+                    'extracted_capabilities' => [
+                        'has_quantities' => true,
+                        'requires_manual_review' => false,
+                    ],
                 ],
             ],
-        ]);
+            'ocr_finished_at' => now(),
+        ])->save();
+        app(ReconcileEstimateGenerationDocuments::class)->reconcile($session);
 
         $session->refresh();
         $this->assertSame(EstimateGenerationStatus::Generating, $session->status);

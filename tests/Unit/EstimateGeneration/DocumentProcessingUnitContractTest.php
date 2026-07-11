@@ -161,17 +161,23 @@ final class DocumentProcessingUnitContractTest extends TestCase
     }
 
     #[Test]
-    public function legacy_document_job_is_dispatcher_only(): void
+    public function document_job_delegates_to_one_application_entrypoint(): void
     {
-        $source = file_get_contents(__DIR__.'/../../../app/BusinessModules/Addons/EstimateGeneration/Jobs/ProcessEstimateGenerationDocumentJob.php');
+        $root = __DIR__.'/../../../app/BusinessModules/Addons/EstimateGeneration';
+        $source = file_get_contents($root.'/Jobs/ProcessEstimateGenerationDocumentJob.php');
+        $entrypoint = file_get_contents($root.'/Application/Documents/ProcessEstimateGenerationDocument.php');
 
         self::assertIsString($source);
-        self::assertStringContainsString('CreateDocumentProcessingUnits', $source);
+        self::assertIsString($entrypoint);
+        self::assertStringContainsString('ProcessEstimateGenerationDocument', $source);
+        self::assertStringContainsString('$documents->handle(', $source);
         self::assertStringNotContainsString('OcrDocumentProcessor', $source);
         self::assertStringNotContainsString('FileService', $source);
-        self::assertStringContainsString('PipelineCheckpointStore', $source);
-        self::assertStringContainsString('PipelineStageOutput::create(', $source);
-        self::assertStringContainsString('document_manifest_v1', $source);
+        self::assertStringNotContainsString('PipelineCheckpointStore', $source);
+        self::assertStringContainsString('CreateDocumentProcessingUnits', $entrypoint);
+        self::assertStringContainsString('PipelineCheckpointStore', $entrypoint);
+        self::assertStringContainsString('PipelineStageOutput::create(', $entrypoint);
+        self::assertStringContainsString('document_manifest_v1', $entrypoint);
         self::assertStringNotContainsString("->with(['facts'", $source);
         self::assertStringNotContainsString('readStream', $source);
     }

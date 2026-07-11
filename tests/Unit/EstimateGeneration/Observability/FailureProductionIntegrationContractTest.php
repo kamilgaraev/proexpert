@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Observability;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RunEstimateGenerationDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\DraftPipelineEntrypoint;
@@ -37,10 +38,16 @@ final class FailureProductionIntegrationContractTest extends TestCase
     public function draft_job_uses_one_container_bound_real_pipeline_entrypoint(): void
     {
         $job = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Jobs/GenerateEstimateDraftJob.php');
-        $provider = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/EstimateGenerationServiceProvider.php');
+        $root = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration';
+        $entrypoint = file_get_contents($root.'/Application/Generation/RunEstimateGenerationDraft.php');
+        $provider = file_get_contents($root.'/EstimateGenerationServiceProvider.php');
         self::assertIsString($job);
+        self::assertIsString($entrypoint);
         self::assertIsString($provider);
-        self::assertStringContainsString(DraftPipelineEntrypoint::class, $job);
+        self::assertStringContainsString(RunEstimateGenerationDraft::class, $job);
+        self::assertStringContainsString(DraftPipelineEntrypoint::class, $entrypoint);
+        self::assertStringContainsString('$generation->handle(', $job);
+        self::assertStringNotContainsString('PipelineCheckpointStore', $job);
         self::assertStringNotContainsString('->generate($session)', $job);
         self::assertStringContainsString(ValidateDraftStage::class, $provider);
         self::assertStringNotContainsString('LegacyDraftPipelineStageAdapter', $provider);
@@ -50,8 +57,9 @@ final class FailureProductionIntegrationContractTest extends TestCase
     #[Test]
     public function failure_paths_use_dispatch_or_start_snapshots(): void
     {
-        foreach (['GenerateEstimateDraftJob.php', 'ProcessEstimateGenerationDocumentJob.php'] as $file) {
-            $source = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Jobs/'.$file);
+        $root = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Application';
+        foreach (['Generation/RunEstimateGenerationDraft.php', 'Documents/HandleDocumentProcessingFailure.php'] as $file) {
+            $source = file_get_contents($root.'/'.$file);
             self::assertIsString($source);
             self::assertStringContainsString('FailureExecutionSnapshot', $source);
             self::assertStringContainsString('$snapshot->stateVersion', $source);
@@ -64,17 +72,18 @@ final class FailureProductionIntegrationContractTest extends TestCase
     {
         $root = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration';
         $checkpoint = file_get_contents($root.'/Pipeline/EloquentPipelineCheckpointStore.php');
-        $documentJob = file_get_contents($root.'/Jobs/ProcessEstimateGenerationDocumentJob.php');
+        $documentEntrypoint = file_get_contents($root.'/Application/Documents/ProcessEstimateGenerationDocument.php');
         $publication = file_get_contents($root.'/Pipeline/DocumentManifestPublicationFence.php');
         $draftPublication = file_get_contents($root.'/Pipeline/PublishValidatedDraft.php');
-        foreach ([$checkpoint, $documentJob, $publication, $draftPublication] as $source) {
+        foreach ([$checkpoint, $documentEntrypoint, $publication, $draftPublication] as $source) {
             self::assertIsString($source);
         }
         self::assertStringContainsString('(int) $session->state_version !== $context->stateVersion', $checkpoint);
         self::assertStringContainsString('generation_attempt_id', $checkpoint);
         self::assertStringContainsString('DocumentSourceVersion::fromDocument($document)', $checkpoint);
-        self::assertStringContainsString('$checkpoints->claim(', $documentJob);
-        self::assertStringContainsString('$creator->handleClaimed($document, $claim)', $documentJob);
+        self::assertStringContainsString('$this->checkpoints->claim(', $documentEntrypoint);
+        self::assertStringContainsString('$this->creator->handleClaimed($document, $claim)', $documentEntrypoint);
+        self::assertStringContainsString('final readonly class ProcessEstimateGenerationDocument', $documentEntrypoint);
         self::assertStringContainsString("->where('claim_token', \$claim->claimToken)", $publication);
         self::assertStringContainsString("->where('state_version', \$context->stateVersion)", $publication);
         self::assertStringContainsString('(int) $session->state_version !== $claim->context->stateVersion', $draftPublication);

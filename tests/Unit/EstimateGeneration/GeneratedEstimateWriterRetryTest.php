@@ -157,7 +157,7 @@ final class GeneratedEstimateWriterRetryTest extends TestCase
             ? 'duplicate key violates a unique index'
             : sprintf('duplicate key violates constraint "%s"', $constraint);
         $previous = new PDOException($message);
-        $previous->errorInfo = [$sqlState, 7, 'duplicate'];
+        $previous->errorInfo = [$sqlState, 7, $message];
 
         return new QueryException('pgsql', 'insert into estimates', [], $previous);
     }

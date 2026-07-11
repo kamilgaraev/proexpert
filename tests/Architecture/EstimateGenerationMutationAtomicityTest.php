@@ -33,10 +33,13 @@ final class EstimateGenerationMutationAtomicityTest extends TestCase
     #[Test]
     public function generation_publication_is_owner_checked_and_atomic(): void
     {
-        $source = $this->source('Services/EstimateGenerationOrchestrator.php');
+        $source = $this->source('Pipeline/PublishValidatedDraft.php');
+        $store = $this->source('Pipeline/EloquentPipelineCheckpointStore.php');
 
-        self::assertStringContainsString('DB::transaction', $source);
-        self::assertLessThan(strpos($source, 'syncFromDraft'), strpos($source, 'generationAttemptGuard->matches'));
+        self::assertStringContainsString('->transaction(', $store);
+        self::assertStringContainsString('$this->completionHook->beforeComplete(', $store);
+        self::assertLessThan(strpos($source, 'syncFromDraft'), strpos($source, '->lockForUpdate()'));
+        self::assertLessThan(strpos($source, 'syncFromDraft'), strpos($source, 'hash_equals('));
         self::assertLessThan(strpos($source, 'generationCompleted'), strpos($source, 'syncFromDraft'));
     }
 

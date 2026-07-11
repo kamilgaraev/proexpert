@@ -21,10 +21,14 @@ final class PipelineRecoveryContractTest extends TestCase
 
         self::assertSame(['int', 'int', 'string', FailureExecutionSnapshot::class], $types);
 
-        $source = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Jobs/GenerateEstimateDraftJob.php');
-        self::assertIsString($source);
-        self::assertStringContainsString("->where('status', 'running')", $source);
-        self::assertStringContainsString('stage: $checkpoint->stage', $source);
+        $root = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration';
+        $job = file_get_contents($root.'/Jobs/GenerateEstimateDraftJob.php');
+        $failure = file_get_contents($root.'/Application/Generation/HandleEstimateGenerationDraftFailure.php');
+        self::assertIsString($job);
+        self::assertIsString($failure);
+        self::assertStringNotContainsString('PipelineCheckpointStore', $job);
+        self::assertStringContainsString("->where('status', 'running')", $failure);
+        self::assertStringContainsString('stage: $checkpoint->stage', $failure);
     }
 
     #[Test]
@@ -38,7 +42,10 @@ final class PipelineRecoveryContractTest extends TestCase
         self::assertStringContainsString('private const BATCH_SIZE = 100', $recovery);
         self::assertStringContainsString("where('id', '>', \$cursor)", $recovery);
         self::assertStringContainsString("where('id', '<=', \$cursor)", $recovery);
-        self::assertStringContainsString("->where('generation_attempt_id', \$snapshot->attemptId)", file_get_contents($root.'/Jobs/GenerateEstimateDraftJob.php'));
+        self::assertStringContainsString(
+            "->where('generation_attempt_id', \$snapshot->attemptId)",
+            file_get_contents($root.'/Application/Generation/HandleEstimateGenerationDraftFailure.php'),
+        );
         self::assertStringContainsString('CheckpointStatus::Running', $recovery);
         self::assertStringContainsString('lease_expires_at->toDateTimeImmutable() > $now', $recovery);
         self::assertStringContainsString('saveCursor', $recovery);

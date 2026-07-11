@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
@@ -68,6 +69,7 @@ final class NormativeCandidateSelectionServiceTest extends TestCase
             $this->createMock(EstimateValidationService::class),
             $this->createMock(EstimateGenerationPackagePersistenceService::class),
             (new \ReflectionClass(EstimateGenerationLearningRecorder::class))->newInstanceWithoutConstructor(),
+            (new \ReflectionClass(AdvanceEstimateGeneration::class))->newInstanceWithoutConstructor(),
         );
     }
 }
@@ -75,7 +77,7 @@ final class NormativeCandidateSelectionServiceTest extends TestCase
 final class TestableNormativeCandidateSelectionService extends NormativeCandidateSelectionService
 {
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     public function assertCandidateFor(array $workItem, int $normId, bool $allowCatalogSelection = false): void
     {
@@ -83,7 +85,7 @@ final class TestableNormativeCandidateSelectionService extends NormativeCandidat
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     public function assertSelectable(array $workItem): void
     {
@@ -91,7 +93,7 @@ final class TestableNormativeCandidateSelectionService extends NormativeCandidat
     }
 
     /**
-     * @param array<string, mixed> $draft
+     * @param  array<string, mixed>  $draft
      */
     public function draftNeedsReview(array $draft): bool
     {
@@ -108,13 +110,12 @@ final class TestableNormativeCandidateSelectionService extends NormativeCandidat
 
     protected function validationException(array $messages): ValidationException
     {
-        return new class($messages) extends ValidationException {
+        return new class($messages) extends ValidationException
+        {
             /**
-             * @param array<string, array<int, string>> $messages
+             * @param  array<string, array<int, string>>  $messages
              */
-            public function __construct(private readonly array $messages)
-            {
-            }
+            public function __construct(private readonly array $messages) {}
 
             public function errors()
             {

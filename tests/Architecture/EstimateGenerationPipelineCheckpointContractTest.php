@@ -40,7 +40,7 @@ final class EstimateGenerationPipelineCheckpointContractTest extends TestCase
         );
 
         self::assertIsString($source);
-        self::assertStringContainsString('private Connection $database', $source);
+        self::assertStringContainsString('private readonly Connection $database', $source);
         self::assertStringContainsString('->setConnection($this->database->getName())', $source);
         self::assertStringNotContainsString('Facades\\DB', $source);
     }

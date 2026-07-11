@@ -39,11 +39,6 @@ return [
             'timeout_seconds' => (int) env('ESTIMATE_GENERATION_PDF_GEOMETRY_TIMEOUT', 45),
             'max_pages' => (int) env('ESTIMATE_GENERATION_PDF_GEOMETRY_MAX_PAGES', 200),
             'max_vector_elements' => (int) env('ESTIMATE_GENERATION_PDF_GEOMETRY_MAX_VECTOR_ELEMENTS', 5000),
-            'render_previews' => (bool) env('ESTIMATE_GENERATION_PDF_GEOMETRY_RENDER_PREVIEWS', false),
-            'preview_dir' => env(
-                'ESTIMATE_GENERATION_PDF_GEOMETRY_PREVIEW_DIR',
-                storage_path('app/estimate-generation/pdf-previews')
-            ),
         ],
         'min_usable_quality_score' => 0.60,
         'min_good_quality_score' => 0.80,

@@ -8,7 +8,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocum
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\DocumentManifestPublicationFence;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentProcessingStatusService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -17,7 +16,7 @@ final readonly class CreateDocumentProcessingUnits
 {
     public function __construct(
         private DocumentUnitDetector $detector,
-        private DocumentProcessingStatusService $status,
+        private RequireDocumentProcessingReview $review,
         private DocumentSourceReplacementCoordinator $replacement,
         private DocumentManifestPublicationFence $publicationFence,
     ) {}
@@ -66,7 +65,20 @@ final readonly class CreateDocumentProcessingUnits
                 throw new DocumentManifestNeedsReview('document_units_empty');
             }
         } catch (DocumentManifestNeedsReview $error) {
-            $this->publish($claim, fn () => $this->status->markNeedsReview($document, 0.0, [$error->safeCode], [], 'unusable'));
+            $this->publish($claim, fn () => $this->replacement->commit(
+                (int) $document->organization_id,
+                (int) $document->project_id,
+                (int) $document->session_id,
+                (int) $document->getKey(),
+                $previousSourceVersion,
+                $sourceVersion,
+                fn () => $this->review->handle(
+                    (int) $document->getKey(),
+                    $previousSourceVersion,
+                    $sourceVersion,
+                    [$error->safeCode],
+                ),
+            ));
 
             return collect();
         }

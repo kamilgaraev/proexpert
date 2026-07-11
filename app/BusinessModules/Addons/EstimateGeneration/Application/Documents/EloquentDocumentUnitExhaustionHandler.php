@@ -5,11 +5,10 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentProcessingStatusService;
 
 final readonly class EloquentDocumentUnitExhaustionHandler implements DocumentUnitExhaustionHandler
 {
-    public function __construct(private DocumentProcessingStatusService $status) {}
+    public function __construct(private RequireDocumentProcessingReview $review) {}
 
     public function handle(int $unitId): void
     {
@@ -19,12 +18,11 @@ final readonly class EloquentDocumentUnitExhaustionHandler implements DocumentUn
             return;
         }
 
-        $this->status->markNeedsReview(
-            $unit->document,
-            0.0,
+        $this->review->handle(
+            (int) $unit->document->getKey(),
+            (string) $unit->source_version,
+            (string) $unit->source_version,
             ['document_unit_attempts_exhausted'],
-            [],
-            'unusable',
         );
     }
 }

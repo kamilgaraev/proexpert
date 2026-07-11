@@ -134,7 +134,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\ConstructionDocum
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentFactMerger;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentProcessingStatusService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrDocumentStorageService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrPreflightService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrQualityAnalyzer;
@@ -216,7 +215,6 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(OcrPreflightService::class);
         $this->app->singleton(SpreadsheetDocumentExtractor::class);
         $this->app->singleton(DocumentGenerationReadinessService::class);
-        $this->app->singleton(DocumentProcessingStatusService::class);
         $this->app->singleton(OcrQualityAnalyzer::class);
         $this->app->singleton(ConstructionDocumentFactExtractor::class);
         $this->app->singleton(DocumentFactMerger::class);

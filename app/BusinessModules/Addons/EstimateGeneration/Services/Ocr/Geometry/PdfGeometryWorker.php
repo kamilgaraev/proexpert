@@ -88,12 +88,6 @@ class PdfGeometryWorker
             (string) max(1, (int) config('estimate-generation.ocr.geometry.max_vector_elements', 5000)),
         ];
 
-        if ((bool) config('estimate-generation.ocr.geometry.render_previews', false)) {
-            $command[] = '--render-preview';
-            $command[] = '--preview-dir';
-            $command[] = (string) config('estimate-generation.ocr.geometry.preview_dir', storage_path('app/estimate-generation/pdf-previews'));
-        }
-
         return $command;
     }
 
