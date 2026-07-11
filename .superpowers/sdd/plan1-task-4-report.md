@@ -31,4 +31,12 @@
 
 ## Ограничение окружения
 
-Полный Laravel Feature bootstrap в текущем SQLite-окружении блокируется существующей миграцией, использующей PostgreSQL-функцию `BTRIM`. Поэтому маршрутный RBAC-контракт сделан статическим и не открывает соединение с БД; поведение `AuthorizeMiddleware` и `AuthorizationService` не обходилось и используется по существующей конвенции проекта.
+Стандартный Laravel Feature bootstrap с миграциями в текущем SQLite-окружении блокируется существующей миграцией, использующей PostgreSQL-функцию `BTRIM`. RBAC-тест загружает приложение и реальный реестр маршрутов, но явно отключает `refreshDatabase()`: миграции и соединение с БД не выполняются.
+
+## Исправление по результатам review
+
+- Root cause: `AuthorizeMiddleware` без дополнительных аргументов автоматически формирует только organization-context. Поэтому проектная роль `parent_administrator` не могла применить выданные ей права к маршрутам AI-сметчика.
+- RED: реальный Laravel route registry test упал на первом проектном маршруте, где отсутствовал `authorize:estimate_generation.view,project,project`.
+- GREEN: все 21 project-scoped маршруты используют `authorize:<permission>,project,project`; глобальный справочник статусов намеренно использует `authorize:estimate_generation.select_normative,organization,current_organization_id`.
+- Regex-контракт заменён тестом зарегистрированных Laravel routes без миграций и БД. Дополнительно напрямую выполняется реальный `AuthorizeMiddleware` с route-bound проектом и mocked `AuthorizationService`: разрешённое project-context право достигает следующего обработчика, отсутствующее право возвращает 403.
+- Повторная проверка RBAC: 25 тестов, 78 проверок.
