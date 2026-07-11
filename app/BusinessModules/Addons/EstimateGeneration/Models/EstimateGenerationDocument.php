@@ -25,6 +25,7 @@ class EstimateGenerationDocument extends Model
         'progress_percent',
         'file_size_bytes',
         'checksum_sha256',
+        'source_version',
         'page_count',
         'processed_page_count',
         'ocr_provider',
@@ -71,6 +72,11 @@ class EstimateGenerationDocument extends Model
     {
         return $this->hasMany(EstimateGenerationDocumentPage::class, 'document_id')
             ->orderBy('page_number');
+    }
+
+    public function processingUnits(): HasMany
+    {
+        return $this->hasMany(EstimateGenerationProcessingUnit::class, 'document_id');
     }
 
     public function facts(): HasMany

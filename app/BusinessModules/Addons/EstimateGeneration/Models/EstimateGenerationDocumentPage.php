@@ -16,6 +16,7 @@ class EstimateGenerationDocumentPage extends Model
 
     protected $fillable = [
         'document_id',
+        'processing_unit_id',
         'organization_id',
         'project_id',
         'session_id',

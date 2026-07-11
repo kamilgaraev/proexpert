@@ -13,6 +13,7 @@ final class LaravelEstimateGenerationRetryDispatcher implements EstimateGenerati
     {
         foreach (array_values(array_unique($documentIds)) as $documentId) {
             ProcessEstimateGenerationDocumentJob::dispatch($documentId)
+                ->onConnection(ProcessEstimateGenerationDocumentJob::CONNECTION)
                 ->onQueue(ProcessEstimateGenerationDocumentJob::QUEUE)
                 ->afterCommit();
         }

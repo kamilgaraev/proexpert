@@ -8,6 +8,19 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\GeneratedEst
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\GeneratedEstimateWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\LaravelGeneratedEstimateNumberAllocator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\LaravelGeneratedEstimateWriter;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ArtifactDocumentUnitDetector;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStore;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceManifestStorage;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitAggregateReconciler;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitContentReader;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitDetector;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitProcessor;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentProcessingUnitStore;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentUnitAggregateReconciler;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\MetadataDocumentUnitDetector;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\OcrDocumentUnitProcessor;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\S3DocumentSourceManifestStorage;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\S3DocumentUnitContentReader;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EloquentRetryableEstimateGenerationSessionRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationRetryDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\LaravelEstimateGenerationRetryDispatcher;
@@ -20,6 +33,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\SessionStateSt
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationTrainingDatasetJob;
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ClassifyEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ImportEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\InspectEstimateNormativesCommand;
@@ -90,6 +104,13 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(config_path('estimate-generation.php'), 'estimate-generation');
 
         $this->app->singleton(DocumentParsingService::class);
+        $this->app->singleton(MetadataDocumentUnitDetector::class);
+        $this->app->singleton(DocumentSourceManifestStorage::class, S3DocumentSourceManifestStorage::class);
+        $this->app->singleton(DocumentUnitDetector::class, ArtifactDocumentUnitDetector::class);
+        $this->app->singleton(DocumentProcessingUnitStore::class, EloquentDocumentProcessingUnitStore::class);
+        $this->app->singleton(DocumentUnitContentReader::class, S3DocumentUnitContentReader::class);
+        $this->app->singleton(DocumentUnitProcessor::class, OcrDocumentUnitProcessor::class);
+        $this->app->singleton(DocumentUnitAggregateReconciler::class, EloquentDocumentUnitAggregateReconciler::class);
         $this->app->singleton(SessionStateStore::class, EloquentSessionStateStore::class);
         $this->app->singleton(OcrClientInterface::class, TimewebVisionOcrClient::class);
         $this->app->singleton(OcrDocumentStorageService::class);
@@ -196,6 +217,13 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $key = $job instanceof ProcessEstimateGenerationDocumentJob ? $job->rateLimitKey() : 'global';
 
             return Limit::perMinute(max(1, (int) config('estimate-generation.ocr.max_document_jobs_per_minute', 6)))
+                ->by($key);
+        });
+
+        RateLimiter::for('estimate-generation-document-units', static function (object $job): Limit {
+            $key = $job instanceof ProcessEstimateGenerationUnitJob ? $job->rateLimitKey() : 'global';
+
+            return Limit::perMinute(max(1, (int) config('estimate-generation.ocr.max_unit_jobs_per_minute', 30)))
                 ->by($key);
         });
 

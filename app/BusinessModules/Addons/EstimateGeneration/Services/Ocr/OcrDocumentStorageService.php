@@ -29,12 +29,17 @@ class OcrDocumentStorageService
         }
 
         $organization = $session->organization()->first();
+        if ($organization === null) {
+            throw new RuntimeException('estimate_generation.document_organization_unavailable');
+        }
         $directory = sprintf('estimate-generation/sessions/%d/documents', $session->id);
         $storagePath = $this->fileService->upload($file, $directory, null, 'private', $organization);
 
         if ($storagePath === false) {
             throw new RuntimeException('estimate_generation.document_storage_error');
         }
+
+        $checksum = hash('sha256', $content);
 
         return EstimateGenerationDocument::create([
             'session_id' => $session->id,
@@ -48,7 +53,8 @@ class OcrDocumentStorageService
             'processing_stage' => 'stored',
             'progress_percent' => 0,
             'file_size_bytes' => $file->getSize(),
-            'checksum_sha256' => hash('sha256', $content),
+            'checksum_sha256' => $checksum,
+            'source_version' => 'sha256:'.$checksum,
             'processed_page_count' => 0,
             'ocr_attempts' => 0,
             'structured_payload' => [],
