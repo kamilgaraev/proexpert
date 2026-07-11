@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationEvent;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationWorkflow;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ApplyEstimateGenerationDraftRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
@@ -21,6 +24,28 @@ use Tests\TestCase;
 
 final class EstimateGenerationFlowTest extends TestCase
 {
+    public function test_persisted_session_follows_the_exact_lifecycle_without_skipping_states(): void
+    {
+        [, , $session] = $this->makeSession();
+        $workflow = app(EstimateGenerationWorkflow::class);
+        $transitions = [
+            [EstimateGenerationEvent::StartDocumentProcessing, EstimateGenerationStatus::ProcessingDocuments],
+            [EstimateGenerationEvent::DocumentsReady, EstimateGenerationStatus::ReadyToGenerate],
+            [EstimateGenerationEvent::GenerationStarted, EstimateGenerationStatus::Generating],
+            [EstimateGenerationEvent::GenerationNeedsReview, EstimateGenerationStatus::EstimateReviewRequired],
+            [EstimateGenerationEvent::GenerationReady, EstimateGenerationStatus::ReadyToApply],
+            [EstimateGenerationEvent::ApplyStarted, EstimateGenerationStatus::Applying],
+            [EstimateGenerationEvent::ApplyCompleted, EstimateGenerationStatus::Applied],
+        ];
+
+        foreach ($transitions as $expectedVersion => [$event, $status]) {
+            $session = $workflow->transition($session, $event);
+            $session->refresh();
+            $this->assertSame($status, $session->status);
+            $this->assertSame($expectedVersion + 1, $session->state_version);
+        }
+    }
+
     public function test_generate_waits_for_processing_documents_instead_of_staying_created(): void
     {
         Queue::fake();
@@ -37,10 +62,9 @@ final class EstimateGenerationFlowTest extends TestCase
 
         $this->assertSame(202, $response->getStatusCode());
         $this->assertTrue($payload['success']);
-        $this->assertSame('waiting_for_documents', $payload['data']['status']);
-        $this->assertSame('documents_processing', $payload['data']['progress']['stage']);
-        $this->assertSame('Документы обрабатываются', $payload['data']['progress']['title']);
-        $this->assertTrue($payload['data']['progress']['can_close_page']);
+        $this->assertSame('processing_documents', $payload['data']['status']);
+        $this->assertSame('processing_documents', $payload['data']['processing_stage']);
+        $this->assertSame(5, $payload['data']['processing_progress']);
         Queue::assertNotPushed(GenerateEstimateDraftJob::class);
     }
 
@@ -48,7 +72,11 @@ final class EstimateGenerationFlowTest extends TestCase
     {
         Queue::fake();
 
-        [, , $session] = $this->makeSession('waiting_for_documents', 'documents_processing', 10);
+        [, , $session] = $this->makeSession('processing_documents', 'processing_documents', 10);
+        $session->forceFill(['input_payload' => [
+            ...($session->input_payload ?? []),
+            'generation_requested' => true,
+        ]])->save();
         $document = $this->makeDocument($session, 'processing');
 
         app(DocumentProcessingStatusService::class)->markReady($document, 0.9, 'good', [
@@ -62,15 +90,15 @@ final class EstimateGenerationFlowTest extends TestCase
         ]);
 
         $session->refresh();
-        $this->assertSame('queued', $session->status);
-        $this->assertSame('queued', $session->processing_stage);
+        $this->assertSame(EstimateGenerationStatus::Generating, $session->status);
+        $this->assertSame('generating', $session->processing_stage);
         $this->assertSame(40, $session->processing_progress);
         Queue::assertPushed(GenerateEstimateDraftJob::class);
     }
 
     public function test_status_returns_progress_stage_labels_and_user_action(): void
     {
-        [$user, $project, $session] = $this->makeSession('processing', 'resource_enrichment', 71);
+        [$user, $project, $session] = $this->makeSession('generating', 'resource_enrichment', 71);
 
         $response = app(EstimateGenerationController::class)->status(
             $this->request('/status', 'GET', $user),
@@ -80,17 +108,14 @@ final class EstimateGenerationFlowTest extends TestCase
         $payload = json_decode($response->getContent(), true, 512, JSON_THROW_ON_ERROR);
 
         $this->assertTrue($payload['success']);
-        $this->assertSame('resource_enrichment', $payload['data']['progress']['stage']);
-        $this->assertSame(71, $payload['data']['progress']['percent']);
-        $this->assertSame('Подбираем ресурсы и цены', $payload['data']['progress']['title']);
-        $this->assertSame('Можно закрыть страницу: мы продолжим расчет и сообщим, когда черновик будет готов.', $payload['data']['progress']['description']);
-        $this->assertSame('wait', $payload['data']['progress']['user_action']);
-        $this->assertTrue($payload['data']['progress']['can_close_page']);
+        $this->assertSame('resource_enrichment', $payload['data']['processing_stage']);
+        $this->assertSame(71, $payload['data']['processing_progress']);
+        $this->assertSame('generating', $payload['data']['status']);
     }
 
     public function test_apply_returns_review_queue_when_blocking_items_remain(): void
     {
-        [$user, $project, $session] = $this->makeSession('ready_for_review', 'quality_check', 100);
+        [$user, $project, $session] = $this->makeSession('ready_to_apply', 'quality_check', 100);
         $this->makeDocument($session, 'ready');
         $session->forceFill([
             'draft_payload' => [
@@ -174,7 +199,7 @@ final class EstimateGenerationFlowTest extends TestCase
      * @return array{0: User, 1: Project, 2: EstimateGenerationSession}
      */
     private function makeSession(
-        string $status = 'created',
+        string $status = 'draft',
         string $stage = 'created',
         int $progress = 0
     ): array {
@@ -208,9 +233,9 @@ final class EstimateGenerationFlowTest extends TestCase
             'organization_id' => $session->organization_id,
             'project_id' => $session->project_id,
             'user_id' => $session->user_id,
-            'filename' => $status . '-document.pdf',
+            'filename' => $status.'-document.pdf',
             'mime_type' => 'application/pdf',
-            'storage_path' => 'org-' . $session->organization_id . '/estimate-generation/documents/' . $status . '.pdf',
+            'storage_path' => 'org-'.$session->organization_id.'/estimate-generation/documents/'.$status.'.pdf',
             'status' => $status,
             'processing_stage' => $status,
             'progress_percent' => $status === 'ready' ? 100 : 30,

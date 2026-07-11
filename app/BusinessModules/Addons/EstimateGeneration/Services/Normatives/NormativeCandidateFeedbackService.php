@@ -4,10 +4,11 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Normatives;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationFeedback;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNoAirWorkItemPolicy;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
 use Illuminate\Validation\ValidationException;
 
@@ -30,7 +31,8 @@ final class NormativeCandidateFeedbackService
         private readonly EstimateGenerationPackagePersistenceService $packagePersistenceService,
         ?callable $messageResolver = null,
         ?callable $validationExceptionFactory = null,
-        private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy(),
+        private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy,
+        private readonly ?AdvanceEstimateGeneration $advanceGeneration = null,
     ) {
         $this->messageResolver = $messageResolver;
         $this->validationExceptionFactory = $validationExceptionFactory;
@@ -41,7 +43,7 @@ final class NormativeCandidateFeedbackService
      */
     public function apply(EstimateGenerationSession $session, EstimateGenerationFeedback $feedback): ?array
     {
-        if (!in_array($feedback->feedback_type, ['normative_rejection', 'normative_confirmation', 'quantity_confirmation', 'duplicate_resolution', 'work_item_resolution'], true)) {
+        if (! in_array($feedback->feedback_type, ['normative_rejection', 'normative_confirmation', 'quantity_confirmation', 'duplicate_resolution', 'work_item_resolution'], true)) {
             return null;
         }
 
@@ -84,32 +86,35 @@ final class NormativeCandidateFeedbackService
         $syncedPackage = $workItemKey !== ''
             && $this->packagePersistenceService->syncWorkItemPackageFromDraft($session, $draft, $workItemKey);
 
-        if (!$syncedPackage) {
+        if (! $syncedPackage) {
             $this->packagePersistenceService->syncFromDraft($session, $draft);
         }
 
-        $session->forceFill([
-            'draft_payload' => $draft,
-            'problem_flags' => $draft['problem_flags'] ?? [],
-            'status' => $this->draftRequiresReview($draft) ? 'review_required' : 'ready_for_review',
-            'processing_stage' => 'validation_and_normalization',
-            'processing_progress' => 100,
-            'last_error' => null,
-        ])->save();
+        ($this->advanceGeneration ?? app(AdvanceEstimateGeneration::class))->reviewUpdated(
+            $session,
+            $this->draftRequiresReview($draft),
+            [
+                'draft_payload' => $draft,
+                'problem_flags' => $draft['problem_flags'] ?? [],
+                'processing_stage' => 'validation_and_normalization',
+                'processing_progress' => 100,
+                'last_error' => null,
+            ],
+        );
 
         return $draft;
     }
 
     /**
-     * @param array<string, mixed> $draft
-     * @param array<string, mixed> $payload
+     * @param  array<string, mixed>  $draft
+     * @param  array<string, mixed>  $payload
      * @return array<string, mixed>
      */
     public function applyDuplicateResolutionToDraft(array $draft, string $workItemKey, array $payload, ?string $comments = null): array
     {
         $action = $this->nullableString($payload['action'] ?? null);
 
-        if (!in_array($action, ['remove_item', 'keep_item', 'merge_with_existing'], true)) {
+        if (! in_array($action, ['remove_item', 'keep_item', 'merge_with_existing'], true)) {
             throw $this->validationException([
                 'payload.action' => [$this->message('estimate_generation.duplicate_resolution_action_required')],
             ]);
@@ -118,17 +123,17 @@ final class NormativeCandidateFeedbackService
         $targetWorkItemKey = $this->nullableString($payload['target_work_item_key'] ?? null);
 
         foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
-            if (!is_array($localEstimate)) {
+            if (! is_array($localEstimate)) {
                 continue;
             }
 
             foreach ($localEstimate['sections'] ?? [] as $sectionIndex => $section) {
-                if (!is_array($section)) {
+                if (! is_array($section)) {
                     continue;
                 }
 
                 foreach ($section['work_items'] ?? [] as $workIndex => $workItem) {
-                    if (!is_array($workItem) || (string) ($workItem['key'] ?? '') !== $workItemKey) {
+                    if (! is_array($workItem) || (string) ($workItem['key'] ?? '') !== $workItemKey) {
                         continue;
                     }
 
@@ -152,8 +157,8 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<string, mixed> $draft
-     * @param array<string, mixed> $payload
+     * @param  array<string, mixed>  $draft
+     * @param  array<string, mixed>  $payload
      * @return array<string, mixed>
      */
     public function applyWorkItemResolutionToDraft(array $draft, string $workItemKey, array $payload, ?string $comments = null): array
@@ -167,17 +172,17 @@ final class NormativeCandidateFeedbackService
         }
 
         foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
-            if (!is_array($localEstimate)) {
+            if (! is_array($localEstimate)) {
                 continue;
             }
 
             foreach ($localEstimate['sections'] ?? [] as $sectionIndex => $section) {
-                if (!is_array($section)) {
+                if (! is_array($section)) {
                     continue;
                 }
 
                 foreach ($section['work_items'] ?? [] as $workIndex => $workItem) {
-                    if (!is_array($workItem) || (string) ($workItem['key'] ?? '') !== $workItemKey) {
+                    if (! is_array($workItem) || (string) ($workItem['key'] ?? '') !== $workItemKey) {
                         continue;
                     }
 
@@ -199,8 +204,8 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<string, mixed> $draft
-     * @param array<string, mixed> $payload
+     * @param  array<string, mixed>  $draft
+     * @param  array<string, mixed>  $payload
      * @return array<string, mixed>
      */
     public function applyQuantityConfirmationToDraft(array $draft, string $workItemKey, array $payload, ?string $comments = null): array
@@ -215,17 +220,17 @@ final class NormativeCandidateFeedbackService
         }
 
         foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
-            if (!is_array($localEstimate)) {
+            if (! is_array($localEstimate)) {
                 continue;
             }
 
             foreach ($localEstimate['sections'] ?? [] as $sectionIndex => $section) {
-                if (!is_array($section)) {
+                if (! is_array($section)) {
                     continue;
                 }
 
                 foreach ($section['work_items'] ?? [] as $workIndex => $workItem) {
-                    if (!is_array($workItem) || (string) ($workItem['key'] ?? '') !== $workItemKey) {
+                    if (! is_array($workItem) || (string) ($workItem['key'] ?? '') !== $workItemKey) {
                         continue;
                     }
 
@@ -242,7 +247,7 @@ final class NormativeCandidateFeedbackService
             }
         }
 
-        if (!$found) {
+        if (! $found) {
             throw $this->validationException([
                 'work_item_key' => [$this->message('estimate_generation.work_item_not_found')],
             ]);
@@ -252,8 +257,8 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<string, mixed> $draft
-     * @param array<string, mixed> $payload
+     * @param  array<string, mixed>  $draft
+     * @param  array<string, mixed>  $payload
      * @return array<string, mixed>
      */
     public function applyNormativeConfirmationToDraft(array $draft, string $workItemKey, array $payload, ?string $comments = null): array
@@ -269,17 +274,17 @@ final class NormativeCandidateFeedbackService
         }
 
         foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
-            if (!is_array($localEstimate)) {
+            if (! is_array($localEstimate)) {
                 continue;
             }
 
             foreach ($localEstimate['sections'] ?? [] as $sectionIndex => $section) {
-                if (!is_array($section)) {
+                if (! is_array($section)) {
                     continue;
                 }
 
                 foreach ($section['work_items'] ?? [] as $workIndex => $workItem) {
-                    if (!is_array($workItem) || (string) ($workItem['key'] ?? '') !== $workItemKey) {
+                    if (! is_array($workItem) || (string) ($workItem['key'] ?? '') !== $workItemKey) {
                         continue;
                     }
 
@@ -295,7 +300,7 @@ final class NormativeCandidateFeedbackService
             }
         }
 
-        if (!$found) {
+        if (! $found) {
             throw $this->validationException([
                 'work_item_key' => [$this->message('estimate_generation.work_item_not_found')],
             ]);
@@ -305,8 +310,8 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<string, mixed> $draft
-     * @param array<string, mixed> $payload
+     * @param  array<string, mixed>  $draft
+     * @param  array<string, mixed>  $payload
      * @return array<string, mixed>
      */
     public function applyRejectionToDraft(array $draft, string $workItemKey, array $payload, ?string $comments = null): array
@@ -324,17 +329,17 @@ final class NormativeCandidateFeedbackService
         }
 
         foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
-            if (!is_array($localEstimate)) {
+            if (! is_array($localEstimate)) {
                 continue;
             }
 
             foreach ($localEstimate['sections'] ?? [] as $sectionIndex => $section) {
-                if (!is_array($section)) {
+                if (! is_array($section)) {
                     continue;
                 }
 
                 foreach ($section['work_items'] ?? [] as $workIndex => $workItem) {
-                    if (!is_array($workItem) || (string) ($workItem['key'] ?? '') !== $workItemKey) {
+                    if (! is_array($workItem) || (string) ($workItem['key'] ?? '') !== $workItemKey) {
                         continue;
                     }
 
@@ -352,7 +357,7 @@ final class NormativeCandidateFeedbackService
             }
         }
 
-        if (!$found) {
+        if (! $found) {
             throw $this->validationException([
                 'work_item_key' => [$this->message('estimate_generation.work_item_not_found')],
             ]);
@@ -362,7 +367,7 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      * @return array<string, mixed>
      */
     private function rejectWorkItemNorm(
@@ -379,7 +384,7 @@ final class NormativeCandidateFeedbackService
         $rejectsOfferedCandidate = $this->hasMatchingCandidate($candidates, $rejectedNormId, $rejectedCode);
         $rejectsCatalogSearchCandidate = $selectionSource === 'catalog_search';
 
-        if (!$rejectsCurrentMatch && !$rejectsOfferedCandidate && !$rejectsCatalogSearchCandidate) {
+        if (! $rejectsCurrentMatch && ! $rejectsOfferedCandidate && ! $rejectsCatalogSearchCandidate) {
             throw $this->validationException([
                 'payload.norm_id' => [$this->message('estimate_generation.normative_feedback_norm_not_found')],
             ]);
@@ -409,7 +414,7 @@ final class NormativeCandidateFeedbackService
             ],
         ];
 
-        if (!$rejectsCurrentMatch) {
+        if (! $rejectsCurrentMatch) {
             return $workItem;
         }
 
@@ -462,7 +467,7 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      * @return array<string, mixed>
      */
     private function confirmCurrentWorkItemNorm(
@@ -473,19 +478,19 @@ final class NormativeCandidateFeedbackService
     ): array {
         $currentMatch = is_array($workItem['normative_match'] ?? null) ? $workItem['normative_match'] : [];
 
-        if ($currentMatch === [] || !$this->matchesNormIdentity($currentMatch, $normId, $normativeCode)) {
+        if ($currentMatch === [] || ! $this->matchesNormIdentity($currentMatch, $normId, $normativeCode)) {
             throw $this->validationException([
                 'payload.norm_id' => [$this->message('estimate_generation.normative_feedback_norm_not_found')],
             ]);
         }
 
-        if (!$this->requiresNormativeConfirmation($workItem, $currentMatch)) {
+        if (! $this->requiresNormativeConfirmation($workItem, $currentMatch)) {
             throw $this->validationException([
                 'work_item_key' => [$this->message('estimate_generation.normative_confirmation_not_required')],
             ]);
         }
 
-        if (!$this->canConfirmCalculatedNorm($workItem)) {
+        if (! $this->canConfirmCalculatedNorm($workItem)) {
             throw $this->validationException([
                 'work_item_key' => [$this->message('estimate_generation.normative_confirmation_price_required')],
             ]);
@@ -529,8 +534,8 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<string, mixed> $currentMatch
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $currentMatch
      */
     private function requiresNormativeConfirmation(array $workItem, array $currentMatch): bool
     {
@@ -548,7 +553,7 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function canConfirmCalculatedNorm(array $workItem): bool
     {
@@ -563,7 +568,7 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<int, mixed> $flags
+     * @param  array<int, mixed>  $flags
      * @return array<int, string>
      */
     private function withoutNormativeReviewFlags(array $flags): array
@@ -571,7 +576,7 @@ final class NormativeCandidateFeedbackService
         return array_values(array_filter(
             array_map(static fn (mixed $flag): string => trim((string) $flag), $flags),
             static fn (string $flag): bool => $flag !== ''
-                && !in_array($flag, [
+                && ! in_array($flag, [
                     'requires_normative_review',
                     'safe_normative_analog',
                     'normative_match_low_confidence',
@@ -582,7 +587,7 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<int, mixed> $warnings
+     * @param  array<int, mixed>  $warnings
      * @return array<int, string>
      */
     private function withoutNormativeReviewWarnings(array $warnings): array
@@ -590,7 +595,7 @@ final class NormativeCandidateFeedbackService
         return array_values(array_filter(
             array_map(static fn (mixed $warning): string => trim((string) $warning), $warnings),
             static fn (string $warning): bool => $warning !== ''
-                && !in_array($warning, [
+                && ! in_array($warning, [
                     'requires_normative_review',
                     'safe_normative_analog',
                     'low_confidence',
@@ -599,7 +604,7 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      * @return array<string, mixed>
      */
     private function confirmWorkItemQuantity(
@@ -661,8 +666,8 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<string, mixed> $draft
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $draft
+     * @param  array<string, mixed>  $workItem
      * @return array<string, mixed>
      */
     private function resolveDuplicateWorkItem(
@@ -681,7 +686,7 @@ final class NormativeCandidateFeedbackService
         $matchingIndexes = $signature !== null ? $this->matchingDuplicateIndexes($workItems, $signature) : [];
         $isDuplicateReviewItem = $this->isDuplicateReviewItem($workItem) || count($matchingIndexes) > 1;
 
-        if (!$isDuplicateReviewItem) {
+        if (! $isDuplicateReviewItem) {
             throw $this->validationException([
                 'work_item_key' => [$this->message('estimate_generation.duplicate_resolution_not_required')],
             ]);
@@ -707,7 +712,7 @@ final class NormativeCandidateFeedbackService
                 }
             }
 
-            if (!$targetIsInGroup) {
+            if (! $targetIsInGroup) {
                 throw $this->validationException([
                     'payload.target_work_item_key' => [$this->message('estimate_generation.work_item_not_found')],
                 ]);
@@ -730,7 +735,7 @@ final class NormativeCandidateFeedbackService
 
             $keptKey = $targetKey;
             $workItems = array_map(function (mixed $candidate) use ($keptKey, $comments, $action, $removedKeys, $mergedItems): mixed {
-                if (!is_array($candidate) || (string) ($candidate['key'] ?? '') !== $keptKey) {
+                if (! is_array($candidate) || (string) ($candidate['key'] ?? '') !== $keptKey) {
                     return $candidate;
                 }
 
@@ -767,7 +772,7 @@ final class NormativeCandidateFeedbackService
         ];
 
         foreach ($draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'] as $index => $candidate) {
-            if (!is_array($candidate)) {
+            if (! is_array($candidate)) {
                 continue;
             }
 
@@ -780,8 +785,8 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<string, mixed> $draft
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $draft
+     * @param  array<string, mixed>  $workItem
      * @return array<string, mixed>
      */
     private function removeGenericWorkItem(
@@ -792,7 +797,7 @@ final class NormativeCandidateFeedbackService
         array $workItem,
         ?string $comments
     ): array {
-        if (!$this->noAirWorkItemPolicy->requiresReview($workItem)) {
+        if (! $this->noAirWorkItemPolicy->requiresReview($workItem)) {
             throw $this->validationException([
                 'work_item_key' => [$this->message('estimate_generation.work_item_resolution_not_required')],
             ]);
@@ -820,7 +825,7 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<int, mixed> $workItems
+     * @param  array<int, mixed>  $workItems
      * @return array<int, int>
      */
     private function matchingDuplicateIndexes(array $workItems, string $signature): array
@@ -837,7 +842,7 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<int, mixed> $workItems
+     * @param  array<int, mixed>  $workItems
      */
     private function firstRemainingDuplicateKey(array $workItems, ?string $signature): ?string
     {
@@ -859,7 +864,7 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function isDuplicateReviewItem(array $workItem): bool
     {
@@ -873,7 +878,7 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      * @return array<string, mixed>
      */
     private function markDuplicateKeptByUser(
@@ -896,8 +901,8 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<string, mixed> $target
-     * @param array<int, array<string, mixed>> $removedItems
+     * @param  array<string, mixed>  $target
+     * @param  array<int, array<string, mixed>>  $removedItems
      * @return array<string, mixed>
      */
     private function mergeDuplicateEvidence(array $target, array $removedItems): array
@@ -930,13 +935,13 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      * @return array<string, mixed>
      */
     private function clearDuplicateReviewFlags(array $workItem): array
     {
         foreach (['validation_flags', 'flags'] as $field) {
-            if (!array_key_exists($field, $workItem)) {
+            if (! array_key_exists($field, $workItem)) {
                 continue;
             }
 
@@ -947,7 +952,7 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<int, mixed> $flags
+     * @param  array<int, mixed>  $flags
      * @return array<int, string>
      */
     private function withoutDuplicateReviewFlags(array $flags): array
@@ -955,18 +960,18 @@ final class NormativeCandidateFeedbackService
         return array_values(array_filter(
             array_map(static fn (mixed $flag): string => trim((string) $flag), $flags),
             static fn (string $flag): bool => $flag !== ''
-                && !in_array($flag, ['possible_duplicate_work_item', 'requires_duplicate_review'], true)
+                && ! in_array($flag, ['possible_duplicate_work_item', 'requires_duplicate_review'], true)
         ));
     }
 
     /**
-     * @param array<int, mixed> $candidates
+     * @param  array<int, mixed>  $candidates
      * @return array<int, mixed>
      */
     private function markRejectedCandidates(array $candidates, ?int $rejectedNormId, ?string $rejectedCode, ?string $reason): array
     {
         return array_map(function (mixed $candidate) use ($rejectedNormId, $rejectedCode, $reason): mixed {
-            if (!is_array($candidate) || !$this->matchesNormIdentity($candidate, $rejectedNormId, $rejectedCode)) {
+            if (! is_array($candidate) || ! $this->matchesNormIdentity($candidate, $rejectedNormId, $rejectedCode)) {
                 return $candidate;
             }
 
@@ -984,7 +989,7 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<int, mixed> $candidates
+     * @param  array<int, mixed>  $candidates
      * @return array<int, mixed>
      */
     private function ensureRejectedCandidate(
@@ -1016,7 +1021,7 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<int, mixed> $candidates
+     * @param  array<int, mixed>  $candidates
      */
     private function hasMatchingCandidate(array $candidates, ?int $rejectedNormId, ?string $rejectedCode): bool
     {
@@ -1030,7 +1035,7 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<string, mixed> $candidate
+     * @param  array<string, mixed>  $candidate
      */
     private function matchesNormIdentity(array $candidate, ?int $normId, ?string $normativeCode): bool
     {
@@ -1046,7 +1051,7 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function duplicateSignature(array $workItem): ?string
     {
@@ -1089,7 +1094,7 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<int, mixed> $values
+     * @param  array<int, mixed>  $values
      * @return array<int, string>
      */
     private function uniqueStrings(array $values): array
@@ -1101,7 +1106,7 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<int, mixed> $values
+     * @param  array<int, mixed>  $values
      * @return array<int, mixed>
      */
     private function uniqueArrayValues(array $values): array
@@ -1165,7 +1170,7 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<string, array<int, string>> $messages
+     * @param  array<string, array<int, string>>  $messages
      */
     private function validationException(array $messages): ValidationException
     {
@@ -1177,7 +1182,7 @@ final class NormativeCandidateFeedbackService
     }
 
     /**
-     * @param array<string, mixed> $draft
+     * @param  array<string, mixed>  $draft
      */
     private function draftRequiresReview(array $draft): bool
     {

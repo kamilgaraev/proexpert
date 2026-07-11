@@ -21,10 +21,12 @@ final class EstimateGenerationTransitionMap
         'input_review_required' => [
             'input_confirmed' => 'ready_to_generate',
             'retried' => 'processing_documents',
+            'documents_changed' => 'processing_documents',
             'cancelled' => 'cancelled',
         ],
         'ready_to_generate' => [
             'generation_started' => 'generating',
+            'documents_changed' => 'processing_documents',
             'cancelled' => 'cancelled',
         ],
         'generating' => [
@@ -36,11 +38,15 @@ final class EstimateGenerationTransitionMap
         'estimate_review_required' => [
             'generation_ready' => 'ready_to_apply',
             'generation_started' => 'generating',
+            'documents_changed' => 'processing_documents',
+            'review_updated' => 'estimate_review_required',
             'cancelled' => 'cancelled',
         ],
         'ready_to_apply' => [
             'apply_started' => 'applying',
             'generation_started' => 'generating',
+            'documents_changed' => 'processing_documents',
+            'review_reopened' => 'estimate_review_required',
             'cancelled' => 'cancelled',
         ],
         'applying' => [
@@ -68,7 +74,7 @@ final class EstimateGenerationTransitionMap
         }
 
         if ($target === '@resume_status') {
-            if (!in_array($resumeStatus, [
+            if (! in_array($resumeStatus, [
                 EstimateGenerationStatus::ProcessingDocuments,
                 EstimateGenerationStatus::Generating,
                 EstimateGenerationStatus::Applying,

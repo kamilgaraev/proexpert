@@ -18,6 +18,44 @@ use PHPUnit\Framework\TestCase;
 final class EstimateGenerationWorkflowTest extends TestCase
 {
     #[Test]
+    public function happy_path_uses_every_required_state_and_one_version_per_transition(): void
+    {
+        $store = new InMemorySessionStateStore($this->session(EstimateGenerationStatus::Draft));
+        $workflow = $this->workflow($store);
+        $transitions = [
+            [EstimateGenerationEvent::StartDocumentProcessing, EstimateGenerationStatus::ProcessingDocuments],
+            [EstimateGenerationEvent::DocumentsReady, EstimateGenerationStatus::ReadyToGenerate],
+            [EstimateGenerationEvent::GenerationStarted, EstimateGenerationStatus::Generating],
+            [EstimateGenerationEvent::GenerationNeedsReview, EstimateGenerationStatus::EstimateReviewRequired],
+            [EstimateGenerationEvent::GenerationReady, EstimateGenerationStatus::ReadyToApply],
+            [EstimateGenerationEvent::ApplyStarted, EstimateGenerationStatus::Applying],
+            [EstimateGenerationEvent::ApplyCompleted, EstimateGenerationStatus::Applied],
+        ];
+
+        $version = 0;
+        foreach ($transitions as [$event, $expectedStatus]) {
+            $session = $workflow->transition($store->current(), $event);
+            self::assertSame($expectedStatus, $session->status);
+            self::assertSame(++$version, $session->state_version);
+        }
+    }
+
+    #[Test]
+    public function document_and_review_reconciliation_have_explicit_edges(): void
+    {
+        $store = new InMemorySessionStateStore($this->session(EstimateGenerationStatus::ReadyToApply, 9));
+        $workflow = $this->workflow($store);
+
+        $session = $workflow->transition($store->current(), EstimateGenerationEvent::ReviewReopened);
+        self::assertSame(EstimateGenerationStatus::EstimateReviewRequired, $session->status);
+        $session = $workflow->transition($session, EstimateGenerationEvent::ReviewUpdated);
+        self::assertSame(EstimateGenerationStatus::EstimateReviewRequired, $session->status);
+        $session = $workflow->transition($session, EstimateGenerationEvent::DocumentsChanged);
+        self::assertSame(EstimateGenerationStatus::ProcessingDocuments, $session->status);
+        self::assertSame(12, $session->state_version);
+    }
+
+    #[Test]
     public function generation_started_moves_ready_session_to_generating_and_increments_version(): void
     {
         $store = new InMemorySessionStateStore($this->session(EstimateGenerationStatus::ReadyToGenerate, 4));
@@ -142,7 +180,7 @@ final class EstimateGenerationWorkflowTest extends TestCase
     public function workflow_returns_its_exact_cas_snapshot_when_persistence_advances_after_update(): void
     {
         $session = $this->session(EstimateGenerationStatus::ReadyToGenerate, 4);
-        $store = new AdvancingAfterCasStateStore();
+        $store = new AdvancingAfterCasStateStore;
 
         $updated = $this->workflow($store)->transition($session, EstimateGenerationEvent::GenerationStarted);
 
@@ -168,7 +206,7 @@ final class EstimateGenerationWorkflowTest extends TestCase
 
     private function workflow(SessionStateStore $store): EstimateGenerationWorkflow
     {
-        return new EstimateGenerationWorkflow(new EstimateGenerationTransitionMap(), $store);
+        return new EstimateGenerationWorkflow(new EstimateGenerationTransitionMap, $store);
     }
 
     private function session(
@@ -190,18 +228,16 @@ final class EstimateGenerationWorkflowTest extends TestCase
 
 final class InMemorySessionStateStore implements SessionStateStore
 {
-    public function __construct(private EstimateGenerationSession $session)
-    {
-    }
+    public function __construct(private EstimateGenerationSession $session) {}
 
     public function compareAndSet(
-        int $sessionId,
+        EstimateGenerationSession $candidate,
         int $expectedVersion,
         EstimateGenerationStatus $status,
         array $attributes,
-    ): void {
-        if ($sessionId !== $this->session->getKey() || $expectedVersion !== $this->session->state_version) {
-            throw new StaleEstimateGenerationState($sessionId, $expectedVersion);
+    ): EstimateGenerationSession {
+        if ($candidate->getKey() !== $this->session->getKey() || $expectedVersion !== $this->session->state_version) {
+            throw new StaleEstimateGenerationState((int) $candidate->getKey(), $expectedVersion);
         }
 
         $this->session->forceFill([
@@ -209,6 +245,8 @@ final class InMemorySessionStateStore implements SessionStateStore
             'status' => $status,
             'state_version' => $expectedVersion + 1,
         ]);
+
+        return $this->session;
     }
 
     public function current(): EstimateGenerationSession
@@ -222,11 +260,19 @@ final class AdvancingAfterCasStateStore implements SessionStateStore
     public int $persistedVersion = 0;
 
     public function compareAndSet(
-        int $sessionId,
+        EstimateGenerationSession $session,
         int $expectedVersion,
         EstimateGenerationStatus $status,
         array $attributes,
-    ): void {
+    ): EstimateGenerationSession {
         $this->persistedVersion = $expectedVersion + 2;
+
+        $session->forceFill([
+            ...$attributes,
+            'status' => $status,
+            'state_version' => $expectedVersion + 1,
+        ]);
+
+        return $session;
     }
 }

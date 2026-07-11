@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Features\Notifications\Services\NotificationService;
 use App\Models\User;
@@ -24,12 +25,12 @@ class EstimateGenerationNotificationService
     {
         $session->loadMissing(['project', 'user']);
 
-        if (!$session->user instanceof User) {
+        if (! $session->user instanceof User) {
             return;
         }
 
-        $isBlocked = $session->status === 'blocked';
-        $isReviewRequired = in_array($session->status, ['review_required', 'blocked'], true);
+        $isBlocked = in_array('quality_blocked', $session->problem_flags ?? [], true);
+        $isReviewRequired = $session->status === EstimateGenerationStatus::EstimateReviewRequired;
         $type = $isReviewRequired ? 'estimate_generation_review_required' : 'estimate_generation_completed';
         $titleKey = $isBlocked
             ? 'estimate_generation.notification_blocked_title'
@@ -52,7 +53,7 @@ class EstimateGenerationNotificationService
     {
         $session->loadMissing(['project', 'user']);
 
-        if (!$session->user instanceof User) {
+        if (! $session->user instanceof User) {
             return;
         }
 
@@ -101,7 +102,7 @@ class EstimateGenerationNotificationService
                     'entity_id' => $session->id,
                     'target_route' => $route,
                     'context' => [
-                        'status' => $session->status,
+                        'status' => $session->status->value,
                         'processing_stage' => $session->processing_stage,
                         ...$context,
                     ],

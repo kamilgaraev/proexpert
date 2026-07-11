@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileEstimateGenerationDocuments;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\IgnoreEstimateGenerationDocumentRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\RetryEstimateGenerationDocumentRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentDetailResource;
@@ -29,6 +31,7 @@ class EstimateGenerationDocumentController extends Controller
 
     public function __construct(
         private readonly DocumentGenerationReadinessService $readinessService,
+        private readonly ReconcileEstimateGenerationDocuments $documentReconciler,
     ) {}
 
     public function index(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
@@ -73,7 +76,7 @@ class EstimateGenerationDocumentController extends Controller
         $this->guardDocument($request, $project, $session, $document);
 
         try {
-            if (!in_array((string) $document->status, self::RETRYABLE_STATUSES, true)) {
+            if (! in_array((string) $document->status, self::RETRYABLE_STATUSES, true)) {
                 return AdminResponse::error(trans_message('estimate_generation.document_retry_not_allowed'), 422);
             }
 
@@ -97,9 +100,12 @@ class EstimateGenerationDocumentController extends Controller
                 ],
             ])->save();
 
+            $this->documentReconciler->changed($session);
+
             ProcessEstimateGenerationDocumentJob::dispatch($document->id)
                 ->onConnection(ProcessEstimateGenerationDocumentJob::CONNECTION)
-                ->onQueue(ProcessEstimateGenerationDocumentJob::QUEUE);
+                ->onQueue(ProcessEstimateGenerationDocumentJob::QUEUE)
+                ->afterCommit();
 
             $session = $session->fresh(['documents']);
 
@@ -107,6 +113,8 @@ class EstimateGenerationDocumentController extends Controller
                 'document' => (new EstimateGenerationDocumentResource($document->fresh()))->resolve(),
                 'documents_summary' => $this->readinessService->evaluate($session)['summary'],
             ], trans_message('estimate_generation.document_retry_queued'));
+        } catch (StaleEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Document retry failed', [
                 'error' => $e->getMessage(),
@@ -127,7 +135,7 @@ class EstimateGenerationDocumentController extends Controller
         $this->guardDocument($request, $project, $session, $document);
 
         try {
-            if (!in_array((string) $document->status, self::IGNORABLE_STATUSES, true)) {
+            if (! in_array((string) $document->status, self::IGNORABLE_STATUSES, true)) {
                 return AdminResponse::error(trans_message('estimate_generation.document_ignore_not_allowed'), 422);
             }
 
@@ -146,12 +154,16 @@ class EstimateGenerationDocumentController extends Controller
                 ],
             ])->save();
 
+            $this->documentReconciler->reconcile($session);
+
             $session = $session->fresh(['documents']);
 
             return AdminResponse::success([
                 'document' => (new EstimateGenerationDocumentResource($document->fresh()))->resolve(),
                 'documents_summary' => $this->readinessService->evaluate($session)['summary'],
             ], trans_message('estimate_generation.document_ignored'));
+        } catch (StaleEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Document ignore failed', [
                 'error' => $e->getMessage(),

@@ -9,12 +9,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 interface SessionStateStore
 {
     /**
-     * @param array<string, mixed> $attributes
+     * @param  array<string, mixed>  $attributes
      */
     public function compareAndSet(
-        int $sessionId,
+        EstimateGenerationSession $session,
         int $expectedVersion,
         EstimateGenerationStatus $status,
         array $attributes,
-    ): void;
+    ): EstimateGenerationSession;
 }

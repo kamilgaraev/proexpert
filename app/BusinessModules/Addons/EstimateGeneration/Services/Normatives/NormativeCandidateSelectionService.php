@@ -4,12 +4,13 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Normatives;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use Illuminate\Validation\ValidationException;
 
@@ -24,6 +25,7 @@ class NormativeCandidateSelectionService
         protected EstimateValidationService $validationService,
         protected EstimateGenerationPackagePersistenceService $packagePersistenceService,
         protected EstimateGenerationLearningRecorder $learningRecorder,
+        protected AdvanceEstimateGeneration $advanceGeneration,
     ) {}
 
     /**
@@ -77,20 +79,20 @@ class NormativeCandidateSelectionService
             }
         }
 
-        if (!$found) {
+        if (! $found) {
             throw $this->validationException([
                 'work_item_key' => [$this->message('estimate_generation.work_item_not_found')],
             ]);
         }
 
-        if (!$updated) {
+        if (! $updated) {
             throw $this->validationException([
                 'norm_id' => [$this->message('estimate_generation.normative_candidate_not_available')],
             ]);
         }
 
         $draft = $this->validationService->validate($draft);
-        if (!$this->packagePersistenceService->syncWorkItemPackageFromDraft($session, $draft, $workItemKey)) {
+        if (! $this->packagePersistenceService->syncWorkItemPackageFromDraft($session, $draft, $workItemKey)) {
             $this->packagePersistenceService->syncFromDraft($session, $draft);
         }
         if ($learningSelection !== null) {
@@ -98,24 +100,19 @@ class NormativeCandidateSelectionService
             $this->learningRecorder->recordUserSelection($session, $originalWorkItem, $selectedWorkItem, $normId, $context);
             $this->learningRecorder->recordSupersededSelection($session, $originalWorkItem, $selectedWorkItem, $normId, $context);
         }
-        $status = $this->draftRequiresReview($draft)
-            ? 'review_required'
-            : 'ready_for_review';
-
-        $session->forceFill([
+        $this->advanceGeneration->reviewUpdated($session, $this->draftRequiresReview($draft), [
             'draft_payload' => $draft,
             'problem_flags' => $draft['problem_flags'] ?? [],
-            'status' => $status,
             'processing_stage' => 'validation_and_normalization',
             'processing_progress' => 100,
             'last_error' => null,
-        ])->save();
+        ]);
 
         return $draft;
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     protected function assertWorkItemCanSelectNorm(array $workItem): void
     {
@@ -129,7 +126,7 @@ class NormativeCandidateSelectionService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     protected function assertCandidateWasOffered(array $workItem, int $normId, bool $allowCatalogSelection = false): void
     {
@@ -162,7 +159,7 @@ class NormativeCandidateSelectionService
     }
 
     /**
-     * @param array<string, array<int, string>> $messages
+     * @param  array<string, array<int, string>>  $messages
      */
     protected function validationException(array $messages): ValidationException
     {
@@ -170,7 +167,7 @@ class NormativeCandidateSelectionService
     }
 
     /**
-     * @param array<string, mixed> $draft
+     * @param  array<string, mixed>  $draft
      */
     private function draftRequiresReview(array $draft): bool
     {

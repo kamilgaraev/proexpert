@@ -11,11 +11,10 @@ final class EstimateGenerationWorkflow
     public function __construct(
         private EstimateGenerationTransitionMap $transitionMap,
         private SessionStateStore $stateStore,
-    ) {
-    }
+    ) {}
 
     /**
-     * @param array<string, mixed> $attributes
+     * @param  array<string, mixed>  $attributes
      */
     public function transition(
         EstimateGenerationSession $session,
@@ -34,19 +33,25 @@ final class EstimateGenerationWorkflow
 
         $expectedVersion = $session->state_version;
 
-        $this->stateStore->compareAndSet(
-            (int) $session->getKey(),
+        return $this->stateStore->compareAndSet(
+            $session,
             $expectedVersion,
             $targetStatus,
             $attributes,
         );
 
-        $session->forceFill([
-            ...$attributes,
-            'status' => $targetStatus,
-            'state_version' => $expectedVersion + 1,
-        ]);
+    }
 
-        return $session;
+    /** @param array<string, mixed> $attributes */
+    public function update(EstimateGenerationSession $session, array $attributes): EstimateGenerationSession
+    {
+        unset($attributes['status'], $attributes['state_version'], $attributes['resume_status']);
+
+        return $this->stateStore->compareAndSet(
+            $session,
+            $session->state_version,
+            $session->status,
+            $attributes,
+        );
     }
 }

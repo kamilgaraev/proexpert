@@ -4,10 +4,11 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateGenerationQualityGateService;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationQuantityLearningEvidenceService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateGenerationQualityGateService;
 use Illuminate\Support\Arr;
 
 class EstimateGenerationOrchestrator
@@ -24,6 +25,7 @@ class EstimateGenerationOrchestrator
         protected EstimateGenerationQualityGateService $qualityGateService,
         protected EstimateGenerationAuditService $auditService,
         protected EstimateGenerationQuantityLearningEvidenceService $quantityLearningEvidenceService,
+        protected AdvanceEstimateGeneration $advanceGeneration,
     ) {}
 
     public function analyze(EstimateGenerationSession $session): EstimateGenerationSession
@@ -52,15 +54,14 @@ class EstimateGenerationOrchestrator
 
         $analysis = $this->semanticParser->parse($session->input_payload ?? [], $documents);
 
-        $session->forceFill([
-            'status' => 'analyzed',
+        $session = $this->advanceGeneration->documentsReady($session, [
             'processing_stage' => 'object_analysis',
             'processing_progress' => 35,
             'analysis_payload' => $analysis,
             'last_error' => null,
-        ])->save();
+        ]);
 
-        return $session->fresh(['documents']);
+        return $session;
     }
 
     public function generate(EstimateGenerationSession $session): EstimateGenerationSession
@@ -143,31 +144,27 @@ class EstimateGenerationOrchestrator
         $this->packagePersistenceService->syncFromDraft($session, $draft);
         $this->auditService->recordNormativeDecisionSummary($session, $draft);
 
-        $status = match ($qualityReport->level) {
-            'passed' => 'ready_for_review',
-            'blocked' => 'blocked',
-            default => 'review_required',
-        };
+        $session = $this->advanceGeneration->generationCompleted(
+            $session,
+            $qualityReport->level !== 'passed',
+            [
+                'processing_stage' => 'validation_and_normalization',
+                'processing_progress' => 100,
+                'draft_payload' => $draft,
+                'problem_flags' => $draft['problem_flags'] ?? [],
+                'last_error' => null,
+            ],
+        );
 
-        $session->forceFill([
-            'status' => $status,
-            'processing_stage' => 'validation_and_normalization',
-            'processing_progress' => 100,
-            'draft_payload' => $draft,
-            'problem_flags' => $draft['problem_flags'] ?? [],
-            'last_error' => null,
-        ])->save();
-
-        return $session->fresh(['documents']);
+        return $session;
     }
 
     private function updateGenerationProgress(EstimateGenerationSession $session, string $stage, int $progress): void
     {
-        $session->forceFill([
-            'status' => 'processing',
+        $this->advanceGeneration->update($session, [
             'processing_stage' => $stage,
             'processing_progress' => max(0, min($progress, 99)),
-        ])->save();
+        ]);
     }
 
     private function normativeMatchingSummary(array $localEstimates): array
@@ -220,13 +217,13 @@ class EstimateGenerationOrchestrator
                 continue;
             }
 
-            $draft['local_estimates'][$index]['assumptions'][] = 'Блок пересобран по запросу пользователя ' . now()->toDateTimeString();
+            $draft['local_estimates'][$index]['assumptions'][] = 'Блок пересобран по запросу пользователя '.now()->toDateTimeString();
         }
 
-        $session->forceFill([
+        $session = $this->advanceGeneration->update($session, [
             'draft_payload' => $draft,
-        ])->save();
+        ]);
 
-        return $session->fresh(['documents']);
+        return $session;
     }
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileEstimateGenerationDocuments;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -18,6 +19,7 @@ class DocumentParsingService
     public function __construct(
         protected OcrDocumentStorageService $storageService,
         protected OcrUsageLogger $usageLogger,
+        protected ReconcileEstimateGenerationDocuments $documentReconciler,
     ) {}
 
     /**
@@ -32,11 +34,18 @@ class DocumentParsingService
             $document = $this->storageService->storeUploadedDocument($session, $file, $user);
             $this->usageLogger->queued($document);
 
-            ProcessEstimateGenerationDocumentJob::dispatch($document->id)
-                ->onConnection(ProcessEstimateGenerationDocumentJob::CONNECTION)
-                ->onQueue(ProcessEstimateGenerationDocumentJob::QUEUE);
-
             $documents->push($document);
+        }
+
+        if ($documents->isNotEmpty()) {
+            $this->documentReconciler->changed($session);
+
+            foreach ($documents as $document) {
+                ProcessEstimateGenerationDocumentJob::dispatch($document->id)
+                    ->onConnection(ProcessEstimateGenerationDocumentJob::CONNECTION)
+                    ->onQueue(ProcessEstimateGenerationDocumentJob::QUEUE)
+                    ->afterCommit();
+            }
         }
 
         return $documents;

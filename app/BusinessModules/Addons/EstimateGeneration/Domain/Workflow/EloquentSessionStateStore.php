@@ -9,13 +9,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 final class EloquentSessionStateStore implements SessionStateStore
 {
     public function compareAndSet(
-        int $sessionId,
+        EstimateGenerationSession $session,
         int $expectedVersion,
         EstimateGenerationStatus $status,
         array $attributes,
-    ): void {
+    ): EstimateGenerationSession {
         $updated = EstimateGenerationSession::query()
-            ->whereKey($sessionId)
+            ->whereKey($session->getKey())
             ->where('state_version', $expectedVersion)
             ->update([
                 ...$attributes,
@@ -24,7 +24,15 @@ final class EloquentSessionStateStore implements SessionStateStore
             ]);
 
         if ($updated !== 1) {
-            throw new StaleEstimateGenerationState($sessionId, $expectedVersion);
+            throw new StaleEstimateGenerationState((int) $session->getKey(), $expectedVersion);
         }
+
+        $session->forceFill([
+            ...$attributes,
+            'status' => $status->value,
+            'state_version' => $expectedVersion + 1,
+        ])->syncChanges();
+
+        return $session;
     }
 }

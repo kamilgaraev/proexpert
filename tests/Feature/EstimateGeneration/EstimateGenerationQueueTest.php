@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationController;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -26,7 +27,7 @@ class EstimateGenerationQueueTest extends TestCase
     {
         Queue::fake();
 
-        [$user, $project, $session] = $this->makeGenerationSession('analyzed');
+        [$user, $project, $session] = $this->makeGenerationSession('ready_to_generate');
         $request = Request::create('/generate', 'POST');
         $request->setUserResolver(static fn (): User => $user);
 
@@ -35,8 +36,8 @@ class EstimateGenerationQueueTest extends TestCase
 
         $this->assertSame(202, $response->getStatusCode());
         $this->assertTrue($payload['success']);
-        $this->assertSame('queued', $payload['data']['status']);
-        $this->assertSame('queued', $payload['data']['processing_stage']);
+        $this->assertSame('generating', $payload['data']['status']);
+        $this->assertSame('generating', $payload['data']['processing_stage']);
 
         Queue::assertPushed(
             GenerateEstimateDraftJob::class,
@@ -46,8 +47,8 @@ class EstimateGenerationQueueTest extends TestCase
 
         $this->assertDatabaseHas('estimate_generation_sessions', [
             'id' => $session->id,
-            'status' => 'queued',
-            'processing_stage' => 'queued',
+            'status' => 'generating',
+            'processing_stage' => 'generating',
             'processing_progress' => 40,
         ]);
     }
@@ -71,14 +72,14 @@ class EstimateGenerationQueueTest extends TestCase
 
     public function test_generation_job_marks_session_failed_when_generation_fails(): void
     {
-        [, , $session] = $this->makeGenerationSession('queued');
-        $job = new GenerateEstimateDraftJob($session->id);
+        [, , $session] = $this->makeGenerationSession('generating');
+        $job = new GenerateEstimateDraftJob($session->id, $session->state_version, 'test-attempt');
 
         $job->failed(new RuntimeException(str_repeat('Ошибка генерации ', 50)));
 
         $session->refresh();
 
-        $this->assertSame('failed', $session->status);
+        $this->assertSame(EstimateGenerationStatus::Failed, $session->status);
         $this->assertSame('failed', $session->processing_stage);
         $this->assertSame(0, $session->processing_progress);
         $this->assertNotNull($session->last_error);
@@ -87,47 +88,67 @@ class EstimateGenerationQueueTest extends TestCase
 
     public function test_generation_job_does_not_override_finished_session_when_stale_attempt_fails(): void
     {
-        [, , $session] = $this->makeGenerationSession('ready_for_review');
+        [, , $session] = $this->makeGenerationSession('ready_to_apply');
         $session->forceFill([
             'processing_stage' => 'validation_and_normalization',
             'processing_progress' => 100,
             'last_error' => null,
         ])->save();
 
-        $job = new GenerateEstimateDraftJob($session->id);
+        $job = new GenerateEstimateDraftJob($session->id, $session->state_version, 'test-attempt');
         $job->failed(new RuntimeException('stale queue attempt'));
 
         $session->refresh();
 
-        $this->assertSame('ready_for_review', $session->status);
+        $this->assertSame(EstimateGenerationStatus::ReadyToApply, $session->status);
         $this->assertSame('validation_and_normalization', $session->processing_stage);
         $this->assertSame(100, $session->processing_progress);
         $this->assertNull($session->last_error);
     }
 
+    public function test_stale_attempt_failure_does_not_change_or_notify_the_newer_generation(): void
+    {
+        [, , $session] = $this->makeGenerationSession('generating');
+        $session->forceFill(['input_payload' => [
+            ...($session->input_payload ?? []),
+            'generation_attempt_id' => 'new-attempt',
+        ]])->save();
+
+        $notifications = Mockery::mock(EstimateGenerationNotificationService::class);
+        $notifications->shouldNotReceive('notifyFailed');
+        $this->app->instance(EstimateGenerationNotificationService::class, $notifications);
+
+        (new GenerateEstimateDraftJob($session->id, $session->state_version, 'old-attempt'))
+            ->failed(new RuntimeException('late failure'));
+
+        $session->refresh();
+        $this->assertSame(EstimateGenerationStatus::Generating, $session->status);
+        $this->assertNull($session->last_error);
+    }
+
     public function test_generation_job_skips_finished_session_instead_of_regenerating(): void
     {
-        [, , $session] = $this->makeGenerationSession('ready_for_review');
+        [, , $session] = $this->makeGenerationSession('ready_to_apply');
         $orchestrator = Mockery::mock(EstimateGenerationOrchestrator::class);
         $orchestrator->shouldNotReceive('generate');
 
-        $job = new GenerateEstimateDraftJob($session->id);
+        $job = new GenerateEstimateDraftJob($session->id, $session->state_version, 'test-attempt');
         $job->handle($orchestrator);
 
         $session->refresh();
 
-        $this->assertSame('ready_for_review', $session->status);
+        $this->assertSame(EstimateGenerationStatus::ReadyToApply, $session->status);
     }
 
     public function test_generation_job_notifies_user_when_generation_finishes(): void
     {
-        [, , $session] = $this->makeGenerationSession('queued');
+        [, , $session] = $this->makeGenerationSession('generating');
         $orchestrator = Mockery::mock(EstimateGenerationOrchestrator::class);
         $orchestrator->shouldReceive('generate')
             ->once()
             ->andReturnUsing(static function (EstimateGenerationSession $session): EstimateGenerationSession {
                 $session->forceFill([
-                    'status' => 'ready_for_review',
+                    'status' => 'ready_to_apply',
                     'processing_stage' => 'validation_and_normalization',
                     'processing_progress' => 100,
                 ])->save();
@@ -139,32 +160,32 @@ class EstimateGenerationQueueTest extends TestCase
         $notifications->shouldReceive('notifyFinished')
             ->once()
             ->with(Mockery::on(static fn (EstimateGenerationSession $notifiedSession): bool => $notifiedSession->id === $session->id
-                && $notifiedSession->status === 'ready_for_review'));
+                && $notifiedSession->status === EstimateGenerationStatus::ReadyToApply));
 
-        $job = new GenerateEstimateDraftJob($session->id);
+        $job = new GenerateEstimateDraftJob($session->id, $session->state_version, 'test-attempt');
         $job->handle($orchestrator, $notifications);
     }
 
     public function test_generation_job_notifies_user_when_generation_fails(): void
     {
-        [, , $session] = $this->makeGenerationSession('queued');
+        [, , $session] = $this->makeGenerationSession('generating');
         $notifications = Mockery::mock(EstimateGenerationNotificationService::class);
         $notifications->shouldReceive('notifyFailed')
             ->once()
             ->with(
                 Mockery::on(static fn (EstimateGenerationSession $notifiedSession): bool => $notifiedSession->id === $session->id
-                    && $notifiedSession->status === 'failed'),
+                    && $notifiedSession->status === EstimateGenerationStatus::Failed),
                 Mockery::type(RuntimeException::class)
             );
         $this->app->instance(EstimateGenerationNotificationService::class, $notifications);
 
-        $job = new GenerateEstimateDraftJob($session->id);
+        $job = new GenerateEstimateDraftJob($session->id, $session->state_version, 'test-attempt');
         $job->failed(new RuntimeException('generation failed'));
     }
 
     public function test_estimate_generation_notification_contains_admin_target_route(): void
     {
-        [$user, $project, $session] = $this->makeGenerationSession('ready_for_review');
+        [$user, $project, $session] = $this->makeGenerationSession('ready_to_apply');
         $notificationService = Mockery::mock(NotificationService::class);
         $notificationService->shouldReceive('send')
             ->once()
@@ -182,14 +203,14 @@ class EstimateGenerationQueueTest extends TestCase
                 ['in_app', 'websocket'],
                 $session->organization_id
             )
-            ->andReturn(new Notification());
+            ->andReturn(new Notification);
 
         (new EstimateGenerationNotificationService($notificationService))->notifyFinished($session);
     }
 
     public function test_status_returns_lightweight_generation_state(): void
     {
-        [$user, $project, $session] = $this->makeGenerationSession('processing');
+        [$user, $project, $session] = $this->makeGenerationSession('generating');
         $session->forceFill([
             'processing_stage' => 'draft_generation',
             'processing_progress' => 45,
@@ -203,7 +224,7 @@ class EstimateGenerationQueueTest extends TestCase
 
         $this->assertTrue($payload['success']);
         $this->assertSame($session->id, $payload['data']['id']);
-        $this->assertSame('processing', $payload['data']['status']);
+        $this->assertSame('generating', $payload['data']['status']);
         $this->assertSame('draft_generation', $payload['data']['processing_stage']);
         $this->assertSame(45, $payload['data']['processing_progress']);
         $this->assertArrayNotHasKey('input', $payload['data']);
@@ -232,6 +253,7 @@ class EstimateGenerationQueueTest extends TestCase
             'processing_progress' => 35,
             'input_payload' => [
                 'description' => 'Монолитные работы жилого дома',
+                'generation_attempt_id' => 'test-attempt',
             ],
             'analysis_payload' => [
                 'detected_structure' => [],

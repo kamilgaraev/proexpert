@@ -6,7 +6,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimate;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand;
-use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\CreateEstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationTransition;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
@@ -46,6 +47,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -68,6 +70,8 @@ class EstimateGenerationController extends Controller
         protected NormativeCandidateManualSearchService $candidateManualSearchService,
         protected NormativeCandidateFeedbackService $candidateFeedbackService,
         protected EstimateGenerationReviewItemService $reviewItemService,
+        protected CreateEstimateGenerationSession $createSession,
+        protected AdvanceEstimateGeneration $advanceGeneration,
     ) {}
 
     public function index(Request $request, Project $project): JsonResponse
@@ -98,11 +102,10 @@ class EstimateGenerationController extends Controller
             $validated = $request->validated();
             $generationMode = EstimateGenerationMode::fromInput($validated['generation_mode'] ?? null)->value;
 
-            $session = EstimateGenerationSession::create([
+            $session = $this->createSession->handle([
                 'organization_id' => $user->current_organization_id,
                 'project_id' => $project->id,
                 'user_id' => $user->id,
-                'status' => EstimateGenerationStatus::Draft->value,
                 'processing_stage' => 'created',
                 'processing_progress' => 0,
                 'input_payload' => array_merge($validated, [
@@ -143,6 +146,8 @@ class EstimateGenerationController extends Controller
                 'documents' => EstimateGenerationDocumentResource::collection($documents)->resolve(),
                 'documents_summary' => $this->documentReadinessService->evaluate($session->fresh(['documents']))['summary'],
             ], trans_message('estimate_generation.documents_uploaded'));
+        } catch (StaleEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Failed to upload documents', [
                 'error' => $e->getMessage(),
@@ -184,6 +189,8 @@ class EstimateGenerationController extends Controller
                 $this->sessionPayload($session->load('documents')),
                 trans_message('estimate_generation.analysis_completed')
             );
+        } catch (StaleEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Analyze failed', [
                 'error' => $e->getMessage(),
@@ -203,24 +210,24 @@ class EstimateGenerationController extends Controller
             )->value;
 
             if (($session->input_payload['generation_mode'] ?? null) !== $generationMode) {
-                $session->forceFill([
+                $session = $this->advanceGeneration->update($session, [
                     'input_payload' => [
                         ...($session->input_payload ?? []),
                         'generation_mode' => $generationMode,
                     ],
-                ])->save();
+                ]);
             }
 
             $readiness = $this->documentReadinessService->evaluate($session->load('documents'));
 
             if (! $readiness['can_generate']) {
                 if ($this->canWaitForDocuments($session, $readiness['summary'])) {
-                    $session->forceFill([
-                        'status' => 'waiting_for_documents',
-                        'processing_stage' => 'documents_processing',
-                        'processing_progress' => max((int) ($session->processing_progress ?? 0), 5),
-                        'last_error' => null,
-                    ])->save();
+                    $session = $this->advanceGeneration->documentsStarted($session, [
+                        'input_payload' => [
+                            ...($session->input_payload ?? []),
+                            'generation_requested' => true,
+                        ],
+                    ]);
 
                     return AdminResponse::success(
                         $this->sessionPayload($session->fresh(['documents'])),
@@ -246,15 +253,17 @@ class EstimateGenerationController extends Controller
                 );
             }
 
-            if (! in_array($session->status, ['queued', 'processing'], true)) {
-                $session->forceFill([
-                    'status' => 'queued',
-                    'processing_stage' => 'queued',
-                    'processing_progress' => 40,
-                    'last_error' => null,
-                ])->save();
-
-                GenerateEstimateDraftJob::dispatch($session->id)->onQueue(GenerateEstimateDraftJob::QUEUE);
+            $session = $this->advanceGeneration->documentsReady($session);
+            if (in_array($session->status->value, [
+                'ready_to_generate',
+                'estimate_review_required',
+                'ready_to_apply',
+            ], true)) {
+                $attemptId = (string) Str::uuid();
+                $session = $this->advanceGeneration->generationStarted($session, $attemptId);
+                GenerateEstimateDraftJob::dispatch($session->id, $session->state_version, $attemptId)
+                    ->onQueue(GenerateEstimateDraftJob::QUEUE)
+                    ->afterCommit();
             }
 
             return AdminResponse::success(
@@ -262,6 +271,8 @@ class EstimateGenerationController extends Controller
                 trans_message('estimate_generation.generation_queued'),
                 202
             );
+        } catch (StaleEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Generate failed', [
                 'error' => $e->getMessage(),
@@ -473,6 +484,8 @@ class EstimateGenerationController extends Controller
             );
         } catch (ValidationException $e) {
             return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (StaleEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Normative candidate selection failed', [
                 'error' => $e->getMessage(),
@@ -514,9 +527,12 @@ class EstimateGenerationController extends Controller
     {
         try {
             $this->guardSession($request, $project, $session);
+            $session = $this->advanceGeneration->generationStarted($session, (string) Str::uuid());
             $session = $this->orchestrator->rebuildSection($session, $request->validated('local_estimate_key'));
 
             return AdminResponse::success($session->draft_payload, trans_message('estimate_generation.section_rebuilt'));
+        } catch (StaleEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Rebuild section failed', [
                 'error' => $e->getMessage(),
@@ -562,6 +578,8 @@ class EstimateGenerationController extends Controller
             );
         } catch (ValidationException $e) {
             return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (StaleEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Feedback failed', [
                 'error' => $e->getMessage(),

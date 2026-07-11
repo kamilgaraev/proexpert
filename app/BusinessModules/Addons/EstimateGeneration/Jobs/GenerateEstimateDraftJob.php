@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Jobs;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\GenerationAttemptGuard;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNotificationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
@@ -27,14 +29,6 @@ class GenerateEstimateDraftJob implements ShouldQueue
 
     public const QUEUE = 'estimate-generation';
 
-    private const TERMINAL_STATUSES = [
-        'generated',
-        'ready_for_review',
-        'review_required',
-        'blocked',
-        'applied',
-    ];
-
     public int $tries = 3;
 
     public int $timeout = 1800;
@@ -45,6 +39,8 @@ class GenerateEstimateDraftJob implements ShouldQueue
 
     public function __construct(
         private readonly int $sessionId,
+        private readonly ?int $expectedStateVersion = null,
+        private readonly ?string $attemptId = null,
     ) {
         $this->onConnection(self::CONNECTION);
         $this->onQueue(self::QUEUE);
@@ -53,10 +49,10 @@ class GenerateEstimateDraftJob implements ShouldQueue
     public function middleware(): array
     {
         return [
-            (new WithoutOverlapping('estimate-generation:draft:session:' . $this->sessionId))
+            (new WithoutOverlapping('estimate-generation:draft:session:'.$this->sessionId))
                 ->releaseAfter(60)
                 ->expireAfter($this->timeout + 300),
-            (new WithoutOverlapping('estimate-generation:draft:' . $this->rateLimitKey()))
+            (new WithoutOverlapping('estimate-generation:draft:'.$this->rateLimitKey()))
                 ->shared()
                 ->releaseAfter(120)
                 ->expireAfter($this->timeout + 300),
@@ -71,31 +67,25 @@ class GenerateEstimateDraftJob implements ShouldQueue
             ->value('organization_id');
 
         return $organizationId !== null
-            ? 'organization:' . (int) $organizationId
-            : 'session:' . $this->sessionId;
+            ? 'organization:'.(int) $organizationId
+            : 'session:'.$this->sessionId;
     }
 
     public function handle(
         EstimateGenerationOrchestrator $orchestrator,
-        ?EstimateGenerationNotificationService $notificationService = null
-    ): void
-    {
+        ?EstimateGenerationNotificationService $notificationService = null,
+        ?GenerationAttemptGuard $attemptGuard = null,
+    ): void {
         $session = EstimateGenerationSession::query()->find($this->sessionId);
 
-        if (!$session instanceof EstimateGenerationSession) {
+        if (! $session instanceof EstimateGenerationSession) {
             return;
         }
 
-        if (in_array($session->status, self::TERMINAL_STATUSES, true)) {
+        $attemptGuard ??= app(GenerationAttemptGuard::class);
+        if (! $attemptGuard->matches($session, $this->expectedStateVersion, $this->attemptId)) {
             return;
         }
-
-        $session->forceFill([
-            'status' => 'processing',
-            'processing_stage' => 'draft_generation',
-            'processing_progress' => 45,
-            'last_error' => null,
-        ])->save();
 
         $generatedSession = $orchestrator->generate($session);
         $notificationService ??= app(EstimateGenerationNotificationService::class);
@@ -104,22 +94,13 @@ class GenerateEstimateDraftJob implements ShouldQueue
 
     public function failed(\Throwable $exception): void
     {
-        $updated = EstimateGenerationSession::query()
-            ->where('id', $this->sessionId)
-            ->whereNotIn('status', self::TERMINAL_STATUSES)
-            ->update([
-                'status' => 'failed',
-                'processing_stage' => 'failed',
-                'processing_progress' => 0,
-                'last_error' => mb_substr($exception->getMessage(), 0, 500),
-                'updated_at' => now(),
-            ]);
-
-        if ($updated > 0) {
-            $session = EstimateGenerationSession::query()->find($this->sessionId);
-
-            if ($session instanceof EstimateGenerationSession) {
+        $session = EstimateGenerationSession::query()->find($this->sessionId);
+        if ($session instanceof EstimateGenerationSession
+            && app(GenerationAttemptGuard::class)->matches($session, null, $this->attemptId)) {
+            try {
+                $session = app(AdvanceEstimateGeneration::class)->failed($session, $exception);
                 app(EstimateGenerationNotificationService::class)->notifyFailed($session, $exception);
+            } catch (\Throwable) {
             }
         }
 
