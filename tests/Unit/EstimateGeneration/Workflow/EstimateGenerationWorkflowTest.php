@@ -118,6 +118,54 @@ final class EstimateGenerationWorkflowTest extends TestCase
         self::assertSame(2, $updated->state_version);
     }
 
+    #[Test]
+    public function caller_cannot_inject_workflow_managed_fields(): void
+    {
+        $store = new InMemorySessionStateStore($this->session(EstimateGenerationStatus::Draft, 4));
+
+        $updated = $this->workflow($store)->transition(
+            $store->current(),
+            EstimateGenerationEvent::StartDocumentProcessing,
+            [
+                'resume_status' => 'applying',
+                'status' => 'applied',
+                'state_version' => 999,
+            ],
+        );
+
+        self::assertSame(EstimateGenerationStatus::ProcessingDocuments, $updated->status);
+        self::assertSame(5, $updated->state_version);
+        self::assertNull($updated->resume_status);
+    }
+
+    #[Test]
+    public function workflow_returns_its_exact_cas_snapshot_when_persistence_advances_after_update(): void
+    {
+        $session = $this->session(EstimateGenerationStatus::ReadyToGenerate, 4);
+        $store = new AdvancingAfterCasStateStore();
+
+        $updated = $this->workflow($store)->transition($session, EstimateGenerationEvent::GenerationStarted);
+
+        self::assertSame($session, $updated);
+        self::assertSame(EstimateGenerationStatus::Generating, $updated->status);
+        self::assertSame(5, $updated->state_version);
+        self::assertSame(6, $store->persistedVersion);
+    }
+
+    #[Test]
+    public function eloquent_store_does_not_read_session_after_conditional_update(): void
+    {
+        $source = file_get_contents(
+            dirname(__DIR__, 4)
+            .'/app/BusinessModules/Addons/EstimateGeneration/Domain/Workflow/EloquentSessionStateStore.php',
+        );
+
+        self::assertIsString($source);
+        self::assertStringNotContainsString('findOrFail', $source);
+        self::assertStringNotContainsString('->first(', $source);
+        self::assertStringNotContainsString('->find(', $source);
+    }
+
     private function workflow(SessionStateStore $store): EstimateGenerationWorkflow
     {
         return new EstimateGenerationWorkflow(new EstimateGenerationTransitionMap(), $store);
@@ -151,7 +199,7 @@ final class InMemorySessionStateStore implements SessionStateStore
         int $expectedVersion,
         EstimateGenerationStatus $status,
         array $attributes,
-    ): EstimateGenerationSession {
+    ): void {
         if ($sessionId !== $this->session->getKey() || $expectedVersion !== $this->session->state_version) {
             throw new StaleEstimateGenerationState($sessionId, $expectedVersion);
         }
@@ -161,12 +209,24 @@ final class InMemorySessionStateStore implements SessionStateStore
             'status' => $status,
             'state_version' => $expectedVersion + 1,
         ]);
-
-        return $this->session;
     }
 
     public function current(): EstimateGenerationSession
     {
         return $this->session;
+    }
+}
+
+final class AdvancingAfterCasStateStore implements SessionStateStore
+{
+    public int $persistedVersion = 0;
+
+    public function compareAndSet(
+        int $sessionId,
+        int $expectedVersion,
+        EstimateGenerationStatus $status,
+        array $attributes,
+    ): void {
+        $this->persistedVersion = $expectedVersion + 2;
     }
 }

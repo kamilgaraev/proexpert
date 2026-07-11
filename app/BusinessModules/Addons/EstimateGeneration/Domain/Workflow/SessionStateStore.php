@@ -16,5 +16,5 @@ interface SessionStateStore
         int $expectedVersion,
         EstimateGenerationStatus $status,
         array $attributes,
-    ): EstimateGenerationSession;
+    ): void;
 }

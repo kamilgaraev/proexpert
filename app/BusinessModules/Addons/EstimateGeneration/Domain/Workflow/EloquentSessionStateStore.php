@@ -13,7 +13,7 @@ final class EloquentSessionStateStore implements SessionStateStore
         int $expectedVersion,
         EstimateGenerationStatus $status,
         array $attributes,
-    ): EstimateGenerationSession {
+    ): void {
         $updated = EstimateGenerationSession::query()
             ->whereKey($sessionId)
             ->where('state_version', $expectedVersion)
@@ -26,7 +26,5 @@ final class EloquentSessionStateStore implements SessionStateStore
         if ($updated !== 1) {
             throw new StaleEstimateGenerationState($sessionId, $expectedVersion);
         }
-
-        return EstimateGenerationSession::query()->findOrFail($sessionId);
     }
 }

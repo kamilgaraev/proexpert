@@ -25,17 +25,28 @@ final class EstimateGenerationWorkflow
         $currentStatus = $session->status;
         $targetStatus = $this->transitionMap->resolve($currentStatus, $event, $session->resume_status);
 
+        unset($attributes['status'], $attributes['state_version'], $attributes['resume_status']);
+        $attributes['resume_status'] = null;
+
         if ($event === EstimateGenerationEvent::Failed) {
             $attributes['resume_status'] = $currentStatus->value;
-        } elseif ($event === EstimateGenerationEvent::Retried) {
-            $attributes['resume_status'] = null;
         }
 
-        return $this->stateStore->compareAndSet(
+        $expectedVersion = $session->state_version;
+
+        $this->stateStore->compareAndSet(
             (int) $session->getKey(),
-            $session->state_version,
+            $expectedVersion,
             $targetStatus,
             $attributes,
         );
+
+        $session->forceFill([
+            ...$attributes,
+            'status' => $targetStatus,
+            'state_version' => $expectedVersion + 1,
+        ]);
+
+        return $session;
     }
 }
