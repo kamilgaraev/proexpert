@@ -6,8 +6,12 @@ namespace Tests\Unit\EstimateGeneration\Pipeline;
 
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointClaimStatus;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineCheckpointStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineFailureDetails;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineFailureObserver;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineLeaseHeartbeat;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStage;
@@ -222,6 +226,114 @@ final class PipelineRunnerTest extends TestCase
     }
 
     #[Test]
+    public function checkpoint_failure_recorder_exception_never_replaces_stage_exception(): void
+    {
+        $original = new RuntimeException('original-stage-error');
+        $stage = new ThrowingStage(ProcessingStage::UnderstandDocuments, $original);
+        $later = new CountingStage(ProcessingStage::UnderstandObject);
+        $this->store->failException = new RuntimeException('recorder-error');
+
+        try {
+            $this->runner([$stage, $later])->runNext($this->context());
+            self::fail('Stage exception must be rethrown.');
+        } catch (Throwable $caught) {
+            self::assertSame($original, $caught);
+        }
+
+        self::assertSame(0, $later->executions);
+    }
+
+    #[Test]
+    public function false_failure_recording_never_replaces_stage_exception_or_runs_later_stage(): void
+    {
+        $original = new RuntimeException('original-stage-error');
+        $stage = new ThrowingStage(ProcessingStage::UnderstandDocuments, $original);
+        $later = new CountingStage(ProcessingStage::UnderstandObject);
+        $this->store->forceFailFalse = true;
+
+        try {
+            $this->runner([$stage, $later])->runNext($this->context());
+            self::fail('Stage exception must be rethrown.');
+        } catch (Throwable $caught) {
+            self::assertSame($original, $caught);
+        }
+
+        self::assertSame(0, $later->executions);
+    }
+
+    #[Test]
+    public function failure_observer_receives_only_safe_details_when_checkpoint_recording_fails(): void
+    {
+        $secret = 'Bearer private-token password=secret';
+        $original = new RuntimeException($secret);
+        $observer = new RecordingFailureObserver;
+        $this->store->forceFailFalse = true;
+
+        try {
+            $this->runner(
+                [new ThrowingStage(ProcessingStage::UnderstandDocuments, $original)],
+                $observer,
+            )->runNext($this->context());
+        } catch (Throwable) {
+        }
+
+        self::assertSame(1, $observer->calls);
+        self::assertNotNull($observer->stageFailure);
+        self::assertStringNotContainsString(
+            $secret,
+            $observer->stageFailure->code.'|'.$observer->stageFailure->fingerprint,
+        );
+    }
+
+    #[Test]
+    public function throwing_failure_observer_never_replaces_stage_exception(): void
+    {
+        $original = new RuntimeException('original-stage-error');
+        $observer = new RecordingFailureObserver(new RuntimeException('observer-error'));
+        $this->store->forceFailFalse = true;
+
+        try {
+            $this->runner(
+                [new ThrowingStage(ProcessingStage::UnderstandDocuments, $original)],
+                $observer,
+            )->runNext($this->context());
+            self::fail('Stage exception must be rethrown.');
+        } catch (Throwable $caught) {
+            self::assertSame($original, $caught);
+        }
+
+        self::assertSame(1, $observer->calls);
+    }
+
+    #[Test]
+    public function lease_aware_stage_renews_between_chunks_and_completes_after_original_expiry(): void
+    {
+        $stage = new HeartbeatStage($this->clock);
+
+        $result = $this->runner([$stage])->runNext($this->context());
+
+        self::assertTrue($stage->renewed);
+        self::assertSame(ProcessingStage::UnderstandObject, $result?->stage);
+        self::assertSame('completed', $this->store->status($this->context(), $stage->stage()));
+    }
+
+    #[Test]
+    public function reclaimed_owner_heartbeat_is_rejected_and_stale_result_is_not_published(): void
+    {
+        $context = $this->context();
+        $stage = new ReclaimingHeartbeatStage($this->clock, $this->store, $context);
+
+        $this->expectException(LogicException::class);
+        try {
+            $this->runner([$stage])->runNext($context);
+        } finally {
+            self::assertFalse($stage->renewed);
+            self::assertSame('running', $this->store->status($context, $stage->stage()));
+            self::assertSame(2, $this->store->attempts($context, $stage->stage()));
+        }
+    }
+
+    #[Test]
     public function stages_progress_in_registry_order_and_all_complete_returns_null(): void
     {
         $later = new CountingStage(ProcessingStage::ExtractQuantities);
@@ -246,13 +358,14 @@ final class PipelineRunnerTest extends TestCase
     }
 
     /** @param list<PipelineStage> $stages */
-    private function runner(array $stages): PipelineRunner
+    private function runner(array $stages, ?PipelineFailureObserver $observer = null): PipelineRunner
     {
         return new PipelineRunner(
             new PipelineRegistry($stages),
             $this->store,
             fn (): DateTimeImmutable => $this->clock->now,
             60,
+            $observer,
         );
     }
 
@@ -274,6 +387,28 @@ final class MutableClock
     public function advance(string $modifier): void
     {
         $this->now = $this->now->modify($modifier);
+    }
+}
+
+final class RecordingFailureObserver implements PipelineFailureObserver
+{
+    public int $calls = 0;
+
+    public ?PipelineFailureDetails $stageFailure = null;
+
+    public function __construct(private readonly ?Throwable $error = null) {}
+
+    public function checkpointFailureWasNotRecorded(
+        CheckpointClaim $claim,
+        PipelineFailureDetails $stageFailure,
+        ?PipelineFailureDetails $recorderFailure,
+    ): void {
+        $this->calls++;
+        $this->stageFailure = $stageFailure;
+
+        if ($this->error !== null) {
+            throw $this->error;
+        }
     }
 }
 
@@ -299,6 +434,89 @@ final class CountingStage implements PipelineStage
         }
 
         return new PipelineStageResult($this->processingStage, 'sha256:out', ['attempt' => $this->executions]);
+    }
+}
+
+final class ThrowingStage implements PipelineStage
+{
+    public function __construct(
+        private readonly ProcessingStage $processingStage,
+        private readonly Throwable $error,
+    ) {}
+
+    public function stage(): ProcessingStage
+    {
+        return $this->processingStage;
+    }
+
+    public function execute(PipelineContext $context): PipelineStageResult
+    {
+        throw $this->error;
+    }
+}
+
+final class HeartbeatStage implements LeaseAwarePipelineStage
+{
+    public bool $renewed = false;
+
+    public function __construct(private readonly MutableClock $clock) {}
+
+    public function stage(): ProcessingStage
+    {
+        return ProcessingStage::UnderstandObject;
+    }
+
+    public function execute(PipelineContext $context): PipelineStageResult
+    {
+        throw new LogicException('Runner must use heartbeat-aware execution.');
+    }
+
+    public function executeWithHeartbeat(
+        PipelineContext $context,
+        PipelineLeaseHeartbeat $heartbeat,
+    ): PipelineStageResult {
+        $this->clock->advance('+50 seconds');
+        $this->renewed = $heartbeat->renew();
+        $this->clock->advance('+50 seconds');
+
+        return new PipelineStageResult($this->stage(), 'sha256:heartbeat', []);
+    }
+}
+
+final class ReclaimingHeartbeatStage implements LeaseAwarePipelineStage
+{
+    public bool $renewed = true;
+
+    public function __construct(
+        private readonly MutableClock $clock,
+        private readonly InMemoryCheckpointStore $store,
+        private readonly PipelineContext $context,
+    ) {}
+
+    public function stage(): ProcessingStage
+    {
+        return ProcessingStage::UnderstandObject;
+    }
+
+    public function execute(PipelineContext $context): PipelineStageResult
+    {
+        throw new LogicException('Runner must use heartbeat-aware execution.');
+    }
+
+    public function executeWithHeartbeat(
+        PipelineContext $context,
+        PipelineLeaseHeartbeat $heartbeat,
+    ): PipelineStageResult {
+        $this->clock->advance('+61 seconds');
+        $this->store->claim(
+            $this->context,
+            $this->stage(),
+            $this->clock->now,
+            $this->clock->now->modify('+60 seconds'),
+        );
+        $this->renewed = $heartbeat->renew();
+
+        return new PipelineStageResult($this->stage(), 'sha256:stale', []);
     }
 }
 
@@ -342,6 +560,10 @@ final class InMemoryCheckpointStore implements PipelineCheckpointStore
 
     private int $tokenSequence = 0;
 
+    public ?Throwable $failException = null;
+
+    public bool $forceFailFalse = false;
+
     public function claim(
         PipelineContext $context,
         ProcessingStage $stage,
@@ -377,6 +599,14 @@ final class InMemoryCheckpointStore implements PipelineCheckpointStore
 
     public function fail(CheckpointClaim $claim, Throwable $error, DateTimeImmutable $failedAt): bool
     {
+        if ($this->failException !== null) {
+            throw $this->failException;
+        }
+
+        if ($this->forceFailFalse) {
+            return false;
+        }
+
         return $this->transition($claim, 'failed', $failedAt);
     }
 

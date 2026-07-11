@@ -22,18 +22,22 @@ final class PipelineRunner
     /** @var Closure(): DateTimeImmutable */
     private readonly Closure $clock;
 
+    private readonly PipelineFailureObserver $failureObserver;
+
     /** @param callable(): DateTimeImmutable $clock */
     public function __construct(
         private readonly PipelineRegistry $registry,
         private readonly PipelineCheckpointStore $checkpointStore,
         callable $clock,
         private readonly int $leaseSeconds = self::DEFAULT_LEASE_SECONDS,
+        ?PipelineFailureObserver $failureObserver = null,
     ) {
         if ($leaseSeconds <= 0) {
             throw new InvalidArgumentException('Pipeline checkpoint lease must be positive.');
         }
 
         $this->clock = Closure::fromCallable($clock);
+        $this->failureObserver = $failureObserver ?? new NullPipelineFailureObserver;
     }
 
     public function runNext(PipelineContext $context): ?PipelineStageResult
@@ -67,7 +71,9 @@ final class PipelineRunner
         CheckpointClaim $claim,
     ): PipelineStageResult {
         try {
-            $result = $stage->execute($context);
+            $result = $stage instanceof LeaseAwarePipelineStage
+                ? $stage->executeWithHeartbeat($context, $this->heartbeat($claim))
+                : $stage->execute($context);
 
             if ($result->stage !== $stage->stage()) {
                 throw new LogicException('Pipeline stage returned a result for another stage.');
@@ -79,9 +85,47 @@ final class PipelineRunner
 
             return $result;
         } catch (Throwable $error) {
-            $this->checkpointStore->fail($claim, $error, ($this->clock)());
+            $this->recordFailureWithoutMasking($claim, $error);
 
             throw $error;
+        }
+    }
+
+    private function heartbeat(CheckpointClaim $claim): PipelineLeaseHeartbeat
+    {
+        return new PipelineLeaseHeartbeat(function () use ($claim): bool {
+            $now = ($this->clock)();
+
+            return $this->checkpointStore->renewLease(
+                $claim,
+                $now,
+                $now->modify(sprintf('+%d seconds', $this->leaseSeconds)),
+            );
+        });
+    }
+
+    private function recordFailureWithoutMasking(CheckpointClaim $claim, Throwable $stageError): void
+    {
+        $recorderFailure = null;
+
+        try {
+            $recorded = $this->checkpointStore->fail($claim, $stageError, ($this->clock)());
+        } catch (Throwable $error) {
+            $recorded = false;
+            $recorderFailure = PipelineFailureDetails::from($error);
+        }
+
+        if ($recorded) {
+            return;
+        }
+
+        try {
+            $this->failureObserver->checkpointFailureWasNotRecorded(
+                $claim,
+                PipelineFailureDetails::from($stageError),
+                $recorderFailure,
+            );
+        } catch (Throwable) {
         }
     }
 }

@@ -51,7 +51,7 @@ final class EloquentPipelineCheckpointStoreTest extends TestCase
     }
 
     #[Test]
-    public function contending_unique_claims_use_same_connection_and_only_one_is_acquired(): void
+    public function sequential_claims_use_same_connection_and_second_observes_busy_checkpoint(): void
     {
         [$firstStore, $context] = $this->storeAndContext();
         $secondStore = new EloquentPipelineCheckpointStore(DB::connection());
