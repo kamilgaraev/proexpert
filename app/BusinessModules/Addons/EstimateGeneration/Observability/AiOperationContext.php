@@ -31,8 +31,14 @@ final readonly class AiOperationContext
                 throw new InvalidArgumentException('Usage context identifiers must be positive.');
             }
         }
+        foreach ([$documentId, $pageId, $unitId] as $value) {
+            if ($value !== null && $value < 1) {
+                throw new InvalidArgumentException('Optional usage scope identifiers must be positive.');
+            }
+        }
         if (! in_array($stage, ['understand_documents', 'match_normatives'], true)
-            || ! in_array($operation, ['ocr', 'vision', 'rerank'], true)) {
+            || ! in_array($operation, ['ocr', 'vision', 'rerank'], true)
+            || ($stage === 'match_normatives') !== ($operation === 'rerank')) {
             throw new InvalidArgumentException('Invalid usage operation context.');
         }
     }

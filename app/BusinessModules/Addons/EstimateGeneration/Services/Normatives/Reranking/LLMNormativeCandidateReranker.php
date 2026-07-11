@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Rera
 
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\NormativeRerankResultData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AttemptAwareNormativeLlmClient;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireException;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use Throwable;
 
@@ -47,6 +48,9 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
                 ...$context,
                 'work_item_key' => $workItem['key'] ?? $workItem['id'] ?? $context['work_item_key'] ?? null,
             ]);
+        } catch (RerankWireException $exception) {
+            return $this->fallback->rerank($workItem, $context, $candidates)
+                ->withWarnings([$exception->attemptStatus === 'malformed_response' ? 'llm_reranker_invalid_json' : 'llm_reranker_failed']);
         } catch (Throwable) {
             return $this->fallback->rerank($workItem, $context, $candidates)
                 ->withWarnings(['llm_reranker_failed']);

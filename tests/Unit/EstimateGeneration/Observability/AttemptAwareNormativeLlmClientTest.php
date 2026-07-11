@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AttemptAwareNormativeLlmClient;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireException;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -56,6 +57,143 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
         $firstClaimId = $store->rows[0]->context->attemptId;
         $client->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7d'));
         self::assertNotSame($firstClaimId, $store->rows[2]->context->attemptId);
+    }
+
+    #[Test]
+    public function malformed_wire_exception_records_exactly_one_malformed_attempt(): void
+    {
+        $wire = new class implements RerankWireClient
+        {
+            public function provider(): string
+            {
+                return 'timeweb';
+            }
+
+            public function call(string $model, array $messages, array $options): array
+            {
+                throw new RerankWireException('malformed_response');
+            }
+        };
+        $store = new class implements AiUsageStore
+        {
+            /** @var array<int, AiUsageData> */
+            public array $rows = [];
+
+            public function record(AiUsageData $data): void
+            {
+                $this->rows[] = $data;
+            }
+        };
+        $client = new AttemptAwareNormativeLlmClient($wire, $store, ['model-a'], []);
+
+        try {
+            $client->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'));
+            self::fail('Malformed response must fail the routed call.');
+        } catch (RerankWireException) {
+        }
+
+        self::assertCount(1, $store->rows);
+        self::assertSame('malformed_response', $store->rows[0]->status);
+        self::assertNull($store->rows[0]->httpCode);
+    }
+
+    #[Test]
+    public function missing_usage_is_unavailable_and_measurement_construction_failure_never_masks_success(): void
+    {
+        $wire = new class implements RerankWireClient
+        {
+            public function provider(): string
+            {
+                return 'timeweb';
+            }
+
+            public function call(string $model, array $messages, array $options): array
+            {
+                return ['content' => '{}', 'model' => $model, 'usage_available' => false];
+            }
+        };
+        $store = new class implements AiUsageStore
+        {
+            /** @var array<int, AiUsageData> */
+            public array $rows = [];
+
+            public function record(AiUsageData $data): void
+            {
+                $this->rows[] = $data;
+            }
+        };
+
+        $normal = new AttemptAwareNormativeLlmClient($wire, $store, ['model-a'], []);
+        self::assertSame('{}', $normal->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'))['content']);
+        self::assertSame('unavailable', $store->rows[0]->usageStatus);
+
+        $invalidMeasurement = new AttemptAwareNormativeLlmClient($wire, $store, ['invalid model with spaces'], []);
+        self::assertSame('{}', $invalidMeasurement->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7d'))['content']);
+    }
+
+    #[Test]
+    public function invalid_json_is_one_malformed_attempt_and_not_a_success(): void
+    {
+        $wire = new class implements RerankWireClient
+        {
+            public function provider(): string
+            {
+                return 'timeweb';
+            }
+
+            public function call(string $model, array $messages, array $options): array
+            {
+                return ['content' => 'plain text', 'model' => $model, 'usage_available' => false];
+            }
+        };
+        $store = new class implements AiUsageStore
+        {
+            /** @var array<int, AiUsageData> */
+            public array $rows = [];
+
+            public function record(AiUsageData $data): void
+            {
+                $this->rows[] = $data;
+            }
+        };
+
+        $this->expectException(RerankWireException::class);
+        try {
+            (new AttemptAwareNormativeLlmClient($wire, $store, ['model-a'], []))
+                ->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'));
+        } finally {
+            self::assertCount(1, $store->rows);
+            self::assertSame('malformed_response', $store->rows[0]->status);
+        }
+    }
+
+    #[Test]
+    public function recorder_failure_never_masks_typed_provider_error(): void
+    {
+        $wire = new class implements RerankWireClient
+        {
+            public function provider(): string
+            {
+                return 'timeweb';
+            }
+
+            public function call(string $model, array $messages, array $options): array
+            {
+                throw new RerankWireException('http_failed', 503);
+            }
+        };
+        $store = new class implements AiUsageStore
+        {
+            public function record(AiUsageData $data): void
+            {
+                throw new RuntimeException('recorder failed');
+            }
+        };
+
+        $this->expectException(RerankWireException::class);
+        $this->expectExceptionMessage('reranker_wire_failed');
+        (new AttemptAwareNormativeLlmClient($wire, $store, ['model-a'], []))
+            ->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'));
     }
 
     /** @return array<string, mixed> */

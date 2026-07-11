@@ -42,13 +42,15 @@ final readonly class AttemptAwareNormativeLlmClient
             try {
                 $response = $this->wire->call($model, $messages, $options);
                 $reportedModel = $response['model'] ?? null;
-                $status = trim((string) ($response['content'] ?? '')) === ''
+                $content = trim((string) ($response['content'] ?? ''));
+                $decoded = json_decode($content, true);
+                $status = $content === '' || ! is_array($decoded)
                     || (is_string($reportedModel) && $reportedModel !== $model)
                     ? 'malformed_response' : 'succeeded';
                 if ($status === 'succeeded') {
                     return $response;
                 }
-                $last = new InvalidArgumentException('Malformed reranker response.');
+                $last = new RerankWireException('malformed_response');
             } catch (RerankWireException $exception) {
                 $status = $exception->attemptStatus;
                 $httpCode = $exception->httpCode;
@@ -66,11 +68,12 @@ final readonly class AttemptAwareNormativeLlmClient
     /** @param array<string, mixed> $response */
     private function record(string $correlationId, int $organizationId, int $projectId, int $sessionId, string $model, int $ordinal, string $status, ?int $httpCode, array $response, int $started): void
     {
-        $context = new AiOperationContext($correlationId, AiOperationContext::deterministicId($correlationId.'|'.$model.'|'.$ordinal), $organizationId, $projectId, $sessionId, 'match_normatives', 'rerank', $ordinal);
-        $input = max(0, (int) ($response['input_tokens'] ?? 0));
-        $output = max(0, (int) ($response['output_tokens'] ?? 0));
-        $snapshot = AiPriceSnapshot::fromArray($this->price($model));
         try {
+            $context = new AiOperationContext($correlationId, AiOperationContext::deterministicId($correlationId.'|'.$model.'|'.$ordinal), $organizationId, $projectId, $sessionId, 'match_normatives', 'rerank', $ordinal);
+            $usageAvailable = ($response['usage_available'] ?? false) === true;
+            $input = $usageAvailable ? max(0, (int) ($response['input_tokens'] ?? 0)) : 0;
+            $output = $usageAvailable ? max(0, (int) ($response['output_tokens'] ?? 0)) : 0;
+            $snapshot = AiPriceSnapshot::fromArray($this->price($model));
             $this->usageStore->record(new AiUsageData(
                 context: $context,
                 provider: $this->wire->provider(),
@@ -78,7 +81,7 @@ final readonly class AttemptAwareNormativeLlmClient
                 reportedModel: is_string($response['model'] ?? null) ? $response['model'] : null,
                 status: $status,
                 durationMs: (int) max(0, round((hrtime(true) - $started) / 1_000_000)),
-                usageStatus: isset($response['input_tokens']) || isset($response['output_tokens']) ? 'measured' : 'unavailable',
+                usageStatus: $usageAvailable ? 'measured' : 'unavailable',
                 inputTokens: $input,
                 outputTokens: $output,
                 httpCode: $httpCode,

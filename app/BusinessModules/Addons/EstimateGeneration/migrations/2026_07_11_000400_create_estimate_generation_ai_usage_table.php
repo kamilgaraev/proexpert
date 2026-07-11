@@ -17,6 +17,9 @@ return new class extends Migration
         Schema::table('estimate_generation_processing_units', function (Blueprint $table): void {
             $table->unique(['id', 'organization_id', 'project_id', 'session_id', 'document_id'], 'eg_units_tenant_scope_uq');
         });
+        Schema::table('estimate_generation_document_pages', function (Blueprint $table): void {
+            $table->unique(['id', 'organization_id', 'project_id', 'session_id', 'document_id'], 'eg_pages_tenant_scope_uq');
+        });
 
         Schema::create('estimate_generation_ai_usage', function (Blueprint $table): void {
             $table->uuid('attempt_id')->primary();
@@ -26,6 +29,7 @@ return new class extends Migration
             $table->unsignedBigInteger('project_id');
             $table->unsignedBigInteger('session_id');
             $table->unsignedBigInteger('document_id')->nullable();
+            $table->unsignedBigInteger('page_id')->nullable();
             $table->unsignedBigInteger('unit_id')->nullable();
             $table->string('stage', 40);
             $table->string('operation', 24);
@@ -52,11 +56,13 @@ return new class extends Migration
             $table->index(['organization_id', 'session_id', 'created_at'], 'eg_usage_org_session_date_idx');
             $table->index(['stage', 'status', 'created_at'], 'eg_usage_stage_status_date_idx');
             $table->index(['provider', 'requested_model', 'created_at'], 'eg_usage_provider_model_date_idx');
-            $table->index(['document_id', 'unit_id'], 'eg_usage_document_unit_idx');
+            $table->index(['document_id', 'page_id', 'unit_id'], 'eg_usage_document_page_unit_idx');
             $table->foreign(['session_id', 'organization_id', 'project_id'], 'eg_usage_session_scope_fk')
                 ->references(['id', 'organization_id', 'project_id'])->on('estimate_generation_sessions')->cascadeOnDelete();
             $table->foreign(['document_id', 'organization_id', 'project_id', 'session_id'], 'eg_usage_document_scope_fk')
                 ->references(['id', 'organization_id', 'project_id', 'session_id'])->on('estimate_generation_documents')->cascadeOnDelete();
+            $table->foreign(['page_id', 'organization_id', 'project_id', 'session_id', 'document_id'], 'eg_usage_page_scope_fk')
+                ->references(['id', 'organization_id', 'project_id', 'session_id', 'document_id'])->on('estimate_generation_document_pages')->cascadeOnDelete();
             $table->foreign(['unit_id', 'organization_id', 'project_id', 'session_id', 'document_id'], 'eg_usage_unit_scope_fk')
                 ->references(['id', 'organization_id', 'project_id', 'session_id', 'document_id'])->on('estimate_generation_processing_units')->cascadeOnDelete();
         });
@@ -64,6 +70,7 @@ return new class extends Migration
         if (DB::getDriverName() === 'pgsql') {
             DB::statement("ALTER TABLE estimate_generation_ai_usage ADD CONSTRAINT eg_usage_stage_ck CHECK (stage IN ('understand_documents','match_normatives'))");
             DB::statement("ALTER TABLE estimate_generation_ai_usage ADD CONSTRAINT eg_usage_operation_ck CHECK (operation IN ('ocr','vision','rerank'))");
+            DB::statement("ALTER TABLE estimate_generation_ai_usage ADD CONSTRAINT eg_usage_stage_operation_ck CHECK ((stage = 'match_normatives') = (operation = 'rerank'))");
             DB::statement("ALTER TABLE estimate_generation_ai_usage ADD CONSTRAINT eg_usage_status_ck CHECK (status IN ('succeeded','http_failed','connection_failed','malformed_response'))");
             DB::statement("ALTER TABLE estimate_generation_ai_usage ADD CONSTRAINT eg_usage_status_http_ck CHECK ((status = 'http_failed' AND http_code IS NOT NULL AND NOT (http_code BETWEEN 200 AND 299)) OR (status = 'connection_failed' AND http_code IS NULL) OR (status = 'succeeded' AND (http_code IS NULL OR http_code BETWEEN 200 AND 299)) OR (status = 'malformed_response' AND (http_code IS NULL OR http_code BETWEEN 200 AND 299)))");
             DB::statement("ALTER TABLE estimate_generation_ai_usage ADD CONSTRAINT eg_usage_pricing_ck CHECK ((pricing_status = 'available' AND usage_status = 'measured' AND cost_amount IS NOT NULL AND currency IS NOT NULL AND price_snapshot ?& ARRAY['input_per_million','cached_input_per_million','output_per_million','currency','source','version','effective_at']) OR (pricing_status = 'unavailable' AND cost_amount IS NULL AND currency IS NULL))");
@@ -74,6 +81,7 @@ return new class extends Migration
             DB::statement("ALTER TABLE estimate_generation_ai_usage ADD CONSTRAINT eg_usage_usage_status_ck CHECK (usage_status IN ('measured','unavailable'))");
             DB::statement('ALTER TABLE estimate_generation_ai_usage ADD CONSTRAINT eg_usage_image_ck CHECK ((image_count = 0 AND image_detail IS NULL) OR (image_count > 0 AND image_detail IS NOT NULL))');
             DB::statement('ALTER TABLE estimate_generation_ai_usage ADD CONSTRAINT eg_usage_unit_document_ck CHECK (unit_id IS NULL OR document_id IS NOT NULL)');
+            DB::statement('ALTER TABLE estimate_generation_ai_usage ADD CONSTRAINT eg_usage_page_document_ck CHECK (page_id IS NULL OR document_id IS NOT NULL)');
             DB::statement("ALTER TABLE estimate_generation_ai_usage ADD CONSTRAINT eg_usage_currency_ck CHECK (currency IS NULL OR currency ~ '^[A-Z]{3}$')");
             DB::statement("ALTER TABLE estimate_generation_ai_usage ADD CONSTRAINT eg_usage_identifiers_ck CHECK (provider ~ '^[a-z0-9._-]{1,80}$' AND requested_model ~ '^[A-Za-z0-9._/-]{1,160}$' AND (reported_model IS NULL OR reported_model ~ '^[A-Za-z0-9._/-]{1,160}$'))");
             DB::statement("ALTER TABLE estimate_generation_ai_usage ADD CONSTRAINT eg_usage_json_ck CHECK (jsonb_typeof(price_snapshot) = 'object')");
@@ -109,6 +117,7 @@ return new class extends Migration
             DB::statement('DROP FUNCTION IF EXISTS prevent_estimate_generation_ai_usage_mutation() CASCADE');
         }
         Schema::dropIfExists('estimate_generation_ai_usage');
+        Schema::table('estimate_generation_document_pages', fn (Blueprint $table) => $table->dropUnique('eg_pages_tenant_scope_uq'));
         Schema::table('estimate_generation_processing_units', fn (Blueprint $table) => $table->dropUnique('eg_units_tenant_scope_uq'));
         Schema::table('estimate_generation_documents', fn (Blueprint $table) => $table->dropUnique('eg_documents_tenant_scope_uq'));
     }

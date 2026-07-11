@@ -42,7 +42,7 @@ final class TimewebRerankWireClient implements RerankWireClient
         }
         $message = $response->choices[0]->message ?? null;
         if (! is_object($message)) {
-            throw new RuntimeException('reranker_malformed_response');
+            throw new RerankWireException('malformed_response');
         }
         $usage = $response->usage ?? null;
 
