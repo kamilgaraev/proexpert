@@ -107,7 +107,8 @@ class OcrDocumentProcessor
             Log::error('[EstimateGeneration OCR] Document processing failed', [
                 'document_id' => $document->id,
                 'session_id' => $document->session_id,
-                'error' => $exception->getMessage(),
+                'failure_code' => 'ocr_processing_error',
+                'failure_fingerprint' => hash('sha256', $exception::class.'|'.(string) $exception->getCode()),
             ]);
 
             $this->statusService->markFailed(
@@ -189,9 +190,8 @@ class OcrDocumentProcessor
             return $this->pdfGeometryExtractor->extract($content, $filename);
         } catch (PdfGeometryExtractionException $exception) {
             Log::info('[EstimateGeneration OCR] PDF geometry extraction skipped', [
-                'filename' => $filename,
-                'error' => $exception->getMessage(),
-                'context' => $exception->context,
+                'failure_code' => 'drawing_geometry_unreadable',
+                'failure_fingerprint' => hash('sha256', $exception::class.'|'.(string) $exception->getCode()),
             ]);
 
             return null;

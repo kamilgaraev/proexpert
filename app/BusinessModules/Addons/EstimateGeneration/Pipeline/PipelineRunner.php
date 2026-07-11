@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline;
 
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use Closure;
 use DateTimeImmutable;
 use InvalidArgumentException;
-use LogicException;
 use Throwable;
 
 /**
@@ -31,6 +34,8 @@ final class PipelineRunner
         callable $clock,
         private readonly int $leaseSeconds = self::DEFAULT_LEASE_SECONDS,
         ?PipelineFailureObserver $failureObserver = null,
+        private readonly ?FailureRecorder $failureRecorder = null,
+        private readonly ?FailureWorkflowHandler $failureWorkflowHandler = null,
     ) {
         if ($leaseSeconds <= 0) {
             throw new InvalidArgumentException('Pipeline checkpoint lease must be positive.');
@@ -76,16 +81,28 @@ final class PipelineRunner
                 : $stage->execute($context);
 
             if ($result->stage !== $stage->stage()) {
-                throw new LogicException('Pipeline stage returned a result for another stage.');
+                throw new PipelineStageException(FailureCategory::Terminal, 'pipeline_result_stage_mismatch');
             }
 
             if (! $this->checkpointStore->complete($claim, $result, ($this->clock)())) {
-                throw new LogicException('Pipeline checkpoint ownership was lost before completion.');
+                throw new PipelineStageException(FailureCategory::Recoverable, 'pipeline_claim_lost');
+            }
+
+            try {
+                $this->failureRecorder?->resolveActive($this->failureContext($claim));
+            } catch (Throwable) {
             }
 
             return $result;
         } catch (Throwable $error) {
-            $this->recordFailureWithoutMasking($claim, $error);
+            $failure = $this->failureRecorder?->capture($error, $this->failureContext($claim));
+            $recorded = $this->recordFailureWithoutMasking($claim, $error);
+            if ($recorded && $failure !== null) {
+                try {
+                    $this->failureWorkflowHandler?->handle($failure, $claim->context->stateVersion);
+                } catch (Throwable) {
+                }
+            }
 
             throw $error;
         }
@@ -104,7 +121,7 @@ final class PipelineRunner
         });
     }
 
-    private function recordFailureWithoutMasking(CheckpointClaim $claim, Throwable $stageError): void
+    private function recordFailureWithoutMasking(CheckpointClaim $claim, Throwable $stageError): bool
     {
         $recorderFailure = null;
 
@@ -116,7 +133,7 @@ final class PipelineRunner
         }
 
         if ($recorded) {
-            return;
+            return true;
         }
 
         try {
@@ -127,5 +144,21 @@ final class PipelineRunner
             );
         } catch (Throwable) {
         }
+
+        return false;
+    }
+
+    private function failureContext(CheckpointClaim $claim): FailureContext
+    {
+        return new FailureContext(
+            organizationId: $claim->context->organizationId,
+            projectId: $claim->context->projectId,
+            sessionId: $claim->context->sessionId,
+            stage: $claim->stage,
+            operation: 'run_stage',
+            attempt: $claim->attempt,
+            correlationId: (string) $claim->claimToken,
+            checkpointId: $claim->checkpointId,
+        );
     }
 }

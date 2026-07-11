@@ -22,12 +22,12 @@ class PdfTextLayerExtractor
     {
         try {
             $pages = $this->pdfParserRuntime->withRaisedMemoryLimit(
-                static fn (): array => (new Parser())->parseContent($content)->getPages()
+                static fn (): array => (new Parser)->parseContent($content)->getPages()
             );
         } catch (Throwable $exception) {
             Log::info('[EstimateGeneration OCR] PDF text layer extraction skipped', [
-                'filename' => $filename,
-                'error' => $exception->getMessage(),
+                'failure_code' => 'pdf_text_layer_unreadable',
+                'failure_fingerprint' => hash('sha256', $exception::class.'|'.(string) $exception->getCode()),
             ]);
 
             return null;
@@ -49,7 +49,7 @@ class PdfTextLayerExtractor
             );
         }
 
-        if (!$this->hasUsefulText($pageResults)) {
+        if (! $this->hasUsefulText($pageResults)) {
             return null;
         }
 
@@ -69,7 +69,7 @@ class PdfTextLayerExtractor
     }
 
     /**
-     * @param array<int, OcrPageResult> $pages
+     * @param  array<int, OcrPageResult>  $pages
      */
     private function hasUsefulText(array $pages): bool
     {

@@ -391,7 +391,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
     public function unit_reader_rejects_another_organization_artifact_path(): void
     {
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('estimate_generation.document_unit_scope_invalid');
+        $this->expectExceptionMessage('document_storage_scope_invalid');
 
         S3DocumentUnitContentReader::assertOrganizationPath('org-99/manifest/page.txt', 10);
     }

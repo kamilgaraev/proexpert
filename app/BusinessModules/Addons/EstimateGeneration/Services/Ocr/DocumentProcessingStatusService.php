@@ -7,10 +7,14 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Ocr;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileEstimateGenerationDocuments;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\SensitiveDiagnosticSanitizer;
 
 class DocumentProcessingStatusService
 {
-    public function __construct(private ReconcileEstimateGenerationDocuments $documentReconciler) {}
+    public function __construct(
+        private ReconcileEstimateGenerationDocuments $documentReconciler,
+        private SensitiveDiagnosticSanitizer $diagnosticSanitizer,
+    ) {}
 
     public function markProcessing(EstimateGenerationDocument $document, string $stage, int $progress): void
     {
@@ -90,7 +94,7 @@ class DocumentProcessingStatusService
             'progress_percent' => 100,
             'error_code' => $errorCode,
             'error_message_key' => $messageKey,
-            'error_context' => $context,
+            'error_context' => $this->diagnosticSanitizer->sanitize($context),
             'ocr_finished_at' => now(),
         ])->save();
 

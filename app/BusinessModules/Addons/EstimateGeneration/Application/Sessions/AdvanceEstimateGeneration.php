@@ -31,6 +31,7 @@ final class AdvanceEstimateGeneration
             'processing_stage' => 'processing_documents',
             'processing_progress' => 5,
             'last_error' => null,
+            'failure_code' => null,
             ...$attributes,
         ]);
     }
@@ -51,6 +52,7 @@ final class AdvanceEstimateGeneration
             'processing_stage' => 'ready_to_generate',
             'processing_progress' => 35,
             'last_error' => null,
+            'failure_code' => null,
             ...$attributes,
         ]);
     }
@@ -65,6 +67,7 @@ final class AdvanceEstimateGeneration
             'processing_stage' => 'generating',
             'processing_progress' => 40,
             'last_error' => null,
+            'failure_code' => null,
             'input_payload' => [
                 ...($session->input_payload ?? []),
                 'generation_attempt_id' => $attemptId,
@@ -73,11 +76,23 @@ final class AdvanceEstimateGeneration
         ]);
     }
 
-    public function documentsNeedReview(EstimateGenerationSession $session): EstimateGenerationSession
+    public function documentsNeedReview(EstimateGenerationSession $session, ?string $failureCode = null): EstimateGenerationSession
     {
         return $this->workflow->transition($session, EstimateGenerationEvent::DocumentsNeedReview, [
             'processing_stage' => 'input_review_required',
             'processing_progress' => 100,
+            'last_error' => null,
+            'failure_code' => $failureCode,
+        ]);
+    }
+
+    public function generationNeedsReview(EstimateGenerationSession $session, string $failureCode): EstimateGenerationSession
+    {
+        return $this->workflow->transition($session, EstimateGenerationEvent::GenerationNeedsReview, [
+            'processing_stage' => 'estimate_review_required',
+            'processing_progress' => 100,
+            'last_error' => null,
+            'failure_code' => $failureCode,
         ]);
     }
 
@@ -110,8 +125,11 @@ final class AdvanceEstimateGeneration
             : $this->workflow->transition($session, $event, $attributes);
     }
 
-    public function failed(EstimateGenerationSession $session, \Throwable $exception): EstimateGenerationSession
+    public function failed(EstimateGenerationSession $session, string $failureCode): EstimateGenerationSession
     {
+        if (preg_match('/\A[a-z][a-z0-9_]{0,79}\z/', $failureCode) !== 1) {
+            throw new \InvalidArgumentException('Invalid estimate generation failure code.');
+        }
         if ($session->status->isTerminal() || $session->status === EstimateGenerationStatus::Failed) {
             return $session;
         }
@@ -119,7 +137,8 @@ final class AdvanceEstimateGeneration
         return $this->workflow->transition($session, EstimateGenerationEvent::Failed, [
             'processing_stage' => 'failed',
             'processing_progress' => 0,
-            'last_error' => mb_substr($exception->getMessage(), 0, 500),
+            'last_error' => null,
+            'failure_code' => $failureCode,
         ]);
     }
 
@@ -144,6 +163,7 @@ final class AdvanceEstimateGeneration
             'processing_stage' => 'processing_documents',
             'processing_progress' => 5,
             'last_error' => null,
+            'failure_code' => null,
             'input_payload' => [
                 ...($session->input_payload ?? []),
                 'generation_attempt_id' => null,

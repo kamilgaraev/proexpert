@@ -29,6 +29,7 @@ class EstimateGenerationSession extends Model
         'problem_flags',
         'applied_estimate_id',
         'last_error',
+        'failure_code',
         'state_version',
         'resume_status',
     ];

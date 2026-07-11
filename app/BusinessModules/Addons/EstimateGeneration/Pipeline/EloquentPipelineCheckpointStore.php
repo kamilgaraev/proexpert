@@ -49,7 +49,9 @@ final readonly class EloquentPipelineCheckpointStore implements PipelineCheckpoi
             ]);
 
             if ($inserted === 1) {
-                return CheckpointClaim::acquired($context, $stage, $token);
+                $checkpoint = $this->query()->where($identity)->firstOrFail();
+
+                return CheckpointClaim::acquired($context, $stage, $token, 1, (int) $checkpoint->getKey());
             }
 
             /** @var EstimateGenerationPipelineCheckpoint|null $checkpoint */
@@ -90,7 +92,13 @@ final readonly class EloquentPipelineCheckpointStore implements PipelineCheckpoi
                 'last_error_fingerprint' => null,
             ])->save();
 
-            return CheckpointClaim::acquired($context, $stage, $token);
+            return CheckpointClaim::acquired(
+                $context,
+                $stage,
+                $token,
+                (int) $checkpoint->attempt_count,
+                (int) $checkpoint->getKey(),
+            );
         }, 3);
     }
 

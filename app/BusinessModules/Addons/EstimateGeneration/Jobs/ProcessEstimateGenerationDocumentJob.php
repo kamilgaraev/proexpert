@@ -6,6 +6,12 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Jobs;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\CreateDocumentProcessingUnits;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentProcessingStatusService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -62,17 +68,42 @@ final class ProcessEstimateGenerationDocumentJob implements ShouldQueue
 
     public function failed(\Throwable $error): void
     {
-        $document = EstimateGenerationDocument::query()->find($this->documentId);
+        $document = EstimateGenerationDocument::query()->with('session')->find($this->documentId);
 
         if (! $document instanceof EstimateGenerationDocument || in_array($document->status, ['ready', 'ignored'], true)) {
             return;
         }
 
-        app(DocumentProcessingStatusService::class)->markFailed(
-            $document,
-            'document_manifest_job_failed',
-            'estimate_generation.ocr_provider_error',
-            ['failure_fingerprint' => hash('sha256', $error::class)],
-        );
+        $correlationId = AiOperationContext::deterministicId(sprintf(
+            'document-manifest|%d|%d|%s',
+            $this->documentId,
+            max(1, $this->attempts()),
+            (string) ($document->source_version ?? 'missing'),
+        ));
+        $failure = app(FailureRecorder::class)->capture($error, new FailureContext(
+            organizationId: (int) $document->organization_id,
+            projectId: (int) $document->project_id,
+            sessionId: (int) $document->session_id,
+            stage: ProcessingStage::UnderstandDocuments,
+            operation: 'create_units',
+            attempt: max(1, $this->attempts()),
+            correlationId: $correlationId,
+            documentId: (int) $document->getKey(),
+        ));
+        try {
+            app(DocumentProcessingStatusService::class)->markFailed(
+                $document,
+                $failure->code,
+                'estimate_generation.ocr_provider_error',
+                ['failure_fingerprint' => $failure->fingerprint],
+            );
+            app(FailureWorkflowHandler::class)->handle(
+                $failure,
+                $document->session instanceof EstimateGenerationSession
+                    ? (int) $document->session->state_version
+                    : null,
+            );
+        } catch (\Throwable) {
+        }
     }
 }

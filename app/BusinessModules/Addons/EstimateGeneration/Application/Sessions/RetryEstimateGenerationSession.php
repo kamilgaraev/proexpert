@@ -73,6 +73,7 @@ final class RetryEstimateGenerationSession
             'processing_stage' => 'processing_documents',
             'processing_progress' => 5,
             'last_error' => null,
+            'failure_code' => null,
         ]);
 
         if ($documentIds !== []) {
@@ -85,6 +86,7 @@ final class RetryEstimateGenerationSession
             'processing_stage' => 'ready_to_generate',
             'processing_progress' => 35,
             'last_error' => null,
+            'failure_code' => null,
         ]);
     }
 
@@ -108,6 +110,7 @@ final class RetryEstimateGenerationSession
             'processing_stage' => 'processing_documents',
             'processing_progress' => 5,
             'last_error' => null,
+            'failure_code' => null,
         ]);
 
         if ($actionRequired) {
@@ -131,6 +134,7 @@ final class RetryEstimateGenerationSession
                 'processing_stage' => 'ready_to_generate',
                 'processing_progress' => 35,
                 'last_error' => null,
+                'failure_code' => null,
             ]);
         }
 
@@ -146,6 +150,7 @@ final class RetryEstimateGenerationSession
             'processing_stage' => 'generating',
             'processing_progress' => 40,
             'last_error' => null,
+            'failure_code' => null,
             'input_payload' => [
                 ...($session->input_payload ?? []),
                 'generation_attempt_id' => $attemptId,
@@ -163,6 +168,7 @@ final class RetryEstimateGenerationSession
             'processing_stage' => 'ready_to_apply',
             'processing_progress' => 100,
             'last_error' => null,
+            'failure_code' => null,
         ]);
     }
 }

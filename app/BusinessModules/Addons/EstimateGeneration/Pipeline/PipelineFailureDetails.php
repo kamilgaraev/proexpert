@@ -17,7 +17,7 @@ final readonly class PipelineFailureDetails
     {
         return new self(
             'pipeline_stage_failed',
-            hash('sha256', $error::class."\0".(string) $error->getCode()."\0".$error->getMessage()),
+            hash('sha256', $error::class."\0".(string) $error->getCode()),
         );
     }
 }

@@ -6,10 +6,11 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Ocr;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
 use App\Models\User;
 use App\Services\Storage\FileService;
 use Illuminate\Http\UploadedFile;
-use RuntimeException;
 
 class OcrDocumentStorageService
 {
@@ -25,18 +26,18 @@ class OcrDocumentStorageService
         $content = file_get_contents((string) $file->getRealPath());
 
         if ($content === false) {
-            throw new RuntimeException('estimate_generation.document_read_error');
+            throw new TypedFailureException(FailureCategory::UserActionRequired, 'document_read_failed');
         }
 
         $organization = $session->organization()->first();
         if ($organization === null) {
-            throw new RuntimeException('estimate_generation.document_organization_unavailable');
+            throw new TypedFailureException(FailureCategory::Terminal, 'document_organization_unavailable');
         }
         $directory = sprintf('estimate-generation/sessions/%d/documents', $session->id);
         $storagePath = $this->fileService->upload($file, $directory, null, 'private', $organization);
 
         if ($storagePath === false) {
-            throw new RuntimeException('estimate_generation.document_storage_error');
+            throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
         }
 
         $checksum = hash('sha256', $content);

@@ -71,6 +71,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\Es
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AttemptAwareNormativeLlmClient;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EloquentAiUsageStore;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\EloquentFailureStore;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\EloquentFailureWorkflowHandler;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebRerankWireClient;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
@@ -137,6 +141,8 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(SessionStateStore::class, EloquentSessionStateStore::class);
         $this->app->singleton(OcrClientInterface::class, TimewebVisionOcrClient::class);
         $this->app->singleton(AiUsageStore::class, EloquentAiUsageStore::class);
+        $this->app->singleton(FailureStore::class, EloquentFailureStore::class);
+        $this->app->singleton(FailureWorkflowHandler::class, EloquentFailureWorkflowHandler::class);
         $this->app->singleton(RerankWireClient::class, TimewebRerankWireClient::class);
         $this->app->singleton(OcrDocumentStorageService::class);
         $this->app->singleton(OcrPreflightService::class);

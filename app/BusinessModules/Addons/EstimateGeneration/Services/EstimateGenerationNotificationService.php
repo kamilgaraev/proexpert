@@ -49,7 +49,7 @@ class EstimateGenerationNotificationService
         );
     }
 
-    public function notifyFailed(EstimateGenerationSession $session, ?Throwable $exception = null): void
+    public function notifyFailed(EstimateGenerationSession $session): void
     {
         $session->loadMissing(['project', 'user']);
 
@@ -65,7 +65,7 @@ class EstimateGenerationNotificationService
             'high',
             'error',
             [
-                'error' => $exception?->getMessage() ?? $session->last_error,
+                'failure_code' => $session->failure_code,
             ]
         );
     }
@@ -122,7 +122,7 @@ class EstimateGenerationNotificationService
         } catch (Throwable $exception) {
             Log::warning('[EstimateGeneration] Failed to send generation notification', [
                 'session_id' => $session->id,
-                'error' => $exception->getMessage(),
+                'failure_code' => 'notification_delivery_failed',
             ]);
         }
     }

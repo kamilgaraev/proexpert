@@ -17,16 +17,25 @@ final readonly class CheckpointClaim
 
     public ?string $claimToken;
 
+    public int $attempt;
+
+    public ?int $checkpointId;
+
     private function __construct(
         CheckpointClaimStatus $status,
         PipelineContext $context,
         ProcessingStage $stage,
         ?string $claimToken,
+        int $attempt = 1,
+        ?int $checkpointId = null,
     ) {
         $claimToken = $claimToken === null ? null : strtolower($claimToken);
 
         if (($status === CheckpointClaimStatus::Acquired) !== ($claimToken !== null && $claimToken !== '')) {
             throw new LogicException('Only an acquired checkpoint claim may have an ownership token.');
+        }
+        if ($attempt < 1 || ($checkpointId !== null && $checkpointId < 1)) {
+            throw new LogicException('Checkpoint claim attempt and identity must be positive.');
         }
 
         if (
@@ -43,11 +52,18 @@ final readonly class CheckpointClaim
         $this->context = $context;
         $this->stage = $stage;
         $this->claimToken = $claimToken;
+        $this->attempt = $attempt;
+        $this->checkpointId = $checkpointId;
     }
 
-    public static function acquired(PipelineContext $context, ProcessingStage $stage, string $claimToken): self
-    {
-        return new self(CheckpointClaimStatus::Acquired, $context, $stage, $claimToken);
+    public static function acquired(
+        PipelineContext $context,
+        ProcessingStage $stage,
+        string $claimToken,
+        int $attempt = 1,
+        ?int $checkpointId = null,
+    ): self {
+        return new self(CheckpointClaimStatus::Acquired, $context, $stage, $claimToken, $attempt, $checkpointId);
     }
 
     public static function alreadyCompleted(PipelineContext $context, ProcessingStage $stage): self

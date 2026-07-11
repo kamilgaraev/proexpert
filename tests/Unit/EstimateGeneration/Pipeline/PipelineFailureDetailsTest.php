@@ -30,4 +30,13 @@ final class PipelineFailureDetailsTest extends TestCase
         self::assertMatchesRegularExpression('/\A[0-9a-f]{64}\z/', $details->fingerprint);
         self::assertSame(64, strlen($details->fingerprint));
     }
+
+    #[Test]
+    public function diagnostic_fingerprint_never_depends_on_throwable_message(): void
+    {
+        $first = PipelineFailureDetails::from(new RuntimeException('first private document', 503));
+        $second = PipelineFailureDetails::from(new RuntimeException('second private document', 503));
+
+        self::assertSame($first->fingerprint, $second->fingerprint);
+    }
 }

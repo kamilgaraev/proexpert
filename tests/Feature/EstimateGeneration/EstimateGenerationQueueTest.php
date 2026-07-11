@@ -86,8 +86,8 @@ class EstimateGenerationQueueTest extends TestCase
         $this->assertSame(EstimateGenerationStatus::Failed, $session->status);
         $this->assertSame('failed', $session->processing_stage);
         $this->assertSame(0, $session->processing_progress);
-        $this->assertNotNull($session->last_error);
-        $this->assertLessThanOrEqual(500, mb_strlen($session->last_error));
+        $this->assertNull($session->last_error);
+        $this->assertSame('unexpected_internal_failure', $session->failure_code);
     }
 
     public function test_generation_job_does_not_override_finished_session_when_stale_attempt_fails(): void
@@ -108,6 +108,7 @@ class EstimateGenerationQueueTest extends TestCase
         $this->assertSame('validation_and_normalization', $session->processing_stage);
         $this->assertSame(100, $session->processing_progress);
         $this->assertNull($session->last_error);
+        $this->assertNull($session->failure_code);
     }
 
     public function test_stale_attempt_failure_does_not_change_or_notify_the_newer_generation(): void
@@ -128,6 +129,7 @@ class EstimateGenerationQueueTest extends TestCase
         $session->refresh();
         $this->assertSame(EstimateGenerationStatus::Generating, $session->status);
         $this->assertNull($session->last_error);
+        $this->assertNull($session->failure_code);
     }
 
     public function test_generation_job_skips_finished_session_instead_of_regenerating(): void
@@ -176,11 +178,9 @@ class EstimateGenerationQueueTest extends TestCase
         $notifications = Mockery::mock(EstimateGenerationNotificationService::class);
         $notifications->shouldReceive('notifyFailed')
             ->once()
-            ->with(
-                Mockery::on(static fn (EstimateGenerationSession $notifiedSession): bool => $notifiedSession->id === $session->id
-                    && $notifiedSession->status === EstimateGenerationStatus::Failed),
-                Mockery::type(RuntimeException::class)
-            );
+            ->with(Mockery::on(static fn (EstimateGenerationSession $notifiedSession): bool => $notifiedSession->id === $session->id
+                && $notifiedSession->status === EstimateGenerationStatus::Failed
+                && $notifiedSession->failure_code === 'unexpected_internal_failure'));
         $this->app->instance(EstimateGenerationNotificationService::class, $notifications);
 
         $job = new GenerateEstimateDraftJob($session->id, $session->state_version, 'test-attempt');
