@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
-use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSessionOperationalSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\CreateEstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionSnapshotEtag;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
@@ -17,6 +17,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationReg
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -32,7 +33,7 @@ final class EstimateGenerationSessionController extends Controller
     public function __construct(
         private readonly CreateEstimateGenerationSession $createSession,
         private readonly EstimateGenerationRegionalContextResolver $regionalContextResolver,
-        private readonly BuildSessionOperationalSnapshot $operationalSnapshot,
+        private readonly SessionOperationalSnapshotBuilder $operationalSnapshot,
     ) {}
 
     public function index(Request $request, Project $project): JsonResponse
@@ -132,6 +133,8 @@ final class EstimateGenerationSessionController extends Controller
             $response->headers->add($headers);
 
             return $response;
+        } catch (ModelNotFoundException) {
+            return AdminResponse::error(trans_message('errors.resource_not_found'), 404);
         } catch (HttpExceptionInterface $exception) {
             throw $exception;
         } catch (\Throwable) {

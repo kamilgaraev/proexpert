@@ -43,4 +43,51 @@ final class OperationalSnapshotRevisionTest extends TestCase
             self::assertNotSame($baseline, OperationalSnapshotRevision::fromSources($changed), $source);
         }
     }
+
+    #[Test]
+    public function every_source_watermark_changes_the_revision_in_place(): void
+    {
+        $watermarks = [
+            'pages_count' => 1,
+            'pages_max_id' => 1,
+            'pages_max_updated_at' => '2026-07-11T10:00:00+00:00',
+            'facts_count' => 1,
+            'facts_max_id' => 1,
+            'facts_max_updated_at' => '2026-07-11T10:00:00+00:00',
+            'drawings_count' => 1,
+            'drawings_max_id' => 1,
+            'drawings_max_updated_at' => '2026-07-11T10:00:00+00:00',
+            'quantities_count' => 1,
+            'quantities_max_id' => 1,
+            'quantities_max_updated_at' => '2026-07-11T10:00:00+00:00',
+            'scopes_count' => 1,
+            'scopes_max_id' => 1,
+            'scopes_max_updated_at' => '2026-07-11T10:00:00+00:00',
+            'edges_count' => 1,
+            'edges_max_id' => 1,
+            'edges_max_created_at' => '2026-07-11T10:00:00+00:00',
+            'feedback_count' => 1,
+            'feedback_max_id' => 1,
+            'feedback_max_updated_at' => '2026-07-11T10:00:00+00:00',
+            'audit_count' => 1,
+            'audit_max_id' => 1,
+            'audit_max_updated_at' => '2026-07-11T10:00:00+00:00',
+            'failure_events_count' => 1,
+            'failure_events_max_sequence' => 1,
+        ];
+        $baseline = OperationalSnapshotRevision::fromSources(['sources' => $watermarks]);
+
+        foreach (array_keys($watermarks) as $watermark) {
+            $changed = $watermarks;
+            $changed[$watermark] = is_int($changed[$watermark])
+                ? $changed[$watermark] + 1
+                : '2026-07-11T10:00:01+00:00';
+
+            self::assertNotSame(
+                $baseline,
+                OperationalSnapshotRevision::fromSources(['sources' => $changed]),
+                $watermark,
+            );
+        }
+    }
 }

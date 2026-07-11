@@ -9,17 +9,25 @@ use App\BusinessModules\Addons\EstimateGeneration\DTOs\EstimateGenerationQuality
 class EstimateGenerationQualityGateService
 {
     private const HOUSE_MIN_ITEMS = 250;
+
     private const WAREHOUSE_MIN_ITEMS = 600;
+
     private const HOUSE_TOTAL_PER_M2_MIN = 25000;
+
     private const HOUSE_TOTAL_PER_M2_MAX = 300000;
+
     private const WAREHOUSE_TOTAL_PER_M2_MIN = 15000;
+
     private const WAREHOUSE_TOTAL_PER_M2_MAX = 180000;
+
     private const SECTION_SHARE_MAX = 0.45;
+
     private const LINE_SHARE_MAX = 0.35;
+
     private const LINE_TOTAL_PER_M2_MAX = 800000;
 
     /**
-     * @param array<string, mixed> $draft
+     * @param  array<string, mixed>  $draft
      */
     public function evaluate(array $draft): EstimateGenerationQualityReportData
     {
@@ -53,7 +61,7 @@ class EstimateGenerationQualityGateService
             $criticalFlags[] = 'insufficient_detail';
         }
 
-        if ($area > 0 && $totalCost > 0 && !$pricingCoverageIncomplete) {
+        if ($area > 0 && $totalCost > 0 && ! $pricingCoverageIncomplete) {
             $totalPerSquareMeter = $totalCost / $area;
             [$min, $max] = $this->isWarehouse($objectType)
                 ? [self::WAREHOUSE_TOTAL_PER_M2_MIN, self::WAREHOUSE_TOTAL_PER_M2_MAX]
@@ -64,15 +72,15 @@ class EstimateGenerationQualityGateService
             }
         }
 
-        if ($totalCost > 0 && !$pricingCoverageIncomplete && $this->hasAnomalousSectionShare($draft, $totalCost)) {
+        if ($totalCost > 0 && ! $pricingCoverageIncomplete && $this->hasAnomalousSectionShare($draft, $totalCost)) {
             $criticalFlags[] = 'section_total_anomaly';
         }
 
-        if (!$pricingCoverageIncomplete && $lineAnomalies !== []) {
+        if (! $pricingCoverageIncomplete && $lineAnomalies !== []) {
             $criticalFlags[] = 'line_total_anomaly';
         }
 
-        if (($totals['zero_price_work_items'] ?? 0) > 0 && !$pricingCoverageIncomplete) {
+        if (($totals['zero_price_work_items'] ?? 0) > 0 && ! $pricingCoverageIncomplete) {
             $criticalFlags[] = 'missing_prices';
         }
 
@@ -139,7 +147,7 @@ class EstimateGenerationQualityGateService
     }
 
     /**
-     * @param array<string, mixed> $draft
+     * @param  array<string, mixed>  $draft
      * @return array<int, array{key: string, total_cost: float, share: float}>
      */
     private function lineAnomalies(array $draft, float $totalCost, float $area): array
@@ -167,7 +175,7 @@ class EstimateGenerationQualityGateService
                     if (
                         $pricedMismatch
                         || $totalPerProjectSquareMeter > self::LINE_TOTAL_PER_M2_MAX
-                        || ($share > self::LINE_SHARE_MAX && !$normativeAccepted)
+                        || ($share > self::LINE_SHARE_MAX && ! $normativeAccepted)
                     ) {
                         $anomalies[] = [
                             'key' => (string) ($workItem['key'] ?? $workItem['name'] ?? 'work_item'),
@@ -183,7 +191,7 @@ class EstimateGenerationQualityGateService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function isNormativeAccepted(array $workItem): bool
     {
@@ -198,7 +206,7 @@ class EstimateGenerationQualityGateService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function hasPricedNormativeMismatch(array $workItem): bool
     {
@@ -218,7 +226,7 @@ class EstimateGenerationQualityGateService
     }
 
     /**
-     * @param array<string, mixed> $draft
+     * @param  array<string, mixed>  $draft
      */
     private function countItems(array $draft): int
     {
@@ -238,7 +246,7 @@ class EstimateGenerationQualityGateService
     }
 
     /**
-     * @param array<string, mixed> $draft
+     * @param  array<string, mixed>  $draft
      */
     private function hasAnomalousSectionShare(array $draft, float $totalCost): bool
     {
@@ -258,7 +266,7 @@ class EstimateGenerationQualityGateService
     }
 
     /**
-     * @param array<string, mixed> $draft
+     * @param  array<string, mixed>  $draft
      * @return array<int, string>
      */
     private function collectExistingFlags(array $draft): array

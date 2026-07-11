@@ -11,14 +11,21 @@ use Illuminate\Support\Collection;
 final class EstimateGenerationReviewItemService
 {
     private const SEVERITY_BLOCKING = 'blocking';
+
     private const SEVERITY_WARNING = 'warning';
+
     private const SEVERITY_OPTIONAL = 'optional';
 
     private const ACTION_CONFIRM_QUANTITY = 'confirm_quantity';
+
     private const ACTION_SELECT_NORM = 'select_norm';
+
     private const ACTION_REVIEW_NORM = 'review_norm';
+
     private const ACTION_RESOLVE_DUPLICATE = 'resolve_duplicate';
+
     private const ACTION_RESOLVE_GENERIC_WORK = 'resolve_generic_work';
+
     private const ACTION_CHECK_PRICE = 'check_price';
 
     private const NORMATIVE_REVIEW_STATUSES = [
@@ -73,7 +80,7 @@ final class EstimateGenerationReviewItemService
 
     public function __construct(
         private readonly EstimateGenerationPackagePresenter $packagePresenter,
-        private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy(),
+        private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy,
     ) {}
 
     /**
@@ -101,7 +108,16 @@ final class EstimateGenerationReviewItemService
     }
 
     /**
-     * @param array<string, mixed> $draft
+     * @param  array<string, mixed>  $draft
+     * @return array<string, int>
+     */
+    public function summaryForDraft(array $draft): array
+    {
+        return $this->summary($this->draftReviewItems($draft));
+    }
+
+    /**
+     * @param  array<string, mixed>  $draft
      * @return array<int, array<string, mixed>>
      */
     private function draftReviewItems(array $draft): array
@@ -109,17 +125,17 @@ final class EstimateGenerationReviewItemService
         $items = [];
 
         foreach ($draft['local_estimates'] ?? [] as $localEstimate) {
-            if (!is_array($localEstimate)) {
+            if (! is_array($localEstimate)) {
                 continue;
             }
 
             foreach ($localEstimate['sections'] ?? [] as $section) {
-                if (!is_array($section)) {
+                if (! is_array($section)) {
                     continue;
                 }
 
                 foreach ($section['work_items'] ?? [] as $workItem) {
-                    if (!is_array($workItem)) {
+                    if (! is_array($workItem)) {
                         continue;
                     }
 
@@ -136,7 +152,7 @@ final class EstimateGenerationReviewItemService
     }
 
     /**
-     * @param array<int, array<string, mixed>> $items
+     * @param  array<int, array<string, mixed>>  $items
      * @return array<int, array<string, mixed>>
      */
     private function appendPackageReviewItems(EstimateGenerationSession $session, array $items): array
@@ -158,7 +174,7 @@ final class EstimateGenerationReviewItemService
                         'source_refs' => $package->source_refs ?? [],
                     ],
                     [
-                        'key' => (string) $package->key . ':review',
+                        'key' => (string) $package->key.':review',
                         'title' => (string) $package->title,
                         'source_refs' => $package->source_refs ?? [],
                     ],
@@ -187,7 +203,7 @@ final class EstimateGenerationReviewItemService
             return $packages instanceof Collection ? $packages : collect();
         }
 
-        if (!$session->exists) {
+        if (! $session->exists) {
             return collect();
         }
 
@@ -231,9 +247,9 @@ final class EstimateGenerationReviewItemService
     }
 
     /**
-     * @param array<string, mixed> $localEstimate
-     * @param array<string, mixed> $section
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $localEstimate
+     * @param  array<string, mixed>  $section
+     * @param  array<string, mixed>  $workItem
      * @return array<string, mixed>|null
      */
     private function reviewItem(array $localEstimate, array $section, array $workItem): ?array
@@ -257,24 +273,24 @@ final class EstimateGenerationReviewItemService
             || in_array('quantity_review_required', $flags, true);
         $duplicateReviewRequired = in_array('requires_duplicate_review', $flags, true)
             || in_array('possible_duplicate_work_item', $flags, true);
-        $normativeCodeRequired = !$quantityReviewRequired && $this->normativeCodeRequired($workItem, $flags);
-        $normativePriceRequired = !$quantityReviewRequired && $this->normativePriceRequired($workItem, $flags);
-        $normativeReviewRequired = !$quantityReviewRequired && $this->normativeReviewRequired($workItem, $flags);
-        $pricingNotCalculated = !$quantityReviewRequired && $this->pricingNotCalculated($workItem, $flags);
-        $priceReviewRequired = !$quantityReviewRequired && $this->priceReviewRequired($workItem, $flags);
-        $hasAlternative = !$quantityReviewRequired && $this->hasNormativeAlternative($workItem);
-        $hasNormativeResourceReference = !$quantityReviewRequired && $this->hasNormativeResourceReference($workItem);
+        $normativeCodeRequired = ! $quantityReviewRequired && $this->normativeCodeRequired($workItem, $flags);
+        $normativePriceRequired = ! $quantityReviewRequired && $this->normativePriceRequired($workItem, $flags);
+        $normativeReviewRequired = ! $quantityReviewRequired && $this->normativeReviewRequired($workItem, $flags);
+        $pricingNotCalculated = ! $quantityReviewRequired && $this->pricingNotCalculated($workItem, $flags);
+        $priceReviewRequired = ! $quantityReviewRequired && $this->priceReviewRequired($workItem, $flags);
+        $hasAlternative = ! $quantityReviewRequired && $this->hasNormativeAlternative($workItem);
+        $hasNormativeResourceReference = ! $quantityReviewRequired && $this->hasNormativeResourceReference($workItem);
 
         if (
-            !$quantityReviewRequired
-            && !$duplicateReviewRequired
-            && !$genericReviewRequired
-            && !$normativeCodeRequired
-            && !$normativePriceRequired
-            && !$normativeReviewRequired
-            && !$pricingNotCalculated
-            && !$priceReviewRequired
-            && !$hasAlternative
+            ! $quantityReviewRequired
+            && ! $duplicateReviewRequired
+            && ! $genericReviewRequired
+            && ! $normativeCodeRequired
+            && ! $normativePriceRequired
+            && ! $normativeReviewRequired
+            && ! $pricingNotCalculated
+            && ! $priceReviewRequired
+            && ! $hasAlternative
         ) {
             return null;
         }
@@ -341,7 +357,7 @@ final class EstimateGenerationReviewItemService
     }
 
     /**
-     * @param array<int, array<string, mixed>> $items
+     * @param  array<int, array<string, mixed>>  $items
      * @return array<string, int>
      */
     private function summary(array $items): array
@@ -376,7 +392,7 @@ final class EstimateGenerationReviewItemService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      * @return array<int, string>
      */
     private function flags(array $workItem): array
@@ -390,8 +406,8 @@ final class EstimateGenerationReviewItemService
     }
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<int, string> $flags
+     * @param  array<string, mixed>  $workItem
+     * @param  array<int, string>  $flags
      */
     private function normativeReviewRequired(array $workItem, array $flags): bool
     {
@@ -401,12 +417,12 @@ final class EstimateGenerationReviewItemService
         return in_array($status, self::NORMATIVE_REVIEW_STATUSES, true)
             || array_intersect($flags, self::NORMATIVE_REVIEW_FLAGS) !== []
             || data_get($workItem, 'normative_match.decision.can_use_for_pricing') === false
-            || ($decisionStatus !== '' && !in_array($decisionStatus, ['accepted', 'review_priced'], true));
+            || ($decisionStatus !== '' && ! in_array($decisionStatus, ['accepted', 'review_priced'], true));
     }
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<int, string> $flags
+     * @param  array<string, mixed>  $workItem
+     * @param  array<int, string>  $flags
      */
     private function pricingNotCalculated(array $workItem, array $flags): bool
     {
@@ -419,12 +435,12 @@ final class EstimateGenerationReviewItemService
     }
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<int, string> $flags
+     * @param  array<string, mixed>  $workItem
+     * @param  array<int, string>  $flags
      */
     private function normativePriceRequired(array $workItem, array $flags): bool
     {
-        if (!$this->hasCurrentNorm($workItem)) {
+        if (! $this->hasCurrentNorm($workItem)) {
             return false;
         }
 
@@ -437,8 +453,8 @@ final class EstimateGenerationReviewItemService
     }
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<int, string> $flags
+     * @param  array<string, mixed>  $workItem
+     * @param  array<int, string>  $flags
      */
     private function normativeCodeRequired(array $workItem, array $flags): bool
     {
@@ -461,8 +477,8 @@ final class EstimateGenerationReviewItemService
     }
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<int, string> $flags
+     * @param  array<string, mixed>  $workItem
+     * @param  array<int, string>  $flags
      */
     private function priceReviewRequired(array $workItem, array $flags): bool
     {
@@ -474,7 +490,7 @@ final class EstimateGenerationReviewItemService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function hasNormativeAlternative(array $workItem): bool
     {
@@ -482,7 +498,7 @@ final class EstimateGenerationReviewItemService
         $candidateIds = [];
 
         foreach ($this->arrayValues($workItem['normative_candidates'] ?? []) as $candidate) {
-            if (!is_array($candidate)) {
+            if (! is_array($candidate)) {
                 continue;
             }
 
@@ -506,13 +522,13 @@ final class EstimateGenerationReviewItemService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function hasCurrentNorm(array $workItem): bool
     {
         $match = data_get($workItem, 'normative_match');
 
-        if (!is_array($match)) {
+        if (! is_array($match)) {
             return false;
         }
 
@@ -525,7 +541,7 @@ final class EstimateGenerationReviewItemService
 
     private function normId(mixed $payload): ?int
     {
-        if (!is_array($payload)) {
+        if (! is_array($payload)) {
             return null;
         }
 
@@ -535,7 +551,7 @@ final class EstimateGenerationReviewItemService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function normativeStatus(array $workItem): ?string
     {
@@ -591,7 +607,7 @@ final class EstimateGenerationReviewItemService
             $reasons[] = EstimateGenerationNoAirWorkItemPolicy::FLAG;
         }
 
-        if ($normativeReviewRequired && !$normativePriceRequired) {
+        if ($normativeReviewRequired && ! $normativePriceRequired) {
             $reasons[] = 'normative_requires_review';
         }
 
@@ -607,7 +623,7 @@ final class EstimateGenerationReviewItemService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function candidatesCount(array $workItem): int
     {
@@ -615,7 +631,7 @@ final class EstimateGenerationReviewItemService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function normativeRateCode(array $workItem): ?string
     {
@@ -625,7 +641,7 @@ final class EstimateGenerationReviewItemService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function hasNormativeResourceReference(array $workItem): bool
     {
@@ -636,7 +652,7 @@ final class EstimateGenerationReviewItemService
     }
 
     /**
-     * @param array<int, mixed> $sourceRefs
+     * @param  array<int, mixed>  $sourceRefs
      */
     private function hasProjectDocumentNormReference(array $sourceRefs): bool
     {
@@ -650,7 +666,7 @@ final class EstimateGenerationReviewItemService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      * @return array<int, array<string, mixed>>
      */
     private function sourceRefs(array $workItem): array
@@ -686,7 +702,7 @@ final class EstimateGenerationReviewItemService
     }
 
     /**
-     * @param array<string, mixed> $item
+     * @param  array<string, mixed>  $item
      */
     private function dedupeKey(array $item): string
     {

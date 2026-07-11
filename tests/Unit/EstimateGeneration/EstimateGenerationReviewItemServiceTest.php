@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
-use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNoAirWorkItemPolicy;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationReviewItemService;
 use PHPUnit\Framework\TestCase;
 
@@ -113,6 +113,19 @@ final class EstimateGenerationReviewItemServiceTest extends TestCase
         self::assertNotContains('normative_requires_review', $itemsByKey['check-price']['reason_codes']);
         self::assertSame('review_norm', $itemsByKey['optional-alternative']['required_action']);
         self::assertContains('normative_alternative_available', $itemsByKey['optional-alternative']['reason_codes']);
+        self::assertSame($result['summary'], $this->service()->summaryForDraft($this->draft([
+            $this->workItem([
+                'key' => 'operation-row',
+                'item_type' => 'operation',
+                'pricing_status' => 'not_calculated',
+                'validation_flags' => ['pricing_not_calculated'],
+            ]),
+            $this->workItem(['key' => 'quantity-review', 'item_type' => 'quantity_review', 'pricing_blocker' => 'quantity_review_required', 'validation_flags' => ['quantity_review_required']]),
+            $this->workItem(['key' => 'duplicate-work', 'validation_flags' => ['requires_duplicate_review'], 'pricing_status' => 'calculated', 'total_cost' => 1000, 'normative_match' => ['norm_id' => 101, 'status' => 'matched', 'decision' => ['status' => 'accepted']]]),
+            $this->workItem(['key' => 'select-norm', 'pricing_status' => 'not_calculated', 'pricing_blocker' => 'normative_required', 'validation_flags' => ['safe_norm_required', 'pricing_not_calculated'], 'normative_match' => ['status' => 'candidate'], 'normative_candidates' => [['norm_id' => 201, 'code' => '01-01-001-01']]]),
+            $this->workItem(['key' => 'check-price', 'pricing_status' => 'not_calculated', 'pricing_blocker' => 'norm_with_unpriced_resources', 'validation_flags' => ['normative_price_required', 'pricing_not_calculated'], 'normative_match' => ['norm_id' => 301, 'code' => '16-02-052-05', 'status' => 'matched', 'decision' => ['status' => 'accepted']]]),
+            $this->workItem(['key' => 'optional-alternative', 'pricing_status' => 'calculated', 'total_cost' => 2000, 'normative_match' => ['norm_id' => 401, 'code' => '10-01-001-01', 'status' => 'matched', 'decision' => ['status' => 'accepted']], 'normative_candidates' => [['norm_id' => 401, 'code' => '10-01-001-01'], ['norm_id' => 402, 'code' => '10-01-001-02']]]),
+        ])));
     }
 
     public function test_project_document_norm_reference_without_code_requires_norm_selection(): void
@@ -155,7 +168,7 @@ final class EstimateGenerationReviewItemServiceTest extends TestCase
 
     public function test_returns_empty_summary_for_missing_draft(): void
     {
-        $result = $this->service()->forSession(new EstimateGenerationSession());
+        $result = $this->service()->forSession(new EstimateGenerationSession);
 
         self::assertSame([], $result['items']);
         self::assertSame(0, $result['summary']['total']);
@@ -290,11 +303,11 @@ final class EstimateGenerationReviewItemServiceTest extends TestCase
 
     private function service(): EstimateGenerationReviewItemService
     {
-        return new EstimateGenerationReviewItemService(new EstimateGenerationPackagePresenter());
+        return new EstimateGenerationReviewItemService(new EstimateGenerationPackagePresenter);
     }
 
     /**
-     * @param array<int, array<string, mixed>> $workItems
+     * @param  array<int, array<string, mixed>>  $workItems
      * @return array<string, mixed>
      */
     private function draft(array $workItems): array
@@ -317,7 +330,7 @@ final class EstimateGenerationReviewItemServiceTest extends TestCase
     }
 
     /**
-     * @param array<string, mixed> $overrides
+     * @param  array<string, mixed>  $overrides
      * @return array<string, mixed>
      */
     private function workItem(array $overrides): array

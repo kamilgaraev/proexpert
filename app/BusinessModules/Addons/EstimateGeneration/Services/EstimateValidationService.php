@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReviewSummarySnapshot;
+
 class EstimateValidationService
 {
     private const NORMATIVE_PRICE_REQUIRED_MARKERS = [
@@ -16,11 +18,12 @@ class EstimateValidationService
     ];
 
     public function __construct(
-        private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy(),
+        private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy,
+        private readonly ?EstimateGenerationReviewItemService $reviewItemService = null,
     ) {}
 
     /**
-     * @param array<string, mixed> $draft
+     * @param  array<string, mixed>  $draft
      * @return array<string, mixed>
      */
     public function validate(array $draft): array
@@ -70,8 +73,8 @@ class EstimateValidationService
                     $total = (float) ($workItem['total_cost'] ?? 0);
                     $itemType = (string) ($workItem['item_type'] ?? 'priced_work');
                     $isQuantityReviewItem = $itemType === 'quantity_review';
-                    $isPricedItem = !$isQuantityReviewItem
-                        && !in_array($itemType, ['operation', 'resource_note', 'review_note'], true);
+                    $isPricedItem = ! $isQuantityReviewItem
+                        && ! in_array($itemType, ['operation', 'resource_note', 'review_note'], true);
                     $hasResources = ($workItem['materials'] ?? []) !== []
                         || ($workItem['labor'] ?? []) !== []
                         || ($workItem['machinery'] ?? []) !== [];
@@ -88,7 +91,7 @@ class EstimateValidationService
                         $flags[] = 'quantity_review_required';
                         $workItem['pricing_status'] = 'not_applicable';
                         $workItem['pricing_blocker'] = $workItem['pricing_blocker'] ?? 'quantity_review_required';
-                    } elseif (!$isPricedItem) {
+                    } elseif (! $isPricedItem) {
                         $operationWorkItemsCount++;
                     }
 
@@ -118,7 +121,7 @@ class EstimateValidationService
                     }
 
                     $priceMissing = $isPricedItem && $total <= 0;
-                    $resourcesMissing = $isPricedItem && !$hasResources;
+                    $resourcesMissing = $isPricedItem && ! $hasResources;
 
                     if ($priceMissing) {
                         $flags[] = 'missing_price';
@@ -280,12 +283,17 @@ class EstimateValidationService
             $quantityReviewWorkItemsCount,
             $projectFlags
         );
+        $reviewSummary = ($this->reviewItemService ?? new EstimateGenerationReviewItemService(
+            new EstimateGenerationPackagePresenter,
+        ))->summaryForDraft($draft);
+        $draft['quality_summary']['content_version'] = ReviewSummarySnapshot::contentVersion($draft);
+        $draft['quality_summary']['review_items'] = ReviewSummarySnapshot::create($draft, $reviewSummary);
 
         return $draft;
     }
 
     /**
-     * @param array<string, mixed> $draft
+     * @param  array<string, mixed>  $draft
      * @return array{percent: float, amount: float}
      */
     private function contingency(array $draft, float $totalCost): array
@@ -302,7 +310,7 @@ class EstimateValidationService
     }
 
     /**
-     * @param array<int, string> $projectFlags
+     * @param  array<int, string>  $projectFlags
      * @return array<string, mixed>
      */
     private function qualitySummary(
@@ -401,7 +409,7 @@ class EstimateValidationService
     }
 
     /**
-     * @param array<string, mixed> $normativeMatch
+     * @param  array<string, mixed>  $normativeMatch
      * @return array<int, string>
      */
     private function normativeWarnings(array $normativeMatch): array
@@ -415,14 +423,14 @@ class EstimateValidationService
     }
 
     /**
-     * @param array<string, mixed> $draft
-     * @param array<int, string> $flags
+     * @param  array<string, mixed>  $draft
+     * @param  array<int, string>  $flags
      */
     private function appendWorkItemFlags(array &$draft, int $localIndex, int $sectionIndex, int $workIndex, array $flags): void
     {
         $existingFlags = $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex]['validation_flags'] ?? [];
 
-        if (!is_array($existingFlags)) {
+        if (! is_array($existingFlags)) {
             $existingFlags = [];
         }
 
@@ -433,7 +441,7 @@ class EstimateValidationService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function duplicateSignature(array $workItem): ?string
     {
@@ -468,8 +476,8 @@ class EstimateValidationService
     }
 
     /**
-     * @param array<int, string> $warnings
-     * @param array<int, string> $flags
+     * @param  array<int, string>  $warnings
+     * @param  array<int, string>  $flags
      */
     private function safeNormRequired(mixed $normativeStatus, string $decisionStatus, array $warnings, array $flags): bool
     {
@@ -501,9 +509,9 @@ class EstimateValidationService
     }
 
     /**
-     * @param array<int, string> $warnings
-     * @param array<int, string> $flags
-     * @param array<string, mixed> $workItem
+     * @param  array<int, string>  $warnings
+     * @param  array<int, string>  $flags
+     * @param  array<string, mixed>  $workItem
      */
     private function normativePriceRequired(array $warnings, array $flags, array $workItem): bool
     {
@@ -517,8 +525,8 @@ class EstimateValidationService
     }
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<int, string> $flags
+     * @param  array<string, mixed>  $workItem
+     * @param  array<int, string>  $flags
      */
     private function normativeCodeRequired(array $workItem, array $flags): bool
     {
@@ -544,7 +552,7 @@ class EstimateValidationService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function normativeRateCode(array $workItem): ?string
     {
@@ -554,12 +562,12 @@ class EstimateValidationService
     }
 
     /**
-     * @param array<int, mixed> $sourceRefs
+     * @param  array<int, mixed>  $sourceRefs
      */
     private function hasProjectDocumentNormReference(array $sourceRefs): bool
     {
         foreach ($sourceRefs as $sourceRef) {
-            if (!is_array($sourceRef)) {
+            if (! is_array($sourceRef)) {
                 continue;
             }
 
@@ -572,7 +580,7 @@ class EstimateValidationService
     }
 
     /**
-     * @param array<int, string> $warnings
+     * @param  array<int, string>  $warnings
      */
     private function pricingBlocker(
         mixed $currentBlocker,
