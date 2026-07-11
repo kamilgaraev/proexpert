@@ -27,6 +27,7 @@ final class CashGapForecastReadService
 
     public function build(array $request): array
     {
+        $request = $this->normalizeBuildRequest($request);
         $currency = $this->nullableCurrency($request['currency'] ?? null);
         $filters = new PaymentCalendarSourceFilters(
             organizationId: (int) $request['organization_id'],
@@ -111,6 +112,23 @@ final class CashGapForecastReadService
             $payload,
             EpmDataMartScope::fromInput(EpmDataMartScope::CASH_GAP, $request),
         );
+    }
+
+    private function normalizeBuildRequest(array $request): array
+    {
+        $defaults = [
+            'granularity' => 'day',
+            'scenario' => CashGapForecastContext::SCENARIO_BASE,
+            'scenario_adjustments' => [],
+        ];
+
+        foreach ($defaults as $key => $value) {
+            if (!array_key_exists($key, $request) || $request[$key] === null) {
+                $request[$key] = $value;
+            }
+        }
+
+        return $request;
     }
 
     private function dataMartFreshness(): EpmDataMartFreshnessService
