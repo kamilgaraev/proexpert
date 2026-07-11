@@ -27,7 +27,7 @@ final class BuildSessionSnapshot
         'upload_documents' => 'estimate_generation.upload_documents',
         'start_document_processing' => 'estimate_generation.generate',
         'generate' => 'estimate_generation.generate',
-        'review' => 'estimate_generation.review',
+        'review' => 'estimate_generation.view',
         'apply' => 'estimate_generation.apply',
         'retry' => 'estimate_generation.generate',
     ];

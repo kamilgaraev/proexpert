@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\SearchEstimateGe
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\SelectEstimateGenerationNormativeCandidateRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\UploadEstimateGenerationDocumentsRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentResource;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionListResource;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionResource;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationFeedback;
@@ -73,16 +74,11 @@ class EstimateGenerationController extends Controller
         $sessions = EstimateGenerationSession::query()
             ->where('organization_id', $user->current_organization_id)
             ->where('project_id', $project->id)
-            ->with([
-                'documents' => static fn ($query) => $query
-                    ->withCount(['pages', 'facts', 'drawingElements', 'quantityTakeoffs', 'scopeInferences'])
-                    ->orderBy('id'),
-            ])
             ->orderByDesc('id')
             ->paginate((int) $request->input('per_page', 10));
 
         return AdminResponse::paginated(
-            EstimateGenerationSessionResource::collection($sessions),
+            EstimateGenerationSessionListResource::collection($sessions),
             [
                 'current_page' => $sessions->currentPage(),
                 'last_page' => $sessions->lastPage(),
@@ -277,7 +273,7 @@ class EstimateGenerationController extends Controller
     {
         $this->guardSession($request, $project, $session);
 
-        return AdminResponse::success($this->sessionPayload($session->load('documents')));
+        return AdminResponse::success($this->sessionPayload($session));
     }
 
     public function status(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
@@ -613,10 +609,8 @@ class EstimateGenerationController extends Controller
     private function sessionPayload(EstimateGenerationSession $session): array
     {
         $this->loadSessionDocumentsForReadiness($session);
-        $payload = (new EstimateGenerationSessionResource($session))->resolve();
-        $payload['documents_summary'] = $this->documentReadinessService->evaluate($session)['summary'];
 
-        return $payload;
+        return (new EstimateGenerationSessionResource($session))->resolve();
     }
 
     /**
@@ -645,6 +639,10 @@ class EstimateGenerationController extends Controller
 
     private function loadSessionDocumentsForReadiness(EstimateGenerationSession $session): void
     {
+        if ($session->relationLoaded('documents')) {
+            return;
+        }
+
         $session->load([
             'documents' => static fn ($query) => $query
                 ->withCount(['pages', 'facts', 'drawingElements', 'quantityTakeoffs', 'scopeInferences'])

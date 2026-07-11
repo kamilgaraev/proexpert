@@ -33,7 +33,7 @@ final class BuildSessionSnapshotTest extends TestCase
         );
 
         self::assertSame('ready_to_apply', $snapshot->status->value);
-        self::assertSame(['apply'], array_column($snapshot->availableActions, 'action'));
+        self::assertSame(['apply', 'review'], array_column($snapshot->availableActions, 'action'));
         self::assertSame([], $snapshot->blockingIssues);
         self::assertSame('apply', $snapshot->nextAction);
         self::assertSame([
@@ -51,12 +51,26 @@ final class BuildSessionSnapshotTest extends TestCase
     {
         $snapshot = app(BuildSessionSnapshot::class)->handle(
             session: $this->makeSession(EstimateGenerationStatus::ReadyToApply),
-            permissions: ['estimate_generation.view'],
+            permissions: [],
             readinessSummary: ['blockers' => [], 'warnings' => []],
         );
 
         self::assertSame([], $snapshot->availableActions);
         self::assertNull($snapshot->nextAction);
+    }
+
+    #[Test]
+    public function review_action_uses_the_same_view_permission_as_its_get_route(): void
+    {
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $this->makeSession(EstimateGenerationStatus::EstimateReviewRequired),
+            permissions: ['estimate_generation.view'],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+        );
+
+        self::assertSame(['review'], array_column($snapshot->availableActions, 'action'));
+        self::assertSame('GET', $snapshot->availableActions[0]['method']);
+        self::assertSame('review', $snapshot->nextAction);
     }
 
     #[Test]
@@ -83,7 +97,7 @@ final class BuildSessionSnapshotTest extends TestCase
     {
         $snapshot = app(BuildSessionSnapshot::class)->handle(
             session: $this->makeSession(EstimateGenerationStatus::EstimateReviewRequired),
-            permissions: ['estimate_generation.review'],
+            permissions: ['estimate_generation.view'],
             readinessSummary: [
                 'blockers' => [['code' => 'prices_require_review', 'message' => 'Проверьте цены']],
                 'warnings' => [['code' => 'quantity', 'message' => 'Проверьте объёмы']],
