@@ -29,6 +29,7 @@ final class EstimateGenerationPipelineCheckpoint extends Model
         'failed_at',
         'last_error_code',
         'last_error_message',
+        'last_error_fingerprint',
     ];
 
     protected $casts = [

@@ -6,7 +6,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPipelineCheckpoint;
 use DateTimeImmutable;
-use Illuminate\Database\ConnectionInterface;
+use Illuminate\Database\Connection;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use RuntimeException;
@@ -14,7 +15,7 @@ use Throwable;
 
 final readonly class EloquentPipelineCheckpointStore implements PipelineCheckpointStore
 {
-    public function __construct(private ConnectionInterface $database) {}
+    public function __construct(private Connection $database) {}
 
     public function claim(
         PipelineContext $context,
@@ -52,7 +53,7 @@ final readonly class EloquentPipelineCheckpointStore implements PipelineCheckpoi
             }
 
             /** @var EstimateGenerationPipelineCheckpoint|null $checkpoint */
-            $checkpoint = EstimateGenerationPipelineCheckpoint::query()
+            $checkpoint = $this->query()
                 ->where($identity)
                 ->lockForUpdate()
                 ->first();
@@ -86,6 +87,7 @@ final readonly class EloquentPipelineCheckpointStore implements PipelineCheckpoi
                 'failed_at' => null,
                 'last_error_code' => null,
                 'last_error_message' => null,
+                'last_error_fingerprint' => null,
             ])->save();
 
             return CheckpointClaim::acquired($context, $stage, $token);
@@ -103,10 +105,11 @@ final readonly class EloquentPipelineCheckpointStore implements PipelineCheckpoi
 
         PipelineVersionValidator::assertValid($result->outputVersion, 'output');
 
-        return EstimateGenerationPipelineCheckpoint::query()
+        return $this->query()
             ->where($this->identity($claim))
             ->where('status', CheckpointStatus::Running->value)
             ->where('claim_token', $claim->claimToken)
+            ->where('lease_expires_at', '>', $completedAt)
             ->update([
                 'status' => CheckpointStatus::Completed->value,
                 'output_version' => $result->outputVersion,
@@ -118,7 +121,28 @@ final readonly class EloquentPipelineCheckpointStore implements PipelineCheckpoi
                 'failed_at' => null,
                 'last_error_code' => null,
                 'last_error_message' => null,
+                'last_error_fingerprint' => null,
                 'updated_at' => $completedAt,
+            ]) === 1;
+    }
+
+    public function renewLease(
+        CheckpointClaim $claim,
+        DateTimeImmutable $now,
+        DateTimeImmutable $newLeaseExpiresAt,
+    ): bool {
+        if ($claim->status !== CheckpointClaimStatus::Acquired || $newLeaseExpiresAt <= $now) {
+            return false;
+        }
+
+        return $this->query()
+            ->where($this->identity($claim))
+            ->where('status', CheckpointStatus::Running->value)
+            ->where('claim_token', $claim->claimToken)
+            ->where('lease_expires_at', '>', $now)
+            ->update([
+                'lease_expires_at' => $newLeaseExpiresAt,
+                'updated_at' => $now,
             ]) === 1;
     }
 
@@ -128,17 +152,21 @@ final readonly class EloquentPipelineCheckpointStore implements PipelineCheckpoi
             return false;
         }
 
-        return EstimateGenerationPipelineCheckpoint::query()
+        $failure = PipelineFailureDetails::from($error);
+
+        return $this->query()
             ->where($this->identity($claim))
             ->where('status', CheckpointStatus::Running->value)
             ->where('claim_token', $claim->claimToken)
+            ->where('lease_expires_at', '>', $failedAt)
             ->update([
                 'status' => CheckpointStatus::Failed->value,
                 'claim_token' => null,
                 'lease_expires_at' => null,
                 'failed_at' => $failedAt,
-                'last_error_code' => mb_substr($error::class, 0, 160),
-                'last_error_message' => $this->safeErrorMessage($error),
+                'last_error_code' => $failure->code,
+                'last_error_message' => null,
+                'last_error_fingerprint' => $failure->fingerprint,
                 'updated_at' => $failedAt,
             ]) === 1;
     }
@@ -153,10 +181,12 @@ final readonly class EloquentPipelineCheckpointStore implements PipelineCheckpoi
         ];
     }
 
-    private function safeErrorMessage(Throwable $error): string
+    /** @return Builder<EstimateGenerationPipelineCheckpoint> */
+    private function query(): Builder
     {
-        $message = preg_replace('/[\x00-\x1F\x7F]+/u', ' ', $error->getMessage()) ?? '';
+        $model = new EstimateGenerationPipelineCheckpoint;
+        $model->setConnection($this->database->getName());
 
-        return mb_substr(trim($message), 0, 1000);
+        return $model->newQuery();
     }
 }

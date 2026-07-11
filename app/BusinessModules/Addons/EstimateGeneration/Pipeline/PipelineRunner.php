@@ -10,8 +10,15 @@ use InvalidArgumentException;
 use LogicException;
 use Throwable;
 
+/**
+ * Stage execution must finish within the configured lease. Long-running stage
+ * orchestration must renew the acquired claim before expiry; expired work is
+ * never published because completion is guarded by the store lease CAS.
+ */
 final class PipelineRunner
 {
+    public const DEFAULT_LEASE_SECONDS = 300;
+
     /** @var Closure(): DateTimeImmutable */
     private readonly Closure $clock;
 
@@ -20,7 +27,7 @@ final class PipelineRunner
         private readonly PipelineRegistry $registry,
         private readonly PipelineCheckpointStore $checkpointStore,
         callable $clock,
-        private readonly int $leaseSeconds = 300,
+        private readonly int $leaseSeconds = self::DEFAULT_LEASE_SECONDS,
     ) {
         if ($leaseSeconds <= 0) {
             throw new InvalidArgumentException('Pipeline checkpoint lease must be positive.');

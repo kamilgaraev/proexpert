@@ -105,8 +105,81 @@ final class PipelineRunnerTest extends TestCase
 
         self::assertSame(CheckpointClaimStatus::Acquired, $fresh->status);
         self::assertNotSame($old->claimToken, $fresh->claimToken);
+        self::assertFalse($this->store->renewLease(
+            $old,
+            $this->clock->now,
+            $this->clock->now->modify('+1 minute'),
+        ));
         self::assertFalse($this->store->complete($old, $this->stageResult($stage), $this->clock->now));
         self::assertTrue($this->store->complete($fresh, $this->stageResult($stage), $this->clock->now));
+    }
+
+    #[Test]
+    public function expired_unreclaimed_claim_cannot_complete_or_fail(): void
+    {
+        $context = $this->context();
+        $claim = $this->store->claim(
+            $context,
+            ProcessingStage::UnderstandObject,
+            $this->clock->now,
+            $this->clock->now->modify('+1 second'),
+        );
+        $this->clock->advance('+2 seconds');
+
+        self::assertFalse($this->store->complete(
+            $claim,
+            $this->stageResult(ProcessingStage::UnderstandObject),
+            $this->clock->now,
+        ));
+        self::assertFalse($this->store->fail($claim, new RuntimeException('late'), $this->clock->now));
+        self::assertSame('running', $this->store->status($context, ProcessingStage::UnderstandObject));
+    }
+
+    #[Test]
+    public function current_owner_can_renew_only_an_unexpired_lease(): void
+    {
+        $context = $this->context();
+        $claim = $this->store->claim(
+            $context,
+            ProcessingStage::UnderstandObject,
+            $this->clock->now,
+            $this->clock->now->modify('+2 seconds'),
+        );
+
+        self::assertTrue($this->store->renewLease(
+            $claim,
+            $this->clock->now,
+            $this->clock->now->modify('+10 seconds'),
+        ));
+        $this->clock->advance('+11 seconds');
+        self::assertFalse($this->store->renewLease(
+            $claim,
+            $this->clock->now,
+            $this->clock->now->modify('+10 seconds'),
+        ));
+    }
+
+    #[Test]
+    public function acquired_claim_rejects_non_canonical_uuid_tokens(): void
+    {
+        $this->expectException(LogicException::class);
+
+        CheckpointClaim::acquired(
+            $this->context(),
+            ProcessingStage::UnderstandObject,
+            'prefix-550e8400-e29b-41d4-a716-446655440000',
+        );
+    }
+
+    #[Test]
+    public function acquired_claim_normalizes_uuid_and_copies_scalar_token(): void
+    {
+        $token = '550E8400-E29B-41D4-A716-446655440000';
+        $claim = CheckpointClaim::acquired($this->context(), ProcessingStage::UnderstandObject, $token);
+        $token = 'changed';
+
+        self::assertSame('550e8400-e29b-41d4-a716-446655440000', $claim->claimToken);
+        self::assertNotSame($token, $claim->claimToken);
     }
 
     #[Test]
@@ -119,6 +192,19 @@ final class PipelineRunnerTest extends TestCase
             $this->runner([$stage])->runNext($this->context());
         } finally {
             self::assertSame('failed', $this->store->status($this->context(), $stage->stage()));
+        }
+    }
+
+    #[Test]
+    public function result_finishing_after_lease_expiry_is_never_published(): void
+    {
+        $stage = new AdvancingStage($this->clock, '+61 seconds');
+
+        $this->expectException(LogicException::class);
+        try {
+            $this->runner([$stage])->runNext($this->context());
+        } finally {
+            self::assertSame('running', $this->store->status($this->context(), $stage->stage()));
         }
     }
 
@@ -229,6 +315,26 @@ final class MismatchedStage implements PipelineStage
     }
 }
 
+final class AdvancingStage implements PipelineStage
+{
+    public function __construct(
+        private readonly MutableClock $clock,
+        private readonly string $modifier,
+    ) {}
+
+    public function stage(): ProcessingStage
+    {
+        return ProcessingStage::UnderstandObject;
+    }
+
+    public function execute(PipelineContext $context): PipelineStageResult
+    {
+        $this->clock->advance($this->modifier);
+
+        return new PipelineStageResult($this->stage(), 'sha256:late', []);
+    }
+}
+
 final class InMemoryCheckpointStore implements PipelineCheckpointStore
 {
     /** @var array<string, array{status: string, token: ?string, expires: ?DateTimeImmutable, attempts: int}> */
@@ -253,7 +359,7 @@ final class InMemoryCheckpointStore implements PipelineCheckpointStore
             return CheckpointClaim::busy($context, $stage);
         }
 
-        $token = 'claim-'.++$this->tokenSequence;
+        $token = sprintf('00000000-0000-4000-8000-%012d', ++$this->tokenSequence);
         $this->items[$key] = [
             'status' => 'running',
             'token' => $token,
@@ -266,12 +372,32 @@ final class InMemoryCheckpointStore implements PipelineCheckpointStore
 
     public function complete(CheckpointClaim $claim, PipelineStageResult $result, DateTimeImmutable $completedAt): bool
     {
-        return $this->transition($claim, 'completed');
+        return $this->transition($claim, 'completed', $completedAt);
     }
 
     public function fail(CheckpointClaim $claim, Throwable $error, DateTimeImmutable $failedAt): bool
     {
-        return $this->transition($claim, 'failed');
+        return $this->transition($claim, 'failed', $failedAt);
+    }
+
+    public function renewLease(
+        CheckpointClaim $claim,
+        DateTimeImmutable $now,
+        DateTimeImmutable $newLeaseExpiresAt,
+    ): bool {
+        $key = $this->key($claim->context, $claim->stage);
+        if (
+            ($this->items[$key]['status'] ?? null) !== 'running'
+            || ($this->items[$key]['token'] ?? null) !== $claim->claimToken
+            || ($this->items[$key]['expires'] ?? null) <= $now
+            || $newLeaseExpiresAt <= $now
+        ) {
+            return false;
+        }
+
+        $this->items[$key]['expires'] = $newLeaseExpiresAt;
+
+        return true;
     }
 
     public function count(): int
@@ -289,10 +415,14 @@ final class InMemoryCheckpointStore implements PipelineCheckpointStore
         return $this->items[$this->key($context, $stage)]['status'];
     }
 
-    private function transition(CheckpointClaim $claim, string $status): bool
+    private function transition(CheckpointClaim $claim, string $status, DateTimeImmutable $now): bool
     {
         $key = $this->key($claim->context, $claim->stage);
-        if (($this->items[$key]['status'] ?? null) !== 'running' || ($this->items[$key]['token'] ?? null) !== $claim->claimToken) {
+        if (
+            ($this->items[$key]['status'] ?? null) !== 'running'
+            || ($this->items[$key]['token'] ?? null) !== $claim->claimToken
+            || ($this->items[$key]['expires'] ?? null) <= $now
+        ) {
             return false;
         }
 

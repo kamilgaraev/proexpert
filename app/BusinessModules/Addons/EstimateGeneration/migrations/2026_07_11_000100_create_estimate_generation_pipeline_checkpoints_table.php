@@ -20,7 +20,7 @@ return new class extends Migration
             $table->string('status', 30);
             $table->jsonb('metrics')->default('{}');
             $table->jsonb('warnings')->default('[]');
-            $table->unsignedInteger('attempt_count')->default(0);
+            $table->unsignedInteger('attempt_count')->default(1);
             $table->uuid('claim_token')->nullable();
             $table->timestampTz('lease_expires_at')->nullable();
             $table->timestampTz('started_at')->nullable();
@@ -28,6 +28,7 @@ return new class extends Migration
             $table->timestampTz('failed_at')->nullable();
             $table->string('last_error_code', 160)->nullable();
             $table->text('last_error_message')->nullable();
+            $table->char('last_error_fingerprint', 64)->nullable();
             $table->timestampsTz();
 
             $table->unique(
@@ -40,8 +41,47 @@ return new class extends Migration
 
         DB::statement(<<<'SQL'
             ALTER TABLE estimate_generation_pipeline_checkpoints
-            ADD CONSTRAINT estimate_generation_checkpoint_status_check
+            ADD CONSTRAINT ai_ckpt_status_ck
             CHECK (status IN ('running', 'completed', 'failed'))
+            SQL);
+        DB::statement(<<<'SQL'
+            ALTER TABLE estimate_generation_pipeline_checkpoints
+            ADD CONSTRAINT ai_ckpt_attempt_ck CHECK (attempt_count >= 1)
+            SQL);
+        DB::statement(<<<'SQL'
+            ALTER TABLE estimate_generation_pipeline_checkpoints
+            ADD CONSTRAINT ai_ckpt_stage_ck CHECK (stage IN (
+                'understand_documents', 'understand_object', 'extract_quantities',
+                'plan_work_items', 'match_normatives', 'assemble_resources',
+                'resolve_prices', 'build_draft', 'validate_draft'
+            ))
+            SQL);
+        DB::statement(<<<'SQL'
+            ALTER TABLE estimate_generation_pipeline_checkpoints
+            ADD CONSTRAINT ai_ckpt_json_ck CHECK (
+                jsonb_typeof(metrics) = 'object'
+                AND jsonb_typeof(warnings) = 'array'
+            )
+            SQL);
+        DB::statement(<<<'SQL'
+            ALTER TABLE estimate_generation_pipeline_checkpoints
+            ADD CONSTRAINT ai_ckpt_state_ck CHECK (
+                (status = 'running'
+                    AND claim_token IS NOT NULL AND lease_expires_at IS NOT NULL AND started_at IS NOT NULL
+                    AND output_version IS NULL AND completed_at IS NULL AND failed_at IS NULL
+                    AND last_error_code IS NULL AND last_error_message IS NULL AND last_error_fingerprint IS NULL)
+                OR (status = 'completed'
+                    AND started_at IS NOT NULL AND output_version IS NOT NULL AND completed_at IS NOT NULL
+                    AND claim_token IS NULL AND lease_expires_at IS NULL AND failed_at IS NULL
+                    AND last_error_code IS NULL AND last_error_message IS NULL AND last_error_fingerprint IS NULL)
+                OR (status = 'failed'
+                    AND started_at IS NOT NULL AND failed_at IS NOT NULL
+                    AND last_error_code = 'pipeline_stage_failed'
+                    AND last_error_message IS NULL
+                    AND last_error_fingerprint ~ '^[0-9a-f]{64}$'
+                    AND claim_token IS NULL AND lease_expires_at IS NULL
+                    AND output_version IS NULL AND completed_at IS NULL)
+            )
             SQL);
     }
 
