@@ -42,6 +42,9 @@ final readonly class EvidenceRecorder
             if ($parent->invalidatedAt !== null) {
                 throw new RuntimeException('estimate_generation.evidence_parent_invalidated');
             }
+            if (! EvidenceTransitionPolicy::allows($parent->type, $parentLink->relation, $child->type)) {
+                throw new RuntimeException('estimate_generation.evidence_transition_invalid');
+            }
             if ($this->repository->pathExists($data->organizationId, $data->projectId, $data->sessionId, $childId, $parent->id)) {
                 throw new RuntimeException('estimate_generation.evidence_cycle');
             }

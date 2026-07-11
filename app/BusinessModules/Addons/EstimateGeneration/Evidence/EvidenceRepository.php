@@ -16,11 +16,16 @@ interface EvidenceRepository
 
     public function pathExists(int $organizationId, int $projectId, int $sessionId, int $fromId, int $toId): bool;
 
-    /** @return list<int> */
-    public function sourceRoots(int $organizationId, int $projectId, int $sessionId, EvidenceSourceType $type, string $ref, string $version): array;
-
-    /** @param list<int> $parentIds @return list<int> */
-    public function children(int $organizationId, int $projectId, int $sessionId, array $parentIds): array;
+    /** @param non-empty-list<EvidenceSourceType> $types @return iterable<list<int>> */
+    public function descendantBatches(
+        int $organizationId,
+        int $projectId,
+        int $sessionId,
+        array $types,
+        string $ref,
+        string $version,
+        int $chunkSize,
+    ): iterable;
 
     /** @param list<int> $ids */
     public function invalidate(int $organizationId, int $projectId, int $sessionId, array $ids, string $reason): int;

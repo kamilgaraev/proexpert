@@ -77,29 +77,37 @@ final class InMemoryEvidenceRepository implements EvidenceRepository
         return false;
     }
 
-    public function sourceRoots(int $organizationId, int $projectId, int $sessionId, EvidenceSourceType $type, string $ref, string $version): array
+    public function descendantBatches(int $organizationId, int $projectId, int $sessionId, array $types, string $ref, string $version, int $chunkSize): iterable
     {
-        return array_values(array_map(
+        $queue = array_values(array_map(
             static fn (EvidenceNode $node): int => $node->id,
             array_filter($this->nodes, static fn (EvidenceNode $node): bool => $node->organizationId === $organizationId && $node->projectId === $projectId
-                && $node->sessionId === $sessionId && $node->sourceType === $type
-                && $node->sourceRef === $ref && $node->sourceVersion === $version && $node->invalidatedAt === null),
+                && $node->sessionId === $sessionId && in_array($node->sourceType, $types, true)
+                && $node->sourceRef === $ref && $node->sourceVersion === $version),
         ));
-    }
-
-    public function children(int $organizationId, int $projectId, int $sessionId, array $parentIds): array
-    {
-        $parents = array_fill_keys($parentIds, true);
-        $children = [];
-        foreach ($this->edges as $edge) {
-            if ($edge->organizationId === $organizationId && $edge->projectId === $projectId
-                && $edge->sessionId === $sessionId && isset($parents[$edge->parentId])
-                && isset($this->nodes[$edge->childId])) {
-                $children[$edge->childId] = true;
+        $visited = [];
+        $batch = [];
+        while ($queue !== []) {
+            $id = array_shift($queue);
+            if (isset($visited[$id])) {
+                continue;
+            }
+            $visited[$id] = true;
+            $batch[] = $id;
+            foreach ($this->edges as $edge) {
+                if ($edge->organizationId === $organizationId && $edge->projectId === $projectId
+                    && $edge->sessionId === $sessionId && $edge->parentId === $id) {
+                    $queue[] = $edge->childId;
+                }
+            }
+            if (count($batch) === $chunkSize) {
+                yield $batch;
+                $batch = [];
             }
         }
-
-        return array_map('intval', array_keys($children));
+        if ($batch !== []) {
+            yield $batch;
+        }
     }
 
     public function invalidate(int $organizationId, int $projectId, int $sessionId, array $ids, string $reason): int

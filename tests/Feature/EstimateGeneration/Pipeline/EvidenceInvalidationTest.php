@@ -5,15 +5,63 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration\Pipeline;
 
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceEdge;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceInvalidator;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceNode;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceParent;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRelation;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+
+final class BatchRecordingEvidenceRepository implements EvidenceRepository
+{
+    /** @var list<int> */
+    public array $batchSizes = [];
+
+    public function __construct(private readonly InMemoryEvidenceRepository $inner = new InMemoryEvidenceRepository) {}
+
+    public function transaction(int $organizationId, int $sessionId, callable $callback): mixed
+    {
+        return $this->inner->transaction($organizationId, $sessionId, $callback);
+    }
+
+    public function insertOrGet(EvidenceData $data): EvidenceNode
+    {
+        return $this->inner->insertOrGet($data);
+    }
+
+    public function node(int $organizationId, int $projectId, int $sessionId, int $id): ?EvidenceNode
+    {
+        return $this->inner->node($organizationId, $projectId, $sessionId, $id);
+    }
+
+    public function addEdge(EvidenceEdge $edge): void
+    {
+        $this->inner->addEdge($edge);
+    }
+
+    public function pathExists(int $organizationId, int $projectId, int $sessionId, int $fromId, int $toId): bool
+    {
+        return $this->inner->pathExists($organizationId, $projectId, $sessionId, $fromId, $toId);
+    }
+
+    public function descendantBatches(int $organizationId, int $projectId, int $sessionId, array $types, string $ref, string $version, int $chunkSize): iterable
+    {
+        return $this->inner->descendantBatches($organizationId, $projectId, $sessionId, $types, $ref, $version, $chunkSize);
+    }
+
+    public function invalidate(int $organizationId, int $projectId, int $sessionId, array $ids, string $reason): int
+    {
+        $this->batchSizes[] = count($ids);
+
+        return $this->inner->invalidate($organizationId, $projectId, $sessionId, $ids, $reason);
+    }
+}
 
 final class EvidenceInvalidationTest extends TestCase
 {
@@ -83,6 +131,32 @@ final class EvidenceInvalidationTest extends TestCase
         self::assertNotNull($repository->node(1, 10, 100, $leaf->id)?->invalidatedAt);
     }
 
+    #[Test]
+    public function traversal_resumes_from_an_invalidated_root_and_updates_in_bounded_batches(): void
+    {
+        $repository = new BatchRecordingEvidenceRepository;
+        $recorder = new EvidenceRecorder($repository);
+        $root = $recorder->record($this->data('old', 'document:44'));
+        $previous = $root;
+        for ($index = 0; $index < 80; $index++) {
+            $previous = $recorder->record($this->data('v1', 'bounded:'.$index, EvidenceType::Extracted), [
+                new EvidenceParent($previous->id, EvidenceRelation::DerivedFrom),
+            ]);
+        }
+        $repository->invalidate(1, 10, 100, [$root->id], 'partial_previous_attempt');
+        $repository->batchSizes = [];
+
+        self::assertSame(80, (new EvidenceInvalidator($repository, 17))->invalidateSource(
+            1, 10, 100, EvidenceSourceType::Document, 'document:44', 'old', 'source_replaced',
+        ));
+        self::assertGreaterThan(1, count($repository->batchSizes));
+        self::assertLessThanOrEqual(17, max($repository->batchSizes));
+        self::assertNotNull($repository->node(1, 10, 100, $previous->id)?->invalidatedAt);
+        self::assertSame(0, (new EvidenceInvalidator($repository, 17))->invalidateSource(
+            1, 10, 100, EvidenceSourceType::Document, 'document:44', 'old', 'source_replaced',
+        ));
+    }
+
     private function data(
         string $sourceVersion,
         string $sourceRef,
@@ -97,8 +171,16 @@ final class EvidenceInvalidationTest extends TestCase
             sourceType: EvidenceSourceType::Document,
             sourceRef: $sourceRef,
             sourceVersion: $sourceVersion,
-            locator: ['page' => 1],
-            value: ['kind' => 'wall'],
+            locator: $type === EvidenceType::Inferred
+                ? ['inference_key' => 'scope:'.$sourceRef]
+                : ['document_id' => 44, 'page' => 1],
+            value: match ($type) {
+                EvidenceType::SourceFact => ['fact_key' => 'kind', 'fact_value' => 'wall'],
+                EvidenceType::Extracted => ['field_key' => 'kind', 'field_value' => 'wall'],
+                EvidenceType::Measured => ['quantity' => 12.0, 'unit' => 'm'],
+                EvidenceType::Inferred => ['result_code' => 'wall'],
+                default => throw new \LogicException('Unsupported fixture type.'),
+            },
             confidence: 0.9,
             producerName: 'test',
             producerVersion: '1',

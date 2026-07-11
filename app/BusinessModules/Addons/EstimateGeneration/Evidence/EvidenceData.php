@@ -40,8 +40,8 @@ final readonly class EvidenceData
             throw new InvalidArgumentException('Evidence confidence must be between zero and one.');
         }
 
-        $this->locator = CanonicalEvidenceJson::normalize($locator);
-        $this->value = CanonicalEvidenceJson::normalize($value);
+        $this->locator = EvidenceSchema::locator($type, $locator);
+        $this->value = EvidenceSchema::value($type, $value);
         $this->confidence = round($confidence, 6);
     }
 

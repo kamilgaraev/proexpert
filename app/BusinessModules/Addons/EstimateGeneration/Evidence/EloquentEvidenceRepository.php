@@ -98,24 +98,33 @@ final readonly class EloquentEvidenceRepository implements EvidenceRepository
         return false;
     }
 
-    public function sourceRoots(int $organizationId, int $projectId, int $sessionId, EvidenceSourceType $type, string $ref, string $version): array
+    public function descendantBatches(int $organizationId, int $projectId, int $sessionId, array $types, string $ref, string $version, int $chunkSize): iterable
     {
-        return $this->database->table('estimate_generation_evidence')->where('organization_id', $organizationId)->where('project_id', $projectId)
-            ->where('session_id', $sessionId)->where('source_type', $type->value)->where('source_ref', $ref)
-            ->where('source_version', $version)->whereNull('invalidated_at')->pluck('id')
-            ->map(static fn (mixed $id): int => (int) $id)->all();
-    }
-
-    public function children(int $organizationId, int $projectId, int $sessionId, array $parentIds): array
-    {
-        if ($parentIds === []) {
-            return [];
+        $temporaryTable = 'eg_evidence_walk_ids';
+        $this->database->statement("CREATE TEMP TABLE IF NOT EXISTS {$temporaryTable} (id bigint PRIMARY KEY) ON COMMIT DROP");
+        $this->database->table($temporaryTable)->truncate();
+        $typeValues = array_map(static fn (EvidenceSourceType $type): string => $type->value, $types);
+        $placeholders = implode(',', array_fill(0, count($typeValues), '?'));
+        $sql = "INSERT INTO {$temporaryTable} (id) WITH RECURSIVE graph(id) AS (
+            SELECT id FROM estimate_generation_evidence
+            WHERE organization_id = ? AND project_id = ? AND session_id = ?
+              AND source_type IN ({$placeholders}) AND source_ref = ? AND source_version = ?
+            UNION
+            SELECT edge.child_id FROM estimate_generation_evidence_edges edge
+            INNER JOIN graph ON graph.id = edge.parent_id
+            WHERE edge.organization_id = ? AND edge.project_id = ? AND edge.session_id = ?
+        ) SELECT id FROM graph";
+        $bindings = [$organizationId, $projectId, $sessionId, ...$typeValues, $ref, $version, $organizationId, $projectId, $sessionId];
+        $this->database->insert($sql, $bindings);
+        while (true) {
+            $batch = $this->database->table($temporaryTable)->orderBy('id')->limit($chunkSize)->pluck('id')
+                ->map(static fn (mixed $id): int => (int) $id)->all();
+            if ($batch === []) {
+                break;
+            }
+            $this->database->table($temporaryTable)->whereIn('id', $batch)->delete();
+            yield $batch;
         }
-
-        return $this->database->table('estimate_generation_evidence_edges as edge')
-            ->where('edge.organization_id', $organizationId)->where('edge.project_id', $projectId)
-            ->where('edge.session_id', $sessionId)->whereIn('edge.parent_id', $parentIds)
-            ->distinct()->pluck('edge.child_id')->map(static fn (mixed $id): int => (int) $id)->all();
     }
 
     public function invalidate(int $organizationId, int $projectId, int $sessionId, array $ids, string $reason): int

@@ -24,22 +24,33 @@ final class EvidencePersistenceContractTest extends TestCase
         self::assertStringContainsString('eg_evidence_session_scope_fk', $migration);
         self::assertStringContainsString('eg_sessions_scope_uq', $migration);
         self::assertStringContainsString('eg_evidence_immutable_trg', $migration);
+        self::assertStringContainsString('eg_evidence_edge_transition_trg', $migration);
+        self::assertStringContainsString('eg_evidence_edge_append_trg', $migration);
+        self::assertStringContainsString("TG_OP = 'UPDATE'", $migration);
+        self::assertStringContainsString('estimate_generation.evidence_edge_delete_forbidden', $migration);
+        self::assertStringContainsString("Schema::create('estimate_generation_evidence_edges'", $migration);
+        self::assertStringContainsString("unsignedBigInteger('organization_id')", $migration);
         self::assertStringContainsString('eg_evidence_source_active_idx', $migration);
         self::assertIsString($repository);
         self::assertStringContainsString('pg_advisory_xact_lock', $repository);
         self::assertStringContainsString('insertOrIgnore', $repository);
-        self::assertStringNotContainsString('->delete(', $repository);
+        self::assertStringContainsString('CREATE TEMP TABLE', $repository);
+        self::assertStringContainsString('WITH RECURSIVE graph', $repository);
+        self::assertStringContainsString('ON COMMIT DROP', $repository);
+        self::assertStringNotContainsString('->cursor(', $repository);
+        self::assertStringNotContainsString("table('estimate_generation_evidence')->delete", $repository);
     }
 
     #[Test]
-    public function accepted_document_source_replacement_invokes_scoped_invalidation_seam(): void
+    public function document_source_replacement_uses_atomic_coordinator(): void
     {
         $source = file_get_contents($this->path('app/BusinessModules/Addons/EstimateGeneration/Application/Documents/CreateDocumentProcessingUnits.php'));
 
         self::assertIsString($source);
-        self::assertStringContainsString('EvidenceSourceReplacementInvalidator', $source);
+        self::assertStringContainsString('DocumentSourceReplacementCoordinator', $source);
         self::assertStringContainsString('$previousSourceVersion', $source);
-        self::assertStringContainsString('invalidateReplacedDocumentSource(', $source);
+        self::assertStringContainsString('replacement->commit(', $source);
+        self::assertStringNotContainsString('DB::transaction(', $source);
     }
 
     private function path(string $relative): string

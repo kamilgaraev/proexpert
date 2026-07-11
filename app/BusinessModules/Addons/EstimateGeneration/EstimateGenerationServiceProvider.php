@@ -11,6 +11,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\LaravelGener
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ArtifactDocumentUnitDetector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceManifestStorage;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceReplacementTransaction;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitAggregateReconciler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitContentReader;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitDetector;
@@ -23,6 +24,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Eloquent
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EloquentDocumentUnitExhaustionHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EstimateGenerationUnitJobDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\EvidenceSourceReplacementInvalidator;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\LaravelDocumentSourceReplacementTransaction;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\LaravelEstimateGenerationUnitJobDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\MetadataDocumentUnitDetector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\OcrDocumentUnitProcessor;
@@ -126,6 +128,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(DocumentUnitContentReader::class, S3DocumentUnitContentReader::class);
         $this->app->singleton(DocumentUnitProcessor::class, OcrDocumentUnitProcessor::class);
         $this->app->singleton(DocumentUnitAggregateReconciler::class, EloquentDocumentUnitAggregateReconciler::class);
+        $this->app->singleton(DocumentSourceReplacementTransaction::class, LaravelDocumentSourceReplacementTransaction::class);
         $this->app->singleton(EvidenceRepository::class, EloquentEvidenceRepository::class);
         $this->app->singleton(EvidenceSourceReplacementInvalidator::class, EvidenceDocumentSourceReplacementInvalidator::class);
         $this->app->singleton(SessionStateStore::class, EloquentSessionStateStore::class);

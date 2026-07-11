@@ -53,32 +53,16 @@ final readonly class EvidenceInvalidator
         return $this->repository->transaction($organizationId, $sessionId, function () use (
             $organizationId, $projectId, $sessionId, $sourceTypes, $sourceRef, $sourceVersion, $reason,
         ): int {
-            $queue = [];
-            foreach ($sourceTypes as $sourceType) {
-                array_push($queue, ...$this->repository->sourceRoots(
-                    $organizationId, $projectId, $sessionId, $sourceType, $sourceRef, $sourceVersion,
-                ));
-            }
-            $visited = [];
-            while ($queue !== []) {
-                $batch = array_splice($queue, 0, $this->chunkSize);
-                $fresh = [];
-                foreach ($batch as $id) {
-                    if (! isset($visited[$id])) {
-                        $visited[$id] = true;
-                        $fresh[] = $id;
-                    }
-                }
-                if ($fresh !== []) {
-                    foreach ($this->repository->children($organizationId, $projectId, $sessionId, $fresh) as $childId) {
-                        if (! isset($visited[$childId])) {
-                            $queue[] = $childId;
-                        }
-                    }
-                }
+            $invalidated = 0;
+            foreach ($this->repository->descendantBatches(
+                $organizationId, $projectId, $sessionId, $sourceTypes, $sourceRef, $sourceVersion, $this->chunkSize,
+            ) as $batch) {
+                $invalidated += $this->repository->invalidate(
+                    $organizationId, $projectId, $sessionId, $batch, $reason,
+                );
             }
 
-            return $this->repository->invalidate($organizationId, $projectId, $sessionId, array_map('intval', array_keys($visited)), $reason);
+            return $invalidated;
         });
     }
 }

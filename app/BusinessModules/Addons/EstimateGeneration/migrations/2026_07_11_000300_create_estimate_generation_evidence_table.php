@@ -44,9 +44,9 @@ return new class extends Migration
 
         Schema::create('estimate_generation_evidence_edges', function (Blueprint $table): void {
             $table->id();
-            $table->foreignId('organization_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('project_id')->constrained()->cascadeOnDelete();
-            $table->foreignId('session_id')->constrained('estimate_generation_sessions')->cascadeOnDelete();
+            $table->unsignedBigInteger('organization_id');
+            $table->unsignedBigInteger('project_id');
+            $table->unsignedBigInteger('session_id');
             $table->unsignedBigInteger('parent_id');
             $table->unsignedBigInteger('child_id');
             $table->string('relation', 32);
@@ -69,6 +69,10 @@ return new class extends Migration
             DB::statement('ALTER TABLE estimate_generation_evidence_edges ADD CONSTRAINT eg_evidence_edge_child_scope_fk FOREIGN KEY (child_id, organization_id, project_id, session_id) REFERENCES estimate_generation_evidence (id, organization_id, project_id, session_id) ON DELETE CASCADE');
             DB::statement("CREATE FUNCTION eg_evidence_immutable_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF ROW(OLD.organization_id, OLD.project_id, OLD.session_id, OLD.type, OLD.source_type, OLD.source_ref, OLD.source_version, OLD.locator, OLD.value, OLD.confidence, OLD.producer_name, OLD.producer_version, OLD.fingerprint, OLD.created_at) IS DISTINCT FROM ROW(NEW.organization_id, NEW.project_id, NEW.session_id, NEW.type, NEW.source_type, NEW.source_ref, NEW.source_version, NEW.locator, NEW.value, NEW.confidence, NEW.producer_name, NEW.producer_version, NEW.fingerprint, NEW.created_at) THEN RAISE EXCEPTION 'estimate_generation.evidence_is_immutable'; END IF; RETURN NEW; END; $$");
             DB::statement('CREATE TRIGGER eg_evidence_immutable_trg BEFORE UPDATE ON estimate_generation_evidence FOR EACH ROW EXECUTE FUNCTION eg_evidence_immutable_guard()');
+            DB::statement("CREATE FUNCTION eg_evidence_edge_transition_guard() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE parent_type text; child_type text; BEGIN SELECT type INTO parent_type FROM estimate_generation_evidence WHERE id = NEW.parent_id AND organization_id = NEW.organization_id AND project_id = NEW.project_id AND session_id = NEW.session_id; SELECT type INTO child_type FROM estimate_generation_evidence WHERE id = NEW.child_id AND organization_id = NEW.organization_id AND project_id = NEW.project_id AND session_id = NEW.session_id; IF NOT ((parent_type = 'source_fact' AND NEW.relation = 'derived_from' AND child_type IN ('extracted','measured')) OR (parent_type = 'source_fact' AND NEW.relation = 'supports' AND child_type IN ('extracted','measured','inferred')) OR (parent_type = 'source_fact' AND NEW.relation IN ('contradicts','resolves') AND child_type = 'source_fact') OR (parent_type = 'extracted' AND NEW.relation = 'derived_from' AND child_type IN ('extracted','measured','inferred')) OR (parent_type = 'extracted' AND NEW.relation = 'supports' AND child_type IN ('measured','inferred','work_item')) OR (parent_type = 'measured' AND NEW.relation IN ('derived_from','supports') AND child_type IN ('measured','inferred','work_item')) OR (parent_type = 'inferred' AND NEW.relation IN ('derived_from','supports') AND child_type IN ('inferred','work_item')) OR (parent_type = 'work_item' AND NEW.relation = 'matched_to' AND child_type = 'normative_match') OR (parent_type = 'normative_match' AND NEW.relation = 'priced_by' AND child_type = 'price')) THEN RAISE EXCEPTION 'estimate_generation.evidence_transition_invalid'; END IF; RETURN NEW; END; $$");
+            DB::statement('CREATE TRIGGER eg_evidence_edge_transition_trg BEFORE INSERT ON estimate_generation_evidence_edges FOR EACH ROW EXECUTE FUNCTION eg_evidence_edge_transition_guard()');
+            DB::statement("CREATE FUNCTION eg_evidence_edge_append_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF TG_OP = 'UPDATE' THEN RAISE EXCEPTION 'estimate_generation.evidence_edge_update_forbidden'; END IF; IF EXISTS (SELECT 1 FROM estimate_generation_evidence WHERE id = OLD.parent_id AND organization_id = OLD.organization_id AND project_id = OLD.project_id AND session_id = OLD.session_id) AND EXISTS (SELECT 1 FROM estimate_generation_evidence WHERE id = OLD.child_id AND organization_id = OLD.organization_id AND project_id = OLD.project_id AND session_id = OLD.session_id) THEN RAISE EXCEPTION 'estimate_generation.evidence_edge_delete_forbidden'; END IF; RETURN OLD; END; $$");
+            DB::statement('CREATE TRIGGER eg_evidence_edge_append_trg BEFORE UPDATE OR DELETE ON estimate_generation_evidence_edges FOR EACH ROW EXECUTE FUNCTION eg_evidence_edge_append_guard()');
         } else {
             Schema::table('estimate_generation_evidence_edges', function (Blueprint $table): void {
                 $table->foreign('parent_id', 'eg_evidence_edge_parent_fk')->references('id')->on('estimate_generation_evidence')->cascadeOnDelete();
@@ -80,7 +84,11 @@ return new class extends Migration
     public function down(): void
     {
         if (DB::getDriverName() === 'pgsql') {
+            DB::statement('DROP TRIGGER IF EXISTS eg_evidence_edge_append_trg ON estimate_generation_evidence_edges');
+            DB::statement('DROP TRIGGER IF EXISTS eg_evidence_edge_transition_trg ON estimate_generation_evidence_edges');
             DB::statement('DROP TRIGGER IF EXISTS eg_evidence_immutable_trg ON estimate_generation_evidence');
+            DB::statement('DROP FUNCTION IF EXISTS eg_evidence_edge_append_guard()');
+            DB::statement('DROP FUNCTION IF EXISTS eg_evidence_edge_transition_guard()');
             DB::statement('DROP FUNCTION IF EXISTS eg_evidence_immutable_guard()');
         }
         Schema::dropIfExists('estimate_generation_evidence_edges');
