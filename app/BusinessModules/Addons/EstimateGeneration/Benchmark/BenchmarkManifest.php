@@ -138,6 +138,12 @@ final readonly class BenchmarkManifest
         return count($this->cases);
     }
 
+    /** @return list<BenchmarkCaseData> */
+    public function cases(): array
+    {
+        return $this->cases;
+    }
+
     /** @param array<string, mixed> $payload */
     private static function caseFromArray(array $payload, string $root): BenchmarkCaseData
     {
@@ -217,6 +223,7 @@ final readonly class BenchmarkManifest
                 continue;
             }
             foreach ([[$case->inputPath(), $case->inputSha256, 64_000_000], [$case->expectedPath(), $case->expectedSha256, 4_000_000]] as [$path, $hash, $maxBytes]) {
+                self::assertSafePathComponents($path, $root);
                 $real = realpath($path);
                 $stat = @lstat($path);
                 if ($real === false || ! is_file($real) || is_link($path) || ! is_array($stat)
@@ -231,9 +238,16 @@ final readonly class BenchmarkManifest
                     throw new BenchmarkManifestException('fixture_hash_mismatch');
                 }
             }
-            if (in_array($case->sourceType, [BenchmarkSourceType::VectorPdf, BenchmarkSourceType::ScannedPdf], true)) {
-                (new BenchmarkFixtureDescriptorValidator)->pdf($case->inputPath(), $case->sourceType->value);
+            $inputBytes = @file_get_contents($case->inputPath());
+            if (! is_string($inputBytes)) {
+                throw new BenchmarkManifestException('fixture_file_invalid');
             }
+            (new BenchmarkFixtureDescriptorValidator)->validateBytes(
+                $inputBytes,
+                $case->sourceType,
+                $case->inputLocator,
+                $case->allowedCapabilities,
+            );
             try {
                 $expectedPayload = json_decode((string) file_get_contents($case->expectedPath()), true, 64, JSON_THROW_ON_ERROR);
             } catch (JsonException) {
@@ -358,6 +372,27 @@ final readonly class BenchmarkManifest
         $prefix = rtrim(str_replace('\\', '/', $root), '/').'/';
 
         return str_starts_with(str_replace('\\', '/', $path), $prefix);
+    }
+
+    private static function assertSafePathComponents(string $path, string $root): void
+    {
+        $normalizedRoot = rtrim(str_replace('\\', '/', $root), '/');
+        $normalizedPath = str_replace('\\', '/', $path);
+        if (! str_starts_with($normalizedPath, $normalizedRoot.'/')) {
+            throw new BenchmarkManifestException('fixture_file_invalid');
+        }
+        $current = $normalizedRoot;
+        foreach (explode('/', substr($normalizedPath, strlen($normalizedRoot) + 1)) as $component) {
+            if ($component === '' || $component === '.' || $component === '..') {
+                throw new BenchmarkManifestException('fixture_file_invalid');
+            }
+            $current .= '/'.$component;
+            $stat = @lstat($current);
+            if (! is_array($stat) || is_link($current) || (PHP_OS_FAMILY !== 'Windows' && @readlink($current) !== false)
+                || (((int) ($stat['mode'] ?? 0)) & 0170000) === 0120000) {
+                throw new BenchmarkManifestException('fixture_file_invalid');
+            }
+        }
     }
 
     /** @param array<string, mixed> $payload */

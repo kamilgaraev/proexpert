@@ -10,7 +10,7 @@ final readonly class AcceptanceBenchmarkCorpusLoader
 {
     public function __construct(private BenchmarkPrivateObjectStore $store) {}
 
-    public function load(int $organizationId, string $manifestLocator): BenchmarkCorpus
+    public function load(int $organizationId, string $manifestLocator, BenchmarkManifest $publicManifest): BenchmarkCorpus
     {
         if ($organizationId < 1) {
             throw new BenchmarkContractException('acceptance_organization_invalid');
@@ -34,11 +34,59 @@ final readonly class AcceptanceBenchmarkCorpusLoader
         if ($cases === [] || count($cases) !== $manifest->caseCount()) {
             throw new BenchmarkContractException('acceptance_dataset_invalid');
         }
+        $this->assertGloballyDisjoint($publicManifest, $manifest);
+        $objects = new PrivateBenchmarkObjectReader($this->store, $organizationId);
+        $this->preflight($cases, $objects);
 
         return new BenchmarkCorpus(
             $manifest,
-            new PrivateBenchmarkObjectReader($this->store, $organizationId),
+            $objects,
             'acceptance:org-'.$organizationId.':'.$manifest->manifestVersion,
         );
+    }
+
+    private function assertGloballyDisjoint(BenchmarkManifest $public, BenchmarkManifest $acceptance): void
+    {
+        $ids = [];
+        $locators = [];
+        $digests = [];
+        foreach ($public->cases() as $case) {
+            $ids[$case->id] = true;
+            $locators[$case->inputLocator] = true;
+            $locators[$case->expectedLocator] = true;
+            $digests[$case->inputSha256] = true;
+            $digests[$case->expectedSha256] = true;
+        }
+        foreach ($acceptance->cases() as $case) {
+            if (isset($ids[$case->id])) {
+                throw new BenchmarkContractException('cross_manifest_case_id_collision');
+            }
+            if (isset($locators[$case->inputLocator]) || isset($locators[$case->expectedLocator])) {
+                throw new BenchmarkContractException('cross_manifest_locator_collision');
+            }
+            if (isset($digests[$case->inputSha256]) || isset($digests[$case->expectedSha256])) {
+                throw new BenchmarkContractException('cross_manifest_digest_ownership_collision');
+            }
+        }
+    }
+
+    /** @param list<BenchmarkCaseData> $cases */
+    private function preflight(array $cases, BenchmarkObjectReader $objects): void
+    {
+        $descriptor = new BenchmarkFixtureDescriptorValidator;
+        foreach ($cases as $case) {
+            $input = $objects->read($case, 'input', 64_000_000);
+            $expectedJson = $objects->read($case, 'expected', 4_000_000);
+            $descriptor->validateBytes($input, $case->sourceType, $case->inputLocator, $case->allowedCapabilities);
+            try {
+                $expected = json_decode($expectedJson, true, 64, JSON_THROW_ON_ERROR);
+                if (! is_array($expected)) {
+                    throw new BenchmarkContractException('expected_contract_invalid');
+                }
+                BenchmarkExpectedContract::expected($expected, $case->expectedModelSchemaVersion);
+            } catch (JsonException|BenchmarkContractException) {
+                throw new BenchmarkContractException('expected_contract_invalid');
+            }
+        }
     }
 }

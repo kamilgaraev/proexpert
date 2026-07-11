@@ -90,6 +90,26 @@ final class BenchmarkPathSafetyTest extends TestCase
         BenchmarkManifest::fromArray($this->manifest, $this->root);
     }
 
+    #[Test]
+    public function intermediate_directory_link_is_rejected_even_when_target_remains_inside_root(): void
+    {
+        $link = $this->root.'/development/photo-plan-001';
+        $target = $this->root.'/development/photo-plan-real';
+        rename($link, $target);
+        if (PHP_OS_FAMILY === 'Windows') {
+            $process = new Process(['cmd', '/c', 'mklink', '/J', str_replace('/', '\\', $link), str_replace('/', '\\', $target)]);
+            $process->run();
+            self::assertTrue($process->isSuccessful(), $process->getErrorOutput());
+        } else {
+            self::assertTrue(symlink($target, $link));
+        }
+        $this->junctions[] = $link;
+
+        $this->expectException(BenchmarkManifestException::class);
+        $this->expectExceptionMessage('fixture_file_invalid');
+        BenchmarkManifest::fromArray($this->manifest, $this->root);
+    }
+
     private function copyTree(string $source, string $destination): void
     {
         foreach (scandir($source) ?: [] as $name) {

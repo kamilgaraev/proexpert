@@ -9,7 +9,7 @@ Status: DONE
 - Added a typed pipeline-adapter boundary, deterministic sequential runner with per-case timeout contract, safe failure codes, explicit unsupported policy, macro/micro aggregation, per-source/per-tag breakdowns, canonical report JSON, deterministic fingerprint, exact decimal cost accumulation, and unknown-cost accounting.
 - Added all required metric names and explicit formulas/empty-set/zero-denominator/outlier semantics.
 - Added a DB-less command with explicit adapter/pipeline/prompt/failure-policy versions, strict-zero default failure threshold, protected output root, no overwrite, and production/private-acceptance gates.
-- Registered no synthetic production adapter. A real Plan 3 pipeline adapter must be registered by later tasks; tests inject their fixture adapter explicitly.
+- Registered the real current baseline adapter in production. It invokes the existing PDF text and rule-based drawing analysis pipeline; tests may still inject purpose-built adapters at the explicit registry boundary.
 
 ## Fixture provenance
 
@@ -97,6 +97,14 @@ The PDF corpus contains two real one-page PDFs verified with Poppler and the exe
 
 - Vector plan: A4 landscape, vector walls/openings/dimensions/text, no embedded image; SHA-256 `18b3ab3ddaa317b1f1f11c0dadd8aae266c5a3de169ee822b9340fb19a517dd4`.
 - Scanned plan: A4 landscape, one 1800x1273 grayscale raster, no text layer; SHA-256 `c35739115f4f8347fe05007d97c4ff0c3e8ceb2bd581f7e01ee9d1ea25b797eb`.
+
+Second hardening pass:
+
+- The private manifest is checked against the complete public identity index for IDs, locators, and input/expected digests in both cross-role directions.
+- Every selected private case is preflighted before the runner: both objects are bounded-read and hash-verified, the source descriptor is validated, and expected JSON is checked against the closed schema. This includes authorized unsupported cases; any failure prevents adapter execution and report creation.
+- Every lexical local path component from fixture root to object is rejected when it is a symlink/reparse point; final hardlinks remain forbidden. Actual outside-root and inside-root Windows junction/POSIX symlink cases are covered.
+- Bounded validators now cover PPM dimensions/body, safe SVG geometry without active/external content, DXF sections/terminator, the exact licensed DWG placeholder policy, and PDF structure. Source/extension mismatches are rejected for local and private objects.
+- Benchmark PDFs are marked binary in `.gitattributes`, so repository diff checks do not parse valid PDF byte syntax as text whitespace.
 
 Fresh corrective verification:
 

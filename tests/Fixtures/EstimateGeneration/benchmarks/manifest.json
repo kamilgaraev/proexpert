@@ -61,7 +61,7 @@
       "tags": ["cad", "synthetic", "unsupported_conversion"],
       "schema_version": 1,
       "expected_model_schema_version": "benchmark-expected:v1",
-      "allowed_capabilities": ["descriptor_validation"]
+      "allowed_capabilities": ["descriptor_validation", "unsupported_conversion"]
     },
     {
       "id": "reg-dxf-001",

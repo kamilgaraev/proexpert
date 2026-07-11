@@ -73,7 +73,11 @@ final class RunEstimateGenerationBenchmarkCaseCommand extends Command
         if (app()->environment('production') || getenv('RUN_ESTIMATE_GENERATION_ACCEPTANCE_BENCHMARK') !== '1') {
             throw new \InvalidArgumentException('acceptance_worker_forbidden');
         }
-        $corpus = $this->acceptanceLoader->load($this->acceptanceOrganizationId, $this->acceptanceManifestLocator);
+        $corpus = $this->acceptanceLoader->load(
+            $this->acceptanceOrganizationId,
+            $this->acceptanceManifestLocator,
+            BenchmarkManifest::fromFile($this->repositoryManifestPath, $this->fixtureRoot),
+        );
         if (! hash_equals($corpus->executionReference, $reference)) {
             throw new \InvalidArgumentException('manifest_reference_invalid');
         }

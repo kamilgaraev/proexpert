@@ -92,6 +92,39 @@ final class EstimateGenerationBenchmarkCommandTest extends TestCase
     }
 
     #[Test]
+    public function acceptance_preflight_failure_never_calls_adapter_or_writes_report(): void
+    {
+        [$loader, $locator] = $this->acceptanceLoader(true);
+        $adapter = new class implements BenchmarkPipelineAdapter
+        {
+            public int $calls = 0;
+
+            public function id(): string
+            {
+                return 'preflight-spy';
+            }
+
+            public function run(BenchmarkCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
+            {
+                $this->calls++;
+
+                return BenchmarkPipelineResultData::technicalFailure('must_not_run');
+            }
+        };
+        $tester = $this->tester([$adapter], 'testing', '1', $locator, 42, $loader);
+
+        self::assertSame(1, $tester->execute([
+            '--dataset' => 'acceptance',
+            '--adapter' => 'preflight-spy',
+            '--pipeline-version' => 'preflight-spy:v1',
+            '--output' => 'preflight.json',
+        ]));
+        self::assertSame(0, $adapter->calls);
+        self::assertFileDoesNotExist($this->outputRoot.'/preflight.json');
+        self::assertStringContainsString('expected_contract_invalid', $tester->getDisplay());
+    }
+
+    #[Test]
     public function output_is_restricted_to_benchmark_root_and_never_overwrites(): void
     {
         $tester = $this->tester([$this->passingAdapter()]);
@@ -223,7 +256,7 @@ final class EstimateGenerationBenchmarkCommandTest extends TestCase
     }
 
     /** @return array{AcceptanceBenchmarkCorpusLoader, string} */
-    private function acceptanceLoader(): array
+    private function acceptanceLoader(bool $withInvalidUnsupportedCase = false): array
     {
         $expected = json_encode([
             'schema_version' => 1, 'expected_model_schema_version' => 'benchmark-expected:v1',
@@ -233,20 +266,40 @@ final class EstimateGenerationBenchmarkCommandTest extends TestCase
                 'applicable_item_ids' => [], 'evidence_ids_by_item' => [],
             ],
         ], JSON_THROW_ON_ERROR);
-        $input = 'private-input';
+        $input = "P3\n1 1\n255\n0 0 0\n";
+        $cases = [[
+            'id' => 'acceptance-command-001', 'dataset' => 'acceptance', 'source_type' => 'photo_plan',
+            'input_locator' => 's3://org-{organization_id}/estimate-generation/benchmarks/acceptance/case/input.ppm',
+            'expected_locator' => 's3://org-{organization_id}/estimate-generation/benchmarks/acceptance/case/expected.json',
+            'input_sha256' => hash('sha256', $input), 'expected_sha256' => hash('sha256', $expected),
+            'license' => 'private-approved', 'provenance' => 'private:approved', 'tags' => ['private'],
+            'schema_version' => 1, 'expected_model_schema_version' => 'benchmark-expected:v1',
+            'allowed_capabilities' => ['document_understanding'],
+        ]];
+        $objects = [
+            'org-42/estimate-generation/benchmarks/acceptance/case/input.ppm' => $input,
+            'org-42/estimate-generation/benchmarks/acceptance/case/expected.json' => $expected,
+        ];
+        if ($withInvalidUnsupportedCase) {
+            $invalidExpected = '{"schema_version":1}';
+            $cases[] = array_merge($cases[0], [
+                'id' => 'acceptance-command-dwg-002', 'source_type' => 'dwg',
+                'input_locator' => 's3://org-{organization_id}/estimate-generation/benchmarks/acceptance/case/unsupported.dwg',
+                'expected_locator' => 's3://org-{organization_id}/estimate-generation/benchmarks/acceptance/case/unsupported.json',
+                'input_sha256' => hash('sha256', "AC1032 SYNTHETIC-LICENSED-DESCRIPTOR DWG conversion intentionally unsupported in Task 1\n"),
+                'expected_sha256' => hash('sha256', $invalidExpected),
+                'tags' => ['private', 'unsupported_conversion'],
+                'allowed_capabilities' => ['descriptor_validation', 'unsupported_conversion'],
+            ]);
+            $objects['org-42/estimate-generation/benchmarks/acceptance/case/unsupported.dwg'] = "AC1032 SYNTHETIC-LICENSED-DESCRIPTOR DWG conversion intentionally unsupported in Task 1\n";
+            $objects['org-42/estimate-generation/benchmarks/acceptance/case/unsupported.json'] = $invalidExpected;
+        }
         $manifest = json_encode([
             'schema_version' => 1, 'manifest_version' => 'acceptance-command:v1',
-            'cases' => [[
-                'id' => 'acceptance-command-001', 'dataset' => 'acceptance', 'source_type' => 'vector_pdf',
-                'input_locator' => 's3://org-{organization_id}/estimate-generation/benchmarks/acceptance/case/input.pdf',
-                'expected_locator' => 's3://org-{organization_id}/estimate-generation/benchmarks/acceptance/case/expected.json',
-                'input_sha256' => hash('sha256', $input), 'expected_sha256' => hash('sha256', $expected),
-                'license' => 'private-approved', 'provenance' => 'private:approved', 'tags' => ['private'],
-                'schema_version' => 1, 'expected_model_schema_version' => 'benchmark-expected:v1',
-                'allowed_capabilities' => ['document_understanding'],
-            ]],
+            'cases' => $cases,
         ], JSON_THROW_ON_ERROR);
-        $store = new class(['org-42/estimate-generation/benchmarks/acceptance/manifest.json' => $manifest, 'org-42/estimate-generation/benchmarks/acceptance/case/input.pdf' => $input, 'org-42/estimate-generation/benchmarks/acceptance/case/expected.json' => $expected]) implements BenchmarkPrivateObjectStore
+        $objects['org-42/estimate-generation/benchmarks/acceptance/manifest.json'] = $manifest;
+        $store = new class($objects) implements BenchmarkPrivateObjectStore
         {
             /** @param array<string, string> $objects */
             public function __construct(private array $objects) {}

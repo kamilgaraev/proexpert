@@ -112,7 +112,11 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
             throw new InvalidArgumentException('acceptance_private_corpus_not_configured');
         }
 
-        return $this->acceptanceLoader->load($this->acceptanceOrganizationId, $this->acceptanceManifestLocator);
+        return $this->acceptanceLoader->load(
+            $this->acceptanceOrganizationId,
+            $this->acceptanceManifestLocator,
+            BenchmarkManifest::fromFile($this->repositoryManifestPath, $this->fixtureRoot),
+        );
     }
 
     private function failureRate(): float
