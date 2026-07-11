@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimate;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationTransition;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ApplyEstimateGenerationDraftRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\CreateEstimateGenerationSessionRequest;
@@ -22,7 +26,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPacka
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationExcelExportService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationFinalWorkItemGuard;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
@@ -53,7 +56,7 @@ class EstimateGenerationController extends Controller
     public function __construct(
         protected EstimateGenerationOrchestrator $orchestrator,
         protected DocumentParsingService $documentParsingService,
-        protected EstimateDraftPersistenceService $draftPersistenceService,
+        protected ApplyGeneratedEstimate $applyGeneratedEstimate,
         protected EstimateGenerationExcelExportService $excelExportService,
         protected EstimateGenerationRegionalContextResolver $regionalContextResolver,
         protected EstimateGenerationFinalWorkItemGuard $finalWorkItemGuard,
@@ -157,7 +160,7 @@ class EstimateGenerationController extends Controller
 
             $readiness = $this->documentReadinessService->evaluate($session->load('documents'));
 
-            if (!$readiness['can_analyze']) {
+            if (! $readiness['can_analyze']) {
                 return AdminResponse::error(
                     trans_message($readiness['blocking_message_key'] ?? 'estimate_generation.documents_processing'),
                     409,
@@ -166,7 +169,7 @@ class EstimateGenerationController extends Controller
                 );
             }
 
-            if (!$this->hasGenerationInput($session, $readiness['summary'])) {
+            if (! $this->hasGenerationInput($session, $readiness['summary'])) {
                 return AdminResponse::error(
                     trans_message('estimate_generation.input_required'),
                     422,
@@ -210,7 +213,7 @@ class EstimateGenerationController extends Controller
 
             $readiness = $this->documentReadinessService->evaluate($session->load('documents'));
 
-            if (!$readiness['can_generate']) {
+            if (! $readiness['can_generate']) {
                 if ($this->canWaitForDocuments($session, $readiness['summary'])) {
                     $session->forceFill([
                         'status' => 'waiting_for_documents',
@@ -234,7 +237,7 @@ class EstimateGenerationController extends Controller
                 );
             }
 
-            if (!$this->hasGenerationInput($session, $readiness['summary'])) {
+            if (! $this->hasGenerationInput($session, $readiness['summary'])) {
                 return AdminResponse::error(
                     trans_message('estimate_generation.input_required'),
                     422,
@@ -243,7 +246,7 @@ class EstimateGenerationController extends Controller
                 );
             }
 
-            if (!in_array($session->status, ['queued', 'processing'], true)) {
+            if (! in_array($session->status, ['queued', 'processing'], true)) {
                 $session->forceFill([
                     'status' => 'queued',
                     'processing_stage' => 'queued',
@@ -349,17 +352,17 @@ class EstimateGenerationController extends Controller
                     fputcsv($handle, ['Локальная смета', 'Раздел', 'Работа', 'Ед.', 'Кол-во', 'Итого', 'Основание']);
 
                     foreach ($draft['local_estimates'] ?? [] as $localEstimate) {
-                        if (!is_array($localEstimate)) {
+                        if (! is_array($localEstimate)) {
                             continue;
                         }
 
                         foreach ($localEstimate['sections'] ?? [] as $section) {
-                            if (!is_array($section)) {
+                            if (! is_array($section)) {
                                 continue;
                             }
 
                             foreach ($section['work_items'] ?? [] as $workItem) {
-                                if (!is_array($workItem) || !$this->finalWorkItemGuard->isFinalEstimateWorkItem($workItem)) {
+                                if (! is_array($workItem) || ! $this->finalWorkItemGuard->isFinalEstimateWorkItem($workItem)) {
                                     continue;
                                 }
 
@@ -377,7 +380,7 @@ class EstimateGenerationController extends Controller
                     }
 
                     fclose($handle);
-                }, 'estimate-generation-draft-' . $session->id . '.csv', [
+                }, 'estimate-generation-draft-'.$session->id.'.csv', [
                     'Content-Type' => 'text/csv; charset=UTF-8',
                 ]);
             }
@@ -385,7 +388,7 @@ class EstimateGenerationController extends Controller
             if ($format === 'json') {
                 return response()->streamDownload(function () use ($draft): void {
                     echo json_encode($draft, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-                }, 'estimate-generation-draft-' . $session->id . '.json', [
+                }, 'estimate-generation-draft-'.$session->id.'.json', [
                     'Content-Type' => 'application/json; charset=UTF-8',
                 ]);
             }
@@ -412,46 +415,24 @@ class EstimateGenerationController extends Controller
         try {
             $this->guardSession($request, $project, $session);
 
-            if ($session->status === 'blocked') {
-                return AdminResponse::error(trans_message('estimate_generation.apply_blocked'), 422);
-            }
+            $validated = $request->validated();
+            $result = $this->applyGeneratedEstimate->handle(new ApplyGeneratedEstimateCommand(
+                sessionId: (int) $session->getKey(),
+                organizationId: (int) $request->user()->current_organization_id,
+                projectId: (int) $project->getKey(),
+                expectedStateVersion: (int) $validated['state_version'],
+                name: isset($validated['name']) ? (string) $validated['name'] : null,
+                type: isset($validated['type']) ? (string) $validated['type'] : null,
+                estimateDate: isset($validated['estimate_date']) ? (string) $validated['estimate_date'] : null,
+            ));
 
-            $this->loadSessionDocumentsForReadiness($session);
-            $readiness = $this->estimatorReadinessService->evaluate($session);
-            $reviewQueue = $this->reviewItemService->forSession($session);
-            $blockingReviewItems = (int) data_get($reviewQueue, 'summary.blocking', 0);
-
-            if ($blockingReviewItems > 0) {
-                $message = trans_message('estimate_generation.apply_review_items_blocked', [
-                    'count' => $blockingReviewItems,
-                ]);
-
-                return AdminResponse::error(
-                    $message,
-                    422,
-                    ['draft' => [$message]],
-                    [
-                        'estimator_readiness' => $readiness,
-                        'review_queue' => $reviewQueue,
-                    ]
-                );
-            }
-
-            if (($readiness['can_apply'] ?? false) !== true) {
-                return AdminResponse::error(
-                    trans_message('estimate_generation.apply_readiness_blocked'),
-                    422,
-                    ['estimator_readiness' => $readiness]
-                );
-            }
-
-            $estimate = $this->draftPersistenceService->apply($session, $request->validated(), $request->user());
-
-            return AdminResponse::success([
-                'estimate_id' => $estimate->id,
-            ], trans_message('estimate_generation.draft_applied'));
+            return AdminResponse::success($result->toArray(), trans_message('estimate_generation.draft_applied'));
         } catch (ValidationException $e) {
             return AdminResponse::error($e->getMessage(), 422, $e->errors());
+        } catch (StaleEstimateGenerationState $e) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (InvalidEstimateGenerationTransition $e) {
+            return AdminResponse::error(trans_message('estimate_generation.apply_not_ready'), 422);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Apply failed', [
                 'error' => $e->getMessage(),
@@ -651,7 +632,7 @@ class EstimateGenerationController extends Controller
     }
 
     /**
-     * @param array<string, mixed> $documentsSummary
+     * @param  array<string, mixed>  $documentsSummary
      */
     private function hasGenerationInput(EstimateGenerationSession $session, array $documentsSummary): bool
     {
@@ -661,7 +642,7 @@ class EstimateGenerationController extends Controller
     }
 
     /**
-     * @param array<string, mixed> $documentsSummary
+     * @param  array<string, mixed>  $documentsSummary
      */
     private function canWaitForDocuments(EstimateGenerationSession $session, array $documentsSummary): bool
     {
