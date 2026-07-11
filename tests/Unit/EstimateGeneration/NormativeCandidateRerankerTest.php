@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AttemptAwareNormativeLlmClient;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\LLMNormativeCandidateReranker;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\RuleBasedNormativeCandidateReranker;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
@@ -128,15 +132,11 @@ final class NormativeCandidateRerankerTest extends TestCase
 
     public function test_llm_reranker_cannot_introduce_candidate_not_in_list(): void
     {
-        $reranker = new LLMNormativeCandidateReranker(
-            new FakeNormativeRerankerLlm('{"selected_candidate_key":"ghost","confidence":0.9,"reason":"x","evidence_keys":[]}'),
-            $this->ruleBasedReranker(),
-            true
-        );
+        $reranker = $this->llmReranker('{"selected_candidate_key":"ghost","confidence":0.9,"reason":"x","evidence_keys":[]}');
 
         $result = $reranker->rerank(
             ['name' => 'Бетонирование фундаментной ленты', 'unit' => 'м3'],
-            ['scope_type' => 'foundation'],
+            $this->paidContext(),
             [$this->candidate('candidate-a', ['score' => 60])]
         );
 
@@ -147,15 +147,11 @@ final class NormativeCandidateRerankerTest extends TestCase
 
     public function test_llm_reranker_cannot_select_hard_gated_candidate(): void
     {
-        $reranker = new LLMNormativeCandidateReranker(
-            new FakeNormativeRerankerLlm('{"selected_candidate_key":"candidate-a","confidence":0.95,"reason":"x","evidence_keys":[]}'),
-            $this->ruleBasedReranker(),
-            true
-        );
+        $reranker = $this->llmReranker('{"selected_candidate_key":"candidate-a","confidence":0.95,"reason":"x","evidence_keys":[]}');
 
         $result = $reranker->rerank(
             ['name' => 'Опалубка ленточного фундамента', 'unit' => 'м2'],
-            ['scope_type' => 'foundation'],
+            $this->paidContext(),
             [
                 $this->candidate('candidate-a', ['warnings' => ['unit_mismatch'], 'score' => 100]),
                 $this->candidate('candidate-b', ['score' => 40]),
@@ -169,15 +165,11 @@ final class NormativeCandidateRerankerTest extends TestCase
 
     public function test_llm_reranker_cannot_select_partially_priced_candidate(): void
     {
-        $reranker = new LLMNormativeCandidateReranker(
-            new FakeNormativeRerankerLlm('{"selected_candidate_key":"candidate-partial","confidence":0.95,"reason":"x","evidence_keys":[]}'),
-            $this->ruleBasedReranker(),
-            true
-        );
+        $reranker = $this->llmReranker('{"selected_candidate_key":"candidate-partial","confidence":0.95,"reason":"x","evidence_keys":[]}');
 
         $result = $reranker->rerank(
             ['name' => 'Бетонирование фундаментной ленты', 'unit' => 'м3'],
-            ['scope_type' => 'foundation'],
+            $this->paidContext(),
             [
                 $this->candidate('candidate-partial', [
                     'warnings' => ['norm_with_unpriced_resources'],
@@ -203,15 +195,11 @@ final class NormativeCandidateRerankerTest extends TestCase
 
     public function test_invalid_llm_json_returns_rule_based_result_with_warning(): void
     {
-        $reranker = new LLMNormativeCandidateReranker(
-            new FakeNormativeRerankerLlm('не json'),
-            $this->ruleBasedReranker(),
-            true
-        );
+        $reranker = $this->llmReranker('не json');
 
         $result = $reranker->rerank(
             ['name' => 'Бетонирование фундаментной ленты', 'unit' => 'м3'],
-            ['scope_type' => 'foundation'],
+            $this->paidContext(),
             [$this->candidate('candidate-a', ['score' => 60])]
         );
 
@@ -221,12 +209,46 @@ final class NormativeCandidateRerankerTest extends TestCase
     }
 
     /**
-     * @param array<string, mixed> $overrides
+     * @param  array<string, mixed>  $overrides
      * @return array<string, mixed>
      */
     private function ruleBasedReranker(): RuleBasedNormativeCandidateReranker
     {
-        return new RuleBasedNormativeCandidateReranker();
+        return new RuleBasedNormativeCandidateReranker;
+    }
+
+    private function llmReranker(string $content): LLMNormativeCandidateReranker
+    {
+        $provider = new FakeNormativeRerankerLlm($content);
+        $wire = new class($provider) implements RerankWireClient
+        {
+            public function __construct(private FakeNormativeRerankerLlm $provider) {}
+
+            public function provider(): string
+            {
+                return 'timeweb';
+            }
+
+            public function call(string $model, array $messages, array $options): array
+            {
+                return $this->provider->chat($messages, $options);
+            }
+        };
+        $store = new class implements AiUsageStore
+        {
+            public function record(AiUsageData $data): void {}
+        };
+
+        return new LLMNormativeCandidateReranker($provider, $this->ruleBasedReranker(), true,
+            new AttemptAwareNormativeLlmClient($wire, $store, [$provider->getModel()], []));
+    }
+
+    /** @return array<string, mixed> */
+    private function paidContext(): array
+    {
+        return ['scope_type' => 'foundation', 'organization_id' => 1, 'project_id' => 2, 'session_id' => 3,
+            'checkpoint_claim_token' => '018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c', 'input_version' => 'sha256:abc',
+            'work_item_key' => 'work-1', 'logical_attempt' => 1];
     }
 
     private function candidate(string $key, array $overrides = []): array

@@ -6,10 +6,9 @@ namespace Tests\Unit\EstimateGeneration\Ocr;
 
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrDocumentStorageService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrUsageLogger;
-use ReflectionClass;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
+use ReflectionClass;
 use Tests\TestCase;
 
 class EstimateGenerationOcrCompatibilityTest extends TestCase
@@ -23,7 +22,7 @@ class EstimateGenerationOcrCompatibilityTest extends TestCase
         );
 
         $this->assertContains(OcrDocumentStorageService::class, $dependencies);
-        $this->assertContains(OcrUsageLogger::class, $dependencies);
+        $this->assertNotContains('App\\BusinessModules\\Addons\\EstimateGeneration\\Services\\Ocr\\OcrUsageLogger', $dependencies);
         $this->assertContainsOnly('string', $dependencies);
     }
 
@@ -33,7 +32,7 @@ class EstimateGenerationOcrCompatibilityTest extends TestCase
         $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root));
 
         foreach ($iterator as $file) {
-            if (!$file->isFile() || $file->getExtension() !== 'php') {
+            if (! $file->isFile() || $file->getExtension() !== 'php') {
                 continue;
             }
 

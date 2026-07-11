@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking;
 
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\NormativeRerankResultData;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AttemptAwareNormativeLlmClient;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
-use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use Throwable;
 
 final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerInterface
@@ -15,33 +15,38 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
         private readonly LLMProviderInterface $llmProvider,
         private readonly RuleBasedNormativeCandidateReranker $fallback,
         private readonly ?bool $enabled = null,
-        private readonly ?UsageTracker $usageTracker = null,
+        private readonly ?AttemptAwareNormativeLlmClient $attemptAwareClient = null,
     ) {}
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<string, mixed> $context
-     * @param array<int, array<string, mixed>> $candidates
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $context
+     * @param  array<int, array<string, mixed>>  $candidates
      */
     public function rerank(array $workItem, array $context, array $candidates): NormativeRerankResultData
     {
-        if (!$this->enabled()) {
+        if (! $this->enabled()) {
             return $this->fallback->rerank($workItem, $context, $candidates)
                 ->withWarnings(['llm_reranker_disabled']);
         }
 
-        if (!$this->llmProvider->isAvailable()) {
+        if (! $this->llmProvider->isAvailable()) {
             return $this->fallback->rerank($workItem, $context, $candidates)
                 ->withWarnings(['llm_reranker_unavailable']);
         }
 
         try {
-            $response = $this->llmProvider->chat($this->messages($workItem, $context, $candidates), [
+            if (! $this->attemptAwareClient instanceof AttemptAwareNormativeLlmClient) {
+                throw new \RuntimeException('Attempt-aware reranker is required.');
+            }
+            $response = $this->attemptAwareClient->chat($this->messages($workItem, $context, $candidates), [
                 'profile' => 'json',
                 'temperature' => 0,
                 'max_tokens' => 240,
+            ], [
+                ...$context,
+                'work_item_key' => $workItem['key'] ?? $workItem['id'] ?? $context['work_item_key'] ?? null,
             ]);
-            $this->recordUsage($response, $context, count($candidates));
         } catch (Throwable) {
             return $this->fallback->rerank($workItem, $context, $candidates)
                 ->withWarnings(['llm_reranker_failed']);
@@ -92,9 +97,9 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
     }
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<string, mixed> $context
-     * @param array<int, array<string, mixed>> $candidates
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $context
+     * @param  array<int, array<string, mixed>>  $candidates
      * @return array<int, array<string, string>>
      */
     private function messages(array $workItem, array $context, array $candidates): array
@@ -149,38 +154,9 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
     }
 
     /**
-     * @param array<string, mixed> $response
-     * @param array<string, mixed> $context
+     * @param  array<string, mixed>  $response
+     * @param  array<string, mixed>  $context
      */
-    private function recordUsage(array $response, array $context, int $candidateCount): void
-    {
-        $inputTokens = max(0, (int) ($response['input_tokens'] ?? 0));
-        $outputTokens = max(0, (int) ($response['output_tokens'] ?? 0));
-        $totalTokens = max(0, (int) ($response['tokens_used'] ?? ($inputTokens + $outputTokens)));
-
-        if ($totalTokens <= 0 && $inputTokens <= 0 && $outputTokens <= 0) {
-            return;
-        }
-
-        ($this->usageTracker ?? app(UsageTracker::class))->recordUsage(
-            isset($context['organization_id']) ? (int) $context['organization_id'] : null,
-            isset($context['user_id']) ? (int) $context['user_id'] : null,
-            (string) ($response['provider'] ?? config('ai-assistant.llm.provider', 'unknown')),
-            (string) ($response['model'] ?? $this->llmProvider->getModel()),
-            'estimate_generation_rerank',
-            $inputTokens,
-            $outputTokens,
-            $totalTokens,
-            [
-                'project_id' => isset($context['project_id']) ? (int) $context['project_id'] : null,
-                'scope_type' => $context['scope_type'] ?? null,
-                'local_estimate_title' => $context['local_estimate_title'] ?? null,
-                'section_title' => $context['section_title'] ?? null,
-                'candidate_count' => $candidateCount,
-            ]
-        );
-    }
-
     /**
      * @return array<string, mixed>|null
      */
@@ -198,7 +174,7 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
     }
 
     /**
-     * @param array<string, mixed> $decoded
+     * @param  array<string, mixed>  $decoded
      */
     private function selectedKey(array $decoded): ?string
     {
@@ -212,7 +188,7 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
     }
 
     /**
-     * @param array<int, array<string, mixed>> $candidates
+     * @param  array<int, array<string, mixed>>  $candidates
      * @return array<string, mixed>|null
      */
     private function candidateByKey(string $selectedKey, array $candidates): ?array
@@ -243,7 +219,7 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
      */
     private function stringList(mixed $value): array
     {
-        if (!is_array($value)) {
+        if (! is_array($value)) {
             return [];
         }
 

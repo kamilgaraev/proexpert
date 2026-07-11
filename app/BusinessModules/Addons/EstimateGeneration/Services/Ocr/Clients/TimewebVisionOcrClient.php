@@ -7,6 +7,10 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Clients;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrConfigurationException;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrProviderException;
@@ -15,10 +19,13 @@ use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 final class TimewebVisionOcrClient implements OcrClientInterface
 {
     public const PROVIDER = 'timeweb';
+
+    public function __construct(private readonly ?AiUsageStore $usageStore = null) {}
 
     public function recognize(OcrDocumentInput $input): OcrRecognitionResult
     {
@@ -46,6 +53,10 @@ final class TimewebVisionOcrClient implements OcrClientInterface
                     'status' => $exception->statusCode,
                     'provider_code' => $exception->providerCode,
                 ]);
+
+                if (! $this->fallbackToAnotherModel($exception)) {
+                    throw $exception;
+                }
             }
         }
 
@@ -88,23 +99,78 @@ final class TimewebVisionOcrClient implements OcrClientInterface
             ],
         ];
 
-        try {
-            $response = Http::timeout((int) config('estimate-generation.ocr.timeout_seconds', 60))
-                ->retry(
-                    max(1, (int) config('estimate-generation.ocr.retry_attempts', 3)),
-                    max(0, (int) config('estimate-generation.ocr.retry_delay_ms', 250)),
-                    throw: false
-                )
-                ->acceptJson()
-                ->asJson()
-                ->withToken($apiKey)
-                ->post($baseUri.'/chat/completions', $requestPayload);
-        } catch (ConnectionException|RequestException $exception) {
-            throw new OcrProviderException(
-                'estimate_generation.ocr_provider_unavailable',
-                providerCode: 'timeweb_request_failed',
-                previous: $exception
-            );
+        if (! $input->operationContext instanceof AiOperationContext && $this->usageStore instanceof AiUsageStore) {
+            throw new OcrConfigurationException;
+        }
+
+        $response = null;
+        $lastException = null;
+        $retryAttempts = max(1, (int) config('estimate-generation.ocr.retry_attempts', 3));
+        for ($wireAttempt = 1; $wireAttempt <= $retryAttempts; $wireAttempt++) {
+            $startedAt = hrtime(true);
+            $status = 'connection_failed';
+            $httpCode = null;
+            $payload = [];
+            try {
+                $response = Http::timeout((int) config('estimate-generation.ocr.timeout_seconds', 60))
+                    ->acceptJson()->asJson()->withToken($apiKey)
+                    ->post($baseUri.'/chat/completions', $requestPayload);
+                $httpCode = $response->status();
+                $payload = $response->json();
+                $payload = is_array($payload) ? $payload : [];
+                if ($response->successful()) {
+                    $content = trim((string) Arr::get($payload, 'choices.0.message.content', ''));
+                    if ($content === '') {
+                        $status = 'malformed_response';
+                        $lastException = new OcrProviderException(
+                            'estimate_generation.ocr_malformed_response',
+                            providerCode: 'empty_timeweb_response',
+                        );
+                    } else {
+                        $this->pagesFromContent($content);
+                        $status = 'succeeded';
+                    }
+                } else {
+                    $status = 'http_failed';
+                    $lastException = new OcrProviderException(
+                        $this->messageKeyForStatus($response->status()),
+                        $response->status(),
+                        providerCode: 'timeweb_http_failed',
+                    );
+                }
+            } catch (ConnectionException|RequestException $exception) {
+                $lastException = new OcrProviderException(
+                    'estimate_generation.ocr_provider_unavailable',
+                    providerCode: 'timeweb_request_failed',
+                    previous: $exception
+                );
+            } finally {
+                $this->recordAttempt(
+                    $input,
+                    $model,
+                    $attempt,
+                    $wireAttempt,
+                    $status,
+                    $httpCode,
+                    $payload,
+                    (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000)),
+                );
+            }
+
+            if ($status === 'succeeded') {
+                break;
+            }
+            if ($status === 'malformed_response' || ($httpCode !== null && ! $this->retryableStatus($httpCode))) {
+                break;
+            }
+
+            if ($wireAttempt < $retryAttempts) {
+                usleep(max(0, (int) config('estimate-generation.ocr.retry_delay_ms', 250)) * 1000);
+            }
+        }
+
+        if ($response === null || ! $response->successful()) {
+            throw $lastException ?? new OcrProviderException('estimate_generation.ocr_provider_unavailable');
         }
 
         $payload = $response->json();
@@ -138,6 +204,86 @@ final class TimewebVisionOcrClient implements OcrClientInterface
                 'finish_reason' => Arr::get($payload, 'choices.0.finish_reason'),
             ],
         );
+    }
+
+    private function retryableStatus(int $status): bool
+    {
+        return in_array($status, [408, 429], true) || $status >= 500;
+    }
+
+    private function fallbackToAnotherModel(OcrProviderException $exception): bool
+    {
+        if ($exception->providerCode === 'empty_timeweb_response') {
+            return true;
+        }
+        $status = $exception->statusCode;
+
+        return $status === null || $status === 404 || in_array($status, [408, 429], true) || $status >= 500;
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function recordAttempt(
+        OcrDocumentInput $input,
+        string $model,
+        int $routeAttempt,
+        int $wireAttempt,
+        string $status,
+        ?int $httpCode,
+        array $payload,
+        int $durationMs,
+    ): void {
+        $base = $input->operationContext;
+        if (! $base instanceof AiOperationContext || ! $this->usageStore instanceof AiUsageStore) {
+            return;
+        }
+        $ordinal = (($routeAttempt - 1) * max(1, (int) config('estimate-generation.ocr.retry_attempts', 3))) + $wireAttempt;
+        $context = new AiOperationContext(
+            correlationId: $base->correlationId,
+            attemptId: AiOperationContext::deterministicId($base->correlationId.'|'.$model.'|'.$wireAttempt.'|'.$routeAttempt),
+            organizationId: $base->organizationId,
+            projectId: $base->projectId,
+            sessionId: $base->sessionId,
+            stage: $base->stage,
+            operation: $base->operation,
+            attemptOrdinal: $ordinal,
+            documentId: $base->documentId,
+            pageId: $base->pageId,
+            unitId: $base->unitId,
+        );
+        $usage = $this->usageFromPayload($payload);
+        $priceSnapshot = $this->priceSnapshot($model);
+        try {
+            $this->usageStore->record(new AiUsageData(
+                context: $context,
+                provider: self::PROVIDER,
+                requestedModel: $model,
+                status: $status,
+                durationMs: $durationMs,
+                reportedModel: is_string($payload['model'] ?? null) ? $payload['model'] : null,
+                usageStatus: isset($payload['usage']) && is_array($payload['usage']) ? 'measured' : 'unavailable',
+                inputTokens: $usage['input_tokens'],
+                outputTokens: $usage['output_tokens'],
+                imageCount: $this->isImage($input) ? 1 : 0,
+                pageCount: max(0, $input->pageCount ?? 0),
+                imageDetail: $this->isImage($input) ? (string) config('estimate-generation.ocr.timeweb.image_detail', 'high') : null,
+                httpCode: $httpCode,
+                priceSnapshot: AiPriceSnapshot::fromArray($priceSnapshot),
+            ));
+        } catch (Throwable $exception) {
+            Log::error('[EstimateGeneration OCR] Usage recording failed', ['exception_class' => $exception::class]);
+        }
+    }
+
+    /** @return array<string, mixed> */
+    private function priceSnapshot(string $model): array
+    {
+        $configured = config("estimate-generation.ai_pricing.timeweb.models.{$model}", []);
+        if (! is_array($configured)) {
+            return [];
+        }
+        $allowed = ['input_per_million', 'cached_input_per_million', 'output_per_million', 'reasoning_per_million', 'reasoning_mode', 'image_unit', 'page_unit', 'currency', 'source', 'version', 'effective_at'];
+
+        return array_intersect_key($configured, array_flip($allowed));
     }
 
     /**

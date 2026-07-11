@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrDocumentInput;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
 
 final readonly class OcrDocumentUnitProcessor implements DocumentUnitProcessor
@@ -50,11 +51,27 @@ final readonly class OcrDocumentUnitProcessor implements DocumentUnitProcessor
             );
         }
 
+        $correlationId = AiOperationContext::deterministicId(implode('|', [
+            'unit', $context->sessionId, $context->documentId, $context->unitId, $context->sourceVersion,
+            $context->claimToken, $context->unitAttemptCount,
+        ]));
         $recognition = $this->ocr->recognize(new OcrDocumentInput(
             content: $content,
             mimeType: $context->mimeType,
             filename: $context->filename,
             pageCount: 1,
+            operationContext: new AiOperationContext(
+                correlationId: $correlationId,
+                attemptId: $correlationId,
+                organizationId: $context->organizationId,
+                projectId: $context->projectId,
+                sessionId: $context->sessionId,
+                stage: 'understand_documents',
+                operation: 'ocr',
+                attemptOrdinal: 1,
+                documentId: $context->documentId,
+                unitId: $context->unitId,
+            ),
         ));
         $page = $recognition->pages[0] ?? null;
 

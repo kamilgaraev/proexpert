@@ -20,5 +20,7 @@ final readonly class DocumentUnitExecutionContext
         public string $storagePath,
         public string $mimeType,
         public string $filename,
+        public string $claimToken,
+        public int $unitAttemptCount,
     ) {}
 }

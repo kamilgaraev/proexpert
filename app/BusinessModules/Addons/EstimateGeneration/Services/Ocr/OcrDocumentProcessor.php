@@ -11,6 +11,7 @@ use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentFact;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentUnderstandingSummaryBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DrawingUnderstandingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferenceService;
@@ -21,7 +22,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\PdfGeo
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryExtractionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryRecognitionMerger;
-use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use App\Services\Storage\FileService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -44,8 +44,6 @@ class OcrDocumentProcessor
         private readonly DrawingUnderstandingService $drawingUnderstandingService,
         private readonly DocumentUnderstandingSummaryBuilder $documentUnderstandingSummaryBuilder,
         private readonly EstimatorScopeInferenceService $scopeInferenceService,
-        private readonly UsageTracker $usageTracker,
-        private readonly OcrUsageLogger $usageLogger,
     ) {}
 
     public function process(EstimateGenerationDocument $document): EstimateGenerationDocument
@@ -68,25 +66,14 @@ class OcrDocumentProcessor
                 : ($this->preflightService->isCad($document)
                     ? 'cad_metadata'
                     : (string) config('estimate-generation.ocr.provider', 'timeweb'));
-            $this->usageLogger->started($document, $provider);
-
             $this->statusService->markProcessing($document, $this->recognitionStage($document), 35);
             $recognition = $this->recognize($document, $content, $pageCount);
-            $this->recordRecognitionUsage($document, $recognition);
 
             $this->statusService->markProcessing($document, 'normalization', 75);
             $quality = $this->qualityAnalyzer->analyze($recognition);
             $facts = $this->factExtractor->extract($recognition, (int) $document->id, $document->filename);
             $factsSummary = $this->factMerger->summarize($facts);
             $factsSummary = $this->persistRecognition($document, $recognition, $facts, $factsSummary);
-            $this->usageLogger->completed(
-                $document,
-                $recognition,
-                $facts,
-                $quality->score,
-                $quality->level,
-                $this->elapsedMs($startedAt)
-            );
 
             $requiresDocumentReview = $this->requiresDocumentReview($factsSummary);
 
@@ -108,12 +95,6 @@ class OcrDocumentProcessor
 
             return $document->refresh();
         } catch (OcrProviderException $exception) {
-            $this->usageLogger->failed(
-                $document,
-                $exception->providerCode ?? 'ocr_provider_error',
-                $exception->context,
-                $this->elapsedMs($startedAt)
-            );
             $this->statusService->markFailed(
                 $document,
                 $exception->providerCode ?? 'ocr_provider_error',
@@ -123,7 +104,6 @@ class OcrDocumentProcessor
 
             return $document->refresh();
         } catch (Throwable $exception) {
-            $this->usageLogger->failed($document, 'ocr_processing_error', [], $this->elapsedMs($startedAt));
             Log::error('[EstimateGeneration OCR] Document processing failed', [
                 'document_id' => $document->id,
                 'session_id' => $document->session_id,
@@ -180,6 +160,7 @@ class OcrDocumentProcessor
                 mimeType: $document->mime_type ?? 'application/octet-stream',
                 filename: $document->filename,
                 pageCount: $pageCount,
+                operationContext: $this->operationContext($document),
             ));
         } catch (OcrConfigurationException $exception) {
             if ($pdfGeometry instanceof PdfGeometryExtractionResult && $pdfGeometry->pages !== []) {
@@ -275,38 +256,21 @@ class OcrDocumentProcessor
         return (int) round((microtime(true) - $startedAt) * 1000);
     }
 
-    private function recordRecognitionUsage(EstimateGenerationDocument $document, OcrRecognitionResult $recognition): void
+    private function operationContext(EstimateGenerationDocument $document): AiOperationContext
     {
-        if ($recognition->provider !== 'timeweb') {
-            return;
-        }
+        $seed = implode('|', ['document', $document->session_id, $document->id, $document->source_version ?: $document->checksum_sha256, (int) $document->ocr_attempts]);
+        $correlationId = AiOperationContext::deterministicId($seed);
 
-        $usage = $recognition->metadata['usage'] ?? null;
-
-        if (! is_array($usage)) {
-            return;
-        }
-
-        $inputTokens = (int) ($usage['input_tokens'] ?? 0);
-        $outputTokens = (int) ($usage['output_tokens'] ?? 0);
-        $totalTokens = (int) ($usage['total_tokens'] ?? ($inputTokens + $outputTokens));
-
-        $this->usageTracker->recordUsage(
-            organizationId: $document->organization_id !== null ? (int) $document->organization_id : null,
-            userId: $document->user_id !== null ? (int) $document->user_id : null,
-            provider: $recognition->provider,
-            model: $recognition->model,
-            operation: 'estimate_generation_ocr',
-            inputTokens: $inputTokens,
-            outputTokens: $outputTokens,
-            totalTokens: $totalTokens,
-            metadata: [
-                'document_id' => $document->id,
-                'session_id' => $document->session_id,
-                'project_id' => $document->project_id,
-                'filename' => $document->filename,
-                'mime_type' => $document->mime_type,
-            ],
+        return new AiOperationContext(
+            correlationId: $correlationId,
+            attemptId: $correlationId,
+            organizationId: (int) $document->organization_id,
+            projectId: (int) $document->project_id,
+            sessionId: (int) $document->session_id,
+            stage: 'understand_documents',
+            operation: 'ocr',
+            attemptOrdinal: 1,
+            documentId: (int) $document->id,
         );
     }
 

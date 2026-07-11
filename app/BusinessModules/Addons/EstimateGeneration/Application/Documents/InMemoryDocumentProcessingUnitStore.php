@@ -56,6 +56,8 @@ final class InMemoryDocumentProcessingUnitStore implements DocumentProcessingUni
             'memory://document',
             'application/octet-stream',
             'document',
+            (string) $record->claimToken,
+            $record->attemptCount,
         );
     }
 

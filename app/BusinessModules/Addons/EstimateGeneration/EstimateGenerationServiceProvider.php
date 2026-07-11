@@ -68,6 +68,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\Est
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateSourceImportService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\FgiscsBuildingResourcePriceSpreadsheetParser;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AttemptAwareNormativeLlmClient;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\EloquentAiUsageStore;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebRerankWireClient;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\ConstructionDocumentClassifierService;
@@ -99,13 +104,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrDocumentProces
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrDocumentStorageService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrPreflightService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrQualityAnalyzer;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrUsageLogger;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\SpreadsheetDocumentExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ProjectDocumentNormativeReferenceExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorReadinessService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
-use App\BusinessModules\Features\AIAssistant\Services\UsageTracker;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\RateLimiter;
@@ -133,9 +136,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(EvidenceSourceReplacementInvalidator::class, EvidenceDocumentSourceReplacementInvalidator::class);
         $this->app->singleton(SessionStateStore::class, EloquentSessionStateStore::class);
         $this->app->singleton(OcrClientInterface::class, TimewebVisionOcrClient::class);
+        $this->app->singleton(AiUsageStore::class, EloquentAiUsageStore::class);
+        $this->app->singleton(RerankWireClient::class, TimewebRerankWireClient::class);
         $this->app->singleton(OcrDocumentStorageService::class);
         $this->app->singleton(OcrPreflightService::class);
-        $this->app->singleton(OcrUsageLogger::class);
         $this->app->singleton(SpreadsheetDocumentExtractor::class);
         $this->app->singleton(DocumentGenerationReadinessService::class);
         $this->app->singleton(DocumentProcessingStatusService::class);
@@ -172,7 +176,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(LLMProviderInterface::class),
             $app->make(RuleBasedNormativeCandidateReranker::class),
             null,
-            $app->make(UsageTracker::class)
+            $app->make(AttemptAwareNormativeLlmClient::class),
         ));
         $this->app->singleton(NormativeCandidateRerankerInterface::class, function ($app): NormativeCandidateRerankerInterface {
             $provider = (string) config('estimate-generation.normative_matching.reranker.provider', 'rule_based');

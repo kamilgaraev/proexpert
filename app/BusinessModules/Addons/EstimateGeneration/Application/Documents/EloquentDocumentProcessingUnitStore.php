@@ -58,6 +58,8 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
             (string) $unit->document->storage_path,
             (string) ($unit->document->mime_type ?: 'application/octet-stream'),
             (string) $unit->document->filename,
+            (string) $unit->claim_token,
+            (int) $unit->attempt_count,
         );
     }
 

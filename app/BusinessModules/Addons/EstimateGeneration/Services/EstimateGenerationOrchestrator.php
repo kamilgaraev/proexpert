@@ -83,6 +83,9 @@ class EstimateGenerationOrchestrator
         $documentRequirements = $this->packagePlannerService->documentRequirements($objectProfile);
         $localEstimates = $this->decompositionService->decomposePackagePlan($analysis, $packagePlan);
         $regionalContext = $session->input_payload['regional_context'] ?? $analysis['regional_context'] ?? [];
+        $generationAttemptId = is_string($session->input_payload['generation_attempt_id'] ?? null)
+            ? $session->input_payload['generation_attempt_id'] : '';
+        $generationInputVersion = 'sha256:'.hash('sha256', json_encode($analysis, JSON_THROW_ON_ERROR));
         $localEstimatesCount = max(count($localEstimates), 1);
 
         foreach ($localEstimates as $localIndex => $localEstimate) {
@@ -101,6 +104,10 @@ class EstimateGenerationOrchestrator
                 $workItems = $this->resourceAssemblyService->enrich($workItems, [
                     'organization_id' => $session->organization_id,
                     'project_id' => $session->project_id,
+                    'session_id' => $session->id,
+                    'checkpoint_claim_token' => $generationAttemptId,
+                    'input_version' => $generationInputVersion,
+                    'logical_attempt' => max(1, (int) $session->state_version),
                     'user_id' => $session->user_id,
                     'scope_type' => $localEstimate['scope_type'] ?? null,
                     'local_estimate_title' => $localEstimate['title'] ?? null,
