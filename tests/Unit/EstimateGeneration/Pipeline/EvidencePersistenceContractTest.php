@@ -19,6 +19,7 @@ final class EvidencePersistenceContractTest extends TestCase
     public function postgres_schema_and_repository_encode_graph_invariants(): void
     {
         $migration = file_get_contents($this->path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000300_create_estimate_generation_evidence_table.php'));
+        $checkpointMigration = file_get_contents($this->path('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000100_create_estimate_generation_pipeline_checkpoints_table.php'));
         $repository = file_get_contents($this->path('app/BusinessModules/Addons/EstimateGeneration/Evidence/EloquentEvidenceRepository.php'));
 
         self::assertIsString($migration);
@@ -28,7 +29,8 @@ final class EvidencePersistenceContractTest extends TestCase
         self::assertStringContainsString('eg_evidence_edge_parent_scope_fk', $migration);
         self::assertStringContainsString('eg_evidence_edge_child_scope_fk', $migration);
         self::assertStringContainsString('eg_evidence_session_scope_fk', $migration);
-        self::assertStringContainsString('eg_sessions_scope_uq', $migration);
+        self::assertIsString($checkpointMigration);
+        self::assertStringContainsString('eg_sessions_scope_uq', $checkpointMigration);
         self::assertStringContainsString('eg_evidence_immutable_trg', $migration);
         self::assertStringContainsString('eg_evidence_edge_transition_trg', $migration);
         self::assertStringContainsString('eg_evidence_edge_append_trg', $migration);

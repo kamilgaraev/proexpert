@@ -6,7 +6,6 @@ namespace Tests\Unit\EstimateGeneration\Pipeline;
 
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
-use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
@@ -14,17 +13,22 @@ use ReflectionClass;
 final class PipelineRecoveryContractTest extends TestCase
 {
     #[Test]
-    public function generation_job_payload_is_bounded_and_carries_exact_stage_identity(): void
+    public function generation_job_payload_is_bounded_and_stage_is_derived_from_checkpoint(): void
     {
         $constructor = (new ReflectionClass(GenerateEstimateDraftJob::class))->getConstructor();
         self::assertNotNull($constructor);
         $types = array_map(static fn ($parameter): string => (string) $parameter->getType(), $constructor->getParameters());
 
-        self::assertSame(['int', 'int', 'string', FailureExecutionSnapshot::class, ProcessingStage::class], $types);
+        self::assertSame(['int', 'int', 'string', FailureExecutionSnapshot::class], $types);
+
+        $source = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Jobs/GenerateEstimateDraftJob.php');
+        self::assertIsString($source);
+        self::assertStringContainsString("->where('status', 'running')", $source);
+        self::assertStringContainsString('stage: $checkpoint->stage', $source);
     }
 
     #[Test]
-    public function recovery_is_bounded_two_query_wakeup_and_is_scheduled(): void
+    public function recovery_is_bounded_cursor_fair_lease_aware_and_is_scheduled(): void
     {
         $root = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration';
         $recovery = file_get_contents($root.'/Application/Generation/RecoverEstimateGenerationPipelines.php');
@@ -32,8 +36,12 @@ final class PipelineRecoveryContractTest extends TestCase
 
         self::assertIsString($recovery);
         self::assertStringContainsString('private const BATCH_SIZE = 100', $recovery);
-        self::assertSame(2, substr_count($recovery, '::query()'));
-        self::assertStringContainsString('ProcessingStage::cases()', $recovery);
+        self::assertStringContainsString("where('id', '>', \$cursor)", $recovery);
+        self::assertStringContainsString("where('id', '<=', \$cursor)", $recovery);
+        self::assertStringContainsString("->where('generation_attempt_id', \$snapshot->attemptId)", file_get_contents($root.'/Jobs/GenerateEstimateDraftJob.php'));
+        self::assertStringContainsString('CheckpointStatus::Running', $recovery);
+        self::assertStringContainsString('lease_expires_at->toDateTimeImmutable() > $now', $recovery);
+        self::assertStringContainsString('saveCursor', $recovery);
         self::assertStringContainsString('->afterCommit()', $recovery);
         self::assertIsString($provider);
         self::assertStringContainsString('new RecoverEstimateGenerationPipelinesJob', $provider);

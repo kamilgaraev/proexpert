@@ -23,10 +23,7 @@ final readonly class ExtractQuantitiesStage implements PipelineStage
     {
         $analysis = $context->priorOutputs->payload(ProcessingStage::UnderstandObject)['analysis'];
         $hints = $this->learning->hintsForAnalysis($context->organizationId, $context->projectId, $analysis);
-        if ($hints !== []) {
-            $analysis['document_context']['quantity_learning_hints'] = $hints;
-        }
 
-        return $this->results->make($context, $this->stage(), ['analysis' => $analysis], ['hints_count' => count($hints)]);
+        return $this->results->make($context, $this->stage(), ['quantity_learning_hints' => $hints], ['hints_count' => count($hints)]);
     }
 }

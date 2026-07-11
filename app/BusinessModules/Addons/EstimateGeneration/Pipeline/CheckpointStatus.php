@@ -9,4 +9,5 @@ enum CheckpointStatus: string
     case Running = 'running';
     case Completed = 'completed';
     case Failed = 'failed';
+    case Invalidated = 'invalidated';
 }

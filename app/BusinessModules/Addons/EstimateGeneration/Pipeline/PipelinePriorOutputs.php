@@ -47,10 +47,10 @@ final readonly class PipelinePriorOutputs
                 throw new DomainException('Pipeline artifact loader returned invalid data.');
             }
 
-            return $loaded;
+            return PipelineStagePayload::from($stage, $loaded)->data;
         }
 
-        return $this->require($stage)->data;
+        throw new DomainException('Pipeline artifact payload requires an explicit loader.');
     }
 
     /** @return array<string, PipelineStageOutput> */

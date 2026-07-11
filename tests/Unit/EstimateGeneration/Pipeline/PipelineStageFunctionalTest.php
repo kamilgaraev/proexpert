@@ -5,10 +5,19 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Pipeline;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\AssembleMatchedResources;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\GenerationPipelineDataGateway;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\InMemoryPipelineArtifactStore;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\InMemoryPipelineStateStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
-use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelinePriorOutputs;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineDefinitionGraph;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelinePlanResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRegistry;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\AssembleResourcesStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\BuildDraftStage;
@@ -31,60 +40,78 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\PackagePlannerService
 use App\BusinessModules\Addons\EstimateGeneration\Services\ProjectDocumentNormativeReferenceExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateGenerationQualityGateService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
+use DateTimeImmutable;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
 final class PipelineStageFunctionalTest extends TestCase
 {
     #[Test]
-    public function nine_real_stage_boundaries_consume_prior_outputs_and_produce_versioned_data(): void
+    public function nine_real_stage_boundaries_consume_exact_typed_dependencies(): void
     {
         $gateway = new class implements GenerationPipelineDataGateway
         {
+            public function manifest(PipelineContext $context): array
+            {
+                return ['base_input_version' => (string) $context->baseInputVersion, 'documents' => [], 'documents_count' => 0, 'rebuild_section_key' => null];
+            }
+
             public function source(PipelineContext $context): array
             {
-                return ['input' => ['description' => 'Небольшой одноэтажный дом 80 м2'], 'documents' => [], 'user_id' => 7];
+                return ['input' => ['description' => 'Одноэтажный дом 80 м2'], 'documents' => [], 'user_id' => 7];
             }
         };
         $matcher = $this->createMock(ResourceAssemblyService::class);
         $matcher->method('enrich')->willReturnCallback(static fn (array $items): array => $items);
         $artifacts = new InMemoryPipelineArtifactStore;
-        $results = new StageResultFactory($artifacts);
+        $graph = PipelineDefinitionGraph::standard();
+        $results = new StageResultFactory($artifacts, $graph);
         $stages = [
             new UnderstandDocumentsStage($gateway, $results),
-            new UnderstandObjectStage(new ConstructionSemanticParser, $results),
+            new UnderstandObjectStage(new ConstructionSemanticParser, $gateway, $results),
             new ExtractQuantitiesStage(new EstimateGenerationQuantityLearningEvidenceService, $results),
-            new PlanWorkItemsStage(
-                new PackagePlannerService,
-                new EstimateDecompositionService,
-                new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService),
-                $results,
-            ),
+            new PlanWorkItemsStage(new PackagePlannerService, new EstimateDecompositionService, new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService), $results),
             new MatchNormativesStage($matcher, $results),
             new AssembleResourcesStage(new AssembleMatchedResources, $results),
             new ResolvePricesStage(new EstimatePricingService, $results),
             new BuildDraftStage($results),
             new ValidateDraftStage(new EstimateValidationService, new EstimateGenerationQualityGateService, $results),
         ];
-        $outputs = [];
-        $context = new PipelineContext(1, 2, 3, 4, 'attempt-1', 'generating');
+        $base = 'sha256:'.str_repeat('a', 64);
+        $attempt = '00000000-0000-4000-8000-000000000001';
+        $state = new InMemoryPipelineStateStore($artifacts);
+        $resolver = new PipelinePlanResolver($graph, $state, $state);
+        $runner = new PipelineRunner(
+            new PipelineRegistry($stages), $state,
+            new FailureRecorder(new class implements FailureStore
+            {
+                public function record(FailureData $failure, DateTimeImmutable $seenAt): void {}
 
-        foreach ($stages as $index => $stage) {
-            $payloads = [];
-            foreach ($outputs as $key => $reference) {
-                $payloads[$key] = $artifacts->read($context, $reference);
-            }
-            $result = $stage->execute($context->withPriorOutputs(new PipelinePriorOutputs($outputs, $payloads)));
-            self::assertSame(ProcessingStage::cases()[$index], $result->stage);
-            self::assertNotNull($result->output);
-            self::assertSame($result->outputVersion, $result->output->version);
-            self::assertSame('memory_json_v1', $result->output->data['artifact_kind']);
-            $outputs[$result->stage->value] = $result->output;
+                public function resolve(FailureContext $context, string $fingerprint, string $resolutionCode, DateTimeImmutable $resolvedAt): bool
+                {
+                    return true;
+                }
+
+                public function resolveActive(FailureContext $context, string $resolutionCode, DateTimeImmutable $resolvedAt): int
+                {
+                    return 0;
+                }
+            }),
+            new class implements FailureWorkflowHandler
+            {
+                public function handle(FailureData $failure, ?int $expectedStateVersion = null): void {}
+            },
+            static fn (): DateTimeImmutable => new DateTimeImmutable('2026-07-11T10:00:00+00:00'),
+        );
+        $seed = new PipelineContext(1, 2, 3, 4, $base, 'generating', generationAttemptId: $attempt, baseInputVersion: $base);
+        for ($invocation = 0; $invocation < 9; $invocation++) {
+            $context = $resolver->next($seed);
+            self::assertNotNull($context);
+            $result = $runner->runNext($context);
+            self::assertSame($context->stage, $result?->stage);
         }
-
-        $validated = $artifacts->read($context, $outputs[ProcessingStage::ValidateDraft->value]);
-        self::assertArrayHasKey('draft', $validated);
-        self::assertArrayHasKey('requires_review', $validated);
-        self::assertArrayHasKey('quality_summary', $validated['draft']);
+        self::assertNull($resolver->next($seed));
+        $payload = $state->priorOutputs($seed)->payload(ProcessingStage::ValidateDraft);
+        self::assertArrayHasKey('quality_summary', $payload['draft']);
     }
 }

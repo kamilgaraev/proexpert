@@ -12,8 +12,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecution
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointClaimStatus;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineArtifactReference;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineCheckpointStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineDefinitionGraph;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineInputVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageOutput;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
@@ -73,16 +76,23 @@ final class ProcessEstimateGenerationDocumentJob implements ShouldQueue
 
         $snapshot = $this->failureSnapshot;
         $now = new DateTimeImmutable;
+        $definition = PipelineDefinitionGraph::standard()->get(ProcessingStage::UnderstandDocuments);
+        $baseInputVersion = (string) $snapshot->sourceVersion;
+        $inputVersion = PipelineInputVersion::for($definition, $baseInputVersion, []);
         $claim = $checkpoints->claim(
             new PipelineContext(
                 sessionId: $snapshot->sessionId,
                 organizationId: $snapshot->organizationId,
                 projectId: $snapshot->projectId,
                 stateVersion: $snapshot->stateVersion,
-                inputVersion: $snapshot->attemptId,
+                inputVersion: $inputVersion,
                 sessionStatus: $snapshot->status,
                 documentId: $snapshot->documentId,
                 sourceVersion: $snapshot->sourceVersion,
+                generationAttemptId: $snapshot->attemptId,
+                baseInputVersion: $baseInputVersion,
+                stage: ProcessingStage::UnderstandDocuments,
+                dependencyVersions: [],
             ),
             ProcessingStage::UnderstandDocuments,
             $now,
@@ -93,11 +103,17 @@ final class ProcessEstimateGenerationDocumentJob implements ShouldQueue
         }
         try {
             $creator->handleClaimed($document, $claim);
-            $output = PipelineStageOutput::create(ProcessingStage::UnderstandDocuments, 1, [
-                'artifact_kind' => 'document_manifest_v1',
-                'document_id' => (int) $document->getKey(),
-                'source_version' => $snapshot->sourceVersion,
-            ]);
+            $output = PipelineStageOutput::create(
+                $definition,
+                $inputVersion,
+                [],
+                new PipelineArtifactReference(
+                    'document_manifest_v1',
+                    'document/'.(int) $document->getKey().'/'.$snapshot->attemptId,
+                    $baseInputVersion,
+                    1,
+                ),
+            );
             if (! $checkpoints->complete($claim, new PipelineStageResult(
                 ProcessingStage::UnderstandDocuments,
                 $output->version,

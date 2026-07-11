@@ -15,10 +15,16 @@ final class EstimateGenerationPipelineCheckpoint extends Model
 
     protected $fillable = [
         'session_id',
+        'organization_id',
+        'project_id',
+        'generation_attempt_id',
+        'base_input_version',
         'stage',
         'input_version',
+        'dependency_versions',
         'output_version',
         'output_payload',
+        'artifact_bytes',
         'status',
         'metrics',
         'warnings',
@@ -28,6 +34,8 @@ final class EstimateGenerationPipelineCheckpoint extends Model
         'started_at',
         'completed_at',
         'failed_at',
+        'invalidated_at',
+        'invalidation_reason',
         'last_error_code',
         'last_error_message',
         'last_error_fingerprint',
@@ -38,12 +46,15 @@ final class EstimateGenerationPipelineCheckpoint extends Model
         'status' => CheckpointStatus::class,
         'metrics' => 'array',
         'warnings' => 'array',
+        'dependency_versions' => 'array',
         'output_payload' => 'array',
+        'artifact_bytes' => 'integer',
         'attempt_count' => 'integer',
         'lease_expires_at' => 'immutable_datetime',
         'started_at' => 'immutable_datetime',
         'completed_at' => 'immutable_datetime',
         'failed_at' => 'immutable_datetime',
+        'invalidated_at' => 'immutable_datetime',
     ];
 
     public function session(): BelongsTo

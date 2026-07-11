@@ -6,8 +6,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline;
 
 interface PipelineArtifactStore
 {
-    public function write(PipelineContext $context, ProcessingStage $stage, array $data): PipelineStageOutput;
+    public function write(PipelineContext $context, StageDefinition $definition, array $data): PipelineArtifactReference;
 
     /** @return array<string, mixed> */
-    public function read(PipelineContext $context, PipelineStageOutput $reference): array;
+    public function read(PipelineContext $context, PipelineArtifactReference $reference): array;
 }

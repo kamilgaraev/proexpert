@@ -9,6 +9,22 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 
 final class EloquentGenerationPipelineDataGateway implements GenerationPipelineDataGateway
 {
+    public function manifest(PipelineContext $context): array
+    {
+        $source = $this->source($context);
+
+        return [
+            'base_input_version' => (string) $context->baseInputVersion,
+            'documents' => array_map(static fn (array $document): array => [
+                'id' => (int) $document['id'],
+                'source_version' => (string) $document['source_version'],
+            ], $source['documents']),
+            'documents_count' => count($source['documents']),
+            'rebuild_section_key' => is_string($source['input']['rebuild_section_key'] ?? null)
+                ? $source['input']['rebuild_section_key'] : null,
+        ];
+    }
+
     public function source(PipelineContext $context): array
     {
         $session = EstimateGenerationSession::query()
@@ -20,12 +36,14 @@ final class EloquentGenerationPipelineDataGateway implements GenerationPipelineD
         if (! $session instanceof EstimateGenerationSession
             || (int) $session->state_version !== $context->stateVersion
             || $session->status->value !== $context->sessionStatus
-            || ! hash_equals($context->inputVersion, (string) ($session->input_payload['generation_attempt_id'] ?? ''))) {
+            || $context->generationAttemptId === null
+            || ! hash_equals($context->generationAttemptId, (string) ($session->input_payload['generation_attempt_id'] ?? ''))) {
             throw new StaleEstimateGenerationState($context->sessionId, $context->stateVersion);
         }
 
         $documents = $session->documents->map(static fn ($document): array => [
             'id' => (int) $document->id,
+            'source_version' => 'sha256:'.strtolower((string) $document->checksum_sha256),
             'status' => (string) $document->status,
             'structured_payload' => is_array($document->structured_payload) ? $document->structured_payload : [],
             'facts_summary' => is_array($document->facts_summary) ? $document->facts_summary : [],

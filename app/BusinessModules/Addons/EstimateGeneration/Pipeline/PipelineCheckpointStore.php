@@ -29,4 +29,6 @@ interface PipelineCheckpointStore
     ): bool;
 
     public function fail(CheckpointClaim $claim, Throwable $error, DateTimeImmutable $failedAt): bool;
+
+    public function invalidateDownstream(PipelineContext $context, ProcessingStage $changedStage, DateTimeImmutable $invalidatedAt): int;
 }

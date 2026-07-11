@@ -12,6 +12,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowH
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\InMemoryPipelineArtifactStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\InMemoryPipelineStateStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineDefinitionGraph;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineInputVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStage;
@@ -25,31 +27,66 @@ use PHPUnit\Framework\TestCase;
 final class PipelineNineInvocationE2ETest extends TestCase
 {
     #[Test]
-    public function nine_invocations_complete_nine_outputs_and_replay_is_a_noop(): void
+    public function nine_planned_invocations_complete_once_and_redelivery_is_noop(): void
     {
         $artifacts = new InMemoryPipelineArtifactStore;
         $state = new InMemoryPipelineStateStore($artifacts);
-        $results = new StageResultFactory($artifacts);
-        $executions = [];
-        $stages = array_map(static function (ProcessingStage $stage) use ($results, &$executions): PipelineStage {
-            return new class($stage, $results, $executions) implements PipelineStage
+        $graph = PipelineDefinitionGraph::standard();
+        $results = new StageResultFactory($artifacts, $graph);
+        $executions = new \ArrayObject;
+        $stages = array_map(static fn (ProcessingStage $stage): PipelineStage => new class($stage, $results, $executions) implements PipelineStage
+        {
+            public function __construct(private ProcessingStage $value, private StageResultFactory $results, private \ArrayObject $executions) {}
+
+            public function stage(): ProcessingStage
             {
-                public function __construct(private ProcessingStage $value, private StageResultFactory $results, private array &$executions) {}
+                return $this->value;
+            }
 
-                public function stage(): ProcessingStage
-                {
-                    return $this->value;
-                }
+            public function execute(PipelineContext $context): PipelineStageResult
+            {
+                $this->executions[$this->value->value] = ($this->executions[$this->value->value] ?? 0) + 1;
 
-                public function execute(PipelineContext $context): PipelineStageResult
-                {
-                    $this->executions[$this->value->value] = ($this->executions[$this->value->value] ?? 0) + 1;
-
-                    return $this->results->make($context, $this->value, ['stage' => $this->value->value]);
-                }
-            };
+                return $this->results->make($context, $this->value, PipelineNineInvocationE2ETest::payload($this->value));
+            }
         }, ProcessingStage::cases());
-        $failureStore = new class implements FailureStore
+        $runner = new PipelineRunner(new PipelineRegistry($stages), $state, new FailureRecorder($this->failureStore()), $this->workflow(), static fn (): DateTimeImmutable => new DateTimeImmutable('2026-07-11T10:00:00+00:00'));
+        $base = 'sha256:'.str_repeat('a', 64);
+        $attempt = '00000000-0000-4000-8000-000000000001';
+        $outputs = [];
+        $lastContext = null;
+
+        foreach ($graph->ordered() as $definition) {
+            $dependencies = [];
+            foreach ($definition->dependencies as $dependency) {
+                $dependencies[$dependency->value] = $outputs[$dependency->value]->version;
+            }
+            $lastContext = new PipelineContext(1, 2, 3, 4, PipelineInputVersion::for($definition, $base, $dependencies), 'generating', priorOutputs: $state->priorOutputs(new PipelineContext(1, 2, 3, 4, $base, 'generating', generationAttemptId: $attempt, baseInputVersion: $base)), generationAttemptId: $attempt, baseInputVersion: $base, stage: $definition->stage, dependencyVersions: $dependencies);
+            $result = $runner->runNext($lastContext);
+            self::assertSame($definition->stage, $result?->stage);
+            $outputs[$definition->stage->value] = $result->output;
+        }
+        self::assertSame(9, $state->completedCount());
+        self::assertNull($runner->runNext($lastContext));
+        self::assertSame(array_fill_keys(array_map(static fn (ProcessingStage $stage): string => $stage->value, ProcessingStage::cases()), 1), $executions->getArrayCopy());
+    }
+
+    public static function payload(ProcessingStage $stage): array
+    {
+        return match ($stage) {
+            ProcessingStage::UnderstandDocuments => ['base_input_version' => 'sha256:'.str_repeat('a', 64), 'documents' => [], 'documents_count' => 0, 'rebuild_section_key' => null],
+            ProcessingStage::UnderstandObject => ['analysis' => []],
+            ProcessingStage::ExtractQuantities => ['quantity_learning_hints' => []],
+            ProcessingStage::PlanWorkItems => ['object_profile' => [], 'package_plan' => [], 'document_requirements' => [], 'generation_mode' => 'complete', 'regional_context' => [], 'local_estimates' => []],
+            ProcessingStage::MatchNormatives, ProcessingStage::AssembleResources, ProcessingStage::ResolvePrices => ['local_estimates' => []],
+            ProcessingStage::BuildDraft => ['draft' => []],
+            ProcessingStage::ValidateDraft => ['draft' => [], 'requires_review' => true],
+        };
+    }
+
+    private function failureStore(): FailureStore
+    {
+        return new class implements FailureStore
         {
             public function record(FailureData $failure, DateTimeImmutable $seenAt): void {}
 
@@ -63,19 +100,13 @@ final class PipelineNineInvocationE2ETest extends TestCase
                 return 0;
             }
         };
-        $workflow = new class implements FailureWorkflowHandler
+    }
+
+    private function workflow(): FailureWorkflowHandler
+    {
+        return new class implements FailureWorkflowHandler
         {
             public function handle(FailureData $failure, ?int $expectedStateVersion = null): void {}
         };
-        $runner = new PipelineRunner(new PipelineRegistry($stages), $state, new FailureRecorder($failureStore), $workflow, static fn (): DateTimeImmutable => new DateTimeImmutable('2026-07-11T10:00:00+00:00'));
-        $base = new PipelineContext(1, 2, 3, 4, 'attempt-a', 'generating');
-
-        foreach (ProcessingStage::cases() as $expected) {
-            $context = $base->withPriorOutputs($state->priorOutputs($base));
-            self::assertSame($expected, $runner->runNext($context)?->stage);
-        }
-        self::assertSame(9, $state->completedCount());
-        self::assertNull($runner->runNext($base->withPriorOutputs($state->priorOutputs($base))));
-        self::assertSame(array_fill_keys(array_map(static fn (ProcessingStage $stage): string => $stage->value, ProcessingStage::cases()), 1), $executions);
     }
 }

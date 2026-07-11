@@ -11,9 +11,6 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::table('estimate_generation_sessions', function (Blueprint $table): void {
-            $table->unique(['id', 'organization_id', 'project_id'], 'eg_sessions_scope_uq');
-        });
 
         Schema::create('estimate_generation_evidence', function (Blueprint $table): void {
             $table->id();
@@ -134,8 +131,5 @@ SQL);
         }
         Schema::dropIfExists('estimate_generation_evidence_edges');
         Schema::dropIfExists('estimate_generation_evidence');
-        Schema::table('estimate_generation_sessions', function (Blueprint $table): void {
-            $table->dropUnique('eg_sessions_scope_uq');
-        });
     }
 };

@@ -35,7 +35,7 @@ final readonly class PipelineStageResult
 
         if ($transientData !== null) {
             $canonical = CanonicalPipelineJson::encode($transientData);
-            $contentVersion = $output?->data['content_version'] ?? null;
+            $contentVersion = $output?->artifact->contentVersion;
             if (! is_string($contentVersion)
                 || ! hash_equals($contentVersion, 'sha256:'.hash('sha256', $canonical))) {
                 throw new InvalidArgumentException('Pipeline transient output does not match its artifact reference.');

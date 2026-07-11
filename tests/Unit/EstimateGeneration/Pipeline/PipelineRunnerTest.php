@@ -14,8 +14,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointClaimStatus
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineCheckpointStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineDefinitionGraph;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineFailureDetails;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineFailureObserver;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineInputVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineLeaseHeartbeat;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRunner;
@@ -78,7 +80,7 @@ final class PipelineRunnerTest extends TestCase
         $first = new CountingStage(ProcessingStage::UnderstandDocuments);
         $later = new CountingStage(ProcessingStage::UnderstandObject);
         $context = $this->context();
-        $this->store->claim($context, $first->stage(), $this->clock->now, $this->clock->now->modify('+1 minute'));
+        $this->store->claim($context, $later->stage(), $this->clock->now, $this->clock->now->modify('+1 minute'));
 
         self::assertNull($this->runner([$first, $later])->runNext($context));
         self::assertSame(0, $later->executions);
@@ -239,7 +241,7 @@ final class PipelineRunnerTest extends TestCase
         $this->store->failException = new RuntimeException('recorder-error');
 
         try {
-            $this->runner([$stage, $later])->runNext($this->context());
+            $this->runner([$stage, $later])->runNext($this->context(stage: ProcessingStage::UnderstandDocuments));
             self::fail('Stage exception must be rethrown.');
         } catch (Throwable $caught) {
             self::assertSame($original, $caught);
@@ -257,7 +259,7 @@ final class PipelineRunnerTest extends TestCase
         $this->store->forceFailFalse = true;
 
         try {
-            $this->runner([$stage, $later])->runNext($this->context());
+            $this->runner([$stage, $later])->runNext($this->context(stage: ProcessingStage::UnderstandDocuments));
             self::fail('Stage exception must be rethrown.');
         } catch (Throwable $caught) {
             self::assertSame($original, $caught);
@@ -278,7 +280,7 @@ final class PipelineRunnerTest extends TestCase
             $this->runner(
                 [new ThrowingStage(ProcessingStage::UnderstandDocuments, $original)],
                 $observer,
-            )->runNext($this->context());
+            )->runNext($this->context(stage: ProcessingStage::UnderstandDocuments));
         } catch (Throwable) {
         }
 
@@ -301,7 +303,7 @@ final class PipelineRunnerTest extends TestCase
             $this->runner(
                 [new ThrowingStage(ProcessingStage::UnderstandDocuments, $original)],
                 $observer,
-            )->runNext($this->context());
+            )->runNext($this->context(stage: ProcessingStage::UnderstandDocuments));
             self::fail('Stage exception must be rethrown.');
         } catch (Throwable $caught) {
             self::assertSame($original, $caught);
@@ -345,12 +347,14 @@ final class PipelineRunnerTest extends TestCase
         $first = new CountingStage(ProcessingStage::UnderstandDocuments);
         $middle = new CountingStage(ProcessingStage::UnderstandObject);
         $runner = $this->runner([$later, $middle, $first]);
-        $context = $this->context();
+        $firstContext = $this->context(stage: $first->stage());
+        $middleContext = $this->context(stage: $middle->stage());
+        $laterContext = $this->context(stage: $later->stage());
 
-        self::assertSame($first->stage(), $runner->runNext($context)?->stage);
-        self::assertSame($middle->stage(), $runner->runNext($context)?->stage);
-        self::assertSame($later->stage(), $runner->runNext($context)?->stage);
-        self::assertNull($runner->runNext($context));
+        self::assertSame($first->stage(), $runner->runNext($firstContext)?->stage);
+        self::assertSame($middle->stage(), $runner->runNext($middleContext)?->stage);
+        self::assertSame($later->stage(), $runner->runNext($laterContext)?->stage);
+        self::assertNull($runner->runNext($laterContext));
     }
 
     #[Test]
@@ -376,9 +380,24 @@ final class PipelineRunnerTest extends TestCase
         );
     }
 
-    private function context(int $stateVersion = 3): PipelineContext
+    private function context(int $stateVersion = 3, ProcessingStage $stage = ProcessingStage::UnderstandObject): PipelineContext
     {
-        return new PipelineContext(10, 20, 30, $stateVersion, 'sha256:a', 'generating');
+        $definition = PipelineDefinitionGraph::standard()->get($stage);
+        $dependencies = [];
+        foreach ($definition->dependencies as $dependency) {
+            $dependencies[$dependency->value] = 'sha256:'.hash('sha256', $dependency->value);
+        }
+        $base = 'sha256:'.str_repeat('a', 64);
+
+        return new PipelineContext(
+            10, 20, 30, $stateVersion,
+            PipelineInputVersion::for($definition, $base, $dependencies),
+            'generating',
+            generationAttemptId: '00000000-0000-4000-8000-000000000001',
+            baseInputVersion: $base,
+            stage: $stage,
+            dependencyVersions: $dependencies,
+        );
     }
 
     private function stageResult(ProcessingStage $stage): PipelineStageResult
@@ -655,6 +674,11 @@ final class InMemoryCheckpointStore implements PipelineCheckpointStore
         $this->items[$key]['expires'] = $newLeaseExpiresAt;
 
         return true;
+    }
+
+    public function invalidateDownstream(PipelineContext $context, ProcessingStage $changedStage, DateTimeImmutable $invalidatedAt): int
+    {
+        return 0;
     }
 
     public function count(): int

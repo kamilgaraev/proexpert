@@ -22,7 +22,7 @@ final readonly class MatchNormativesStage implements PipelineStage
     public function execute(PipelineContext $context): PipelineStageResult
     {
         $data = $context->priorOutputs->payload(ProcessingStage::PlanWorkItems);
-        $regionalContext = $data['analysis']['regional_context'] ?? [];
+        $regionalContext = $data['regional_context'] ?? [];
         foreach ($data['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'] = $this->matcher->enrich(
@@ -31,9 +31,9 @@ final readonly class MatchNormativesStage implements PipelineStage
                         'organization_id' => $context->organizationId,
                         'project_id' => $context->projectId,
                         'session_id' => $context->sessionId,
-                        'checkpoint_claim_token' => $context->inputVersion,
+                        'checkpoint_claim_token' => $context->claimToken,
                         'input_version' => $context->priorOutputs->require(ProcessingStage::PlanWorkItems)->version,
-                        'logical_attempt' => max(1, $context->stateVersion),
+                        'logical_attempt' => $context->stageAttempt,
                         'scope_type' => $localEstimate['scope_type'] ?? null,
                         'local_estimate_title' => $localEstimate['title'] ?? null,
                         'section_title' => $section['title'] ?? null,
@@ -44,6 +44,6 @@ final readonly class MatchNormativesStage implements PipelineStage
             }
         }
 
-        return $this->results->make($context, $this->stage(), $data);
+        return $this->results->make($context, $this->stage(), ['local_estimates' => $data['local_estimates']]);
     }
 }

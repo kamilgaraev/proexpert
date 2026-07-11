@@ -4,14 +4,18 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Jobs;
 
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPipelineCheckpoint;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\DraftPipelineEntrypoint;
-use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNotificationService;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineCheckpointStore;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineDefinitionGraph;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -45,7 +49,6 @@ class GenerateEstimateDraftJob implements ShouldQueue
         private readonly int $expectedStateVersion,
         private readonly string $attemptId,
         private readonly FailureExecutionSnapshot $failureSnapshot,
-        private readonly ProcessingStage $expectedStage = ProcessingStage::UnderstandDocuments,
     ) {
         $this->onConnection(self::CONNECTION);
         $this->onQueue(self::QUEUE);
@@ -78,7 +81,6 @@ class GenerateEstimateDraftJob implements ShouldQueue
 
     public function handle(
         DraftPipelineEntrypoint $pipeline,
-        ?EstimateGenerationNotificationService $notificationService = null,
     ): void {
         $current = EstimateGenerationSession::query()->find($this->sessionId);
         if (! $current instanceof EstimateGenerationSession
@@ -95,7 +97,6 @@ class GenerateEstimateDraftJob implements ShouldQueue
                 $this->expectedStateVersion,
                 $this->attemptId,
                 $this->failureSnapshot->nextEvent(),
-                $run->executedStage?->next() ?? ProcessingStage::ValidateDraft,
             )->onQueue(self::QUEUE)->afterCommit();
 
             return;
@@ -103,35 +104,67 @@ class GenerateEstimateDraftJob implements ShouldQueue
         if (! $run->finalized || ! $run->session instanceof EstimateGenerationSession) {
             return;
         }
-        $notificationService ??= app(EstimateGenerationNotificationService::class);
-        $notificationService->notifyFinished($run->session);
     }
 
     public function failed(\Throwable $exception): void
     {
-        $session = EstimateGenerationSession::query()->find($this->sessionId);
         $snapshot = $this->failureSnapshot;
-        if ($session instanceof EstimateGenerationSession
-            && (int) $session->state_version === $snapshot->stateVersion
-            && $session->status->value === $snapshot->status
-            && hash_equals($snapshot->attemptId, (string) ($session->input_payload['generation_attempt_id'] ?? ''))) {
+        $checkpoint = EstimateGenerationPipelineCheckpoint::query()
+            ->where('session_id', $snapshot->sessionId)
+            ->where('organization_id', $snapshot->organizationId)
+            ->where('project_id', $snapshot->projectId)
+            ->where('generation_attempt_id', $snapshot->attemptId)
+            ->where('status', 'running')
+            ->whereNotNull('claim_token')
+            ->orderByDesc('id')
+            ->first();
+        if ($checkpoint instanceof EstimateGenerationPipelineCheckpoint) {
             try {
                 $failure = app(FailureRecorder::class)->capture($exception, new FailureContext(
                     organizationId: $snapshot->organizationId,
                     projectId: $snapshot->projectId,
                     sessionId: $snapshot->sessionId,
-                    stage: $this->expectedStage,
+                    stage: $checkpoint->stage,
                     operation: 'run_stage',
-                    attempt: max(1, $this->attempts()),
-                    correlationId: $snapshot->correlationId,
-                    eventId: $snapshot->eventId,
+                    attempt: (int) $checkpoint->attempt_count,
+                    correlationId: AiOperationContext::deterministicId(sprintf(
+                        'pipeline|%d|%s|%s',
+                        $snapshot->sessionId,
+                        $checkpoint->stage->value,
+                        (string) $checkpoint->input_version,
+                    )),
+                    eventId: (string) $checkpoint->claim_token,
                     expectedSessionStateVersion: $snapshot->stateVersion,
                     expectedSessionStatus: $snapshot->status,
+                    checkpointId: (int) $checkpoint->getKey(),
                 ));
-                app(FailureWorkflowHandler::class)->handle($failure, $snapshot->stateVersion);
-                $failedSession = EstimateGenerationSession::query()->find($snapshot->sessionId);
-                if ($failedSession instanceof EstimateGenerationSession && $failedSession->status->value === 'failed') {
-                    app(EstimateGenerationNotificationService::class)->notifyFailed($failedSession);
+                $definition = PipelineDefinitionGraph::standard()->get($checkpoint->stage);
+                $storedDependencies = is_array($checkpoint->dependency_versions) ? $checkpoint->dependency_versions : [];
+                $dependencies = [];
+                foreach ($definition->dependencies as $dependency) {
+                    $dependencies[$dependency->value] = (string) ($storedDependencies[$dependency->value] ?? '');
+                }
+                $context = new PipelineContext(
+                    sessionId: $snapshot->sessionId,
+                    organizationId: $snapshot->organizationId,
+                    projectId: $snapshot->projectId,
+                    stateVersion: $snapshot->stateVersion,
+                    inputVersion: (string) $checkpoint->input_version,
+                    sessionStatus: $snapshot->status,
+                    generationAttemptId: $snapshot->attemptId,
+                    baseInputVersion: (string) $checkpoint->base_input_version,
+                    stage: $checkpoint->stage,
+                    dependencyVersions: $dependencies,
+                );
+                $claim = CheckpointClaim::acquired(
+                    $context,
+                    $checkpoint->stage,
+                    (string) $checkpoint->claim_token,
+                    (int) $checkpoint->attempt_count,
+                    (int) $checkpoint->getKey(),
+                );
+                if (app(PipelineCheckpointStore::class)->fail($claim, $exception, new \DateTimeImmutable)) {
+                    app(FailureWorkflowHandler::class)->handle($failure, $snapshot->stateVersion);
                 }
             } catch (\Throwable) {
             }

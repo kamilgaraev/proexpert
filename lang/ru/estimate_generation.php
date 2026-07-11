@@ -1,6 +1,7 @@
 <?php
 
 return [
+    'draft_default_title' => 'Смета строительных работ',
     'access_denied' => 'Недостаточно прав для работы с AI-генерацией смет.',
     'invalid_module_settings' => 'Проверьте настройки AI-сметчика.',
     'session_created' => 'Сессия генерации сметы создана.',

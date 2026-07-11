@@ -9,19 +9,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecution
 
 class DraftPipelineEntrypoint
 {
-    public function __construct(private readonly PipelineRunner $runner, private readonly PipelineOutputRepository $outputs) {}
+    public function __construct(private readonly PipelineRunner $runner, private readonly PipelineExecutionPlanner $planner) {}
 
     public function run(FailureExecutionSnapshot $snapshot): DraftPipelineRunResult
     {
-        $context = new PipelineContext(
-            sessionId: $snapshot->sessionId,
-            organizationId: $snapshot->organizationId,
-            projectId: $snapshot->projectId,
-            stateVersion: $snapshot->stateVersion,
-            sessionStatus: $snapshot->status,
-            inputVersion: $snapshot->attemptId,
-        );
-        $result = $this->runner->runNext($context->withPriorOutputs($this->outputs->priorOutputs($context)));
+        $context = $this->planner->next($snapshot);
+        $result = $context !== null ? $this->runner->runNext($context) : null;
 
         $session = EstimateGenerationSession::query()->find($snapshot->sessionId);
         $executedStage = $result?->stage;

@@ -6,6 +6,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\FinalizationDeliveryReceipt;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\FinalizationDeliveryStore;
 use App\BusinessModules\Features\Notifications\Services\NotificationService;
 use App\Models\User;
 use Illuminate\Support\Facades\Log;
@@ -19,14 +21,15 @@ class EstimateGenerationNotificationService
 
     public function __construct(
         private readonly NotificationService $notificationService,
+        private readonly ?FinalizationDeliveryStore $deliveries = null,
     ) {}
 
-    public function notifyFinished(EstimateGenerationSession $session): void
+    public function notifyFinished(EstimateGenerationSession $session, ?string $idempotencyKey = null): bool
     {
         $session->loadMissing(['project', 'user']);
 
         if (! $session->user instanceof User) {
-            return;
+            return true;
         }
 
         $isBlocked = in_array('quality_blocked', $session->problem_flags ?? [], true);
@@ -39,13 +42,14 @@ class EstimateGenerationNotificationService
             ? 'estimate_generation.notification_blocked_message'
             : ($isReviewRequired ? 'estimate_generation.notification_review_message' : 'estimate_generation.notification_completed_message');
 
-        $this->send(
+        return $this->send(
             $session,
             $type,
             $titleKey,
             $messageKey,
             $isBlocked ? 'high' : 'normal',
-            $isBlocked ? 'warning' : 'info'
+            $isBlocked ? 'warning' : 'info',
+            $idempotencyKey === null ? [] : ['idempotency_key' => $idempotencyKey],
         );
     }
 
@@ -78,12 +82,12 @@ class EstimateGenerationNotificationService
         string $priority,
         string $category,
         array $context = [],
-    ): void {
+    ): bool {
         $route = "/projects/{$session->project_id}/estimates/ai-workspace/{$session->id}";
         $projectName = $session->project?->name;
 
         try {
-            $this->notificationService->send(
+            $deliver = fn () => $this->notificationService->send(
                 $session->user,
                 $type,
                 [
@@ -106,6 +110,7 @@ class EstimateGenerationNotificationService
                         'processing_stage' => $session->processing_stage,
                         ...$context,
                     ],
+                    ...(($context['idempotency_key'] ?? null) === null ? [] : ['idempotency_key' => $context['idempotency_key']]),
                     'actions' => [
                         [
                             'label' => trans_message('estimate_generation.notification_open_action'),
@@ -119,11 +124,36 @@ class EstimateGenerationNotificationService
                 self::CHANNELS,
                 $session->organization_id
             );
+            if (is_string($context['idempotency_key'] ?? null)) {
+                $this->deliverOnce($session, $type, $context['idempotency_key'], $deliver);
+            } else {
+                $deliver();
+            }
+
+            return true;
         } catch (Throwable $exception) {
             Log::warning('[EstimateGeneration] Failed to send generation notification', [
                 'session_id' => $session->id,
                 'failure_code' => 'notification_delivery_failed',
             ]);
+
+            return false;
         }
+    }
+
+    private function deliverOnce(EstimateGenerationSession $session, string $eventType, string $businessKey, callable $deliver): void
+    {
+        ($this->deliveries ?? app(FinalizationDeliveryStore::class))->deliverOnce(
+            new FinalizationDeliveryReceipt(
+                organizationId: (int) $session->organization_id,
+                projectId: (int) $session->project_id,
+                sessionId: (int) $session->getKey(),
+                generationAttemptId: (string) ($session->input_payload['generation_attempt_id'] ?? ''),
+                eventType: $eventType,
+                recipientId: (int) $session->user->getKey(),
+                businessKey: $businessKey,
+            ),
+            $deliver,
+        );
     }
 }

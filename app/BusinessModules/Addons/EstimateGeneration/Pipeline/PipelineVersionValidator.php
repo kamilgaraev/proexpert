@@ -25,4 +25,11 @@ final class PipelineVersionValidator
             );
         }
     }
+
+    public static function assertSha256(string $version, string $name): void
+    {
+        if (preg_match('/\Asha256:[0-9a-f]{64}\z/', $version) !== 1) {
+            throw new InvalidArgumentException("Pipeline {$name} version must be canonical sha256.");
+        }
+    }
 }

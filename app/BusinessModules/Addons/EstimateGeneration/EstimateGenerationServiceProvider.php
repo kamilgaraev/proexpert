@@ -42,6 +42,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\SessionStateSt
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceDocumentSourceReplacementInvalidator;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\DeliverEstimateGenerationFinalizationsJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationTrainingDatasetJob;
@@ -78,13 +79,20 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebRerankWireClient;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentFinalizationDeliveryStore;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentFinalizationOutbox;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentGenerationPipelineDataGateway;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentPipelineCheckpointStore;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentPipelineExecutionPlanner;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentPipelineOutputRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\FinalizationDeliveryStore;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\FinalizationOutbox;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\GenerationPipelineDataGateway;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineArtifactStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineCheckpointStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineCompletionHook;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineDefinitionGraph;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineExecutionPlanner;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineOutputRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRunner;
@@ -164,12 +172,22 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(FailureStore::class, EloquentFailureStore::class);
         $this->app->singleton(FailureWorkflowHandler::class, EloquentFailureWorkflowHandler::class);
         $this->app->singleton(PipelineCompletionHook::class, PublishValidatedDraft::class);
+        $this->app->singleton(FinalizationOutbox::class, fn ($app) => new EloquentFinalizationOutbox($app->make('db')->connection()));
+        $this->app->singleton(FinalizationDeliveryStore::class, fn ($app) => new EloquentFinalizationDeliveryStore($app->make('db')->connection()));
+        $this->app->singleton(PipelineDefinitionGraph::class, static fn (): PipelineDefinitionGraph => PipelineDefinitionGraph::standard());
         $this->app->singleton(PipelineArtifactStore::class, S3PipelineArtifactStore::class);
         $this->app->singleton(PipelineCheckpointStore::class, fn ($app) => new EloquentPipelineCheckpointStore(
             $app->make('db')->connection(),
             $app->make(PipelineCompletionHook::class),
         ));
         $this->app->singleton(PipelineOutputRepository::class, EloquentPipelineOutputRepository::class);
+        $this->app->singleton(PipelineExecutionPlanner::class, EloquentPipelineExecutionPlanner::class);
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RecoverEstimateGenerationPipelines::class,
+            fn ($app) => new \App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RecoverEstimateGenerationPipelines(
+                $app->make('db')->connection(),
+            ),
+        );
         $this->app->singleton(GenerationPipelineDataGateway::class, EloquentGenerationPipelineDataGateway::class);
         $this->app->singleton(PipelineRegistry::class, fn ($app) => new PipelineRegistry([
             $app->make(UnderstandDocumentsStage::class),
@@ -272,6 +290,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                     ->withoutOverlapping();
                 $this->app->make(Schedule::class)
                     ->job(new RecoverEstimateGenerationPipelinesJob)
+                    ->everyMinute()
+                    ->withoutOverlapping();
+                $this->app->make(Schedule::class)
+                    ->job(new DeliverEstimateGenerationFinalizationsJob)
                     ->everyMinute()
                     ->withoutOverlapping();
             });

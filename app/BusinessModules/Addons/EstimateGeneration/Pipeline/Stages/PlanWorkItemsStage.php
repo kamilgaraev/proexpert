@@ -29,7 +29,11 @@ final readonly class PlanWorkItemsStage implements PipelineStage
 
     public function execute(PipelineContext $context): PipelineStageResult
     {
-        $analysis = $context->priorOutputs->payload(ProcessingStage::ExtractQuantities)['analysis'];
+        $analysis = $context->priorOutputs->payload(ProcessingStage::UnderstandObject)['analysis'];
+        $hints = $context->priorOutputs->payload(ProcessingStage::ExtractQuantities)['quantity_learning_hints'];
+        if ($hints !== []) {
+            $analysis['document_context']['quantity_learning_hints'] = $hints;
+        }
         $profile = $this->packagePlanner->profileFromAnalysis($analysis);
         $plan = $this->packagePlanner->plan($profile);
         $localEstimates = $this->decomposition->decomposePackagePlan($analysis, $plan);
@@ -40,11 +44,11 @@ final readonly class PlanWorkItemsStage implements PipelineStage
         }
 
         return $this->results->make($context, $this->stage(), [
-            'analysis' => $analysis,
             'object_profile' => $profile->toArray(),
             'package_plan' => $plan->toArray(),
             'document_requirements' => $this->packagePlanner->documentRequirements($profile),
             'generation_mode' => EstimateGenerationMode::fromInput($profile->planningSignals['generation_mode'] ?? null)->value,
+            'regional_context' => $analysis['regional_context'] ?? [],
             'local_estimates' => $localEstimates,
         ], ['local_estimates_count' => count($localEstimates)]);
     }

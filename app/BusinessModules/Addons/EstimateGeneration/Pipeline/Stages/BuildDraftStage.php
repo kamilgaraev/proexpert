@@ -10,6 +10,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use Illuminate\Support\Arr;
 
+use function trans_message;
+
 final readonly class BuildDraftStage implements PipelineStage
 {
     public function __construct(private StageResultFactory $results) {}
@@ -21,15 +23,19 @@ final readonly class BuildDraftStage implements PipelineStage
 
     public function execute(PipelineContext $context): PipelineStageResult
     {
+        $plan = $context->priorOutputs->payload(ProcessingStage::PlanWorkItems);
         $data = $context->priorOutputs->payload(ProcessingStage::ResolvePrices);
         $source = $context->priorOutputs->payload(ProcessingStage::UnderstandDocuments);
-        $analysis = $data['analysis'];
+        $analysis = $context->priorOutputs->payload(ProcessingStage::UnderstandObject)['analysis'];
+        $description = trim((string) Arr::get($analysis, 'object.description', ''));
         $draft = [
-            'title' => $source['input']['description'] ?? 'AI draft estimate',
-            'generation_mode' => $data['generation_mode'],
-            'document_requirements' => $data['document_requirements'],
-            'object_profile' => $data['object_profile'],
-            'package_plan' => $data['package_plan'],
+            'title' => $description !== ''
+                ? mb_substr($description, 0, 160)
+                : trans_message('estimate_generation.draft_default_title'),
+            'generation_mode' => $plan['generation_mode'],
+            'document_requirements' => $plan['document_requirements'],
+            'object_profile' => $plan['object_profile'],
+            'package_plan' => $plan['package_plan'],
             'source_documents' => Arr::get($analysis, 'source_documents', []),
             'local_estimates' => $data['local_estimates'],
             'traceability' => [
@@ -43,7 +49,7 @@ final readonly class BuildDraftStage implements PipelineStage
             'normative_matching' => $this->normativeSummary($data['local_estimates']),
         ];
         $warnings = [];
-        $rebuildKey = $source['input']['rebuild_section_key'] ?? null;
+        $rebuildKey = $source['rebuild_section_key'] ?? null;
         if (is_string($rebuildKey) && $rebuildKey !== '') {
             $found = false;
             foreach ($draft['local_estimates'] as $index => $localEstimate) {

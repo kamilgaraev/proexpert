@@ -19,6 +19,7 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
         private EstimateGenerationAuditService $audit,
         private AdvanceEstimateGeneration $advance,
         private PipelineArtifactStore $artifacts,
+        private FinalizationOutbox $finalizations,
     ) {}
 
     public function beforeComplete(CheckpointClaim $claim, PipelineStageResult $result, DateTimeImmutable $completedAt): void
@@ -40,7 +41,8 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
         if (! $session instanceof EstimateGenerationSession
             || (int) $session->state_version !== $claim->context->stateVersion
             || $session->status !== EstimateGenerationStatus::Generating
-            || ! hash_equals($claim->context->inputVersion, (string) ($session->input_payload['generation_attempt_id'] ?? ''))) {
+            || $claim->context->generationAttemptId === null
+            || ! hash_equals($claim->context->generationAttemptId, (string) ($session->input_payload['generation_attempt_id'] ?? ''))) {
             throw new StaleEstimateGenerationState($claim->context->sessionId, $claim->context->stateVersion);
         }
         $this->packages->syncFromDraft($session, $draft);
@@ -52,5 +54,11 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
             'problem_flags' => $draft['problem_flags'] ?? [],
             'last_error' => null,
         ]);
+        $this->finalizations->enqueue(FinalizationEvent::completed(
+            $claim->context->organizationId,
+            $claim->context->projectId,
+            $claim->context->sessionId,
+            (string) $claim->context->generationAttemptId,
+        ), $completedAt);
     }
 }

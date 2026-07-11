@@ -48,27 +48,21 @@ final class PipelineRunner
 
     public function runNext(PipelineContext $context): ?PipelineStageResult
     {
-        foreach ($this->registry->ordered() as $stage) {
-            $now = ($this->clock)();
-            $claim = $this->checkpointStore->claim(
-                $context,
-                $stage->stage(),
-                $now,
-                $now->modify(sprintf('+%d seconds', $this->leaseSeconds)),
-            );
-
-            if ($claim->status === CheckpointClaimStatus::AlreadyCompleted) {
-                continue;
-            }
-
-            if ($claim->status === CheckpointClaimStatus::Busy) {
-                return null;
-            }
-
-            return $this->executeClaimed($stage, $context, $claim);
+        if ($context->stage === null) {
+            throw new InvalidArgumentException('Pipeline runner requires an exactly planned stage.');
+        }
+        $stage = $this->registry->get($context->stage);
+        if (! $stage instanceof PipelineStage) {
+            throw new InvalidArgumentException('Planned pipeline stage is not registered.');
+        }
+        $now = ($this->clock)();
+        $leaseExpiresAt = $now->modify(sprintf('+%d seconds', $this->leaseSeconds));
+        $claim = $this->checkpointStore->claim($context, $stage->stage(), $now, $leaseExpiresAt);
+        if ($claim->status !== CheckpointClaimStatus::Acquired) {
+            return null;
         }
 
-        return null;
+        return $this->executeClaimed($stage, $context->withClaim($claim, $leaseExpiresAt), $claim);
     }
 
     private function executeClaimed(

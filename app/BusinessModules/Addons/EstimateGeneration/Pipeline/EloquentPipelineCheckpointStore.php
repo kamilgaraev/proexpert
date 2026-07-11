@@ -46,10 +46,13 @@ final class EloquentPipelineCheckpointStore implements PipelineCheckpointStore
             if (! $session instanceof EstimateGenerationSession
                 || (int) $session->state_version !== $context->stateVersion
                 || $session->status->value !== $context->sessionStatus
-                || ($stage === ProcessingStage::BuildDraft
-                    && ! hash_equals($context->inputVersion, (string) ($session->input_payload['generation_attempt_id'] ?? '')))) {
+                || $context->stage !== $stage
+                || $context->generationAttemptId === null
+                || ($context->documentId === null
+                    && ! hash_equals($context->generationAttemptId, (string) ($session->input_payload['generation_attempt_id'] ?? '')))) {
                 throw new StaleEstimateGenerationState($context->sessionId, $context->stateVersion);
             }
+            $this->assertDependenciesCurrent($context);
             if ($context->documentId !== null) {
                 $document = $this->documentQuery()
                     ->whereKey($context->documentId)
@@ -66,12 +69,17 @@ final class EloquentPipelineCheckpointStore implements PipelineCheckpointStore
             $token = (string) Str::uuid();
             $identity = [
                 'session_id' => $context->sessionId,
+                'generation_attempt_id' => $context->generationAttemptId,
                 'stage' => $stage->value,
                 'input_version' => $context->inputVersion,
             ];
 
             $inserted = $this->database->table('estimate_generation_pipeline_checkpoints')->insertOrIgnore([
                 ...$identity,
+                'organization_id' => $context->organizationId,
+                'project_id' => $context->projectId,
+                'base_input_version' => $context->baseInputVersion,
+                'dependency_versions' => json_encode($context->dependencyVersions, JSON_THROW_ON_ERROR),
                 'status' => CheckpointStatus::Running->value,
                 'metrics' => '{}',
                 'warnings' => '[]',
@@ -150,6 +158,19 @@ final class EloquentPipelineCheckpointStore implements PipelineCheckpointStore
         PipelineVersionValidator::assertValid($result->outputVersion, 'output');
 
         return $this->database->transaction(function () use ($claim, $result, $completedAt): bool {
+            $session = $this->sessionQuery()
+                ->whereKey($claim->context->sessionId)
+                ->where('organization_id', $claim->context->organizationId)
+                ->where('project_id', $claim->context->projectId)
+                ->lockForUpdate()
+                ->first();
+            if (! $session instanceof EstimateGenerationSession
+                || (int) $session->state_version !== $claim->context->stateVersion
+                || $session->status->value !== $claim->context->sessionStatus
+                || $claim->context->generationAttemptId === null
+                || ! hash_equals($claim->context->generationAttemptId, (string) ($session->input_payload['generation_attempt_id'] ?? ''))) {
+                return false;
+            }
             $checkpoint = $this->query()
                 ->where($this->identity($claim))
                 ->where('status', CheckpointStatus::Running->value)
@@ -162,6 +183,17 @@ final class EloquentPipelineCheckpointStore implements PipelineCheckpointStore
             }
 
             $this->completionHook->beforeComplete($claim, $result, $completedAt);
+            $artifactBytes = $result->output->artifact->bytes;
+            $aggregateBytes = (int) $this->query()
+                ->where('session_id', $claim->context->sessionId)
+                ->where('organization_id', $claim->context->organizationId)
+                ->where('project_id', $claim->context->projectId)
+                ->where('generation_attempt_id', $claim->context->generationAttemptId)
+                ->where('status', CheckpointStatus::Completed->value)
+                ->sum('artifact_bytes');
+            if ($aggregateBytes + $artifactBytes > PipelineDefinitionGraph::MAX_TOTAL_ARTIFACT_BYTES) {
+                throw new RuntimeException('estimate_generation.pipeline_artifact_budget_exceeded');
+            }
 
             return $checkpoint->newQuery()
                 ->whereKey($checkpoint->getKey())
@@ -171,6 +203,7 @@ final class EloquentPipelineCheckpointStore implements PipelineCheckpointStore
                     'status' => CheckpointStatus::Completed->value,
                     'output_version' => $result->outputVersion,
                     'output_payload' => json_encode($result->output->envelope(), JSON_THROW_ON_ERROR),
+                    'artifact_bytes' => $artifactBytes,
                     'metrics' => json_encode($result->metrics, JSON_THROW_ON_ERROR),
                     'warnings' => json_encode($result->warnings, JSON_THROW_ON_ERROR),
                     'claim_token' => null,
@@ -230,14 +263,65 @@ final class EloquentPipelineCheckpointStore implements PipelineCheckpointStore
             ]) === 1;
     }
 
-    /** @return array{session_id: int, stage: string, input_version: string} */
+    public function invalidateDownstream(PipelineContext $context, ProcessingStage $changedStage, DateTimeImmutable $invalidatedAt): int
+    {
+        if ($context->generationAttemptId === null) {
+            return 0;
+        }
+        $downstream = array_map(
+            static fn (ProcessingStage $stage): string => $stage->value,
+            array_filter(ProcessingStage::cases(), static fn (ProcessingStage $stage): bool => $stage->order() >= $changedStage->order()),
+        );
+
+        return $this->query()
+            ->where('session_id', $context->sessionId)
+            ->where('organization_id', $context->organizationId)
+            ->where('project_id', $context->projectId)
+            ->where('generation_attempt_id', $context->generationAttemptId)
+            ->whereIn('stage', $downstream)
+            ->where('status', CheckpointStatus::Completed->value)
+            ->update([
+                'status' => CheckpointStatus::Invalidated->value,
+                'invalidated_at' => $invalidatedAt,
+                'invalidation_reason' => 'dependency_changed',
+                'updated_at' => $invalidatedAt,
+            ]);
+    }
+
+    /** @return array{session_id: int, generation_attempt_id: string|null, stage: string, input_version: string} */
     private function identity(CheckpointClaim $claim): array
     {
         return [
             'session_id' => $claim->context->sessionId,
+            'generation_attempt_id' => $claim->context->generationAttemptId,
             'stage' => $claim->stage->value,
             'input_version' => $claim->context->inputVersion,
         ];
+    }
+
+    private function assertDependenciesCurrent(PipelineContext $context): void
+    {
+        if ($context->dependencyVersions === []) {
+            return;
+        }
+        $rows = $this->query()
+            ->where('session_id', $context->sessionId)
+            ->where('organization_id', $context->organizationId)
+            ->where('project_id', $context->projectId)
+            ->where('generation_attempt_id', $context->generationAttemptId)
+            ->where('status', CheckpointStatus::Completed->value)
+            ->whereIn('stage', array_keys($context->dependencyVersions))
+            ->get(['stage', 'output_version'])
+            ->mapWithKeys(static fn (EstimateGenerationPipelineCheckpoint $checkpoint): array => [$checkpoint->stage->value => (string) $checkpoint->output_version])
+            ->all();
+        if (count($rows) !== count($context->dependencyVersions)) {
+            throw new StaleEstimateGenerationState($context->sessionId, $context->stateVersion);
+        }
+        foreach ($context->dependencyVersions as $stage => $version) {
+            if (! isset($rows[$stage]) || ! hash_equals($version, $rows[$stage])) {
+                throw new StaleEstimateGenerationState($context->sessionId, $context->stateVersion);
+            }
+        }
     }
 
     /** @return Builder<EstimateGenerationPipelineCheckpoint> */

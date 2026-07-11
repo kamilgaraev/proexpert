@@ -27,7 +27,7 @@ final class InMemoryPipelineStateStore implements PipelineCheckpointStore, Pipel
         }
         $attempt = (int) ($record['attempt'] ?? 0) + 1;
         $token = sprintf('00000000-0000-4000-8000-%012d', ++$this->sequence);
-        $this->records[$key] = ['status' => CheckpointStatus::Running, 'lease' => $leaseExpiresAt, 'token' => $token, 'attempt' => $attempt, 'output' => null];
+        $this->records[$key] = ['context' => $context, 'stage' => $stage, 'status' => CheckpointStatus::Running, 'lease' => $leaseExpiresAt, 'token' => $token, 'attempt' => $attempt, 'output' => null];
 
         return CheckpointClaim::acquired($context, $stage, $token, $attempt, $this->sequence);
     }
@@ -67,17 +67,42 @@ final class InMemoryPipelineStateStore implements PipelineCheckpointStore, Pipel
         return true;
     }
 
+    public function invalidateDownstream(PipelineContext $context, ProcessingStage $changedStage, DateTimeImmutable $invalidatedAt): int
+    {
+        $count = 0;
+        foreach ($this->records as &$record) {
+            if (($record['context']->sessionId ?? null) === $context->sessionId
+                && ($record['context']->generationAttemptId ?? null) === $context->generationAttemptId
+                && ($record['stage'] ?? null) instanceof ProcessingStage
+                && $record['stage']->order() >= $changedStage->order()
+                && $record['status'] === CheckpointStatus::Completed) {
+                $record['status'] = CheckpointStatus::Invalidated;
+                $count++;
+            }
+        }
+        unset($record);
+
+        return $count;
+    }
+
     public function priorOutputs(PipelineContext $context): PipelinePriorOutputs
     {
         $outputs = [];
-        foreach (ProcessingStage::cases() as $stage) {
-            $output = $this->records[$this->key($context, $stage)]['output'] ?? null;
-            if ($output instanceof PipelineStageOutput) {
+        foreach ($this->records as $record) {
+            $recordContext = $record['context'] ?? null;
+            $stage = $record['stage'] ?? null;
+            $output = $record['output'] ?? null;
+            if ($recordContext instanceof PipelineContext
+                && $recordContext->sessionId === $context->sessionId
+                && $recordContext->generationAttemptId === $context->generationAttemptId
+                && $record['status'] === CheckpointStatus::Completed
+                && $stage instanceof ProcessingStage
+                && $output instanceof PipelineStageOutput) {
                 $outputs[$stage->value] = $output;
             }
         }
 
-        return new PipelinePriorOutputs($outputs, loader: fn (PipelineStageOutput $output): array => $this->artifacts->read($context, $output));
+        return new PipelinePriorOutputs($outputs, loader: fn (PipelineStageOutput $output): array => $this->artifacts->read($context, $output->artifact));
     }
 
     public function completedCount(): int

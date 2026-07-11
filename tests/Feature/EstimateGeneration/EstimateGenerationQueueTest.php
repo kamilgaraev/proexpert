@@ -152,7 +152,7 @@ class EstimateGenerationQueueTest extends TestCase
         $this->assertSame(EstimateGenerationStatus::ReadyToApply, $session->status);
     }
 
-    public function test_generation_job_notifies_user_when_generation_finishes(): void
+    public function test_generation_job_leaves_finished_notification_to_transactional_outbox(): void
     {
         [, , $session] = $this->makeGenerationSession('generating');
         $pipeline = Mockery::mock(DraftPipelineEntrypoint::class);
@@ -173,29 +173,27 @@ class EstimateGenerationQueueTest extends TestCase
                 );
             });
 
-        $notifications = Mockery::mock(EstimateGenerationNotificationService::class);
-        $notifications->shouldReceive('notifyFinished')
-            ->once()
-            ->with(Mockery::on(static fn (EstimateGenerationSession $notifiedSession): bool => $notifiedSession->id === $session->id
-                && $notifiedSession->status === EstimateGenerationStatus::ReadyToApply));
-
         $job = new GenerateEstimateDraftJob($session->id, $session->state_version, 'test-attempt', $this->snapshot($session, 'test-attempt'));
-        $job->handle($pipeline, $notifications);
+        $job->handle($pipeline);
+        self::assertStringNotContainsString(
+            'notifyFinished(',
+            file_get_contents(base_path('app/BusinessModules/Addons/EstimateGeneration/Jobs/GenerateEstimateDraftJob.php')),
+        );
     }
 
-    public function test_generation_job_notifies_user_when_generation_fails(): void
+    public function test_generation_job_failure_has_no_direct_notification_delivery(): void
     {
         [, , $session] = $this->makeGenerationSession('generating');
         $notifications = Mockery::mock(EstimateGenerationNotificationService::class);
-        $notifications->shouldReceive('notifyFailed')
-            ->once()
-            ->with(Mockery::on(static fn (EstimateGenerationSession $notifiedSession): bool => $notifiedSession->id === $session->id
-                && $notifiedSession->status === EstimateGenerationStatus::Failed
-                && $notifiedSession->failure_code === 'unexpected_internal_failure'));
+        $notifications->shouldNotReceive('notifyFailed');
         $this->app->instance(EstimateGenerationNotificationService::class, $notifications);
 
         $job = new GenerateEstimateDraftJob($session->id, $session->state_version, 'test-attempt', $this->snapshot($session, 'test-attempt'));
         $job->failed(new RuntimeException('generation failed'));
+        self::assertStringNotContainsString(
+            'notifyFailed(',
+            file_get_contents(base_path('app/BusinessModules/Addons/EstimateGeneration/Jobs/GenerateEstimateDraftJob.php')),
+        );
     }
 
     public function test_estimate_generation_notification_contains_admin_target_route(): void

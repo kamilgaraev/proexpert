@@ -17,10 +17,13 @@ final readonly class EloquentPipelineOutputRepository implements PipelineOutputR
     {
         $rows = EstimateGenerationPipelineCheckpoint::query()
             ->where('session_id', $context->sessionId)
-            ->where('input_version', $context->inputVersion)
+            ->where('organization_id', $context->organizationId)
+            ->where('project_id', $context->projectId)
+            ->where('generation_attempt_id', $context->generationAttemptId)
             ->where('status', CheckpointStatus::Completed->value)
-            ->orderBy('id')
-            ->get(['stage', 'output_version', 'output_payload']);
+            ->orderBy('stage')
+            ->orderByDesc('id')
+            ->get(['stage', 'output_version', 'output_payload', 'artifact_bytes']);
         $outputs = [];
         $bytes = 0;
 
@@ -31,12 +34,15 @@ final readonly class EloquentPipelineOutputRepository implements PipelineOutputR
                 throw new DomainException('Persisted pipeline outputs exceed the session bound.');
             }
             $output = PipelineStageOutput::fromEnvelope($payload, (string) $row->output_version);
+            if ((int) $row->artifact_bytes !== $output->artifact->bytes || isset($outputs[$output->stage->value])) {
+                continue;
+            }
             $outputs[$output->stage->value] = $output;
         }
 
         return new PipelinePriorOutputs(
             $outputs,
-            loader: fn (PipelineStageOutput $output): array => $this->artifacts->read($context, $output),
+            loader: fn (PipelineStageOutput $output): array => $this->artifacts->read($context, $output->artifact),
         );
     }
 }

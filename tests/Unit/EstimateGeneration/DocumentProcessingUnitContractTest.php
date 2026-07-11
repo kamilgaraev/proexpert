@@ -169,7 +169,10 @@ final class DocumentProcessingUnitContractTest extends TestCase
         self::assertStringContainsString('CreateDocumentProcessingUnits', $source);
         self::assertStringNotContainsString('OcrDocumentProcessor', $source);
         self::assertStringNotContainsString('FileService', $source);
-        self::assertStringNotContainsString('->get(', $source);
+        self::assertStringContainsString('PipelineCheckpointStore', $source);
+        self::assertStringContainsString('PipelineStageOutput::create(', $source);
+        self::assertStringContainsString('document_manifest_v1', $source);
+        self::assertStringNotContainsString("->with(['facts'", $source);
         self::assertStringNotContainsString('readStream', $source);
     }
 

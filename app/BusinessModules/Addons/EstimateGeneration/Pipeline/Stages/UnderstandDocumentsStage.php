@@ -21,8 +21,8 @@ final readonly class UnderstandDocumentsStage implements PipelineStage
 
     public function execute(PipelineContext $context): PipelineStageResult
     {
-        $source = $this->gateway->source($context);
+        $source = $this->gateway->manifest($context);
 
-        return $this->results->make($context, $this->stage(), $source, ['documents_count' => count($source['documents'])]);
+        return $this->results->make($context, $this->stage(), $source, ['documents_count' => $source['documents_count']]);
     }
 }
