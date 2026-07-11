@@ -14,28 +14,36 @@ final readonly class EvidenceData
 
     public float $confidence;
 
+    public string $sourceRef;
+
+    public string $sourceVersion;
+
+    public string $producerName;
+
+    public string $producerVersion;
+
     public function __construct(
         public int $organizationId,
         public int $projectId,
         public int $sessionId,
         public EvidenceType $type,
         public EvidenceSourceType $sourceType,
-        public string $sourceRef,
-        public string $sourceVersion,
+        string $sourceRef,
+        string $sourceVersion,
         array $locator,
         array $value,
         float $confidence,
-        public string $producerName,
-        public string $producerVersion,
+        string $producerName,
+        string $producerVersion,
     ) {
         if ($organizationId < 1 || $projectId < 1 || $sessionId < 1) {
             throw new InvalidArgumentException('Evidence scope identifiers must be positive.');
         }
-        foreach ([[$sourceRef, 160], [$sourceVersion, 80], [$producerName, 80], [$producerVersion, 80]] as [$text, $limit]) {
-            if ($text === '' || strlen($text) > $limit || ! mb_check_encoding($text, 'UTF-8')) {
-                throw new InvalidArgumentException('Evidence identity field is invalid.');
-            }
-        }
+        $this->sourceRef = (new EvidenceSourceReference($sourceType, $sourceRef))->value;
+        $this->sourceVersion = (new EvidenceVersion($sourceVersion))->value;
+        $this->producerName = EvidenceProducer::tryFrom($producerName)?->value
+            ?? throw new InvalidArgumentException('Evidence producer is invalid.');
+        $this->producerVersion = (new EvidenceVersion($producerVersion))->value;
         if (! is_finite($confidence) || $confidence < 0 || $confidence > 1) {
             throw new InvalidArgumentException('Evidence confidence must be between zero and one.');
         }

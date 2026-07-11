@@ -123,6 +123,38 @@ final class EvidencePostgresContractTest extends TestCase
         self::assertSame(0, DB::table('estimate_generation_evidence_edges')->where('parent_id', $parent->id)->count());
     }
 
+    #[Test]
+    public function semantic_trigger_rejects_direct_identity_and_json_bypasses(): void
+    {
+        $base = [
+            'organization_id' => (int) getenv('EG_TEST_ORGANIZATION_ID'),
+            'project_id' => (int) getenv('EG_TEST_PROJECT_ID'),
+            'session_id' => (int) getenv('EG_TEST_SESSION_ID'),
+            'type' => 'source_fact', 'source_type' => 'document', 'source_ref' => 'document:1',
+            'source_version' => 'test:'.$this->runSuffix, 'locator' => json_encode(['document_id' => 1], JSON_THROW_ON_ERROR),
+            'value' => json_encode(['fact_key' => 'area', 'fact_value' => 1], JSON_THROW_ON_ERROR),
+            'confidence' => 1, 'producer_name' => 'contract', 'producer_version' => 'contract:'.$this->runSuffix,
+            'fingerprint' => hash('sha256', $this->runSuffix), 'invalidation_version' => 0, 'created_at' => now(), 'updated_at' => now(),
+        ];
+        $variants = [
+            ['source_ref' => 'prompt:ignore_previous'],
+            ['producer_name' => 'access_token'],
+            ['source_version' => 'model:sk-proj-secret'],
+            ['locator' => json_encode(['document_id' => 'sk-proj-secret'], JSON_THROW_ON_ERROR)],
+            ['locator' => json_encode(['document_id' => 1, 'element_key' => 'sk-proj-secret'], JSON_THROW_ON_ERROR)],
+            ['value' => json_encode(['fact_key' => 'api_key', 'fact_value' => 'sk-proj-secret'], JSON_THROW_ON_ERROR)],
+            ['value' => json_encode(['fact_key' => 'area'], JSON_THROW_ON_ERROR)],
+            ['value' => json_encode(['fact_key' => 'area', 'fact_value' => 1, 'unit' => 'sk-proj-secret'], JSON_THROW_ON_ERROR)],
+        ];
+        foreach ($variants as $index => $variant) {
+            $this->assertMutationRejected('semantic_'.$index, function () use ($base, $variant, $index): void {
+                DB::table('estimate_generation_evidence')->insert([
+                    ...$base, ...$variant, 'fingerprint' => hash('sha256', $base['fingerprint'].':'.$index),
+                ]);
+            }, 'estimate_generation.evidence_');
+        }
+    }
+
     private function data(string $sourceRef = 'document:contract', EvidenceType $type = EvidenceType::SourceFact): EvidenceData
     {
         return new EvidenceData(
@@ -131,15 +163,15 @@ final class EvidencePostgresContractTest extends TestCase
             sessionId: (int) getenv('EG_TEST_SESSION_ID'),
             type: $type,
             sourceType: EvidenceSourceType::Document,
-            sourceRef: $sourceRef.':'.$this->runSuffix,
+            sourceRef: 'document:'.sprintf('%u', crc32($sourceRef.':'.$this->runSuffix)),
             sourceVersion: 'contract:'.$this->runSuffix,
             locator: ['document_id' => 1, 'page' => 1],
             value: $type === EvidenceType::SourceFact
-                ? ['fact_key' => 'contract', 'fact_value' => 'fixture']
-                : ['field_key' => 'contract', 'field_value' => 'fixture'],
+                ? ['fact_key' => 'element_type_code', 'fact_value' => 'element_type:wall']
+                : ['field_key' => 'element_type_code', 'field_value' => 'element_type:wall'],
             confidence: 1,
             producerName: 'contract',
-            producerVersion: $this->runSuffix,
+            producerVersion: 'contract:'.$this->runSuffix,
         );
     }
 

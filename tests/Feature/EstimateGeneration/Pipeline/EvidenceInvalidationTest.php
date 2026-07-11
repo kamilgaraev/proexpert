@@ -65,31 +65,37 @@ final class BatchRecordingEvidenceRepository implements EvidenceRepository
 
 final class EvidenceInvalidationTest extends TestCase
 {
+    private const OLD_VERSION = 'test:aaaaaa';
+
+    private const NEW_VERSION = 'test:bbbbbb';
+
+    private const DERIVED_VERSION = 'test:cccccc';
+
     #[Test]
     public function invalidates_old_source_and_all_descendants_once_without_deleting_history(): void
     {
         $repository = new InMemoryEvidenceRepository;
         $recorder = new EvidenceRecorder($repository);
         $invalidator = new EvidenceInvalidator($repository, chunkSize: 17);
-        $old = $recorder->record($this->data('sha256:old', 'document:44'));
-        $new = $recorder->record($this->data('sha256:new', 'document:44'));
-        $left = $recorder->record($this->data('v1', 'left', EvidenceType::Extracted), [new EvidenceParent($old->id, EvidenceRelation::DerivedFrom)]);
-        $right = $recorder->record($this->data('v1', 'right', EvidenceType::Extracted), [new EvidenceParent($old->id, EvidenceRelation::DerivedFrom)]);
-        $diamond = $recorder->record($this->data('v1', 'diamond', EvidenceType::Measured), [
+        $old = $recorder->record($this->data(self::OLD_VERSION, 'document:44'));
+        $new = $recorder->record($this->data(self::NEW_VERSION, 'document:44'));
+        $left = $recorder->record($this->data(self::DERIVED_VERSION, 'left', EvidenceType::Extracted), [new EvidenceParent($old->id, EvidenceRelation::DerivedFrom)]);
+        $right = $recorder->record($this->data(self::DERIVED_VERSION, 'right', EvidenceType::Extracted), [new EvidenceParent($old->id, EvidenceRelation::DerivedFrom)]);
+        $diamond = $recorder->record($this->data(self::DERIVED_VERSION, 'diamond', EvidenceType::Measured), [
             new EvidenceParent($left->id, EvidenceRelation::DerivedFrom),
             new EvidenceParent($right->id, EvidenceRelation::Supports),
         ]);
         $previous = $diamond;
         for ($index = 0; $index < 1000; $index++) {
-            $previous = $recorder->record($this->data('v1', 'chain:'.$index, EvidenceType::Inferred), [
+            $previous = $recorder->record($this->data(self::DERIVED_VERSION, 'chain:'.$index, EvidenceType::Inferred), [
                 new EvidenceParent($previous->id, EvidenceRelation::DerivedFrom),
             ]);
         }
 
-        $count = $invalidator->invalidateSource(1, 10, 100, EvidenceSourceType::Document, 'document:44', 'sha256:old', 'source_replaced');
+        $count = $invalidator->invalidateSource(1, 10, 100, EvidenceSourceType::Document, 'document:44', self::OLD_VERSION, 'source_replaced');
 
         self::assertSame(1004, $count);
-        self::assertSame(0, $invalidator->invalidateSource(1, 10, 100, EvidenceSourceType::Document, 'document:44', 'sha256:old', 'source_replaced'));
+        self::assertSame(0, $invalidator->invalidateSource(1, 10, 100, EvidenceSourceType::Document, 'document:44', self::OLD_VERSION, 'source_replaced'));
         self::assertCount(1005, $repository->nodes());
         self::assertNull($repository->node(1, 10, 100, $new->id)?->invalidatedAt);
         self::assertNotNull($repository->node(1, 10, 100, $previous->id)?->invalidatedAt);
@@ -101,11 +107,11 @@ final class EvidenceInvalidationTest extends TestCase
         $repository = new InMemoryEvidenceRepository;
         $recorder = new EvidenceRecorder($repository);
         $invalidator = new EvidenceInvalidator($repository);
-        $target = $recorder->record($this->data('old', 'document:44'));
-        $otherVersion = $recorder->record($this->data('new', 'document:44'));
-        $otherTenant = $recorder->record($this->data('old', 'document:44', organizationId: 2));
+        $target = $recorder->record($this->data(self::OLD_VERSION, 'document:44'));
+        $otherVersion = $recorder->record($this->data(self::NEW_VERSION, 'document:44'));
+        $otherTenant = $recorder->record($this->data(self::OLD_VERSION, 'document:44', organizationId: 2));
 
-        self::assertSame(1, $invalidator->invalidateSource(1, 10, 100, EvidenceSourceType::Document, 'document:44', 'old', 'source_replaced'));
+        self::assertSame(1, $invalidator->invalidateSource(1, 10, 100, EvidenceSourceType::Document, 'document:44', self::OLD_VERSION, 'source_replaced'));
         self::assertNotNull($repository->node(1, 10, 100, $target->id)?->invalidatedAt);
         self::assertNull($repository->node(1, 10, 100, $otherVersion->id)?->invalidatedAt);
         self::assertNull($repository->node(2, 10, 100, $otherTenant->id)?->invalidatedAt);
@@ -116,17 +122,17 @@ final class EvidenceInvalidationTest extends TestCase
     {
         $repository = new InMemoryEvidenceRepository;
         $recorder = new EvidenceRecorder($repository);
-        $root = $recorder->record($this->data('old', 'document:44'));
-        $middle = $recorder->record($this->data('v1', 'middle', EvidenceType::Extracted), [
+        $root = $recorder->record($this->data(self::OLD_VERSION, 'document:44'));
+        $middle = $recorder->record($this->data(self::DERIVED_VERSION, 'middle', EvidenceType::Extracted), [
             new EvidenceParent($root->id, EvidenceRelation::DerivedFrom),
         ]);
-        $leaf = $recorder->record($this->data('v1', 'leaf', EvidenceType::Measured), [
+        $leaf = $recorder->record($this->data(self::DERIVED_VERSION, 'leaf', EvidenceType::Measured), [
             new EvidenceParent($middle->id, EvidenceRelation::DerivedFrom),
         ]);
         $repository->invalidate(1, 10, 100, [$middle->id], 'partial_previous_attempt');
 
         self::assertSame(2, (new EvidenceInvalidator($repository))->invalidateSource(
-            1, 10, 100, EvidenceSourceType::Document, 'document:44', 'old', 'source_replaced',
+            1, 10, 100, EvidenceSourceType::Document, 'document:44', self::OLD_VERSION, 'source_replaced',
         ));
         self::assertNotNull($repository->node(1, 10, 100, $leaf->id)?->invalidatedAt);
     }
@@ -136,10 +142,10 @@ final class EvidenceInvalidationTest extends TestCase
     {
         $repository = new BatchRecordingEvidenceRepository;
         $recorder = new EvidenceRecorder($repository);
-        $root = $recorder->record($this->data('old', 'document:44'));
+        $root = $recorder->record($this->data(self::OLD_VERSION, 'document:44'));
         $previous = $root;
         for ($index = 0; $index < 80; $index++) {
-            $previous = $recorder->record($this->data('v1', 'bounded:'.$index, EvidenceType::Extracted), [
+            $previous = $recorder->record($this->data(self::DERIVED_VERSION, 'bounded:'.$index, EvidenceType::Extracted), [
                 new EvidenceParent($previous->id, EvidenceRelation::DerivedFrom),
             ]);
         }
@@ -147,13 +153,13 @@ final class EvidenceInvalidationTest extends TestCase
         $repository->batchSizes = [];
 
         self::assertSame(80, (new EvidenceInvalidator($repository, 17))->invalidateSource(
-            1, 10, 100, EvidenceSourceType::Document, 'document:44', 'old', 'source_replaced',
+            1, 10, 100, EvidenceSourceType::Document, 'document:44', self::OLD_VERSION, 'source_replaced',
         ));
         self::assertGreaterThan(1, count($repository->batchSizes));
         self::assertLessThanOrEqual(17, max($repository->batchSizes));
         self::assertNotNull($repository->node(1, 10, 100, $previous->id)?->invalidatedAt);
         self::assertSame(0, (new EvidenceInvalidator($repository, 17))->invalidateSource(
-            1, 10, 100, EvidenceSourceType::Document, 'document:44', 'old', 'source_replaced',
+            1, 10, 100, EvidenceSourceType::Document, 'document:44', self::OLD_VERSION, 'source_replaced',
         ));
     }
 
@@ -169,21 +175,23 @@ final class EvidenceInvalidationTest extends TestCase
             sessionId: 100,
             type: $type,
             sourceType: EvidenceSourceType::Document,
-            sourceRef: $sourceRef,
+            sourceRef: str_starts_with($sourceRef, 'document:')
+                ? $sourceRef
+                : 'document:'.max(1, (int) sprintf('%u', crc32($sourceRef))),
             sourceVersion: $sourceVersion,
             locator: $type === EvidenceType::Inferred
-                ? ['inference_key' => 'scope:'.$sourceRef]
+                ? ['inference_key' => 'inference:'.max(1, (int) sprintf('%u', crc32($sourceRef)))]
                 : ['document_id' => 44, 'page' => 1],
             value: match ($type) {
-                EvidenceType::SourceFact => ['fact_key' => 'kind', 'fact_value' => 'wall'],
-                EvidenceType::Extracted => ['field_key' => 'kind', 'field_value' => 'wall'],
+                EvidenceType::SourceFact => ['fact_key' => 'element_type_code', 'fact_value' => 'element_type:wall'],
+                EvidenceType::Extracted => ['field_key' => 'element_type_code', 'field_value' => 'element_type:wall'],
                 EvidenceType::Measured => ['quantity' => 12.0, 'unit' => 'm'],
-                EvidenceType::Inferred => ['result_code' => 'wall'],
+                EvidenceType::Inferred => ['result_code' => 'element_type:wall'],
                 default => throw new \LogicException('Unsupported fixture type.'),
             },
             confidence: 0.9,
             producerName: 'test',
-            producerVersion: '1',
+            producerVersion: 'test:dddddd',
         );
     }
 }

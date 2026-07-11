@@ -12,12 +12,12 @@ final class EvidenceSchema
     {
         $schema = match ($type) {
             EvidenceType::SourceFact, EvidenceType::Extracted, EvidenceType::Measured => [
-                'document_id' => 'positive_int', 'unit_type' => 'key', 'unit_index' => 'positive_int',
-                'page' => 'positive_int', 'sheet' => 'key', 'region_key' => 'key', 'element_key' => 'key',
-                'bbox' => 'bbox', 'source_key' => 'key',
+                'document_id' => 'positive_int', 'unit_type' => 'unit_type', 'unit_index' => 'positive_int',
+                'page' => 'positive_int', 'sheet' => 'positive_int', 'region_key' => 'region_ref', 'element_key' => 'element_ref',
+                'bbox' => 'bbox', 'source_key' => 'source_ref',
             ],
-            EvidenceType::Inferred => ['inference_key' => 'key', 'item_key' => 'key'],
-            EvidenceType::WorkItem, EvidenceType::NormativeMatch, EvidenceType::Price => ['item_key' => 'key'],
+            EvidenceType::Inferred => ['inference_key' => 'inference_ref', 'item_key' => 'item_ref'],
+            EvidenceType::WorkItem, EvidenceType::NormativeMatch, EvidenceType::Price => ['item_key' => 'item_ref'],
         };
         self::assertClosed($locator, $schema, 'locator');
         $hasIdentity = match ($type) {
@@ -35,13 +35,13 @@ final class EvidenceSchema
     public static function value(EvidenceType $type, array $value): array
     {
         [$schema, $required] = match ($type) {
-            EvidenceType::SourceFact => [['fact_key' => 'key', 'fact_value' => 'normalized_scalar', 'unit' => 'unit'], ['fact_key', 'fact_value']],
-            EvidenceType::Extracted => [['field_key' => 'key', 'field_value' => 'normalized_scalar', 'unit' => 'unit'], ['field_key', 'field_value']],
-            EvidenceType::Measured => [['quantity' => 'number', 'unit' => 'unit', 'method' => 'key'], ['quantity', 'unit']],
-            EvidenceType::Inferred => [['result_code' => 'key', 'confidence_band' => 'key'], ['result_code']],
-            EvidenceType::WorkItem => [['work_code' => 'key', 'quantity' => 'number', 'unit' => 'unit'], ['work_code']],
-            EvidenceType::NormativeMatch => [['norm_key' => 'key', 'score' => 'confidence', 'dataset_version' => 'key'], ['norm_key', 'score', 'dataset_version']],
-            EvidenceType::Price => [['amount' => 'number', 'currency' => 'currency', 'price_version' => 'key', 'region_code' => 'key'], ['amount', 'currency', 'price_version']],
+            EvidenceType::SourceFact => [['fact_key' => 'attribute', 'fact_value' => 'normalized_scalar', 'unit' => 'unit'], ['fact_key', 'fact_value']],
+            EvidenceType::Extracted => [['field_key' => 'attribute', 'field_value' => 'normalized_scalar', 'unit' => 'unit'], ['field_key', 'field_value']],
+            EvidenceType::Measured => [['quantity' => 'number', 'unit' => 'unit', 'method' => 'method'], ['quantity', 'unit']],
+            EvidenceType::Inferred => [['result_code' => 'domain_code', 'confidence_band' => 'confidence_band'], ['result_code']],
+            EvidenceType::WorkItem => [['work_code' => 'domain_code', 'quantity' => 'number', 'unit' => 'unit'], ['work_code']],
+            EvidenceType::NormativeMatch => [['norm_key' => 'norm_ref', 'score' => 'confidence', 'dataset_version' => 'version'], ['norm_key', 'score', 'dataset_version']],
+            EvidenceType::Price => [['amount' => 'number', 'currency' => 'currency', 'price_version' => 'version', 'region_code' => 'region_code'], ['amount', 'currency', 'price_version']],
         };
         self::assertClosed($value, $schema, 'value');
         foreach ($required as $key) {
@@ -69,11 +69,23 @@ final class EvidenceSchema
             'positive_int' => is_int($value) && $value > 0 && $value <= 1_000_000,
             'number' => (is_int($value) || is_float($value)) && is_finite((float) $value) && abs((float) $value) <= 1_000_000_000_000,
             'confidence' => (is_int($value) || is_float($value)) && is_finite((float) $value) && $value >= 0 && $value <= 1,
-            'key' => self::boundedString($value, 160, '/^[\pL\pN][\pL\pN_.:\/@-]*$/u'),
-            'unit' => self::boundedString($value, 32, '/^[\pL\pN][\pL\pN .\/*%-]*$/u'),
-            'currency' => is_string($value) && preg_match('/^[A-Z]{3}$/D', $value) === 1,
+            'attribute' => is_string($value) && EvidenceAttribute::tryFrom($value) !== null,
+            'unit' => is_string($value) && EvidenceUnit::tryFrom($value) !== null,
+            'method' => is_string($value) && EvidenceMeasurementMethod::tryFrom($value) !== null,
+            'confidence_band' => is_string($value) && EvidenceConfidenceBand::tryFrom($value) !== null,
+            'unit_type' => is_string($value) && in_array($value, ['pdf_page', 'spreadsheet_sheet', 'raster_image', 'sketch', 'cad_drawing', 'text_page'], true),
+            'region_ref' => self::boundedString($value, 87, '/^region:(?:[1-9][0-9]*|[a-f0-9]{64})$/D'),
+            'element_ref' => self::boundedString($value, 88, '/^element:(?:[1-9][0-9]*|[a-f0-9]{64})$/D'),
+            'source_ref' => self::boundedString($value, 87, '/^source:(?:[1-9][0-9]*|[a-f0-9]{64})$/D'),
+            'inference_ref' => self::boundedString($value, 90, '/^inference:(?:[1-9][0-9]*|[a-f0-9]{64})$/D'),
+            'item_ref' => self::boundedString($value, 70, '/^item:(?:[1-9][0-9]*|[a-f0-9]{64})$/D'),
+            'domain_code' => is_string($value) && self::validDomainCode($value),
+            'norm_ref' => self::boundedString($value, 90, '/^(?:(?:gesn|fer):[0-9]+(?:-[0-9]+){1,5}|fsnb:[0-9]{4}-[1-9][0-9]*)$/D'),
+            'version' => is_string($value) && self::validVersion($value),
+            'region_code' => is_string($value) && preg_match('/^[0-9]{1,6}$/D', $value) === 1,
+            'currency' => is_string($value) && EvidenceCurrency::tryFrom($value) !== null,
             'normalized_scalar' => is_bool($value) || is_int($value) || (is_float($value) && is_finite($value))
-                || self::boundedString($value, 160, '/^[\pL\pN][\pL\pN_.:\/@-]*$/u'),
+                || (is_string($value) && self::validDomainCode($value)),
             'bbox' => self::validBbox($value),
             default => false,
         };
@@ -101,5 +113,27 @@ final class EvidenceSchema
         }
 
         return true;
+    }
+
+    private static function validDomainCode(string $value): bool
+    {
+        try {
+            new EvidenceDomainCode($value);
+
+            return true;
+        } catch (InvalidArgumentException) {
+            return false;
+        }
+    }
+
+    private static function validVersion(string $value): bool
+    {
+        try {
+            new EvidenceVersion($value);
+
+            return true;
+        } catch (InvalidArgumentException) {
+            return false;
+        }
     }
 }

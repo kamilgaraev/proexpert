@@ -4,6 +4,12 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Pipeline;
 
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceAttribute;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceConfidenceBand;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceCurrency;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceMeasurementMethod;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceProducer;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceUnit;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -26,6 +32,7 @@ final class EvidencePersistenceContractTest extends TestCase
         self::assertStringContainsString('eg_evidence_immutable_trg', $migration);
         self::assertStringContainsString('eg_evidence_edge_transition_trg', $migration);
         self::assertStringContainsString('eg_evidence_edge_append_trg', $migration);
+        self::assertStringContainsString('eg_evidence_semantic_trg', $migration);
         self::assertStringContainsString("TG_OP = 'UPDATE'", $migration);
         self::assertStringContainsString('estimate_generation.evidence_edge_delete_forbidden', $migration);
         self::assertStringContainsString("Schema::create('estimate_generation_evidence_edges'", $migration);
@@ -39,6 +46,11 @@ final class EvidencePersistenceContractTest extends TestCase
         self::assertStringContainsString('ON COMMIT DROP', $repository);
         self::assertStringNotContainsString('->cursor(', $repository);
         self::assertStringNotContainsString("table('estimate_generation_evidence')->delete", $repository);
+        foreach ([EvidenceAttribute::cases(), EvidenceProducer::cases(), EvidenceUnit::cases(), EvidenceMeasurementMethod::cases(), EvidenceConfidenceBand::cases(), EvidenceCurrency::cases()] as $cases) {
+            foreach ($cases as $case) {
+                self::assertStringContainsString("'{$case->value}'", $migration);
+            }
+        }
     }
 
     #[Test]
