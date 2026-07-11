@@ -209,3 +209,33 @@ Shell syntax for production sandbox, offline harness and bootstrap: pass.
 ```
 
 No Docker build, database command or migration was executed.
+
+## Fourth corrective cycle
+
+### Finding → fix evidence
+
+- The contradictory 10,000-scalar ceiling was replaced with independent streaming budgets aligned with the worker contract: 200 pages, 100,000 path segments, 1,000,000 text characters, 500,000 coordinate components, 100,000 nested references and bounded top-level collections. A 5,000-entity production-sized drawing passes. A hostile 100,001-reference block is rejected before depth/schema traversal, and the regression test verifies less than 8 MiB validation peak growth after `memory_reset_peak_usage()`.
+- Recursive numeric counting no longer uses `array_map()` or intermediate arrays. All recursive and aggregate counters increment in loops and stop immediately when their dedicated threshold is exceeded.
+- Warning `safe_context` is a closed numeric schema containing only bounded `decoder_counts` and/or `reconciliation` groups. Reference strings and lists are non-empty and bounded to 512 bytes. Path style, when present, requires exactly all seven producer fields with nullable RGBA values validated explicitly.
+- The runner's sandbox prefix is injectable without changing the production default. The Windows integration bridge transports the complete sandbox command as UTF-8 JSON/base64 to a WSL Python exec adapter, which validates `list[str]` and invokes `os.execvpe()` without shell re-quoting. The real PHP runner test proves exact preservation of script paths, flags, spaces and `semi;$&value`, plus stdout, stderr and exit code 17.
+- WSL bubblewrap location is supplied as an exact WSL path discovered from the distribution's own `$HOME`. The production Alpine 3.20 package is pinned to `bubblewrap=0.10.0-r0`; the executable harness accepts the compatible tested range from 0.6.1 upward and continues to assert the required namespace/resource behavior.
+- The non-Linux production fail-closed test injects the Windows platform family and therefore runs identically on every host without a platform skip.
+
+### Fourth corrective TDD and verification
+
+```text
+RED:
+- production-sized 5,000-entity contract failed with geometry_contract_aggregate_limit;
+- arbitrary warning context, empty/oversized references and incomplete style were accepted;
+- production Dockerfile did not pin bubblewrap;
+- multi-argument runner lost every argument after the executable, then shell-reparsed &$ and returned 127.
+
+GREEN focused:
+VectorGeometryDataContractTest + CadProductionRuntimeContractTest:
+28 tests, 76 assertions, 0 failed, 0 skipped.
+
+Full final matrix with real LibreDWG 0.13.4:
+58 tests, 169 assertions, 0 failed, 0 skipped.
+```
+
+No Docker build, database command or migration was executed.

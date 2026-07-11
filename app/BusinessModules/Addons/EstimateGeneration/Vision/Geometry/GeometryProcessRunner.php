@@ -10,7 +10,11 @@ use Symfony\Component\Process\Process;
 
 final readonly class GeometryProcessRunner
 {
-    public function __construct(private ?string $platformFamily = null) {}
+    /** @param array<int, string> $sandboxCommandPrefix */
+    public function __construct(
+        private ?string $platformFamily = null,
+        private array $sandboxCommandPrefix = [],
+    ) {}
 
     /** @param array<int, string> $command @return array{exit_code: int|null, stdout: string, stderr: string} */
     public function run(
@@ -95,7 +99,7 @@ final readonly class GeometryProcessRunner
         $stdoutPath = $workspace.DIRECTORY_SEPARATOR.'process.stdout';
         $stderrPath = $workspace.DIRECTORY_SEPARATOR.'process.stderr';
         [$memoryLimit, $cpuLimit, $fileLimit, $openFileLimit] = $limits->sandboxArguments();
-        $sandboxCommand = [$sandbox, $workspace, $stdoutPath, $stderrPath, (string) $timeout, $memoryLimit, $cpuLimit, $fileLimit, $openFileLimit, ...$command];
+        $sandboxCommand = [$sandbox, ...$this->sandboxCommandPrefix, $workspace, $stdoutPath, $stderrPath, (string) $timeout, $memoryLimit, $cpuLimit, $fileLimit, $openFileLimit, ...$command];
         $process = new Process($sandboxCommand, $workspace);
         $process->disableOutput();
         $process->setTimeout($timeout + 2);

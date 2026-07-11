@@ -106,19 +106,71 @@ final class VectorGeometryDataContractTest extends TestCase
 
             return $data;
         }, 'geometry_contract_depth_invalid'];
+        yield 'warning safe context rejects arbitrary fields' => [static function (array $data): array {
+            $data['warnings'] = [['code' => 'diagnostic', 'safe_context' => ['document' => 'secret']]];
+
+            return $data;
+        }, 'geometry_contract_warning_invalid'];
+        yield 'reference strings must be non-empty' => [static function (array $data): array {
+            $data['entities'][0]['source_lineage'] = [''];
+
+            return $data;
+        }, 'geometry_contract_entity_invalid'];
+        yield 'reference strings are bounded' => [static function (array $data): array {
+            $data['blocks'] = [['name' => 'B', 'handle' => 'B1', 'owner' => str_repeat('x', 513), 'entities' => ['A1']]];
+
+            return $data;
+        }, 'geometry_contract_block_invalid'];
+        yield 'path style requires the exact complete shape' => [static function (array $data): array {
+            $data['entities'][0] = [
+                'handle' => 'P1', 'type' => 'path', 'layer' => 'page',
+                'segments' => [['operator' => 'move', 'points' => [[0, 0]], 'source_indices' => [0], 'closes_subpath' => false]],
+                'style' => ['fill_mode' => 0, 'stroke' => true, 'stroke_width' => 1, 'line_cap' => 0, 'line_join' => 0, 'fill_rgba' => null],
+            ];
+
+            return $data;
+        }, 'geometry_contract_style_invalid'];
     }
 
     #[Test]
-    public function aggregate_nested_budget_accepts_near_limit_and_rejects_over_limit(): void
+    public function bounded_numeric_warning_context_is_accepted(): void
+    {
+        $data = $this->validPayload();
+        $data['warnings'] = [[
+            'code' => 'decoder_diagnostic',
+            'count' => 2,
+            'safe_context' => [
+                'decoder_counts' => ['unknown' => 2],
+                'reconciliation' => ['entity_records' => 10, 'represented_records' => 8],
+            ],
+        ]];
+
+        self::assertSame(1, VectorGeometryData::fromArray($data)->schemaVersion);
+    }
+
+    #[Test]
+    public function production_sized_payload_passes_and_nested_over_limit_rejects_without_traversal_allocation(): void
     {
         $near = $this->validPayload();
-        $near['blocks'] = [['name' => 'B', 'handle' => 'B1', 'owner' => 'blocks', 'entities' => array_fill(0, 9_800, 'A')]];
+        $near['entities'] = [];
+        for ($index = 0; $index < 5_000; $index++) {
+            $near['entities'][] = ['handle' => 'L'.$index, 'type' => 'line', 'layer' => 'WALLS', 'points' => [[0, 0], [10, 10]], 'layout' => 'Model'];
+        }
         self::assertSame(1, VectorGeometryData::fromArray($near)->schemaVersion);
 
         $over = $this->validPayload();
-        $over['blocks'] = [['name' => 'B', 'handle' => 'B1', 'owner' => 'blocks', 'entities' => array_fill(0, 10_100, 'A')]];
-        $this->expectExceptionMessage('geometry_contract_aggregate_limit');
-        VectorGeometryData::fromArray($over);
+        $over['blocks'] = [['name' => 'B', 'handle' => 'B1', 'owner' => 'blocks', 'entities' => array_fill(0, 100_001, 'A')]];
+        if (function_exists('memory_reset_peak_usage')) {
+            memory_reset_peak_usage();
+        }
+        $baseline = memory_get_usage(true);
+        try {
+            VectorGeometryData::fromArray($over);
+            self::fail('Over-limit payload must be rejected.');
+        } catch (InvalidArgumentException $exception) {
+            self::assertSame('geometry_contract_nested_items_limit', $exception->getMessage());
+            self::assertLessThan(8 * 1024 * 1024, memory_get_peak_usage(true) - $baseline);
+        }
     }
 
     #[Test]

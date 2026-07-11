@@ -29,6 +29,7 @@ final class CadProductionRuntimeContractTest extends TestCase
         self::assertMatchesRegularExpression('/FROM alpine:3\.20@sha256:[a-f0-9]{64}/', $dockerfile);
         self::assertMatchesRegularExpression('/FROM php:8\.2-cli-alpine@sha256:[a-f0-9]{64}/', $dockerfile);
         self::assertStringContainsString('bubblewrap', $dockerfile);
+        self::assertStringContainsString('bubblewrap=0.10.0-r0', $dockerfile);
         self::assertStringContainsString('--require-hashes', $dockerfile);
         self::assertStringContainsString('geometry-sandbox', $dockerfile);
         self::assertStringContainsString('--ro-bind / /', file_get_contents($root.'/docker/geometry/geometry-sandbox.sh'));
@@ -43,10 +44,6 @@ final class CadProductionRuntimeContractTest extends TestCase
     #[Test]
     public function non_linux_production_execution_fails_closed(): void
     {
-        if (PHP_OS_FAMILY === 'Linux') {
-            self::markTestSkipped('Non-Linux production policy test.');
-        }
-
         $previousEnvironment = getenv('APP_ENV');
         $previousOptIn = getenv('GEOMETRY_ALLOW_UNISOLATED_LOCAL');
         putenv('APP_ENV=production');
@@ -55,7 +52,7 @@ final class CadProductionRuntimeContractTest extends TestCase
         try {
             $this->expectException(GeometryExtractionException::class);
             $this->expectExceptionMessage('cad_runtime_platform_unsupported');
-            (new GeometryProcessRunner)->run(
+            (new GeometryProcessRunner('Windows'))->run(
                 [PHP_BINARY, '-r', 'exit(0);'],
                 sys_get_temp_dir(),
                 'cad',
@@ -78,15 +75,30 @@ final class CadProductionRuntimeContractTest extends TestCase
         $root = dirname(__DIR__, 4);
         $workspace = sys_get_temp_dir().'/most-geometry-runner-'.bin2hex(random_bytes(8));
         self::assertTrue(mkdir($workspace, 0700));
-        self::assertNotFalse(file_put_contents($workspace.'/worker.sh', "printf runner-ok\nprintf runner-error >&2\nexit 17\n"));
-        $wslWorker = '/mnt/'.strtolower($workspace[0]).str_replace('\\', '/', substr($workspace, 2)).'/worker.sh';
-        (new Process(['wsl.exe', '-d', 'Ubuntu-22.04', '--', 'chmod', '0755', $wslWorker]))->mustRun();
+        self::assertNotFalse(file_put_contents($workspace.'/worker script.py', <<<'PYTHON'
+import json
+import sys
+
+print(json.dumps(sys.argv[1:], separators=(",", ":")))
+print("runner-error", file=sys.stderr, end="")
+raise SystemExit(17)
+PYTHON));
+        $wslWorker = '/mnt/'.strtolower($workspace[0]).str_replace('\\', '/', substr($workspace, 2)).'/worker script.py';
         $previousSandbox = getenv('GEOMETRY_SANDBOX_BINARY');
-        putenv('GEOMETRY_SANDBOX_BINARY='.$root.'/tests/Runtime/geometry-sandbox-wsl-bridge.cmd');
+        putenv('GEOMETRY_SANDBOX_BINARY='.getenv('SystemRoot').'\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+        $wslHome = trim((new Process(['wsl.exe', '-d', 'Ubuntu-22.04', '--', 'sh', '-lc', 'printf %s "$HOME"']))->mustRun()->getOutput());
+        self::assertStringStartsWith('/home/', $wslHome);
 
         try {
-            $result = (new GeometryProcessRunner('Linux'))->run(
-                [$wslWorker],
+            $result = (new GeometryProcessRunner('Linux', [
+                '-NoProfile',
+                '-ExecutionPolicy',
+                'Bypass',
+                '-File',
+                $root.'/tests/Runtime/geometry-sandbox-wsl-bridge.ps1',
+                $wslHome.'/.cache/most-geometry-sandbox/bwrap',
+            ]))->run(
+                ['python3', $wslWorker, '--input', 'value with spaces', '--workspace', 'semi;$&value'],
                 $workspace,
                 'cad',
                 10,
@@ -94,13 +106,13 @@ final class CadProductionRuntimeContractTest extends TestCase
             );
 
             self::assertSame(17, $result['exit_code'], $result['stderr']);
-            self::assertSame('runner-ok', $result['stdout']);
+            self::assertSame("[\"--input\",\"value with spaces\",\"--workspace\",\"semi;$&value\"]\n", $result['stdout']);
             self::assertSame('runner-error', $result['stderr']);
         } finally {
             $this->restoreEnvironment('GEOMETRY_SANDBOX_BINARY', $previousSandbox);
             @unlink($workspace.'/process.stdout');
             @unlink($workspace.'/process.stderr');
-            @unlink($workspace.'/worker.sh');
+            @unlink($workspace.'/worker script.py');
             @rmdir($workspace);
         }
     }

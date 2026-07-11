@@ -12,7 +12,8 @@ if ! command -v bwrap >/dev/null 2>&1; then
     export PATH="$(dirname "$BWRAP_BINARY"):$PATH"
 fi
 
-test "$(bwrap --version)" = 'bubblewrap 0.6.1'
+BWRAP_VERSION="$(bwrap --version | awk '{print $2}')"
+test "$(printf '%s\n' '0.6.1' "$BWRAP_VERSION" | sort -V | head -n 1)" = '0.6.1'
 bwrap --ro-bind / / --proc /proc --dev /dev --unshare-all -- sh -c 'exit 0'
 
 cp "$PROJECT_ROOT/docker/geometry/geometry-sandbox.sh" "$ROOT/sandbox"

@@ -10,7 +10,15 @@ final readonly class VectorGeometryData
 
     private const MAX_COORDINATE_COMPONENTS = 500_000;
 
-    private const MAX_AGGREGATE_SCALARS = 10_000;
+    private const MAX_PAGES = 200;
+
+    private const MAX_SEGMENTS = 100_000;
+
+    private const MAX_TEXT_CHARACTERS = 1_000_000;
+
+    private const MAX_NESTED_REFERENCES = 100_000;
+
+    private const MAX_REFERENCE_LENGTH = 512;
 
     private const MAX_TEXT_LENGTH = 4096;
 
@@ -71,10 +79,8 @@ final readonly class VectorGeometryData
                 throw new \InvalidArgumentException('cad_contract_field_invalid');
             }
         }
+        self::assertStructuralBudgets($data);
         self::assertDepth($data);
-        if (self::countScalarLeaves($data) > self::MAX_AGGREGATE_SCALARS) {
-            throw new \InvalidArgumentException('geometry_contract_aggregate_limit');
-        }
         self::assertBounds($data['bounds']);
         self::assertCollection($data['layers'], ['name', 'visible'], ['name', 'visible'], 'layer');
         self::assertCollection($data['blocks'], ['name', 'handle', 'owner', 'entities'], ['name', 'handle', 'owner', 'entities'], 'block');
@@ -99,7 +105,7 @@ final readonly class VectorGeometryData
         foreach (['entities', 'texts', 'dimensions'] as $collection) {
             foreach ($data[$collection] as $item) {
                 $handle = $item['handle'];
-                if (! is_string($handle) || $handle === '' || isset($handles[$handle])) {
+                if (! self::isReferenceString($handle) || isset($handles[$handle])) {
                     throw new \InvalidArgumentException('geometry_contract_duplicate_handle');
                 }
                 $handles[$handle] = true;
@@ -208,19 +214,24 @@ final readonly class VectorGeometryData
             return 0;
         }
 
-        return array_sum(array_map(self::countNumericLeaves(...), $value));
+        $count = 0;
+        foreach ($value as $child) {
+            $count += self::countNumericLeaves($child);
+        }
+
+        return $count;
     }
 
     /** @param array<string, mixed> $entity */
     private static function assertEntityDetails(array $entity): void
     {
         foreach (['handle', 'type', 'layer'] as $field) {
-            if (! is_string($entity[$field]) || $entity[$field] === '') {
+            if (! self::isReferenceString($entity[$field])) {
                 throw new \InvalidArgumentException('geometry_contract_entity_invalid');
             }
         }
         foreach (['layout', 'owner', 'block', 'source_operator', 'source_member_handle'] as $field) {
-            if (array_key_exists($field, $entity) && (! is_string($entity[$field]) || $entity[$field] === '')) {
+            if (array_key_exists($field, $entity) && ! self::isReferenceString($entity[$field])) {
                 throw new \InvalidArgumentException('geometry_contract_entity_invalid');
             }
         }
@@ -269,7 +280,7 @@ final readonly class VectorGeometryData
         if (isset($entity['source_member_handle']) && (! is_string($entity['source_member_handle']) || $entity['source_member_handle'] === '')) {
             throw new \InvalidArgumentException('geometry_contract_entity_invalid');
         }
-        if (isset($entity['source_lineage']) && (! is_array($entity['source_lineage']) || array_filter($entity['source_lineage'], 'is_string') !== $entity['source_lineage'])) {
+        if (isset($entity['source_lineage']) && ! self::isReferenceList($entity['source_lineage'])) {
             throw new \InvalidArgumentException('geometry_contract_entity_invalid');
         }
         if (isset($entity['segments'])) {
@@ -310,8 +321,8 @@ final readonly class VectorGeometryData
             }
         }
         if (isset($entity['style'])) {
-            $allowed = ['fill_mode', 'stroke', 'fill_rgba', 'stroke_rgba', 'stroke_width', 'line_cap', 'line_join'];
-            if (! is_array($entity['style']) || array_diff(array_keys($entity['style']), $allowed) !== []) {
+            $required = ['fill_mode', 'stroke', 'fill_rgba', 'stroke_rgba', 'stroke_width', 'line_cap', 'line_join'];
+            if (! is_array($entity['style']) || array_diff($required, array_keys($entity['style'])) !== [] || array_diff(array_keys($entity['style']), $required) !== []) {
                 throw new \InvalidArgumentException('geometry_contract_style_invalid');
             }
             if (! is_int($entity['style']['fill_mode'] ?? null) || ! is_bool($entity['style']['stroke'] ?? null)
@@ -344,7 +355,7 @@ final readonly class VectorGeometryData
     private static function assertLayers(array $layers): void
     {
         foreach ($layers as $layer) {
-            if (! is_string($layer['name']) || $layer['name'] === '' || ! is_bool($layer['visible'])) {
+            if (! self::isReferenceString($layer['name']) || ! is_bool($layer['visible'])) {
                 throw new \InvalidArgumentException('geometry_contract_layer_invalid');
             }
         }
@@ -354,9 +365,8 @@ final readonly class VectorGeometryData
     private static function assertBlocks(array $blocks): void
     {
         foreach ($blocks as $block) {
-            if (! is_string($block['name']) || $block['name'] === '' || ! is_string($block['handle']) || $block['handle'] === ''
-                || ! is_string($block['owner']) || ! is_array($block['entities'])
-                || array_filter($block['entities'], 'is_string') !== $block['entities']) {
+            if (! self::isReferenceString($block['name']) || ! self::isReferenceString($block['handle'])
+                || ! self::isReferenceString($block['owner']) || ! self::isReferenceList($block['entities'])) {
                 throw new \InvalidArgumentException('geometry_contract_block_invalid');
             }
         }
@@ -383,7 +393,7 @@ final readonly class VectorGeometryData
     private static function assertScaleCandidates(array $candidates): void
     {
         foreach ($candidates as $candidate) {
-            if (! self::isFiniteNumber($candidate['value']) || (float) $candidate['value'] <= 0 || ! is_string($candidate['source'])
+            if (! self::isFiniteNumber($candidate['value']) || (float) $candidate['value'] <= 0 || ! self::isReferenceString($candidate['source'])
                 || (isset($candidate['confidence']) && (! self::isFiniteNumber($candidate['confidence']) || (float) $candidate['confidence'] < 0 || (float) $candidate['confidence'] > 1))) {
                 throw new \InvalidArgumentException('geometry_contract_scale_candidate_invalid');
             }
@@ -394,9 +404,12 @@ final readonly class VectorGeometryData
     private static function assertWarnings(array $warnings): void
     {
         foreach ($warnings as $warning) {
-            if (! is_string($warning['code']) || $warning['code'] === ''
+            if (! self::isReferenceString($warning['code'])
                 || (isset($warning['count']) && (! is_int($warning['count']) || $warning['count'] < 0))) {
                 throw new \InvalidArgumentException('geometry_contract_warning_invalid');
+            }
+            if (array_key_exists('safe_context', $warning)) {
+                self::assertWarningContext($warning['safe_context']);
             }
         }
     }
@@ -405,7 +418,7 @@ final readonly class VectorGeometryData
     private static function assertTextDetails(array $text): void
     {
         foreach (['handle', 'type', 'layer', 'text', 'layout'] as $field) {
-            if (! is_string($text[$field])) {
+            if ($field === 'text' ? ! is_string($text[$field]) : ! self::isReferenceString($text[$field])) {
                 throw new \InvalidArgumentException('geometry_contract_text_invalid');
             }
         }
@@ -423,7 +436,7 @@ final readonly class VectorGeometryData
     private static function assertDimensionDetails(array $dimension): void
     {
         foreach (['handle', 'type', 'layer', 'text', 'layout'] as $field) {
-            if (! is_string($dimension[$field])) {
+            if ($field === 'text' ? ! is_string($dimension[$field]) : ! self::isReferenceString($dimension[$field])) {
                 throw new \InvalidArgumentException('geometry_contract_dimension_invalid');
             }
         }
@@ -520,22 +533,102 @@ final readonly class VectorGeometryData
     private static function assertOptionalReferences(array $item, string $reason): void
     {
         foreach (['owner', 'block', 'source_operator', 'source_member_handle'] as $field) {
-            if (array_key_exists($field, $item) && (! is_string($item[$field]) || $item[$field] === '')) {
+            if (array_key_exists($field, $item) && ! self::isReferenceString($item[$field])) {
                 throw new \InvalidArgumentException($reason);
             }
         }
-        if (isset($item['source_lineage']) && (! is_array($item['source_lineage']) || array_filter($item['source_lineage'], static fn (mixed $value): bool => is_string($value) && $value !== '') !== $item['source_lineage'])) {
+        if (isset($item['source_lineage']) && ! self::isReferenceList($item['source_lineage'])) {
             throw new \InvalidArgumentException($reason);
         }
     }
 
-    private static function countScalarLeaves(mixed $value): int
+    /** @param array<string, mixed> $data */
+    private static function assertStructuralBudgets(array $data): void
     {
-        if (! is_array($value)) {
-            return 1;
+        if (count($data['pages']) > self::MAX_PAGES) {
+            throw new \InvalidArgumentException('geometry_contract_pages_limit');
+        }
+        $nestedReferences = 0;
+        $segments = 0;
+        $textCharacters = 0;
+        foreach ($data['blocks'] as $block) {
+            if (is_array($block) && is_array($block['entities'] ?? null)) {
+                $nestedReferences += count($block['entities']);
+                if ($nestedReferences > self::MAX_NESTED_REFERENCES) {
+                    throw new \InvalidArgumentException('geometry_contract_nested_items_limit');
+                }
+            }
+        }
+        foreach (['entities', 'texts', 'dimensions'] as $collection) {
+            if (count($data[$collection]) > self::MAX_ITEMS) {
+                throw new \InvalidArgumentException('geometry_contract_items_limit');
+            }
+            foreach ($data[$collection] as $item) {
+                if (! is_array($item)) {
+                    continue;
+                }
+                if (is_string($item['text'] ?? null)) {
+                    $textCharacters += mb_strlen($item['text']);
+                    if ($textCharacters > self::MAX_TEXT_CHARACTERS) {
+                        throw new \InvalidArgumentException('geometry_contract_text_limit');
+                    }
+                }
+                if (is_array($item['segments'] ?? null)) {
+                    $segments += count($item['segments']);
+                    if ($segments > self::MAX_SEGMENTS) {
+                        throw new \InvalidArgumentException('geometry_contract_segments_limit');
+                    }
+                }
+                foreach (['source_lineage', 'transform_lineage'] as $field) {
+                    if (is_array($item[$field] ?? null)) {
+                        $nestedReferences += count($item[$field]);
+                        if ($nestedReferences > self::MAX_NESTED_REFERENCES) {
+                            throw new \InvalidArgumentException('geometry_contract_nested_items_limit');
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static function isReferenceString(mixed $value): bool
+    {
+        return is_string($value) && $value !== '' && strlen($value) <= self::MAX_REFERENCE_LENGTH;
+    }
+
+    private static function isReferenceList(mixed $value): bool
+    {
+        if (! is_array($value) || ! array_is_list($value)) {
+            return false;
+        }
+        foreach ($value as $reference) {
+            if (! self::isReferenceString($reference)) {
+                return false;
+            }
         }
 
-        return array_sum(array_map(self::countScalarLeaves(...), $value));
+        return true;
+    }
+
+    private static function assertWarningContext(mixed $context): void
+    {
+        if (! is_array($context) || $context === [] || array_diff(array_keys($context), ['decoder_counts', 'reconciliation']) !== []) {
+            throw new \InvalidArgumentException('geometry_contract_warning_invalid');
+        }
+        $allowed = [
+            'decoder_counts' => ['unsupported', 'skipped', 'unknown'],
+            'reconciliation' => ['object_records', 'entity_records', 'represented_records'],
+        ];
+        foreach ($context as $group => $counts) {
+            if (! is_array($counts) || $counts === [] || array_diff(array_keys($counts), $allowed[$group]) !== []) {
+                throw new \InvalidArgumentException('geometry_contract_warning_invalid');
+            }
+            foreach ($counts as $count) {
+                if (! is_int($count) || $count < 0 || $count > 10_000_000) {
+                    throw new \InvalidArgumentException('geometry_contract_warning_invalid');
+                }
+            }
+        }
     }
 
     /** @param array<string, mixed> $data */
