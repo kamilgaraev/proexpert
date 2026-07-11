@@ -35,35 +35,51 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
 
     public function executionContext(DocumentProcessingUnitClaim $claim): ?DocumentUnitExecutionContext
     {
-        $unit = $this->query()->with('document')->find($claim->unitId);
-
-        if (! $unit instanceof EstimateGenerationProcessingUnit
-            || ! $unit->document instanceof EstimateGenerationDocument
-            || ! $claim->acquired()
-            || (string) $unit->claim_token !== $claim->token
-            || ! $this->isCurrent($unit, (string) $unit->source_version)) {
+        if (! $claim->acquired()) {
             return null;
         }
 
-        $pageId = $this->pageIdentity($unit);
+        return $this->database->transaction(function () use ($claim): DocumentUnitExecutionContext {
+            $unit = $this->query()->with('document')->lockForUpdate()->find($claim->unitId);
+            $now = now()->toDateTimeImmutable();
 
-        return new DocumentUnitExecutionContext(
-            (int) $unit->id,
-            (int) $unit->organization_id,
-            (int) $unit->project_id,
-            (int) $unit->session_id,
-            (int) $unit->document_id,
-            $unit->unit_type,
-            (int) $unit->unit_index,
-            (string) $unit->source_version,
-            (array) $unit->locator,
-            (string) $unit->document->storage_path,
-            (string) ($unit->document->mime_type ?: 'application/octet-stream'),
-            (string) $unit->document->filename,
-            (string) $unit->claim_token,
-            (int) $unit->attempt_count,
-            $pageId,
-        );
+            if (! $unit instanceof EstimateGenerationProcessingUnit
+                || ! $unit->document instanceof EstimateGenerationDocument
+                || ! $this->isCurrent($unit, (string) $claim->sourceVersion)) {
+                throw new DocumentUnitProcessingException('unit_claim_lost');
+            }
+            (new DocumentUnitExecutionOwnershipGuard)->assertOwned(
+                status: $unit->status->value,
+                storedToken: (string) $unit->claim_token,
+                claimToken: (string) $claim->token,
+                storedSourceVersion: (string) $unit->source_version,
+                claimSourceVersion: (string) $claim->sourceVersion,
+                leaseExpiresAt: $unit->lease_expires_at?->toDateTimeImmutable(),
+                now: $now,
+                storedScope: [(int) $unit->organization_id, (int) $unit->project_id, (int) $unit->session_id, (int) $unit->document_id],
+                claimScope: [$claim->organizationId, $claim->projectId, $claim->sessionId, $claim->documentId],
+            );
+
+            $pageId = $this->pageIdentity($unit);
+
+            return new DocumentUnitExecutionContext(
+                (int) $unit->id,
+                (int) $unit->organization_id,
+                (int) $unit->project_id,
+                (int) $unit->session_id,
+                (int) $unit->document_id,
+                $unit->unit_type,
+                (int) $unit->unit_index,
+                (string) $unit->source_version,
+                (array) $unit->locator,
+                (string) $unit->document->storage_path,
+                (string) ($unit->document->mime_type ?: 'application/octet-stream'),
+                (string) $unit->document->filename,
+                (string) $unit->claim_token,
+                (int) $unit->attempt_count,
+                $pageId,
+            );
+        }, 3);
     }
 
     public function claim(int $unitId, string $sourceVersion, DateTimeImmutable $now, DateTimeImmutable $leaseExpiresAt, int $maxAttempts): DocumentProcessingUnitClaim
@@ -137,10 +153,19 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                 return false;
             }
 
-            $this->pageQuery()->updateOrCreate(
-                ['document_id' => $unit->document_id, 'page_number' => $unit->unit_index],
-                ['processing_unit_id' => $unit->id, 'source_version' => $unit->source_version, 'output_version' => $output->version, 'organization_id' => $unit->organization_id, 'project_id' => $unit->project_id, 'session_id' => $unit->session_id, 'width' => $output->width, 'height' => $output->height, 'rotation' => $output->rotation, 'text' => $output->text, 'text_hash' => $output->text !== '' ? hash('sha256', $output->text) : null, 'confidence' => $output->confidence, 'normalized_payload' => $output->normalizedPayload, 'quality_flags' => []],
-            );
+            $page = $this->pageQuery()->where('document_id', $unit->document_id)
+                ->where('page_number', $unit->unit_index)->lockForUpdate()->first();
+            if (! $page instanceof EstimateGenerationDocumentPage
+                || (int) $page->processing_unit_id !== (int) $unit->id
+                || (string) $page->source_version !== (string) $unit->source_version
+                || $this->pageHasLineage($page)) {
+                return false;
+            }
+            $page->forceFill(['output_version' => $output->version, 'width' => $output->width, 'height' => $output->height,
+                'rotation' => $output->rotation, 'text' => $output->text,
+                'text_hash' => $output->text !== '' ? hash('sha256', $output->text) : null,
+                'confidence' => $output->confidence, 'normalized_payload' => $output->normalizedPayload,
+                'quality_flags' => []])->save();
 
             return $this->query()
                 ->whereKey($unit->id)
@@ -224,26 +249,49 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
 
     private function pageIdentity(EstimateGenerationProcessingUnit $unit): int
     {
-        $page = $this->pageQuery()->createOrFirst(
-            ['document_id' => $unit->document_id, 'page_number' => $unit->unit_index],
-            ['processing_unit_id' => $unit->id, 'source_version' => $unit->source_version,
+        $page = $this->pageQuery()->where('document_id', $unit->document_id)
+            ->where('page_number', $unit->unit_index)->lockForUpdate()->first();
+        if (! $page instanceof EstimateGenerationDocumentPage) {
+            $page = $this->pageQuery()->create([
+                'document_id' => $unit->document_id, 'page_number' => $unit->unit_index,
+                'processing_unit_id' => $unit->id, 'source_version' => $unit->source_version,
                 'organization_id' => $unit->organization_id, 'project_id' => $unit->project_id,
-                'session_id' => $unit->session_id, 'normalized_payload' => [], 'quality_flags' => []],
-        );
-        if ($page->processing_unit_id === null) {
-            $this->pageQuery()->whereKey($page->getKey())->whereNull('processing_unit_id')
-                ->update(['processing_unit_id' => $unit->id, 'source_version' => $unit->source_version]);
-            $page->refresh();
+                'session_id' => $unit->session_id, 'normalized_payload' => [], 'quality_flags' => [],
+            ]);
         }
         if ((int) $page->organization_id !== (int) $unit->organization_id
             || (int) $page->project_id !== (int) $unit->project_id
             || (int) $page->session_id !== (int) $unit->session_id
-            || (int) $page->document_id !== (int) $unit->document_id
-            || (int) $page->processing_unit_id !== (int) $unit->id) {
+            || (int) $page->document_id !== (int) $unit->document_id) {
             throw new DocumentUnitProcessingException('unit_page_scope_mismatch');
+        }
+        (new DocumentUnitPageReservationPolicy)->assertReservable(
+            processingUnitId: $page->processing_unit_id !== null ? (int) $page->processing_unit_id : null,
+            sourceVersion: $page->source_version !== null ? (string) $page->source_version : null,
+            text: $page->text !== null ? (string) $page->text : null,
+            textHash: $page->text_hash !== null ? (string) $page->text_hash : null,
+            outputVersion: $page->output_version !== null ? (string) $page->output_version : null,
+            normalizedPayload: is_array($page->normalized_payload) ? $page->normalized_payload : [],
+            hasLineage: $this->pageHasLineage($page),
+            unitId: (int) $unit->id,
+            unitSourceVersion: (string) $unit->source_version,
+        );
+        if ($page->processing_unit_id === null) {
+            $page->forceFill(['processing_unit_id' => $unit->id, 'source_version' => $unit->source_version])->save();
         }
 
         return (int) $page->getKey();
+    }
+
+    private function pageHasLineage(EstimateGenerationDocumentPage $page): bool
+    {
+        return $page->facts()->exists() || $page->drawingElements()->exists() || $page->quantityTakeoffs()->exists()
+            || $page->scopeInferences()->exists()
+            || $this->database->table('estimate_generation_evidence')
+                ->where('organization_id', $page->organization_id)->where('project_id', $page->project_id)
+                ->where('session_id', $page->session_id)->whereNull('invalidated_at')
+                ->whereRaw("locator->>'document_id' = ?", [(string) $page->document_id])
+                ->whereRaw("locator->>'page' = ?", [(string) $page->page_number])->exists();
     }
 
     /** @return Builder<EstimateGenerationProcessingUnit> */

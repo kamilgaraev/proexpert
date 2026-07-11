@@ -41,7 +41,7 @@ final class AiUsagePageScopeContractTest extends TestCase
         self::assertStringContainsString("'page_id'", (string) $migration);
         self::assertStringContainsString('eg_usage_page_scope_fk', (string) $migration);
         self::assertStringContainsString("'page_id' => \$data->context->pageId", (string) $store);
-        self::assertStringContainsString('->createOrFirst(', (string) $unitStore);
+        self::assertStringContainsString("->where('page_number', \$unit->unit_index)->lockForUpdate()->first()", (string) $unitStore);
     }
 
     #[Test]
@@ -88,6 +88,24 @@ final class AiUsagePageScopeContractTest extends TestCase
         (new OcrDocumentUnitProcessor($reader, $ocr))->process($context);
 
         self::assertSame(99, $ocr->input?->operationContext?->pageId);
+    }
+
+    #[Test]
+    public function production_store_locks_and_revalidates_claim_before_preserving_or_reserving_page(): void
+    {
+        $root = dirname(__DIR__, 4);
+        $source = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Application/Documents/EloquentDocumentProcessingUnitStore.php');
+        $policy = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Application/Documents/DocumentUnitPageReservationPolicy.php');
+
+        self::assertStringContainsString('return $this->database->transaction(function () use ($claim): DocumentUnitExecutionContext', (string) $source);
+        self::assertStringContainsString("->with('document')->lockForUpdate()->find(\$claim->unitId)", (string) $source);
+        self::assertStringContainsString('DocumentProcessingUnitStatus::Running', (string) $source);
+        self::assertStringContainsString("throw new DocumentUnitProcessingException('unit_claim_lost')", (string) $source);
+        self::assertStringContainsString('(new DocumentUnitExecutionOwnershipGuard)->assertOwned(', (string) $source);
+        self::assertStringContainsString('(new DocumentUnitPageReservationPolicy)->assertReservable(', (string) $source);
+        self::assertStringContainsString("throw new DocumentUnitProcessingException('unit_page_lineage_conflict')", (string) $policy);
+        self::assertStringNotContainsString('->updateOrCreate(', (string) $source);
+        self::assertStringContainsString("throw new DocumentUnitProcessingException('unit_page_reservation_conflict')", (string) $policy);
     }
 
     private function usage(int $pageId): AiUsageData

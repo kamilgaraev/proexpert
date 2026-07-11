@@ -72,6 +72,11 @@ class EstimateGenerationDocumentPage extends Model
             ->orderBy('id');
     }
 
+    public function facts(): HasMany
+    {
+        return $this->hasMany(EstimateGenerationDocumentFact::class, 'page_id');
+    }
+
     public function quantityTakeoffs(): HasMany
     {
         return $this->hasMany(EstimateGenerationQuantityTakeoff::class, 'page_id')
