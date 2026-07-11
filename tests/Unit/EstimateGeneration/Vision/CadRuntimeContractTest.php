@@ -39,6 +39,165 @@ final class CadRuntimeContractTest extends TestCase
         }
     }
 
+    #[Test]
+    public function unknown_dxf_entity_fails_closed_instead_of_returning_warning(): void
+    {
+        $path = $this->generatedDxf('msp.add_point((1, 2))');
+        try {
+            $this->expectExceptionMessage('cad_unsupported_entities');
+            $this->runtime()->extract($path);
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    #[Test]
+    public function nested_insert_is_expanded_with_transform_and_lineage(): void
+    {
+        $path = $this->generatedDxf("inner=doc.blocks.new('INNER'); inner.add_line((0,0),(10,0)); outer=doc.blocks.new('OUTER'); outer.add_blockref('INNER',(5,0)); msp.add_blockref('OUTER',(100,50),dxfattribs={'rotation':90})");
+        try {
+            $result = $this->runtime()->extract($path);
+            $line = array_values(array_filter($result->entities, static fn (array $entity): bool => $entity['type'] === 'line'))[0];
+            self::assertSame([[100.0, 55.0], [100.0, 65.0]], $line['points']);
+            self::assertCount(3, $line['source_lineage']);
+            self::assertSame('INNER', $line['block']);
+            self::assertNotEmpty($result->blocks);
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    #[Test]
+    public function process_timeout_is_typed_and_workspace_is_cleaned(): void
+    {
+        $script = $this->temporaryScript("import time\ntime.sleep(3)\n");
+        $before = glob(sys_get_temp_dir().DIRECTORY_SEPARATOR.'most-cad-*');
+        try {
+            $runtime = new CadConversionRuntime('python', $script, '', timeoutSeconds: 1);
+            $runtime->extract(dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/Vision/simple-house.dxf');
+            self::fail('Timeout must fail.');
+        } catch (\Throwable $exception) {
+            self::assertSame('cad_runtime_timeout', $exception->getMessage());
+            self::assertSame($before, glob(sys_get_temp_dir().DIRECTORY_SEPARATOR.'most-cad-*'));
+        } finally {
+            @unlink($script);
+        }
+    }
+
+    #[Test]
+    public function process_output_is_bounded_while_streaming(): void
+    {
+        $script = $this->temporaryScript("print('x' * 100000)\n");
+        try {
+            $this->expectExceptionMessage('cad_runtime_output_oversize');
+            (new CadConversionRuntime('python', $script, '', maxOutputBytes: 1024))->extract(
+                dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/Vision/simple-house.dxf'
+            );
+        } finally {
+            @unlink($script);
+        }
+    }
+
+    #[Test]
+    public function malformed_worker_json_is_rejected_and_workspace_is_cleaned(): void
+    {
+        $script = $this->temporaryScript("print('{broken')\n");
+        $before = glob(sys_get_temp_dir().DIRECTORY_SEPARATOR.'most-cad-*');
+        try {
+            $this->expectExceptionMessage('cad_runtime_contract_invalid');
+            (new CadConversionRuntime('python', $script))->extract(dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/Vision/simple-house.dxf');
+        } finally {
+            @unlink($script);
+            self::assertSame($before, glob(sys_get_temp_dir().DIRECTORY_SEPARATOR.'most-cad-*'));
+        }
+    }
+
+    #[Test]
+    public function oversized_input_is_rejected_before_process_start(): void
+    {
+        $this->expectExceptionMessage('cad_size_invalid');
+        (new CadConversionRuntime(maxInputBytes: 16))->extract(dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/Vision/simple-house.dxf');
+    }
+
+    #[Test]
+    public function unknown_units_remain_explicit_and_never_become_metric(): void
+    {
+        $path = $this->generatedDxf('msp.add_line((0,0),(1,0))', false);
+        try {
+            $result = $this->runtime()->extract($path);
+            self::assertNull($result->sourceUnit);
+            self::assertSame('unknown', $result->unitStatus);
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    #[Test]
+    public function dwg_runtime_rejects_unverified_libredwg_version(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $this->expectExceptionMessage('libredwg_version_mismatch');
+        (new CadConversionRuntime('python', dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/bin/cad_geometry_extract.py', 'python'))->extract(
+            $root.'/Fixtures/EstimateGeneration/Vision/simple-house.dwg'
+        );
+    }
+
+    #[Test]
+    public function all_required_dxf_entities_are_represented_with_geometry(): void
+    {
+        $body = "msp.add_arc((0,0),5,10,80); msp.add_circle((20,20),3); msp.add_polyline2d([(0,0),(2,2),(4,0)]); msp.add_mtext('Note',dxfattribs={'insert':(1,1)}); msp.add_linear_dim(base=(0,3),p1=(0,0),p2=(10,0)).render()";
+        $path = $this->generatedDxf($body);
+        try {
+            $result = $this->runtime()->extract($path);
+            $types = array_column($result->entities, 'type');
+            self::assertContains('arc', $types);
+            self::assertContains('circle', $types);
+            self::assertContains('polyline', $types);
+            self::assertNotEmpty($result->texts);
+            self::assertNotEmpty($result->dimensions);
+            $arc = array_values(array_filter($result->entities, static fn (array $entity): bool => $entity['type'] === 'arc'))[0];
+            self::assertSame(10.0, $arc['start_angle']);
+            self::assertSame(80.0, $arc['end_angle']);
+        } finally {
+            @unlink($path);
+        }
+    }
+
+    #[Test]
+    public function symlink_source_is_rejected(): void
+    {
+        $link = tempnam(sys_get_temp_dir(), 'cad-link-');
+        @unlink($link);
+        $source = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/Vision/simple-house.dxf';
+        $cleanupDirectory = false;
+        if (! @symlink($source, $link)) {
+            if (PHP_OS_FAMILY !== 'Windows') {
+                self::fail('Required gate: test environment must permit symlink creation.');
+            }
+            $process = new \Symfony\Component\Process\Process([
+                'powershell',
+                '-NoProfile',
+                '-Command',
+                '& { param($path, $target) New-Item -ItemType Junction -Path $path -Target $target | Out-Null }',
+                $link,
+                dirname($source),
+            ]);
+            $process->mustRun();
+            $cleanupDirectory = true;
+            $link .= DIRECTORY_SEPARATOR.basename($source);
+        }
+        try {
+            $this->expectExceptionMessage('cad_source_invalid');
+            $this->runtime()->extract($link);
+        } finally {
+            if ($cleanupDirectory) {
+                @rmdir(dirname($link));
+            } else {
+                @unlink($link);
+            }
+        }
+    }
+
     private function runtime(): CadConversionRuntime
     {
         return new CadConversionRuntime(
@@ -46,5 +205,24 @@ final class CadRuntimeContractTest extends TestCase
             scriptPath: dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/bin/cad_geometry_extract.py',
             dwgreadBinary: (string) getenv('LIBREDWG_DWGREAD_BINARY')
         );
+    }
+
+    private function generatedDxf(string $body, bool $metric = true): string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'cad-fixture-').'.dxf';
+        $unit = $metric ? "doc.header['\$INSUNITS']=4;" : "doc.header['\$INSUNITS']=0;";
+        $code = "import ezdxf; doc=ezdxf.new('R2010'); {$unit} msp=doc.modelspace(); {$body}; doc.saveas(r'".str_replace("'", "''", $path)."')";
+        $process = new \Symfony\Component\Process\Process(['python', '-c', $code]);
+        $process->mustRun();
+
+        return $path;
+    }
+
+    private function temporaryScript(string $body): string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'cad-runtime-').'.py';
+        file_put_contents($path, $body);
+
+        return $path;
     }
 }

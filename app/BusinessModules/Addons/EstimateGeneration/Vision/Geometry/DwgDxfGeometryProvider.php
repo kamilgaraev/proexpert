@@ -17,6 +17,7 @@ final readonly class DwgDxfGeometryProvider implements CadGeometryProvider
         private FileService $fileService,
         private BoundedStorageReader $reader,
         private CadConversionRuntime $runtime,
+        private int $maxInputBytes = 52_428_800,
     ) {}
 
     public function extract(string $storageKey, Organization $organization): VectorGeometryData
@@ -33,7 +34,7 @@ final readonly class DwgDxfGeometryProvider implements CadGeometryProvider
             $content = $this->reader->read(
                 $this->fileService->disk($organization),
                 $storageKey,
-                max(1, (int) config('estimate-generation.vision.geometry.max_input_bytes', 52_428_800))
+                max(1, $this->maxInputBytes)
             );
         } catch (\Throwable) {
             throw new GeometryExtractionException('cad_source_read_failed', true);

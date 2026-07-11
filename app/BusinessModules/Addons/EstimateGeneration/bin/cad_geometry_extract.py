@@ -1,107 +1,486 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 import argparse
 import hashlib
 import json
 import math
 import os
+import re
 import subprocess
 import sys
+from pathlib import Path
+from typing import Any, Iterable
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
-SCHEMA_VERSION = 1
-SUPPORTED = {"LINE", "ARC", "CIRCLE", "LWPOLYLINE", "POLYLINE", "INSERT", "TEXT", "MTEXT", "DIMENSION"}
+EXPECTED_LIBREDWG_VERSION = "0.13.4"
+SUPPORTED = {
+    "LINE",
+    "ARC",
+    "CIRCLE",
+    "LWPOLYLINE",
+    "POLYLINE",
+    "INSERT",
+    "TEXT",
+    "MTEXT",
+    "DIMENSION",
+}
 
-def fail(code, retryable=False):
-    sys.stderr.write(json.dumps({"code": code, "safe_message": "Не удалось безопасно обработать чертёж.", "retryable": retryable}, ensure_ascii=False))
-    raise SystemExit(2)
 
-def handle(value):
+class SafeFailure(Exception):
+    def __init__(self, code: str, retryable: bool = False):
+        super().__init__(code)
+        self.code = code
+        self.retryable = retryable
+
+
+def sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return "sha256:" + digest.hexdigest()
+
+
+def number(value: Any) -> float:
+    result = round(float(value), 6)
+    if not math.isfinite(result):
+        raise SafeFailure("cad_number_invalid")
+    return result
+
+
+def point(value: Any) -> list[float]:
+    return [number(value[0]), number(value[1])]
+
+
+def handle(value: Any) -> str:
     if isinstance(value, list) and value:
         return format(int(value[-1]), "X")
     return str(value or "0")
 
-def unit(code):
-    units = {1:"in", 2:"ft", 4:"mm", 5:"cm", 6:"m"}
-    value = units.get(int(code or 0))
-    return value, "confirmed" if value else "unknown"
 
-def point(value):
-    return [float(value[0]), float(value[1])]
+def source_unit(code: Any) -> tuple[str | None, str]:
+    unit = {1: "in", 2: "ft", 4: "mm", 5: "cm", 6: "m"}.get(int(code or 0))
+    return unit, "confirmed" if unit else "unknown"
 
-def bounds_of(entities):
-    pts=[]
-    for entity in entities:
-        pts += entity.get("points", [])
-        if "center" in entity: pts.append(entity["center"])
-    return [min(p[0] for p in pts), min(p[1] for p in pts), max(p[0] for p in pts), max(p[1] for p in pts)] if pts else []
 
-def parse_dxf(path):
-    import ezdxf
-    doc=ezdxf.readfile(path)
-    source_unit,status=unit(doc.header.get("$INSUNITS", 0))
-    layers=[{"name": layer.dxf.name, "visible": not layer.is_off()} for layer in doc.layers]
-    entities=[]; texts=[]; dimensions=[]; warnings=[]; unsupported={}
-    for layout in doc.layouts:
-        for e in layout:
-            typ=e.dxftype(); h=str(e.dxf.handle or f"generated-{len(entities)}"); layer=str(e.dxf.layer); base={"handle":h,"type":typ.lower(),"layer":layer,"layout":layout.name}
-            if typ=="LINE": base["points"]=[point(e.dxf.start),point(e.dxf.end)]; entities.append(base)
-            elif typ in ("LWPOLYLINE","POLYLINE"):
-                base["points"]=[point(v) for v in (e.get_points("xy") if typ=="LWPOLYLINE" else [v.dxf.location for v in e.vertices])]; base["closed"]=bool(e.closed); entities.append(base)
-            elif typ in ("ARC","CIRCLE"):
-                base.update(center=point(e.dxf.center),radius=float(e.dxf.radius));
-                if typ=="ARC": base.update(start_angle=float(e.dxf.start_angle),end_angle=float(e.dxf.end_angle))
-                entities.append(base)
-            elif typ in ("TEXT","MTEXT"):
-                texts.append({"handle":h,"type":typ.lower(),"layer":layer,"text":str(e.dxf.text if typ=="TEXT" else e.text),"position":point(e.dxf.insert),"layout":layout.name})
-            elif typ=="DIMENSION": dimensions.append({"handle":h,"type":"dimension","layer":layer,"text":str(e.dxf.text),"layout":layout.name})
-            elif typ=="INSERT":
-                matrix=list(e.matrix44()); base.update(block=str(e.dxf.name),transform=[[float(x) for x in row] for row in matrix],source_lineage=[h]); entities.append(base)
-            else: unsupported[typ]=unsupported.get(typ,0)+1
-    if unsupported: warnings.append({"code":"unsupported_entities","counts":unsupported,"blocking":True})
-    blocks=[{"name": block.name,"entity_count":len(block)} for block in doc.blocks if not block.name.startswith("*")]
-    return source_unit,status,layers,blocks,entities,texts,dimensions,warnings,"ezdxf:1.4.4"
+def entity_handle(entity: Any, lineage: list[str]) -> str:
+    own = str(entity.dxf.handle or entity.dxftype())
+    return "/".join([*lineage, own])
 
-def parse_dwg(path, dwgread, workspace):
+
+def matrix_payload(matrix: Any) -> list[list[float]]:
+    return [[number(value) for value in row] for row in matrix.rows()]
+
+
+def map_dxf_entity(
+    entity: Any, lineage: list[str], block: str | None, layout: str
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None]:
+    entity_type = entity.dxftype()
+    item_handle = entity_handle(entity, lineage)
+    layer = str(entity.dxf.get("layer", "0"))
+    owner = lineage[-1] if lineage else layout
+    base: dict[str, Any] = {
+        "handle": item_handle,
+        "type": entity_type.lower(),
+        "layer": layer,
+        "layout": layout,
+        "owner": owner,
+        "source_lineage": [*lineage, str(entity.dxf.handle or entity_type)],
+    }
+    if block is not None:
+        base["block"] = block
+    if entity_type == "LINE":
+        base["points"] = [point(entity.dxf.start), point(entity.dxf.end)]
+        return base, None, None
+    if entity_type in {"LWPOLYLINE", "POLYLINE"}:
+        vertices: Iterable[Any] = (
+            entity.get_points("xy")
+            if entity_type == "LWPOLYLINE"
+            else [vertex.dxf.location for vertex in entity.vertices]
+        )
+        base["points"] = [point(vertex) for vertex in vertices]
+        base["closed"] = bool(
+            entity.closed if entity_type == "LWPOLYLINE" else entity.is_closed
+        )
+        if len(base["points"]) < 2:
+            raise SafeFailure("cad_required_entity_incomplete")
+        return base, None, None
+    if entity_type in {"ARC", "CIRCLE"}:
+        base["center"] = point(entity.dxf.center)
+        base["radius"] = number(entity.dxf.radius)
+        if entity_type == "ARC":
+            base["start_angle"] = number(entity.dxf.start_angle)
+            base["end_angle"] = number(entity.dxf.end_angle)
+        return base, None, None
+    if entity_type in {"TEXT", "MTEXT"}:
+        value = str(entity.dxf.text if entity_type == "TEXT" else entity.text)
+        text = {
+            "handle": item_handle,
+            "type": entity_type.lower(),
+            "layer": layer,
+            "text": value,
+            "position": point(entity.dxf.insert),
+            "layout": layout,
+            "owner": owner,
+            "transform": (
+                [number(value) for value in entity.get_wcs_transform().m]
+                if hasattr(entity, "get_wcs_transform")
+                else [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+            ),
+        }
+        return None, text, None
+    if entity_type == "DIMENSION":
+        points = []
+        for name in ("defpoint", "defpoint2", "defpoint3", "defpoint4"):
+            value = entity.dxf.get(name, None)
+            if value is not None:
+                points.append(point(value))
+        if len(points) < 2:
+            raise SafeFailure("cad_required_entity_incomplete")
+        dimension = {
+            "handle": item_handle,
+            "type": "dimension",
+            "layer": layer,
+            "text": str(entity.dxf.get("text", "")),
+            "layout": layout,
+            "owner": owner,
+            "definition_points": points,
+        }
+        return None, None, dimension
+    raise SafeFailure("cad_unsupported_entities")
+
+
+def expand_insert(
+    insert: Any,
+    lineage: list[str],
+    depth: int,
+    max_depth: int,
+    entities: list[dict[str, Any]],
+    texts: list[dict[str, Any]],
+    dimensions: list[dict[str, Any]],
+    layout: str,
+) -> None:
+    if depth > max_depth:
+        raise SafeFailure("cad_block_depth_exceeded")
+    insert_handle = entity_handle(insert, lineage)
+    own_lineage = [*lineage, str(insert.dxf.handle or insert.dxf.name)]
+    entities.append(
+        {
+            "handle": insert_handle,
+            "type": "insert",
+            "layer": str(insert.dxf.layer),
+            "block": str(insert.dxf.name),
+            "transform": matrix_payload(insert.matrix44()),
+            "source_lineage": own_lineage,
+            "layout": layout,
+            "owner": lineage[-1] if lineage else layout,
+        }
+    )
     try:
-        proc=subprocess.run([dwgread,"-O","JSON",path],cwd=workspace,capture_output=True,text=True,timeout=30,check=False)
-    except (OSError,subprocess.TimeoutExpired): fail("libredwg_unavailable", True)
-    if proc.returncode != 0: fail("dwg_decode_failed")
-    try: data=json.loads(proc.stdout)
-    except Exception: fail("dwg_contract_invalid")
-    entities=[]; texts=[]; dimensions=[]; layers=[]; warnings=[]; unsupported={}
-    for obj in data.get("OBJECTS",[]):
-        typ=obj.get("entity")
-        if obj.get("object")=="LAYER": layers.append({"name":str(obj.get("name","0")),"visible":not bool(obj.get("flag",0)&1)})
-        if not typ: continue
-        h=handle(obj.get("handle")); base={"handle":h,"type":typ.lower(),"layer":handle(obj.get("layer")),"layout":"model"}
-        if typ=="LINE": base["points"]=[point(obj["start"]),point(obj["end"])]; entities.append(base)
-        elif typ=="LWPOLYLINE": base["points"]=[point(p) for p in obj.get("points",[])]; base["closed"]=bool(obj.get("flag",0)&512); entities.append(base)
-        elif typ in ("ARC","CIRCLE"): base.update(center=point(obj["center"]),radius=float(obj["radius"])); entities.append(base)
-        elif typ in ("TEXT","MTEXT"): texts.append({"handle":h,"type":typ.lower(),"layer":base["layer"],"text":str(obj.get("text_value","")),"position":point(obj.get("ins_pt",[0,0])),"layout":"model"})
-        elif typ=="DIMENSION": dimensions.append({"handle":h,"type":"dimension","layer":base["layer"],"text":str(obj.get("text","")),"layout":"model"})
-        elif typ in SUPPORTED: entities.append(base)
-        else: unsupported[typ]=unsupported.get(typ,0)+1
-    if unsupported: warnings.append({"code":"unsupported_entities","counts":unsupported,"blocking":True})
-    measurement=data.get("Template",{}).get("MEASUREMENT",0); source_unit,status=("mm","confirmed") if measurement==1 else (None,"unknown")
-    if not entities and not texts and not dimensions: fail("dwg_geometry_empty")
-    return source_unit,status,layers,[],entities,texts,dimensions,warnings,"libredwg:0.13.4"
+        virtual_entities = list(insert.virtual_entities())
+    except Exception as exception:
+        raise SafeFailure("cad_required_entity_incomplete") from exception
+    if not virtual_entities:
+        raise SafeFailure("cad_required_entity_incomplete")
+    for virtual in virtual_entities:
+        if virtual.dxftype() == "INSERT":
+            expand_insert(
+                virtual,
+                own_lineage,
+                depth + 1,
+                max_depth,
+                entities,
+                texts,
+                dimensions,
+                layout,
+            )
+            continue
+        mapped, text, dimension = map_dxf_entity(
+            virtual, own_lineage, str(insert.dxf.name), layout
+        )
+        if mapped is not None:
+            entities.append(mapped)
+        if text is not None:
+            texts.append(text)
+        if dimension is not None:
+            dimensions.append(dimension)
 
-def main():
-    p=argparse.ArgumentParser(); p.add_argument("--input",required=True); p.add_argument("--workspace",required=True); p.add_argument("--dwgread",default="dwgread"); p.add_argument("--max-output-bytes",type=int,default=16777216); a=p.parse_args()
-    source=os.path.realpath(a.input); workspace=os.path.realpath(a.workspace)
-    if os.path.commonpath([source,workspace]) != workspace or not os.path.isfile(source): fail("cad_path_invalid")
-    digest="sha256:"+hashlib.sha256(open(source,"rb").read()).hexdigest()
-    parsed=parse_dwg(source,a.dwgread,workspace) if source.lower().endswith(".dwg") else parse_dxf(source)
-    source_unit,status,layers,blocks,entities,texts,dimensions,warnings,runtime=parsed
-    result={"schema_version":SCHEMA_VERSION,"runtime_version":"cad-geometry:v1;"+runtime,"source_fingerprint":digest,"source_unit":source_unit,"unit_status":status,"bounds":bounds_of(entities),"layers":layers,"blocks":blocks,"entities":entities,"texts":texts,"dimensions":dimensions,"pages":[],"scale_candidates":[],"warnings":warnings}
-    output=json.dumps(result,separators=(",",":"),ensure_ascii=False,allow_nan=False)
-    if len(output.encode())>a.max_output_bytes: fail("cad_output_oversize")
+
+def parse_dxf(path: str, max_depth: int) -> tuple[Any, ...]:
+    import ezdxf
+
+    try:
+        document = ezdxf.readfile(path)
+    except Exception as exception:
+        raise SafeFailure("dxf_decode_failed") from exception
+    unit, status = source_unit(document.header.get("$INSUNITS", 0))
+    layers = [
+        {"name": layer.dxf.name, "visible": not layer.is_off()}
+        for layer in document.layers
+    ]
+    blocks = []
+    for block in document.blocks:
+        if block.name.startswith("*"):
+            continue
+        blocks.append(
+            {
+                "name": block.name,
+                "handle": str(block.block_record_handle),
+                "owner": "blocks",
+                "entities": [
+                    str(entity.dxf.handle or entity.dxftype()) for entity in block
+                ],
+            }
+        )
+    entities: list[dict[str, Any]] = []
+    texts: list[dict[str, Any]] = []
+    dimensions: list[dict[str, Any]] = []
+    for layout in document.layouts:
+        for entity in layout:
+            if entity.dxftype() not in SUPPORTED:
+                raise SafeFailure("cad_unsupported_entities")
+            if entity.dxftype() == "INSERT":
+                expand_insert(
+                    entity, [], 1, max_depth, entities, texts, dimensions, layout.name
+                )
+                continue
+            mapped, text, dimension = map_dxf_entity(entity, [], None, layout.name)
+            if mapped is not None:
+                entities.append(mapped)
+            if text is not None:
+                texts.append(text)
+            if dimension is not None:
+                dimensions.append(dimension)
+    if not entities and not texts and not dimensions:
+        raise SafeFailure("cad_geometry_empty")
+    return unit, status, layers, blocks, entities, texts, dimensions, [], "ezdxf:1.4.4"
+
+
+def checked_libredwg_version(binary: str, workspace: str) -> None:
+    stdout_path = os.path.join(workspace, "libredwg-version.stdout")
+    stderr_path = os.path.join(workspace, "libredwg-version.stderr")
+    try:
+        with open(stdout_path, "wb") as stdout_stream, open(
+            stderr_path, "wb"
+        ) as stderr_stream:
+            process = subprocess.run(
+                [binary, "--version"],
+                cwd=workspace,
+                stdout=stdout_stream,
+                stderr=stderr_stream,
+                timeout=5,
+                check=False,
+            )
+    except (OSError, subprocess.TimeoutExpired) as exception:
+        raise SafeFailure("libredwg_unavailable", True) from exception
+    if os.path.getsize(stdout_path) > 4096 or os.path.getsize(stderr_path) > 4096:
+        raise SafeFailure("libredwg_version_output_oversize")
+    output = Path(stdout_path).read_text(encoding="utf-8", errors="replace") + Path(
+        stderr_path
+    ).read_text(encoding="utf-8", errors="replace")
+    if process.returncode != 0 or re.search(r"\b0\.13\.4\b", output) is None:
+        raise SafeFailure("libredwg_version_mismatch")
+
+
+def parse_dwg(
+    path: str, binary: str, workspace: str, max_output_bytes: int
+) -> tuple[Any, ...]:
+    checked_libredwg_version(binary, workspace)
+    json_path = os.path.join(workspace, "libredwg.json")
+    error_path = os.path.join(workspace, "libredwg.stderr")
+    try:
+        with open(json_path, "wb") as output_stream, open(
+            error_path, "wb"
+        ) as error_stream:
+            process = subprocess.run(
+                [binary, "-O", "JSON", path],
+                cwd=workspace,
+                stdout=output_stream,
+                stderr=error_stream,
+                timeout=30,
+                check=False,
+            )
+    except (OSError, subprocess.TimeoutExpired) as exception:
+        raise SafeFailure("libredwg_unavailable", True) from exception
+    if (
+        os.path.getsize(json_path) > max_output_bytes
+        or os.path.getsize(error_path) > 8192
+    ):
+        raise SafeFailure("cad_output_oversize")
+    diagnostic = Path(error_path).read_text(encoding="utf-8", errors="replace").lower()
+    if process.returncode != 0:
+        raise SafeFailure("dwg_decode_failed")
+    if any(
+        marker in diagnostic
+        for marker in ("unknown", "unsupported", "skipped", "error", "warning")
+    ):
+        raise SafeFailure("dwg_completeness_unproven")
+    try:
+        data = json.loads(Path(json_path).read_text(encoding="utf-8"))
+    except Exception as exception:
+        raise SafeFailure("dwg_contract_invalid") from exception
+    if data.get("created_by") != "LibreDWG 0.13.4":
+        raise SafeFailure("libredwg_provenance_invalid")
+    layers = []
+    entities = []
+    texts = []
+    dimensions = []
+    for item in data.get("OBJECTS", []):
+        if item.get("object") == "LAYER":
+            layers.append(
+                {
+                    "name": str(item.get("name", "0")),
+                    "visible": not bool(item.get("flag", 0) & 1),
+                }
+            )
+        entity_type = item.get("entity")
+        if not entity_type:
+            continue
+        if entity_type not in SUPPORTED:
+            raise SafeFailure("cad_unsupported_entities")
+        item_handle = handle(item.get("handle"))
+        layer = handle(item.get("layer"))
+        base = {
+            "handle": item_handle,
+            "type": entity_type.lower(),
+            "layer": layer,
+            "layout": "model",
+            "owner": "model",
+            "source_lineage": [item_handle],
+        }
+        if entity_type == "LINE" and "start" in item and "end" in item:
+            base["points"] = [point(item["start"]), point(item["end"])]
+            entities.append(base)
+        elif entity_type == "LWPOLYLINE" and len(item.get("points", [])) >= 2:
+            base["points"] = [point(value) for value in item["points"]]
+            base["closed"] = bool(item.get("flag", 0) & 512)
+            entities.append(base)
+        elif entity_type in {"ARC", "CIRCLE"} and "center" in item and "radius" in item:
+            base["center"] = point(item["center"])
+            base["radius"] = number(item["radius"])
+            if entity_type == "ARC" and "start_angle" in item and "end_angle" in item:
+                base["start_angle"] = number(item["start_angle"])
+                base["end_angle"] = number(item["end_angle"])
+            elif entity_type == "ARC":
+                raise SafeFailure("cad_required_entity_incomplete")
+            entities.append(base)
+        elif entity_type in {"TEXT", "MTEXT"} and "ins_pt" in item:
+            texts.append(
+                {
+                    "handle": item_handle,
+                    "type": entity_type.lower(),
+                    "layer": layer,
+                    "text": str(item.get("text_value", "")),
+                    "position": point(item["ins_pt"]),
+                    "layout": "model",
+                    "owner": "model",
+                }
+            )
+        else:
+            raise SafeFailure("cad_required_entity_incomplete")
+    if not entities and not texts and not dimensions:
+        raise SafeFailure("dwg_geometry_empty")
+    measurement = data.get("Template", {}).get("MEASUREMENT", 0)
+    unit, status = ("mm", "confirmed") if measurement == 1 else (None, "unknown")
+    return unit, status, layers, [], entities, texts, dimensions, [], "libredwg:0.13.4"
+
+
+def geometry_bounds(entities: list[dict[str, Any]]) -> list[float]:
+    points = []
+    for entity in entities:
+        points.extend(entity.get("points", []))
+        if "center" in entity:
+            points.append(entity["center"])
+    if not points:
+        return []
+    return [
+        min(value[0] for value in points),
+        min(value[1] for value in points),
+        max(value[0] for value in points),
+        max(value[1] for value in points),
+    ]
+
+
+def parser() -> argparse.ArgumentParser:
+    argument_parser = argparse.ArgumentParser()
+    argument_parser.add_argument("--input", required=True)
+    argument_parser.add_argument("--workspace", required=True)
+    argument_parser.add_argument("--dwgread", default="dwgread")
+    argument_parser.add_argument("--max-output-bytes", type=int, default=16_777_216)
+    argument_parser.add_argument("--max-block-depth", type=int, default=8)
+    return argument_parser
+
+
+def main() -> int:
+    args = parser().parse_args()
+    source = os.path.realpath(args.input)
+    workspace = os.path.realpath(args.workspace)
+    if os.path.commonpath([source, workspace]) != workspace or not os.path.isfile(
+        source
+    ):
+        raise SafeFailure("cad_path_invalid")
+    fingerprint = sha256_file(source)
+    parsed = (
+        parse_dwg(source, args.dwgread, workspace, args.max_output_bytes)
+        if source.lower().endswith(".dwg")
+        else parse_dxf(source, args.max_block_depth)
+    )
+    unit, status, layers, blocks, entities, texts, dimensions, warnings, runtime = (
+        parsed
+    )
+    result = {
+        "schema_version": 1,
+        "runtime_version": "cad-geometry:v1;" + runtime,
+        "source_fingerprint": fingerprint,
+        "source_unit": unit,
+        "unit_status": status,
+        "bounds": geometry_bounds(entities),
+        "layers": layers,
+        "blocks": blocks,
+        "entities": entities,
+        "texts": texts,
+        "dimensions": dimensions,
+        "pages": [],
+        "scale_candidates": [],
+        "warnings": warnings,
+    }
+    output = json.dumps(
+        result, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+    )
+    if len(output.encode("utf-8")) > args.max_output_bytes:
+        raise SafeFailure("cad_output_oversize")
     sys.stdout.write(output)
+    return 0
 
-if __name__=="__main__":
-    try: main()
-    except SystemExit: raise
-    except Exception: fail("cad_parse_failed")
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except SafeFailure as exception:
+        sys.stderr.write(
+            json.dumps(
+                {
+                    "code": exception.code,
+                    "safe_message": "Не удалось безопасно обработать чертёж.",
+                    "retryable": exception.retryable,
+                },
+                ensure_ascii=False,
+            )
+        )
+        raise SystemExit(2)
+    except Exception:
+        sys.stderr.write(
+            json.dumps(
+                {
+                    "code": "cad_parse_failed",
+                    "safe_message": "Не удалось безопасно обработать чертёж.",
+                    "retryable": False,
+                },
+                ensure_ascii=False,
+            )
+        )
+        raise SystemExit(2)

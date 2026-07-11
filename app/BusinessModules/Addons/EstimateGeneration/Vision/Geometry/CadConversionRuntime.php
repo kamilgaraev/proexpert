@@ -6,8 +6,6 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry;
 
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtractionException;
-use Symfony\Component\Process\Exception\ProcessTimedOutException;
-use Symfony\Component\Process\Process;
 
 final readonly class CadConversionRuntime
 {
@@ -23,7 +21,7 @@ final readonly class CadConversionRuntime
     public function extract(string $inputPath): VectorGeometryData
     {
         $real = realpath($inputPath);
-        if ($real === false || ! is_file($real) || is_link($inputPath)) {
+        if ($real === false || ! is_file($real) || is_link($inputPath) || $this->resolvesThroughIndirectPath($inputPath, $real)) {
             throw new GeometryExtractionException('cad_source_invalid');
         }
         $size = filesize($real);
@@ -45,21 +43,17 @@ final readonly class CadConversionRuntime
             if (! copy($real, $copy)) {
                 throw new GeometryExtractionException('cad_source_copy_failed');
             }
-            $process = new Process([$this->pythonBinary, $script, '--input', $copy, '--workspace', $workDir,
-                '--dwgread', $this->dwgreadBinary, '--max-output-bytes', (string) $this->maxOutputBytes]);
-            $process->setTimeout($this->timeoutSeconds);
-            $process->setIdleTimeout(min($this->timeoutSeconds, 15));
-            try {
-                $process->run();
-            } catch (ProcessTimedOutException) {
-                throw new GeometryExtractionException('cad_runtime_timeout', true);
-            }
-            $stdout = $process->getOutput();
-            $stderr = $process->getErrorOutput();
-            if (strlen($stdout) > $this->maxOutputBytes || strlen($stderr) > 8192) {
-                throw new GeometryExtractionException('cad_runtime_output_oversize');
-            }
-            if (! $process->isSuccessful()) {
+            $result = (new GeometryProcessRunner)->run(
+                [$this->pythonBinary, $script, '--input', $copy, '--workspace', $workDir,
+                    '--dwgread', $this->dwgreadBinary, '--max-output-bytes', (string) $this->maxOutputBytes],
+                $workDir,
+                'cad',
+                $this->timeoutSeconds,
+                $this->maxOutputBytes,
+            );
+            $stdout = $result['stdout'];
+            $stderr = $result['stderr'];
+            if ($result['exit_code'] !== 0) {
                 $error = json_decode($stderr, true);
                 throw new GeometryExtractionException(
                     is_array($error) && is_string($error['code'] ?? null) ? $error['code'] : 'cad_runtime_failed',
@@ -88,6 +82,34 @@ final readonly class CadConversionRuntime
             'dxf' => str_contains($prefix, 'SECTION') || str_starts_with($prefix, 'AutoCAD Binary DXF'),
             default => false,
         };
+    }
+
+    private function resolvesThroughIndirectPath(string $inputPath, string $realPath): bool
+    {
+        if (PHP_OS_FAMILY === 'Windows') {
+            return $this->containsWindowsReparsePoint($inputPath);
+        }
+        if (! str_starts_with($inputPath, DIRECTORY_SEPARATOR)
+            && preg_match('/^[A-Za-z]:[\\\\\/]/', $inputPath) !== 1) {
+            return false;
+        }
+
+        return strcasecmp(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $inputPath), str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $realPath)) !== 0;
+    }
+
+    private function containsWindowsReparsePoint(string $path): bool
+    {
+        $directory = dirname($path);
+        while ($directory !== dirname($directory)) {
+            $process = new \Symfony\Component\Process\Process(['fsutil', 'reparsepoint', 'query', $directory]);
+            $process->run();
+            if ($process->isSuccessful()) {
+                return true;
+            }
+            $directory = dirname($directory);
+        }
+
+        return false;
     }
 
     private function removeDirectory(string $directory): void
