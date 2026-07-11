@@ -77,3 +77,55 @@ The production Dockerfile is statically contracted but not built, because the ta
 ## Commit
 
 Implementation commit: `e4575e31`.
+
+## Corrective cycle after independent review
+
+### Finding → fix evidence
+
+- Critical: PDF paths were bounding-box placeholders. Replaced by raw PDFium `FPDFPath_*` extraction of MOVE/LINE/cubic Bezier operators, exact source segment indices, close flags, points after composed object/Form/page transforms, style and non-authoritative bbox. `PdfVectorGeometryProviderTest` asserts exact operators and transformed coordinates; `LegacyPdfGeometryAdapterTest` asserts real legacy line geometry/style/metrics.
+- Critical: page boxes/rotation/mixed classification were incomplete. MediaBox/CropBox and the exact normalization matrix are emitted; displayed dimensions account for rotation; raster and vector counters independently produce `vector`, `raster`, `mixed` or `empty`. A real two-page vector+image fixture verifies offset CropBox, 90° transform and mixed classification.
+- Critical: CAD entities/transforms were incomplete. DXF LINE, ARC, CIRCLE, LWPOLYLINE/POLYLINE, INSERT, TEXT/MTEXT and DIMENSION now have geometry or fail closed. Nested INSERTs are recursively expanded with bounded depth, source lineage, block ownership and transform graph. DWG mandatory entities are mapped only when complete; incomplete POLYLINE/INSERT/DIMENSION is a typed failure rather than an empty entity. Focused tests verify every DXF mandatory type and nested transformed coordinates.
+- Critical: unknown/partial CAD returned success. Unknown entity types, LibreDWG warning/error/skipped/unsupported diagnostics and incomplete mandatory entity payloads now return typed failures. The closed DTO also rejects completeness warnings from an untrusted worker.
+- Critical: LibreDWG provenance was hardcoded. The worker invokes the actual binary with `--version`, requires exact `0.13.4`, validates JSON `created_by`, and rejects mismatch. The required real-DWG gate fails explicitly when `LIBREDWG_DWGREAD_BINARY` is absent; it never skips silently.
+- Critical: process output/resource isolation was post-hoc. `GeometryProcessRunner` bounds stdout/stderr while receiving chunks and clears Symfony buffers immediately. Production Linux uses `geometry-sandbox.sh`: bubblewrap user/mount/network/PID isolation, read-only root, only one writable ephemeral workspace, `ulimit` for VM/CPU/file/open-file resources, hard timeout, bounded output files and typed timeout/file-limit exits. LibreDWG JSON/version output is streamed to bounded workspace files rather than `capture_output` memory.
+- Critical: PDF lacked private S3 entrypoint. `PdfVectorGeometryProvider::extract()` now requires `org-{id}/`, `.pdf`, `FileService`, `BoundedStorageReader`, unique ephemeral lifecycle and unconditional cleanup. CAD provider has equivalent focused org-scoping/bounded-read coverage.
+- Important: schema was only partly closed. `VectorGeometryData` validates all top-level collections, required/allowed nested keys, path segments/styles, runtime allowlist, units, finite numbers, ordered bounds, global handle uniqueness, text/point/item/depth limits and blocking warning codes. Negative tests cover unknown nested fields, NaN, reversed bounds, duplicates, unit inconsistency, runtime mismatch and excessive nesting.
+- Important: DXF blocks lacked ownership/lineage. Blocks now include handles/owners/member handles; recursively expanded children retain the insert chain and block name.
+- Important: PDF limits were per page. Limits are document-global for pages, objects, path segments and text characters; exceeding any limit fails closed rather than truncating.
+- Important: legacy PDF adapter lost geometry. It now reconstructs real line/curve elements, bboxes, styles, text bounds, metrics, density, signals and optional previews from the same strict contract. The isolated regression test avoids the repository-wide SQLite migration bootstrap and proves the `geometry_v1` consumer shape.
+- Important: required security matrix was absent. Focused tests now cover malformed signature/JSON, input/output limits, timeout, cleanup, S3 traversal, filesystem symlink/junction traversal, closed schema, NaN, invalid bounds, duplicates, unknown entities, explicit unknown units, required entity types, nested transforms and rotated mixed multipage PDF.
+- Important: supply-chain/runtime contract was weak. Both Alpine/PHP bases are digest-pinned; `requirements.lock` is generated with hashes and installed using `--require-hashes`; LibreDWG archive SHA-256 is checked. Exact GPL Corresponding Source is copied into the final image at `/usr/share/source/libredwg-0.13.4.tar.xz`, not merely linked externally.
+- Minor: Python security-boundary scripts were compressed. Both were split into typed parsing/validation/serialization helpers and formatted with Black 25.1.0.
+
+### Corrective RED evidence
+
+```text
+VectorGeometryDataContractTest: 7/7 negative cases initially failed (no exception).
+PDF exact-segment/legacy tests: missing `segments`, placeholder corner geometry and null legacy geometry failed.
+CAD unknown/nested tests: unknown entity returned a contract and nested INSERT raised `cad_parse_failed`.
+Production contract: failed on missing base digests/sandbox/hash install/GPL source delivery.
+S3 PDF test: failed with unknown `fileService` constructor argument before entrypoint implementation.
+Timeout/output tests were written before `GeometryProcessRunner`; initial runtime accumulated Process output.
+```
+
+### Corrective final verification
+
+```text
+LIBREDWG_DWGREAD_BINARY=<official LibreDWG 0.13.4>/dwgread.exe vendor/bin/phpunit \
+  CadRuntimeContractTest.php CadProductionRuntimeContractTest.php \
+  DwgDxfGeometryProviderTest.php PdfVectorGeometryProviderTest.php \
+  LegacyPdfGeometryAdapterTest.php VectorGeometryDataContractTest.php
+Result: 31 tests, 97 assertions, 0 failed, 0 skipped (final run).
+
+PHPStan/Larastan on all changed production PHP: [OK] No errors.
+Pint focused production/tests: PASS.
+php -l on every changed production PHP: no syntax errors.
+python -m py_compile on both workers: exit 0.
+python -m black --check on both workers: unchanged/pass.
+sh -n docker/geometry/geometry-sandbox.sh: exit 0.
+git diff --check: exit 0 (Git reports only the existing Dockerfile CRLF normalization warning).
+```
+
+Docker build and database-backed Laravel tests were not run because the task expressly forbids Docker builds and DB/migration commands. The compatibility regression is therefore provided as a pure PHPUnit/process test that exercises the real Python adapter without Laravel database bootstrap.
+
+Corrective implementation commit: `8afd261c`.
