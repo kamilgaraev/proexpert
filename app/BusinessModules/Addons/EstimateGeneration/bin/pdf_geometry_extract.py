@@ -1,427 +1,70 @@
 #!/usr/bin/env python3
-from __future__ import annotations
-
 import argparse
+import hashlib
 import json
-import math
 import os
 import sys
-from pathlib import Path
-from typing import Any
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
-if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
 
-try:
-    import fitz
-except Exception as exc:  # pragma: no cover
-    print(json.dumps({"error": "pymupdf_unavailable", "message": str(exc)}), file=sys.stderr)
-    sys.exit(77)
-
-
-def point_payload(point: Any) -> list[float]:
-    return [round(float(point.x), 4), round(float(point.y), 4)]
-
-
-def rect_payload(rect: Any) -> list[float]:
-    return [
-        round(float(rect.x0), 4),
-        round(float(rect.y0), 4),
-        round(float(rect.x1), 4),
-        round(float(rect.y1), 4),
-    ]
-
-
-def bbox_from_points(points: list[list[float]]) -> dict[str, float] | None:
-    if not points:
-        return None
-
-    xs = [point[0] for point in points]
-    ys = [point[1] for point in points]
-    left = min(xs)
-    top = min(ys)
-    right = max(xs)
-    bottom = max(ys)
-
-    return {
-        "x": round(left, 4),
-        "y": round(top, 4),
-        "width": round(max(right - left, 0.0), 4),
-        "height": round(max(bottom - top, 0.0), 4),
-    }
-
-
-def bbox_from_rect(rect: Any) -> dict[str, float]:
-    return {
-        "x": round(float(rect.x0), 4),
-        "y": round(float(rect.y0), 4),
-        "width": round(max(float(rect.x1) - float(rect.x0), 0.0), 4),
-        "height": round(max(float(rect.y1) - float(rect.y0), 0.0), 4),
-    }
-
-
-def normalize_text_blocks(page: Any) -> list[dict[str, Any]]:
-    blocks: list[dict[str, Any]] = []
-
-    for block in page.get_text("blocks", sort=True):
-        if len(block) < 7:
-            continue
-
-        x0, y0, x1, y1, text, block_no, block_type = block[:7]
-        text_value = str(text or "").strip()
-        blocks.append(
-            {
-                "text": text_value,
-                "bbox": {
-                    "x": round(float(x0), 4),
-                    "y": round(float(y0), 4),
-                    "width": round(max(float(x1) - float(x0), 0.0), 4),
-                    "height": round(max(float(y1) - float(y0), 0.0), 4),
-                },
-                "block_no": int(block_no),
-                "block_type": int(block_type),
-            }
-        )
-
-    return blocks
-
-
-def drawing_elements(page: Any, max_elements: int) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    elements: list[dict[str, Any]] = []
-    metrics = {
-        "path_count": 0,
-        "line_count": 0,
-        "curve_count": 0,
-        "rect_count": 0,
-    }
-
-    for drawing_index, drawing in enumerate(page.get_drawings()):
-        metrics["path_count"] += 1
-        items = drawing.get("items", [])
-        path_rect = drawing.get("rect")
-        path_bbox = bbox_from_rect(path_rect) if path_rect is not None else None
-
-        for item_index, item in enumerate(items):
-            if not item:
-                continue
-
-            command = str(item[0])
-            payload: dict[str, Any] = {
-                "drawing_index": drawing_index,
-                "item_index": item_index,
-                "stroke_width": round(float(drawing.get("width") or 0.0), 4),
-                "path_bbox": path_bbox,
-            }
-
-            if command == "l" and len(item) >= 3:
-                points = [point_payload(item[1]), point_payload(item[2])]
-                metrics["line_count"] += 1
-                if len(elements) < max_elements:
-                    elements.append(
-                        {
-                            "kind": "line",
-                            "bbox": bbox_from_points(points),
-                            "geometry": {"points": points},
-                            "style": payload,
-                        }
-                    )
-                continue
-
-            if command == "re" and len(item) >= 2:
-                rect = item[1]
-                metrics["rect_count"] += 1
-                if len(elements) < max_elements:
-                    elements.append(
-                        {
-                            "kind": "rect",
-                            "bbox": bbox_from_rect(rect),
-                            "geometry": {"rect": rect_payload(rect)},
-                            "style": payload,
-                        }
-                    )
-                continue
-
-            if command == "c" and len(item) >= 5:
-                points = [point_payload(item[1]), point_payload(item[2]), point_payload(item[3]), point_payload(item[4])]
-                metrics["curve_count"] += 1
-                if len(elements) < max_elements:
-                    elements.append(
-                        {
-                            "kind": "curve",
-                            "bbox": bbox_from_points(points),
-                            "geometry": {"points": points},
-                            "style": payload,
-                        }
-                    )
-                continue
-
-            points = []
-            for value in item[1:]:
-                if hasattr(value, "x") and hasattr(value, "y"):
-                    points.append(point_payload(value))
-                elif hasattr(value, "rect"):
-                    rect = value.rect
-                    points.extend(
-                        [
-                            [float(rect.x0), float(rect.y0)],
-                            [float(rect.x1), float(rect.y1)],
-                        ]
-                    )
-
-            if len(elements) < max_elements:
-                elements.append(
-                    {
-                        "kind": command,
-                        "bbox": bbox_from_points(points) or path_bbox,
-                        "geometry": {"points": points},
-                        "style": payload,
-                    }
-                )
-
-    return elements, metrics
-
-
-def line_orientation(element: dict[str, Any]) -> str | None:
-    if element.get("kind") != "line":
-        return None
-
-    points = element.get("geometry", {}).get("points", [])
-    if len(points) < 2:
-        return None
-
-    dx = abs(float(points[1][0]) - float(points[0][0]))
-    dy = abs(float(points[1][1]) - float(points[0][1]))
-
-    if dx < 0.5 and dy >= 4.0:
-        return "vertical"
-
-    if dy < 0.5 and dx >= 4.0:
-        return "horizontal"
-
-    return None
-
-
-def overlap(a0: float, a1: float, b0: float, b1: float) -> float:
-    return max(min(a1, b1) - max(a0, b0), 0.0)
-
-
-def table_candidate_count(elements: list[dict[str, Any]]) -> int:
-    horizontal = []
-    vertical = []
-
-    for element in elements:
-        bbox = element.get("bbox") if isinstance(element.get("bbox"), dict) else None
-        orientation = line_orientation(element)
-
-        if bbox is None:
-            continue
-
-        if orientation == "horizontal":
-            horizontal.append(bbox)
-        elif orientation == "vertical":
-            vertical.append(bbox)
-        elif element.get("kind") == "rect":
-            if float(bbox.get("width", 0)) > 20 and float(bbox.get("height", 0)) > 8:
-                horizontal.append(bbox)
-                vertical.append(bbox)
-
-    candidates = 0
-
-    for hbox in horizontal:
-        related_vertical = 0
-        hx0 = float(hbox["x"])
-        hx1 = hx0 + float(hbox["width"])
-        hy0 = float(hbox["y"])
-        hy1 = hy0 + max(float(hbox["height"]), 1.0)
-
-        for vbox in vertical:
-            vx0 = float(vbox["x"])
-            vx1 = vx0 + max(float(vbox["width"]), 1.0)
-            vy0 = float(vbox["y"])
-            vy1 = vy0 + float(vbox["height"])
-
-            if overlap(hx0, hx1, vx0, vx1) > 0 or overlap(hy0, hy1, vy0, vy1) > 0:
-                related_vertical += 1
-
-        if related_vertical >= 3:
-            candidates += 1
-
-    return min(candidates, 20)
-
-
-def contour_candidate_count(elements: list[dict[str, Any]]) -> int:
-    rects = [element for element in elements if element.get("kind") == "rect"]
-    long_lines = []
-
-    for element in elements:
-        bbox = element.get("bbox") if isinstance(element.get("bbox"), dict) else None
-        if element.get("kind") != "line" or bbox is None:
-            continue
-
-        if max(float(bbox.get("width", 0)), float(bbox.get("height", 0))) >= 20:
-            long_lines.append(element)
-
-    return min(len(rects) + math.floor(len(long_lines) / 4), 200)
-
-
-def title_block_candidate(elements: list[dict[str, Any]], width: float, height: float) -> bool:
-    bottom_right = 0
-
-    for element in elements:
-        bbox = element.get("bbox") if isinstance(element.get("bbox"), dict) else None
-        if bbox is None:
-            continue
-
-        x = float(bbox.get("x", 0))
-        y = float(bbox.get("y", 0))
-
-        if x >= width * 0.45 and y >= height * 0.55:
-            bottom_right += 1
-
-    return bottom_right >= 8
-
-
-def classify_page(text_blocks: list[dict[str, Any]], elements: list[dict[str, Any]], metrics: dict[str, int], width: float, height: float) -> tuple[str, list[str]]:
-    text = "\n".join(str(block.get("text", "")) for block in text_blocks).strip()
-    lower_text = text.lower()
-    signals: list[str] = []
-
-    if text == "":
-        signals.append("text_empty")
-    else:
-        signals.append("text_blocks")
-
-    if metrics["line_count"] > 0 or metrics["curve_count"] > 0 or metrics["rect_count"] > 0:
-        signals.append("vector_geometry")
-
-    tables = table_candidate_count(elements)
-    contours = contour_candidate_count(elements)
-
-    if tables > 0:
-        signals.append("table_candidate")
-
-    if contours > 0:
-        signals.append("contour_candidate")
-
-    if title_block_candidate(elements, width, height):
-        signals.append("title_block_candidate")
-
-    if any(marker in lower_text for marker in ["спецификац", "ведомость", "поз."]):
-        role = "specification"
-    elif any(marker in lower_text for marker in ["план", "плита", "сбор", "мусор", "plan"]):
-        role = "plan"
-    elif "title_block_candidate" in signals and metrics["line_count"] < 30:
-        role = "title"
-    elif metrics["line_count"] > 0 or metrics["rect_count"] > 0 or metrics["curve_count"] > 0:
-        has_drawing_geometry = metrics["line_count"] >= 20 or metrics["rect_count"] >= 2 or metrics["curve_count"] > 0 or contours > 0
-        role = "plan" if has_drawing_geometry else "geometry_only"
-    else:
-        role = "empty"
-
-    if role in {"plan", "geometry_only"}:
-        signals.append("plan_candidate")
-
-    return role, list(dict.fromkeys(signals))
-
-
-def render_preview(page: Any, preview_dir: str | None, page_number: int, filename: str) -> dict[str, Any]:
-    if not preview_dir:
-        return {"path": None}
-
-    Path(preview_dir).mkdir(parents=True, exist_ok=True)
-    safe_filename = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in filename)[:80]
-    output_path = Path(preview_dir) / f"{safe_filename}_page_{page_number}.png"
-    pixmap = page.get_pixmap(matrix=fitz.Matrix(1.0, 1.0), alpha=False)
-    pixmap.save(str(output_path))
-
-    return {
-        "path": str(output_path),
-        "width": int(pixmap.width),
-        "height": int(pixmap.height),
-    }
-
-
-def extract(args: argparse.Namespace) -> dict[str, Any]:
-    document = fitz.open(args.input)
-    pages = []
-    max_pages = min(int(args.max_pages), len(document))
-    filename = args.filename or os.path.basename(args.input)
-
-    for page_index in range(max_pages):
-        page = document.load_page(page_index)
-        width = float(page.rect.width)
-        height = float(page.rect.height)
-        text_blocks = normalize_text_blocks(page)
-        vectors, metrics = drawing_elements(page, max(1, int(args.max_vector_elements)))
-        tables = table_candidate_count(vectors)
-        contours = contour_candidate_count(vectors)
-        role, signals = classify_page(text_blocks, vectors, metrics, width, height)
-        preview = render_preview(page, args.preview_dir if args.render_preview else None, page_index + 1, filename)
-
-        visual_metrics = {
-            **metrics,
-            "vector_element_count": metrics["line_count"] + metrics["curve_count"] + metrics["rect_count"],
-            "stored_vector_element_count": len(vectors),
-            "text_block_count": len([block for block in text_blocks if block.get("text")]),
-            "table_candidate_count": tables,
-            "contour_candidate_count": contours,
-            "title_block_candidate_count": 1 if "title_block_candidate" in signals else 0,
-            "geometry_density": round(len(vectors) / max(width * height, 1.0), 8),
-        }
-
-        pages.append(
-            {
-                "page_number": page_index + 1,
-                "width": round(width, 4),
-                "height": round(height, 4),
-                "rotation": int(page.rotation),
-                "text_blocks": text_blocks,
-                "vector_elements": vectors,
-                "visual_metrics": visual_metrics,
-                "page_role": role,
-                "signals": signals,
-                "preview": preview,
-            }
-        )
-
-    return {
-        "provider": "pymupdf",
-        "model": "geometry_v1",
-        "pages": pages,
-        "metadata": {
-            "page_count": len(document),
-            "processed_page_count": len(pages),
-            "filename": filename,
-            "pymupdf_version": getattr(fitz, "VersionBind", None),
-        },
-    }
-
-
-def parser() -> argparse.ArgumentParser:
-    argument_parser = argparse.ArgumentParser()
-    argument_parser.add_argument("--input", required=True)
-    argument_parser.add_argument("--filename", default="")
-    argument_parser.add_argument("--preview-dir", default="")
-    argument_parser.add_argument("--max-pages", type=int, default=200)
-    argument_parser.add_argument("--max-vector-elements", type=int, default=5000)
-    argument_parser.add_argument("--render-preview", action="store_true")
-    return argument_parser
-
-
-def main() -> int:
-    args = parser().parse_args()
-
+def failure(code):
+    sys.stderr.write(json.dumps({"code":code,"safe_message":"Не удалось безопасно обработать документ.","retryable":False},ensure_ascii=False))
+    raise SystemExit(2)
+
+def extract(path, max_pages, max_objects):
     try:
-        payload = extract(args)
-    except Exception as exc:
-        print(json.dumps({"error": "pdf_geometry_extract_failed", "message": str(exc)}, ensure_ascii=False), file=sys.stderr)
-        return 1
+        import pypdfium2 as pdfium
+        from pypdfium2 import raw
+        from pypdfium2.version import PYPDFIUM_INFO
+    except Exception: failure("pypdfium2_unavailable")
+    try: document=pdfium.PdfDocument(path)
+    except Exception: failure("pdf_invalid")
+    pages=[]; entities=[]; texts=[]; warnings=[]
+    for page_index in range(min(len(document),max_pages)):
+        page=document[page_index]; width,height=page.get_size(); rotation=page.get_rotation()
+        page_entities=0; page_images=0
+        text_page=page.get_textpage()
+        for object_index,obj in enumerate(page.get_objects(max_depth=8,textpage=text_page)):
+            if object_index>=max_objects: failure("pdf_object_limit_exceeded")
+            bounds=[float(v) for v in obj.get_bounds()]
+            identity=f"page:{page_index+1}:object:{object_index}"
+            matrix=[float(v) for v in obj.get_matrix().get()]
+            if obj.type==raw.FPDF_PAGEOBJ_PATH:
+                entities.append({"handle":identity,"type":"path","layer":"page","points":[bounds[:2],bounds[2:]],"source_lineage":[identity],"transform":matrix,"layout":f"page:{page_index+1}"}); page_entities+=1
+            elif obj.type==raw.FPDF_PAGEOBJ_TEXT:
+                value=obj.extract()[:4096]
+                texts.append({"handle":identity,"type":"text","layer":"page","text":value,"position":bounds[:2],"layout":f"page:{page_index+1}","source_operator":identity})
+            elif obj.type==raw.FPDF_PAGEOBJ_IMAGE: page_images+=1
+        classification="vector" if page_entities else ("mixed" if page_images and texts else "raster")
+        pages.append({"page_number":page_index+1,"width":float(width),"height":float(height),"rotation":int(rotation),"page_box":[0.0,0.0,float(width),float(height)],"transform":[1.0,0.0,0.0,1.0,0.0,0.0],"classification":classification})
+    if not entities: failure("pdf_vector_geometry_missing")
+    bounds=[]
+    points=[p for entity in entities for p in entity["points"]]
+    if points: bounds=[min(p[0] for p in points),min(p[1] for p in points),max(p[0] for p in points),max(p[1] for p in points)]
+    fingerprint="sha256:"+hashlib.sha256(open(path,"rb").read()).hexdigest()
+    return {"schema_version":1,"runtime_version":f"pdf-geometry:v1;pypdfium2:{PYPDFIUM_INFO}","source_fingerprint":fingerprint,"source_unit":None,"unit_status":"unknown","bounds":bounds,"layers":[{"name":"page","visible":True}],"blocks":[],"entities":entities,"texts":texts,"dimensions":[],"pages":pages,"scale_candidates":[],"warnings":warnings}
 
-    print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
-    return 0
+def legacy(contract):
+    pages=[]
+    for page in contract["pages"]:
+        page_no=page["page_number"]
+        vectors=[]
+        for entity in contract["entities"]:
+            if entity["layout"]==f"page:{page_no}": vectors.append({"kind":"path","bbox":None,"geometry":{"points":entity["points"]},"style":{"source_operator":entity["handle"]}})
+        page_text=[t for t in contract["texts"] if t["layout"]==f"page:{page_no}"]
+        pages.append({"page_number":page_no,"width":page["width"],"height":page["height"],"rotation":page["rotation"],"text_blocks":[{"text":t["text"],"bbox":None,"block_no":i,"block_type":0} for i,t in enumerate(page_text)],"vector_elements":vectors,"visual_metrics":{"path_count":len(vectors),"line_count":0,"curve_count":0,"rect_count":0,"vector_element_count":len(vectors),"stored_vector_element_count":len(vectors),"text_block_count":len(page_text),"table_candidate_count":0,"contour_candidate_count":0,"title_block_candidate_count":0,"geometry_density":0},"page_role":"geometry_only" if vectors else "empty","signals":["vector_geometry"] if vectors else ["text_empty"],"preview":{"path":None}})
+    return {"provider":"pypdfium2","model":"geometry_v1","pages":pages,"metadata":{"page_count":len(pages),"processed_page_count":len(pages),"pypdfium2_version":"5.8.0"}}
 
+def main():
+    p=argparse.ArgumentParser(); p.add_argument("--input",required=True); p.add_argument("--workspace",default=""); p.add_argument("--contract-vector",action="store_true"); p.add_argument("--filename",default=""); p.add_argument("--preview-dir",default=""); p.add_argument("--max-pages",type=int,default=200); p.add_argument("--max-vector-elements",type=int,default=5000); p.add_argument("--render-preview",action="store_true"); a=p.parse_args()
+    real=os.path.realpath(a.input)
+    if a.workspace and os.path.commonpath([real,os.path.realpath(a.workspace)])!=os.path.realpath(a.workspace): failure("pdf_path_invalid")
+    result=extract(real,a.max_pages,a.max_vector_elements)
+    sys.stdout.write(json.dumps(result if a.contract_vector else legacy(result),separators=(",",":"),ensure_ascii=False,allow_nan=False))
 
-if __name__ == "__main__":
-    sys.exit(main())
+if __name__=="__main__":
+    try: main()
+    except SystemExit: raise
+    except Exception: failure("pdf_parse_failed")

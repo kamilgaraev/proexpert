@@ -1,0 +1,6 @@
+pypdfium2==5.8.0
+ezdxf==1.4.4
+numpy==2.2.3
+fonttools==4.63.0
+pyparsing==3.3.2
+typing_extensions==4.12.2

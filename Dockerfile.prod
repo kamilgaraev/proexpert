@@ -1,5 +1,21 @@
 # Используем официальный образ PHP 8.2 с FPM/CLI
+FROM alpine:3.20 AS geometry-runtime
+
+ARG LIBREDWG_VERSION=0.13.4
+ARG LIBREDWG_SHA256=7e153ea4dac4cbf3dc9c50b9ef7a5604e09cdd4c5520bcf8017877bbe1422cd5
+RUN apk add --no-cache autoconf automake build-base curl libtool pcre2-dev python3-dev texinfo xz-dev zlib-dev \
+    && curl -fsSLo /tmp/libredwg.tar.xz "https://github.com/LibreDWG/libredwg/releases/download/${LIBREDWG_VERSION}/libredwg-${LIBREDWG_VERSION}.tar.xz" \
+    && echo "${LIBREDWG_SHA256}  /tmp/libredwg.tar.xz" | sha256sum -c - \
+    && mkdir /tmp/libredwg \
+    && tar -xJf /tmp/libredwg.tar.xz -C /tmp/libredwg --strip-components=1 \
+    && cd /tmp/libredwg \
+    && ./configure --prefix=/opt/libredwg --disable-bindings \
+    && make -j2 \
+    && make install
+
 FROM php:8.2-cli-alpine
+
+ARG LIBREDWG_VERSION=0.13.4
 
 # Аргументы сборки
 ARG APP_DIR=/var/www/html
@@ -15,6 +31,10 @@ RUN apk add --no-cache \
     zip \
     unzip \
     git \
+    python3 \
+    py3-pip \
+    pcre2 \
+    xz-libs \
     nodejs \
     npm \
     $PHPIZE_DEPS \
@@ -23,6 +43,14 @@ RUN apk add --no-cache \
     freetype-dev \
     icu-dev \
     libjpeg-turbo-dev
+
+COPY --from=geometry-runtime /opt/libredwg /opt/libredwg
+COPY docker/geometry/requirements.lock /tmp/geometry-requirements.lock
+RUN python3 -m venv /opt/geometry-venv \
+    && /opt/geometry-venv/bin/pip install --no-cache-dir --requirement /tmp/geometry-requirements.lock \
+    && /opt/libredwg/bin/dwgread --version | grep "${LIBREDWG_VERSION}"
+ENV PATH="/opt/geometry-venv/bin:/opt/libredwg/bin:${PATH}" \
+    LD_LIBRARY_PATH="/opt/libredwg/lib"
 
 # Конфигурация расширений GD
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg
