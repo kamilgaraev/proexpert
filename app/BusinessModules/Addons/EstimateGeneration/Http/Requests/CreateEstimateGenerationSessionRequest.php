@@ -15,11 +15,20 @@ class CreateEstimateGenerationSessionRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
         $user = $this->user();
-        $context = $user?->current_organization_id ? ['organization_id' => $user->current_organization_id] : null;
+        $organizationId = $user?->current_organization_id;
+        $project = $this->route('project');
+        $projectId = is_object($project) && method_exists($project, 'getKey') ? $project->getKey() : $project;
 
-        return $user !== null && $authService->can($user, 'ai_estimates.generate', $context);
+        if ($user === null || $organizationId === null || ! is_numeric($projectId)) {
+            return false;
+        }
+
+        return app(\App\Domain\Authorization\Services\AuthorizationService::class)->can(
+            $user,
+            'estimate_generation.create',
+            ['organization_id' => (int) $organizationId, 'project_id' => (int) $projectId],
+        );
     }
 
     public function rules(): array

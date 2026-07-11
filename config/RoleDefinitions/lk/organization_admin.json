@@ -490,15 +490,15 @@
       "admin.ai_assistant.project_pulse.export",
       "admin.ai_assistant.project_pulse.delete"
     ],
-    "ai-estimates": [
-      "ai_estimates.create_session",
-      "ai_estimates.view_sessions",
-      "ai_estimates.upload_documents",
-      "ai_estimates.generate",
-      "ai_estimates.review",
-      "ai_estimates.apply",
-      "ai_estimates.export",
-      "ai_estimates.configure"
+    "estimate-generation": [
+      "estimate_generation.view",
+      "estimate_generation.create",
+      "estimate_generation.upload_documents",
+      "estimate_generation.generate",
+      "estimate_generation.review",
+      "estimate_generation.select_normative",
+      "estimate_generation.export",
+      "estimate_generation.apply"
     ],
     "procurement": [
       "procurement.view",

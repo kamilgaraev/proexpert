@@ -4,15 +4,18 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Requests;
 
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\Concerns\AuthorizesEstimateGenerationRequest;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 
 class EstimateGenerationFeedbackRequest extends FormRequest
 {
+    use AuthorizesEstimateGenerationRequest;
+
     public function authorize(): bool
     {
-        return true;
+        return $this->authorizeEstimateGeneration('estimate_generation.review');
     }
 
     protected function prepareForValidation(): void

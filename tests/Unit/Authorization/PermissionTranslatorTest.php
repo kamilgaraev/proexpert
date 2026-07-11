@@ -163,6 +163,30 @@ class PermissionTranslatorTest extends TestCase
         $this->assertStringNotContainsString('design-management.settings.manage', $flattenedValues);
     }
 
+    public function test_estimate_generation_permissions_are_translated_for_frontend(): void
+    {
+        $permissions = [
+            'estimate_generation.view',
+            'estimate_generation.create',
+            'estimate_generation.upload_documents',
+            'estimate_generation.generate',
+            'estimate_generation.review',
+            'estimate_generation.select_normative',
+            'estimate_generation.export',
+            'estimate_generation.apply',
+        ];
+        $translated = PermissionTranslator::translatePermissionsData([
+            'module_permissions' => ['estimate-generation' => $permissions],
+        ]);
+        $flattenedValues = json_encode($this->valuesOnly($translated), JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+
+        $this->assertSame('AI-сметчик', $translated['module_groups']['estimate-generation']);
+        foreach ($permissions as $permission) {
+            $this->assertArrayHasKey($permission, $translated['module_permissions']['estimate-generation']);
+            $this->assertStringNotContainsString($permission, $flattenedValues);
+        }
+    }
+
     public function test_warehouse_custody_permissions_are_translated_for_frontend(): void
     {
         $translated = PermissionTranslator::translatePermissionsData([

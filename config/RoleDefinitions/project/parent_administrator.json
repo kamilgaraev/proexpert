@@ -78,6 +78,16 @@
       "budget-estimates.view",
       "budget-estimates.view_all",
       "construction-journal.view"
+    ],
+    "estimate-generation": [
+      "estimate_generation.view",
+      "estimate_generation.create",
+      "estimate_generation.upload_documents",
+      "estimate_generation.generate",
+      "estimate_generation.review",
+      "estimate_generation.select_normative",
+      "estimate_generation.export",
+      "estimate_generation.apply"
     ]
   },
   
