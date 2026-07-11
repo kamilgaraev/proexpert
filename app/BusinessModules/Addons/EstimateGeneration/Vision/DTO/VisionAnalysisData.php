@@ -57,9 +57,16 @@ final readonly class VisionAnalysisData
         $materialConflict = false;
         if (count($scaleCandidates) > 1) {
             $scaleValues = array_map(static fn (VisionScaleCandidateData $item): float => $item->metersPerUnit, $scaleCandidates);
-            $minimum = min($scaleValues);
-            $maximum = max($scaleValues);
-            $materialConflict = ($maximum - $minimum) > max(1.0e-9, abs($minimum) * 0.02);
+            for ($left = 0; $left < count($scaleValues) && ! $materialConflict; $left++) {
+                for ($right = $left + 1; $right < count($scaleValues); $right++) {
+                    $a = $scaleValues[$left];
+                    $b = $scaleValues[$right];
+                    if (abs($a - $b) > max(1.0e-9, 0.02 * min($a, $b))) {
+                        $materialConflict = true;
+                        break;
+                    }
+                }
+            }
         }
         if ($materialConflict !== $hasScaleConflict) {
             throw new VisionContractException('unreported_scale_conflict');

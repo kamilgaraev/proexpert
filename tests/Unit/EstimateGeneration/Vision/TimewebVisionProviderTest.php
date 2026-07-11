@@ -16,6 +16,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\Projectiv
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Providers\BoundedVisionResponseBodyReader;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Providers\TimewebVisionProvider;
 use Illuminate\Support\Facades\Http;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\Support\DatabaseLessTestCase;
 
@@ -61,7 +62,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         self::assertSame('succeeded', $this->attempts[0]->status);
         self::assertSame(1, $this->attempts[0]->imageCount);
         self::assertSame('high', $this->attempts[0]->imageDetail);
-        self::assertSame('sha256:0599a6fe8c53cd198a1dc11fad38a4d0a759d6995b5443e256c79c5e57e1dc10', TimewebVisionProvider::promptHash());
+        self::assertSame(TimewebVisionProvider::promptHash(100), TimewebVisionProvider::promptHash());
         Http::assertSentCount(1);
         Http::assertSent(function ($request): bool {
             $system = (string) $request['messages'][0]['content'];
@@ -73,10 +74,71 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 && str_contains($system, 'room, wall, opening, dimension, axis, engineering_element, text')
                 && str_contains($system, 'dimension_text, scale_notation, known_object, manual_reference')
                 && str_contains($system, 'scale_missing, scale_conflict, low_confidence, perspective_confirmation_required, geometry_incomplete, text_uncertain')
+                && str_contains($system, 'meters_per_unit is finite in (0, 1000000]')
+                && str_contains($system, 'abs(a-b) > max(1e-9, 0.02 * min(a,b))')
+                && str_contains($system, 'Exactly 2 distinct points with nonzero length are allowed only for dimension, axis, engineering_element and text')
                 && $user['contract_version'] === TimewebVisionProvider::PROMPT_VERSION
                 && $user['contract_sha256'] === TimewebVisionProvider::promptHash()
                 && $user['evidence_locator']['processing_unit_id'] === 19;
         });
+    }
+
+    #[Test]
+    #[DataProvider('maxElementCases')]
+    public function effective_element_limit_is_rendered_hashed_and_enforced(int $maxElements): void
+    {
+        config()->set('estimate-generation.vision.max_elements', $maxElements);
+        $elements = [];
+        for ($index = 0; $index <= $maxElements; $index++) {
+            $elements[] = [
+                'key' => 'room-'.$index, 'type' => 'room', 'label' => null,
+                'polygon' => [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+                'confidence' => 0.8, 'evidence_ref' => 'page-1',
+            ];
+        }
+        Http::fake(['*' => Http::response($this->response(['elements' => $elements]))]);
+
+        try {
+            $this->provider()->analyze($this->input());
+            self::fail('Configured element limit was not enforced.');
+        } catch (VisionContractException) {
+            Http::assertSent(function ($request) use ($maxElements): bool {
+                $system = (string) $request['messages'][0]['content'];
+                $user = json_decode((string) $request['messages'][1]['content'][0]['text'], true, 16, JSON_THROW_ON_ERROR);
+
+                return str_contains($system, "0..{$maxElements} elements")
+                    && $user['contract_sha256'] === TimewebVisionProvider::promptHash($maxElements);
+            });
+        }
+    }
+
+    #[Test]
+    public function contract_hash_changes_with_the_effective_element_limit(): void
+    {
+        self::assertNotSame(TimewebVisionProvider::promptHash(1), TimewebVisionProvider::promptHash(100));
+        self::assertNotSame(TimewebVisionProvider::promptHash(100), TimewebVisionProvider::promptHash(500));
+    }
+
+    #[Test]
+    public function element_limits_outside_one_to_five_hundred_fail_before_wire_call(): void
+    {
+        Http::fake();
+        foreach ([0, 501] as $invalid) {
+            config()->set('estimate-generation.vision.max_elements', $invalid);
+            try {
+                $this->provider()->analyze($this->input());
+                self::fail('Invalid element limit was accepted.');
+            } catch (VisionProviderException $exception) {
+                self::assertSame('vision_max_elements_invalid', $exception->reason);
+            }
+        }
+        Http::assertNothingSent();
+    }
+
+    /** @return array<string, array{int}> */
+    public static function maxElementCases(): array
+    {
+        return ['one' => [1], 'hundred' => [100], 'five_hundred' => [500]];
     }
 
     #[Test]

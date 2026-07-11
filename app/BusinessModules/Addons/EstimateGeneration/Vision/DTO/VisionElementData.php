@@ -36,6 +36,12 @@ final readonly class VisionElementData
         if (count($pointKeys) !== count(array_unique($pointKeys))) {
             throw new VisionContractException('repeated_polygon_point');
         }
+        if (count($polygon) === 2) {
+            if (in_array($type, ['room', 'wall', 'opening'], true)
+                || hypot($polygon[1][0] - $polygon[0][0], $polygon[1][1] - $polygon[0][1]) <= 1.0e-10) {
+                throw new VisionContractException('invalid_polyline');
+            }
+        }
         if (count($polygon) >= 3 && $this->selfIntersects($polygon)) {
             throw new VisionContractException('self_intersecting_polygon');
         }

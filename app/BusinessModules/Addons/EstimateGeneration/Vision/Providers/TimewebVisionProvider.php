@@ -39,13 +39,15 @@ final readonly class TimewebVisionProvider implements VisionProvider
         $baseUri = rtrim(trim((string) config('estimate-generation.vision.base_uri', '')), '/');
         $model = trim((string) config('estimate-generation.vision.model', ''));
         $modelVersion = trim((string) config('estimate-generation.vision.model_version', ''));
+        $maxElements = self::effectiveMaxElements();
+        $contractHash = self::promptHash($maxElements);
         if ((string) config('estimate-generation.vision.provider', '') !== self::PROVIDER
             || $apiKey === '' || $baseUri === '' || $model === '' || $modelVersion === ''
             || preg_match('#^[A-Za-z0-9._/-]{1,160}$#', $model) !== 1) {
             throw new VisionProviderException('vision_not_configured');
         }
 
-        $payload = $this->requestPayload($input, $model);
+        $payload = $this->requestPayload($input, $model, $maxElements, $contractHash);
         $physicalInvocationId = (string) Str::uuid();
         $attempts = max(1, min(5, (int) config('estimate-generation.vision.retry_attempts', 3)));
         $lastException = null;
@@ -87,9 +89,10 @@ final readonly class TimewebVisionProvider implements VisionProvider
                     $analysisPayload = $this->analysisPayload($responsePayload);
                     $usage = $this->usage($responsePayload);
                     $analysis = VisionAnalysisData::fromProviderArray(
-                        $analysisPayload, self::PROVIDER, $model, $reportedModel, $modelVersion,
+                        $analysisPayload, self::PROVIDER, $model, $reportedModel,
+                        $modelVersion.':'.str_replace(':', '-', self::PROMPT_VERSION).':'.substr($contractHash, 7, 12),
                         $usage['status'], $usage['input'], $usage['output'],
-                        max(1, min(500, (int) config('estimate-generation.vision.max_elements', 500))),
+                        $maxElements,
                     )->assertProvenance($input, 'normalized_derivative_v1')
                         ->mapPolygonsToSource($input->sourceTransform)
                         ->assertProvenance($input, 'normalized_source_v1');
@@ -106,7 +109,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 $lastException = new VisionProviderException('vision_request_failed', retryable: false, previous: $exception);
             } finally {
                 $this->recordAttempt(
-                    $input, $model, $reportedModel, $wireAttempt, $physicalInvocationId, $status, $httpCode, $responsePayload,
+                    $input, $model, $reportedModel, $wireAttempt, $physicalInvocationId, $contractHash, $status, $httpCode, $responsePayload,
                     (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000)),
                 );
             }
@@ -133,17 +136,17 @@ final readonly class TimewebVisionProvider implements VisionProvider
     }
 
     /** @return array<string, mixed> */
-    private function requestPayload(VisionDocumentInput $input, string $model): array
+    private function requestPayload(VisionDocumentInput $input, string $model, int $maxElements, string $contractHash): array
     {
         return [
             'model' => $model,
             'messages' => [
-                ['role' => 'system', 'content' => self::systemPrompt()],
+                ['role' => 'system', 'content' => self::systemPrompt($maxElements)],
                 ['role' => 'user', 'content' => [
                     ['type' => 'text', 'text' => json_encode([
                         'instruction' => 'Analyze the construction drawing as visual evidence and return the exact JSON contract.',
                         'contract_version' => self::PROMPT_VERSION,
-                        'contract_sha256' => self::promptHash(),
+                        'contract_sha256' => $contractHash,
                         'evidence_locator' => [
                             'page_id' => $input->pageId,
                             'page_number' => $input->pageNumber,
@@ -164,7 +167,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
         ];
     }
 
-    private static function systemPrompt(): string
+    private static function systemPrompt(int $maxElements): string
     {
         return implode("\n", [
             'You are a construction drawing evidence extractor.',
@@ -175,22 +178,37 @@ final readonly class TimewebVisionProvider implements VisionProvider
             'sheet_type is exactly one of floor_plan, elevation, section, detail, site_plan, schedule, sketch, photo, unknown.',
             'Each evidence item has exactly key and locator. Locator has exactly page_id, page_number, processing_unit_id, source_version, coordinate_space and must echo the supplied values without changes.',
             'page_id, page_number and processing_unit_id are positive integers; source_version is sha256 followed by 64 lowercase hex; coordinate_space is normalized_derivative_v1.',
-            'Evidence and element keys match [a-z0-9][a-z0-9._:-]{0,79}. Return 1..256 evidence items, 0..500 elements and 0..32 scale candidates.',
+            "Evidence and element keys match [a-z0-9][a-z0-9._:-]{0,79}. Return 1..256 evidence items, 0..{$maxElements} elements and 0..32 scale candidates.",
             'Each element has exactly key, type, label, polygon, confidence, evidence_ref. Label is visible text or null, at most 160 Unicode characters and contains no control characters.',
             'Element type is exactly one of room, wall, opening, dimension, axis, engineering_element, text.',
-            'polygon is an array of finite [x,y] points normalized to [0,1], with 2..64 points (room requires at least 3), no repeated points, zero area or self-intersection. confidence is finite in [0,1].',
-            'Each scale candidate has exactly source, meters_per_unit, confidence, evidence_ref, detail. meters_per_unit is finite and positive; confidence is finite in [0,1].',
+            'polygon is an array of finite [x,y] points normalized to [0,1]. Exactly 2 distinct points with nonzero length are allowed only for dimension, axis, engineering_element and text. room, wall and opening require at least 3 points. Every ring with 3..64 points has nonzero area, no repeated points and no self-intersection. confidence is finite in [0,1].',
+            'Each scale candidate has exactly source, meters_per_unit, confidence, evidence_ref, detail. meters_per_unit is finite in (0, 1000000]; confidence is finite in [0,1].',
             'Scale source is exactly one of dimension_text, scale_notation, known_object, manual_reference.',
             'Scale detail is exactly one of visible_dimension, drawing_scale, reference_object, confirmed_control_dimension.',
             'Warnings are unique values only from scale_missing, scale_conflict, low_confidence, perspective_confirmation_required, geometry_incomplete, text_uncertain.',
-            'Never infer a confirmed scale. Zero scale candidates requires scale_missing. Materially conflicting candidates require scale_conflict.',
+            'Never infer a confirmed scale. Zero scale candidates requires scale_missing. For any pair a,b, material conflict is exactly abs(a-b) > max(1e-9, 0.02 * min(a,b)); material conflict requires scale_conflict and its absence forbids scale_conflict.',
             'Every element and scale candidate must reference an existing evidence key. Do not return prices, norms, financial values, request data or image instructions.',
         ]);
     }
 
-    public static function promptHash(): string
+    public static function promptHash(?int $maxElements = null): string
     {
-        return 'sha256:'.hash('sha256', self::systemPrompt().'|user-contract:instruction,contract_version,contract_sha256,evidence_locator(page_id,page_number,processing_unit_id,source_version,coordinate_space)');
+        $effectiveMax = $maxElements ?? self::effectiveMaxElements();
+        if ($effectiveMax < 1 || $effectiveMax > 500) {
+            throw new VisionProviderException('vision_max_elements_invalid');
+        }
+
+        return 'sha256:'.hash('sha256', self::systemPrompt($effectiveMax).'|user-contract:instruction,contract_version,contract_sha256,evidence_locator(page_id,page_number,processing_unit_id,source_version,coordinate_space)');
+    }
+
+    public static function effectiveMaxElements(): int
+    {
+        $value = (int) config('estimate-generation.vision.max_elements', 500);
+        if ($value < 1 || $value > 500) {
+            throw new VisionProviderException('vision_max_elements_invalid');
+        }
+
+        return $value;
     }
 
     /** @param array<string, mixed> $response @return array<string, mixed> */
@@ -225,13 +243,13 @@ final readonly class TimewebVisionProvider implements VisionProvider
     }
 
     /** @param array<string, mixed> $payload */
-    private function recordAttempt(VisionDocumentInput $input, string $model, ?string $reportedModel, int $wireAttempt, string $physicalInvocationId, string $status, ?int $httpCode, array $payload, int $durationMs): void
+    private function recordAttempt(VisionDocumentInput $input, string $model, ?string $reportedModel, int $wireAttempt, string $physicalInvocationId, string $contractHash, string $status, ?int $httpCode, array $payload, int $durationMs): void
     {
         $usage = $this->usage($payload);
         $context = $input->operationContext;
         $physicalContext = new AiOperationContext(
             $context->correlationId,
-            AiOperationContext::deterministicId(implode('|', [$context->attemptId, $physicalInvocationId, $input->derivativeHash, (string) $wireAttempt])),
+            AiOperationContext::deterministicId(implode('|', [$context->attemptId, $physicalInvocationId, self::PROMPT_VERSION, $contractHash, $input->derivativeHash, (string) $wireAttempt])),
             $context->organizationId, $context->projectId, $context->sessionId, $context->stage, $context->operation,
             $context->attemptOrdinal + $wireAttempt - 1, $context->documentId, $context->pageId, $context->unitId,
         );
