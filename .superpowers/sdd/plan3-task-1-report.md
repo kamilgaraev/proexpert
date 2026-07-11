@@ -104,6 +104,7 @@ Second hardening pass:
 - Every selected private case is preflighted before the runner: both objects are bounded-read and hash-verified, the source descriptor is validated, and expected JSON is checked against the closed schema. This includes authorized unsupported cases; any failure prevents adapter execution and report creation.
 - Every lexical local path component from fixture root to object is rejected when it is a symlink/reparse point; final hardlinks remain forbidden. Actual outside-root and inside-root Windows junction/POSIX symlink cases are covered.
 - Bounded validators now cover PPM dimensions/body, safe SVG geometry without active/external content, DXF sections/terminator, the exact licensed DWG placeholder policy, and PDF structure. Source/extension mismatches are rejected for local and private objects.
+- SVG uses fail-closed `LIBXML_NONET` parsing with element/attribute whitelists and rejects events, references, active/foreign elements, namespaces, and CSS execution primitives. PPM uses a byte-offset header/sample tokenizer and exact P5/P6 body lengths without allocating a full-file token array; large-body peak-memory behavior is tested.
 - Benchmark PDFs are marked binary in `.gitattributes`, so repository diff checks do not parse valid PDF byte syntax as text whitespace.
 
 Fresh corrective verification:

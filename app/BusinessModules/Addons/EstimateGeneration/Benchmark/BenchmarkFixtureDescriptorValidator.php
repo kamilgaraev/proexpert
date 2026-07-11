@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Benchmark;
 
+use DOMDocument;
+use DOMElement;
 use Smalot\PdfParser\Parser;
 use Throwable;
 
@@ -79,34 +81,127 @@ final class BenchmarkFixtureDescriptorValidator
 
     private function ppm(string $content): void
     {
-        $withoutComments = preg_replace('/#[^\r\n]*/', '', $content);
-        $tokens = preg_split('/\s+/', trim((string) $withoutComments));
-        if (! is_array($tokens) || count($tokens) < 4 || array_shift($tokens) !== 'P3') {
+        $offset = 0;
+        $magic = $this->nextPpmToken($content, $offset);
+        $widthToken = $this->nextPpmToken($content, $offset);
+        $heightToken = $this->nextPpmToken($content, $offset);
+        $maxToken = $this->nextPpmToken($content, $offset);
+        if (! in_array($magic, ['P3', 'P5', 'P6'], true)) {
             throw new BenchmarkManifestException('ppm_fixture_invalid');
         }
-        $width = filter_var(array_shift($tokens), FILTER_VALIDATE_INT);
-        $height = filter_var(array_shift($tokens), FILTER_VALIDATE_INT);
-        $max = filter_var(array_shift($tokens), FILTER_VALIDATE_INT);
+        $width = filter_var($widthToken, FILTER_VALIDATE_INT);
+        $height = filter_var($heightToken, FILTER_VALIDATE_INT);
+        $max = filter_var($maxToken, FILTER_VALIDATE_INT);
         if (! is_int($width) || ! is_int($height) || ! is_int($max) || $width < 1 || $height < 1
-            || $width > 10_000 || $height > 10_000 || $width * $height > 20_000_000 || $max < 1 || $max > 65_535
-            || count($tokens) !== $width * $height * 3) {
+            || $width > 10_000 || $height > 10_000 || $width > intdiv(20_000_000, $height)
+            || $max < 1 || $max > 65_535) {
             throw new BenchmarkManifestException('ppm_fixture_invalid');
         }
-        foreach ($tokens as $token) {
-            if (! preg_match('/^[0-9]{1,5}$/', $token) || (int) $token > $max) {
+        $samples = $width * $height * ($magic === 'P6' || $magic === 'P3' ? 3 : 1);
+        if ($magic === 'P3') {
+            for ($index = 0; $index < $samples; $index++) {
+                $token = $this->nextPpmToken($content, $offset);
+                if ($token === null || ! preg_match('/^[0-9]{1,5}$/', $token) || (int) $token > $max) {
+                    throw new BenchmarkManifestException('ppm_fixture_invalid');
+                }
+            }
+            if ($this->nextPpmToken($content, $offset) !== null) {
                 throw new BenchmarkManifestException('ppm_fixture_invalid');
             }
+
+            return;
+        }
+        $length = strlen($content);
+        if ($offset >= $length || ! str_contains(" \t\r\n", $content[$offset])) {
+            throw new BenchmarkManifestException('ppm_fixture_invalid');
+        }
+        $offset += $content[$offset] === "\r" && ($content[$offset + 1] ?? '') === "\n" ? 2 : 1;
+        $bytesPerSample = $max > 255 ? 2 : 1;
+        if ($samples > intdiv(64_000_000, $bytesPerSample)
+            || $length - $offset !== $samples * $bytesPerSample) {
+            throw new BenchmarkManifestException('ppm_fixture_invalid');
         }
     }
 
     private function svg(string $content): void
     {
-        if (strlen($content) > 4_000_000 || preg_match('/<!DOCTYPE|<!ENTITY|<script\b|\b(?:href|src)\s*=\s*["\']\s*(?:https?:|\/\/|data:)/i', $content)
-            || ! preg_match('/^\s*<svg\b[^>]*(?:viewBox|width)\s*=/i', $content)
-            || ! preg_match('/<(?:path|rect|line|polyline|polygon|circle|ellipse)\b/i', $content)
-            || ! preg_match('/<\/svg>\s*$/i', $content)) {
+        if (strlen($content) > 4_000_000 || preg_match('/<!DOCTYPE|<!ENTITY|url\s*\(|@import|expression\s*\(/i', $content)) {
             throw new BenchmarkManifestException('svg_fixture_invalid');
         }
+        $previous = libxml_use_internal_errors(true);
+        try {
+            $document = new DOMDocument;
+            if (! $document->loadXML($content, LIBXML_NONET | LIBXML_NOBLANKS | LIBXML_COMPACT)
+                || $document->doctype !== null || ! $document->documentElement instanceof DOMElement) {
+                throw new BenchmarkManifestException('svg_fixture_invalid');
+            }
+            $root = $document->documentElement;
+            if ($root->localName !== 'svg' || ! in_array($root->namespaceURI, [null, '', 'http://www.w3.org/2000/svg'], true)
+                || (! $root->hasAttribute('viewBox') && (! $root->hasAttribute('width') || ! $root->hasAttribute('height')))) {
+                throw new BenchmarkManifestException('svg_fixture_invalid');
+            }
+            $allowedElements = ['svg', 'g', 'title', 'desc', 'path', 'rect', 'line', 'polyline', 'polygon', 'circle', 'ellipse', 'text'];
+            $allowedAttributes = [
+                'xmlns', 'viewBox', 'width', 'height', 'id', 'transform', 'fill', 'stroke', 'stroke-width',
+                'd', 'points', 'x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'r', 'rx', 'ry', 'font-size',
+            ];
+            $geometry = 0;
+            foreach ($document->getElementsByTagName('*') as $element) {
+                if (! $element instanceof DOMElement || ! in_array($element->localName, $allowedElements, true)
+                    || ! in_array($element->namespaceURI, [null, '', 'http://www.w3.org/2000/svg'], true)) {
+                    throw new BenchmarkManifestException('svg_fixture_invalid');
+                }
+                if (in_array($element->localName, ['path', 'rect', 'line', 'polyline', 'polygon', 'circle', 'ellipse'], true)) {
+                    $geometry++;
+                }
+                foreach ($element->attributes as $attribute) {
+                    if (str_starts_with(strtolower($attribute->localName), 'on')
+                        || ! in_array($attribute->nodeName, $allowedAttributes, true)
+                        || preg_match('/url\s*\(|@import|expression\s*\(/i', $attribute->nodeValue ?? '')) {
+                        throw new BenchmarkManifestException('svg_fixture_invalid');
+                    }
+                }
+            }
+            if ($geometry < 1) {
+                throw new BenchmarkManifestException('svg_fixture_invalid');
+            }
+        } finally {
+            libxml_clear_errors();
+            libxml_use_internal_errors($previous);
+        }
+    }
+
+    private function nextPpmToken(string $content, int &$offset): ?string
+    {
+        $length = strlen($content);
+        while ($offset < $length) {
+            $character = $content[$offset];
+            if (str_contains(" \t\r\n", $character)) {
+                $offset++;
+
+                continue;
+            }
+            if ($character !== '#') {
+                break;
+            }
+            $lineEnd = strpos($content, "\n", $offset);
+            if ($lineEnd === false || $lineEnd - $offset > 65_536 || $lineEnd > 131_072) {
+                throw new BenchmarkManifestException('ppm_fixture_invalid');
+            }
+            $offset = $lineEnd + 1;
+        }
+        if ($offset >= $length || $offset > 131_072) {
+            return null;
+        }
+        $start = $offset;
+        while ($offset < $length && ! str_contains(" \t\r\n#", $content[$offset])) {
+            if ($offset - $start > 32) {
+                throw new BenchmarkManifestException('ppm_fixture_invalid');
+            }
+            $offset++;
+        }
+
+        return substr($content, $start, $offset - $start);
     }
 
     private function dxf(string $content): void
