@@ -1,0 +1,44 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Addons\EstimateGeneration\BuildingModel;
+
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
+
+final class InMemoryBuildingModelStore implements BuildingModelStore
+{
+    private array $models = [];
+
+    private array $evidence = [];
+
+    private int $nextId = 1;
+
+    public function transaction(BuildingModelOperationContext $context, callable $callback): mixed
+    {
+        return $callback();
+    }
+
+    public function insertOrGet(BuildingModelOperationContext $context, NormalizedBuildingModelData $model): StoredBuildingModel
+    {
+        $slot = implode(':', [$context->organizationId, $context->projectId, $context->sessionId, $context->inputVersion]);
+        $contentVersion = $model->contentVersion();
+        if (isset($this->models[$slot])) {
+            $stored = $this->models[$slot];
+            if (! hash_equals($stored->contentVersion, $contentVersion)) {
+                throw new BuildingModelContentCollision;
+            }
+
+            return new StoredBuildingModel($stored->id, $context, $stored->modelVersion, $stored->contentVersion, false);
+        }
+        $stored = new StoredBuildingModel($this->nextId++, $context, $model->modelVersion, $contentVersion, true);
+        $this->models[$slot] = $stored;
+
+        return $stored;
+    }
+
+    public function attachEvidence(StoredBuildingModel $stored, array $evidenceIds): void
+    {
+        $this->evidence[$stored->id] = $evidenceIds;
+    }
+}
