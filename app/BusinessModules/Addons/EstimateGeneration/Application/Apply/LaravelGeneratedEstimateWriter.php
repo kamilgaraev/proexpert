@@ -102,9 +102,38 @@ class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
     protected function isEstimateNumberCollision(QueryException $exception): bool
     {
         $sqlState = (string) ($exception->errorInfo[0] ?? $exception->getCode());
+        $constraint = $this->constraintName($exception);
 
         return $sqlState === '23505'
-            && str_contains($exception->getMessage(), 'estimates_organization_id_number_unique');
+            && $constraint !== null
+            && hash_equals('estimates_organization_id_number_unique', $constraint);
+    }
+
+    private function constraintName(QueryException $exception): ?string
+    {
+        foreach (['constraint', 'constraint_name'] as $key) {
+            $value = $exception->errorInfo[$key] ?? null;
+            if (is_string($value) && $value !== '') {
+                return $value;
+            }
+        }
+
+        $diagnostics = array_filter(
+            [...$exception->errorInfo, $exception->getMessage()],
+            static fn (mixed $value): bool => is_string($value),
+        );
+
+        foreach ($diagnostics as $diagnostic) {
+            if (preg_match(
+                '/(?:constraint|ограничени(?:е|я)(?:\s+уникальности)?)\s+["«]([^"»]+)["»]/iu',
+                $diagnostic,
+                $matches,
+            ) === 1) {
+                return $matches[1];
+            }
+        }
+
+        return null;
     }
 
     /** @param array<string, mixed> $draft */

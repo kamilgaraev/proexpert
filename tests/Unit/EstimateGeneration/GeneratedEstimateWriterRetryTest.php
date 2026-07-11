@@ -68,6 +68,36 @@ final class GeneratedEstimateWriterRetryTest extends TestCase
     }
 
     #[Test]
+    public function constraint_name_superstring_is_not_retryable(): void
+    {
+        $exception = $this->queryException('23505', 'archived_estimates_organization_id_number_unique_backup');
+        $writer = $this->writer([$exception, $this->estimate(91)]);
+
+        $this->expectExceptionObject($exception);
+
+        try {
+            $writer->createEstimateForTest($this->session());
+        } finally {
+            self::assertSame(['AI-42-0'], $writer->attemptedNumbers);
+        }
+    }
+
+    #[Test]
+    public function unparseable_unique_violation_is_not_retryable(): void
+    {
+        $exception = $this->queryException('23505', null);
+        $writer = $this->writer([$exception, $this->estimate(91)]);
+
+        $this->expectExceptionObject($exception);
+
+        try {
+            $writer->createEstimateForTest($this->session());
+        } finally {
+            self::assertSame(['AI-42-0'], $writer->attemptedNumbers);
+        }
+    }
+
+    #[Test]
     public function retry_budget_exhaustion_rethrows_last_number_collision(): void
     {
         $collisions = array_map(
@@ -121,9 +151,12 @@ final class GeneratedEstimateWriterRetryTest extends TestCase
         return $estimate;
     }
 
-    private function queryException(string $sqlState, string $constraint): QueryException
+    private function queryException(string $sqlState, ?string $constraint): QueryException
     {
-        $previous = new PDOException(sprintf('duplicate key violates constraint "%s"', $constraint));
+        $message = $constraint === null
+            ? 'duplicate key violates a unique index'
+            : sprintf('duplicate key violates constraint "%s"', $constraint);
+        $previous = new PDOException($message);
         $previous->errorInfo = [$sqlState, 7, 'duplicate'];
 
         return new QueryException('pgsql', 'insert into estimates', [], $previous);
