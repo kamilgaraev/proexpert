@@ -23,13 +23,6 @@ final readonly class PipelineContext
             throw new InvalidArgumentException('Pipeline state version cannot be negative.');
         }
 
-        self::assertSafeVersion($inputVersion, 'input');
-    }
-
-    private static function assertSafeVersion(string $version, string $name): void
-    {
-        if (trim($version) === '' || preg_match('/[\x00-\x1F\x7F]/', $version) === 1) {
-            throw new InvalidArgumentException("Pipeline {$name} version must be a non-empty safe string.");
-        }
+        PipelineVersionValidator::assertValid($inputVersion, 'input');
     }
 }

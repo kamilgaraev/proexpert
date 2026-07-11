@@ -121,6 +121,34 @@ final class PipelineRegistryTest extends TestCase
     }
 
     #[Test]
+    public function pipeline_versions_accept_eighty_unicode_characters(): void
+    {
+        $version = str_repeat('я', 80);
+
+        self::assertSame($version, (new PipelineContext(1, 2, 3, 0, $version))->inputVersion);
+        self::assertSame(
+            $version,
+            (new PipelineStageResult(ProcessingStage::BuildDraft, $version, [], []))->outputVersion,
+        );
+    }
+
+    #[Test]
+    public function pipeline_context_rejects_versions_longer_than_eighty_characters(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        new PipelineContext(1, 2, 3, 0, str_repeat('я', 81));
+    }
+
+    #[Test]
+    public function stage_result_rejects_versions_longer_than_eighty_characters(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        new PipelineStageResult(ProcessingStage::BuildDraft, str_repeat('a', 81), [], []);
+    }
+
+    #[Test]
     public function stage_result_rejects_empty_output_version(): void
     {
         $this->expectException(InvalidArgumentException::class);
@@ -129,11 +157,11 @@ final class PipelineRegistryTest extends TestCase
     }
 
     #[Test]
-    public function stage_result_rejects_nested_metric_payloads(): void
+    public function stage_result_rejects_object_metric_payloads(): void
     {
         $this->expectException(InvalidArgumentException::class);
 
-        new PipelineStageResult(ProcessingStage::BuildDraft, 'sha256:output', ['payload' => ['unsafe']], []);
+        new PipelineStageResult(ProcessingStage::BuildDraft, 'sha256:output', ['payload' => ['value' => new \stdClass]], []);
     }
 
     #[Test]
@@ -142,6 +170,19 @@ final class PipelineRegistryTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
 
         new PipelineStageResult(ProcessingStage::BuildDraft, 'sha256:output', [], [123]);
+    }
+
+    #[Test]
+    public function stage_result_rejects_named_warning_maps(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        new PipelineStageResult(
+            ProcessingStage::BuildDraft,
+            'sha256:output',
+            [],
+            ['review' => 'manual_review_required'],
+        );
     }
 
     #[Test]
@@ -158,6 +199,69 @@ final class PipelineRegistryTest extends TestCase
         self::assertSame('sha256:output', $result->outputVersion);
         self::assertSame(['duration_ms' => 12], $result->metrics);
         self::assertSame(['manual_review_required'], $result->warnings);
+    }
+
+    #[Test]
+    public function stage_result_breaks_external_scalar_references(): void
+    {
+        $duration = 12;
+        $warning = 'manual_review_required';
+        $metrics = ['duration_ms' => &$duration];
+        $warnings = [&$warning];
+        $result = new PipelineStageResult(ProcessingStage::BuildDraft, 'sha256:output', $metrics, $warnings);
+
+        $duration = 99;
+        $warning = 'changed';
+
+        self::assertSame(['duration_ms' => 12], $result->metrics);
+        self::assertSame(['manual_review_required'], $result->warnings);
+    }
+
+    #[Test]
+    public function stage_result_breaks_nested_array_references(): void
+    {
+        $confidence = 0.75;
+        $details = ['confidence' => &$confidence];
+        $metrics = ['quality' => &$details];
+        $result = new PipelineStageResult(ProcessingStage::BuildDraft, 'sha256:output', $metrics, []);
+
+        $confidence = 0.1;
+        $details['accepted'] = true;
+
+        self::assertSame(['quality' => ['confidence' => 0.75]], $result->metrics);
+    }
+
+    #[Test]
+    public function stage_result_is_unchanged_when_source_arrays_are_modified(): void
+    {
+        $metrics = ['duration_ms' => 12];
+        $warnings = ['manual_review_required'];
+        $result = new PipelineStageResult(ProcessingStage::BuildDraft, 'sha256:output', $metrics, $warnings);
+
+        $metrics['duration_ms'] = 99;
+        $warnings[] = 'changed';
+
+        self::assertSame(['duration_ms' => 12], $result->metrics);
+        self::assertSame(['manual_review_required'], $result->warnings);
+    }
+
+    /** @return iterable<string, array{array<mixed>}> */
+    public static function invalidMetricMaps(): iterable
+    {
+        yield 'empty key' => [['' => 1]];
+        yield 'whitespace key' => [['   ' => 1]];
+        yield 'unsafe key' => [["duration\nms" => 1]];
+        yield 'numeric key' => [[0 => 1]];
+        yield 'non-finite float' => [['confidence' => INF]];
+    }
+
+    #[Test]
+    #[DataProvider('invalidMetricMaps')]
+    public function stage_result_rejects_invalid_metric_maps(array $metrics): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        new PipelineStageResult(ProcessingStage::BuildDraft, 'sha256:output', $metrics, []);
     }
 }
 
