@@ -251,14 +251,14 @@ class EstimatorReadinessServiceTest extends TestCase
     }
 
     /**
-     * @param array<int, EstimateGenerationDocument> $documents
-     * @param array<string, mixed> $draft
+     * @param  array<int, EstimateGenerationDocument>  $documents
+     * @param  array<string, mixed>  $draft
      */
     private function session(array $documents, array $draft = []): EstimateGenerationSession
     {
-        $session = new EstimateGenerationSession();
+        $session = new EstimateGenerationSession;
         $session->forceFill([
-            'status' => $draft === [] ? 'created' : 'ready_for_review',
+            'status' => $draft === [] ? 'draft' : 'ready_to_apply',
             'problem_flags' => [],
             'draft_payload' => $draft,
         ]);
@@ -268,7 +268,7 @@ class EstimatorReadinessServiceTest extends TestCase
     }
 
     /**
-     * @param array<string, mixed> $quality
+     * @param  array<string, mixed>  $quality
      * @return array<string, mixed>
      */
     private function draft(array $quality): array
@@ -293,7 +293,7 @@ class EstimatorReadinessServiceTest extends TestCase
         int $scopeInferences = 0,
         array $factsSummary = []
     ): EstimateGenerationDocument {
-        $document = new EstimateGenerationDocument();
+        $document = new EstimateGenerationDocument;
         $document->forceFill([
             'status' => $status,
             'facts_summary' => $factsSummary,
@@ -308,6 +308,6 @@ class EstimatorReadinessServiceTest extends TestCase
 
     private function service(): EstimatorReadinessService
     {
-        return new EstimatorReadinessService();
+        return new EstimatorReadinessService;
     }
 }

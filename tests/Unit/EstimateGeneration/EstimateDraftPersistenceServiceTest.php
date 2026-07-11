@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNoAirWorkItemPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationFinalWorkItemGuard;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNoAirWorkItemPolicy;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationReviewItemService;
 use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
 use Illuminate\Filesystem\Filesystem;
@@ -25,11 +28,12 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
     {
         parent::setUp();
 
-        $container = new Container();
-        $loader = new FileLoader(new Filesystem(), dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'lang');
+        $container = new Container;
+        $loader = new FileLoader(new Filesystem, dirname(__DIR__, 3).DIRECTORY_SEPARATOR.'lang');
         $translator = new Translator($loader, 'ru');
 
-        $container->instance('app', new class {
+        $container->instance('app', new class
+        {
             public function getLocale(): string
             {
                 return 'ru';
@@ -54,7 +58,7 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
 
     public function test_review_required_quality_status_blocks_apply_guard(): void
     {
-        $blocker = (new TestableEstimateDraftPersistenceService())->blockerFor([
+        $blocker = $this->service()->findApplyBlocker([
             'quality_summary' => [
                 'status' => 'review_required',
                 'not_calculated_work_items' => 0,
@@ -71,8 +75,8 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
 
     public function test_service_rows_are_not_persistable_final_estimate_items(): void
     {
-        $service = new TestableEstimateDraftPersistenceService();
-        $persistable = $service->persistableItemsFor([
+        $service = $this->service();
+        $persistable = $service->persistableWorkItems([
             $this->workItem('work-1', 'priced_work', 1000),
             $this->workItem('operation-1', 'operation', 0),
             $this->workItem('note-1', 'resource_note', 0),
@@ -87,8 +91,8 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
 
     public function test_generic_priced_work_is_not_persistable_final_estimate_item(): void
     {
-        $service = new TestableEstimateDraftPersistenceService();
-        $persistable = $service->persistableItemsFor([
+        $service = $this->service();
+        $persistable = $service->persistableWorkItems([
             [
                 'key' => 'generic-complex-work',
                 'item_type' => 'priced_work',
@@ -109,8 +113,8 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
 
     public function test_unconfirmed_quantity_review_trace_is_not_persistable_final_estimate_item(): void
     {
-        $service = new TestableEstimateDraftPersistenceService();
-        $persistable = $service->persistableItemsFor([
+        $service = $this->service();
+        $persistable = $service->persistableWorkItems([
             [
                 ...$this->workItem('drawing-wall', 'priced_work', 1200),
                 'quantity' => 42.5,
@@ -141,8 +145,8 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
 
     public function test_persistable_total_ignores_service_and_not_calculated_rows(): void
     {
-        $service = new TestableEstimateDraftPersistenceService();
-        $total = $service->persistableTotalFor([
+        $service = $this->service();
+        $total = $service->persistableDraftTotal([
             'local_estimates' => [[
                 'sections' => [[
                     'work_items' => [
@@ -160,7 +164,7 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
 
     public function test_duplicate_metric_blocks_apply_even_when_quality_status_is_ready(): void
     {
-        $blocker = (new TestableEstimateDraftPersistenceService())->blockerFor([
+        $blocker = $this->service()->findApplyBlocker([
             'quality_summary' => [
                 'status' => 'ready',
                 'duplicate_work_items' => 2,
@@ -177,7 +181,7 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
 
     public function test_non_persistable_priced_work_blocks_apply_even_when_quality_status_is_ready(): void
     {
-        $blocker = (new TestableEstimateDraftPersistenceService())->blockerFor([
+        $blocker = $this->service()->findApplyBlocker([
             'quality_summary' => [
                 'status' => 'ready',
                 'not_calculated_work_items' => 0,
@@ -200,7 +204,7 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
 
     public function test_missing_normative_code_blocks_apply_even_with_positive_price(): void
     {
-        $blocker = (new TestableEstimateDraftPersistenceService())->blockerFor([
+        $blocker = $this->service()->findApplyBlocker([
             'quality_summary' => [
                 'status' => 'ready',
                 'not_calculated_work_items' => 0,
@@ -223,7 +227,7 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
 
     public function test_positive_price_without_normative_resources_blocks_apply(): void
     {
-        $blocker = (new TestableEstimateDraftPersistenceService())->blockerFor([
+        $blocker = $this->service()->findApplyBlocker([
             'quality_summary' => [
                 'status' => 'ready',
                 'not_calculated_work_items' => 0,
@@ -266,7 +270,7 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
         $workItem = $this->workItem('priced-without-accepted-match', 'priced_work', 1000);
         $workItem['normative_match']['decision']['status'] = 'review_priced';
 
-        $blocker = (new TestableEstimateDraftPersistenceService())->blockerFor([
+        $blocker = $this->service()->findApplyBlocker([
             'quality_summary' => [
                 'status' => 'ready',
                 'not_calculated_work_items' => 0,
@@ -289,7 +293,7 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
 
     public function test_generic_priced_work_blocks_apply_even_when_quality_status_is_ready(): void
     {
-        $blocker = (new TestableEstimateDraftPersistenceService())->blockerFor([
+        $blocker = $this->service()->findApplyBlocker([
             'quality_summary' => [
                 'status' => 'ready',
                 'not_calculated_work_items' => 0,
@@ -322,7 +326,7 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
 
     public function test_empty_persistable_total_blocks_apply_even_when_quality_status_is_ready(): void
     {
-        $blocker = (new TestableEstimateDraftPersistenceService())->blockerFor([
+        $blocker = $this->service()->findApplyBlocker([
             'quality_summary' => [
                 'status' => 'ready',
                 'not_calculated_work_items' => 0,
@@ -391,7 +395,15 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
 
         $this->expectException(ValidationException::class);
 
-        (new TestableEstimateDraftPersistenceService())->assertNoBlockingReviewItemsFor($session);
+        $this->service()->validatedDraft($session);
+    }
+
+    private function service(): EstimateDraftPersistenceService
+    {
+        return new EstimateDraftPersistenceService(
+            new EstimateGenerationFinalWorkItemGuard,
+            new EstimateGenerationReviewItemService(new EstimateGenerationPackagePresenter),
+        );
     }
 
     /**
@@ -403,8 +415,7 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
         float $totalCost,
         string $pricingStatus = 'calculated',
         ?string $normativeRateCode = '01-01-001-01'
-    ): array
-    {
+    ): array {
         $workItem = [
             'key' => $key,
             'item_type' => $type,
@@ -437,38 +448,5 @@ final class EstimateDraftPersistenceServiceTest extends TestCase
         }
 
         return $workItem;
-    }
-}
-
-final class TestableEstimateDraftPersistenceService extends EstimateDraftPersistenceService
-{
-    public function assertNoBlockingReviewItemsFor(EstimateGenerationSession $session): void
-    {
-        $this->assertNoBlockingReviewItems($session);
-    }
-
-    /**
-     * @param array<string, mixed> $draft
-     */
-    public function blockerFor(array $draft): ?array
-    {
-        return $this->applyBlocker($draft);
-    }
-
-    /**
-     * @param array<int, mixed> $workItems
-     * @return array<int, array<string, mixed>>
-     */
-    public function persistableItemsFor(array $workItems): array
-    {
-        return $this->persistableWorkItems($workItems);
-    }
-
-    /**
-     * @param array<string, mixed> $draft
-     */
-    public function persistableTotalFor(array $draft): float
-    {
-        return $this->persistableDraftTotal($draft);
     }
 }

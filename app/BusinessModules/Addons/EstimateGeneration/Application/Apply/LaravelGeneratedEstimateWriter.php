@@ -12,12 +12,19 @@ use App\Models\EstimateItem;
 use App\Models\EstimateItemResource;
 use App\Models\EstimateSection;
 use App\Models\MeasurementUnit;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 
-final class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
+class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
 {
     private const ESTIMATE_NAME_MAX_LENGTH = 255;
 
-    public function __construct(private EstimateDraftPersistenceService $draftService) {}
+    private const NUMBER_CREATE_ATTEMPTS = 4;
+
+    public function __construct(
+        private EstimateDraftPersistenceService $draftService,
+        private GeneratedEstimateNumberAllocator $numberAllocator,
+    ) {}
 
     public function createFromSession(
         EstimateGenerationSession $session,
@@ -26,30 +33,86 @@ final class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
         $draft = $this->draftService->validatedDraft($session);
         $regionalContext = $draft['regional_context'] ?? $session->input_payload['regional_context'] ?? [];
         $total = $this->draftService->persistableDraftTotal($draft);
-        $estimate = Estimate::create([
-            'organization_id' => $session->organization_id,
-            'project_id' => $session->project_id,
-            'number' => sprintf('AI-%d', (int) $session->getKey()),
-            'name' => $this->resolveEstimateName($session, $draft, $command->name),
-            'description' => $session->input_payload['description'] ?? null,
-            'type' => $command->type ?? 'local',
-            'status' => 'draft',
-            'estimate_date' => $command->estimateDate ?? now()->toDateString(),
-            'calculation_method' => 'resource',
-            'estimate_regional_price_version_id' => $regionalContext['estimate_regional_price_version_id'] ?? null,
-            'regional_price_snapshot' => $regionalContext !== [] ? $regionalContext : null,
-            'metadata' => [
-                'is_ai_generated' => true,
-                'generation_session_id' => $session->getKey(),
-                'draft_traceability' => $draft['traceability'] ?? [],
-                'quality_summary' => $draft['quality_summary'] ?? null,
-                'regional_context' => $regionalContext,
-            ],
-            'total_direct_costs' => $total,
-            'total_amount' => $total,
-            'total_amount_with_vat' => $total,
-        ]);
+        $estimate = $this->createEstimate($session, $command, $draft, $regionalContext, $total);
 
+        $this->persistSections($session, $estimate, $draft);
+
+        return (int) $estimate->id;
+    }
+
+    /**
+     * @param  array<string, mixed>  $draft
+     * @param  array<string, mixed>  $regionalContext
+     */
+    protected function createEstimate(
+        EstimateGenerationSession $session,
+        ApplyGeneratedEstimateCommand $command,
+        array $draft,
+        array $regionalContext,
+        float $total,
+    ): Estimate {
+        for ($attempt = 0; $attempt < self::NUMBER_CREATE_ATTEMPTS; $attempt++) {
+            try {
+                $attributes = [
+                    'organization_id' => $session->organization_id,
+                    'project_id' => $session->project_id,
+                    'number' => $this->numberAllocator->allocate($session, $attempt),
+                    'name' => $this->resolveEstimateName($session, $draft, $command->name),
+                    'description' => $session->input_payload['description'] ?? null,
+                    'type' => $command->type ?? 'local',
+                    'status' => 'draft',
+                    'estimate_date' => $command->estimateDate ?? now()->toDateString(),
+                    'calculation_method' => 'resource',
+                    'estimate_regional_price_version_id' => $regionalContext['estimate_regional_price_version_id'] ?? null,
+                    'regional_price_snapshot' => $regionalContext !== [] ? $regionalContext : null,
+                    'metadata' => [
+                        'is_ai_generated' => true,
+                        'generation_session_id' => $session->getKey(),
+                        'draft_traceability' => $draft['traceability'] ?? [],
+                        'quality_summary' => $draft['quality_summary'] ?? null,
+                        'regional_context' => $regionalContext,
+                    ],
+                    'total_direct_costs' => $total,
+                    'total_amount' => $total,
+                    'total_amount_with_vat' => $total,
+                ];
+
+                return $this->transactionAttempt(fn (): Estimate => $this->createEstimateAttempt($attributes));
+            } catch (QueryException $exception) {
+                if (! $this->isEstimateNumberCollision($exception) || $attempt === self::NUMBER_CREATE_ATTEMPTS - 1) {
+                    throw $exception;
+                }
+            }
+        }
+
+        throw new \LogicException('Estimate number allocation attempts exhausted.');
+    }
+
+    /** @param array<string, mixed> $attributes */
+    protected function createEstimateAttempt(array $attributes): Estimate
+    {
+        return Estimate::create($attributes);
+    }
+
+    protected function transactionAttempt(callable $callback): mixed
+    {
+        return DB::transaction($callback);
+    }
+
+    protected function isEstimateNumberCollision(QueryException $exception): bool
+    {
+        $sqlState = (string) ($exception->errorInfo[0] ?? $exception->getCode());
+
+        return $sqlState === '23505'
+            && str_contains($exception->getMessage(), 'estimates_organization_id_number_unique');
+    }
+
+    /** @param array<string, mixed> $draft */
+    private function persistSections(
+        EstimateGenerationSession $session,
+        Estimate $estimate,
+        array $draft,
+    ): void {
         $localIndex = 0;
         foreach ($draft['local_estimates'] as $localEstimate) {
             if (! is_array($localEstimate)) {
@@ -110,7 +173,6 @@ final class LaravelGeneratedEstimateWriter implements GeneratedEstimateWriter
             }
         }
 
-        return (int) $estimate->id;
     }
 
     /** @param array<string, mixed> $workItem */

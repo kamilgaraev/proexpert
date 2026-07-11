@@ -143,7 +143,7 @@ class StrictNormativeGenerationTest extends TestCase
         ]);
 
         try {
-            app(EstimateDraftPersistenceService::class)->apply($session, ['name' => 'Смета'], $user);
+            app(EstimateDraftPersistenceService::class)->validatedDraft($session);
             self::fail('Expected unresolved normative validation error.');
         } catch (ValidationException $exception) {
             self::assertArrayHasKey('draft', $exception->errors());

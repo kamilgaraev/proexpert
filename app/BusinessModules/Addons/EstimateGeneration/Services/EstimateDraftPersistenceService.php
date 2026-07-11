@@ -109,7 +109,7 @@ final class EstimateDraftPersistenceService
     /** @param array<string, mixed> $draft */
     private function assertDraftCanBeApplied(array $draft): void
     {
-        $blocker = $this->applyBlocker($draft);
+        $blocker = $this->findApplyBlocker($draft);
 
         if ($blocker === null) {
             return;
@@ -134,7 +134,7 @@ final class EstimateDraftPersistenceService
      * @param  array<string, mixed>  $draft
      * @return array{type: string, count?: int}|null
      */
-    private function applyBlocker(array $draft): ?array
+    public function findApplyBlocker(array $draft): ?array
     {
         $qualityStatus = (string) ($draft['quality_summary']['status'] ?? '');
         $qualityLevel = (string) ($draft['quality_summary']['level'] ?? '');

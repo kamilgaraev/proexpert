@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\GeneratedEstimateWriter;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationExcelExportService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\ExcelEstimateBuilder;
 use App\Enums\EstimatePositionItemType;
+use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\Organization;
 use App\Models\Project;
@@ -24,7 +26,17 @@ class EstimateGenerationNormativeOutputTest extends TestCase
         $user = User::factory()->create(['current_organization_id' => $organization->id]);
         $session = $this->createSession($organization, $project, $user);
 
-        $estimate = app(EstimateDraftPersistenceService::class)->apply($session, ['name' => 'Смета'], $user);
+        $estimateId = app(GeneratedEstimateWriter::class)->createFromSession(
+            $session,
+            new ApplyGeneratedEstimateCommand(
+                (int) $session->id,
+                (int) $organization->id,
+                (int) $project->id,
+                (int) $session->state_version,
+                'Смета',
+            ),
+        );
+        $estimate = Estimate::query()->findOrFail($estimateId);
         $work = EstimateItem::query()
             ->where('estimate_id', $estimate->id)
             ->where('item_type', EstimatePositionItemType::WORK->value)
@@ -60,11 +72,17 @@ class EstimateGenerationNormativeOutputTest extends TestCase
             ]),
         ])->save();
 
-        $estimate = app(EstimateDraftPersistenceService::class)->apply(
+        $estimateId = app(GeneratedEstimateWriter::class)->createFromSession(
             $session->fresh(),
-            ['name' => str_repeat('Хочу построить дом для семьи в Татарстане. ', 30)],
-            $user
+            new ApplyGeneratedEstimateCommand(
+                (int) $session->id,
+                (int) $organization->id,
+                (int) $project->id,
+                (int) $session->state_version,
+                str_repeat('Хочу построить дом для семьи в Татарстане. ', 30),
+            ),
         );
+        $estimate = Estimate::query()->findOrFail($estimateId);
 
         $this->assertLessThanOrEqual(255, mb_strlen($estimate->name));
         $this->assertSame('AI-смета • Жилой дом • 180 м² • Республика Татарстан', $estimate->name);

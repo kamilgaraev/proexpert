@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Quality;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
@@ -57,9 +58,9 @@ class EstimatorReadinessService
     }
 
     /**
-     * @param Collection<int, EstimateGenerationDocument> $documents
-     * @param array<string, mixed> $draft
-     * @param array<string, mixed> $quality
+     * @param  Collection<int, EstimateGenerationDocument>  $documents
+     * @param  array<string, mixed>  $draft
+     * @param  array<string, mixed>  $quality
      * @return array<string, int>
      */
     private function metrics(EstimateGenerationSession $session, Collection $documents, array $draft, array $quality): array
@@ -112,7 +113,7 @@ class EstimatorReadinessService
     {
         try {
             $service = $this->reviewItemService
-                ?? new EstimateGenerationReviewItemService(new EstimateGenerationPackagePresenter());
+                ?? new EstimateGenerationReviewItemService(new EstimateGenerationPackagePresenter);
             $queue = $service->forSession($session);
 
             return is_array($queue['summary'] ?? null) ? $queue['summary'] : [];
@@ -122,24 +123,24 @@ class EstimatorReadinessService
     }
 
     /**
-     * @param array<string, mixed> $draft
+     * @param  array<string, mixed>  $draft
      */
     private function zeroTotalCalculatedPricedWorkItems(array $draft): int
     {
         $count = 0;
 
         foreach (($draft['local_estimates'] ?? []) as $localEstimate) {
-            if (!is_array($localEstimate)) {
+            if (! is_array($localEstimate)) {
                 continue;
             }
 
             foreach (($localEstimate['sections'] ?? []) as $section) {
-                if (!is_array($section)) {
+                if (! is_array($section)) {
                     continue;
                 }
 
                 foreach (($section['work_items'] ?? []) as $workItem) {
-                    if (!is_array($workItem)) {
+                    if (! is_array($workItem)) {
                         continue;
                     }
 
@@ -158,7 +159,7 @@ class EstimatorReadinessService
     }
 
     /**
-     * @param Collection<int, EstimateGenerationDocument> $documents
+     * @param  Collection<int, EstimateGenerationDocument>  $documents
      */
     private function sumDocumentCount(Collection $documents, string $attribute, string $relation): int
     {
@@ -174,8 +175,8 @@ class EstimatorReadinessService
     }
 
     /**
-     * @param array<string, int> $metrics
-     * @param array<string, mixed> $quality
+     * @param  array<string, int>  $metrics
+     * @param  array<string, mixed>  $quality
      * @return array<int, array<string, string>>
      */
     private function blockers(EstimateGenerationSession $session, array $metrics, array $quality): array
@@ -235,7 +236,7 @@ class EstimatorReadinessService
     }
 
     /**
-     * @param array<string, int> $metrics
+     * @param  array<string, int>  $metrics
      * @return array<int, array<string, string>>
      */
     private function warnings(array $metrics): array
@@ -254,12 +255,16 @@ class EstimatorReadinessService
     }
 
     /**
-     * @param array<string, int> $metrics
-     * @param array<int, array<string, string>> $blockers
+     * @param  array<string, int>  $metrics
+     * @param  array<int, array<string, string>>  $blockers
      */
     private function status(EstimateGenerationSession $session, array $metrics, array $blockers): string
     {
-        if ((string) $session->status === 'applied') {
+        $sessionStatus = $session->status instanceof EstimateGenerationStatus
+            ? $session->status->value
+            : (string) $session->status;
+
+        if ($sessionStatus === EstimateGenerationStatus::Applied->value) {
             return 'applied';
         }
 
@@ -276,7 +281,7 @@ class EstimatorReadinessService
         }
 
         $hasDraft = is_array($session->draft_payload) && ($session->draft_payload['local_estimates'] ?? []) !== [];
-        if (!$hasDraft) {
+        if (! $hasDraft) {
             return 'ready_for_generation';
         }
 
@@ -292,8 +297,8 @@ class EstimatorReadinessService
     }
 
     /**
-     * @param array<int, array<string, string>> $blockers
-     * @param array<int, string> $codes
+     * @param  array<int, array<string, string>>  $blockers
+     * @param  array<int, string>  $codes
      */
     private function hasBlocker(array $blockers, array $codes): bool
     {
@@ -307,7 +312,7 @@ class EstimatorReadinessService
     }
 
     /**
-     * @param array<string, int> $metrics
+     * @param  array<string, int>  $metrics
      */
     private function canGenerate(array $metrics): bool
     {
@@ -335,7 +340,7 @@ class EstimatorReadinessService
     }
 
     /**
-     * @param array<int, array<string, string>> $blockers
+     * @param  array<int, array<string, string>>  $blockers
      */
     private function canApply(string $status, array $blockers): bool
     {
