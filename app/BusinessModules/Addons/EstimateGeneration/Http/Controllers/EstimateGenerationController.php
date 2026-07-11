@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ApplyEstimateGenerationDraftRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\CreateEstimateGenerationSessionRequest;
@@ -102,7 +103,7 @@ class EstimateGenerationController extends Controller
                 'organization_id' => $user->current_organization_id,
                 'project_id' => $project->id,
                 'user_id' => $user->id,
-                'status' => 'created',
+                'status' => EstimateGenerationStatus::Draft->value,
                 'processing_stage' => 'created',
                 'processing_progress' => 0,
                 'input_payload' => array_merge($validated, [

@@ -17,12 +17,16 @@ return new class extends Migration
         DB::table('estimate_generation_audit_events')->delete();
         DB::table('estimate_generation_package_items')->delete();
         DB::table('estimate_generation_packages')->delete();
+        DB::table('estimate_generation_drawing_elements')->delete();
+        DB::table('estimate_generation_quantity_takeoffs')->delete();
+        DB::table('estimate_generation_scope_inferences')->delete();
         DB::table('estimate_generation_document_facts')->delete();
         DB::table('estimate_generation_document_pages')->delete();
         DB::table('estimate_generation_documents')->delete();
         DB::table('estimate_generation_sessions')->delete();
 
         Schema::table('estimate_generation_sessions', function (Blueprint $table): void {
+            $table->string('status', 50)->default('draft')->change();
             $table->unsignedBigInteger('state_version')->default(0);
             $table->timestampTz('applied_at')->nullable();
             $table->timestampTz('state_changed_at')->nullable();
@@ -60,6 +64,7 @@ return new class extends Migration
 
         Schema::table('estimate_generation_sessions', function (Blueprint $table): void {
             $table->dropUnique(['applied_estimate_id']);
+            $table->string('status', 50)->default('created')->change();
             $table->dropColumn([
                 'state_version',
                 'applied_at',
