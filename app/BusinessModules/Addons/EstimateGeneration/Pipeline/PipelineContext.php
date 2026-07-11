@@ -15,6 +15,8 @@ final readonly class PipelineContext
         public int $stateVersion,
         public string $inputVersion,
         public string $sessionStatus,
+        public ?int $documentId = null,
+        public ?string $sourceVersion = null,
     ) {
         if ($sessionId <= 0 || $organizationId <= 0 || $projectId <= 0) {
             throw new InvalidArgumentException('Pipeline identity values must be positive.');
@@ -27,6 +29,12 @@ final readonly class PipelineContext
         PipelineVersionValidator::assertValid($inputVersion, 'input');
         if (preg_match('/\A[a-z][a-z0-9_]{0,39}\z/', $sessionStatus) !== 1) {
             throw new InvalidArgumentException('Pipeline session status is invalid.');
+        }
+        if (($documentId === null) !== ($sourceVersion === null) || ($documentId !== null && $documentId < 1)) {
+            throw new InvalidArgumentException('Pipeline document fence is incomplete or invalid.');
+        }
+        if ($sourceVersion !== null) {
+            PipelineVersionValidator::assertValid($sourceVersion, 'source');
         }
     }
 }

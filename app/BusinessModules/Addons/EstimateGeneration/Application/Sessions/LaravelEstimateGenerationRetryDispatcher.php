@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
@@ -21,7 +22,12 @@ final class LaravelEstimateGenerationRetryDispatcher implements EstimateGenerati
             }
             ProcessEstimateGenerationDocumentJob::dispatch(
                 $documentId,
-                FailureExecutionSnapshot::capture($document->session, 'document_manifest'),
+                FailureExecutionSnapshot::capture(
+                    $document->session,
+                    'document_manifest',
+                    documentId: (int) $document->getKey(),
+                    sourceVersion: DocumentSourceVersion::fromDocument($document),
+                ),
             )
                 ->onConnection(ProcessEstimateGenerationDocumentJob::CONNECTION)
                 ->onQueue(ProcessEstimateGenerationDocumentJob::QUEUE)

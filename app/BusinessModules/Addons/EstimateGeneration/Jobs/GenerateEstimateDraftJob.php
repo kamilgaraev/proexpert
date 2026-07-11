@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Jobs;
 
-use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\GenerationAttemptGuard;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
@@ -79,19 +78,7 @@ class GenerateEstimateDraftJob implements ShouldQueue
     public function handle(
         DraftPipelineEntrypoint $pipeline,
         ?EstimateGenerationNotificationService $notificationService = null,
-        ?GenerationAttemptGuard $attemptGuard = null,
     ): void {
-        $session = EstimateGenerationSession::query()->find($this->sessionId);
-
-        if (! $session instanceof EstimateGenerationSession) {
-            return;
-        }
-
-        $attemptGuard ??= app(GenerationAttemptGuard::class);
-        if (! $attemptGuard->matches($session, $this->expectedStateVersion, $this->attemptId)) {
-            return;
-        }
-
         $generatedSession = $pipeline->run($this->failureSnapshot);
         if (! $generatedSession instanceof EstimateGenerationSession) {
             return;

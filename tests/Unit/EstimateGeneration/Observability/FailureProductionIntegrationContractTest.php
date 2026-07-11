@@ -10,7 +10,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowH
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\DraftPipelineEntrypoint;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LegacyDraftPipelineStageAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRunner;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrDocumentProcessor;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
@@ -20,7 +19,7 @@ final class FailureProductionIntegrationContractTest extends TestCase
     #[Test]
     public function production_execution_boundaries_require_observability_dependencies(): void
     {
-        foreach ([ProcessDocumentUnit::class, PipelineRunner::class, OcrDocumentProcessor::class] as $class) {
+        foreach ([ProcessDocumentUnit::class, PipelineRunner::class] as $class) {
             $parameters = (new ReflectionClass($class))->getConstructor()?->getParameters() ?? [];
             $byType = [];
             foreach ($parameters as $parameter) {
@@ -57,22 +56,44 @@ final class FailureProductionIntegrationContractTest extends TestCase
             self::assertStringContainsString('$snapshot->stateVersion', $source);
             self::assertStringContainsString('$snapshot->status', $source);
         }
-        $ocr = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Services/Ocr/OcrDocumentProcessor.php');
-        self::assertIsString($ocr);
-        self::assertStringContainsString('FailureExecutionSnapshot::capture', $ocr);
-        self::assertStringContainsString('captureFailure($document, $exception, $snapshot)', $ocr);
     }
 
     #[Test]
-    public function whole_document_path_records_typed_failure_and_rethrows_recoverable_geometry_or_ocr(): void
+    public function production_claims_revalidate_snapshot_before_work_and_before_publication(): void
     {
-        $source = file_get_contents(dirname(__DIR__, 4)
-            .'/app/BusinessModules/Addons/EstimateGeneration/Services/Ocr/OcrDocumentProcessor.php');
-        self::assertIsString($source);
-        self::assertStringContainsString('$this->captureFailure(', $source);
-        self::assertStringContainsString('FailureCategory::Recoverable', $source);
-        self::assertStringContainsString('throw $exception;', $source);
-        self::assertStringNotContainsString('PDF geometry extraction skipped', $source);
-        self::assertStringNotContainsString('catch (PdfGeometryExtractionException', $source);
+        $root = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration';
+        $checkpoint = file_get_contents($root.'/Pipeline/EloquentPipelineCheckpointStore.php');
+        $documentJob = file_get_contents($root.'/Jobs/ProcessEstimateGenerationDocumentJob.php');
+        $publication = file_get_contents($root.'/Pipeline/DocumentManifestPublicationFence.php');
+        $orchestrator = file_get_contents($root.'/Services/EstimateGenerationOrchestrator.php');
+        foreach ([$checkpoint, $documentJob, $publication, $orchestrator] as $source) {
+            self::assertIsString($source);
+        }
+        self::assertStringContainsString('(int) $session->state_version !== $context->stateVersion', $checkpoint);
+        self::assertStringContainsString('generation_attempt_id', $checkpoint);
+        self::assertStringContainsString('DocumentSourceVersion::fromDocument($document)', $checkpoint);
+        self::assertStringContainsString('$checkpoints->claim(', $documentJob);
+        self::assertStringContainsString('$creator->handleClaimed($document, $claim)', $documentJob);
+        self::assertStringContainsString("->where('claim_token', \$claim->claimToken)", $publication);
+        self::assertStringContainsString("->where('state_version', \$context->stateVersion)", $publication);
+        self::assertStringContainsString('matches($lockedSession, (int) $session->state_version', $orchestrator);
+    }
+
+    #[Test]
+    public function dormant_whole_document_processor_is_absent_from_production_and_container(): void
+    {
+        $root = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration';
+        self::assertFileDoesNotExist($root.'/Services/Ocr/OcrDocumentProcessor.php');
+        $provider = file_get_contents($root.'/EstimateGenerationServiceProvider.php');
+        self::assertIsString($provider);
+        self::assertStringNotContainsString('OcrDocumentProcessor', $provider);
+        $references = [];
+        foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root)) as $file) {
+            if ($file->isFile() && $file->getExtension() === 'php'
+                && str_contains((string) file_get_contents($file->getPathname()), 'OcrDocumentProcessor')) {
+                $references[] = $file->getPathname();
+            }
+        }
+        self::assertSame([], $references);
     }
 }

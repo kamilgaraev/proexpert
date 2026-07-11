@@ -11,8 +11,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointClaimStatus;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineCheckpointStore;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentProcessingStatusService;
+use DateTimeImmutable;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -57,7 +62,7 @@ final class ProcessEstimateGenerationDocumentJob implements ShouldQueue
         return 'document:'.$this->documentId;
     }
 
-    public function handle(CreateDocumentProcessingUnits $creator): void
+    public function handle(CreateDocumentProcessingUnits $creator, PipelineCheckpointStore $checkpoints): void
     {
         $document = EstimateGenerationDocument::query()->with('session')->find($this->documentId);
 
@@ -65,7 +70,39 @@ final class ProcessEstimateGenerationDocumentJob implements ShouldQueue
             return;
         }
 
-        $creator->handle($document);
+        $snapshot = $this->failureSnapshot;
+        $now = new DateTimeImmutable;
+        $claim = $checkpoints->claim(
+            new PipelineContext(
+                sessionId: $snapshot->sessionId,
+                organizationId: $snapshot->organizationId,
+                projectId: $snapshot->projectId,
+                stateVersion: $snapshot->stateVersion,
+                inputVersion: $snapshot->attemptId,
+                sessionStatus: $snapshot->status,
+                documentId: $snapshot->documentId,
+                sourceVersion: $snapshot->sourceVersion,
+            ),
+            ProcessingStage::UnderstandDocuments,
+            $now,
+            $now->modify('+180 seconds'),
+        );
+        if ($claim->status !== CheckpointClaimStatus::Acquired) {
+            return;
+        }
+        try {
+            $creator->handleClaimed($document, $claim);
+            if (! $checkpoints->complete($claim, new PipelineStageResult(
+                ProcessingStage::UnderstandDocuments,
+                $snapshot->sourceVersion ?? $snapshot->attemptId,
+                ['document_id' => (int) $document->getKey()],
+            ), new DateTimeImmutable)) {
+                throw new \RuntimeException('estimate_generation.document_manifest_claim_lost');
+            }
+        } catch (\Throwable $error) {
+            $checkpoints->fail($claim, $error, new DateTimeImmutable);
+            throw $error;
+        }
     }
 
     public function failed(\Throwable $error): void

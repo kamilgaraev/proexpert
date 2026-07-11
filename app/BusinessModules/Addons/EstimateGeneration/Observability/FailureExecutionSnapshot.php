@@ -18,10 +18,17 @@ final readonly class FailureExecutionSnapshot
         public string $attemptId,
         public string $eventId,
         public string $correlationId,
+        public ?int $documentId = null,
+        public ?string $sourceVersion = null,
     ) {}
 
-    public static function capture(EstimateGenerationSession $session, string $operation, ?string $attemptId = null): self
-    {
+    public static function capture(
+        EstimateGenerationSession $session,
+        string $operation,
+        ?string $attemptId = null,
+        ?int $documentId = null,
+        ?string $sourceVersion = null,
+    ): self {
         $attemptId ??= (string) Str::uuid();
 
         return new self(
@@ -33,6 +40,8 @@ final readonly class FailureExecutionSnapshot
             attemptId: $attemptId,
             eventId: (string) Str::uuid(),
             correlationId: AiOperationContext::deterministicId($operation.'|'.$session->getKey().'|'.$attemptId),
+            documentId: $documentId,
+            sourceVersion: $sourceVersion,
         );
     }
 }

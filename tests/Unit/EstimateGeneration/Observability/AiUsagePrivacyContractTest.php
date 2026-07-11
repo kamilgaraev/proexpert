@@ -24,8 +24,8 @@ final class AiUsagePrivacyContractTest extends TestCase
         }
         $root = dirname(__DIR__, 4);
         $reranker = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Services/Normatives/Reranking/LLMNormativeCandidateReranker.php');
-        $ocr = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Services/Ocr/OcrDocumentProcessor.php');
-        self::assertStringNotContainsString('UsageTracker', (string) $reranker.(string) $ocr);
-        self::assertStringNotContainsString('OcrUsageLogger', (string) $reranker.(string) $ocr);
+        $unitProcessor = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Application/Documents/OcrDocumentUnitProcessor.php');
+        self::assertStringNotContainsString('UsageTracker', (string) $reranker.(string) $unitProcessor);
+        self::assertStringNotContainsString('OcrUsageLogger', (string) $reranker.(string) $unitProcessor);
     }
 }

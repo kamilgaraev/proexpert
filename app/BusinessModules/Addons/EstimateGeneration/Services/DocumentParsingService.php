@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceVersion;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileEstimateGenerationDocuments;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
@@ -41,7 +42,12 @@ class DocumentParsingService
             foreach ($documents as $document) {
                 ProcessEstimateGenerationDocumentJob::dispatch(
                     $document->id,
-                    FailureExecutionSnapshot::capture($session, 'document_manifest'),
+                    FailureExecutionSnapshot::capture(
+                        $session,
+                        'document_manifest',
+                        documentId: (int) $document->getKey(),
+                        sourceVersion: DocumentSourceVersion::fromDocument($document),
+                    ),
                 )
                     ->onConnection(ProcessEstimateGenerationDocumentJob::CONNECTION)
                     ->onQueue(ProcessEstimateGenerationDocumentJob::QUEUE)

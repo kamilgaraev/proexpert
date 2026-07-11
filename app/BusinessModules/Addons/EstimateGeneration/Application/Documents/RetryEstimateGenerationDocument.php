@@ -70,7 +70,12 @@ final class RetryEstimateGenerationDocument
 
         ProcessEstimateGenerationDocumentJob::dispatch(
             (int) $document->getKey(),
-            FailureExecutionSnapshot::capture($session, 'document_manifest'),
+            FailureExecutionSnapshot::capture(
+                $session,
+                'document_manifest',
+                documentId: (int) $document->getKey(),
+                sourceVersion: DocumentSourceVersion::fromDocument($document),
+            ),
         )
             ->onConnection(ProcessEstimateGenerationDocumentJob::CONNECTION)
             ->onQueue(ProcessEstimateGenerationDocumentJob::QUEUE)

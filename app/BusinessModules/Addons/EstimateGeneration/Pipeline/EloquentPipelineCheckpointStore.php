@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceVersion;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPipelineCheckpoint;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use DateTimeImmutable;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Eloquent\Builder;
@@ -28,6 +32,32 @@ final readonly class EloquentPipelineCheckpointStore implements PipelineCheckpoi
         }
 
         return $this->database->transaction(function () use ($context, $stage, $now, $leaseExpiresAt): CheckpointClaim {
+            $session = $this->sessionQuery()
+                ->whereKey($context->sessionId)
+                ->where('organization_id', $context->organizationId)
+                ->where('project_id', $context->projectId)
+                ->lockForUpdate()
+                ->first();
+            if (! $session instanceof EstimateGenerationSession
+                || (int) $session->state_version !== $context->stateVersion
+                || $session->status->value !== $context->sessionStatus
+                || ($stage === ProcessingStage::BuildDraft
+                    && ! hash_equals($context->inputVersion, (string) ($session->input_payload['generation_attempt_id'] ?? '')))) {
+                throw new StaleEstimateGenerationState($context->sessionId, $context->stateVersion);
+            }
+            if ($context->documentId !== null) {
+                $document = $this->documentQuery()
+                    ->whereKey($context->documentId)
+                    ->where('organization_id', $context->organizationId)
+                    ->where('project_id', $context->projectId)
+                    ->where('session_id', $context->sessionId)
+                    ->lockForUpdate()
+                    ->first();
+                if (! $document instanceof EstimateGenerationDocument
+                    || DocumentSourceVersion::fromDocument($document) !== $context->sourceVersion) {
+                    throw new StaleEstimateGenerationState($context->sessionId, $context->stateVersion);
+                }
+            }
             $token = (string) Str::uuid();
             $identity = [
                 'session_id' => $context->sessionId,
@@ -193,6 +223,24 @@ final readonly class EloquentPipelineCheckpointStore implements PipelineCheckpoi
     private function query(): Builder
     {
         $model = new EstimateGenerationPipelineCheckpoint;
+        $model->setConnection($this->database->getName());
+
+        return $model->newQuery();
+    }
+
+    /** @return Builder<EstimateGenerationSession> */
+    private function sessionQuery(): Builder
+    {
+        $model = new EstimateGenerationSession;
+        $model->setConnection($this->database->getName());
+
+        return $model->newQuery();
+    }
+
+    /** @return Builder<EstimateGenerationDocument> */
+    private function documentQuery(): Builder
+    {
+        $model = new EstimateGenerationDocument;
         $model->setConnection($this->database->getName());
 
         return $model->newQuery();

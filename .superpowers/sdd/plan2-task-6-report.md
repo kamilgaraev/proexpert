@@ -34,3 +34,12 @@
 - Удалено сохранение HTTP response body, исходного пути и raw import fragment из диагностических записей. Provider/model ограничены закрытыми slug-доменами и фильтром token/path-like значений.
 - PostgreSQL opt-in matrix дополнена invalid identity/event cases, nullable tenant bypass, explicit sequence, stale/duplicate resolve, concurrent resolve и concurrent distinct occurrences. Она написана, но не запускалась.
 - Финальный DB-less gate: `165 passed (990 assertions)`; PHPStan: `No errors`.
+
+## Атомарная граница выполнения
+
+- Generation checkpoint теперь в одной транзакции блокирует и сверяет tenant, точные session status/state version и `generation_attempt_id` до выдачи claim token. Неатомарный job guard удалён как источник истины.
+- Каждый progress update генерации использует session CAS, а финальная публикация draft дополнительно требует точную актуальную state version и attempt, поэтому изменение состояния после claim отклоняет результат.
+- Document manifest job получает persisted checkpoint claim только после блокировки и проверки session/document/source snapshot. Детектор работает вне транзакции, а запись units/status и dispatch допускаются только через `DocumentManifestPublicationFence`, повторно проверяющий активный token/lease, session version/status и source lineage под блокировками.
+- Повторная доставка того же job использует тот же snapshot/input identity: completed claim не запускается повторно, active lease не допускает параллельную обработку, failed/expired claim может быть безопасно перехвачен.
+- Неиспользуемый whole-document `OcrDocumentProcessor` удалён вместе с container binding и тестами мёртвого контура. Единственным production OCR-путём остаётся unit pipeline с claim/source/publish fences; geometry, drawing understanding и OCR services, используемые им, сохранены.
+- Повторный DB-less gate после исправления: `166 passed (991 assertions)`; PHPStan: `No errors`.

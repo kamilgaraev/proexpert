@@ -6,6 +6,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointClaim;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\DocumentManifestPublicationFence;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentProcessingStatusService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -18,10 +20,17 @@ final readonly class CreateDocumentProcessingUnits
         private DocumentProcessingStatusService $status,
         private DispatchDocumentProcessingUnits $dispatcher,
         private DocumentSourceReplacementCoordinator $replacement,
+        private DocumentManifestPublicationFence $publicationFence,
     ) {}
 
     /** @return Collection<int, EstimateGenerationProcessingUnit> */
-    public function handle(EstimateGenerationDocument $document): Collection
+    public function handleClaimed(EstimateGenerationDocument $document, CheckpointClaim $claim): Collection
+    {
+        return $this->create($document, $claim);
+    }
+
+    /** @return Collection<int, EstimateGenerationProcessingUnit> */
+    private function create(EstimateGenerationDocument $document, CheckpointClaim $claim): Collection
     {
         $document->loadMissing('session');
         $sourceVersion = DocumentSourceVersion::fromDocument($document);
@@ -47,7 +56,7 @@ final readonly class CreateDocumentProcessingUnits
             ->get();
 
         if ($existing->isNotEmpty()) {
-            $this->dispatcher->forDocument((int) $document->id, $sourceVersion);
+            $this->publish($claim, fn () => $this->dispatcher->forDocument((int) $document->id, $sourceVersion));
 
             return $existing;
         }
@@ -58,11 +67,11 @@ final readonly class CreateDocumentProcessingUnits
                 throw new DocumentManifestNeedsReview('document_units_empty');
             }
         } catch (DocumentManifestNeedsReview $error) {
-            $this->status->markNeedsReview($document, 0.0, [$error->safeCode], [], 'unusable');
+            $this->publish($claim, fn () => $this->status->markNeedsReview($document, 0.0, [$error->safeCode], [], 'unusable'));
 
             return collect();
         }
-        $models = $this->replacement->commit(
+        $models = $this->publish($claim, fn () => $this->replacement->commit(
             (int) $document->organization_id,
             (int) $document->project_id,
             (int) $document->session_id,
@@ -125,10 +134,15 @@ final readonly class CreateDocumentProcessingUnits
                     ->orderBy('unit_index')
                     ->get();
             },
-        );
+        ));
 
         $this->dispatcher->forDocument((int) $document->id, $sourceVersion);
 
         return $models;
+    }
+
+    private function publish(CheckpointClaim $claim, callable $publication): mixed
+    {
+        return $this->publicationFence->publish($claim, $publication);
     }
 }
