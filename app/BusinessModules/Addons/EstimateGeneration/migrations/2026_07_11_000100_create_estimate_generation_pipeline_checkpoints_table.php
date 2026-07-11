@@ -17,6 +17,7 @@ return new class extends Migration
             $table->string('stage', 80);
             $table->string('input_version', 80);
             $table->string('output_version', 80)->nullable();
+            $table->jsonb('output_payload')->nullable();
             $table->string('status', 30);
             $table->jsonb('metrics')->default('{}');
             $table->jsonb('warnings')->default('[]');
@@ -61,6 +62,10 @@ return new class extends Migration
             ADD CONSTRAINT ai_ckpt_json_ck CHECK (
                 jsonb_typeof(metrics) = 'object'
                 AND jsonb_typeof(warnings) = 'array'
+                AND (output_payload IS NULL OR (
+                    jsonb_typeof(output_payload) = 'object'
+                    AND pg_column_size(output_payload) <= 4096
+                ))
             )
             SQL);
         DB::statement(<<<'SQL'
@@ -69,9 +74,11 @@ return new class extends Migration
                 (status = 'running'
                     AND claim_token IS NOT NULL AND lease_expires_at IS NOT NULL AND started_at IS NOT NULL
                     AND output_version IS NULL AND completed_at IS NULL AND failed_at IS NULL
+                    AND output_payload IS NULL
                     AND last_error_code IS NULL AND last_error_message IS NULL AND last_error_fingerprint IS NULL)
                 OR (status = 'completed'
                     AND started_at IS NOT NULL AND output_version IS NOT NULL AND completed_at IS NOT NULL
+                    AND output_payload IS NOT NULL
                     AND claim_token IS NULL AND lease_expires_at IS NULL AND failed_at IS NULL
                     AND last_error_code IS NULL AND last_error_message IS NULL AND last_error_fingerprint IS NULL)
                 OR (status = 'failed'
@@ -80,7 +87,8 @@ return new class extends Migration
                     AND last_error_message IS NULL
                     AND last_error_fingerprint ~ '^[0-9a-f]{64}$'
                     AND claim_token IS NULL AND lease_expires_at IS NULL
-                    AND output_version IS NULL AND completed_at IS NULL)
+                    AND output_version IS NULL AND completed_at IS NULL
+                    AND output_payload IS NULL)
             )
             SQL);
     }

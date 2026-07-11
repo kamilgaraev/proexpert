@@ -10,7 +10,6 @@ use App\BusinessModules\Addons\EstimateGeneration\DTOs\Normatives\WorkIntentData
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeSearchProfileCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
@@ -19,10 +18,13 @@ use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Tests\Concerns\RunsEstimateGenerationPipeline;
 use Tests\TestCase;
 
 final class EstimateGenerationFullFsnbPricingTest extends TestCase
 {
+    use RunsEstimateGenerationPipeline;
+
     private const TARGET_TOTAL_COST = 12000000.0;
 
     public function test_house_draft_prices_every_source_backed_position_with_safe_fsnb_norms(): void
@@ -63,7 +65,7 @@ final class EstimateGenerationFullFsnbPricingTest extends TestCase
             'problem_flags' => [],
         ]);
 
-        $session = app(EstimateGenerationOrchestrator::class)->generate($session);
+        $session = $this->runGenerationPipeline($session);
         $draft = $session->draft_payload;
         $quality = $draft['quality_summary'];
         $normativeItems = $quality['normative_items'];

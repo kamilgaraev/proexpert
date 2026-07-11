@@ -11,6 +11,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\DraftPipelineEntrypoint;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\DraftPipelineRunResult;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNotificationService;
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\BusinessModules\Features\Notifications\Services\NotificationService;
@@ -156,14 +158,19 @@ class EstimateGenerationQueueTest extends TestCase
         $pipeline = Mockery::mock(DraftPipelineEntrypoint::class);
         $pipeline->shouldReceive('run')
             ->once()
-            ->andReturnUsing(static function () use ($session): EstimateGenerationSession {
+            ->andReturnUsing(static function () use ($session): DraftPipelineRunResult {
                 $session->forceFill([
                     'status' => 'ready_to_apply',
                     'processing_stage' => 'validation_and_normalization',
                     'processing_progress' => 100,
                 ])->save();
 
-                return $session->fresh(['documents']);
+                return new DraftPipelineRunResult(
+                    $session->fresh(['documents']),
+                    ProcessingStage::ValidateDraft,
+                    false,
+                    true,
+                );
             });
 
         $notifications = Mockery::mock(EstimateGenerationNotificationService::class);

@@ -9,6 +9,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointClaimStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentPipelineCheckpointStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageOutput;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\Models\Organization;
@@ -40,7 +41,8 @@ final class EloquentPipelineCheckpointStoreTest extends TestCase
             $started->modify('+2 seconds'),
             $started->modify('+1 minute'),
         );
-        $result = new PipelineStageResult(ProcessingStage::UnderstandObject, 'sha256:output', []);
+        $output = PipelineStageOutput::create(ProcessingStage::UnderstandObject, 1, ['artifact_kind' => 'test', 'object_key' => 'test']);
+        $result = new PipelineStageResult(ProcessingStage::UnderstandObject, $output->version, [], output: $output);
 
         self::assertSame(CheckpointClaimStatus::Acquired, $fresh->status);
         self::assertNotSame($old->claimToken, $fresh->claimToken);
@@ -73,7 +75,8 @@ final class EloquentPipelineCheckpointStoreTest extends TestCase
         $now = new DateTimeImmutable('2026-07-11T10:00:00+00:00');
         $claim = $store->claim($context, ProcessingStage::UnderstandObject, $now, $now->modify('+1 second'));
         $expired = $now->modify('+2 seconds');
-        $result = new PipelineStageResult(ProcessingStage::UnderstandObject, 'sha256:output', []);
+        $output = PipelineStageOutput::create(ProcessingStage::UnderstandObject, 1, ['artifact_kind' => 'test', 'object_key' => 'test']);
+        $result = new PipelineStageResult(ProcessingStage::UnderstandObject, $output->version, [], output: $output);
 
         self::assertFalse($store->complete($claim, $result, $expired));
         self::assertFalse($store->fail($claim, new \RuntimeException('expired'), $expired));

@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowH
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointClaimStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineCheckpointStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageOutput;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentProcessingStatusService;
@@ -92,10 +93,16 @@ final class ProcessEstimateGenerationDocumentJob implements ShouldQueue
         }
         try {
             $creator->handleClaimed($document, $claim);
+            $output = PipelineStageOutput::create(ProcessingStage::UnderstandDocuments, 1, [
+                'artifact_kind' => 'document_manifest_v1',
+                'document_id' => (int) $document->getKey(),
+                'source_version' => $snapshot->sourceVersion,
+            ]);
             if (! $checkpoints->complete($claim, new PipelineStageResult(
                 ProcessingStage::UnderstandDocuments,
-                $snapshot->sourceVersion ?? $snapshot->attemptId,
+                $output->version,
                 ['document_id' => (int) $document->getKey()],
+                output: $output,
             ), new DateTimeImmutable)) {
                 throw new \RuntimeException('estimate_generation.document_manifest_claim_lost');
             }

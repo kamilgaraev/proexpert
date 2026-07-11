@@ -20,4 +20,9 @@ enum ProcessingStage: string
     {
         return array_search($this, self::cases(), true);
     }
+
+    public function next(): ?self
+    {
+        return self::cases()[$this->order() + 1] ?? null;
+    }
 }

@@ -46,6 +46,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationDocumentJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationTrainingDatasetJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob;
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverEstimateGenerationPipelinesJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverEstimateGenerationUnitsJob;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ClassifyEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ImportEstimateNormativesCommand;
@@ -77,11 +78,27 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TimewebRerankWireClient;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentGenerationPipelineDataGateway;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentPipelineCheckpointStore;
-use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LegacyDraftPipelineStageAdapter;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentPipelineOutputRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\GenerationPipelineDataGateway;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineArtifactStore;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineCheckpointStore;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineCompletionHook;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineOutputRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRunner;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PublishValidatedDraft;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\S3PipelineArtifactStore;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\AssembleResourcesStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\BuildDraftStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\ExtractQuantitiesStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\MatchNormativesStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\PlanWorkItemsStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\ResolvePricesStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\UnderstandDocumentsStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\UnderstandObjectStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\ValidateDraftStage;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticParser;
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\ConstructionDocumentClassifierService;
@@ -91,7 +108,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\RuleBasedDr
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationAuditService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferenceService;
@@ -147,10 +163,24 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(AiUsageStore::class, EloquentAiUsageStore::class);
         $this->app->singleton(FailureStore::class, EloquentFailureStore::class);
         $this->app->singleton(FailureWorkflowHandler::class, EloquentFailureWorkflowHandler::class);
-        $this->app->singleton(PipelineCheckpointStore::class, EloquentPipelineCheckpointStore::class);
-        $this->app->singleton(LegacyDraftPipelineStageAdapter::class);
+        $this->app->singleton(PipelineCompletionHook::class, PublishValidatedDraft::class);
+        $this->app->singleton(PipelineArtifactStore::class, S3PipelineArtifactStore::class);
+        $this->app->singleton(PipelineCheckpointStore::class, fn ($app) => new EloquentPipelineCheckpointStore(
+            $app->make('db')->connection(),
+            $app->make(PipelineCompletionHook::class),
+        ));
+        $this->app->singleton(PipelineOutputRepository::class, EloquentPipelineOutputRepository::class);
+        $this->app->singleton(GenerationPipelineDataGateway::class, EloquentGenerationPipelineDataGateway::class);
         $this->app->singleton(PipelineRegistry::class, fn ($app) => new PipelineRegistry([
-            $app->make(LegacyDraftPipelineStageAdapter::class),
+            $app->make(UnderstandDocumentsStage::class),
+            $app->make(UnderstandObjectStage::class),
+            $app->make(ExtractQuantitiesStage::class),
+            $app->make(PlanWorkItemsStage::class),
+            $app->make(MatchNormativesStage::class),
+            $app->make(AssembleResourcesStage::class),
+            $app->make(ResolvePricesStage::class),
+            $app->make(BuildDraftStage::class),
+            $app->make(ValidateDraftStage::class),
         ]));
         $this->app->singleton(PipelineRunner::class, fn ($app) => new PipelineRunner(
             registry: $app->make(PipelineRegistry::class),
@@ -208,7 +238,6 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 ? $app->make(LLMNormativeCandidateReranker::class)
                 : $app->make(RuleBasedNormativeCandidateReranker::class);
         });
-        $this->app->singleton(EstimateGenerationOrchestrator::class);
         $this->app->singleton(EstimateSourceStorageService::class);
         $this->app->singleton(EstimateSourceImportService::class);
         $this->app->singleton(EstimateImportStatisticsService::class);
@@ -239,6 +268,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $this->app->booted(function (): void {
                 $this->app->make(Schedule::class)
                     ->job(new RecoverEstimateGenerationUnitsJob)
+                    ->everyMinute()
+                    ->withoutOverlapping();
+                $this->app->make(Schedule::class)
+                    ->job(new RecoverEstimateGenerationPipelinesJob)
                     ->everyMinute()
                     ->withoutOverlapping();
             });

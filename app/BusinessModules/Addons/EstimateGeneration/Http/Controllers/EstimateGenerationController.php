@@ -559,7 +559,11 @@ class EstimateGenerationController extends Controller
                 (string) $request->validated('local_estimate_key'),
             );
 
-            return AdminResponse::success($session->draft_payload, trans_message('estimate_generation.section_rebuilt'));
+            return AdminResponse::success(
+                $this->sessionPayload($session),
+                trans_message('estimate_generation.generation_queued'),
+                202,
+            );
         } catch (StaleEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {

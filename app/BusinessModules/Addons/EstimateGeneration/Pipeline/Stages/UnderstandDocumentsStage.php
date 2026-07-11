@@ -1,0 +1,28 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages;
+
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\GenerationPipelineDataGateway;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
+
+final readonly class UnderstandDocumentsStage implements PipelineStage
+{
+    public function __construct(private GenerationPipelineDataGateway $gateway, private StageResultFactory $results) {}
+
+    public function stage(): ProcessingStage
+    {
+        return ProcessingStage::UnderstandDocuments;
+    }
+
+    public function execute(PipelineContext $context): PipelineStageResult
+    {
+        $source = $this->gateway->source($context);
+
+        return $this->results->make($context, $this->stage(), $source, ['documents_count' => count($source['documents'])]);
+    }
+}

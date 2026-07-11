@@ -8,8 +8,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessD
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\DraftPipelineEntrypoint;
-use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LegacyDraftPipelineStageAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineRunner;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\ValidateDraftStage;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
@@ -42,7 +42,8 @@ final class FailureProductionIntegrationContractTest extends TestCase
         self::assertIsString($provider);
         self::assertStringContainsString(DraftPipelineEntrypoint::class, $job);
         self::assertStringNotContainsString('->generate($session)', $job);
-        self::assertStringContainsString(LegacyDraftPipelineStageAdapter::class, $provider);
+        self::assertStringContainsString(ValidateDraftStage::class, $provider);
+        self::assertStringNotContainsString('LegacyDraftPipelineStageAdapter', $provider);
         self::assertStringContainsString(PipelineRunner::class, $provider);
     }
 
@@ -65,8 +66,8 @@ final class FailureProductionIntegrationContractTest extends TestCase
         $checkpoint = file_get_contents($root.'/Pipeline/EloquentPipelineCheckpointStore.php');
         $documentJob = file_get_contents($root.'/Jobs/ProcessEstimateGenerationDocumentJob.php');
         $publication = file_get_contents($root.'/Pipeline/DocumentManifestPublicationFence.php');
-        $orchestrator = file_get_contents($root.'/Services/EstimateGenerationOrchestrator.php');
-        foreach ([$checkpoint, $documentJob, $publication, $orchestrator] as $source) {
+        $draftPublication = file_get_contents($root.'/Pipeline/PublishValidatedDraft.php');
+        foreach ([$checkpoint, $documentJob, $publication, $draftPublication] as $source) {
             self::assertIsString($source);
         }
         self::assertStringContainsString('(int) $session->state_version !== $context->stateVersion', $checkpoint);
@@ -76,7 +77,8 @@ final class FailureProductionIntegrationContractTest extends TestCase
         self::assertStringContainsString('$creator->handleClaimed($document, $claim)', $documentJob);
         self::assertStringContainsString("->where('claim_token', \$claim->claimToken)", $publication);
         self::assertStringContainsString("->where('state_version', \$context->stateVersion)", $publication);
-        self::assertStringContainsString('(int) $lockedSession->state_version !== (int) $session->state_version', $orchestrator);
+        self::assertStringContainsString('(int) $session->state_version !== $claim->context->stateVersion', $draftPublication);
+        self::assertStringContainsString('generation_attempt_id', $draftPublication);
         $creator = file_get_contents($root.'/Application/Documents/CreateDocumentProcessingUnits.php');
         self::assertIsString($creator);
         self::assertStringNotContainsString('EstimateGenerationUnitJobDispatcher', $creator);

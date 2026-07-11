@@ -9,14 +9,16 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPacka
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationAuditService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use Tests\Concerns\RunsEstimateGenerationPipeline;
 use Tests\TestCase;
 
 final class EstimateGenerationAuditTest extends TestCase
 {
+    use RunsEstimateGenerationPipeline;
+
     public function test_generation_records_normative_decision_audit_without_sensitive_prompt_text(): void
     {
         $organization = Organization::factory()->create();
@@ -48,7 +50,7 @@ final class EstimateGenerationAuditTest extends TestCase
             'problem_flags' => [],
         ]);
 
-        $session = app(EstimateGenerationOrchestrator::class)->generate($session);
+        $session = $this->runGenerationPipeline($session);
         $events = EstimateGenerationAuditEvent::query()
             ->where('session_id', $session->id)
             ->where('event_type', EstimateGenerationAuditService::EVENT_NORMATIVE_DECISION_SUMMARY)

@@ -44,4 +44,20 @@ final readonly class FailureExecutionSnapshot
             sourceVersion: $sourceVersion,
         );
     }
+
+    public function nextEvent(): self
+    {
+        return new self(
+            $this->organizationId,
+            $this->projectId,
+            $this->sessionId,
+            $this->stateVersion,
+            $this->status,
+            $this->attemptId,
+            (string) Str::uuid(),
+            $this->correlationId,
+            $this->documentId,
+            $this->sourceVersion,
+        );
+    }
 }

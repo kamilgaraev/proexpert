@@ -45,6 +45,7 @@ class GenerateEstimateDraftJob implements ShouldQueue
         private readonly int $expectedStateVersion,
         private readonly string $attemptId,
         private readonly FailureExecutionSnapshot $failureSnapshot,
+        private readonly ProcessingStage $expectedStage = ProcessingStage::UnderstandDocuments,
     ) {
         $this->onConnection(self::CONNECTION);
         $this->onQueue(self::QUEUE);
@@ -79,12 +80,31 @@ class GenerateEstimateDraftJob implements ShouldQueue
         DraftPipelineEntrypoint $pipeline,
         ?EstimateGenerationNotificationService $notificationService = null,
     ): void {
-        $generatedSession = $pipeline->run($this->failureSnapshot);
-        if (! $generatedSession instanceof EstimateGenerationSession) {
+        $current = EstimateGenerationSession::query()->find($this->sessionId);
+        if (! $current instanceof EstimateGenerationSession
+            || (int) $current->state_version !== $this->expectedStateVersion
+            || $current->status->value !== $this->failureSnapshot->status
+            || ! hash_equals($this->attemptId, (string) ($current->input_payload['generation_attempt_id'] ?? ''))) {
+            return;
+        }
+
+        $run = $pipeline->run($this->failureSnapshot);
+        if ($run->dispatchNext) {
+            self::dispatch(
+                $this->sessionId,
+                $this->expectedStateVersion,
+                $this->attemptId,
+                $this->failureSnapshot->nextEvent(),
+                $run->executedStage?->next() ?? ProcessingStage::ValidateDraft,
+            )->onQueue(self::QUEUE)->afterCommit();
+
+            return;
+        }
+        if (! $run->finalized || ! $run->session instanceof EstimateGenerationSession) {
             return;
         }
         $notificationService ??= app(EstimateGenerationNotificationService::class);
-        $notificationService->notifyFinished($generatedSession);
+        $notificationService->notifyFinished($run->session);
     }
 
     public function failed(\Throwable $exception): void
@@ -100,8 +120,8 @@ class GenerateEstimateDraftJob implements ShouldQueue
                     organizationId: $snapshot->organizationId,
                     projectId: $snapshot->projectId,
                     sessionId: $snapshot->sessionId,
-                    stage: ProcessingStage::BuildDraft,
-                    operation: 'generate_draft',
+                    stage: $this->expectedStage,
+                    operation: 'run_stage',
                     attempt: max(1, $this->attempts()),
                     correlationId: $snapshot->correlationId,
                     eventId: $snapshot->eventId,

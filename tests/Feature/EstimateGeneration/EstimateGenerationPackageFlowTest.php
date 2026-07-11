@@ -10,15 +10,17 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocum
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use Tests\Concerns\RunsEstimateGenerationPipeline;
 use Tests\TestCase;
 
 class EstimateGenerationPackageFlowTest extends TestCase
 {
+    use RunsEstimateGenerationPipeline;
+
     public function test_package_sync_persists_only_estimate_positions_and_prunes_old_service_rows(): void
     {
         $organization = Organization::factory()->create();
@@ -152,7 +154,7 @@ class EstimateGenerationPackageFlowTest extends TestCase
             'problem_flags' => [],
         ]);
 
-        $session = app(EstimateGenerationOrchestrator::class)->generate($session);
+        $session = $this->runGenerationPipeline($session);
 
         $this->assertContains($session->status, [
             EstimateGenerationStatus::EstimateReviewRequired,
@@ -205,7 +207,7 @@ class EstimateGenerationPackageFlowTest extends TestCase
             'problem_flags' => [],
         ]);
 
-        $session = app(EstimateGenerationOrchestrator::class)->generate($session);
+        $session = $this->runGenerationPipeline($session);
         $packages = $session->packages()->with('items')->get();
         $packageKeys = $packages->pluck('key')->all();
         $pricedItemsCount = $packages->sum(fn ($package): int => $package->items->where('item_type', 'priced_work')->count());
@@ -308,7 +310,7 @@ class EstimateGenerationPackageFlowTest extends TestCase
             ],
         ]);
 
-        $session = app(EstimateGenerationOrchestrator::class)->generate($session);
+        $session = $this->runGenerationPipeline($session);
         $packageKeys = $session->packages()->pluck('key')->all();
         $draft = $session->draft_payload;
 

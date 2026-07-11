@@ -7,7 +7,6 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Generation;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionActionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrchestrator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 
 final class AnalyzeEstimateGenerationSession
@@ -15,7 +14,7 @@ final class AnalyzeEstimateGenerationSession
     public function __construct(
         private EstimateGenerationMutationPolicy $policy,
         private DocumentGenerationReadinessService $readiness,
-        private EstimateGenerationOrchestrator $orchestrator,
+        private AnalyzeGenerationInput $analyzer,
     ) {}
 
     public function handle(EstimateGenerationSession $session, int $expectedVersion): SessionActionResult
@@ -29,7 +28,7 @@ final class AnalyzeEstimateGenerationSession
             return new SessionActionResult($session, false, 'estimate_generation.input_required', 422, ['documents_summary' => $readiness['summary']]);
         }
 
-        return new SessionActionResult($this->orchestrator->analyze($session), true, 'estimate_generation.analysis_completed', 200);
+        return new SessionActionResult($this->analyzer->handle($session), true, 'estimate_generation.analysis_completed', 200);
     }
 
     /** @param array<string, mixed> $summary */

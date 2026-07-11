@@ -17,6 +17,7 @@ final readonly class PipelineContext
         public string $sessionStatus,
         public ?int $documentId = null,
         public ?string $sourceVersion = null,
+        public PipelinePriorOutputs $priorOutputs = new PipelinePriorOutputs,
     ) {
         if ($sessionId <= 0 || $organizationId <= 0 || $projectId <= 0) {
             throw new InvalidArgumentException('Pipeline identity values must be positive.');
@@ -36,5 +37,20 @@ final readonly class PipelineContext
         if ($sourceVersion !== null) {
             PipelineVersionValidator::assertValid($sourceVersion, 'source');
         }
+    }
+
+    public function withPriorOutputs(PipelinePriorOutputs $priorOutputs): self
+    {
+        return new self(
+            $this->sessionId,
+            $this->organizationId,
+            $this->projectId,
+            $this->stateVersion,
+            $this->inputVersion,
+            $this->sessionStatus,
+            $this->documentId,
+            $this->sourceVersion,
+            $priorOutputs,
+        );
     }
 }

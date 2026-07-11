@@ -17,9 +17,14 @@ use InvalidArgumentException;
 use RuntimeException;
 use Throwable;
 
-final readonly class EloquentPipelineCheckpointStore implements PipelineCheckpointStore
+final class EloquentPipelineCheckpointStore implements PipelineCheckpointStore
 {
-    public function __construct(private Connection $database) {}
+    private readonly PipelineCompletionHook $completionHook;
+
+    public function __construct(private readonly Connection $database, ?PipelineCompletionHook $completionHook = null)
+    {
+        $this->completionHook = $completionHook ?? new NullPipelineCompletionHook;
+    }
 
     public function claim(
         PipelineContext $context,
@@ -109,6 +114,7 @@ final readonly class EloquentPipelineCheckpointStore implements PipelineCheckpoi
             $checkpoint->forceFill([
                 'status' => CheckpointStatus::Running,
                 'output_version' => null,
+                'output_payload' => null,
                 'metrics' => [],
                 'warnings' => [],
                 'attempt_count' => $checkpoint->attempt_count + 1,
@@ -137,31 +143,46 @@ final readonly class EloquentPipelineCheckpointStore implements PipelineCheckpoi
         PipelineStageResult $result,
         DateTimeImmutable $completedAt,
     ): bool {
-        if ($claim->status !== CheckpointClaimStatus::Acquired || $result->stage !== $claim->stage) {
+        if ($claim->status !== CheckpointClaimStatus::Acquired || $result->stage !== $claim->stage || $result->output === null) {
             return false;
         }
 
         PipelineVersionValidator::assertValid($result->outputVersion, 'output');
 
-        return $this->query()
-            ->where($this->identity($claim))
-            ->where('status', CheckpointStatus::Running->value)
-            ->where('claim_token', $claim->claimToken)
-            ->where('lease_expires_at', '>', $completedAt)
-            ->update([
-                'status' => CheckpointStatus::Completed->value,
-                'output_version' => $result->outputVersion,
-                'metrics' => json_encode($result->metrics, JSON_THROW_ON_ERROR),
-                'warnings' => json_encode($result->warnings, JSON_THROW_ON_ERROR),
-                'claim_token' => null,
-                'lease_expires_at' => null,
-                'completed_at' => $completedAt,
-                'failed_at' => null,
-                'last_error_code' => null,
-                'last_error_message' => null,
-                'last_error_fingerprint' => null,
-                'updated_at' => $completedAt,
-            ]) === 1;
+        return $this->database->transaction(function () use ($claim, $result, $completedAt): bool {
+            $checkpoint = $this->query()
+                ->where($this->identity($claim))
+                ->where('status', CheckpointStatus::Running->value)
+                ->where('claim_token', $claim->claimToken)
+                ->where('lease_expires_at', '>', $completedAt)
+                ->lockForUpdate()
+                ->first();
+            if (! $checkpoint instanceof EstimateGenerationPipelineCheckpoint) {
+                return false;
+            }
+
+            $this->completionHook->beforeComplete($claim, $result, $completedAt);
+
+            return $checkpoint->newQuery()
+                ->whereKey($checkpoint->getKey())
+                ->where('status', CheckpointStatus::Running->value)
+                ->where('claim_token', $claim->claimToken)
+                ->update([
+                    'status' => CheckpointStatus::Completed->value,
+                    'output_version' => $result->outputVersion,
+                    'output_payload' => json_encode($result->output->envelope(), JSON_THROW_ON_ERROR),
+                    'metrics' => json_encode($result->metrics, JSON_THROW_ON_ERROR),
+                    'warnings' => json_encode($result->warnings, JSON_THROW_ON_ERROR),
+                    'claim_token' => null,
+                    'lease_expires_at' => null,
+                    'completed_at' => $completedAt,
+                    'failed_at' => null,
+                    'last_error_code' => null,
+                    'last_error_message' => null,
+                    'last_error_fingerprint' => null,
+                    'updated_at' => $completedAt,
+                ]) === 1;
+        }, 3);
     }
 
     public function renewLease(
