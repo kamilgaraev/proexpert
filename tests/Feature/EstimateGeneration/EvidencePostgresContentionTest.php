@@ -74,17 +74,25 @@ final class EvidencePostgresContentionTest extends TestCase
             self::assertFalse($this->readable($sockets[0], 0, 750_000), 'Second record did not wait for the first transaction.');
             $first->commit();
             self::assertTrue($this->readable($sockets[0], 5, 0));
-            $result = json_decode(trim((string) fgets($sockets[0])), true, flags: JSON_THROW_ON_ERROR);
+            $line = fgets($sockets[0]);
+            pcntl_waitpid($pid, $status);
+            $pid = null;
+            if ($line === false) {
+                self::fail(sprintf('Child closed socket without result: exited=%s status=%d signaled=%s', pcntl_wifexited($status) ? 'yes' : 'no', pcntl_wifexited($status) ? pcntl_wexitstatus($status) : -1, pcntl_wifsignaled($status) ? 'yes' : 'no'));
+            }
+            try {
+                $result = json_decode(trim($line), true, flags: JSON_THROW_ON_ERROR);
+            } catch (Throwable $error) {
+                self::fail(sprintf('Invalid child payload %s; status=%d; parse=%s', substr(trim($line), 0, 500), pcntl_wifexited($status) ? pcntl_wexitstatus($status) : -1, $error->getMessage()));
+            }
             self::assertIsArray($result);
             if (isset($result['error'])) {
-                self::fail('Child evidence record failed: '.(string) $result['error']);
+                self::fail(sprintf('Child evidence record failed: %s: %s [%s]', $result['error'], $result['message'] ?? '', $result['code'] ?? ''));
             }
+            self::assertTrue(pcntl_wifexited($status) && pcntl_wexitstatus($status) === 0);
             self::assertSame($firstNode->id, $result['id'] ?? null);
             self::assertSame(1, DB::table('estimate_generation_evidence')->where('fingerprint', $childData->fingerprint())->count());
             self::assertSame(1, DB::table('estimate_generation_evidence_edges')->where('parent_id', $parent->id)->where('child_id', $firstNode->id)->count());
-            pcntl_waitpid($pid, $status);
-            self::assertTrue(pcntl_wifexited($status) && pcntl_wexitstatus($status) === 0);
-            $pid = null;
         } finally {
             if ($first instanceof Connection && $first->transactionLevel() > 0) {
                 $first->rollBack();
@@ -100,16 +108,28 @@ final class EvidencePostgresContentionTest extends TestCase
             }
             DB::disconnect($firstName);
             if (is_array($fixture)) {
-                DB::table('estimate_generation_sessions')->where('id', $fixture['session_id'])->delete();
-                DB::table('projects')->where('id', $fixture['project_id'])->delete();
-                DB::table('organizations')->where('id', $fixture['organization_id'])->delete();
-                DB::table('users')->where('id', $fixture['user_id'])->delete();
+                $cleanupErrors = [];
+                foreach ([
+                    ['estimate_generation_sessions', $fixture['session_id']], ['projects', $fixture['project_id']],
+                    ['organizations', $fixture['organization_id']], ['users', $fixture['user_id']],
+                    ['organizations', $fixture['organization_id']],
+                ] as [$table, $id]) {
+                    try {
+                        DB::table($table)->where('id', $id)->delete();
+                    } catch (Throwable $error) {
+                        $cleanupErrors[] = [$table, $id, $error::class, $error->getMessage()];
+                    }
+                }
+                if ($cleanupErrors !== []) {
+                    fwrite(STDERR, 'Evidence contention cleanup diagnostics: '.json_encode($cleanupErrors, JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR).PHP_EOL);
+                }
             }
         }
     }
 
     private function runChild(mixed $socket, string $connectionName, EvidenceData $data, int $parentId): never
     {
+        $exitCode = 0;
         try {
             fwrite($socket, "before_record\n");
             $node = (new EvidenceRecorder(new EloquentEvidenceRepository($this->independentConnection($connectionName))))->record($data, [
@@ -117,12 +137,13 @@ final class EvidencePostgresContentionTest extends TestCase
             ]);
             fwrite($socket, json_encode(['id' => $node->id], JSON_THROW_ON_ERROR)."\n");
         } catch (Throwable $error) {
-            fwrite($socket, json_encode(['error' => $error::class], JSON_THROW_ON_ERROR)."\n");
+            $exitCode = 1;
+            fwrite($socket, json_encode(['error' => $error::class, 'message' => $error->getMessage(), 'code' => $error->getCode()], JSON_THROW_ON_ERROR)."\n");
         } finally {
             DB::disconnect($connectionName);
             fclose($socket);
         }
-        exit(0);
+        exit($exitCode);
     }
 
     private function requireEnvironment(): void
@@ -153,15 +174,17 @@ final class EvidencePostgresContentionTest extends TestCase
 
     private function fixture(): array
     {
-        $organization = Organization::factory()->create();
-        $project = Project::factory()->for($organization)->create();
-        $user = User::factory()->create();
-        $session = EstimateGenerationSession::query()->create([
-            'organization_id' => $organization->id, 'project_id' => $project->id, 'user_id' => $user->id,
-            'status' => 'draft', 'processing_stage' => 'draft', 'processing_progress' => 0, 'input_payload' => [], 'state_version' => 0,
-        ]);
+        return DB::transaction(function (): array {
+            $organization = Organization::factory()->create();
+            $project = Project::factory()->for($organization)->create();
+            $user = User::factory()->create();
+            $session = EstimateGenerationSession::query()->create([
+                'organization_id' => $organization->id, 'project_id' => $project->id, 'user_id' => $user->id,
+                'status' => 'draft', 'processing_stage' => 'draft', 'processing_progress' => 0, 'input_payload' => [], 'state_version' => 0,
+            ]);
 
-        return ['organization_id' => (int) $organization->id, 'project_id' => (int) $project->id, 'user_id' => (int) $user->id, 'session_id' => (int) $session->id];
+            return ['organization_id' => (int) $organization->id, 'project_id' => (int) $project->id, 'user_id' => (int) $user->id, 'session_id' => (int) $session->id];
+        }, 3);
     }
 
     private function data(array $fixture, string $suffix, EvidenceType $type): EvidenceData

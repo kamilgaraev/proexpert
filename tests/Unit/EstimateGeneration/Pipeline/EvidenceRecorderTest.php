@@ -235,6 +235,26 @@ final class EvidenceRecorderTest extends TestCase
     }
 
     #[Test]
+    public function physical_quantities_and_prices_are_nonnegative_and_bounded(): void
+    {
+        $invalid = [
+            [EvidenceType::SourceFact, ['fact_key' => 'area', 'fact_value' => -1]],
+            [EvidenceType::Measured, ['quantity' => -1, 'unit' => 'm']],
+            [EvidenceType::WorkItem, ['work_code' => 'work_type:1', 'quantity' => 1_000_000_000_001]],
+            [EvidenceType::Price, ['amount' => -0.01, 'currency' => 'RUB', 'price_version' => 'price:1']],
+        ];
+
+        foreach ($invalid as [$type, $value]) {
+            try {
+                $this->data(type: $type, value: $value);
+                self::fail('Invalid physical numeric value was accepted.');
+            } catch (InvalidArgumentException) {
+                self::assertTrue(true);
+            }
+        }
+    }
+
+    #[Test]
     public function transition_policy_rejects_reverse_or_wrong_relation_edges(): void
     {
         $repository = new InMemoryEvidenceRepository;

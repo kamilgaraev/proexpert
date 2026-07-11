@@ -145,6 +145,13 @@ final class EvidencePostgresContractTest extends TestCase
             ['value' => json_encode(['fact_key' => 'api_key', 'fact_value' => 'sk-proj-secret'], JSON_THROW_ON_ERROR)],
             ['value' => json_encode(['fact_key' => 'area'], JSON_THROW_ON_ERROR)],
             ['value' => json_encode(['fact_key' => 'area', 'fact_value' => 1, 'unit' => 'sk-proj-secret'], JSON_THROW_ON_ERROR)],
+            ['locator' => json_encode(['document_id' => 1_000_001], JSON_THROW_ON_ERROR)],
+            ['value' => json_encode(['fact_key' => 'area', 'fact_value' => 1_000_000_000_001], JSON_THROW_ON_ERROR)],
+            ['type' => 'price', 'locator' => json_encode(['item_key' => 'item:1'], JSON_THROW_ON_ERROR), 'value' => json_encode(['amount' => -1, 'currency' => 'RUB', 'price_version' => 'price:1'], JSON_THROW_ON_ERROR)],
+            ['source_type' => 'user_input', 'source_ref' => 'input:00000000-0000-0000-0000-000000000000'],
+            ['value' => '{"fact_key":"area","fact_value":'.str_repeat('1', 66_000).'}'],
+            ['locator' => json_encode(['document_id' => 1, 'bbox' => array_fill(0, 20_000, 1)], JSON_THROW_ON_ERROR)],
+            ['value' => json_encode(['fact_key' => 'area', 'fact_value' => 1, 'unit' => str_repeat('m', 66_000)], JSON_THROW_ON_ERROR)],
         ];
         foreach ($variants as $index => $variant) {
             $this->assertMutationRejected('semantic_'.$index, function () use ($base, $variant, $index): void {
