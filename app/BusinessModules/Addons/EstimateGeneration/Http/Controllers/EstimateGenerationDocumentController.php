@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ReconcileEstimateGenerationDocuments;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationState;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationTransition;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\IgnoreEstimateGenerationDocumentRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\RetryEstimateGenerationDocumentRequest;
@@ -32,6 +35,7 @@ class EstimateGenerationDocumentController extends Controller
     public function __construct(
         private readonly DocumentGenerationReadinessService $readinessService,
         private readonly ReconcileEstimateGenerationDocuments $documentReconciler,
+        private readonly EstimateGenerationMutationPolicy $mutationPolicy,
     ) {}
 
     public function index(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
@@ -76,6 +80,8 @@ class EstimateGenerationDocumentController extends Controller
         $this->guardDocument($request, $project, $session, $document);
 
         try {
+            $this->mutationPolicy->documents($session, (int) $request->validated('state_version'));
+            $this->documentReconciler->assertMutable($session);
             if (! in_array((string) $document->status, self::RETRYABLE_STATUSES, true)) {
                 return AdminResponse::error(trans_message('estimate_generation.document_retry_not_allowed'), 422);
             }
@@ -115,6 +121,8 @@ class EstimateGenerationDocumentController extends Controller
             ], trans_message('estimate_generation.document_retry_queued'));
         } catch (StaleEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Document retry failed', [
                 'error' => $e->getMessage(),
@@ -135,6 +143,8 @@ class EstimateGenerationDocumentController extends Controller
         $this->guardDocument($request, $project, $session, $document);
 
         try {
+            $this->mutationPolicy->documents($session, (int) $request->validated('state_version'));
+            $this->documentReconciler->assertMutable($session);
             if (! in_array((string) $document->status, self::IGNORABLE_STATUSES, true)) {
                 return AdminResponse::error(trans_message('estimate_generation.document_ignore_not_allowed'), 422);
             }
@@ -163,6 +173,8 @@ class EstimateGenerationDocumentController extends Controller
                 'documents_summary' => $this->readinessService->evaluate($session)['summary'],
             ], trans_message('estimate_generation.document_ignored'));
         } catch (StaleEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Document ignore failed', [

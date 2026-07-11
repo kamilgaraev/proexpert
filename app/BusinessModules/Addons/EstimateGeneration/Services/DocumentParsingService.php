@@ -28,6 +28,7 @@ class DocumentParsingService
      */
     public function storeParsedDocuments(EstimateGenerationSession $session, array $files, User $user): Collection
     {
+        $this->documentReconciler->assertMutable($session);
         $documents = collect();
 
         foreach ($files as $file) {

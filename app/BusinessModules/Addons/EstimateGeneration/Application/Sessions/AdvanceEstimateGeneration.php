@@ -17,7 +17,11 @@ final class AdvanceEstimateGeneration
     public function documentsStarted(EstimateGenerationSession $session, array $attributes = []): EstimateGenerationSession
     {
         if ($session->status === EstimateGenerationStatus::ProcessingDocuments) {
-            return $attributes === [] ? $session : $this->workflow->update($session, $attributes);
+            return $attributes === [] ? $session : $this->workflow->update(
+                $session,
+                [EstimateGenerationStatus::ProcessingDocuments],
+                $attributes,
+            );
         }
         if ($session->status !== EstimateGenerationStatus::Draft) {
             return $session;
@@ -36,7 +40,11 @@ final class AdvanceEstimateGeneration
     {
         $session = $this->documentsStarted($session);
         if ($session->status !== EstimateGenerationStatus::ProcessingDocuments) {
-            return $attributes === [] ? $session : $this->workflow->update($session, $attributes);
+            return $attributes === [] ? $session : $this->workflow->update(
+                $session,
+                [EstimateGenerationStatus::Generating],
+                $attributes,
+            );
         }
 
         return $this->workflow->transition($session, EstimateGenerationEvent::DocumentsReady, [
@@ -94,7 +102,11 @@ final class AdvanceEstimateGeneration
         };
 
         return $event === null
-            ? $this->workflow->update($session, $attributes)
+            ? $this->workflow->update(
+                $session,
+                [EstimateGenerationStatus::EstimateReviewRequired, EstimateGenerationStatus::ReadyToApply],
+                $attributes,
+            )
             : $this->workflow->transition($session, $event, $attributes);
     }
 
@@ -112,9 +124,13 @@ final class AdvanceEstimateGeneration
     }
 
     /** @param array<string, mixed> $attributes */
-    public function update(EstimateGenerationSession $session, array $attributes): EstimateGenerationSession
-    {
-        return $this->workflow->update($session, $attributes);
+    /** @param list<EstimateGenerationStatus> $allowedStatuses */
+    public function update(
+        EstimateGenerationSession $session,
+        array $allowedStatuses,
+        array $attributes,
+    ): EstimateGenerationSession {
+        return $this->workflow->update($session, $allowedStatuses, $attributes);
     }
 
     public function documentsChanged(EstimateGenerationSession $session): EstimateGenerationSession
@@ -128,6 +144,11 @@ final class AdvanceEstimateGeneration
             'processing_stage' => 'processing_documents',
             'processing_progress' => 5,
             'last_error' => null,
+            'input_payload' => [
+                ...($session->input_payload ?? []),
+                'generation_attempt_id' => null,
+                'generation_requested' => false,
+            ],
         ]);
     }
 }

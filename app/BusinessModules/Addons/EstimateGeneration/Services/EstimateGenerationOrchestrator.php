@@ -4,12 +4,16 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\GenerationAttemptGuard;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationQuantityLearningEvidenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateGenerationQualityGateService;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\DB;
 
 class EstimateGenerationOrchestrator
 {
@@ -26,6 +30,7 @@ class EstimateGenerationOrchestrator
         protected EstimateGenerationAuditService $auditService,
         protected EstimateGenerationQuantityLearningEvidenceService $quantityLearningEvidenceService,
         protected AdvanceEstimateGeneration $advanceGeneration,
+        protected GenerationAttemptGuard $generationAttemptGuard,
     ) {}
 
     public function analyze(EstimateGenerationSession $session): EstimateGenerationSession
@@ -141,27 +146,53 @@ class EstimateGenerationOrchestrator
             ...$qualityReport->criticalFlags,
             ...$qualityReport->warningFlags,
         ]));
-        $this->packagePersistenceService->syncFromDraft($session, $draft);
-        $this->auditService->recordNormativeDecisionSummary($session, $draft);
-
-        $session = $this->advanceGeneration->generationCompleted(
+        $session = $this->publishGeneratedDraft(
             $session,
+            $draft,
             $qualityReport->level !== 'passed',
-            [
-                'processing_stage' => 'validation_and_normalization',
-                'processing_progress' => 100,
-                'draft_payload' => $draft,
-                'problem_flags' => $draft['problem_flags'] ?? [],
-                'last_error' => null,
-            ],
         );
 
         return $session;
     }
 
+    /** @param array<string, mixed> $draft */
+    private function publishGeneratedDraft(
+        EstimateGenerationSession $session,
+        array $draft,
+        bool $requiresReview,
+    ): EstimateGenerationSession {
+        $attemptId = $session->input_payload['generation_attempt_id'] ?? null;
+
+        return DB::transaction(function () use ($session, $draft, $requiresReview, $attemptId): EstimateGenerationSession {
+            $lockedSession = EstimateGenerationSession::query()
+                ->whereKey($session->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if (! $this->generationAttemptGuard->matches($lockedSession, null, is_string($attemptId) ? $attemptId : null)) {
+                throw new StaleEstimateGenerationState((int) $session->getKey(), (int) $session->state_version);
+            }
+
+            $this->packagePersistenceService->syncFromDraft($lockedSession, $draft);
+            $this->auditService->recordNormativeDecisionSummary($lockedSession, $draft);
+
+            return $this->advanceGeneration->generationCompleted(
+                $lockedSession,
+                $requiresReview,
+                [
+                    'processing_stage' => 'validation_and_normalization',
+                    'processing_progress' => 100,
+                    'draft_payload' => $draft,
+                    'problem_flags' => $draft['problem_flags'] ?? [],
+                    'last_error' => null,
+                ],
+            );
+        });
+    }
+
     private function updateGenerationProgress(EstimateGenerationSession $session, string $stage, int $progress): void
     {
-        $this->advanceGeneration->update($session, [
+        $this->advanceGeneration->update($session, [EstimateGenerationStatus::Generating], [
             'processing_stage' => $stage,
             'processing_progress' => max(0, min($progress, 99)),
         ]);
@@ -221,6 +252,9 @@ class EstimateGenerationOrchestrator
         }
 
         $session = $this->advanceGeneration->update($session, [
+            EstimateGenerationStatus::EstimateReviewRequired,
+            EstimateGenerationStatus::ReadyToApply,
+        ], [
             'draft_payload' => $draft,
         ]);
 

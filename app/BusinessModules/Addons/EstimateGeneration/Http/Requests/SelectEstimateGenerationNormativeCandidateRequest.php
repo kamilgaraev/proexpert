@@ -22,6 +22,7 @@ class SelectEstimateGenerationNormativeCandidateRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'state_version' => ['required', 'integer', 'min:0'],
             'work_item_key' => ['required', 'string', 'max:255'],
             'norm_id' => ['required', 'integer'],
             'selection_source' => ['nullable', 'string', 'in:offered_candidate,catalog_search'],

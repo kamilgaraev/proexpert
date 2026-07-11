@@ -7,7 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Requests;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\Concerns\AuthorizesEstimateGenerationRequest;
 use Illuminate\Foundation\Http\FormRequest;
 
-class RebuildEstimateGenerationSectionRequest extends FormRequest
+final class AnalyzeEstimateGenerationRequest extends FormRequest
 {
     use AuthorizesEstimateGenerationRequest;
 
@@ -18,9 +18,6 @@ class RebuildEstimateGenerationSectionRequest extends FormRequest
 
     public function rules(): array
     {
-        return [
-            'state_version' => ['required', 'integer', 'min:0'],
-            'local_estimate_key' => ['required', 'string', 'max:255'],
-        ];
+        return ['state_version' => ['required', 'integer', 'min:0']];
     }
 }

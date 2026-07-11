@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenera
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationTransitionMap;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationWorkflow;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationTransition;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\SessionStateStore;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
@@ -53,6 +54,35 @@ final class EstimateGenerationWorkflowTest extends TestCase
         $session = $workflow->transition($session, EstimateGenerationEvent::DocumentsChanged);
         self::assertSame(EstimateGenerationStatus::ProcessingDocuments, $session->status);
         self::assertSame(12, $session->state_version);
+    }
+
+    #[Test]
+    public function document_change_invalidates_an_active_generation_attempt(): void
+    {
+        $store = new InMemorySessionStateStore($this->session(EstimateGenerationStatus::Generating, 4));
+
+        $session = $this->workflow($store)->transition(
+            $store->current(),
+            EstimateGenerationEvent::DocumentsChanged,
+            ['input_payload' => ['generation_attempt_id' => null]],
+        );
+
+        self::assertSame(EstimateGenerationStatus::ProcessingDocuments, $session->status);
+        self::assertNull($session->input_payload['generation_attempt_id']);
+        self::assertSame(5, $session->state_version);
+    }
+
+    #[Test]
+    public function attributes_only_update_rejects_terminal_and_wrong_source_states(): void
+    {
+        $store = new InMemorySessionStateStore($this->session(EstimateGenerationStatus::Applied, 4));
+
+        $this->expectException(InvalidEstimateGenerationState::class);
+        $this->workflow($store)->update(
+            $store->current(),
+            [EstimateGenerationStatus::Generating],
+            ['processing_progress' => 80],
+        );
     }
 
     #[Test]
@@ -230,6 +260,18 @@ final class InMemorySessionStateStore implements SessionStateStore
 {
     public function __construct(private EstimateGenerationSession $session) {}
 
+    public function create(array $attributes): EstimateGenerationSession
+    {
+        $this->session = new EstimateGenerationSession([
+            ...$attributes,
+            'status' => EstimateGenerationStatus::Draft,
+            'state_version' => 0,
+            'resume_status' => null,
+        ]);
+
+        return $this->session;
+    }
+
     public function compareAndSet(
         EstimateGenerationSession $candidate,
         int $expectedVersion,
@@ -258,6 +300,11 @@ final class InMemorySessionStateStore implements SessionStateStore
 final class AdvancingAfterCasStateStore implements SessionStateStore
 {
     public int $persistedVersion = 0;
+
+    public function create(array $attributes): EstimateGenerationSession
+    {
+        return new EstimateGenerationSession($attributes);
+    }
 
     public function compareAndSet(
         EstimateGenerationSession $session,

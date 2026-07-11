@@ -46,3 +46,15 @@
 ## DB caveat
 
 Feature-сценарии `EstimateGenerationFlowTest` и `EstimateGenerationQueueTest` обновлены под новый контракт, включая persisted exact lifecycle и stale failed-attempt notification guard, но локально не запускались: они требуют тестовой БД/миграционного bootstrap. Миграции приложения вручную не запускались. Проверка исполняемого workflow выполнена DB-less in-memory store тестами.
+
+## Исправления после code review
+
+- Версия generation attempt стала нижней границей: собственные progress-CAS больше не блокируют retry того же job; иной token, версия ниже стартовой и не-`generating` состояние отклоняются.
+- `documents_changed` теперь явно переводит `input_review_required` и `generating` в `processing_documents`, атомарно отзывает attempt token; терминальные document mutations отклоняются до файловых и пакетных side effects.
+- Все POST-mutations существующей сессии требуют `state_version`; analyze/generate получили отдельные FormRequest.
+- Unrestricted attributes update удален: каждый вызов передает явный набор допустимых исходных состояний, terminal state всегда запрещен.
+- Selection и feedback вынесены в application use cases: scoped `lockForUpdate`, version/state policy до первой записи, все package/learning/feedback/CAS записи в одной короткой транзакции.
+- Генерация и rebuild резервируют attempt CAS до вычислений; публикация draft/packages/audit выполняется короткой транзакцией только после повторной owner-проверки. Устаревший результат не публикуется.
+- Architecture boundary расширен на все управляемые поля сессии; adversarial AST fixtures проверяют aliases, variable attribute arrays, relation chains, dynamic properties, array access, increment/unset и `setAttribute`.
+
+Повторная DB-less проверка: `27 tests, 94 assertions`, PASS. Targeted PHPStan: PASS, no errors. Pint, `php -l`, `git diff --check`: PASS.

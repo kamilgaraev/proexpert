@@ -22,6 +22,7 @@ class RetryEstimateGenerationDocumentRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'state_version' => ['required', 'integer', 'min:0'],
             'reason' => ['nullable', 'string', 'max:500'],
         ];
     }

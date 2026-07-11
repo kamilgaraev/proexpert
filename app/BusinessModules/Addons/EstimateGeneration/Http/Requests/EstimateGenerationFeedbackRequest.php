@@ -22,14 +22,14 @@ class EstimateGenerationFeedbackRequest extends FormRequest
     {
         $payload = $this->input('payload');
 
-        if ($payload !== null && !is_array($payload)) {
+        if ($payload !== null && ! is_array($payload)) {
             return;
         }
 
         $payload = $payload ?? [];
 
         foreach (['norm_id', 'normative_code', 'reason', 'quantity', 'unit', 'quantity_basis', 'action', 'target_work_item_key', 'selection_source'] as $key) {
-            if (!array_key_exists($key, $payload) && $this->filled($key)) {
+            if (! array_key_exists($key, $payload) && $this->filled($key)) {
                 $payload[$key] = $this->input($key);
             }
         }
@@ -42,6 +42,7 @@ class EstimateGenerationFeedbackRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'state_version' => ['required', 'integer', 'min:0'],
             'feedback_type' => ['required', 'string', Rule::in(['normative_rejection', 'normative_correction', 'normative_confirmation', 'quantity_confirmation', 'duplicate_resolution', 'work_item_resolution'])],
             'section_key' => ['nullable', 'string', 'max:255'],
             'work_item_key' => [
@@ -83,7 +84,7 @@ class EstimateGenerationFeedbackRequest extends FormRequest
                 $hasNormativeCode = is_array($payload)
                     && trim((string) ($payload['normative_code'] ?? '')) !== '';
 
-                if (!$hasNormId && !$hasNormativeCode) {
+                if (! $hasNormId && ! $hasNormativeCode) {
                     $validator->errors()->add(
                         'payload.norm_id',
                         trans_message('estimate_generation.normative_feedback_norm_required')
@@ -97,7 +98,7 @@ class EstimateGenerationFeedbackRequest extends FormRequest
                 $hasNormativeCode = is_array($payload)
                     && trim((string) ($payload['normative_code'] ?? '')) !== '';
 
-                if (!$hasNormId && !$hasNormativeCode) {
+                if (! $hasNormId && ! $hasNormativeCode) {
                     $validator->errors()->add(
                         'payload.norm_id',
                         trans_message('estimate_generation.normative_confirmation_norm_required')

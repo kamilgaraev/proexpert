@@ -42,9 +42,19 @@ final class EstimateGenerationWorkflow
 
     }
 
-    /** @param array<string, mixed> $attributes */
-    public function update(EstimateGenerationSession $session, array $attributes): EstimateGenerationSession
-    {
+    /**
+     * @param  list<EstimateGenerationStatus>  $allowedStatuses
+     * @param  array<string, mixed>  $attributes
+     */
+    public function update(
+        EstimateGenerationSession $session,
+        array $allowedStatuses,
+        array $attributes,
+    ): EstimateGenerationSession {
+        if ($session->status->isTerminal() || ! in_array($session->status, $allowedStatuses, true)) {
+            throw new InvalidEstimateGenerationState($session->status, 'attributes_update');
+        }
+
         unset($attributes['status'], $attributes['state_version'], $attributes['resume_status']);
 
         return $this->stateStore->compareAndSet(

@@ -1,0 +1,50 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Architecture;
+
+use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\TestCase;
+
+final class EstimateGenerationMutationAtomicityTest extends TestCase
+{
+    #[Test]
+    public function normative_selection_locks_and_checks_before_writes(): void
+    {
+        $source = $this->source('Application/Review/SelectNormativeCandidate.php');
+
+        self::assertStringContainsString('DB::transaction', $source);
+        self::assertStringContainsString('->lockForUpdate()', $source);
+        self::assertLessThan(strpos($source, '$this->selection->select'), strpos($source, '$this->policy->review'));
+    }
+
+    #[Test]
+    public function feedback_checks_version_before_creating_any_evidence(): void
+    {
+        $source = $this->source('Application/Review/RecordEstimateGenerationFeedback.php');
+
+        self::assertStringContainsString('DB::transaction', $source);
+        self::assertStringContainsString('->lockForUpdate()', $source);
+        self::assertLessThan(strpos($source, 'EstimateGenerationFeedback::query()->create'), strpos($source, '$this->policy->review'));
+        self::assertLessThan(strpos($source, 'recordFeedbackDecision'), strpos($source, 'EstimateGenerationFeedback::query()->create'));
+    }
+
+    #[Test]
+    public function generation_publication_is_owner_checked_and_atomic(): void
+    {
+        $source = $this->source('Services/EstimateGenerationOrchestrator.php');
+
+        self::assertStringContainsString('DB::transaction', $source);
+        self::assertLessThan(strpos($source, 'syncFromDraft'), strpos($source, 'generationAttemptGuard->matches'));
+        self::assertLessThan(strpos($source, 'generationCompleted'), strpos($source, 'syncFromDraft'));
+    }
+
+    private function source(string $relative): string
+    {
+        $source = file_get_contents(dirname(__DIR__, 2).'/app/BusinessModules/Addons/EstimateGeneration/'.$relative);
+        self::assertIsString($source);
+
+        return $source;
+    }
+}

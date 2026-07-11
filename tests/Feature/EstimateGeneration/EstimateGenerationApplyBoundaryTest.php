@@ -243,14 +243,19 @@ final class ApplyInMemoryStateStore implements SessionStateStore
 {
     public function __construct(private EstimateGenerationSession $session) {}
 
+    public function create(array $attributes): EstimateGenerationSession
+    {
+        return new EstimateGenerationSession($attributes);
+    }
+
     public function compareAndSet(
-        int $sessionId,
+        EstimateGenerationSession $session,
         int $expectedVersion,
         EstimateGenerationStatus $status,
         array $attributes,
-    ): void {
-        if ($sessionId !== $this->session->getKey() || $expectedVersion !== $this->session->state_version) {
-            throw new StaleEstimateGenerationState($sessionId, $expectedVersion);
+    ): EstimateGenerationSession {
+        if ($session->getKey() !== $this->session->getKey() || $expectedVersion !== $this->session->state_version) {
+            throw new StaleEstimateGenerationState((int) $session->getKey(), $expectedVersion);
         }
 
         $this->session->forceFill([
@@ -258,5 +263,7 @@ final class ApplyInMemoryStateStore implements SessionStateStore
             'status' => $status,
             'state_version' => $expectedVersion + 1,
         ]);
+
+        return $this->session;
     }
 }

@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Requests;
 
+use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\Concerns\AuthorizesEstimateGenerationRequest;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
-class RebuildEstimateGenerationSectionRequest extends FormRequest
+final class GenerateEstimateGenerationRequest extends FormRequest
 {
     use AuthorizesEstimateGenerationRequest;
 
@@ -20,7 +22,7 @@ class RebuildEstimateGenerationSectionRequest extends FormRequest
     {
         return [
             'state_version' => ['required', 'integer', 'min:0'],
-            'local_estimate_key' => ['required', 'string', 'max:255'],
+            'generation_mode' => ['nullable', 'string', Rule::in(EstimateGenerationMode::values())],
         ];
     }
 }

@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationEvent;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationTransition;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
@@ -22,7 +24,9 @@ final class ReconcileEstimateGenerationDocuments
     {
         $session = $session->fresh(['documents']) ?? $session;
         if (in_array($session->status, [
+            EstimateGenerationStatus::InputReviewRequired,
             EstimateGenerationStatus::ReadyToGenerate,
+            EstimateGenerationStatus::Generating,
             EstimateGenerationStatus::EstimateReviewRequired,
             EstimateGenerationStatus::ReadyToApply,
         ], true)) {
@@ -30,6 +34,24 @@ final class ReconcileEstimateGenerationDocuments
         }
 
         return $this->advance->documentsStarted($session);
+    }
+
+    public function assertMutable(EstimateGenerationSession $session): void
+    {
+        if (! in_array($session->status, [
+            EstimateGenerationStatus::Draft,
+            EstimateGenerationStatus::ProcessingDocuments,
+            EstimateGenerationStatus::InputReviewRequired,
+            EstimateGenerationStatus::ReadyToGenerate,
+            EstimateGenerationStatus::Generating,
+            EstimateGenerationStatus::EstimateReviewRequired,
+            EstimateGenerationStatus::ReadyToApply,
+        ], true)) {
+            throw new InvalidEstimateGenerationTransition(
+                $session->status,
+                EstimateGenerationEvent::DocumentsChanged,
+            );
+        }
     }
 
     public function reconcile(EstimateGenerationSession $session): EstimateGenerationSession

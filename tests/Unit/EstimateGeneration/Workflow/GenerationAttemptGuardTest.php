@@ -19,9 +19,20 @@ final class GenerationAttemptGuardTest extends TestCase
         $session = $this->session(EstimateGenerationStatus::Generating, 7, 'attempt-new');
 
         self::assertTrue($guard->matches($session, 7, 'attempt-new'));
-        self::assertFalse($guard->matches($session, 6, 'attempt-new'));
+        self::assertTrue($guard->matches($session, 6, 'attempt-new'));
         self::assertFalse($guard->matches($session, 7, 'attempt-old'));
         self::assertFalse($guard->matches($session, 7, null));
+    }
+
+    #[Test]
+    public function owning_attempt_survives_its_own_progress_version_increments(): void
+    {
+        $guard = new GenerationAttemptGuard;
+        $session = $this->session(EstimateGenerationStatus::Generating, 12, 'same-attempt');
+
+        self::assertTrue($guard->matches($session, 7, 'same-attempt'));
+        self::assertFalse($guard->matches($session, 13, 'same-attempt'));
+        self::assertFalse($guard->matches($session, 7, 'different-attempt'));
     }
 
     #[Test]

@@ -6,14 +6,22 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimate;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Apply\ApplyGeneratedEstimateCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\RebuildGeneratedSection;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Review\RecordEstimateGenerationFeedback;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Review\SelectNormativeCandidate;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\CreateEstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationTransition;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\AnalyzeEstimateGenerationRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ApplyEstimateGenerationDraftRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\CreateEstimateGenerationSessionRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\EstimateGenerationFeedbackRequest;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\GenerateEstimateGenerationRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\RebuildEstimateGenerationSectionRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\SearchEstimateGenerationNormativeCandidatesRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\SelectEstimateGenerationNormativeCandidateRequest;
@@ -22,7 +30,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerat
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionListResource;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionResource;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\GenerateEstimateDraftJob;
-use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationFeedback;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -33,10 +40,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationOrc
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationReviewItemService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationLearningRecorder;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateFeedbackService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateManualSearchService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSelectionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorReadinessService;
 use App\Http\Controllers\Controller;
@@ -45,7 +49,6 @@ use App\Models\Project;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -63,15 +66,16 @@ class EstimateGenerationController extends Controller
         protected EstimateGenerationRegionalContextResolver $regionalContextResolver,
         protected EstimateGenerationFinalWorkItemGuard $finalWorkItemGuard,
         protected EstimateGenerationPackagePresenter $packagePresenter,
-        protected NormativeCandidateSelectionService $candidateSelectionService,
         protected DocumentGenerationReadinessService $documentReadinessService,
         protected EstimatorReadinessService $estimatorReadinessService,
-        protected EstimateGenerationLearningRecorder $learningRecorder,
         protected NormativeCandidateManualSearchService $candidateManualSearchService,
-        protected NormativeCandidateFeedbackService $candidateFeedbackService,
         protected EstimateGenerationReviewItemService $reviewItemService,
         protected CreateEstimateGenerationSession $createSession,
         protected AdvanceEstimateGeneration $advanceGeneration,
+        protected EstimateGenerationMutationPolicy $mutationPolicy,
+        protected SelectNormativeCandidate $selectNormativeCandidate,
+        protected RecordEstimateGenerationFeedback $recordFeedback,
+        protected RebuildGeneratedSection $rebuildGeneratedSection,
     ) {}
 
     public function index(Request $request, Project $project): JsonResponse
@@ -135,6 +139,7 @@ class EstimateGenerationController extends Controller
     {
         try {
             $this->guardSession($request, $project, $session);
+            $this->mutationPolicy->documents($session, (int) $request->validated('state_version'));
 
             $documents = $this->documentParsingService->storeParsedDocuments(
                 $session,
@@ -148,6 +153,8 @@ class EstimateGenerationController extends Controller
             ], trans_message('estimate_generation.documents_uploaded'));
         } catch (StaleEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Failed to upload documents', [
                 'error' => $e->getMessage(),
@@ -158,10 +165,11 @@ class EstimateGenerationController extends Controller
         }
     }
 
-    public function analyze(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
+    public function analyze(AnalyzeEstimateGenerationRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse
     {
         try {
             $this->guardSession($request, $project, $session);
+            $this->mutationPolicy->analyze($session, (int) $request->validated('state_version'));
 
             $readiness = $this->documentReadinessService->evaluate($session->load('documents'));
 
@@ -191,6 +199,8 @@ class EstimateGenerationController extends Controller
             );
         } catch (StaleEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Analyze failed', [
                 'error' => $e->getMessage(),
@@ -201,16 +211,30 @@ class EstimateGenerationController extends Controller
         }
     }
 
-    public function generate(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
+    public function generate(GenerateEstimateGenerationRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse
     {
         try {
             $this->guardSession($request, $project, $session);
+            $this->mutationPolicy->generate($session, (int) $request->validated('state_version'));
+            if ($session->status === EstimateGenerationStatus::Generating) {
+                return AdminResponse::success(
+                    $this->sessionPayload($session),
+                    trans_message('estimate_generation.generation_queued'),
+                    202,
+                );
+            }
             $generationMode = EstimateGenerationMode::fromInput(
                 $request->input('generation_mode', $session->input_payload['generation_mode'] ?? null)
             )->value;
 
             if (($session->input_payload['generation_mode'] ?? null) !== $generationMode) {
                 $session = $this->advanceGeneration->update($session, [
+                    EstimateGenerationStatus::Draft,
+                    EstimateGenerationStatus::ProcessingDocuments,
+                    EstimateGenerationStatus::ReadyToGenerate,
+                    EstimateGenerationStatus::EstimateReviewRequired,
+                    EstimateGenerationStatus::ReadyToApply,
+                ], [
                     'input_payload' => [
                         ...($session->input_payload ?? []),
                         'generation_mode' => $generationMode,
@@ -272,6 +296,8 @@ class EstimateGenerationController extends Controller
                 202
             );
         } catch (StaleEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Generate failed', [
@@ -462,11 +488,14 @@ class EstimateGenerationController extends Controller
         try {
             $this->guardSession($request, $project, $session);
 
-            $this->candidateSelectionService->select(
-                $session,
+            $session = $this->selectNormativeCandidate->handle(
+                (int) $session->getKey(),
+                (int) $request->user()->current_organization_id,
+                (int) $project->getKey(),
+                (int) $request->validated('state_version'),
                 (string) $request->validated('work_item_key'),
                 (int) $request->validated('norm_id'),
-                $request->validated('selection_source') === 'catalog_search'
+                $request->validated('selection_source') === 'catalog_search',
             );
 
             if ($request->validated('response_scope') === 'review_queue') {
@@ -485,6 +514,8 @@ class EstimateGenerationController extends Controller
         } catch (ValidationException $e) {
             return AdminResponse::error($e->getMessage(), 422, $e->errors());
         } catch (StaleEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Normative candidate selection failed', [
@@ -527,11 +558,16 @@ class EstimateGenerationController extends Controller
     {
         try {
             $this->guardSession($request, $project, $session);
-            $session = $this->advanceGeneration->generationStarted($session, (string) Str::uuid());
-            $session = $this->orchestrator->rebuildSection($session, $request->validated('local_estimate_key'));
+            $session = $this->rebuildGeneratedSection->handle(
+                $session,
+                (int) $request->validated('state_version'),
+                (string) $request->validated('local_estimate_key'),
+            );
 
             return AdminResponse::success($session->draft_payload, trans_message('estimate_generation.section_rebuilt'));
         } catch (StaleEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Rebuild section failed', [
@@ -548,27 +584,14 @@ class EstimateGenerationController extends Controller
         try {
             $this->guardSession($request, $project, $session);
 
-            $feedbackId = DB::transaction(function () use ($request, $project, $session): int {
-                $lockedSession = EstimateGenerationSession::query()
-                    ->whereKey($session->id)
-                    ->lockForUpdate()
-                    ->firstOrFail();
-                $this->guardSession($request, $project, $lockedSession);
-
-                $feedback = EstimateGenerationFeedback::create([
-                    'session_id' => $lockedSession->id,
-                    'user_id' => $request->user()->id,
-                    'feedback_type' => $request->validated('feedback_type'),
-                    'section_key' => $request->validated('section_key'),
-                    'work_item_key' => $request->validated('work_item_key'),
-                    'payload' => $request->validated('payload', []),
-                    'comments' => $request->validated('comments'),
-                ]);
-                $this->candidateFeedbackService->apply($lockedSession, $feedback);
-                $this->learningRecorder->recordFeedbackDecision($lockedSession, $feedback);
-
-                return (int) $feedback->id;
-            });
+            $feedbackId = $this->recordFeedback->handle(
+                (int) $session->getKey(),
+                (int) $request->user()->current_organization_id,
+                (int) $project->getKey(),
+                (int) $request->user()->getKey(),
+                (int) $request->validated('state_version'),
+                $request->validated(),
+            );
 
             $responseScope = (string) ($request->validated('response_scope') ?? 'full');
 
@@ -579,6 +602,8 @@ class EstimateGenerationController extends Controller
         } catch (ValidationException $e) {
             return AdminResponse::error($e->getMessage(), 422, $e->errors());
         } catch (StaleEstimateGenerationState) {
+            return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
+        } catch (InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (\Throwable $e) {
             Log::error('[EstimateGeneration] Feedback failed', [

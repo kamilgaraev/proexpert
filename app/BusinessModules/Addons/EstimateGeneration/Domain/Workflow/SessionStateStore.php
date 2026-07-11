@@ -8,6 +8,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 
 interface SessionStateStore
 {
+    /** @param array<string, mixed> $attributes */
+    public function create(array $attributes): EstimateGenerationSession;
+
     /**
      * @param  array<string, mixed>  $attributes
      */

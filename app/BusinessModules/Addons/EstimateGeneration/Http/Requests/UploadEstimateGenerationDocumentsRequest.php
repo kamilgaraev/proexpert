@@ -19,6 +19,7 @@ class UploadEstimateGenerationDocumentsRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'state_version' => ['required', 'integer', 'min:0'],
             'files' => ['required', 'array', 'min:1', 'max:10'],
             'files.*' => ['file', 'max:204800', 'mimes:pdf,jpg,jpeg,png,xlsx,xls,dwg,dxf'],
         ];

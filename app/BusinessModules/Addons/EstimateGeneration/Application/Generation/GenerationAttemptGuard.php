@@ -16,7 +16,7 @@ final class GenerationAttemptGuard
     ): bool {
         return $attemptId !== null
             && $session->status === EstimateGenerationStatus::Generating
-            && ($expectedStateVersion === null || $session->state_version === $expectedStateVersion)
+            && ($expectedStateVersion === null || $session->state_version >= $expectedStateVersion)
             && ($session->input_payload['generation_attempt_id'] ?? null) === $attemptId;
     }
 }
