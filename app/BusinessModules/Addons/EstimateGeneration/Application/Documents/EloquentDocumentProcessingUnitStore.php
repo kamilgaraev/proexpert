@@ -45,6 +45,8 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
             return null;
         }
 
+        $pageId = $this->pageIdentity($unit);
+
         return new DocumentUnitExecutionContext(
             (int) $unit->id,
             (int) $unit->organization_id,
@@ -60,6 +62,7 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
             (string) $unit->document->filename,
             (string) $unit->claim_token,
             (int) $unit->attempt_count,
+            $pageId,
         );
     }
 
@@ -217,6 +220,30 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
         $model->setConnection($this->database->getName());
 
         return $model->newQuery();
+    }
+
+    private function pageIdentity(EstimateGenerationProcessingUnit $unit): int
+    {
+        $page = $this->pageQuery()->createOrFirst(
+            ['document_id' => $unit->document_id, 'page_number' => $unit->unit_index],
+            ['processing_unit_id' => $unit->id, 'source_version' => $unit->source_version,
+                'organization_id' => $unit->organization_id, 'project_id' => $unit->project_id,
+                'session_id' => $unit->session_id, 'normalized_payload' => [], 'quality_flags' => []],
+        );
+        if ($page->processing_unit_id === null) {
+            $this->pageQuery()->whereKey($page->getKey())->whereNull('processing_unit_id')
+                ->update(['processing_unit_id' => $unit->id, 'source_version' => $unit->source_version]);
+            $page->refresh();
+        }
+        if ((int) $page->organization_id !== (int) $unit->organization_id
+            || (int) $page->project_id !== (int) $unit->project_id
+            || (int) $page->session_id !== (int) $unit->session_id
+            || (int) $page->document_id !== (int) $unit->document_id
+            || (int) $page->processing_unit_id !== (int) $unit->id) {
+            throw new DocumentUnitProcessingException('unit_page_scope_mismatch');
+        }
+
+        return (int) $page->getKey();
     }
 
     /** @return Builder<EstimateGenerationProcessingUnit> */

@@ -19,6 +19,7 @@ use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Throwable;
 
 final class TimewebVisionOcrClient implements OcrClientInterface
@@ -38,10 +39,11 @@ final class TimewebVisionOcrClient implements OcrClientInterface
         }
 
         $lastException = null;
+        $physicalInvocationId = (string) Str::uuid();
 
         foreach ($models as $attempt => $model) {
             try {
-                return $this->recognizeWithModel($input, $baseUri, $apiKey, $model, $attempt + 1);
+                return $this->recognizeWithModel($input, $baseUri, $apiKey, $model, $attempt + 1, $physicalInvocationId);
             } catch (OcrProviderException $exception) {
                 $lastException = $exception;
 
@@ -72,7 +74,8 @@ final class TimewebVisionOcrClient implements OcrClientInterface
         string $baseUri,
         string $apiKey,
         string $model,
-        int $attempt
+        int $attempt,
+        string $physicalInvocationId,
     ): OcrRecognitionResult {
         $requestPayload = [
             'model' => $model,
@@ -164,6 +167,7 @@ final class TimewebVisionOcrClient implements OcrClientInterface
                     $httpCode,
                     $payload,
                     (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000)),
+                    $physicalInvocationId,
                 );
             }
 
@@ -241,6 +245,7 @@ final class TimewebVisionOcrClient implements OcrClientInterface
         ?int $httpCode,
         array $payload,
         int $durationMs,
+        string $physicalInvocationId,
     ): void {
         $base = $input->operationContext;
         if (! $base instanceof AiOperationContext || ! $this->usageStore instanceof AiUsageStore) {
@@ -250,7 +255,7 @@ final class TimewebVisionOcrClient implements OcrClientInterface
             $ordinal = (($routeAttempt - 1) * max(1, (int) config('estimate-generation.ocr.retry_attempts', 3))) + $wireAttempt;
             $context = new AiOperationContext(
                 correlationId: $base->correlationId,
-                attemptId: AiOperationContext::deterministicId($base->correlationId.'|'.$model.'|'.$wireAttempt.'|'.$routeAttempt),
+                attemptId: AiOperationContext::deterministicId($physicalInvocationId.'|'.$model.'|'.$wireAttempt.'|'.$routeAttempt),
                 organizationId: $base->organizationId,
                 projectId: $base->projectId,
                 sessionId: $base->sessionId,

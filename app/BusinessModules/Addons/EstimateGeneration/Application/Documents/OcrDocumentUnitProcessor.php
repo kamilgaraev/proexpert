@@ -70,6 +70,7 @@ final readonly class OcrDocumentUnitProcessor implements DocumentUnitProcessor
                 operation: 'ocr',
                 attemptOrdinal: 1,
                 documentId: $context->documentId,
+                pageId: $context->pageId,
                 unitId: $context->unitId,
             ),
         ));

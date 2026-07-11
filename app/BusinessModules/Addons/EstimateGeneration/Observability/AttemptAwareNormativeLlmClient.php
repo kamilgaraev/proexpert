@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Observability;
 
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
 use Throwable;
 
@@ -31,6 +32,7 @@ final readonly class AttemptAwareNormativeLlmClient
         $sessionId = $operation->sessionId;
         $seed = json_encode(get_object_vars($operation), JSON_THROW_ON_ERROR);
         $correlationId = AiOperationContext::deterministicId('rerank|'.$seed);
+        $physicalInvocationId = (string) Str::uuid();
         $models = $this->models();
         $last = null;
 
@@ -58,7 +60,7 @@ final readonly class AttemptAwareNormativeLlmClient
             } catch (Throwable $exception) {
                 $last = $exception;
             } finally {
-                $this->record($correlationId, $organizationId, $projectId, $sessionId, $model, $index + 1, $status, $httpCode, $response, $started);
+                $this->record($correlationId, $physicalInvocationId, $organizationId, $projectId, $sessionId, $model, $index + 1, $status, $httpCode, $response, $started);
             }
         }
 
@@ -66,10 +68,10 @@ final readonly class AttemptAwareNormativeLlmClient
     }
 
     /** @param array<string, mixed> $response */
-    private function record(string $correlationId, int $organizationId, int $projectId, int $sessionId, string $model, int $ordinal, string $status, ?int $httpCode, array $response, int $started): void
+    private function record(string $correlationId, string $physicalInvocationId, int $organizationId, int $projectId, int $sessionId, string $model, int $ordinal, string $status, ?int $httpCode, array $response, int $started): void
     {
         try {
-            $context = new AiOperationContext($correlationId, AiOperationContext::deterministicId($correlationId.'|'.$model.'|'.$ordinal), $organizationId, $projectId, $sessionId, 'match_normatives', 'rerank', $ordinal);
+            $context = new AiOperationContext($correlationId, AiOperationContext::deterministicId($physicalInvocationId.'|'.$model.'|'.$ordinal), $organizationId, $projectId, $sessionId, 'match_normatives', 'rerank', $ordinal);
             $usageAvailable = ($response['usage_available'] ?? false) === true;
             $input = $usageAvailable ? max(0, (int) ($response['input_tokens'] ?? 0)) : 0;
             $output = $usageAvailable ? max(0, (int) ($response['output_tokens'] ?? 0)) : 0;

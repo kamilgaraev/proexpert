@@ -48,20 +48,22 @@ final class EstimateGenerationUsageLedgerPostgresTest extends TestCase
             throw new RuntimeException('Unable to create usage contention barrier.');
         }
         $attempt = (string) Str::uuid();
+        $correlation = (string) Str::uuid();
         $firstName = 'usage_contention_a_'.strtolower(Str::random(8));
         $secondName = 'usage_contention_b_'.strtolower(Str::random(8));
         $first = $this->independentConnection($firstName);
         $pid = null;
         try {
             $first->beginTransaction();
-            self::assertTrue($first->table('estimate_generation_ai_usage')->insert($this->row($fixture, $attempt)));
+            $data = $this->usage($fixture, $attempt, 1, $correlation);
+            (new EloquentAiUsageStore(new AiCostCalculator, $first))->record($data);
             $pid = pcntl_fork();
             if ($pid === -1) {
                 throw new RuntimeException('Unable to fork usage contention recorder.');
             }
             if ($pid === 0) {
                 fclose($sockets[0]);
-                $this->runChild($sockets[1], $secondName, $this->row($fixture, $attempt));
+                $this->runChild($sockets[1], $secondName, $fixture, $attempt, $correlation);
             }
             fclose($sockets[1]);
             unset($sockets[1]);
@@ -72,8 +74,9 @@ final class EstimateGenerationUsageLedgerPostgresTest extends TestCase
             $result = json_decode(trim((string) fgets($sockets[0])), true, flags: JSON_THROW_ON_ERROR);
             pcntl_waitpid($pid, $status);
             $pid = null;
-            self::assertSame(0, $result['affected'] ?? null);
+            self::assertSame('recorded', $result['status'] ?? null);
             self::assertSame(1, DB::table('estimate_generation_ai_usage')->where('attempt_id', $attempt)->count());
+            self::assertSame($data->immutableFingerprint, DB::table('estimate_generation_ai_usage')->where('attempt_id', $attempt)->value('immutable_fingerprint'));
         } finally {
             if ($first->transactionLevel() > 0) {
                 $first->rollBack();
@@ -120,18 +123,31 @@ final class EstimateGenerationUsageLedgerPostgresTest extends TestCase
                 'tenant mismatch' => ['organization_id' => $fixture['organization_id'] + 999999],
                 'page nullable bypass' => ['document_id' => null, 'page_id' => $fixture['page_id']],
                 'unit nullable bypass' => ['document_id' => null, 'unit_id' => $fixture['unit_id']],
+                'page document mismatch' => ['page_id' => $fixture['other_page_id']],
                 'cached exceeds input' => ['usage_status' => 'measured', 'input_tokens' => 1, 'cached_input_tokens' => 2],
                 'negative counter' => ['input_tokens' => -1],
                 'zero ordinal' => ['attempt_ordinal' => 0],
+                'invalid stage operation' => ['stage' => 'match_normatives', 'operation' => 'ocr'],
+                'invalid status' => ['status' => 'unknown'],
                 'http failure without code' => ['status' => 'http_failed', 'http_code' => null],
                 'connection with code' => ['status' => 'connection_failed', 'http_code' => 500],
+                'success with failure code' => ['status' => 'succeeded', 'http_code' => 500],
+                'malformed with failure code' => ['status' => 'malformed_response', 'http_code' => 500],
                 'image without detail' => ['image_count' => 1, 'image_detail' => null],
+                'invalid image detail' => ['image_count' => 1, 'image_detail' => 'original'],
                 'available pricing without snapshot' => ['usage_status' => 'measured', 'pricing_status' => 'available', 'cost_amount' => '1.00000000', 'currency' => 'USD'],
+                'available page pricing without page tariff' => [...$priced, 'attempt_id' => (string) Str::uuid(), 'page_count' => 1],
+                'available reasoning pricing without reasoning tariff' => [...$priced, 'attempt_id' => (string) Str::uuid(), 'output_tokens' => 2, 'reasoning_tokens' => 1],
+                'currency snapshot mismatch' => [...$priced, 'attempt_id' => (string) Str::uuid(), 'currency' => 'RUB'],
                 'unsafe snapshot' => ['price_snapshot' => json_encode(['prompt' => 'secret'], JSON_THROW_ON_ERROR)],
                 'numeric decimal snapshot' => ['price_snapshot' => json_encode(['input_per_million' => 1, 'cached_input_per_million' => '0', 'output_per_million' => '1', 'currency' => 'USD', 'source' => 'fixture', 'version' => 'v1', 'effective_at' => '2026-07-11T00:00:00+00:00'], JSON_THROW_ON_ERROR)],
                 'invalid optional decimal' => ['price_snapshot' => json_encode(['input_per_million' => '1', 'cached_input_per_million' => '0', 'output_per_million' => '1', 'reasoning_per_million' => '1.123456789', 'currency' => 'USD', 'source' => 'fixture', 'version' => 'v1', 'effective_at' => '2026-07-11T00:00:00+00:00'], JSON_THROW_ON_ERROR)],
                 'nil uuid' => ['attempt_id' => '00000000-0000-0000-0000-000000000000'],
                 'nil correlation uuid' => ['correlation_id' => '00000000-0000-0000-0000-000000000000'],
+                'invalid provider identifier' => ['provider' => 'timeweb secret'],
+                'invalid requested model identifier' => ['requested_model' => 'model secret'],
+                'invalid reported model identifier' => ['reported_model' => 'model secret'],
+                'cost decimal overflow' => [...$priced, 'attempt_id' => (string) Str::uuid(), 'cost_amount' => '10000000000.00000000'],
             ];
             foreach ($variants as $name => $changes) {
                 $this->assertRejected($name, [...$this->row($fixture, (string) Str::uuid()), ...$changes]);
@@ -149,13 +165,14 @@ final class EstimateGenerationUsageLedgerPostgresTest extends TestCase
         }
     }
 
-    private function runChild(mixed $socket, string $connectionName, array $row): never
+    private function runChild(mixed $socket, string $connectionName, array $fixture, string $attempt, string $correlation): never
     {
         $exit = 0;
         try {
             fwrite($socket, "before_insert\n");
-            $affected = $this->independentConnection($connectionName)->table('estimate_generation_ai_usage')->insertOrIgnore($row);
-            fwrite($socket, json_encode(['affected' => $affected], JSON_THROW_ON_ERROR)."\n");
+            $connection = $this->independentConnection($connectionName);
+            (new EloquentAiUsageStore(new AiCostCalculator, $connection))->record($this->usage($fixture, $attempt, 1, $correlation));
+            fwrite($socket, json_encode(['status' => 'recorded'], JSON_THROW_ON_ERROR)."\n");
         } catch (Throwable $error) {
             $exit = 1;
             fwrite($socket, json_encode(['error' => $error::class, 'code' => $error->getCode()], JSON_THROW_ON_ERROR)."\n");
@@ -220,22 +237,40 @@ final class EstimateGenerationUsageLedgerPostgresTest extends TestCase
 
     private function fixture(): array
     {
-        $organization = Organization::factory()->create();
-        $project = Project::factory()->for($organization)->create();
-        $user = User::factory()->create();
-        $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
-            'user_id' => $user->id, 'status' => 'draft', 'processing_stage' => 'draft', 'processing_progress' => 0,
-            'input_payload' => [], 'state_version' => 0]);
-        $document = EstimateGenerationDocument::query()->create(['session_id' => $session->id, 'organization_id' => $organization->id,
-            'project_id' => $project->id, 'user_id' => $user->id, 'filename' => 'contract.pdf', 'mime_type' => 'application/pdf']);
-        $page = EstimateGenerationDocumentPage::query()->create(['document_id' => $document->id, 'organization_id' => $organization->id,
-            'project_id' => $project->id, 'session_id' => $session->id, 'page_number' => 1]);
-        $unit = EstimateGenerationProcessingUnit::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
-            'session_id' => $session->id, 'document_id' => $document->id, 'unit_type' => 'pdf_page', 'unit_index' => 1,
-            'source_version' => 'contract-v1', 'status' => 'pending', 'locator' => [], 'metadata' => []]);
+        $fixture = ['organization_id' => null, 'project_id' => null, 'user_id' => null, 'session_id' => null,
+            'document_id' => null, 'page_id' => null, 'unit_id' => null, 'other_page_id' => null];
+        try {
+            $organization = Organization::factory()->create();
+            $fixture['organization_id'] = (int) $organization->id;
+            $project = Project::factory()->for($organization)->create();
+            $fixture['project_id'] = (int) $project->id;
+            $user = User::factory()->create();
+            $fixture['user_id'] = (int) $user->id;
+            $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
+                'user_id' => $user->id, 'status' => 'draft', 'processing_stage' => 'draft', 'processing_progress' => 0,
+                'input_payload' => [], 'state_version' => 0]);
+            $fixture['session_id'] = (int) $session->id;
+            $document = EstimateGenerationDocument::query()->create(['session_id' => $session->id, 'organization_id' => $organization->id,
+                'project_id' => $project->id, 'user_id' => $user->id, 'filename' => 'contract.pdf', 'mime_type' => 'application/pdf']);
+            $fixture['document_id'] = (int) $document->id;
+            $page = EstimateGenerationDocumentPage::query()->create(['document_id' => $document->id, 'organization_id' => $organization->id,
+                'project_id' => $project->id, 'session_id' => $session->id, 'page_number' => 1]);
+            $fixture['page_id'] = (int) $page->id;
+            $otherDocument = EstimateGenerationDocument::query()->create(['session_id' => $session->id, 'organization_id' => $organization->id,
+                'project_id' => $project->id, 'user_id' => $user->id, 'filename' => 'other.pdf', 'mime_type' => 'application/pdf']);
+            $otherPage = EstimateGenerationDocumentPage::query()->create(['document_id' => $otherDocument->id, 'organization_id' => $organization->id,
+                'project_id' => $project->id, 'session_id' => $session->id, 'page_number' => 1]);
+            $fixture['other_page_id'] = (int) $otherPage->id;
+            $unit = EstimateGenerationProcessingUnit::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
+                'session_id' => $session->id, 'document_id' => $document->id, 'unit_type' => 'pdf_page', 'unit_index' => 1,
+                'source_version' => 'contract-v1', 'status' => 'pending', 'locator' => [], 'metadata' => []]);
+            $fixture['unit_id'] = (int) $unit->id;
 
-        return ['organization_id' => (int) $organization->id, 'project_id' => (int) $project->id, 'user_id' => (int) $user->id,
-            'session_id' => (int) $session->id, 'document_id' => (int) $document->id, 'page_id' => (int) $page->id, 'unit_id' => (int) $unit->id];
+            return $fixture;
+        } catch (Throwable $error) {
+            $this->cleanup($fixture);
+            throw $error;
+        }
     }
 
     private function row(array $fixture, string $attempt): array
@@ -250,10 +285,10 @@ final class EstimateGenerationUsageLedgerPostgresTest extends TestCase
             'cost_amount' => null, 'currency' => null, 'pricing_status' => 'unavailable', 'created_at' => now()];
     }
 
-    private function usage(array $fixture, string $attempt, int $durationMs): AiUsageData
+    private function usage(array $fixture, string $attempt, int $durationMs, ?string $correlation = null): AiUsageData
     {
         return new AiUsageData(
-            context: new AiOperationContext((string) Str::uuid(), $attempt, $fixture['organization_id'], $fixture['project_id'],
+            context: new AiOperationContext($correlation ?? (string) Str::uuid(), $attempt, $fixture['organization_id'], $fixture['project_id'],
                 $fixture['session_id'], 'understand_documents', 'ocr', 1, $fixture['document_id'], $fixture['page_id'], $fixture['unit_id']),
             provider: 'timeweb', requestedModel: 'fixture-model', status: 'connection_failed', durationMs: $durationMs,
         );
@@ -264,8 +299,14 @@ final class EstimateGenerationUsageLedgerPostgresTest extends TestCase
         if (($fixture['session_id'] ?? null) !== null) {
             DB::table('estimate_generation_sessions')->where('id', $fixture['session_id'])->delete();
         }
-        DB::table('projects')->where('id', $fixture['project_id'])->delete();
-        DB::table('organizations')->where('id', $fixture['organization_id'])->delete();
-        DB::table('users')->where('id', $fixture['user_id'])->delete();
+        if (($fixture['project_id'] ?? null) !== null) {
+            DB::table('projects')->where('id', $fixture['project_id'])->delete();
+        }
+        if (($fixture['organization_id'] ?? null) !== null) {
+            DB::table('organizations')->where('id', $fixture['organization_id'])->delete();
+        }
+        if (($fixture['user_id'] ?? null) !== null) {
+            DB::table('users')->where('id', $fixture['user_id'])->delete();
+        }
     }
 }

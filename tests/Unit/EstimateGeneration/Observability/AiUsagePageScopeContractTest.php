@@ -4,8 +4,16 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Observability;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitContentReader;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitExecutionContext;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\OcrDocumentUnitProcessor;
+use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrDocumentInput;
+use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
+use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -28,10 +36,12 @@ final class AiUsagePageScopeContractTest extends TestCase
         $root = dirname(__DIR__, 4);
         $migration = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000400_create_estimate_generation_ai_usage_table.php');
         $store = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Observability/EloquentAiUsageStore.php');
+        $unitStore = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Application/Documents/EloquentDocumentProcessingUnitStore.php');
 
         self::assertStringContainsString("'page_id'", (string) $migration);
         self::assertStringContainsString('eg_usage_page_scope_fk', (string) $migration);
         self::assertStringContainsString("'page_id' => \$data->context->pageId", (string) $store);
+        self::assertStringContainsString('->createOrFirst(', (string) $unitStore);
     }
 
     #[Test]
@@ -43,6 +53,41 @@ final class AiUsagePageScopeContractTest extends TestCase
             '018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7d',
             1, 2, 3, 'match_normatives', 'ocr', 1, documentId: 0,
         );
+    }
+
+    #[Test]
+    public function page_processing_context_reaches_the_actual_ocr_operation_context(): void
+    {
+        $reader = new class implements DocumentUnitContentReader
+        {
+            public function open(DocumentUnitExecutionContext $context)
+            {
+                $stream = fopen('php://temp', 'w+b');
+                fwrite($stream, 'image-bytes');
+                rewind($stream);
+
+                return $stream;
+            }
+        };
+        $ocr = new class implements OcrClientInterface
+        {
+            public ?OcrDocumentInput $input = null;
+
+            public function recognize(OcrDocumentInput $input): OcrRecognitionResult
+            {
+                $this->input = $input;
+
+                return new OcrRecognitionResult('fixture', 'fixture-model', [new OcrPageResult(1, 'ok')]);
+            }
+        };
+        $context = new DocumentUnitExecutionContext(
+            5, 1, 2, 3, 4, DocumentUnitType::RasterImage, 1, 'source-v1', [], 'memory://document',
+            'image/png', 'fixture.png', '018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c', 1, pageId: 99,
+        );
+
+        (new OcrDocumentUnitProcessor($reader, $ocr))->process($context);
+
+        self::assertSame(99, $ocr->input?->operationContext?->pageId);
     }
 
     private function usage(int $pageId): AiUsageData

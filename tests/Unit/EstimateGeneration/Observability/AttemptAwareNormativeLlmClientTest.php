@@ -55,8 +55,12 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
         self::assertNotSame($store->rows[0]->context->attemptId, $store->rows[1]->context->attemptId);
 
         $firstClaimId = $store->rows[0]->context->attemptId;
-        $client->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7d'));
+        $client->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'));
         self::assertNotSame($firstClaimId, $store->rows[2]->context->attemptId);
+        self::assertSame($store->rows[0]->context->correlationId, $store->rows[2]->context->correlationId);
+
+        $client->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7d'));
+        self::assertNotSame($firstClaimId, $store->rows[4]->context->attemptId);
     }
 
     #[Test]
