@@ -1,0 +1,30 @@
+# AI-сметчик МОСТ — SDD Progress
+
+Goal: complete `docs/superpowers/plans/2026-07-11-ai-estimator-master-roadmap.md` and Plans 1–4 on `main`.
+
+Constraints: no worktree; ordinary estimates are immutable outside `ApplyGeneratedEstimate`; no migrations/build commands are run; TDD and per-task review are mandatory.
+
+Master Task 1: complete (commits 7b62134d..26b2c4be, review clean)
+Plan 1 Task 1: complete (commit 1d627161, review approved; minor: add direct isTerminal semantics coverage before final review)
+Plan 1 Task 2: complete (commits 3fe079a1..03203cbd, review clean)
+Plan 1 Task 3: complete (commits 86dfbe08..c842d988, review clean)
+Plan 1 Task 4: complete (commits d98db6a8..b3d6ceac, review clean)
+Plan 1 Task 5: complete (commits 08d9b1ee..a6273787, review clean after list/detail readiness fixes)
+Plan 1 Task 6: complete (commits a17424be..7f2d1377, review clean after collision, legacy-suite and boundary hardening)
+Plan 1 Task 7: complete (commits 248fbe43..2f52c0f5, review clean after lifecycle, atomicity, thin-controller and legacy-contract hardening)
+Plan 1 Task 8: complete (commits d3619096..ddccca4f, final Plan 1 review clean; 120 DB-less tests / 700 assertions)
+Plan 1: complete at ddccca4f (workflow/RBAC/snapshot/apply/legacy cleanup gates approved)
+Plan 2 Task 1: complete (commits b6de0c6d..12a1f4a5, review clean after deep-immutability and version-contract hardening)
+Plan 2 Task 2: complete (commits 2ffce428..b89785af, review clean after lease/CAS/heartbeat/constraint/concurrency hardening)
+Plan 2 Task 3: complete (commits 8bc35b54..853718b8, review clean after durable unit recovery/source fencing/finalization/Horizon hardening)
+Plan 2 Task 4: complete (commits bdd5b4f9..8063a0b8, review approved after atomic replacement, bounded invalidation, typed transition, privacy, PostgreSQL immutability/contention and PHP/PG parity hardening; 107 DB-less regression tests / 444 assertions)
+Plan 2 Task 5: complete (commits 8676053c..1785b31c, fifth independent review approved after immutable per-wire usage/cost accounting, unavailable-usage semantics, page attribution, physical-attempt identity, PostgreSQL repository/constraint contracts and claim-safe page reservation hardening; 130 DB-less tests / 480 assertions)
+Plan 2 Task 6: complete (commits 2ec0d336..c906e656, independent review approved after append-only failure events, closed diagnostics/privacy, production runner entrypoint, exact dispatch snapshots, atomic checkpoint claims, strict publication CAS and durable unit recovery; 166 DB-less tests / 996 assertions plus 2 Horizon tests / 40 assertions)
+Plan 2 Task 7: complete (commits 00bda3a6..57813892, independent review approved after real nine-stage resumable pipeline, canonical dependency/input versions, downstream invalidation, bounded S3 artifacts, fair lease-aware recovery, durable finalization outbox, exact physical claims, concurrent aggregate serialization and PostgreSQL immutability/cascade contracts; 214 DB-less tests / 2489 assertions)
+Plan 2 Task 8: complete (commits 2b70864d..3839876d, independent review approved after source-complete operational snapshot, robust conditional ETag, canonical readiness/review parity, exact usage-cost semantics, mutable-source watermarks, constant query budget and race-safe tenant 404; 272 DB-less tests / 2587 assertions)
+Plan 2 Task 9: complete (commits 7110c918..4aa59020, final independent Plan 2 audit approved after legacy/status-path removal, transport-only jobs, migration/queue/S3 production-readiness audit, snapshot SQL/enum fixes, lease-aware paid stages, composite tenant FKs, bounded source readers and exact 23-method PostgreSQL inventory; 686 DB-less tests / 8514 assertions, final audit subset 246 / 5600, whole-module Larastan clean)
+Plan 2: complete at 4aa59020 (backend pipeline, evidence, usage/cost, failures, real nine-stage execution, snapshot API, legacy cleanup and production-readiness gates approved; PostgreSQL opt-in inventory authored but intentionally unrun locally)
+Plan 3 Task 1: complete (commits a6a8c84d..b3a1b369, independent review approved after real current-baseline adapter, killable bounded workers, valid vector/scanned fixtures, closed metrics/schemas, globally disjoint public/private corpora, private S3 preflight, exact source validators and fail-closed path/content safety; 67 unit tests / 238 assertions plus 7 command tests / 21 assertions)
+Plan 3 Task 2: complete (commits d947d6b2..31165154, independent review approved after strict normalized building-model DTOs, mandatory scale blockers, robust polygon geometry, closed PostgreSQL schema, deterministic assembler, immutable tenant/evidence persistence and contention-safe evidence lifecycle; 45 DB-less tests / 662 assertions)
+Plan 3 Task 3: complete (commits 0ff65543..8c6aaf4f, independent review approved after bounded FileService raster preprocessing, native EXIF 1–8, real projective rectification, opaque derivatives, strict versioned vision schema/prompt, page/unit/source provenance, structural animation parsing, streaming Timeweb retry/usage and near-4M resource proof; 48 Vision tests / 175 assertions, combined regression 239 / 1355)
+Plan 3 Task 4: complete (commits e4575e31..6d81373b, fifth independent review approved after real PDFium vector segments/transforms, real DXF/DWG with LibreDWG 0.13.4, strict geometry schema and completeness diagnostics, organization-scoped S3 lifecycle, bounded sandboxed runtime, reproducible licensed production image, legacy PDF compatibility and executable PHP/WSL/bubblewrap gates; 58 tests / 169 assertions, no failures/skips). Final-review minors: make coordinate-budget traversal fail earlier, add direct Linux PHP runner integration, move pinned WSL bubblewrap test package to durable artifact cache.
