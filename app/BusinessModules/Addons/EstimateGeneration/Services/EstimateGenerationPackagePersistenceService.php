@@ -148,17 +148,27 @@ class EstimateGenerationPackagePersistenceService
             BigDecimal::zero(),
         )->toScale(2, RoundingMode::HalfUp);
         $quality = is_array($package->quality_summary) ? $package->quality_summary : [];
+        $criticalFlags = array_values(array_filter(
+            (array) ($quality['critical_flags'] ?? []),
+            static fn (mixed $flag): bool => $flag !== 'missing_price_snapshot',
+        ));
         if ($unfinalized) {
-            $quality['level'] = 'blocked';
-            $quality['critical_flags'] = array_values(array_unique([...(array) ($quality['critical_flags'] ?? []), 'missing_price_snapshot']));
+            $criticalFlags[] = 'missing_price_snapshot';
         }
+        $quality['critical_flags'] = array_values(array_unique($criticalFlags));
+        $quality['level'] = $unfinalized
+            ? 'blocked'
+            : ($quality['critical_flags'] === [] ? 'passed' : 'review_required');
         $totals = is_array($package->totals) ? $package->totals : [];
         $totals['total_cost'] = (string) $total;
         $totals['priced_items_count'] = $priced->count();
+        $totals['total_items_count'] = $latest->count();
+        $totals['items_count'] = $latest->count();
         $package->forceFill([
-            'status' => $unfinalized ? 'blocked' : $package->status,
+            'status' => $this->packageStatus($quality),
             'generation_progress' => $unfinalized ? 99 : 100,
             'finished_at' => $unfinalized ? null : now(),
+            'actual_items_count' => $latest->count(),
             'quality_summary' => $quality,
             'totals' => $totals,
         ])->save();
