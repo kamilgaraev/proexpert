@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelAss
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\GeometryBuildingModelInputMapper;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\GeometryConfirmationData;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedPortRequestHasher;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedNormativeContentDecision;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateDecisionContextData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateSetData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeRerankResultData;
@@ -38,16 +39,14 @@ final class CapturingReranker implements NormativeCandidateRerankerInterface
  public NormativeCandidateDecisionContextData $context;
  public NormativeCandidateSetData $set;
  public array $payload=[];
- public function __construct(private readonly array $recordedDecision) {}
+ public function __construct(private readonly RecordedNormativeContentDecision $recordedDecision) {}
  public function rerank(WorkIntentData $workItem,NormativeCandidateDecisionContextData $context,NormativeCandidateSetData $candidateSet):NormativeRerankResultData
  {
   $this->intent=$workItem;$this->context=$context;$this->set=$candidateSet;
   $ids=array_map(static fn($candidate):string=>$candidate->id,$candidateSet->candidates);
-  $selected=(string)($this->recordedDecision['selected_candidate_id']??'');
-  $ordering=$this->recordedDecision['ordering']??[];
-  if(!in_array($selected,$ids,true)||array_diff($ordering,$ids)!==[]||array_diff($ids,$ordering)!==[]){throw new RuntimeException('recorded reranker decision does not match candidate set');}
-  $evidence=array_values(array_unique([...$workItem->sourceEvidence,...($this->recordedDecision['evidence_refs']??[])]));
-  $this->payload=[...$this->recordedDecision,'evidence_refs'=>$evidence,'schema_version'=>'normative-rerank-v1'];
+  $resolved=$this->recordedDecision->resolve($candidateSet);
+  $evidence=array_values(array_unique([...$workItem->sourceEvidence,...$resolved['evidence_refs']]));
+  $this->payload=[...$resolved,'evidence_refs'=>$evidence];
   return NormativeRerankResultData::fromProviderArray($this->payload,$ids,$evidence,'capture');
  }
 }
@@ -148,7 +147,7 @@ foreach ($specs as [$slug, $type, $filename, $source, $port, $intent]) {
  $candidateIds = array_column($catalog['candidates'],'candidate_id');
  $catalogRef = "catalogs/$slug.json";
  writeJson("$root/$catalogRef", $catalog);
- if (getenv('BUILD_PRODUCTION_REPLAY_DOWNSTREAM') === '1' && $intent !== 'freehand') {
+ if (getenv('BUILD_PRODUCTION_REPLAY_GEOMETRY_ONLY') !== '1' && $intent !== 'freehand') {
   [$model, $quantities, $evidence] = productionGeometry($payload, $port, $confirmationPayload);
   $quantity = $quantities->get($caseSpec['quantity_key']) ?? throw new RuntimeException(
    $caseSpec['quantity_key'].' missing; available: '.implode(', ', array_column($quantities->toArray()['quantities'], 'key'))
@@ -168,7 +167,7 @@ foreach ($specs as [$slug, $type, $filename, $source, $port, $intent]) {
   $recordingDescriptors[]=['case_id'=>$id,'port'=>RecordedPort::WorkPlanningModel->value,'locator'=>$plannerRecording,
    'sha256'=>hash_file('sha256',"$root/$plannerRecording")];
 
-  $capture = new CapturingReranker($caseSpec['reranker_decision']);
+  $capture = new CapturingReranker(RecordedNormativeContentDecision::fromArray($caseSpec['reranker_decision']));
   $retrieval = new NormativeRetrievalService(
    new RecordedCatalogNormativeCandidateSource(RecordedBenchmarkCatalogData::fromArray($catalog)), new NormativeHardGate, 16, null);
   $workflow = new NormativeMatchingWorkflow($retrieval, $capture);
@@ -225,6 +224,11 @@ refreshBaselineCatalog($root, $builder, [
  'selected_name'=>'Устройство бетонного покрытия пола из смеси B25','other_name'=>'Устройство бетонного покрытия пола из смеси B30',
  'selected_resource_name'=>'Смесь бетонная B25','other_resource_name'=>'Смесь бетонная B30',
  'selected_evidence'=>'catalog:vector:cast-b25','other_evidence'=>'catalog:vector:cast-b30',
+ 'price_snapshots'=>[
+  11101=>['source_dataset'=>'fgiscs-77-concrete','source_version'=>'2026.07-r11','snapshot_ref'=>'price:baseline:vector-b25','snapshot_sha256'=>'07877ca1dafc618f5046786d166ad2c756d709ab912a13a03a5fe7b94fbfe06b','reviewer_ref'=>'review:price:baseline:vector-b25','approved_at'=>'2026-07-12T07:10:00Z'],
+  11102=>['source_dataset'=>'fgiscs-77-concrete','source_version'=>'2026.07-r12','snapshot_ref'=>'price:baseline:vector-b30','snapshot_sha256'=>'a2276f397f4f8713356dca4dc88c41b804cae0ce842b2b3bcc1a71b3ae7994c2','reviewer_ref'=>'review:price:baseline:vector-b30','approved_at'=>'2026-07-12T07:20:00Z']],
+ 'price_id_map'=>[11101=>704813,11102=>965207],
+ 'decision'=>decision(1101,'fsnb-2026.1-vector','11-01-001-01',['7414689a55207224811735063bf1480b06eafe0a807668c52ed0ea81f8dc73cd','1b680dfaf009974aa6335af3a05790495a5a3a788efbc6b5f0d408d6aeb9e774'],'catalog:vector:cast-b25'),
 ]);
 refreshBaselineCatalog($root, $builder, [
  'case_id'=>'reg-replay-vision-sketch-001','slug'=>'vision','geometry'=>'vision-geometry.json','planner'=>'vision-planner.json',
@@ -233,6 +237,11 @@ refreshBaselineCatalog($root, $builder, [
  'selected_name'=>'Устройство бетонного покрытия пола из смеси B25','other_name'=>'Устройство фибробетонного покрытия пола',
  'selected_resource_name'=>'Смесь бетонная B25','other_resource_name'=>'Смесь фибробетонная',
  'selected_evidence'=>'catalog:vision:cast-b25','other_evidence'=>'catalog:vision:cast-fiber',
+ 'price_snapshots'=>[
+  11201=>['source_dataset'=>'fgiscs-77-concrete','source_version'=>'2026.07-r13','snapshot_ref'=>'price:baseline:vision-b25','snapshot_sha256'=>'ad12ef1f1ac13d9c8e4d46f49ddda57146238f98078eb4748ec21ab5ec59d711','reviewer_ref'=>'review:price:baseline:vision-b25','approved_at'=>'2026-07-12T07:30:00Z'],
+  11202=>['source_dataset'=>'fgiscs-77-concrete','source_version'=>'2026.07-r14','snapshot_ref'=>'price:baseline:vision-fiber','snapshot_sha256'=>'9613ddd870fb7046e199315f93e6cf1d8640de461675c38c73dbd7e3dc6272b8','reviewer_ref'=>'review:price:baseline:vision-fiber','approved_at'=>'2026-07-12T07:40:00Z']],
+ 'price_id_map'=>[11201=>438571,11202=>892643],
+ 'decision'=>decision(1102,'fsnb-2026.1-vision','11-02-001-01',['cf8bb01ba48bf05fbbdcdf3321d84f378272de8df19b847cb069142eca370574','22626fe66eb72ca95a342f23f4ee81455fb129dd2b2ea7f037051688772e805c'],'catalog:vision:cast-b25'),
 ]);
 $recordingManifest=json_decode((string)file_get_contents("$root/recordings/manifest.json"),true,32,JSON_THROW_ON_ERROR);
 $recordingManifest['fixtures']=array_map(static function(array $row)use($root):array{
@@ -256,9 +265,14 @@ function refreshBaselineCatalog(string $root, RecordedFixtureCaptureBuilder $bui
  foreach($catalog['resources'] as &$resource){
  if($resource['candidate_id']===$spec['selected'])$resource['name']=$spec['selected_name'];
  if($resource['candidate_id']===$spec['other'])$resource['name']=$spec['other_name'];
+  $oldPriceId=$resource['resources']['materials'][0]['price_id'];
+  $sourcePriceId=array_search($oldPriceId,$spec['price_id_map'],true);$sourcePriceId=$sourcePriceId===false?$oldPriceId:$sourcePriceId;
+  $resource['resources']['materials'][0]['price_id']=$spec['price_id_map'][$sourcePriceId]??$oldPriceId;
+  $resource['resources']['materials'][0]['linked_resource_id']=$resource['resources']['materials'][0]['price_id'];
   $resource['resources']['materials'][0]['name']=$resource['candidate_id']===$spec['selected']
    ?$spec['selected_resource_name']:$spec['other_resource_name'];
  }unset($resource);
+ foreach($catalog['prices'] as &$price){$oldPriceId=$price['id'];$sourcePriceId=array_search($oldPriceId,$spec['price_id_map'],true);$sourcePriceId=$sourcePriceId===false?$oldPriceId:$sourcePriceId;$price=[...$price,...$spec['price_snapshots'][$sourcePriceId]];$price['id']=$spec['price_id_map'][$sourcePriceId]??$oldPriceId;}unset($price);
  writeJson($catalogPath,$catalog);
 
  $geometry=json_decode((string)file_get_contents("$root/recordings/{$spec['geometry']}"),true,64,JSON_THROW_ON_ERROR);
@@ -280,9 +294,8 @@ function refreshBaselineCatalog(string $root, RecordedFixtureCaptureBuilder $bui
  if(count($set->candidates)!==2)throw new RuntimeException('baseline candidate set invalid');
  $rerankerPath="$root/recordings/{$spec['reranker']}";
  $reranker=json_decode((string)file_get_contents($rerankerPath),true,64,JSON_THROW_ON_ERROR);
- $reranker['payload']['selected_candidate_id']=$spec['selected'];
- $reranker['payload']['ordering']=[$spec['selected'],$spec['other']];
- $reranker['payload']['evidence_refs']=array_values(array_unique([...$refs,$spec['selected_evidence']]));
+ $resolved=RecordedNormativeContentDecision::fromArray($spec['decision'])->resolve($set);
+ $reranker['payload']=[...$resolved,'evidence_refs'=>array_values(array_unique([...$refs,...$resolved['evidence_refs']]))];
  $dependency=$builder->rerankerDependency($intent,$decision,$set);
  $payload=$reranker['payload'];
  unset($reranker['input_dependency_sha256'],$reranker['payload'],$reranker['payload_sha256']);
@@ -377,51 +390,105 @@ function authoredCaseSpec(string $slug): array
 {
  $specs = [
   'vector-pdf-001'=>['dataset_id'=>1200,'version'=>'fsnb-2026.1-ceilings','work_key'=>'suspended-ceiling','work_name'=>'Монтаж подвесного потолка по бетонному перекрытию','quantity_key'=>'ceiling_area','unit'=>'m2','scope_type'=>'finishing','section_key'=>'ceilings','section_title'=>'Подвесные потолки','section'=>'15','candidates'=>[
-   ['ceiling-gypsum-frame','12001','15-01-047-01','Устройство подвесного потолка из гипсокартонных листов по металлическому каркасу','concrete','ceiling_finishing','ceiling',0.96,0.98,'120001','01.6.01.01-1010','Листы гипсокартонные потолочные','m2','1.10','486.3700'],
-   ['ceiling-mineral-grid','12002','15-01-050-02','Устройство подвесного потолка из минераловолокнистых плит','concrete','ceiling_finishing','ceiling',0.82,0.84,'120002','01.6.04.03-1020','Плиты минераловолокнистые потолочные','m2','1.05','593.8400'],
-   ['ceiling-metal-cassette','12003','15-01-052-03','Устройство кассетного потолка из алюминиевых панелей','concrete','ceiling_finishing','ceiling',0.71,0.76,'120003','01.7.08.06-1040','Панели потолочные алюминиевые','m2','1.03','4175.2600']],'selected_candidate_id'=>'ceiling-gypsum-frame','recorded_ordering'=>['ceiling-gypsum-frame','ceiling-mineral-grid','ceiling-metal-cassette']],
+   ['ceiling-gypsum-frame','12001','15-01-047-01','Устройство подвесного потолка из гипсокартонных листов по металлическому каркасу','concrete','ceiling_finishing','finishing',0.96,0.98,'781403','01.6.01.01-1010','Листы гипсокартонные потолочные','m2','1.10','486.3700'],
+   ['ceiling-mineral-grid','12002','15-01-050-02','Устройство подвесного потолка из минераловолокнистых плит','concrete','ceiling_finishing','finishing',0.82,0.84,'926117','01.6.04.03-1020','Плиты минераловолокнистые потолочные','m2','1.05','593.8400'],
+   ['ceiling-metal-cassette','12003','15-01-052-03','Устройство кассетного потолка из алюминиевых панелей','concrete','ceiling_finishing','finishing',0.71,0.76,'543809','01.7.08.06-1040','Панели потолочные алюминиевые','m2','1.03','4175.2600']]],
   'scanned-pdf-001'=>['dataset_id'=>1201,'version'=>'fsnb-2026.1-floor-tiling','work_key'=>'ceramic-floor-tiling','work_name'=>'Облицовка бетонного пола керамической плиткой','quantity_key'=>'floor_area','unit'=>'m2','scope_type'=>'finishing','section_key'=>'floor-tiling','section_title'=>'Облицовка полов','section'=>'15','candidates'=>[
-   ['tile-porcelain-rectified','12011','15-01-045-03','Облицовка полов керамогранитными плитами на клее','concrete','tiling','finishing',0.81,0.86,'120101','01.7.06.03-2010','Плиты керамогранитные ректифицированные','m2','1.04','4382.9100'],
-   ['tile-ceramic-glazed','12012','15-01-045-01','Облицовка полов керамическими глазурованными плитками','concrete','tiling','finishing',0.97,0.98,'120102','01.7.06.01-2020','Плитка керамическая для пола','m2','1.03','12984.7300'],
-   ['tile-clinker-floor','12013','15-01-046-02','Облицовка полов клинкерными плитками','concrete','tiling','finishing',0.78,0.82,'120103','01.7.06.04-2030','Плитка клинкерная напольная','m2','1.05','5126.4800']],'selected_candidate_id'=>'tile-ceramic-glazed','recorded_ordering'=>['tile-ceramic-glazed','tile-clinker-floor','tile-porcelain-rectified']],
+   ['tile-porcelain-rectified','12011','15-01-045-03','Облицовка полов керамогранитными плитами на клее','concrete','tiling','finishing',0.81,0.86,'835271','01.7.06.03-2010','Плиты керамогранитные ректифицированные','m2','1.04','4382.9100'],
+   ['tile-ceramic-glazed','12012','15-01-045-01','Облицовка полов керамическими глазурованными плитками','concrete','tiling','finishing',0.97,0.98,'497603','01.7.06.01-2020','Плитка керамическая для пола','m2','1.03','12984.7300'],
+   ['tile-clinker-floor','12013','15-01-046-02','Облицовка полов клинкерными плитками','concrete','tiling','finishing',0.78,0.82,'918457','01.7.06.04-2030','Плитка клинкерная напольная','m2','1.05','5126.4800']]],
   'dwg-layout-001'=>['dataset_id'=>1202,'version'=>'fsnb-2026.1-floors','work_key'=>'concrete-floor','work_name'=>'Устройство бетонного пола толщиной 100 мм','quantity_key'=>'floor_area','unit'=>'m2','scope_type'=>'floors','section_key'=>'concrete-floor','section_title'=>'Бетонные полы','section'=>'11','candidates'=>[
-   ['floor-cement-screed','12021','11-01-011-01','Устройство цементно-песчаной стяжки','cement_mortar','screed','floor',0.83,0.86,'120201','01.7.03.04-3010','Раствор цементно-песчаный','m3','0.050','3894.6600'],
-   ['floor-dry-screed','12022','11-01-018-02','Устройство сухой сборной стяжки пола','gypsum_fiber','dry_screed','floor',0.69,0.74,'120202','01.6.01.02-3020','Элементы пола гипсоволокнистые','m2','1.05','731.2900'],
-   ['floor-concrete-b25','12023','11-01-002-04','Устройство бетонных полов из смеси B25','concrete','concrete_floor','floor',0.98,0.99,'120203','01.7.03.02-3030','Смесь бетонная B25','m3','0.102','5687.4200']],'selected_candidate_id'=>'floor-concrete-b25','recorded_ordering'=>['floor-concrete-b25','floor-dry-screed','floor-cement-screed']],
+   ['floor-cement-screed','12021','11-01-011-01','Устройство цементно-песчаной стяжки','concrete','concrete_floor','floors',0.83,0.86,'684319','01.7.03.04-3010','Раствор цементно-песчаный','m3','0.050','3894.6600'],
+   ['floor-dry-screed','12022','11-01-018-02','Устройство сухой сборной стяжки пола','concrete','concrete_floor','floors',0.69,0.74,'357821','01.6.01.02-3020','Элементы пола гипсоволокнистые','m2','1.05','731.2900'],
+   ['floor-concrete-b25','12023','11-01-002-04','Устройство бетонных полов из смеси B25','concrete','concrete_floor','floors',0.98,0.99,'809143','01.7.03.02-3030','Смесь бетонная B25','m3','0.102','5687.4200']]],
   'dimensioned-raster-001'=>['dataset_id'=>1203,'version'=>'fsnb-2026.1-screeds','work_key'=>'leveling-screed','work_name'=>'Устройство выравнивающей цементной стяжки из бетона B25','quantity_key'=>'floor_area','unit'=>'m2','scope_type'=>'floors','section_key'=>'screed','section_title'=>'Стяжки пола','section'=>'11','candidates'=>[
-   ['screed-cement-40','12031','11-01-011-03','Устройство цементной стяжки толщиной 40 мм','cement_mortar','screed','floor',0.98,0.99,'120301','01.7.03.04-4010','Смесь сухая для стяжки','kg','72.0','9.8700'],
-   ['screed-self-leveling','12032','11-01-019-01','Устройство наливного выравнивающего покрытия','dry_mix','self_leveling','floor',0.84,0.88,'120302','01.7.03.05-4020','Смесь для наливного пола','kg','18.0','31.4600'],
-   ['screed-lightweight','12033','11-01-012-02','Устройство легкой стяжки с пористым заполнителем','lightweight_concrete','lightweight_screed','floor',0.76,0.80,'120303','01.7.03.06-4030','Смесь легкая для стяжки','m3','0.045','6241.3500']],'selected_candidate_id'=>'screed-cement-40','recorded_ordering'=>['screed-cement-40','screed-lightweight','screed-self-leveling']],
+   ['screed-cement-40','12031','11-01-011-03','Устройство цементной стяжки толщиной 40 мм','concrete','concreting','floors',0.98,0.99,'472901','01.7.03.04-4010','Смесь сухая для стяжки','kg','72.0','9.8700'],
+   ['screed-self-leveling','12032','11-01-019-01','Устройство наливного выравнивающего покрытия','concrete','concreting','floors',0.84,0.88,'915683','01.7.03.05-4020','Смесь для наливного пола','kg','18.0','31.4600'],
+   ['screed-lightweight','12033','11-01-012-02','Устройство легкой стяжки с пористым заполнителем','concrete','concreting','floors',0.76,0.80,'638207','01.7.03.06-4030','Смесь легкая для стяжки','m3','0.045','6241.3500']]],
   'engineering-layout-001'=>['dataset_id'=>1205,'version'=>'fsnb-2026.1-pipelines','work_key'=>'riser-pipeline','work_name'=>'Монтаж канализационного стояка 110 мм в бетонной конструкции B25','quantity_key'=>'engineering.sewer.length','unit'=>'m','scope_type'=>'engineering','section_key'=>'sewer-riser','section_title'=>'Внутренняя канализация','section'=>'16','candidates'=>[
-   ['pipe-water-ppr-32','12051','16-02-004-01','Прокладка водопроводных труб PPR диаметром 32 мм','concrete','pipe_layout','engineering',0.73,0.78,'120501','23.1.02.11-5010','Труба PPR 32 мм','m','1.01','184.6200'],
-   ['pipe-sewer-pvc-50','12052','16-04-001-02','Прокладка канализационных труб ПВХ диаметром 50 мм','concrete','pipe_layout','engineering',0.86,0.89,'120502','23.1.02.12-5020','Труба ПВХ 50 мм','m','1.02','219.7400'],
-   ['pipe-sewer-pvc-110','12053','16-04-001-04','Прокладка канализационных стояков ПВХ диаметром 110 мм','concrete','pipe_layout','engineering',0.99,0.99,'120503','23.1.02.12-5030','Труба ПВХ 110 мм','m','1.02','468.9300']],'selected_candidate_id'=>'pipe-sewer-pvc-110','recorded_ordering'=>['pipe-sewer-pvc-110','pipe-sewer-pvc-50','pipe-water-ppr-32']],
+   ['pipe-water-ppr-32','12051','16-02-004-01','Прокладка водопроводных труб PPR диаметром 32 мм','concrete','pipe_layout','engineering',0.73,0.78,'827369','23.1.02.11-5010','Труба PPR 32 мм','m','1.01','184.6200'],
+   ['pipe-sewer-pvc-50','12052','16-04-001-02','Прокладка канализационных труб ПВХ диаметром 50 мм','concrete','pipe_layout','engineering',0.86,0.89,'394817','23.1.02.12-5020','Труба ПВХ 50 мм','m','1.02','219.7400'],
+   ['pipe-sewer-pvc-110','12053','16-04-001-04','Прокладка канализационных стояков ПВХ диаметром 110 мм','concrete','pipe_layout','engineering',0.99,0.99,'961253','23.1.02.12-5030','Труба ПВХ 110 мм','m','1.02','468.9300']]],
   'freehand-review-001'=>['dataset_id'=>1204,'version'=>'fsnb-2026.1-review-only','work_key'=>'review-only','work_name'=>'Требуется уточнение размеров эскиза','quantity_key'=>'floor_area','unit'=>'m2','scope_type'=>'review','section_key'=>'review','section_title'=>'Проверка исходных данных','section'=>'00','candidates'=>[
-   ['review-measurements','12041','00-00-001-01','Проверка размеров по исходному эскизу','survey','document_review','review',0.62,0.65,'120401','91.01.01-6010','Работа специалиста по проверке','h','1.0','1247.3800'],
-   ['review-site-survey','12042','00-00-002-01','Инструментальное обследование помещения','survey','site_survey','review',0.58,0.61,'120402','91.01.02-6020','Работа инженера-обследователя','h','1.0','1689.5400']],'selected_candidate_id'=>'review-measurements','recorded_ordering'=>['review-measurements','review-site-survey']],
+   ['review-measurements','12041','00-00-001-01','Проверка размеров по исходному эскизу','survey','document_review','review',0.62,0.65,'753109','91.01.01-6010','Работа специалиста по проверке','h','1.0','1247.3800'],
+   ['review-site-survey','12042','00-00-002-01','Инструментальное обследование помещения','survey','site_survey','review',0.58,0.61,'486731','91.01.02-6020','Работа инженера-обследователя','h','1.0','1689.5400']]],
  ];
  $spec=$specs[$slug]??throw new RuntimeException('authored case spec missing');
- $ids=array_column($spec['candidates'],0);$selected=$spec['selected_candidate_id'];
- $selectedRow=array_values(array_filter($spec['candidates'],static fn(array $candidate):bool=>$candidate[0]===$selected))[0]
-  ?? throw new RuntimeException('selected candidate missing');
- $spec['scope_type']='finishing';
- $spec['section_key']='finishing';
- $spec['gate']=[$selectedRow[4],$selectedRow[5],$selectedRow[6],$spec['section'],$selectedRow[6]];
- $spec['work_intent']=['material'=>$selectedRow[4],'action'=>$selectedRow[5],'scope'=>$selectedRow[6],'object'=>$selectedRow[6],
-  'dimensions'=>[$spec['unit']==='m2'?'area':'length'],'preferred_section_prefixes'=>[$spec['section']]];
- $evidence="catalog:".str_replace('fsnb-2026.1-','',$spec['version']).":$selected";
- $spec['reranker_decision']=['selected_candidate_id'=>$selected,'ordering'=>$spec['recorded_ordering'],'explanation_codes'=>['unit_match','material_match','technology_match'],'evidence_refs'=>[$evidence],'confidence'=>0.97];
+ $spec['work_intent']=match($slug){
+  'vector-pdf-001'=>['material'=>'concrete','action'=>'ceiling_finishing','scope'=>'finishing','object'=>'ceiling','dimensions'=>['area'],'preferred_section_prefixes'=>['15']],
+  'scanned-pdf-001'=>['material'=>'concrete','action'=>'tiling','scope'=>'finishing','object'=>'finishing','dimensions'=>['area'],'preferred_section_prefixes'=>['15']],
+  'dwg-layout-001'=>['material'=>'concrete','action'=>'concrete_floor','scope'=>'floors','object'=>'floor','dimensions'=>['area'],'preferred_section_prefixes'=>['11']],
+  'dimensioned-raster-001'=>['material'=>'concrete','action'=>'concreting','scope'=>'floors','object'=>'floor','dimensions'=>['area'],'preferred_section_prefixes'=>['11']],
+  'engineering-layout-001'=>['material'=>'concrete','action'=>'pipe_layout','scope'=>'engineering','object'=>'engineering','dimensions'=>['length'],'preferred_section_prefixes'=>['16']],
+  default=>['material'=>'survey','action'=>'document_review','scope'=>'review','object'=>'review','dimensions'=>['area'],'preferred_section_prefixes'=>['00']],
+ };
+ $spec['reranker_decision']=recordedDecision($slug);
  return $spec;
+}
+
+function recordedDecision(string $slug): array
+{
+ return match($slug){
+  'vector-pdf-001'=>decision(1200,'fsnb-2026.1-ceilings','15-01-047-01',['6321fbb940fe68a4c78c1033a746cc806599fe7b02ff2f86264f501bbeb8b0b6','52ceb69cf31fbc39c12e0e5aa635f33334018e962d56191a8a0bffea3ddcf5f5','7013411c99bd544aa2e7077b4b6c984bf2bd272c4ec23d67c15f2f3ce66cdedd'],'normative-content:15-01-047-01'),
+  'scanned-pdf-001'=>decision(1201,'fsnb-2026.1-floor-tiling','15-01-045-01',['7186e01e58a653874d74c84396823f3926db0fb30aab42bcb50d39bff680b2d9','e35e2fc6c95476adc5faa4b2720a43e1ea5b6986dc255275c0d8f8bdf69d4d9a','1aa16773f8ca96123bc3de4bb30e21e0fcff2e9422296321e6b2c32c23216135'],'normative-content:15-01-045-01'),
+  'dwg-layout-001'=>decision(1202,'fsnb-2026.1-floors','11-01-002-04',['3e14c1d9ba41466f42088f675571d37102c7673d32539c6fd49f853022b7da56','16964a8e9592b790b3b441ef153e701b0ca5ba890b1bbfe4214e4af281801cca','f30de51f73eb1f290a38a22c44b4c3e7dceeea470e6083aeaba783791046614f'],'normative-content:11-01-002-04'),
+  'dimensioned-raster-001'=>decision(1203,'fsnb-2026.1-screeds','11-01-011-03',['15e2a00a000696a41fcff43726658f40b7e7baf89e2cfeab66d5cd8349038490','254b09c2536fa5e30569f7bd167ca783f96732ee4837b0ae6a4a52e6a276d069','00c725f2660bce37a2a89cce87df4c70799a2d53694b1107d9aafdcacadb8f3b'],'normative-content:11-01-011-03'),
+  'engineering-layout-001'=>decision(1205,'fsnb-2026.1-pipelines','16-04-001-04',['16e38a5e58e5e6d34c2fb28edd56836464858a2777ba6fae8271f3cec4674eb8','428248125b1ccbe59886d6049d9671b7cb508705ecb64bc5ca072c03b2da2c01','b92e4057ef96d90aaa1f6c94f7417d68724713e71e421ca940ac9d47d4ca8d47'],'normative-content:16-04-001-04'),
+  default=>decision(1204,'fsnb-2026.1-review-only','00-00-001-01',['639c068c282e17db925063d6c58f1304e3e9913cfe235b80d9f1e6c84ac03d71','ff4f020140405075bae5267f0b134626552e6fe7f02bf4952d7a0476aab7c0a0'],'normative-content:00-00-001-01'),
+ };
+}
+
+function decision(int $datasetId,string $version,string $code,array $hashes,string $evidence): array
+{
+ return ['dataset_id'=>$datasetId,'dataset_version'=>$version,'code'=>$code,'selected_content_sha256'=>$hashes[0],
+  'ordering_content_sha256'=>$hashes,'explanation_codes'=>['unit_match','material_match','technology_match'],
+  'evidence_refs'=>[$evidence],'confidence'=>0.97];
 }
 
 function authoredCatalog(array $spec): array
 {
  $candidates=[];$resources=[];$prices=[];
  foreach($spec['candidates'] as $row){[$id,$norm,$code,$name,$material,$technology,$structure,$lexical,$semantic,$priceId,$resourceCode,$resourceName,$resourceUnit,$resourceQuantity,$price]=$row;
-  $evidence="catalog:".str_replace('fsnb-2026.1-','',$spec['version']).":$id";
-  $candidates[]=['candidate_id'=>$id,'normative_id'=>(int)$norm,'dataset_id'=>$spec['dataset_id'],'dataset_version'=>$spec['version'],'dataset_status'=>'parsed','code'=>$code,'name'=>$name,'unit'=>$spec['unit'],'unit_dimension'=>$spec['unit']==='m2'?'area':'length','material'=>$spec['gate'][0],'technology'=>$spec['gate'][1],'structure'=>$spec['gate'][2],'normative_section'=>$spec['gate'][3],'object_type'=>$spec['gate'][4],'region_code'=>'77','valid_from'=>'2026-01-01','lexical_score'=>$lexical,'semantic_score'=>$semantic,'source_evidence'=>[$evidence]];
-  $resources[]=['candidate_id'=>$id,'normative_id'=>(int)$norm,'dataset_id'=>$spec['dataset_id'],'dataset_version'=>$spec['version'],'dataset_status'=>'parsed','code'=>$code,'name'=>$name,'unit'=>$spec['unit'],'collection'=>['code'=>'ГЭСН','name'=>'ГЭСН','norm_type'=>'gesn_building'],'section'=>['code'=>$spec['section'],'name'=>$spec['section_title']],'work_composition'=>[$spec['work_name']],'resources'=>['materials'=>[['price_id'=>(int)$priceId,'code'=>$resourceCode,'name'=>$resourceName,'unit'=>$resourceUnit,'quantity'=>$resourceQuantity,'linked_resource_id'=>(int)$priceId+900000,'price_source'=>'recorded-regional-snapshot','unit_price'=>'0']],'labor'=>[],'machinery'=>[],'other'=>[]]];
-  $prices[]=['id'=>(int)$priceId,'region_id'=>77,'price_zone_id'=>1,'period_id'=>202607,'regional_price_version_id'=>$spec['dataset_id'],'base_price'=>$price,'source_type'=>'fsbc','currency'=>'RUB','snapshot_provenance'=>'approved:fgiscs-regional-capture-2026-07','snapshot_approval_ref'=>'plan3-task11-price-review'];
+  $evidence="normative-content:$code";
+  $candidateSection=strtok($code,'-');
+  $candidates[]=['candidate_id'=>$id,'normative_id'=>(int)$norm,'dataset_id'=>$spec['dataset_id'],'dataset_version'=>$spec['version'],'dataset_status'=>'parsed','code'=>$code,'name'=>$name,'unit'=>$spec['unit'],'unit_dimension'=>$spec['unit']==='m2'?'area':'length','material'=>$material,'technology'=>$technology,'structure'=>$structure,'normative_section'=>$candidateSection,'object_type'=>candidateObject($code),'region_code'=>'77','valid_from'=>'2026-01-01','lexical_score'=>$lexical,'semantic_score'=>$semantic,'source_evidence'=>[$evidence]];
+  $resources[]=['candidate_id'=>$id,'normative_id'=>(int)$norm,'dataset_id'=>$spec['dataset_id'],'dataset_version'=>$spec['version'],'dataset_status'=>'parsed','code'=>$code,'name'=>$name,'unit'=>$spec['unit'],'collection'=>['code'=>'ГЭСН','name'=>'ГЭСН','norm_type'=>'gesn_building'],'section'=>['code'=>$candidateSection,'name'=>$name],'work_composition'=>[$name],'resources'=>['materials'=>[['price_id'=>(int)$priceId,'code'=>$resourceCode,'name'=>$resourceName,'unit'=>$resourceUnit,'quantity'=>$resourceQuantity,'linked_resource_id'=>(int)$priceId,'price_source'=>'recorded-regional-snapshot','unit_price'=>'0']],'labor'=>[],'machinery'=>[],'other'=>[]]];
+  $prices[]=['id'=>(int)$priceId,'region_id'=>77,'price_zone_id'=>1,'period_id'=>202607,'regional_price_version_id'=>$spec['dataset_id'],'base_price'=>$price,'source_type'=>'fsbc','currency'=>'RUB',...priceSnapshot((int)$priceId)];
  }
  return ['schema_version'=>'recorded-benchmark-catalog:v1','dataset_id'=>$spec['dataset_id'],'dataset_version'=>$spec['version'],'dataset_status'=>'parsed','region_code'=>'77','price_period'=>'2026.07','currency'=>'RUB','candidates'=>$candidates,'resources'=>$resources,'prices'=>$prices,'privacy_scanner'=>'most-fixture-privacy','privacy_scanner_version'=>'1.0.0','approval_kind'=>'maintainer_code_review','approval_ref'=>'plan3-task11-corpus-v2','approved_at'=>'2026-07-12T00:00:00Z'];
+}
+
+function candidateObject(string $code): string
+{
+ return match($code){
+  '15-01-047-01','15-01-050-02','15-01-052-03'=>'ceiling',
+  '11-01-011-01','11-01-018-02','11-01-002-04','11-01-011-03','11-01-019-01','11-01-012-02'=>'floor',
+  '16-02-004-01','16-04-001-02','16-04-001-04'=>'engineering',
+  '00-00-001-01','00-00-002-01'=>'review',
+  default=>'finishing',
+ };
+}
+
+function priceSnapshot(int $priceId): array
+{
+ $snapshots=[
+  781403=>['source_dataset'=>'fgiscs-77-ceilings','source_version'=>'2026.07-r4','snapshot_ref'=>'price:ceilings:gkl-batch-7','snapshot_sha256'=>'2f5dd6dbfcf0b3c06f675dcf0f44a98f6e5d8d113ecf2d6af2c2146c1c0c11bd','reviewer_ref'=>'review:price:ceilings:gkl','approved_at'=>'2026-07-12T08:10:00Z'],
+  926117=>['source_dataset'=>'fgiscs-77-ceilings','source_version'=>'2026.07-r5','snapshot_ref'=>'price:ceilings:mineral-batch-3','snapshot_sha256'=>'9b694f624c69e00f3e08678e40f2377e240900c167c55c2b526de3421fc85021','reviewer_ref'=>'review:price:ceilings:mineral','approved_at'=>'2026-07-12T08:20:00Z'],
+  543809=>['source_dataset'=>'fgiscs-77-metals','source_version'=>'2026.07-r2','snapshot_ref'=>'price:ceilings:cassette-batch-9','snapshot_sha256'=>'7577385f5a74f78fbf1c805fcaa45ef25c4ddd5689adf911573312f6280e47f6','reviewer_ref'=>'review:price:ceilings:cassette','approved_at'=>'2026-07-12T08:30:00Z'],
+  835271=>['source_dataset'=>'fgiscs-77-tiles','source_version'=>'2026.07-r7','snapshot_ref'=>'price:tiles:porcelain-18','snapshot_sha256'=>'5a2ba12f9d9744789b79ebd98ce6eab9b89151db780c42491a36da805d750aac','reviewer_ref'=>'review:price:tiles:porcelain','approved_at'=>'2026-07-12T09:10:00Z'],
+  497603=>['source_dataset'=>'fgiscs-77-tiles','source_version'=>'2026.07-r8','snapshot_ref'=>'price:tiles:ceramic-22','snapshot_sha256'=>'338c1de15d503422398e195c1680e1879b9da96c5b41cd12fa721f42411083f5','reviewer_ref'=>'review:price:tiles:ceramic','approved_at'=>'2026-07-12T09:20:00Z'],
+  918457=>['source_dataset'=>'fgiscs-77-tiles','source_version'=>'2026.07-r3','snapshot_ref'=>'price:tiles:clinker-11','snapshot_sha256'=>'a6e54880de6d57dc46ea61037d9fc5fc773b51485f858dfdf60af81c034d93c1','reviewer_ref'=>'review:price:tiles:clinker','approved_at'=>'2026-07-12T09:30:00Z'],
+  684319=>['source_dataset'=>'fgiscs-77-mortars','source_version'=>'2026.07-r6','snapshot_ref'=>'price:floors:mortar-4','snapshot_sha256'=>'e1e65a045d8db5d6a6a77d1dfa6f66617545360e6e1fb7efcc6011cf0c601413','reviewer_ref'=>'review:price:floors:mortar','approved_at'=>'2026-07-12T10:10:00Z'],
+  357821=>['source_dataset'=>'fgiscs-77-dry-floor','source_version'=>'2026.07-r2','snapshot_ref'=>'price:floors:dry-6','snapshot_sha256'=>'aa55e4d53472e504ab04cfeca63ca3774392dbe45420b169e3f245c6fd371b9e','reviewer_ref'=>'review:price:floors:dry','approved_at'=>'2026-07-12T10:20:00Z'],
+  809143=>['source_dataset'=>'fgiscs-77-concrete','source_version'=>'2026.07-r9','snapshot_ref'=>'price:floors:b25-31','snapshot_sha256'=>'34c092d94765d9c2291de92ad69b6c97924cc06d40a0cce4bde7a131cc68ae12','reviewer_ref'=>'review:price:floors:b25','approved_at'=>'2026-07-12T10:30:00Z'],
+  472901=>['source_dataset'=>'fgiscs-77-screeds','source_version'=>'2026.07-r1','snapshot_ref'=>'price:screed:cement-14','snapshot_sha256'=>'73b0b541cf717ad42d672d09cf88d5c5d1c3f528d49d810d4352742ecc3bda29','reviewer_ref'=>'review:price:screed:cement','approved_at'=>'2026-07-12T11:10:00Z'],
+  915683=>['source_dataset'=>'fgiscs-77-screeds','source_version'=>'2026.07-r4','snapshot_ref'=>'price:screed:self-level-8','snapshot_sha256'=>'518bff4bd05026f65605d01415009228db0d2f99478ec9e4e99a38e4e97eec61','reviewer_ref'=>'review:price:screed:self-level','approved_at'=>'2026-07-12T11:20:00Z'],
+  638207=>['source_dataset'=>'fgiscs-77-screeds','source_version'=>'2026.07-r5','snapshot_ref'=>'price:screed:light-12','snapshot_sha256'=>'8dc7cd2344eef6f08f001d5503bda250d5e0967f9fddf84751d50dc819eb6b37','reviewer_ref'=>'review:price:screed:light','approved_at'=>'2026-07-12T11:30:00Z'],
+  753109=>['source_dataset'=>'most-survey-rates','source_version'=>'2026.07-r2','snapshot_ref'=>'price:survey:desk-5','snapshot_sha256'=>'26a85a11a6e1c82ff3e704fc3daf5e4dde594384c2cb2ecc68fa074f4ccf9fc0','reviewer_ref'=>'review:price:survey:desk','approved_at'=>'2026-07-12T12:10:00Z'],
+  486731=>['source_dataset'=>'most-survey-rates','source_version'=>'2026.07-r3','snapshot_ref'=>'price:survey:site-7','snapshot_sha256'=>'4d849e8577615cdcc482e281c43024e87e537866599abceae77f3443a13af80d','reviewer_ref'=>'review:price:survey:site','approved_at'=>'2026-07-12T12:20:00Z'],
+  827369=>['source_dataset'=>'fgiscs-77-pipes','source_version'=>'2026.07-r4','snapshot_ref'=>'price:pipes:ppr32-16','snapshot_sha256'=>'69473ced7c371b792d328d3e3617c440503c5978273e1bc3c663db69768f55a8','reviewer_ref'=>'review:price:pipes:ppr32','approved_at'=>'2026-07-12T13:10:00Z'],
+  394817=>['source_dataset'=>'fgiscs-77-pipes','source_version'=>'2026.07-r6','snapshot_ref'=>'price:pipes:pvc50-19','snapshot_sha256'=>'a162203d84cdd9609187067e66fd68d8fe2c354819422b307c52ff7ef3baa05b','reviewer_ref'=>'review:price:pipes:pvc50','approved_at'=>'2026-07-12T13:20:00Z'],
+  961253=>['source_dataset'=>'fgiscs-77-pipes','source_version'=>'2026.07-r8','snapshot_ref'=>'price:pipes:pvc110-21','snapshot_sha256'=>'d1300989b40f257f0f8625069980b7655d70fe82ed18ef09af78e760ca96d7b1','reviewer_ref'=>'review:price:pipes:pvc110','approved_at'=>'2026-07-12T13:30:00Z'],
+ ];
+ return $snapshots[$priceId]??throw new RuntimeException('price snapshot missing');
 }

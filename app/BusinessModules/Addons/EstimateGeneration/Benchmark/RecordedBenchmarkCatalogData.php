@@ -39,6 +39,7 @@ final readonly class RecordedBenchmarkCatalogData
             || ! self::token($data['region_code'], 32) || ! self::token($data['price_period'], 32)
             || ! is_string($data['currency']) || preg_match('/^[A-Z]{3}$/D', $data['currency']) !== 1
             || ! self::records($data['candidates']) || ! self::records($data['resources']) || ! self::records($data['prices'])
+            || ! self::prices($data['prices'], $data['resources'])
             || $data['privacy_scanner'] !== 'most-fixture-privacy'
             || ! self::token($data['privacy_scanner_version'], 32)
             || $data['approval_kind'] !== 'maintainer_code_review'
@@ -76,6 +77,43 @@ final readonly class RecordedBenchmarkCatalogData
     {
         return is_array($records) && array_is_list($records) && $records !== [] && count($records) <= 2048
             && array_filter($records, static fn (mixed $record): bool => ! is_array($record) || array_is_list($record)) === [];
+    }
+
+    private static function prices(array $prices, array $resources): bool
+    {
+        $keys = ['id', 'region_id', 'price_zone_id', 'period_id', 'regional_price_version_id', 'base_price',
+            'source_type', 'currency', 'source_dataset', 'source_version', 'snapshot_ref', 'snapshot_sha256',
+            'reviewer_ref', 'approved_at'];
+        $ids = $hashes = $refs = [];
+        foreach ($prices as $price) {
+            try {
+                self::exactKeys($price, $keys);
+            } catch (InvalidArgumentException) {
+                throw new InvalidArgumentException('recorded_catalog_price_invalid');
+            }
+            if (! is_int($price['id']) || $price['id'] <= 0 || isset($ids[$price['id']])
+                || ! is_string($price['base_price']) || preg_match('/^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,6})?$/D', $price['base_price']) !== 1
+                || ! self::token($price['source_dataset'], 128) || ! self::token($price['source_version'], 96)
+                || ! self::token($price['snapshot_ref'], 160) || isset($refs[$price['snapshot_ref']])
+                || ! is_string($price['snapshot_sha256']) || preg_match('/^[a-f0-9]{64}$/D', $price['snapshot_sha256']) !== 1
+                || isset($hashes[$price['snapshot_sha256']]) || ! self::token($price['reviewer_ref'], 160)
+                || DateTimeImmutable::createFromFormat('!Y-m-d\TH:i:s\Z', $price['approved_at']) === false) {
+                throw new InvalidArgumentException('recorded_catalog_price_invalid');
+            }
+            $ids[$price['id']] = true; $hashes[$price['snapshot_sha256']] = true; $refs[$price['snapshot_ref']] = true;
+        }
+        $resourcePriceIds = [];
+        foreach ($resources as $resource) {
+            foreach (($resource['resources']['materials'] ?? []) as $material) {
+                $resourcePriceIds[] = $material['price_id'] ?? null;
+            }
+        }
+        sort($resourcePriceIds); $priceIds = array_keys($ids); sort($priceIds);
+        if ($resourcePriceIds !== $priceIds) {
+            throw new InvalidArgumentException('recorded_catalog_price_invalid');
+        }
+
+        return true;
     }
 
     private static function token(mixed $value, int $max): bool

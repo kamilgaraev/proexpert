@@ -35,6 +35,18 @@ final class RecordedBenchmarkCatalogDataTest extends TestCase
         RecordedBenchmarkCatalogData::fromArray($payload);
     }
 
+    #[Test]
+    public function price_snapshots_require_closed_unique_hash_bound_provenance(): void
+    {
+        $payload = $this->catalog();
+        unset($payload['prices'][0]['snapshot_sha256']);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('recorded_catalog_price_invalid');
+
+        RecordedBenchmarkCatalogData::fromArray($payload);
+    }
+
     private function catalog(): array
     {
         return [
@@ -42,8 +54,15 @@ final class RecordedBenchmarkCatalogDataTest extends TestCase
             'dataset_version' => 'fsnb-2022:benchmark-v1', 'dataset_status' => 'parsed',
             'region_code' => '77.01', 'price_period' => '2026-Q2', 'currency' => 'RUB',
             'candidates' => [['id' => '101', 'normative_id' => 101, 'code' => 'ГЭСН 15-01-001-01', 'name' => 'Штукатурка стен', 'unit' => 'm2', 'unit_dimension' => 'area', 'lexical_score' => 0.91, 'source_evidence' => ['norm:101']]],
-            'resources' => [['normative_id' => 101, 'resource_id' => 501, 'code' => '01.7.03.01', 'name' => 'Рабочий строитель', 'type' => 'labor', 'unit' => 'h', 'quantity' => '0.5']],
-            'prices' => [['resource_id' => 501, 'price_id' => 701, 'unit' => 'h', 'amount' => '500.00', 'source_reference' => 'catalog:price:701']],
+            'resources' => [['candidate_id' => '101', 'normative_id' => 101, 'code' => '15-01-001-01',
+                'name' => 'Штукатурка стен', 'unit' => 'm2', 'resources' => ['materials' => [[
+                    'price_id' => 701, 'code' => '01.7.03.01', 'name' => 'Смесь', 'unit' => 'kg', 'quantity' => '1.0',
+                ]], 'labor' => [], 'machinery' => [], 'other' => []]]],
+            'prices' => [['id' => 701, 'region_id' => 77, 'price_zone_id' => 1, 'period_id' => 202607,
+                'regional_price_version_id' => 11, 'base_price' => '500.00', 'source_type' => 'fsbc', 'currency' => 'RUB',
+                'source_dataset' => 'fgiscs-77-labor', 'source_version' => '2026.07-r1',
+                'snapshot_ref' => 'price:labor:701', 'snapshot_sha256' => str_repeat('a', 64),
+                'reviewer_ref' => 'review:price:labor:701', 'approved_at' => '2026-07-12T10:00:00Z']],
             'privacy_scanner' => 'most-fixture-privacy', 'privacy_scanner_version' => '1.0.0',
             'approval_kind' => 'maintainer_code_review', 'approval_ref' => 'review:task11:catalog',
             'approved_at' => '2026-07-12T10:00:00Z',

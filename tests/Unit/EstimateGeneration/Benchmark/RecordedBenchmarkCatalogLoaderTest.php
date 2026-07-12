@@ -67,8 +67,15 @@ final class RecordedBenchmarkCatalogLoaderTest extends TestCase
             'schema_version' => 'recorded-benchmark-catalog:v1', 'dataset_id' => 41,
             'dataset_version' => 'fsnb-2026.1', 'dataset_status' => 'parsed', 'region_code' => '77',
             'price_period' => '2026-06', 'currency' => 'RUB',
-            'candidates' => [['id' => 'norm-1']], 'resources' => [['id' => 'resource-1']],
-            'prices' => [['id' => 'price-1']], 'privacy_scanner' => 'most-fixture-privacy',
+            'candidates' => [['id' => 'norm-1']],
+            'resources' => [['id' => 'resource-1', 'resources' => ['materials' => [['price_id' => 704813]]]]],
+            'prices' => [[
+                'id' => 704813, 'region_id' => 77, 'price_zone_id' => 3, 'period_id' => 202606,
+                'regional_price_version_id' => 41, 'base_price' => '125.50', 'source_type' => 'reviewed_snapshot',
+                'currency' => 'RUB', 'source_dataset' => 'fsnb-2026.1', 'source_version' => '2026-06',
+                'snapshot_ref' => 'snapshot:catalog-loader:704813', 'snapshot_sha256' => str_repeat('a', 64),
+                'reviewer_ref' => 'review:catalog-loader', 'approved_at' => '2026-07-12T00:00:00Z',
+            ]], 'privacy_scanner' => 'most-fixture-privacy',
             'privacy_scanner_version' => '1.0', 'approval_kind' => 'maintainer_code_review',
             'approval_ref' => 'review:task11', 'approved_at' => '2026-07-12T00:00:00Z',
         ];

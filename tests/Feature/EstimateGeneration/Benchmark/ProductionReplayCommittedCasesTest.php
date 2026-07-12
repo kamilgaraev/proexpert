@@ -71,11 +71,10 @@ final class ProductionReplayCommittedCasesTest extends TestCase
                 self::assertDoesNotMatchRegularExpression('/(?:^|[-_])(alt|primary)(?:$|[-_])/i', $candidate['candidate_id']);
                 self::assertDoesNotMatchRegularExpression('/альтернатив|основн/i', $candidate['name']);
             }
-            if ($catalog['approval_ref'] === 'plan3-task11-corpus-v2') {
-                foreach ($catalog['prices'] as $price) {
-                    self::assertSame('approved:fgiscs-regional-capture-2026-07', $price['snapshot_provenance']);
-                    self::assertSame('plan3-task11-price-review', $price['snapshot_approval_ref']);
-                }
+            foreach ($catalog['prices'] as $price) {
+                self::assertNotEmpty($price['source_dataset']);
+                self::assertNotEmpty($price['source_version']);
+                self::assertNotEmpty($price['reviewer_ref']);
             }
         }
 
@@ -99,10 +98,59 @@ final class ProductionReplayCommittedCasesTest extends TestCase
         sort($selectedPositions);
         self::assertSame([0, 0, 1, 2, 2], $selectedPositions);
 
+        $plannerDomains = [
+            'vector-pdf-001' => ['finishing', 'ceilings'],
+            'scanned-pdf-001' => ['finishing', 'floor-tiling'],
+            'dwg-layout-001' => ['floors', 'concrete-floor'],
+            'dimensioned-raster-001' => ['floors', 'screed'],
+            'engineering-layout-001' => ['engineering', 'sewer-riser'],
+        ];
+        foreach ($plannerDomains as $slug => [$scope, $section]) {
+            $planner = json_decode((string) file_get_contents($root.'/recordings/'.$slug.'-planner.json'), true, 32, JSON_THROW_ON_ERROR)['payload']['sections'][0];
+            self::assertSame($scope, $planner['scope_type'], $slug);
+            self::assertSame($section, $planner['section_key'], $slug);
+            self::assertSame($scope, $planner['work_intents'][0]['category'], $slug);
+        }
+
+        foreach (glob($root.'/catalogs/*-001.json') ?: [] as $catalogPath) {
+            $catalog = json_decode((string) file_get_contents($catalogPath), true, 64, JSON_THROW_ON_ERROR);
+            $resources = array_column($catalog['resources'], null, 'candidate_id');
+            $semanticRows = array_map(static fn (array $candidate): string => json_encode([
+                $candidate['code'], $candidate['name'], $candidate['material'], $candidate['technology'],
+                $candidate['structure'], $candidate['normative_section'], $candidate['object_type'], $candidate['unit'],
+                $resources[$candidate['candidate_id']]['work_composition'],
+                $resources[$candidate['candidate_id']]['resources']['materials'],
+            ], JSON_THROW_ON_ERROR), $catalog['candidates']);
+            self::assertCount(count($semanticRows), array_unique($semanticRows), $catalogPath);
+            foreach ($catalog['prices'] as $price) {
+                self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $price['snapshot_sha256']);
+                self::assertMatchesRegularExpression('/^[a-z0-9][a-z0-9._:-]+$/', $price['snapshot_ref']);
+                self::assertNotSame($catalog['approval_ref'], $price['reviewer_ref']);
+            }
+        }
+
         $builderSource = (string) file_get_contents($root.'/build-production-replay-corpus.php');
         self::assertStringNotContainsString('expected-authoring-plan3-task11.json', $builderSource);
+        self::assertStringNotContainsString('$selectedRow', $builderSource);
+        self::assertStringNotContainsString("['gate']", $builderSource);
+        self::assertStringNotContainsString('+900000', $builderSource);
+        self::assertStringNotContainsString('BUILD_PRODUCTION_REPLAY_DOWNSTREAM', $builderSource);
+        self::assertStringContainsString("getenv('BUILD_PRODUCTION_REPLAY_GEOMETRY_ONLY') !== '1'", $builderSource);
         self::assertDoesNotMatchRegularExpression('/\$spec\s*\[\s*0\s*\]/', $builderSource);
         self::assertDoesNotMatchRegularExpression('/(?:^|[-_])(alt|primary)(?:$|[-_])/i', $builderSource);
+
+        $authoring = json_decode((string) file_get_contents($root.'/expected-authoring-plan3-task11.json'), true, 64, JSON_THROW_ON_ERROR);
+        self::assertFalse($authoring['prediction_output_used']);
+        self::assertCount(8, $authoring['records']);
+        foreach ($authoring['records'] as $record) {
+            self::assertSame($record['source_sha256'], hash_file('sha256', $root.'/'.$record['input_locator']));
+            self::assertSame($record['expected_sha256'], hash_file('sha256', $root.'/'.$record['expected_locator']));
+            self::assertSame($record['catalog_sha256'], hash_file('sha256', $root.'/'.$record['catalog_locator']));
+            $catalog = json_decode((string) file_get_contents($root.'/'.$record['catalog_locator']), true, 64, JSON_THROW_ON_ERROR);
+            self::assertSame($record['snapshot_sha256'], array_column($catalog['prices'], 'snapshot_sha256'));
+            self::assertNotEmpty($record['basis_refs']);
+            self::assertMatchesRegularExpression('/^review:expected:/', $record['reviewer_ref']);
+        }
 
         foreach (['recordings', 'catalogs', 'projections'] as $directory) {
             foreach (glob($root.'/'.$directory.'/*.json') ?: [] as $artifact) {

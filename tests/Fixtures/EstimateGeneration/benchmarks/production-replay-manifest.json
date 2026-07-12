@@ -56,7 +56,7 @@
             "input_locator": "regression/replay-vector-pdf-001/input.pdf",
             "expected_locator": "regression/replay-vector-pdf-001/expected.json",
             "input_sha256": "636dab59684a9a2877abfc665559917a02dbcead3ca4e7e2ebf4fd94856c20c6",
-            "expected_sha256": "8ee09e4ac566757195a5cd108812721b248d687218077fce9142ed252c407f53",
+            "expected_sha256": "0b74d304772d9d3d45ff5a47f94ab06bb5cded1163477d7b386ba619cd725403",
             "license": "CC0-1.0",
             "provenance": "synthetic:most-plan3-task11-corpus-v1",
             "tags": [
@@ -77,7 +77,7 @@
             "input_locator": "regression/replay-scanned-pdf-001/input.pdf",
             "expected_locator": "regression/replay-scanned-pdf-001/expected.json",
             "input_sha256": "0aab758061ce4466b704a78221752eb2a90e2d8bf656633ddbf49c3676290200",
-            "expected_sha256": "352fa7e4ac7c7862f163e270a95817e7e5313b01d5aafd7eb8b550d1f946971b",
+            "expected_sha256": "25808f9a189d72109b24638b7d63455ac1964b8fe7db485a4da0432e5861f183",
             "license": "CC0-1.0",
             "provenance": "synthetic:most-plan3-task11-corpus-v1",
             "tags": [
@@ -98,7 +98,7 @@
             "input_locator": "regression/replay-dwg-layout-001/input.dwg",
             "expected_locator": "regression/replay-dwg-layout-001/expected.json",
             "input_sha256": "948f40e9370bc92f4a382002cb8f8e28dd34e846d2aec026d3a9477a38a5313c",
-            "expected_sha256": "7312db9a5c3a8e6461617854d09e8bf52c787a6634787a6726adb4d181177a81",
+            "expected_sha256": "895a56e564c76f137ee8f0a3efa36b8c77340a8ecdc3d4d0bd7b27d430e129be",
             "license": "CC0-1.0",
             "provenance": "synthetic:most-plan3-task11-corpus-v1",
             "tags": [
@@ -119,7 +119,7 @@
             "input_locator": "regression/replay-dimensioned-raster-001/input.ppm",
             "expected_locator": "regression/replay-dimensioned-raster-001/expected.json",
             "input_sha256": "9c3c8c4b3d4e323cf85f11abfcb499dda6957827ae04b63e9d0e9f574510ff25",
-            "expected_sha256": "947af7f994548ba79e3985bf06c770931741a2430a3b21ac3cb3fea442c01bed",
+            "expected_sha256": "f96323cda902915d3c51883183b56141aeb1171c046d379a35e44a9cad5cab6e",
             "license": "CC0-1.0",
             "provenance": "synthetic:most-plan3-task11-corpus-v1",
             "tags": [
@@ -161,7 +161,7 @@
             "input_locator": "regression/replay-engineering-layout-001/input.svg",
             "expected_locator": "regression/replay-engineering-layout-001/expected.json",
             "input_sha256": "f8a67260d0aecac037ba4969d2b74b6ccaa3a92c47cf42dd277b9f9c58e0cff3",
-            "expected_sha256": "6df96cefe66d5ba26ccf5a7a3753cfaa4ef5393f4844a10596c457af38b7cd01",
+            "expected_sha256": "9c69957636ca349f28fe5ed7d51091be2c17a01b46b6b9234017f6b248bfca30",
             "license": "CC0-1.0",
             "provenance": "synthetic:most-plan3-task11-corpus-v1",
             "tags": [

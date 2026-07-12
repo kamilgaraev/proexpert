@@ -14,7 +14,8 @@ final readonly class WorkPlannerResponseData
     {
         foreach ($this->sections as $section) {
             if (($section['section_key'] ?? null) === $sectionKey
-                || (($section['scope_type'] ?? null) === $scopeType && count($this->sections) === 1)) {
+                || count($this->sections) === 1
+                || ($section['scope_type'] ?? null) === $scopeType) {
                 return $section['work_intents'];
             }
         }
