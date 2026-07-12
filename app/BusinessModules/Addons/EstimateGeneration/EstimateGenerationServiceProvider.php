@@ -56,6 +56,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\ProcessBenchmarkCase
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\ProductionReplayBenchmarkAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedBenchmarkCatalogLoader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedPortEnvelopeLoader;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RegisteredBenchmarkManifestRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedReplayProjectionLoader;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\BootstrapEstimateGenerationLearningCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\InspectEstimateGenerationProductionCommand;
@@ -210,6 +211,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             ->give(FileServiceAcceptanceBenchmarkObjectStore::class);
         $this->app->singleton(AcceptanceBenchmarkCorpusLoader::class);
         $this->app->singleton(BenchmarkRunner::class);
+        $this->app->singleton(RegisteredBenchmarkManifestRepository::class, static fn (): RegisteredBenchmarkManifestRepository => new RegisteredBenchmarkManifestRepository(
+            base_path('tests/Fixtures/EstimateGeneration/benchmarks'),
+            (array) config('estimate-generation.benchmark.registered_manifests', []),
+        ));
         $this->app->singleton(RasterPreprocessor::class);
         $this->app->singleton(GeometryResourceLimits::class, static fn (): GeometryResourceLimits => new GeometryResourceLimits(
             memoryLimitKiB: (int) config('estimate-generation.vision.geometry_runtime.memory_limit_kib'),
@@ -252,6 +257,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
 
                 return is_string($locator) ? $locator : null;
             })(),
+            $app->make(RegisteredBenchmarkManifestRepository::class),
         ));
         $this->app->singleton(RunEstimateGenerationBenchmarkCommand::class, fn ($app): RunEstimateGenerationBenchmarkCommand => new RunEstimateGenerationBenchmarkCommand(
             $app->make(BenchmarkRunner::class),
@@ -268,6 +274,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 ? $organizationId
                 : null,
             acceptanceLoader: $app->make(AcceptanceBenchmarkCorpusLoader::class),
+            registeredManifests: $app->make(RegisteredBenchmarkManifestRepository::class),
         ));
 
         $this->app->singleton(DocumentParsingService::class);

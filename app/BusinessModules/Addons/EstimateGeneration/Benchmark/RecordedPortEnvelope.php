@@ -13,7 +13,7 @@ final readonly class RecordedPortEnvelope
         'schema_version', 'port', 'source_sha256', 'input_dependency_sha256', 'provider',
         'model_version', 'prompt_version', 'payload_schema_version', 'payload', 'payload_sha256',
         'privacy_scanner', 'privacy_scanner_version', 'capture_kind', 'approval_kind', 'approval_ref',
-        'approved_at', 'manifest_sha256',
+        'privacy_result', 'approved_at', 'manifest_sha256',
     ];
 
     private const FORBIDDEN_KEYS = [
@@ -36,6 +36,7 @@ final readonly class RecordedPortEnvelope
         public string $payloadSha256,
         public string $privacyScanner,
         public string $privacyScannerVersion,
+        public string $privacyResult,
         public string $approvalRef,
         public string $approvedAt,
         public string $manifestSha256,
@@ -80,6 +81,7 @@ final readonly class RecordedPortEnvelope
             }
         }
         if ($data['privacy_scanner'] !== 'most-fixture-privacy'
+            || $data['privacy_result'] !== 'passed'
             || DateTimeImmutable::createFromFormat('!Y-m-d\TH:i:s\Z', (string) $data['approved_at']) === false
             || ! is_array($data['payload']) || ! array_is_list($data['payload']) && $data['payload'] === []) {
             throw new RecordedPortEnvelopeException('recorded_approval_invalid');
@@ -93,7 +95,7 @@ final readonly class RecordedPortEnvelope
         return new self(
             1, $port, $data['source_sha256'], $data['input_dependency_sha256'], $data['provider'],
             $data['model_version'], $data['prompt_version'], $data['payload_schema_version'], $data['payload'],
-            $data['payload_sha256'], $data['privacy_scanner'], $data['privacy_scanner_version'],
+            $data['payload_sha256'], $data['privacy_scanner'], $data['privacy_scanner_version'], $data['privacy_result'],
             $data['approval_ref'], $data['approved_at'], $data['manifest_sha256'],
         );
     }

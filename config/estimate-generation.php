@@ -121,11 +121,17 @@ return [
         'production_replay_projections' => [
             'reg-replay-vector-wall-opening-001' => [
                 'reference' => 'projections/vector-wall-opening-v1.json',
-                'sha256' => 'e5317c23f3cf11af9f6c6d651427fc6d16bacd184037b73c141172c7904ce193',
+                'sha256' => 'e04e492e4a9ded8372686717c0fc3dc4cc1069e51b9f36f98ef1f379b3692abf',
             ],
             'reg-replay-vision-sketch-001' => [
                 'reference' => 'projections/vision-sketch-v1.json',
-                'sha256' => '8b1b58f68fb44514394aec0e8817d4587b3b1c4c0d647610adfd6cb34d7fe507',
+                'sha256' => '21752202fe93c6c7dfbd78ead44acc4fc15158c2879a6ccfea41bff85cc147af',
+            ],
+        ],
+        'registered_manifests' => [
+            'repository-production-replay:v1' => [
+                'locator' => 'production-replay-manifest.json',
+                'sha256' => 'b88e6de7b5d803f2cb8c5debe4f6e0d69f85123fc72058b7a4a8962222fc8214',
             ],
         ],
     ],

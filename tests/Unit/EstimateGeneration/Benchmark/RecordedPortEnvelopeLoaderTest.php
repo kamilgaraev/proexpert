@@ -138,6 +138,7 @@ final class RecordedPortEnvelopeLoaderTest extends TestCase
             'payload_schema_version' => 'vision-analysis:v1', 'payload' => $payload,
             'payload_sha256' => hash('sha256', $canonical), 'privacy_scanner' => 'most-fixture-privacy',
             'privacy_scanner_version' => '1.0.0', 'capture_kind' => 'contract_fixture',
+            'privacy_result' => 'passed',
             'approval_kind' => 'maintainer_code_review',
             'approval_ref' => 'review:plan3-task11:independent-provider-output',
             'approved_at' => '2026-07-12T10:00:00Z', 'manifest_sha256' => $manifestHash,

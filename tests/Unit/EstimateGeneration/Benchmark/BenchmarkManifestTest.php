@@ -51,6 +51,40 @@ final class BenchmarkManifestTest extends TestCase
     }
 
     #[Test]
+    public function manifest_load_does_not_open_or_validate_expected_bytes(): void
+    {
+        $root = sys_get_temp_dir().'/most-manifest-boundary-'.bin2hex(random_bytes(6));
+        mkdir($root.'/case', 0700, true);
+        copy($this->fixtureRoot.'/regression/dxf-house-001/input.dxf', $root.'/case/input.dxf');
+        file_put_contents($root.'/case/expected.json', '{not-json');
+        $payload = [
+            'schema_version' => 1,
+            'manifest_version' => 'boundary-test:v1',
+            'cases' => [[
+                'id' => 'boundary-case', 'dataset' => 'regression', 'source_type' => 'dxf',
+                'input_locator' => 'case/input.dxf', 'expected_locator' => 'case/expected.json',
+                'input_sha256' => hash_file('sha256', $root.'/case/input.dxf'),
+                'expected_sha256' => hash_file('sha256', $root.'/case/expected.json'),
+                'license' => 'CC0-1.0', 'provenance' => 'synthetic:boundary-test', 'tags' => ['boundary'],
+                'schema_version' => 1, 'expected_model_schema_version' => 'benchmark-expected:v1',
+                'allowed_capabilities' => ['document_understanding', 'geometry'],
+            ]],
+        ];
+        file_put_contents($root.'/manifest.json', json_encode($payload, JSON_THROW_ON_ERROR));
+
+        try {
+            $manifest = BenchmarkManifest::fromFile($root.'/manifest.json', $root, false);
+            self::assertSame('boundary-case', $manifest->cases()[0]->id);
+        } finally {
+            unlink($root.'/case/input.dxf');
+            unlink($root.'/case/expected.json');
+            unlink($root.'/manifest.json');
+            rmdir($root.'/case');
+            rmdir($root);
+        }
+    }
+
+    #[Test]
     public function it_rejects_duplicate_content_across_datasets(): void
     {
         $manifest = $this->validInlineManifest();

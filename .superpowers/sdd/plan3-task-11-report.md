@@ -94,3 +94,46 @@ forbidden_artifact_fields: none
 ```
 
 Это не подтверждает общие thresholds и не завершает Task 11: regression corpus требуется расширить минимум до восьми разнообразных независимых кейсов и пройти полный Plan 3 gate, включая LibreDWG runtime gate.
+
+## Review fixes production replay slice
+
+Статус: **INTERMEDIATE — findings закрыты для двух кейсов, общий Task 11 gate остаётся открытым**.
+
+RED подтверждён отдельными тестами:
+
+```text
+RecordedPortEnvelopeTest: valid envelope rejected до добавления обязательного privacy_result.
+RecordedPortRequestHasherTest: RecordedPortRequestHasher class not found.
+BenchmarkManifestTest: expected_contract_invalid при загрузке manifest до запуска adapter.
+```
+
+Исправления:
+
+- manifest до prediction проверяет только input descriptor/bytes; expected безопасно читается и проверяется по root/traversal/symlink/size/SHA/schema в runner после adapter return;
+- parent/worker используют один registered immutable manifest reference, привязанный к normalized locator и SHA; unregistered locator, traversal и tampered SHA отклоняются;
+- envelopes требуют `privacy_result=passed`, missing/unknown значения отклоняются;
+- `input_dependency_sha256` теперь является canonical SHA production request: geometry — source locator/hash/port, planner — building model/quantities/evidence, reranker — intent/context/ordered candidate set;
+- DXF заменён содержательным планом с room polyline, wall, explicit `A-OPENING-DOOR`, dimension layer и 4000/3000 mm cues;
+- raster заменён планом 320×240 с внешними/внутренними стенами, дверным разрывом и дугой, двумя видимыми размерными линиями `6.0 m`/`4.0 m`;
+- recursive forbidden scan покрывает expected/labels/metrics/prediction/readiness/final/price_total/cost_total варианты; singular semantic `label` разрешён только как поле vision element.
+
+Проверки:
+
+```text
+Focused: OK (45 tests, 802 assertions)
+PHPStan changed production files: [OK] No errors
+php -l changed production files: no syntax errors
+Visual raster review: room/walls/door/dimension cues visible.
+DXF structural review: LWPOLYLINE=1, R1=1, A-WALL=2, A-OPENING-DOOR=2, 4000 mm=1, 3000 mm=1.
+```
+
+Финальные CLI после полной hash propagation:
+
+```text
+php artisan estimate-generation:benchmark --dataset=regression --adapter=production-replay --pipeline-version=production-replay-cases:v2 --prompt-version=recorded-ports:v2 --manifest=production-replay-manifest.json --format=json --output=task11/production-replay-review-run-1.json
+php artisan estimate-generation:benchmark --dataset=regression --adapter=production-replay --pipeline-version=production-replay-cases:v2 --prompt-version=recorded-ports:v2 --manifest=production-replay-manifest.json --format=json --output=task11/production-replay-review-run-2.json
+```
+
+Оба запуска: attempted=2, succeeded=2, failed=0, skipped=0. `case_results` и metrics идентичны. Fingerprint обоих запусков: `a644bf519955c4b6b342d8fb7762da018e159227a1c2623c79e192ae3a8626c7`.
+
+Threshold completion не заявляется: два кейса не закрывают требование полного разнообразного regression corpus и Plan 3 gate.

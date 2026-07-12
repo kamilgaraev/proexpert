@@ -20,6 +20,18 @@ final class LocalBenchmarkObjectReader implements BenchmarkObjectReader
             default => throw new BenchmarkContractException('object_role_invalid'),
         };
         $size = @filesize($path);
+        if ($case instanceof BenchmarkCaseData) {
+            $root = realpath($case->fixtureRoot());
+            $resolved = realpath($path);
+            $expectedHash = $role === 'expected' ? $case->expectedSha256 : $case->inputSha256;
+            $prefix = $root === false ? '' : rtrim(str_replace('\\', '/', $root), '/').'/';
+            if ($root === false || $resolved === false || is_link($path)
+                || ! str_starts_with(str_replace('\\', '/', $resolved), $prefix)
+                || ! hash_equals($expectedHash, (string) hash_file('sha256', $resolved))) {
+                throw new BenchmarkContractException($role === 'expected' ? 'expected_object_invalid' : 'input_object_invalid');
+            }
+            $path = $resolved;
+        }
         if (! is_int($size) || $size < 1 || $size > $maxBytes) {
             throw new BenchmarkContractException('object_size_invalid');
         }

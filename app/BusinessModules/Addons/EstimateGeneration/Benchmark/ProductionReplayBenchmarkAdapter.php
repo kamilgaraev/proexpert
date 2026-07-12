@@ -59,6 +59,12 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
             $descriptor = $this->projections[$case->id] ?? throw new \InvalidArgumentException('recorded_projection_missing');
             $case = $this->projectionsLoader->load($case, $descriptor['reference'], $descriptor['sha256']);
             $ports = $this->envelopesLoader->loadProjection($case);
+            foreach ([RecordedPort::VisionExtraction, RecordedPort::DocumentExtraction, RecordedPort::CadExtraction] as $geometryPort) {
+                if (in_array($geometryPort, $ports->ports(), true)) {
+                    RecordedPortRequestHasher::verify($ports->require($geometryPort)->inputDependencySha256,
+                        RecordedPortRequestHasher::geometry($case, $geometryPort), 'recorded_geometry_request_dependency_invalid');
+                }
+            }
             $catalog = $this->catalogLoader->load($case);
             if ($this->expired($deadline)) {
                 return BenchmarkPipelineResultData::technicalFailure('case_timeout');
@@ -73,9 +79,13 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
                 return BenchmarkPipelineResultData::technicalFailure('production_readiness_blocked');
             }
             $quantities = $this->quantityCalculator->calculate($this->quantityMapper->map($model));
+            $plannerEnvelope = $ports->require(RecordedPort::WorkPlanningModel);
+            RecordedPortRequestHasher::verify($plannerEnvelope->inputDependencySha256,
+                RecordedPortRequestHasher::planner($model->toArray(), $quantities->toArray(), $evidence),
+                'recorded_planner_request_dependency_invalid');
             $analysis = $this->analysis($model->toArray(), $quantities->toArray(), $catalog);
             $plan = $this->compiler->compile($analysis, (new RecordedWorkPlannerProvider(
-                $ports->require(RecordedPort::WorkPlanningModel),
+                $plannerEnvelope,
             ))->provide());
             $regional = $analysis['regional_context'];
             $workflow = new NormativeMatchingWorkflow(

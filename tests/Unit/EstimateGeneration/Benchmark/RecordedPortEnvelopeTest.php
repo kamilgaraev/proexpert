@@ -44,6 +44,26 @@ final class RecordedPortEnvelopeTest extends TestCase
         RecordedPortEnvelope::fromArray($data);
     }
 
+    #[Test]
+    public function privacy_result_is_closed_and_required(): void
+    {
+        $valid = $this->valid(['sheet_type' => 'floor_plan']);
+        self::assertSame('passed', RecordedPortEnvelope::fromArray($valid)->privacyResult);
+
+        unset($valid['privacy_result']);
+        try {
+            RecordedPortEnvelope::fromArray($valid);
+            self::fail('Missing privacy result was accepted.');
+        } catch (RecordedPortEnvelopeException $exception) {
+            self::assertSame('recorded_envelope_contract_invalid', $exception->reason);
+        }
+
+        $unknown = $this->valid(['sheet_type' => 'floor_plan']);
+        $unknown['privacy_result'] = 'unknown';
+        $this->expectException(RecordedPortEnvelopeException::class);
+        RecordedPortEnvelope::fromArray($unknown);
+    }
+
     private function valid(array $payload): array
     {
         $canonical = static function (array $value): string {
@@ -64,6 +84,7 @@ final class RecordedPortEnvelopeTest extends TestCase
             'payload_sha256' => hash('sha256', $canonical($payload)),
             'privacy_scanner' => 'most-fixture-privacy',
             'privacy_scanner_version' => '1.0.0',
+            'privacy_result' => 'passed',
             'capture_kind' => 'contract_fixture',
             'approval_kind' => 'maintainer_code_review',
             'approval_ref' => 'review:plan3-task11:independent-provider-output',

@@ -88,17 +88,6 @@ final readonly class RecordedPortEnvelopeLoader
         if ($references !== null && count($envelopes) !== count($references)) {
             throw new RecordedPortEnvelopeException('recorded_projection_descriptor_missing');
         }
-        $allowedDependencies = [$inputSha256 => true];
-        foreach ($envelopes as $envelope) {
-            $allowedDependencies[$envelope->payloadSha256] = true;
-        }
-        foreach ($envelopes as $envelope) {
-            if (! isset($allowedDependencies[$envelope->inputDependencySha256])
-                || hash_equals($envelope->payloadSha256, $envelope->inputDependencySha256)) {
-                throw new RecordedPortEnvelopeException('recorded_input_dependency_invalid');
-            }
-        }
-
         return new RecordedPortEnvelopeSet($envelopes);
     }
 

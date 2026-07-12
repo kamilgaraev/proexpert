@@ -8,8 +8,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkC
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkAdapterRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCorpus;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkManifest;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkManifestException;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\CurrentBaselineBenchmarkAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkObjectReader;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RegisteredBenchmarkManifestRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DrawingGeometryAnalyzer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\PdfTextLayerExtractor;
 use Illuminate\Console\Command;
@@ -33,6 +35,7 @@ final class RunEstimateGenerationBenchmarkCaseCommand extends Command
         private readonly DrawingGeometryAnalyzer $drawing,
         private readonly ?int $acceptanceOrganizationId = null,
         private readonly ?string $acceptanceManifestLocator = null,
+        private readonly ?RegisteredBenchmarkManifestRepository $registeredManifests = null,
     ) {
         parent::__construct();
     }
@@ -70,16 +73,13 @@ final class RunEstimateGenerationBenchmarkCaseCommand extends Command
                 $reference,
             );
         }
-        if ($reference === 'repository-production-replay:v1') {
-            return new BenchmarkCorpus(
-                BenchmarkManifest::fromFile(
-                    $this->fixtureRoot.'/production-replay-manifest.json',
-                    $this->fixtureRoot,
-                    false,
-                ),
-                new LocalBenchmarkObjectReader($this->fixtureRoot),
-                $reference,
-            );
+        if ($this->registeredManifests !== null) {
+            try {
+                $manifest = $this->registeredManifests->byReference($reference);
+
+                return new BenchmarkCorpus($manifest, new LocalBenchmarkObjectReader($this->fixtureRoot), $reference);
+            } catch (BenchmarkManifestException) {
+            }
         }
         if ($this->acceptanceOrganizationId === null || $this->acceptanceManifestLocator === null) {
             throw new \InvalidArgumentException('acceptance_worker_not_configured');

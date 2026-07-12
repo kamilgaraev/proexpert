@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkManifest;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkReportData;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunOptions;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RegisteredBenchmarkManifestRepository;
 use Illuminate\Console\Command;
 use Throwable;
 
@@ -51,6 +52,7 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
         private readonly ?string $acceptanceManifestLocator = null,
         private readonly ?int $acceptanceOrganizationId = null,
         private readonly ?AcceptanceBenchmarkCorpusLoader $acceptanceLoader = null,
+        private readonly ?RegisteredBenchmarkManifestRepository $registeredManifests = null,
     ) {
         parent::__construct();
         $this->environment = $environment ?? static fn (): string => (string) app()->environment();
@@ -99,20 +101,12 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
             $requireAllSourceTypes = true;
             $manifest = $this->option('manifest');
             if (is_string($manifest) && $manifest !== '') {
-                if (! preg_match('#^[a-zA-Z0-9._/-]+\.json$#D', $manifest)
-                    || str_contains($manifest, '..') || str_starts_with($manifest, '/')) {
-                    throw new BenchmarkCommandException('manifest_path_invalid');
-                }
-                $manifestPath = rtrim($this->fixtureRoot, '/\\').DIRECTORY_SEPARATOR
-                    .str_replace('/', DIRECTORY_SEPARATOR, $manifest);
-                $root = realpath($this->fixtureRoot);
-                $resolved = realpath($manifestPath);
-                if ($root === false || $resolved === false || is_link($manifestPath)
-                    || ! str_starts_with(str_replace('\\', '/', $resolved), rtrim(str_replace('\\', '/', $root), '/').'/')) {
-                    throw new BenchmarkCommandException('manifest_path_invalid');
-                }
-                $manifestPath = $resolved;
-                $requireAllSourceTypes = false;
+                $registered = $this->registeredManifests?->byLocator($manifest)
+                    ?? throw new BenchmarkCommandException('manifest_not_registered');
+
+                return new BenchmarkCorpus($registered['manifest'],
+                    new \App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkObjectReader,
+                    $registered['reference']);
             }
 
             return new BenchmarkCorpus(

@@ -222,7 +222,7 @@ final readonly class BenchmarkManifest
             if (! $case->isLocallyReadable()) {
                 continue;
             }
-            foreach ([[$case->inputPath(), $case->inputSha256, 64_000_000], [$case->expectedPath(), $case->expectedSha256, 4_000_000]] as [$path, $hash, $maxBytes]) {
+            foreach ([[$case->inputPath(), $case->inputSha256, 64_000_000]] as [$path, $hash, $maxBytes]) {
                 self::assertSafePathComponents($path, $root);
                 $real = realpath($path);
                 $stat = @lstat($path);
@@ -248,19 +248,6 @@ final readonly class BenchmarkManifest
                 $case->inputLocator,
                 $case->allowedCapabilities,
             );
-            try {
-                $expectedPayload = json_decode((string) file_get_contents($case->expectedPath()), true, 64, JSON_THROW_ON_ERROR);
-            } catch (JsonException) {
-                throw new BenchmarkManifestException('expected_contract_invalid');
-            }
-            if (! is_array($expectedPayload)) {
-                throw new BenchmarkManifestException('expected_contract_invalid');
-            }
-            try {
-                BenchmarkExpectedContract::expected($expectedPayload, $case->expectedModelSchemaVersion);
-            } catch (BenchmarkContractException) {
-                throw new BenchmarkManifestException('expected_contract_invalid');
-            }
         }
     }
 

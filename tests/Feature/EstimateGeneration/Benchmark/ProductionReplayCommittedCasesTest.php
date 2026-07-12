@@ -70,9 +70,55 @@ final class ProductionReplayCommittedCasesTest extends TestCase
 
         foreach (['recordings', 'catalogs', 'projections'] as $directory) {
             foreach (glob($root.'/'.$directory.'/*.json') ?: [] as $artifact) {
-                $contents = strtolower((string) file_get_contents($artifact));
-                self::assertDoesNotMatchRegularExpression('/"(?:expected|prediction|readiness|final_[^"]*|total_cost)"\s*:/', $contents);
+                $payload = json_decode((string) file_get_contents($artifact), true, 64, JSON_THROW_ON_ERROR);
+                $this->assertNoForbiddenKeys($payload, $artifact);
             }
         }
+
+        $dxf = (string) file_get_contents($root.'/regression/replay-vector-wall-opening-001/input.dxf');
+        foreach (['ROOMS', 'A-WALL', 'A-OPENING-DOOR', 'DIMENSIONS', '4000 mm', '3000 mm'] as $trace) {
+            self::assertStringContainsString($trace, $dxf);
+        }
+        $ppm = (string) file_get_contents($root.'/regression/replay-vision-sketch-001/input.ppm');
+        self::assertStringStartsWith("P6\n320 240\n255\n", $ppm);
+        self::assertGreaterThan(200_000, strlen($ppm));
+        self::assertGreaterThan(3_000, substr_count($ppm, "\0\0\0"));
+
+        $manifestCases = array_column(json_decode((string) file_get_contents($root.'/production-replay-manifest.json'), true, 64, JSON_THROW_ON_ERROR)['cases'], null, 'id');
+        foreach (glob($root.'/recordings/*-*.json') ?: [] as $recordingPath) {
+            $recording = json_decode((string) file_get_contents($recordingPath), true, 64, JSON_THROW_ON_ERROR);
+            $caseId = str_starts_with(basename($recordingPath), 'vector-')
+                ? 'reg-replay-vector-wall-opening-001' : 'reg-replay-vision-sketch-001';
+            self::assertSame($manifestCases[$caseId]['input_sha256'], $recording['source_sha256']);
+            self::assertSame('contract_fixture', $recording['capture_kind']);
+            self::assertSame('passed', $recording['privacy_result']);
+            self::assertSame('plan3-task11-recorded-fixtures-v1', $recording['approval_ref']);
+            if (! str_ends_with(basename($recordingPath), '-geometry.json')) {
+                self::assertNotSame($recording['source_sha256'], $recording['input_dependency_sha256']);
+            }
+        }
+        $visionRecording = json_decode((string) file_get_contents($root.'/recordings/vision-geometry.json'), true, 64, JSON_THROW_ON_ERROR);
+        self::assertSame('Комната', $visionRecording['payload']['elements'][0]['label']);
+        self::assertArrayNotHasKey('labels', $visionRecording['payload']['elements'][0]);
+    }
+
+    private function assertNoForbiddenKeys(array $payload, string $path): void
+    {
+        $forbidden = ['expected', 'labels', 'metric', 'metrics', 'final_prediction', 'prediction', 'readiness',
+            'price_total', 'prices_total', 'cost_total', 'total_price', 'total_cost'];
+        $walk = function (array $value) use (&$walk, $forbidden, $path): void {
+            foreach ($value as $key => $item) {
+                if (is_string($key)) {
+                    $normalized = strtolower($key);
+                    self::assertFalse(in_array($normalized, $forbidden, true)
+                        || str_starts_with($normalized, 'expected_') || str_starts_with($normalized, 'final_'),
+                        $path.':'.$key);
+                }
+                if (is_array($item)) {
+                    $walk($item);
+                }
+            }
+        };
+        $walk($payload);
     }
 }

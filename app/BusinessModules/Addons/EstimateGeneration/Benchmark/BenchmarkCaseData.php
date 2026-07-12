@@ -42,6 +42,11 @@ final readonly class BenchmarkCaseData
         return $this->localPath($this->expectedLocator);
     }
 
+    public function fixtureRoot(): string
+    {
+        return $this->fixtureRoot;
+    }
+
     private function localPath(string $locator): string
     {
         if (! $this->isLocallyReadable()) {

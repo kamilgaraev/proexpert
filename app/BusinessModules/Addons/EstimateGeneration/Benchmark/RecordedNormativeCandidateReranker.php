@@ -19,6 +19,9 @@ final readonly class RecordedNormativeCandidateReranker implements NormativeCand
         if ($this->envelope->port !== RecordedPort::NormativeReranker) {
             throw new RecordedPortEnvelopeException('recorded_normative_reranker_port_invalid');
         }
+        RecordedPortRequestHasher::verify($this->envelope->inputDependencySha256,
+            RecordedPortRequestHasher::reranker($workItem, $context, $candidateSet),
+            'recorded_normative_reranker_dependency_invalid');
         $ids = array_map(static fn ($candidate): string => $candidate->id, $candidateSet->candidates);
         $evidence = array_values(array_unique(array_merge($workItem->sourceEvidence, ...array_map(
             static fn ($candidate): array => $candidate->sourceEvidence,
