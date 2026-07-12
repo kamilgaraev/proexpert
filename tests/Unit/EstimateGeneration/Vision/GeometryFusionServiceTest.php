@@ -52,6 +52,32 @@ final class GeometryFusionServiceTest extends TestCase
         self::element('room-1', 'e1', ['polygon' => [[0.0, 0.0], [INF, 0.0], [1.0, 1.0]]]);
     }
 
+    #[Test]
+    public function three_variants_accumulate_all_evidence_for_every_permutation(): void
+    {
+        $a = self::element('room-1', 'e1', ['polygon' => [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]]);
+        $b = self::element('room-1', 'e2', ['polygon' => [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0]]]);
+        $c = self::element('room-1', 'e3', ['polygon' => [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]]);
+        $service = new GeometryFusionService;
+        $expected = null;
+        foreach ([[$a, $b, $c], [$a, $c, $b], [$b, $a, $c], [$b, $c, $a], [$c, $a, $b], [$c, $b, $a]] as $permutation) {
+            $result = $service->fuse($permutation);
+            self::assertSame(['e1', 'e2', 'e3'], $result->issues[0]['evidence_refs']);
+            $expected ??= $result->toArray();
+            self::assertSame($expected, $result->toArray());
+        }
+    }
+
+    #[Test]
+    public function same_evidence_identity_cannot_describe_different_geometry(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        (new GeometryFusionService)->fuse([
+            self::element('room-1', 'e1', ['polygon' => [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]]),
+            self::element('room-1', 'e1', ['polygon' => [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0]]]),
+        ]);
+    }
+
     private static function element(string $key, string $evidence, array $geometry): FusedGeometryElementData
     {
         return new FusedGeometryElementData($key, 'room', $geometry, 'vision', $evidence, 'sha256:'.str_repeat('b', 64), 1, 'normalized_source_v1', 'runtime:v1', 'model:v1', 0.9);

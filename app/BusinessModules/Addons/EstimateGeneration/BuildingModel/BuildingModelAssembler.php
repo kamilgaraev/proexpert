@@ -32,7 +32,17 @@ final class BuildingModelAssembler
         $wallKeys = [];
         $clarifications = [];
         $floorEvidence = [];
+        $modelElements = [];
         foreach ($input->geometry->elements as $element) {
+            if ($confirmed && ! $this->matchesScaleContext($element, $input->scale->context)) {
+                $clarifications[] = new VisionClarificationData('geometry_scale_context_mismatch', $element->key, $element->evidenceRefs());
+                $floorEvidence = [...$floorEvidence, ...array_map(static fn (string $reference): int => $input->evidenceIdsByRef[$reference], $element->evidenceRefs())];
+
+                continue;
+            }
+            $modelElements[] = $element;
+        }
+        foreach ($modelElements as $element) {
             if ($element->type === 'room') {
                 $roomKeys[$element->key] = true;
             }
@@ -40,7 +50,7 @@ final class BuildingModelAssembler
                 $wallKeys[$element->key] = true;
             }
         }
-        foreach ($input->geometry->elements as $element) {
+        foreach ($modelElements as $element) {
             $evidenceIds = array_map(static fn (string $reference): int => $input->evidenceIdsByRef[$reference], $element->evidenceRefs());
             $floorEvidence = [...$floorEvidence, ...$evidenceIds];
             if ($element->type === 'room') {
@@ -314,5 +324,22 @@ final class BuildingModelAssembler
         }
 
         return min(array_map(static fn (FusedGeometryElementData $element): float => $element->confidence, $elements));
+    }
+
+    private function matchesScaleContext(FusedGeometryElementData $element, mixed $context): bool
+    {
+        if (! $context instanceof \App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\ScaleContextData) {
+            return false;
+        }
+        foreach ($element->provenance as $provenance) {
+            if ($provenance['source_fingerprint'] !== $context->sourceFingerprint
+                || $provenance['page_number'] !== $context->pageNumber
+                || $provenance['coordinate_transform'] !== $context->coordinateTransform
+                || $provenance['coordinate_space'] !== $context->coordinateSpace) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

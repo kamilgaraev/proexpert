@@ -11,6 +11,7 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\RoomData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\VisionBuildingModelInputData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\FusedGeometryElementData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\GeometryFusionService;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\ScaleContextData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\ScaleResolutionData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Sketch\SketchAssumption;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Sketch\SketchProvenanceData;
@@ -105,7 +106,7 @@ final class BuildingModelAssemblerTest extends TestCase
             self::sourceRoom('room-1', 'e1', [[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]]),
         ]);
         $input = new VisionBuildingModelInputData(
-            new ScaleResolutionData('confirmed', 0.01, ['e1', 'e2'], null),
+            new ScaleResolutionData('confirmed', 0.01, ['e1', 'e2'], null, self::scaleContext()),
             $geometry,
             [self::userAssumption('floor_count', 1, 'e1')],
             [],
@@ -188,7 +189,7 @@ final class BuildingModelAssemblerTest extends TestCase
             self::sourceElement('opening-orphan', 'opening', 'e5', ['wall_key' => 'wall-missing', 'opening_type' => 'door', 'offset' => 1.0, 'width' => 2.0, 'height' => 2.0]),
         ];
         $result = (new BuildingModelAssembler)->assembleVision(new VisionBuildingModelInputData(
-            new ScaleResolutionData('confirmed', 0.01, ['e1'], null), (new GeometryFusionService)->fuse($elements), [], [],
+            new ScaleResolutionData('confirmed', 0.01, ['e1'], null, self::scaleContext()), (new GeometryFusionService)->fuse($elements), [], [],
             ['e1' => 11, 'e2' => 12, 'e3' => 13, 'e4' => 14, 'e5' => 15], 'vision-fusion:v1', 'floor-1',
         ));
 
@@ -213,6 +214,41 @@ final class BuildingModelAssemblerTest extends TestCase
         self::assertSame(['geometry_scale_unconfirmed'], array_map(static fn ($item): string => $item->code, $result->clarifications));
     }
 
+    #[Test]
+    public function confirmed_scale_metricizes_only_elements_with_exact_immutable_context(): void
+    {
+        $matching = self::sourceRoom('room-match', 'e1', [[0.0, 0.0], [100.0, 0.0], [100.0, 100.0]]);
+        $otherPage = new FusedGeometryElementData('room-other', 'room', ['polygon' => [[0.0, 0.0], [50.0, 0.0], [50.0, 50.0]]], 'vision', 'e2', 'sha256:'.str_repeat('b', 64), 2, 'source:v1', 'runtime:v1', 'model:v1', 0.9, [], 'source:v1');
+        $otherDocument = new FusedGeometryElementData('room-document', 'room', ['polygon' => [[0.0, 0.0], [40.0, 0.0], [40.0, 40.0]]], 'vision', 'e3', 'sha256:'.str_repeat('d', 64), 1, 'source:v1', 'runtime:v1', 'model:v1', 0.9, [], 'source:v1');
+        $otherTransform = new FusedGeometryElementData('room-transform', 'room', ['polygon' => [[0.0, 0.0], [30.0, 0.0], [30.0, 30.0]]], 'vision', 'e4', 'sha256:'.str_repeat('b', 64), 1, 'source:v1', 'runtime:v1', 'model:v1', 0.9, [], 'rotated:v1');
+        $result = (new BuildingModelAssembler)->assembleVision(new VisionBuildingModelInputData(
+            new ScaleResolutionData('confirmed', 0.01, ['e1'], null, self::scaleContext()),
+            (new GeometryFusionService)->fuse([$otherTransform, $otherPage, $matching, $otherDocument]), [], [], ['e1' => 11, 'e2' => 12, 'e3' => 13, 'e4' => 14], 'vision-fusion:v1', 'floor-1',
+        ));
+
+        self::assertSame(['room-match'], array_map(static fn (RoomData $room): string => $room->key, $result->model->floors[0]->rooms));
+        self::assertSame(['geometry_scale_context_mismatch', 'geometry_scale_context_mismatch', 'geometry_scale_context_mismatch'], array_map(static fn ($item): string => $item->code, $result->clarifications));
+        self::assertSame([['e3'], ['e2'], ['e4']], array_map(static fn ($item): array => $item->evidenceRefs, $result->clarifications));
+        self::assertCount(4, $result->sourceGeometry);
+    }
+
+    #[Test]
+    public function result_serializes_complete_sketch_provenance_stably(): void
+    {
+        $result = (new BuildingModelAssembler)->assembleVision(new VisionBuildingModelInputData(
+            new ScaleResolutionData('confirmed', 0.01, ['e1'], null, self::scaleContext()),
+            (new GeometryFusionService)->fuse([self::sourceRoom('room-1', 'e1', [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]])]),
+            [self::userAssumption('floor_count', 1, 'e1')], [], ['e1' => 11], 'vision-fusion:v1', 'floor-1',
+        ));
+
+        self::assertSame([
+            'source' => 'user', 'confirmed_by' => 7, 'evidence_ref' => 'e1',
+            'source_fingerprint' => 'sha256:'.str_repeat('c', 64), 'page_number' => 1,
+            'coordinate_transform' => 'source:v1',
+        ], $result->toArray()['sketch_assumptions'][0]['provenance']);
+        self::assertSame($result->toArray(), $result->toArray());
+    }
+
     private static function floor(string $roomKey, int $width): FloorData
     {
         return new FloorData('floor-1', 0, 2.8, [
@@ -233,5 +269,10 @@ final class BuildingModelAssemblerTest extends TestCase
     private static function userAssumption(string $key, int|float|string|array $value, string $evidence): SketchAssumption
     {
         return new SketchAssumption(new SketchValueData($key, $value), new SketchProvenanceData('user', 7, $evidence, 'sha256:'.str_repeat('c', 64), 1, 'source:v1'), 1.0, true);
+    }
+
+    private static function scaleContext(): ScaleContextData
+    {
+        return new ScaleContextData('sha256:'.str_repeat('b', 64), 1, 'source:v1', 'source:v1');
     }
 }

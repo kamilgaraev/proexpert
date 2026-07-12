@@ -30,6 +30,7 @@ final readonly class VisionBuildingModelAssemblyResult
                 'evidence_id' => $item->evidenceId,
                 'requires_confirmation' => $item->requiresConfirmation,
                 'evidenced' => $item->evidenced,
+                'provenance' => $item->provenance->toArray(),
             ], $this->sketchAssumptions),
             'questions' => array_map(static fn (SketchQuestionData $item): array => $item->toArray(), $this->questions),
             'clarifications' => array_map(static fn (VisionClarificationData $item): array => $item->toArray(), $this->clarifications),

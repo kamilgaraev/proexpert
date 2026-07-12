@@ -36,7 +36,7 @@ final class ScaleResolver
             return $this->confirmed($vectors);
         }
         if ($userControlDimension !== null) {
-            return new ScaleResolutionData('confirmed', $userControlDimension->metersPerUnit, [$userControlDimension->evidenceRef], null);
+            return new ScaleResolutionData('confirmed', $userControlDimension->metersPerUnit, [$userControlDimension->evidenceRef], null, $userControlDimension->context());
         }
         if ($confirmedVision !== []) {
             return $this->confirmed($confirmedVision);
@@ -104,7 +104,7 @@ final class ScaleResolver
         $evidence = array_values(array_unique(array_map(static fn (ScaleCandidateData $item): string => $item->evidenceRef, $candidates)));
         $scale = array_sum(array_map(static fn (ScaleCandidateData $item): float => $item->metersPerUnit, $candidates)) / count($candidates);
 
-        return new ScaleResolutionData('confirmed', $scale, $evidence, null);
+        return new ScaleResolutionData('confirmed', $scale, $evidence, null, $candidates[0]->context());
     }
 
     private function conflict(array $candidates, ?ControlDimensionData $control): ScaleResolutionData

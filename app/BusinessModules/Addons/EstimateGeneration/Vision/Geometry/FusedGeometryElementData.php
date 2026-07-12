@@ -10,21 +10,25 @@ final readonly class FusedGeometryElementData
 {
     public array $provenance;
 
+    public string $coordinateTransform;
+
     public function __construct(
         public string $key, public string $type, public array $geometry, public string $sourceType,
         public string $evidenceRef, public string $sourceFingerprint, public int $pageNumber,
         public string $coordinateSpace, public string $runtimeVersion, public string $modelVersion,
-        public float $confidence, array $provenance = [],
+        public float $confidence, array $provenance = [], ?string $coordinateTransform = null,
     ) {
         if ($key === '' || ! in_array($type, ['room', 'wall', 'opening', 'engineering_element'], true)
             || ! in_array($sourceType, ['vector', 'vision'], true) || $evidenceRef === ''
             || preg_match('/^sha256:[a-f0-9]{64}$/', $sourceFingerprint) !== 1 || $pageNumber < 1
             || $coordinateSpace === '' || $runtimeVersion === '' || $modelVersion === ''
-            || ! is_finite($confidence) || $confidence < 0 || $confidence > 1) {
+            || ! is_finite($confidence) || $confidence < 0 || $confidence > 1 || $coordinateTransform === '') {
             throw new InvalidArgumentException('Fused geometry element is invalid.');
         }
         $this->assertGeometry($type, $geometry);
-        $current = ['evidence_ref' => $evidenceRef, 'source_type' => $sourceType, 'source_fingerprint' => $sourceFingerprint, 'page_number' => $pageNumber, 'coordinate_space' => $coordinateSpace, 'runtime_version' => $runtimeVersion, 'model_version' => $modelVersion, 'confidence' => $confidence];
+        $coordinateTransform ??= $coordinateSpace;
+        $this->coordinateTransform = $coordinateTransform;
+        $current = ['evidence_ref' => $evidenceRef, 'source_type' => $sourceType, 'source_fingerprint' => $sourceFingerprint, 'page_number' => $pageNumber, 'coordinate_space' => $coordinateSpace, 'coordinate_transform' => $coordinateTransform, 'runtime_version' => $runtimeVersion, 'model_version' => $modelVersion, 'confidence' => $confidence];
         $indexed = [];
         foreach ([...$provenance, $current] as $item) {
             if (! is_array($item) || array_keys($item) !== array_keys($current) || ! is_string($item['evidence_ref']) || $item['evidence_ref'] === '') {
@@ -34,6 +38,7 @@ final readonly class FusedGeometryElementData
                 || ! is_string($item['source_fingerprint']) || preg_match('/^sha256:[a-f0-9]{64}$/', $item['source_fingerprint']) !== 1
                 || ! is_int($item['page_number']) || $item['page_number'] < 1
                 || ! is_string($item['coordinate_space']) || $item['coordinate_space'] === ''
+                || ! is_string($item['coordinate_transform']) || $item['coordinate_transform'] === ''
                 || ! is_string($item['runtime_version']) || $item['runtime_version'] === ''
                 || ! is_string($item['model_version']) || $item['model_version'] === ''
                 || (! is_int($item['confidence']) && ! is_float($item['confidence'])) || ! is_finite((float) $item['confidence'])
@@ -61,7 +66,7 @@ final readonly class FusedGeometryElementData
 
     public function withProvenanceFrom(self $other): self
     {
-        return new self($this->key, $this->type, $this->geometry, $this->sourceType, $this->evidenceRef, $this->sourceFingerprint, $this->pageNumber, $this->coordinateSpace, $this->runtimeVersion, $this->modelVersion, min($this->confidence, $other->confidence), [...$this->provenance, ...$other->provenance]);
+        return new self($this->key, $this->type, $this->geometry, $this->sourceType, $this->evidenceRef, $this->sourceFingerprint, $this->pageNumber, $this->coordinateSpace, $this->runtimeVersion, $this->modelVersion, min($this->confidence, $other->confidence), [...$this->provenance, ...$other->provenance], $this->coordinateTransform);
     }
 
     private function assertGeometry(string $type, array $geometry): void

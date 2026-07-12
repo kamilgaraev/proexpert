@@ -6,6 +6,8 @@ namespace Tests\Unit\EstimateGeneration\Vision;
 
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\ControlDimensionData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\ScaleCandidateData;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\ScaleContextData;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\ScaleResolutionData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\ScaleResolver;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Test;
@@ -100,6 +102,32 @@ final class ScaleResolverTest extends TestCase
     {
         $this->expectException(InvalidArgumentException::class);
         new \App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\ScaleResolutionData('confirmed', null, [], null);
+    }
+
+    #[Test]
+    #[\PHPUnit\Framework\Attributes\DataProvider('invalidResolutionStates')]
+    public function scale_resolution_rejects_every_invalid_state(string $status, ?float $scale, array $evidence, ?string $issue, ?ScaleContextData $context): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        new ScaleResolutionData($status, $scale, $evidence, $issue, $context);
+    }
+
+    public static function invalidResolutionStates(): array
+    {
+        $context = new ScaleContextData('sha256:'.str_repeat('a', 64), 1, 'transform:v1', 'source_units_v1');
+
+        return [
+            ['other', null, [], null, null],
+            ['confirmed', 0.01, [], null, $context],
+            ['confirmed', 0.01, ['e1'], null, null],
+            ['missing', 0.01, [], 'geometry_scale_unconfirmed', null],
+            ['missing', null, ['e1'], 'geometry_scale_unconfirmed', null],
+            ['conflict', null, ['e1'], 'geometry_scale_conflict', null],
+            ['conflict', null, ['e1', 'e1'], 'geometry_scale_conflict', null],
+            ['conflict', null, [''], 'geometry_scale_conflict', null],
+            ['missing', null, [], 'geometry_scale_conflict', null],
+            ['conflict', null, ['e1', 'e2'], 'geometry_scale_unconfirmed', null],
+        ];
     }
 
     #[Test]

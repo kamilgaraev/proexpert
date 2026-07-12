@@ -24,4 +24,16 @@ final readonly class SketchProvenanceData
             throw new InvalidArgumentException('Sketch provenance is invalid.');
         }
     }
+
+    public function toArray(): array
+    {
+        return [
+            'source' => $this->source,
+            'confirmed_by' => $this->confirmedBy,
+            'evidence_ref' => $this->evidenceRef,
+            'source_fingerprint' => $this->sourceFingerprint,
+            'page_number' => $this->pageNumber,
+            'coordinate_transform' => $this->coordinateTransform,
+        ];
+    }
 }
