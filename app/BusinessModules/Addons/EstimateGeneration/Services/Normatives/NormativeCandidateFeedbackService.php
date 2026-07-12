@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Normatives;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\AdvanceEstimateGeneration;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationFeedback;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNoAirWorkItemPolicy;
@@ -33,6 +37,7 @@ final class NormativeCandidateFeedbackService
         ?callable $validationExceptionFactory = null,
         private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy,
         private readonly ?AdvanceEstimateGeneration $advanceGeneration = null,
+        private readonly ?EvidenceRepository $evidenceRepository = null,
     ) {
         $this->messageResolver = $messageResolver;
         $this->validationExceptionFactory = $validationExceptionFactory;
@@ -81,6 +86,9 @@ final class NormativeCandidateFeedbackService
                 $feedback->comments
             ),
         };
+        if ($feedback->feedback_type === 'quantity_confirmation') {
+            $draft = $this->attachConfirmedQuantityEvidence($session, $feedback, $draft);
+        }
         $draft = $this->validationService->validate($draft);
         $workItemKey = trim((string) $feedback->work_item_key);
         $syncedPackage = $workItemKey !== ''
@@ -101,6 +109,45 @@ final class NormativeCandidateFeedbackService
                 'last_error' => null,
             ],
         );
+
+        return $draft;
+    }
+
+    private function attachConfirmedQuantityEvidence(EstimateGenerationSession $session, EstimateGenerationFeedback $feedback, array $draft): array
+    {
+        $repository = $this->evidenceRepository ?? app(EvidenceRepository::class);
+        foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
+            foreach ($localEstimate['sections'] ?? [] as $sectionIndex => $section) {
+                foreach ($section['work_items'] ?? [] as $workIndex => $workItem) {
+                    if (! is_array($workItem) || (string) ($workItem['key'] ?? '') !== (string) $feedback->work_item_key) {
+                        continue;
+                    }
+                    $oldId = $this->nullableInt($workItem['quantity_evidence_id'] ?? null);
+                    if ($oldId !== null) {
+                        $repository->invalidate((int) $session->organization_id, (int) $session->project_id, (int) $session->id, [$oldId], 'quantity_confirmed_by_user');
+                    }
+                    $identity = hash('sha256', (string) $feedback->work_item_key);
+                    $node = $repository->insertOrGet(new EvidenceData(
+                        organizationId: (int) $session->organization_id,
+                        projectId: (int) $session->project_id,
+                        sessionId: (int) $session->id,
+                        type: EvidenceType::WorkItem,
+                        sourceType: EvidenceSourceType::UserInput,
+                        sourceRef: 'input:'.(int) $feedback->id,
+                        sourceVersion: 'user:v1',
+                        locator: ['item_key' => 'item:'.$identity],
+                        value: ['work_code' => 'work_type:'.$identity, 'quantity' => $workItem['quantity'], 'unit' => $workItem['unit']],
+                        confidence: 1.0,
+                        producerName: 'user_input_normalizer',
+                        producerVersion: 'user:v1',
+                    ));
+                    $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex]['quantity_evidence_id'] = $node->id;
+                    $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex]['quantity_evidence_fingerprint'] = $node->fingerprint;
+
+                    return $draft;
+                }
+            }
+        }
 
         return $draft;
     }
