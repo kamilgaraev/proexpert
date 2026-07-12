@@ -134,6 +134,7 @@ final class EstimateGenerationTrainingDatasetService
         }
 
         return DB::transaction(function () use ($source, $actor): EstimateGenerationTrainingDataset {
+            DB::select('SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))', [(string) $source->organization_id, (string) $source->dataset_key]);
             $latestVersion = (int) EstimateGenerationTrainingDataset::query()
                 ->where('organization_id', $source->organization_id)
                 ->where('dataset_key', $source->dataset_key)
@@ -277,6 +278,8 @@ final class EstimateGenerationTrainingDatasetService
             'training_dataset_id' => (int) $dataset->id,
             'source_row_hash' => $sourceRowHash,
         ], [
+            'organization_id' => (int) $dataset->organization_id,
+            'dataset_version' => (int) $dataset->version,
             'estimate_file_id' => (int) $referenceFile->id,
             'row_number' => $normalized['row_number'],
             'section_name' => $normalized['section_name'],
@@ -301,6 +304,16 @@ final class EstimateGenerationTrainingDatasetService
         EstimateGenerationTrainingDataset $dataset,
         EstimateGenerationTrainingExample $trainingExample
     ): array {
+        $dataset = EstimateGenerationTrainingDataset::query()
+            ->whereKey($dataset->getKey())
+            ->where('organization_id', $dataset->organization_id)
+            ->where('dataset_key', $dataset->dataset_key)
+            ->where('version', $dataset->version)
+            ->firstOrFail();
+        $trainingExample = $dataset->examples()
+            ->whereKey($trainingExample->getKey())
+            ->where('training_dataset_id', $dataset->id)
+            ->firstOrFail();
         if (! $this->trustPolicy->canTrain($dataset)
             || $trainingExample->reviewed_by === null
             || $trainingExample->reviewed_at === null) {
@@ -386,6 +399,17 @@ final class EstimateGenerationTrainingDatasetService
         $created = $this->learningRecorder->record($attributes);
 
         return ['status' => 'indexed', 'created' => $created];
+    }
+
+    public function archive(EstimateGenerationTrainingDataset $dataset): EstimateGenerationTrainingDataset
+    {
+        if ($dataset->status !== EstimateGenerationTrainingDataset::STATUS_APPROVED) {
+            throw new \DomainException('dataset_archive_transition_not_allowed');
+        }
+
+        $dataset->forceFill(['status' => EstimateGenerationTrainingDataset::STATUS_ARCHIVED])->save();
+
+        return $dataset->refresh();
     }
 
     /**

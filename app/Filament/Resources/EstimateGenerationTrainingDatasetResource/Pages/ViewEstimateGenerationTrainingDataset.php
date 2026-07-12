@@ -30,11 +30,8 @@ class ViewEstimateGenerationTrainingDataset extends ViewRecord
                 ->icon('heroicon-o-play-circle')
                 ->color('success')
                 ->visible(fn (): bool => SystemAdminAccess::can(FilamentPermission::AI_ESTIMATOR_TRAINING_PROCESS))
-                ->disabled(fn (): bool => $this->record instanceof EstimateGenerationTrainingDataset
-                    && in_array($this->record->status, [
-                        EstimateGenerationTrainingDataset::STATUS_PROCESSING,
-                        EstimateGenerationTrainingDataset::STATUS_PROCESSING,
-                    ], true))
+                ->disabled(fn (): bool => ! $this->record instanceof EstimateGenerationTrainingDataset
+                    || $this->record->status !== EstimateGenerationTrainingDataset::STATUS_DRAFT)
                 ->action(function (): void {
                     if ($this->record instanceof EstimateGenerationTrainingDataset) {
                         app(EstimateGenerationTrainingDatasetService::class)->queueProcessing($this->record);

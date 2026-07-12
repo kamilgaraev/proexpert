@@ -1,33 +1,29 @@
-# Plan 3 — Task 10: версионирование learning datasets и benchmark runs
+# Plan 3 — Task 10: versioned learning datasets и benchmark runs
 
-## Результат
+## Итог после полного ревью
 
-Реализованы закрытые versioned datasets типов `development`, `regression`, `acceptance` и immutable benchmark runs. Acceptance и regression допускаются только к benchmark; обучение, prompt/rule/threshold tuning разрешены только для approved development dataset. Обычные сметы и их таблицы не изменялись.
+Контракт AI Addons закрыт на application и PostgreSQL уровнях. Обычные сметы, CBM и их таблицы не изменялись.
 
-## Контракты доверия
+- `recordApprovedExample` повторно загружает dataset по точным `id/organization_id/dataset_key/version`, а example — только через tenant-scoped relation. PostgreSQL composite FK закрепляет membership `(training_dataset_id, organization_id, dataset_version)`.
+- Learning запись использует точную организацию и source identity проверенного example. Acceptance/regression остаются benchmark-only; обучение разрешено только approved development.
+- `complete` и `fail` требуют `organizationId`, а terminal row блокируется по `(organization_id, uuid)`; чужой UUID возвращает domain 404 через `ModelNotFoundException`.
+- `start` сериализован advisory transaction lock по `(organization_id, idempotency_key)`: тот же exact manifest возвращает один run, изменение любого pin/currency/dataset вызывает `benchmark_idempotency_manifest_conflict`.
+- Версия dataset сериализована advisory transaction lock по `(organization_id, dataset_key)`.
+- Inline results — непустой list, максимум 1000 cases, максимум 32 поля на case, максимум 1 MiB, recursive sensitive-key rejection. S3 result требует tenant prefix, реального чтения через `BenchmarkPrivateObjectStore`/`FileService`, точных size и SHA-256; local storage отсутствует.
+- Migration `001800` меняет только AI training FK на `RESTRICT`, запрещает delete approved/archived dataset и каскад организации, разрешает только status-only `approved -> archived` и закрывает completed/failed/running CHECK без NULL/3VL лазеек. Manifest trigger теперь включает idempotency key и currency.
+- Filament process доступен только для draft; terminal delete скрыт и запрещён resource policy; дублированный status удалён.
+- Source-string tests удалены. Контракт доказывается behavior tests и реальным PostgreSQL.
 
-- Статусы dataset закрыты: `draft`, `processing`, `review_required`, `approved`, `rejected`, `archived`.
-- Dataset identity: organization scope, `dataset_key`, append-only `version`; новая версия создаётся отдельной строкой под тем же tenant/key.
-- Approved/archived datasets и их examples неизменяемы; позднее добавление example запрещено.
-- Accepted/indexed example требует `reviewed_by` и `reviewed_at`.
-- Старые dataset явно классифицируются как organization-scoped development v1; старые unreviewed accepted/indexed rows возвращаются в pending review.
-- Старые unversioned статусы блокируются CHECK-ограничением после migration.
+## Проверки
 
-## Benchmark persistence
+- DB-less: `php artisan test tests/Unit/EstimateGeneration/Training tests/Feature/EstimateGeneration/Benchmark --exclude-group=postgres-contract` — **15 tests / 36 assertions, PASS**.
+- PostgreSQL `_contract`, первый прогон `001700 + 001800`: **1 test / 31 assertions, PASS**.
+- PostgreSQL `_contract`, второй последовательный прогон на той же БД: **1 test / 31 assertions, PASS**.
+- Оба literal contention gate используют два `proc_open` процесса и pipe coordination `LOCKED/CONTINUE/DONE`, без sleeps: benchmark first-start и dataset version allocator.
+- PHPStan по изменённым production-классам: **PASS, no errors**.
+- Pint по изменённым PHP-файлам и `git diff --check`: **PASS**.
+- Production migrations не запускались; использовалась только disposable БД `most_ai_estimator_contract`.
 
-Run хранит UUID, tenant, точный dataset/version composite FK, pipeline/model/normative/price versions, закрытые bounded metrics, bounded inline case results либо S3 reference, duration, decimal cost/currency, status и timestamps. Repository обеспечивает idempotent tenant-scoped start с row lock и единственный переход `running -> completed|failed`; terminal manifest и результат неизменяемы.
+## Открытые замечания
 
-Файл migration из brief `2026_07_11_001200...` конфликтовал с уже существующей migration Task 9. Использовано следующее свободное упорядоченное имя `2026_07_12_001700_rebuild_estimate_generation_training_and_benchmarks.php`.
-
-## TDD и проверки
-
-- RED trust policy: 3 ожидаемые ошибки отсутствующего класса.
-- GREEN DB-less Training/Benchmark gate: 14 tests / 59 assertions до дополнительного closed-metrics regression.
-- Closed metrics RED: unknown acceptance-derived metric дошёл до DB facade; GREEN: отклоняется policy до persistence.
-- Disposable PostgreSQL `_contract`: реальная migration, constraints, FKs и triggers; два последовательных чистых прогона на одной базе, каждый 1 test / 12 assertions, PASS. Production не использовался, migrations production не запускались.
-- PHPStan по изменённым production-классам: PASS, no errors.
-- `php -l`, Pint и `git diff --check`: PASS после финального gate.
-
-## Ограничения хранения
-
-Локальное хранение case results не добавлено. Внешний результат допускается только как organization-scoped S3 path; inline JSON и metrics ограничены 1 MiB на application и PostgreSQL уровнях.
+Нет.

@@ -111,17 +111,13 @@ SQL);
         DB::unprepared('DROP TRIGGER IF EXISTS eg_benchmark_run_immutable ON estimate_generation_benchmark_runs; DROP FUNCTION IF EXISTS eg_guard_benchmark_run_immutable(); DROP TRIGGER IF EXISTS eg_benchmark_dataset_scope ON estimate_generation_benchmark_runs; DROP FUNCTION IF EXISTS eg_validate_benchmark_dataset(); DROP TRIGGER IF EXISTS eg_training_example_immutable ON estimate_generation_training_examples; DROP FUNCTION IF EXISTS eg_guard_training_example_immutable(); DROP TRIGGER IF EXISTS eg_training_dataset_immutable ON estimate_generation_training_datasets; DROP FUNCTION IF EXISTS eg_guard_training_dataset_immutable();');
         Schema::dropIfExists('estimate_generation_benchmark_runs');
         DB::statement('ALTER TABLE estimate_generation_training_examples DROP CONSTRAINT IF EXISTS eg_training_example_review_chk');
-        Schema::table('estimate_generation_training_examples', function (Blueprint $table): void {
-            $table->dropConstrainedForeignId('reviewed_by');
-            $table->dropColumn('reviewed_at');
-        });
+        DB::statement('ALTER TABLE estimate_generation_training_examples DROP CONSTRAINT IF EXISTS estimate_generation_training_examples_reviewed_by_foreign');
+        DB::statement('ALTER TABLE estimate_generation_training_examples DROP COLUMN IF EXISTS reviewed_by, DROP COLUMN IF EXISTS reviewed_at');
         DB::statement('DROP INDEX IF EXISTS eg_training_dataset_id_version_uq');
         DB::statement('DROP INDEX IF EXISTS eg_training_dataset_key_version_uq');
         DB::statement('DROP INDEX IF EXISTS eg_training_dataset_trust_idx');
         DB::statement('ALTER TABLE estimate_generation_training_datasets DROP CONSTRAINT IF EXISTS eg_training_dataset_type_chk, DROP CONSTRAINT IF EXISTS eg_training_dataset_status_chk, DROP CONSTRAINT IF EXISTS eg_training_dataset_scope_chk, DROP CONSTRAINT IF EXISTS eg_training_dataset_approval_chk');
-        Schema::table('estimate_generation_training_datasets', function (Blueprint $table): void {
-            $table->dropConstrainedForeignId('approved_by');
-            $table->dropColumn(['dataset_key', 'version', 'dataset_type', 'scope', 'approved_at']);
-        });
+        DB::statement('ALTER TABLE estimate_generation_training_datasets DROP CONSTRAINT IF EXISTS estimate_generation_training_datasets_approved_by_foreign');
+        DB::statement('ALTER TABLE estimate_generation_training_datasets DROP COLUMN IF EXISTS approved_by, DROP COLUMN IF EXISTS dataset_key, DROP COLUMN IF EXISTS version, DROP COLUMN IF EXISTS dataset_type, DROP COLUMN IF EXISTS scope, DROP COLUMN IF EXISTS approved_at');
     }
 };

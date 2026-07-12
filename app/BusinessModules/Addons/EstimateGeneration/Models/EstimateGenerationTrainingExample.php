@@ -21,6 +21,8 @@ class EstimateGenerationTrainingExample extends Model
 
     protected $fillable = [
         'training_dataset_id',
+        'organization_id',
+        'dataset_version',
         'estimate_file_id',
         'learning_example_id',
         'source_row_hash',
@@ -47,6 +49,8 @@ class EstimateGenerationTrainingExample extends Model
     ];
 
     protected $casts = [
+        'organization_id' => 'integer',
+        'dataset_version' => 'integer',
         'training_dataset_id' => 'integer',
         'estimate_file_id' => 'integer',
         'learning_example_id' => 'integer',

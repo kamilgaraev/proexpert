@@ -55,10 +55,70 @@ final class TrainingDatasetTrustPolicyTest extends TestCase
     #[Test]
     public function benchmark_metrics_reject_unknown_names_before_persistence(): void
     {
-        $repository = new BenchmarkRunRepository(new TrainingDatasetTrustPolicy);
+        $store = new class implements \App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPrivateObjectStore
+        {
+            public function read(string $path, int $maxBytes): string
+            {
+                return '';
+            }
+        };
+        $repository = new BenchmarkRunRepository(new TrainingDatasetTrustPolicy, $store);
 
         $this->expectException(\DomainException::class);
         $this->expectExceptionMessage('benchmark_metric_not_allowed');
-        $repository->complete('unused', ['secret_acceptance_score' => ['macro' => 1]], []);
+        $repository->complete(1, 'unused', ['secret_acceptance_score' => ['macro' => 1]], [], durationMs: 1);
+    }
+
+    #[Test]
+    public function inline_benchmark_results_reject_sensitive_fields(): void
+    {
+        $repository = $this->repository('unused');
+        $this->expectExceptionMessage('benchmark_sensitive_case_result_rejected');
+        $repository->complete(7, 'unused', $this->metrics(), [['case_id' => '1', 'token' => 'secret']], durationMs: 1);
+    }
+
+    #[Test]
+    public function inline_benchmark_results_reject_too_many_cases(): void
+    {
+        $repository = $this->repository('unused');
+        $this->expectExceptionMessage('benchmark_case_results_invalid');
+        $repository->complete(7, 'unused', $this->metrics(), array_fill(0, 1001, ['case_id' => '1']), durationMs: 1);
+    }
+
+    #[Test]
+    public function external_results_require_exact_tenant_object_integrity(): void
+    {
+        $repository = $this->repository('payload');
+        $this->expectExceptionMessage('benchmark_results_object_integrity_mismatch');
+        $repository->complete(7, 'unused', $this->metrics(), s3Path: 'org-7/estimate-generation/benchmarks/run.json', durationMs: 1, s3Size: 7, s3Sha256: str_repeat('0', 64));
+    }
+
+    #[Test]
+    public function external_results_reject_cross_organization_paths_before_storage_read(): void
+    {
+        $repository = $this->repository('payload');
+        $this->expectExceptionMessage('benchmark_results_object_invalid');
+        $repository->complete(7, 'unused', $this->metrics(), s3Path: 'org-8/estimate-generation/benchmarks/run.json', durationMs: 1, s3Size: 7, s3Sha256: hash('sha256', 'payload'));
+    }
+
+    private function repository(string $contents): BenchmarkRunRepository
+    {
+        $store = new class($contents) implements \App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPrivateObjectStore
+        {
+            public function __construct(private readonly string $contents) {}
+
+            public function read(string $path, int $maxBytes): string
+            {
+                return $this->contents;
+            }
+        };
+
+        return new BenchmarkRunRepository(new TrainingDatasetTrustPolicy, $store);
+    }
+
+    /** @return array<string, array<string, float>> */
+    private function metrics(): array
+    {
+        return ['technical_success_rate' => ['macro' => 1.0]];
     }
 }

@@ -80,7 +80,7 @@ class EstimateGenerationTrainingDatasetResource extends Resource
                         ->options(fn (Get $get): array => self::projectOptions($get('organization_id')))
                         ->searchable()
                         ->preload()
-                        ->disabled(fn (Get $get): bool => !is_numeric($get('organization_id'))),
+                        ->disabled(fn (Get $get): bool => ! is_numeric($get('organization_id'))),
                     Forms\Components\TextInput::make('title')
                         ->label(trans_message('estimate_generation.training_title'))
                         ->required()
@@ -254,10 +254,7 @@ class EstimateGenerationTrainingDatasetResource extends Resource
                     ->icon('heroicon-o-play-circle')
                     ->color('success')
                     ->visible(fn (): bool => SystemAdminAccess::can(FilamentPermission::AI_ESTIMATOR_TRAINING_PROCESS))
-                    ->disabled(fn (EstimateGenerationTrainingDataset $record): bool => in_array($record->status, [
-                        EstimateGenerationTrainingDataset::STATUS_PROCESSING,
-                        EstimateGenerationTrainingDataset::STATUS_PROCESSING,
-                    ], true))
+                    ->disabled(fn (EstimateGenerationTrainingDataset $record): bool => $record->status !== EstimateGenerationTrainingDataset::STATUS_DRAFT)
                     ->action(function (EstimateGenerationTrainingDataset $record): void {
                         app(EstimateGenerationTrainingDatasetService::class)->queueProcessing($record);
 
@@ -267,7 +264,8 @@ class EstimateGenerationTrainingDatasetResource extends Resource
                             ->send();
                     }),
                 DeleteAction::make()
-                    ->visible(fn (): bool => SystemAdminAccess::can(FilamentPermission::AI_ESTIMATOR_TRAINING_DELETE)),
+                    ->visible(fn (EstimateGenerationTrainingDataset $record): bool => SystemAdminAccess::can(FilamentPermission::AI_ESTIMATOR_TRAINING_DELETE)
+                        && ! in_array($record->status, [EstimateGenerationTrainingDataset::STATUS_APPROVED, EstimateGenerationTrainingDataset::STATUS_ARCHIVED], true)),
             ]);
     }
 
@@ -302,7 +300,9 @@ class EstimateGenerationTrainingDatasetResource extends Resource
 
     public static function canDelete(Model $record): bool
     {
-        return SystemAdminAccess::can(FilamentPermission::AI_ESTIMATOR_TRAINING_DELETE);
+        return $record instanceof EstimateGenerationTrainingDataset
+            && ! in_array($record->status, [EstimateGenerationTrainingDataset::STATUS_APPROVED, EstimateGenerationTrainingDataset::STATUS_ARCHIVED], true)
+            && SystemAdminAccess::can(FilamentPermission::AI_ESTIMATOR_TRAINING_DELETE);
     }
 
     public static function canDeleteAny(): bool
@@ -358,7 +358,7 @@ class EstimateGenerationTrainingDatasetResource extends Resource
      */
     private static function projectOptions(mixed $organizationId): array
     {
-        if (!is_numeric($organizationId) || (int) $organizationId <= 0) {
+        if (! is_numeric($organizationId) || (int) $organizationId <= 0) {
             return [];
         }
 
