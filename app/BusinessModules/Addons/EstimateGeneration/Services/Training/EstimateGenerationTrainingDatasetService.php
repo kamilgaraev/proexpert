@@ -114,22 +114,7 @@ final class EstimateGenerationTrainingDatasetService
     public function queueProcessing(EstimateGenerationTrainingDataset $dataset): void
     {
         $this->trustPolicy->assertCanProcess($dataset);
-        $token = (string) Str::uuid();
-        $affected = EstimateGenerationTrainingDataset::query()
-            ->whereKey($dataset->getKey())
-            ->where('organization_id', $dataset->organization_id)
-            ->where('status', EstimateGenerationTrainingDataset::STATUS_DRAFT)
-            ->update([
-                'status' => EstimateGenerationTrainingDataset::STATUS_PROCESSING,
-                'processing_token' => $token,
-                'queued_at' => now(),
-                'error_message' => null,
-            ]);
-        if ($affected !== 1) {
-            throw new \DomainException('training_dataset_processing_claim_lost');
-        }
-
-        \App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationTrainingDatasetJob::dispatch((int) $dataset->id, $token);
+        \App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationTrainingDatasetJob::dispatch((int) $dataset->id);
     }
 
     public function appendVersion(EstimateGenerationTrainingDataset $source, ?SystemAdmin $actor): EstimateGenerationTrainingDataset
@@ -187,14 +172,21 @@ final class EstimateGenerationTrainingDatasetService
      */
     public function process(EstimateGenerationTrainingDataset $dataset, string $processingToken): array
     {
+        $now = now();
         $claimed = EstimateGenerationTrainingDataset::query()
             ->whereKey($dataset->getKey())
             ->where('organization_id', $dataset->organization_id)
-            ->where('status', EstimateGenerationTrainingDataset::STATUS_PROCESSING)
-            ->where('processing_token', $processingToken)
-            ->update(['processing_token' => null]);
+            ->where('status', EstimateGenerationTrainingDataset::STATUS_DRAFT)
+            ->update([
+                'status' => EstimateGenerationTrainingDataset::STATUS_PROCESSING,
+                'processing_token' => $processingToken,
+                'processing_lease_expires_at' => $now->copy()->addSeconds(2100),
+                'processing_attempt' => DB::raw('processing_attempt + 1'),
+                'queued_at' => $now,
+                'error_message' => null,
+            ]);
         if ($claimed !== 1) {
-            throw new \DomainException('training_dataset_processing_claim_lost');
+            return [];
         }
         $dataset = EstimateGenerationTrainingDataset::query()->whereKey($dataset->getKey())->firstOrFail();
         $tempPath = null;
@@ -204,25 +196,37 @@ final class EstimateGenerationTrainingDatasetService
             if (! $referenceFile instanceof EstimateGenerationTrainingFile) {
                 throw new \RuntimeException(trans_message('estimate_generation.training_reference_estimate_required'));
             }
+            $this->heartbeat((int) $dataset->id, $processingToken);
             $tempPath = $this->downloadToTemp($referenceFile);
-            $stats = $this->parseAndRecord($dataset, $referenceFile, $tempPath);
+            $this->heartbeat((int) $dataset->id, $processingToken);
+            $stats = $this->parseAndRecord($dataset, $referenceFile, $tempPath, $processingToken);
 
-            $dataset->forceFill([
-                'status' => EstimateGenerationTrainingDataset::STATUS_REVIEW_REQUIRED,
-                'quality_status' => 'needs_review',
-                'stats' => $stats,
-                'processed_at' => now(),
-                'accepted_at' => null,
-            ])->save();
+            $affected = EstimateGenerationTrainingDataset::query()->whereKey($dataset->id)
+                ->where('processing_token', $processingToken)->where('processing_lease_expires_at', '>', now())->update([
+                    'status' => EstimateGenerationTrainingDataset::STATUS_REVIEW_REQUIRED,
+                    'quality_status' => 'needs_review',
+                    'stats' => $stats,
+                    'processed_at' => now(),
+                    'accepted_at' => null,
+                    'processing_token' => null,
+                    'processing_lease_expires_at' => null,
+                ]);
+
+            if ($affected !== 1) {
+                throw new \DomainException('training_dataset_processing_claim_lost');
+            }
 
             return $stats;
         } catch (Throwable $e) {
-            $dataset->forceFill([
-                'status' => EstimateGenerationTrainingDataset::STATUS_REJECTED,
-                'quality_status' => 'failed',
-                'error_message' => 'training_dataset_processing_failed',
-                'processed_at' => now(),
-            ])->save();
+            EstimateGenerationTrainingDataset::query()->whereKey($dataset->id)
+                ->where('processing_token', $processingToken)->update([
+                    'status' => EstimateGenerationTrainingDataset::STATUS_REJECTED,
+                    'quality_status' => 'failed',
+                    'error_message' => 'training_dataset_processing_failed',
+                    'processed_at' => now(),
+                    'processing_token' => null,
+                    'processing_lease_expires_at' => null,
+                ]);
 
             Log::error('[EstimateGenerationTraining] Dataset processing failed', [
                 'dataset_id' => $dataset->id,
@@ -238,13 +242,63 @@ final class EstimateGenerationTrainingDatasetService
         }
     }
 
+    public function rejectOwnedLease(int $datasetId, ?string $leaseToken, string $failureCode): void
+    {
+        if ($leaseToken === null || $leaseToken === '') {
+            return;
+        }
+        EstimateGenerationTrainingDataset::query()->whereKey($datasetId)
+            ->where('status', EstimateGenerationTrainingDataset::STATUS_PROCESSING)
+            ->where('processing_token', $leaseToken)->update([
+                'status' => EstimateGenerationTrainingDataset::STATUS_REJECTED,
+                'quality_status' => 'failed', 'error_message' => $failureCode,
+                'processed_at' => now(), 'processing_token' => null,
+                'processing_lease_expires_at' => null,
+            ]);
+    }
+
+    public function approve(EstimateGenerationTrainingDataset $dataset, SystemAdmin $reviewer): EstimateGenerationTrainingDataset
+    {
+        return DB::transaction(function () use ($dataset, $reviewer): EstimateGenerationTrainingDataset {
+            $dataset = EstimateGenerationTrainingDataset::query()->whereKey($dataset->id)
+                ->where('organization_id', $dataset->organization_id)->lockForUpdate()->firstOrFail();
+            if ($dataset->status !== EstimateGenerationTrainingDataset::STATUS_REVIEW_REQUIRED) {
+                throw new \DomainException('dataset_approval_transition_not_allowed');
+            }
+            $examples = $dataset->examples();
+            if (! $examples->exists() || (clone $examples)->where(function ($query): void {
+                $query->where('status', '<>', EstimateGenerationTrainingExample::STATUS_ACCEPTED)
+                    ->orWhereNull('reviewed_by')->orWhereNull('reviewed_at');
+            })->exists()) {
+                throw new \DomainException('dataset_approval_requires_fully_reviewed_examples');
+            }
+            $dataset->forceFill(['status' => EstimateGenerationTrainingDataset::STATUS_APPROVED,
+                'approved_by' => $reviewer->id, 'approved_at' => now()])->save();
+
+            return $dataset->refresh();
+        });
+    }
+
+    public function heartbeat(int $datasetId, string $processingToken): void
+    {
+        $renewed = EstimateGenerationTrainingDataset::query()->whereKey($datasetId)
+            ->where('status', EstimateGenerationTrainingDataset::STATUS_PROCESSING)
+            ->where('processing_token', $processingToken)
+            ->where('processing_lease_expires_at', '>', now())
+            ->update(['processing_lease_expires_at' => now()->addSeconds(2100)]);
+        if ($renewed !== 1) {
+            throw new \DomainException('training_dataset_processing_claim_lost');
+        }
+    }
+
     /**
      * @return array<string, int>
      */
     private function parseAndRecord(
         EstimateGenerationTrainingDataset $dataset,
         EstimateGenerationTrainingFile $referenceFile,
-        string $tempPath
+        string $tempPath,
+        string $processingToken,
     ): array {
         $session = $this->temporaryImportSession($dataset, $referenceFile);
         $rows = $this->rowsReader->rows($session, $tempPath);
@@ -261,6 +315,9 @@ final class EstimateGenerationTrainingDatasetService
 
         foreach ($rows as $row) {
             $stats['parsed_rows']++;
+            if ($stats['parsed_rows'] % 100 === 0) {
+                $this->heartbeat((int) $dataset->id, $processingToken);
+            }
             $trainingExample = $this->upsertTrainingExample($dataset, $referenceFile, is_array($row) ? $row : (array) $row);
 
             if ($trainingExample->status !== EstimateGenerationTrainingExample::STATUS_ACCEPTED) {

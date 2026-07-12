@@ -14,5 +14,6 @@ final readonly class BenchmarkPrivateObject
         public ?string $etag,
         public ?string $versionId,
         public string $contentType,
+        public bool $created = false,
     ) {}
 }

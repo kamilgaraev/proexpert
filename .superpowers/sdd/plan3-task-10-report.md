@@ -28,6 +28,15 @@
 
 Нет.
 
+## Final architecture hardening 002100
+
+Status: **DONE — 0 open findings**.
+
+- Queue dispatch leaves the dataset in `draft`; the unique job atomically claims `draft -> processing` with a lease token, expiry and attempt. Middleware supports releases/retries, and a scheduled reclaimer CAS-resets exact expired leases and redispatches them.
+- Application approval and PostgreSQL constraint triggers require a nonempty corpus whose every example is accepted and has a complete `reviewed_by/reviewed_at` pair, plus a complete dataset `approved_by/approved_at` pair. Late inserts and mutations of approved examples are rejected.
+- Benchmark objects are written only through `FileService` using conditional S3 `PutObject` with `If-None-Match: *`. PutObject ETag/VersionId are authoritative; 409/412 conflicts read the existing object and require exact hash/size/content-type equality. Missing client capability fails closed. A newly created run-owned object is removed if its DB transition fails.
+- Fresh DB-less gate: **90 tests / 293 assertions, PASS**. PostgreSQL 002100 contract with down/up, adversarial approval and expired-lease recovery: **1 test / 45 assertions, PASS twice consecutively on the same disposable database**. Targeted PHPStan, Pint and `git diff --check`: PASS. Production migrations were not executed.
+
 ## Edge-hardening 001900
 
 - Terminal retry сравнивает канонический полный payload; совпадение возвращает исходную запись и timestamp, расхождение даёт `benchmark_terminal_payload_conflict`.

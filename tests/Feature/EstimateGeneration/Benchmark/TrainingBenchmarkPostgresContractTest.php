@@ -6,6 +6,7 @@ namespace Tests\Feature\EstimateGeneration\Benchmark;
 
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationTrainingDatasetJob;
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverExpiredTrainingDatasetLeasesJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationTrainingDataset;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Training\EstimateGenerationTrainingDatasetService;
 use Illuminate\Database\QueryException;
@@ -39,7 +40,11 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
         $hardening = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001800_harden_estimate_generation_training_and_benchmarks.php';
         $edgeHardening = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001900_close_training_benchmark_edge_contracts.php';
         $storageHardening = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_002000_enforce_training_benchmark_storage_contracts.php';
+        $finalHardening = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_002100_finalize_training_benchmark_architecture.php';
         if (\Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_training_datasets', 'dataset_key')) {
+            if (\Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_training_datasets', 'processing_lease_expires_at')) {
+                $finalHardening->down();
+            }
             if (\Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_training_datasets', 'processing_token')
                 && ! \Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_benchmark_runs', 'case_results_version_scheme')) {
                 DB::statement('ALTER TABLE estimate_generation_training_datasets DROP COLUMN processing_token');
@@ -60,6 +65,7 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
         $hardening->up();
         $edgeHardening->up();
         $storageHardening->up();
+        $finalHardening->up();
 
         $organizationId = (int) DB::table('organizations')->insertGetId(['name' => 'Contract organization A']);
         $otherOrganizationId = (int) DB::table('organizations')->insertGetId(['name' => 'Contract organization B']);
@@ -141,12 +147,8 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
         $service = app(EstimateGenerationTrainingDatasetService::class);
         Queue::fake();
         $service->queueProcessing($queueDataset);
-        try {
-            $service->queueProcessing($queueDataset->fresh());
-            self::fail('Duplicate stale queue request dispatched a second job.');
-        } catch (\DomainException $exception) {
-            self::assertSame('training_dataset_processing_claim_lost', $exception->getMessage());
-        }
+        $service->queueProcessing($queueDataset->fresh());
+        self::assertSame('draft', DB::table('estimate_generation_training_datasets')->where('id', $queueDatasetId)->value('status'));
         Queue::assertPushed(ProcessEstimateGenerationTrainingDatasetJob::class, 1);
         $job = null;
         Queue::assertPushed(ProcessEstimateGenerationTrainingDatasetJob::class, function (ProcessEstimateGenerationTrainingDatasetJob $queued) use (&$job): bool {
@@ -161,13 +163,26 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
         } catch (\RuntimeException) {
             self::assertSame('rejected', DB::table('estimate_generation_training_datasets')->where('id', $queueDatasetId)->value('status'));
         }
-        try {
-            $job->handle($service);
-            self::fail('The same processing token was claimed twice.');
-        } catch (\DomainException $exception) {
-            self::assertSame('training_dataset_processing_claim_lost', $exception->getMessage());
-        }
+        $job->handle($service);
+        self::assertSame('rejected', DB::table('estimate_generation_training_datasets')->where('id', $queueDatasetId)->value('status'));
 
+        $emptyApprovalId = $this->insertDataset($organizationId, $reviewerId, fake()->uuid(), 1, 'development', 'review_required');
+        $this->assertRejected(fn () => DB::table('estimate_generation_training_datasets')->where('id', $emptyApprovalId)->update([
+            'status' => 'approved', 'approved_by' => $reviewerId, 'approved_at' => now(),
+        ]));
+
+        $expiredId = $this->insertDataset($organizationId, $reviewerId, fake()->uuid(), 1, 'development', 'draft');
+        $expiredToken = fake()->uuid();
+        DB::table('estimate_generation_training_datasets')->where('id', $expiredId)->update([
+            'status' => 'processing', 'processing_token' => $expiredToken,
+            'processing_lease_expires_at' => now()->subMinute(), 'processing_attempt' => 1,
+        ]);
+        (new RecoverExpiredTrainingDatasetLeasesJob)->handle();
+        self::assertSame('draft', DB::table('estimate_generation_training_datasets')->where('id', $expiredId)->value('status'));
+        self::assertNull(DB::table('estimate_generation_training_datasets')->where('id', $expiredId)->value('processing_token'));
+        Queue::assertPushed(ProcessEstimateGenerationTrainingDatasetJob::class, fn (ProcessEstimateGenerationTrainingDatasetJob $queued): bool => $queued->uniqueId() === (string) $expiredId);
+
+        $finalHardening->down();
         $storageHardening->down();
         $edgeHardening->down();
         $hardening->down();
@@ -176,20 +191,34 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
         $hardening->up();
         $edgeHardening->up();
         $storageHardening->up();
+        $finalHardening->up();
         self::assertTrue(\Illuminate\Support\Facades\Schema::hasTable('estimate_generation_benchmark_runs'));
         self::assertTrue(\Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_benchmark_runs', 'case_results_version_scheme'));
     }
 
     private function insertDataset(int $organizationId, int $reviewerId, string $key, int $version, string $type, string $status = 'approved'): int
     {
-        return DB::table('estimate_generation_training_datasets')->insertGetId([
+        $initialStatus = $status === 'approved' ? 'review_required' : $status;
+        $id = DB::table('estimate_generation_training_datasets')->insertGetId([
             'uuid' => fake()->uuid(), 'dataset_key' => $key, 'version' => $version, 'dataset_type' => $type,
             'scope' => 'organization', 'organization_id' => $organizationId, 'title' => 'Contract dataset',
-            'source_system' => 'contract', 'status' => $status, 'quality_status' => 'accepted',
-            'source_quality_score' => '1.0000', 'approved_by' => $status === 'approved' ? $reviewerId : null,
-            'approved_at' => $status === 'approved' ? now() : null,
+            'source_system' => 'contract', 'status' => $initialStatus, 'quality_status' => 'accepted',
+            'source_quality_score' => '1.0000', 'approved_by' => null, 'approved_at' => null,
             'created_at' => now(), 'updated_at' => now(),
         ]);
+        if ($status === 'approved') {
+            DB::table('estimate_generation_training_examples')->insert([
+                'training_dataset_id' => $id, 'organization_id' => $organizationId, 'dataset_version' => $version,
+                'source_row_hash' => hash('sha256', "approved-{$id}"), 'work_name' => 'Reviewed example',
+                'status' => 'accepted', 'reviewed_by' => $reviewerId, 'reviewed_at' => now(),
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+            DB::table('estimate_generation_training_datasets')->where('id', $id)->update([
+                'status' => 'approved', 'approved_by' => $reviewerId, 'approved_at' => now(), 'updated_at' => now(),
+            ]);
+        }
+
+        return $id;
     }
 
     private function insertRun(int $organizationId, int $datasetId, int $version, string $key): int

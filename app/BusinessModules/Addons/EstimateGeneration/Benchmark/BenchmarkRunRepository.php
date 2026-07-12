@@ -107,15 +107,22 @@ final class BenchmarkRunRepository
             $s3ContentType = $object->contentType;
         }
 
-        return $this->transition($organizationId, $uuid, EstimateGenerationBenchmarkRun::STATUS_COMPLETED, [
-            'metrics' => $metrics, 'case_results' => $caseResults,
-            'case_results_storage_disk' => $s3Path === null ? null : 's3', 'case_results_storage_path' => $s3Path,
-            'case_results_size' => $s3Size, 'case_results_sha256' => $s3Sha256,
-            'case_results_etag' => $s3Etag, 'case_results_version' => $s3Version,
-            'case_results_version_scheme' => $s3Path === null ? null : 'sha256',
-            'case_results_content_type' => $s3ContentType,
-            'duration_ms' => $durationMs, 'cost_amount' => $cost, 'completed_at' => now(),
-        ]);
+        try {
+            return $this->transition($organizationId, $uuid, EstimateGenerationBenchmarkRun::STATUS_COMPLETED, [
+                'metrics' => $metrics, 'case_results' => $caseResults,
+                'case_results_storage_disk' => $s3Path === null ? null : 's3', 'case_results_storage_path' => $s3Path,
+                'case_results_size' => $s3Size, 'case_results_sha256' => $s3Sha256,
+                'case_results_etag' => $s3Etag, 'case_results_version' => $s3Version,
+                'case_results_version_scheme' => $s3Path === null ? null : 'sha256',
+                'case_results_content_type' => $s3ContentType,
+                'duration_ms' => $durationMs, 'cost_amount' => $cost, 'completed_at' => now(),
+            ]);
+        } catch (\Throwable $exception) {
+            if ($object?->created === true && $this->objectStore instanceof BenchmarkImmutableObjectStore) {
+                $this->objectStore->removeCreated($object);
+            }
+            throw $exception;
+        }
     }
 
     public function fail(int $organizationId, string $uuid, string $failureCode, ?string $errorSummary = null): EstimateGenerationBenchmarkRun

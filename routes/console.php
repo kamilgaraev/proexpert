@@ -3,6 +3,11 @@
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverExpiredTrainingDatasetLeasesJob;
+
+Schedule::job(new RecoverExpiredTrainingDatasetLeasesJob())
+    ->everyFiveMinutes()
+    ->withoutOverlapping();
 use Illuminate\Support\Facades\File;
 use App\Console\Commands\ReverifyOrganizationsCommand;
 

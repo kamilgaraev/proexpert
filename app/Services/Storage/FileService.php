@@ -2,15 +2,15 @@
 
 namespace App\Services\Storage;
 
-use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
-use Illuminate\Contracts\Filesystem\Filesystem;
-use Illuminate\Filesystem\FilesystemAdapter;
 use App\Models\Organization;
 use App\Services\Logging\LoggingService;
+use Illuminate\Contracts\Filesystem\Filesystem;
+use Illuminate\Filesystem\FilesystemAdapter;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class FileService
 {
@@ -30,6 +30,92 @@ class FileService
         return Storage::disk('s3');
     }
 
+    /** @return array{path:string,body:string,size:int,sha256:string,etag:?string,version_id:?string,content_type:string,created:bool} */
+    public function putImmutable(string $path, string $body, string $contentType): array
+    {
+        $client = $this->s3Client();
+        $config = $this->disk()->getConfig();
+        $bucket = $config['bucket'] ?? null;
+        if (! is_string($bucket) || $bucket === '') {
+            throw new \RuntimeException('s3_conditional_put_unavailable');
+        }
+        try {
+            $result = $client->putObject([
+                'Bucket' => $bucket, 'Key' => $path, 'Body' => $body,
+                'ContentType' => $contentType, 'IfNoneMatch' => '*',
+            ]);
+            $etag = is_string($result['ETag'] ?? null) ? trim($result['ETag'], '"') : null;
+            $version = is_string($result['VersionId'] ?? null) ? $result['VersionId'] : null;
+
+            return ['path' => $path, 'body' => $body, 'size' => strlen($body),
+                'sha256' => hash('sha256', $body), 'etag' => $etag, 'version_id' => $version,
+                'content_type' => $contentType, 'created' => true];
+        } catch (\Aws\Exception\AwsException $exception) {
+            $status = $exception->getStatusCode();
+            if (! in_array($status, [409, 412], true)) {
+                throw new \RuntimeException('s3_conditional_put_failed', 0, $exception);
+            }
+
+            return [...$this->describeVersion($path, null), 'created' => false];
+        } catch (\InvalidArgumentException $exception) {
+            throw new \RuntimeException('s3_conditional_put_unavailable', 0, $exception);
+        }
+    }
+
+    /** @return array{path:string,body:string,size:int,sha256:string,etag:?string,version_id:?string,content_type:string} */
+    public function describeVersion(string $path, ?string $versionId): array
+    {
+        $client = $this->s3Client();
+        $bucket = $this->disk()->getConfig()['bucket'] ?? null;
+        if (! is_string($bucket) || $bucket === '') {
+            throw new \RuntimeException('s3_versioned_read_unavailable');
+        }
+        $arguments = ['Bucket' => $bucket, 'Key' => $path];
+        if ($versionId !== null && $versionId !== '') {
+            $arguments['VersionId'] = $versionId;
+        }
+        $head = $client->headObject($arguments);
+        $resolvedVersion = is_string($head['VersionId'] ?? null) ? $head['VersionId'] : $versionId;
+        if ($resolvedVersion !== null) {
+            $arguments['VersionId'] = $resolvedVersion;
+        }
+        $object = $client->getObject($arguments);
+        $body = (string) $object['Body'];
+
+        return ['path' => $path, 'body' => $body, 'size' => strlen($body),
+            'sha256' => hash('sha256', $body),
+            'etag' => is_string($head['ETag'] ?? null) ? trim($head['ETag'], '"') : null,
+            'version_id' => $resolvedVersion,
+            'content_type' => is_string($head['ContentType'] ?? null) ? $head['ContentType'] : 'application/octet-stream'];
+    }
+
+    public function removeImmutable(string $path, ?string $versionId): void
+    {
+        $bucket = $this->disk()->getConfig()['bucket'] ?? null;
+        if (! is_string($bucket) || $bucket === '') {
+            throw new \RuntimeException('s3_versioned_delete_unavailable');
+        }
+        $arguments = ['Bucket' => $bucket, 'Key' => $path];
+        if ($versionId !== null && $versionId !== '') {
+            $arguments['VersionId'] = $versionId;
+        }
+        $this->s3Client()->deleteObject($arguments);
+    }
+
+    protected function s3Client(): \Aws\S3\S3ClientInterface
+    {
+        $adapter = $this->disk()->getAdapter();
+        if (! method_exists($adapter, 'getClient')) {
+            throw new \RuntimeException('s3_conditional_put_unavailable');
+        }
+        $client = $adapter->getClient();
+        if (! $client instanceof \Aws\S3\S3ClientInterface) {
+            throw new \RuntimeException('s3_conditional_put_unavailable');
+        }
+
+        return $client;
+    }
+
     /**
      * Загрузить файл и вернуть путь или false.
      */
@@ -42,13 +128,13 @@ class FileService
         bool $respectRequestedVisibility = false
     ): string|false {
         $disk = $this->disk($organization);
-        
+
         // Получаем организацию для формирования пути
         $org = $this->getOrganization($organization);
 
         // Для Яндекс S3 с организациями используем private доступ (временные URL)
         $useVisibility = $visibility;
-        if ($organization && !$respectRequestedVisibility) {
+        if ($organization && ! $respectRequestedVisibility) {
             $useVisibility = null; // private по умолчанию
         }
 
@@ -59,20 +145,20 @@ class FileService
             } catch (\Throwable $e) {
                 \Illuminate\Support\Facades\Log::warning('Failed to delete previous file', [
                     'path' => $existingPath,
-                    'err'  => $e->getMessage(),
+                    'err' => $e->getMessage(),
                 ]);
             }
         }
 
-        $filename = Str::uuid()->toString() . '.' . $file->getClientOriginalExtension();
-        
+        $filename = Str::uuid()->toString().'.'.$file->getClientOriginalExtension();
+
         // Формируем путь с префиксом организации: org-{id}/directory/filename
         $orgPrefix = $org ? "org-{$org->id}" : 'shared';
-        $fullPath = $orgPrefix . '/' . $directory . '/' . $filename;
+        $fullPath = $orgPrefix.'/'.$directory.'/'.$filename;
 
         $startTime = microtime(true);
         $fileSizeMb = round($file->getSize() / 1024 / 1024, 2);
-        
+
         // TECHNICAL: Начало загрузки файла в S3
         $this->logging->technical('s3.upload.started', [
             'filename' => $file->getClientOriginalName(),
@@ -84,18 +170,18 @@ class FileService
             'directory' => $directory,
             'full_s3_path' => $fullPath,
             'visibility' => $visibility,
-            'org_prefix' => $orgPrefix
+            'org_prefix' => $orgPrefix,
         ]);
 
         try {
             // Проверяем валидность файла перед загрузкой
-            if (!$file->isValid()) {
+            if (! $file->isValid()) {
                 Log::error('[FileService] upload(): file is not valid', [
                     'filename' => $file->getClientOriginalName(),
                     'error' => $file->getError(),
                     'error_message' => $file->getErrorMessage(),
                 ]);
-                
+
                 $this->logging->technical('s3.upload.failed', [
                     'filename' => $file->getClientOriginalName(),
                     'file_size_mb' => $fileSizeMb,
@@ -104,13 +190,13 @@ class FileService
                     'reason' => 'UploadedFile is not valid',
                     'upload_error' => $file->getError(),
                 ], 'error');
-                
+
                 return false;
             }
 
             Log::info('[FileService] upload(): starting upload', [
                 'org_prefix' => $orgPrefix,
-                'directory' => $directory, 
+                'directory' => $directory,
                 'filename' => $filename,
                 'full_path' => $fullPath,
                 'org_id' => $org?->id,
@@ -122,14 +208,14 @@ class FileService
 
             // Получаем путь к временному файлу
             $realPath = $file->getRealPath();
-            
-            if (!$realPath || !file_exists($realPath)) {
+
+            if (! $realPath || ! file_exists($realPath)) {
                 Log::error('[FileService] upload(): file path is invalid or file does not exist', [
                     'real_path' => $realPath,
                     'filename' => $file->getClientOriginalName(),
                     'is_uploaded_file' => is_uploaded_file($realPath),
                 ]);
-                
+
                 $this->logging->technical('s3.upload.failed', [
                     'filename' => $file->getClientOriginalName(),
                     'file_size_mb' => $fileSizeMb,
@@ -138,13 +224,13 @@ class FileService
                     'reason' => 'File path is invalid or file does not exist',
                     'real_path' => $realPath,
                 ], 'error');
-                
+
                 return false;
             }
 
-            // Используем полный путь для загрузки  
+            // Используем полный путь для загрузки
             $fileContent = file_get_contents($realPath);
-            
+
             // Проверяем, что контент успешно получен
             if ($fileContent === false || strlen($fileContent) === 0) {
                 Log::error('[FileService] upload(): failed to read file content', [
@@ -154,7 +240,7 @@ class FileService
                     'is_readable' => is_readable($realPath),
                     'content_length' => $fileContent === false ? 'false' : strlen($fileContent),
                 ]);
-                
+
                 $this->logging->technical('s3.upload.failed', [
                     'filename' => $file->getClientOriginalName(),
                     'file_size_mb' => $fileSizeMb,
@@ -163,17 +249,17 @@ class FileService
                     'reason' => 'Failed to read file content or content is empty',
                     'real_path' => $realPath,
                 ], 'error');
-                
+
                 return false;
             }
-            
+
             Log::info('[FileService] File content prepared', [
                 'file_size' => strlen($fileContent),
                 'file_path' => $realPath,
                 'content_length' => strlen($fileContent),
                 'expected_size' => $file->getSize(),
             ]);
-            
+
             // Логируем конфигурацию диска
             $diskConfig = $disk->getConfig();
             Log::info('[FileService] Disk config', [
@@ -182,30 +268,30 @@ class FileService
                 'endpoint' => $diskConfig['endpoint'] ?? 'unknown',
                 'region' => $diskConfig['region'] ?? 'unknown',
             ]);
-            
+
             // Всегда передаем явный visibility параметр для Yandex S3
             // Если $useVisibility null, используем 'private' по умолчанию
             $visibilityParam = $useVisibility ?? 'private';
-            
+
             try {
-                
+
                 Log::info('[FileService] Calling disk->put()', [
                     'path' => $fullPath,
                     'content_length' => strlen($fileContent),
                     'visibility' => $visibilityParam,
                 ]);
-                
+
                 $result = $disk->put($fullPath, $fileContent, $visibilityParam);
-                
+
                 Log::info('[FileService] disk->put() result', [
                     'result' => $result,
                     'result_type' => gettype($result),
                     'path' => $fullPath,
                 ]);
-                
+
             } catch (\Exception $e) {
                 $durationMs = round((microtime(true) - $startTime) * 1000, 2);
-                
+
                 // TECHNICAL: Критическая ошибка загрузки в S3
                 $this->logging->technical('s3.upload.failed', [
                     'filename' => $file->getClientOriginalName(),
@@ -218,19 +304,20 @@ class FileService
                     'aws_error_code' => $e instanceof \Aws\Exception\AwsException ? $e->getAwsErrorCode() : null,
                     'trace' => $e->getTraceAsString(),
                 ], 'error');
-                
+
                 Log::error('[FileService] S3 put() exception', [
                     'path' => $fullPath,
                     'error' => $e->getMessage(),
                     'exception_class' => get_class($e),
                     'trace' => $e->getTraceAsString(),
                 ]);
+
                 return false;
             }
-            
+
             if ($result) {
                 $durationMs = round((microtime(true) - $startTime) * 1000, 2);
-                
+
                 // TECHNICAL: Успешная загрузка файла в S3
                 $this->logging->technical('s3.upload.success', [
                     'filename' => $file->getClientOriginalName(),
@@ -241,7 +328,7 @@ class FileService
                     'duration_ms' => $durationMs,
                     'upload_speed_mbps' => $durationMs > 0 ? round(($fileSizeMb * 8 * 1000) / $durationMs, 2) : null,
                     'visibility' => $visibility,
-                    'directory' => $directory
+                    'directory' => $directory,
                 ]);
 
                 // BUSINESS: Загрузка файла - важная бизнес-метрика использования хранилища
@@ -250,19 +337,20 @@ class FileService
                     'file_size_mb' => $fileSizeMb,
                     'organization_id' => $org?->id,
                     'directory' => $directory,
-                    'user_id' => Auth::id()
+                    'user_id' => Auth::id(),
                 ]);
-                
+
                 Log::info('[FileService] upload(): file uploaded successfully', [
                     'path' => $fullPath,
                     'org_id' => $org?->id,
                     'visibility' => $useVisibility,
                 ]);
+
                 return $fullPath;
             }
-            
+
             $durationMs = round((microtime(true) - $startTime) * 1000, 2);
-            
+
             // TECHNICAL: S3 put вернул false
             $this->logging->technical('s3.upload.put_failed', [
                 'filename' => $file->getClientOriginalName(),
@@ -276,7 +364,7 @@ class FileService
                 'disk_driver' => $diskConfig['driver'] ?? 'unknown',
                 'bucket' => $diskConfig['bucket'] ?? 'unknown',
             ], 'error');
-            
+
             Log::error('[FileService] upload(): put returned false', [
                 'path' => $fullPath,
                 'content_length' => strlen($fileContent),
@@ -287,10 +375,11 @@ class FileService
                 'file_real_path' => $realPath,
                 'file_exists' => file_exists($realPath),
             ]);
+
             return false;
         } catch (\Throwable $e) {
             $durationMs = round((microtime(true) - $startTime) * 1000, 2);
-            
+
             // TECHNICAL: Общая ошибка загрузки
             $this->logging->technical('s3.upload.exception', [
                 'filename' => $file->getClientOriginalName(),
@@ -301,44 +390,45 @@ class FileService
                 'exception_class' => get_class($e),
                 'exception_message' => $e->getMessage(),
                 'file_path' => $e->getFile(),
-                'line' => $e->getLine()
+                'line' => $e->getLine(),
             ], 'error');
-            
+
             Log::error('[FileService] upload(): failed', [
                 'path' => $fullPath,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
+
             return false;
         }
     }
 
     public function delete(?string $path, ?Organization $organization = null): bool
     {
-        if (!$path) {
+        if (! $path) {
             return true;
         }
-        
+
         $startTime = microtime(true);
-        
+
         // TECHNICAL: Начало удаления файла из S3
         $this->logging->technical('s3.delete.started', [
             's3_path' => $path,
-            'organization_id' => $organization?->id
+            'organization_id' => $organization?->id,
         ]);
-        
+
         try {
             $disk = $this->disk($organization);
             $result = $disk->delete($path);
-            
+
             $durationMs = round((microtime(true) - $startTime) * 1000, 2);
-            
+
             if ($result) {
                 // TECHNICAL: Успешное удаление файла
                 $this->logging->technical('s3.delete.success', [
                     's3_path' => $path,
                     'organization_id' => $organization?->id,
-                    'duration_ms' => $durationMs
+                    'duration_ms' => $durationMs,
                 ]);
             } else {
                 // TECHNICAL: Удаление вернуло false
@@ -346,27 +436,28 @@ class FileService
                     's3_path' => $path,
                     'organization_id' => $organization?->id,
                     'duration_ms' => $durationMs,
-                    'result' => false
+                    'result' => false,
                 ], 'warning');
             }
-            
+
             return $result;
         } catch (\Throwable $e) {
             $durationMs = round((microtime(true) - $startTime) * 1000, 2);
-            
+
             // TECHNICAL: Ошибка при удалении файла
             $this->logging->technical('s3.delete.exception', [
                 's3_path' => $path,
                 'organization_id' => $organization?->id,
                 'duration_ms' => $durationMs,
                 'exception_class' => get_class($e),
-                'exception_message' => $e->getMessage()
+                'exception_message' => $e->getMessage(),
             ], 'error');
-            
+
             \Illuminate\Support\Facades\Log::warning('Delete file failed', [
                 'path' => $path,
-                'err'  => $e->getMessage(),
+                'err' => $e->getMessage(),
             ]);
+
             return false;
         }
     }
@@ -410,7 +501,9 @@ class FileService
 
     public function url(?string $path, ?Organization $organization = null): ?string
     {
-        if (!$path) return null;
+        if (! $path) {
+            return null;
+        }
         $disk = $this->disk($organization);
         try {
             $url = $disk->url($path);
@@ -419,18 +512,20 @@ class FileService
                 'path' => $path,
                 'error' => $e->getMessage(),
             ]);
+
             return null;
         }
         Log::debug('[FileService] url(): generated', [
             'path' => $path,
             'url' => $url,
         ]);
+
         return $url;
     }
 
     public function setVisibility(?string $path, string $visibility, ?Organization $organization = null): bool
     {
-        if (!$path) {
+        if (! $path) {
             return false;
         }
 
@@ -453,7 +548,7 @@ class FileService
 
     public function publicUrl(?string $path, ?Organization $organization = null): ?string
     {
-        if (!$path) {
+        if (! $path) {
             return null;
         }
 
@@ -464,7 +559,9 @@ class FileService
 
     public function temporaryUrl(?string $path, int $minutes = 5, ?Organization $organization = null): ?string
     {
-        if (!$path) return null;
+        if (! $path) {
+            return null;
+        }
         $disk = $this->disk($organization);
         try {
             $url = $disk->temporaryUrl($path, now()->addMinutes($minutes));
@@ -473,6 +570,7 @@ class FileService
                 'path' => $path,
                 'error' => $e->getMessage(),
             ]);
+
             return null;
         }
         Log::debug('[FileService] temporaryUrl(): generated', [
@@ -480,6 +578,7 @@ class FileService
             'url' => $url,
             'expires_in_minutes' => $minutes,
         ]);
+
         return $url;
     }
 
@@ -489,13 +588,14 @@ class FileService
     private function getOrganization(?Organization $organization = null): ?Organization
     {
         $org = $organization;
-        if (!$org) {
+        if (! $org) {
             $org = Auth::user()?->currentOrganization;
         }
         // Фолбек на статический контекст, который уже выставлен middleware
-        if (!$org) {
+        if (! $org) {
             $org = \App\Services\Organization\OrganizationContext::getOrganization();
         }
+
         return $org;
     }
-} 
+}

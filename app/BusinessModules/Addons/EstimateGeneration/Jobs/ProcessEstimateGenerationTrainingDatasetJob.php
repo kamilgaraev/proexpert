@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Jobs;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationTrainingDataset;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Training\EstimateGenerationTrainingDatasetService;
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
@@ -14,7 +15,7 @@ use Illuminate\Queue\Middleware\RateLimited;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 
-final class ProcessEstimateGenerationTrainingDatasetJob implements ShouldQueue
+final class ProcessEstimateGenerationTrainingDatasetJob implements ShouldBeUnique, ShouldQueue
 {
     use Dispatchable;
     use InteractsWithQueue;
@@ -25,14 +26,26 @@ final class ProcessEstimateGenerationTrainingDatasetJob implements ShouldQueue
 
     public const QUEUE = 'estimate-generation';
 
-    public int $tries = 1;
+    public int $tries = 8;
+
+    /** @var array<int, int> */
+    public array $backoff = [30, 60, 120, 240, 480];
+
+    public int $uniqueFor = 2100;
 
     public int $timeout = 1800;
 
-    public function __construct(private readonly int $datasetId, private readonly string $processingToken)
+    private ?string $leaseToken = null;
+
+    public function __construct(private readonly int $datasetId)
     {
         $this->onConnection(self::CONNECTION);
         $this->onQueue(self::QUEUE);
+    }
+
+    public function uniqueId(): string
+    {
+        return (string) $this->datasetId;
     }
 
     /**
@@ -66,6 +79,16 @@ final class ProcessEstimateGenerationTrainingDatasetJob implements ShouldQueue
     public function handle(EstimateGenerationTrainingDatasetService $service): void
     {
         $dataset = EstimateGenerationTrainingDataset::query()->findOrFail($this->datasetId);
-        $service->process($dataset, $this->processingToken);
+        $this->leaseToken = (string) \Illuminate\Support\Str::uuid();
+        $service->process($dataset, $this->leaseToken);
+    }
+
+    public function failed(\Throwable $exception): void
+    {
+        app(EstimateGenerationTrainingDatasetService::class)->rejectOwnedLease(
+            $this->datasetId,
+            $this->leaseToken,
+            'training_dataset_processing_failed'
+        );
     }
 }
