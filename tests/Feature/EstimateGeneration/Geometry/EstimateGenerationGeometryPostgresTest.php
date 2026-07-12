@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\ConfirmBu
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\EloquentGeometryRegenerationIntentStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryConfirmationCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryConfirmationFaultInjector;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryDependencyInvalidator;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryRegenerationIntent;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationRetryDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelOperationContext;
@@ -19,6 +20,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
@@ -68,15 +70,21 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
 
         $fixture = $this->fixture();
         $before = DB::table('estimate_generation_building_models')->where('id', $fixture['model_id'])->value('content_version');
-        DB::beginTransaction();
         try {
-            DB::table('estimate_generation_building_models')->where('id', $fixture['model_id'])->update(['content_version' => 'sha256:'.str_repeat('f', 64)]);
-            self::fail('Immutable model update was accepted.');
-        } catch (QueryException) {
-            DB::rollBack();
+            DB::beginTransaction();
+            try {
+                DB::table('estimate_generation_building_models')->where('id', $fixture['model_id'])->update(['content_version' => 'sha256:'.str_repeat('f', 64)]);
+                self::fail('Immutable model update was accepted.');
+            } catch (QueryException) {
+                DB::rollBack();
+            }
+            self::assertSame($before, DB::table('estimate_generation_building_models')->where('id', $fixture['model_id'])->value('content_version'));
+        } finally {
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+            $this->cleanup($fixture);
         }
-        self::assertSame($before, DB::table('estimate_generation_building_models')->where('id', $fixture['model_id'])->value('content_version'));
-        $this->cleanup($fixture);
     }
 
     #[Test]
@@ -87,23 +95,30 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
         $fixture = $this->fixture();
         Queue::fake();
         $before = $this->counts($fixture);
-        $winner = $this->forkConfirmation($fixture, true);
-        self::assertSame("locked\n", fgets($winner['socket']));
-        $loser = $this->forkConfirmation($fixture, false);
-        self::assertSame("attempting\n", fgets($loser['socket']));
+        $winner = null;
+        $loser = null;
         try {
+            $winner = $this->forkConfirmation($fixture, true);
+            self::assertSame("locked\n", $this->readLine($winner['socket']));
+            $loser = $this->forkConfirmation($fixture, false);
+            self::assertSame("attempting\n", $this->readLine($loser['socket']));
             fwrite($winner['socket'], "release\n");
-            self::assertSame("winner\n", fgets($winner['socket']));
-            self::assertSame("stale\n", fgets($loser['socket']));
-            pcntl_waitpid($winner['pid'], $winnerStatus);
-            pcntl_waitpid($loser['pid'], $loserStatus);
+            self::assertSame("winner\n", $this->readLine($winner['socket']));
+            self::assertSame("stale\n", $this->readLine($loser['socket']));
+            $this->waitChild($winner['pid']);
+            $this->waitChild($loser['pid']);
             $effects = $this->counts($fixture);
             self::assertSame(2, (int) $fixture['session']->fresh()->state_version);
             self::assertSame($before['models'] + 1, $effects['models']);
             self::assertSame($before['evidence'] + 1, $effects['evidence']);
             self::assertSame($before['outbox'] + 1, $effects['outbox']);
         } finally {
-            foreach ([$winner['socket'], $loser['socket']] as $socket) {
+            foreach ([$winner, $loser] as $child) {
+                if (! is_array($child)) {
+                    continue;
+                }
+                $this->terminateChild($child['pid']);
+                $socket = $child['socket'];
                 if (is_resource($socket)) {
                     fclose($socket);
                 }
@@ -286,26 +301,81 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
             (int) $fixture['session']->id, 2, $fixture['inputVersion'], 'sha256:'.str_repeat('3', 64),
             'sha256:'.str_repeat('4', 64), (string) \Illuminate\Support\Str::uuid());
         $intentId = $store->append($intent);
-        $first = $this->forkOutboxDelivery($intentId);
-        $second = $this->forkOutboxDelivery($intentId);
+        $probe = 'geometry_dispatch_probe_'.strtolower(\Illuminate\Support\Str::random(10));
+        DB::statement("CREATE SEQUENCE {$probe}");
+        $first = null;
+        $second = null;
         try {
-            self::assertSame("ready\n", fgets($first['socket']));
-            self::assertSame("ready\n", fgets($second['socket']));
+            $first = $this->forkOutboxDelivery($intentId, $probe);
+            $second = $this->forkOutboxDelivery($intentId, $probe);
+            self::assertSame("ready\n", $this->readLine($first['socket']));
+            self::assertSame("ready\n", $this->readLine($second['socket']));
             fwrite($first['socket'], "go\n");
             fwrite($second['socket'], "go\n");
-            $results = [trim((string) fgets($first['socket'])), trim((string) fgets($second['socket']))];
+            $results = [trim($this->readLine($first['socket'])), trim($this->readLine($second['socket']))];
             sort($results);
             self::assertSame(['0', '1'], $results);
-            pcntl_waitpid($first['pid'], $firstStatus);
-            pcntl_waitpid($second['pid'], $secondStatus);
+            $this->waitChild($first['pid']);
+            $this->waitChild($second['pid']);
             self::assertSame('delivered', DB::table('estimate_generation_geometry_regeneration_outbox')->where('id', $intentId)->value('status'));
-            self::assertSame(1, DB::table('estimate_generation_audit_events')->where('session_id', $fixture['session']->id)
-                ->where('event_type', 'geometry_dispatch_contract')->count());
+            $counter = DB::selectOne("SELECT last_value, is_called FROM {$probe}");
+            self::assertTrue((bool) $counter->is_called);
+            self::assertSame(1, (int) $counter->last_value);
         } finally {
-            foreach ([$first['socket'], $second['socket']] as $socket) {
+            foreach ([$first, $second] as $child) {
+                if (! is_array($child)) {
+                    continue;
+                }
+                $this->terminateChild($child['pid']);
+                $socket = $child['socket'];
                 if (is_resource($socket)) {
                     fclose($socket);
                 }
+            }
+            DB::statement("DROP SEQUENCE IF EXISTS {$probe}");
+            $this->cleanup($fixture);
+        }
+    }
+
+    #[Test]
+    public function package_persistence_backfill_and_exact_invalidation_use_typed_input_version(): void
+    {
+        $this->requirePostgres();
+        $fixture = $this->fixture();
+        $version = 'sha256:'.str_repeat('6', 64);
+        $otherVersion = 'sha256:'.str_repeat('7', 64);
+        try {
+            $fixture['session']->forceFill(['input_payload' => ['input_version' => $version]])->save();
+            app(EstimateGenerationPackagePersistenceService::class)->syncFromDraft($fixture['session'], ['local_estimates' => [[
+                'key' => 'persisted-v2', 'title' => 'Persisted', 'scope_type' => 'custom', 'input_version' => $version, 'sections' => [],
+            ]]]);
+            $persisted = DB::table('estimate_generation_packages')->where('session_id', $fixture['session']->id)->where('key', 'persisted-v2')->first();
+            self::assertSame($version, $persisted->input_version);
+            self::assertSame($version, json_decode((string) $persisted->metadata, true, flags: JSON_THROW_ON_ERROR)['input_version']);
+
+            DB::beginTransaction();
+            $historicalId = $this->insertPackage($fixture, 'historical-v2', null, ['generated_from' => 'estimate_generation_v2', 'input_version' => $version]);
+            $legacyId = $this->insertPackage($fixture, 'legacy', null, ['generated_from' => 'legacy', 'input_version' => $version]);
+            $invalidId = $this->insertPackage($fixture, 'invalid-v2', null, ['generated_from' => 'estimate_generation_v2', 'input_version' => 'invalid']);
+            $otherId = $this->insertPackage($fixture, 'other-version', $otherVersion, ['generated_from' => 'estimate_generation_v2', 'input_version' => $otherVersion]);
+            $historicalItem = DB::table('estimate_generation_package_items')->insertGetId(['package_id' => $historicalId, 'key' => 'historical-item',
+                'name' => 'Historical', 'metadata' => '{}', 'created_at' => now(), 'updated_at' => now()]);
+            $otherItem = DB::table('estimate_generation_package_items')->insertGetId(['package_id' => $otherId, 'key' => 'other-item',
+                'name' => 'Other', 'metadata' => '{}', 'created_at' => now(), 'updated_at' => now()]);
+            DB::statement("UPDATE estimate_generation_packages SET input_version = metadata->>'input_version' WHERE input_version IS NULL AND metadata->>'generated_from' = 'estimate_generation_v2' AND metadata->>'input_version' ~ '^sha256:[a-f0-9]{64}$'");
+            self::assertSame($version, DB::table('estimate_generation_packages')->where('id', $historicalId)->value('input_version'));
+            self::assertNull(DB::table('estimate_generation_packages')->where('id', $legacyId)->value('input_version'));
+            self::assertNull(DB::table('estimate_generation_packages')->where('id', $invalidId)->value('input_version'));
+
+            app(GeometryDependencyInvalidator::class)->invalidate((int) $fixture['session']->id, $version, 2);
+            self::assertSame('superseded', DB::table('estimate_generation_packages')->where('id', $historicalId)->value('status'));
+            self::assertSame('planned', DB::table('estimate_generation_packages')->where('id', $otherId)->value('status'));
+            self::assertStringContainsString('geometry_confirmed', (string) DB::table('estimate_generation_package_items')->where('id', $historicalItem)->value('metadata'));
+            self::assertSame('{}', (string) DB::table('estimate_generation_package_items')->where('id', $otherItem)->value('metadata'));
+            DB::rollBack();
+        } finally {
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
             }
             $this->cleanup($fixture);
         }
@@ -356,7 +426,7 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
             'project_id' => $project->id, 'user_id' => $user->id, 'filename' => 'geometry.pdf', 'status' => 'ready',
             'source_version' => $inputVersion, 'created_at' => now(), 'updated_at' => now()]);
         $unitId = DB::table('estimate_generation_processing_units')->insertGetId(['organization_id' => $organization->id, 'project_id' => $project->id,
-            'session_id' => $session->id, 'document_id' => $documentId, 'unit_type' => 'pdf_page', 'unit_index' => 0,
+            'session_id' => $session->id, 'document_id' => $documentId, 'unit_type' => 'pdf_page', 'unit_index' => 1,
             'source_version' => $inputVersion, 'status' => 'pending', 'locator' => '{}', 'metadata' => '{}', 'created_at' => now(), 'updated_at' => now()]);
         $estimateId = DB::table('estimates')->insertGetId(['organization_id' => $organization->id, 'project_id' => $project->id,
             'number' => 'GEOMETRY-SENTINEL-'.\Illuminate\Support\Str::lower(\Illuminate\Support\Str::random(8)), 'name' => 'Контрольная смета',
@@ -393,6 +463,21 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
             'outbox' => DB::table('estimate_generation_geometry_regeneration_outbox')->where('session_id', $sessionId)->count()];
     }
 
+    private function insertPackage(array $fixture, string $key, ?string $inputVersion, array $metadata): int
+    {
+        return (int) DB::table('estimate_generation_packages')->insertGetId([
+            'session_id' => $fixture['session']->id,
+            'input_version' => $inputVersion,
+            'key' => $key,
+            'title' => $key,
+            'scope_type' => 'custom',
+            'status' => 'planned',
+            'metadata' => json_encode($metadata, JSON_THROW_ON_ERROR),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
     private function derivativeState(array $fixture): array
     {
         return [
@@ -426,8 +511,11 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
 
                     public function afterLocksAcquired(): void
                     {
+                        stream_set_timeout($this->socket, 10);
                         fwrite($this->socket, "locked\n");
-                        fgets($this->socket);
+                        if (fgets($this->socket) !== "release\n") {
+                            throw new \RuntimeException('winner_barrier_timeout');
+                        }
                     }
 
                     public function afterInvalidation(): void {}
@@ -436,16 +524,19 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
                 $this->app->instance(GeometryConfirmationFaultInjector::class, new \App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\NoopGeometryConfirmationFaultInjector);
                 fwrite($sockets[1], "attempting\n");
             }
+            $exit = 0;
             try {
                 app(ConfirmBuildingGeometry::class)->handle($this->command($fixture));
                 fwrite($sockets[1], $holdAfterLock ? "winner\n" : "unexpected-winner\n");
+                $exit = $holdAfterLock ? 0 : 2;
             } catch (\App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState) {
                 fwrite($sockets[1], "stale\n");
             } catch (\Throwable $exception) {
                 fwrite($sockets[1], 'error:'.$exception::class."\n");
+                $exit = 1;
             }
             fclose($sockets[1]);
-            exit(0);
+            exit($exit);
         }
         fclose($sockets[1]);
 
@@ -453,7 +544,7 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
     }
 
     /** @return array{pid:int,socket:mixed} */
-    private function forkOutboxDelivery(int $intentId): array
+    private function forkOutboxDelivery(int $intentId, string $probe): array
     {
         $sockets = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
         self::assertIsArray($sockets);
@@ -463,16 +554,66 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
             fclose($sockets[0]);
             DB::disconnect();
             DB::purge();
+            stream_set_timeout($sockets[1], 10);
             fwrite($sockets[1], "ready\n");
-            fgets($sockets[1]);
-            $store = new EloquentGeometryRegenerationIntentStore(DB::connection(), new GeometryAuditCountingDispatcher);
-            fwrite($sockets[1], $store->deliver($intentId) ? "1\n" : "0\n");
+            if (fgets($sockets[1]) !== "go\n") {
+                fwrite($sockets[1], "error:barrier_timeout\n");
+                fclose($sockets[1]);
+                exit(1);
+            }
+            try {
+                $store = new EloquentGeometryRegenerationIntentStore(DB::connection(), new GeometryProbeDispatcher($probe));
+                fwrite($sockets[1], $store->deliver($intentId) ? "1\n" : "0\n");
+                $exit = 0;
+            } catch (\Throwable $exception) {
+                fwrite($sockets[1], 'error:'.$exception::class."\n");
+                $exit = 1;
+            }
             fclose($sockets[1]);
-            exit(0);
+            exit($exit);
         }
         fclose($sockets[1]);
 
         return ['pid' => $pid, 'socket' => $sockets[0]];
+    }
+
+    private function readLine(mixed $socket, int $seconds = 15): string
+    {
+        stream_set_timeout($socket, $seconds);
+        $line = fgets($socket);
+        $metadata = stream_get_meta_data($socket);
+        self::assertFalse((bool) ($metadata['timed_out'] ?? false), 'Child process socket timed out.');
+        self::assertIsString($line, 'Child process closed its socket without a result.');
+
+        return $line;
+    }
+
+    private function waitChild(int $pid, int $seconds = 15): void
+    {
+        $deadline = microtime(true) + $seconds;
+        do {
+            $result = pcntl_waitpid($pid, $status, WNOHANG);
+            if ($result === $pid) {
+                self::assertTrue(pcntl_wifexited($status));
+                self::assertSame(0, pcntl_wexitstatus($status));
+
+                return;
+            }
+            usleep(50_000);
+        } while (microtime(true) < $deadline);
+
+        $this->terminateChild($pid);
+        self::fail("Child process {$pid} did not exit before deadline.");
+    }
+
+    private function terminateChild(int $pid): void
+    {
+        if (pcntl_waitpid($pid, $status, WNOHANG) === 0) {
+            if (function_exists('posix_kill')) {
+                @posix_kill($pid, SIGKILL);
+            }
+            pcntl_waitpid($pid, $status);
+        }
     }
 
     private function cleanup(array $fixture): void
@@ -517,19 +658,18 @@ final class GeometryDispatcherContractFake implements EstimateGenerationRetryDis
     }
 }
 
-final class GeometryAuditCountingDispatcher implements EstimateGenerationRetryDispatcher
+final class GeometryProbeDispatcher implements EstimateGenerationRetryDispatcher
 {
+    public function __construct(private string $probe) {}
+
     public function dispatchDocuments(array $documentIds): void {}
 
     public function dispatchGeneration(int $sessionId, int $stateVersion, string $attemptId): bool
     {
-        DB::table('estimate_generation_audit_events')->insert([
-            'session_id' => $sessionId,
-            'event_type' => 'geometry_dispatch_contract',
-            'payload' => json_encode(['state_version' => $stateVersion, 'attempt_id' => $attemptId], JSON_THROW_ON_ERROR),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        if (preg_match('/^geometry_dispatch_probe_[a-z0-9]{10}$/', $this->probe) !== 1) {
+            throw new \RuntimeException('invalid_probe_name');
+        }
+        DB::selectOne("SELECT nextval('{$this->probe}')");
 
         return true;
     }

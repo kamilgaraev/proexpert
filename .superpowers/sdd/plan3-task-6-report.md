@@ -77,3 +77,12 @@
 - Отдельный outbox contention test создаёт один pending intent и два синхронизированных процесса/соединения перед CAS claim; durable audit dispatcher подтверждает ровно один enqueue, результаты claim `[false,true]`, итоговый status `delivered` и отсутствие duplicate job.
 - Локально: **104 passed, 303 assertions** для DB-less geometry/building-model/package/RBAC набора; Pint PASS, PHPStan No errors, `php -l` PASS, diff-check PASS. PostgreSQL/PCNTL inventory не запускался по явному запрету.
 - Итоговый PostgreSQL inventory: **8 реальных test methods**, не запускался локально; причина — требуется явный `RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT=1`, изолированный PostgreSQL и PCNTL/Unix sockets для двух contention cases.
+
+## Fourth corrective review
+
+- Processing-unit fixture приведён к production contract (`unit_index=1`); document/unit/checkpoint/package rows заполняют обязательные scoped, status-state и JSON поля.
+- Fork harness ограничен 15-секундными socket/deadline waits, проверяет timeout/EOF metadata и нормальный exit status; finally всегда завершает/reaps детей и закрывает sockets. Child exceptions сериализуются только class code и завершаются non-zero.
+- Outbox contention больше не использует audit events: каждый тест создаёт уникальную PostgreSQL sequence probe, dispatcher делает один `nextval`, finally удаляет probe. Два процесса дают `[false,true]`, probe `last_value=1`.
+- Immutable-trigger test обёрнут во внешний try/finally с обязательным rollback активной транзакции и fixture cleanup.
+- Добавлен девятый PostgreSQL behavior method: реальный `EstimateGenerationPackagePersistenceService::syncFromDraft` подтверждает column/metadata agreement; transaction-scoped historical backfill обновляет только valid generation-v2, legacy/invalid остаются NULL; exact invalidation supersedes matching package/item, different version остаётся active.
+- PostgreSQL inventory: **9 test methods**, статически Pint/PHPStan/php-l clean, намеренно не запускался без isolated PostgreSQL + opt-in env; DB-less gates остаются green.
