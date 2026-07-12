@@ -21,6 +21,17 @@ final readonly class QuantityOperandData
         public string $compatibilityGroup,
     ) {}
 
+    /** @return array{role: string, value: string, unit: string, source: string, evidence_ids: array<int, string>, assumptions: array<int, string>, context_id: string, provenance_version: string} */
+    public function toFormulaOperand(): array
+    {
+        return [
+            'role' => $this->role, 'value' => (string) $this->value, 'unit' => $this->unit,
+            'source' => $this->source->value, 'evidence_ids' => $this->evidenceIds,
+            'assumptions' => $this->assumptions, 'context_id' => $this->contextId,
+            'provenance_version' => $this->provenanceVersion,
+        ];
+    }
+
     /** @param array<string, mixed> $record */
     public static function fromRecord(
         array $record,
@@ -65,7 +76,8 @@ final readonly class QuantityOperandData
         if (! $scaleConfirmed && $sourceValue === 'evidenced' && ($payload['metric_independent'] ?? false) !== true) {
             throw new \InvalidArgumentException('metric_independent');
         }
-        $rawEvidence = is_array($payload['evidence_ids'] ?? null) ? array_map('strval', $payload['evidence_ids']) : [];
+        $rawEvidence = is_array($payload['evidence_ids'] ?? null)
+            ? array_map(static fn (mixed $value): string => trim((string) $value), $payload['evidence_ids']) : [];
         if (count($rawEvidence) !== count(array_unique($rawEvidence))) {
             throw new \InvalidArgumentException('duplicate_evidence');
         }

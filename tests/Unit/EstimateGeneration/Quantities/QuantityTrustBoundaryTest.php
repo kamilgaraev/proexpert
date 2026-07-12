@@ -244,6 +244,77 @@ final class QuantityTrustBoundaryTest extends TestCase
         self::assertContains('invalid_typed_operand', array_column($result->diagnostics, 'code'));
     }
 
+    public function test_malformed_polygon_points_are_diagnostic_not_exceptions(): void
+    {
+        foreach ([null, 'point', ['x' => '1', 'y' => '2'], ['1'], ['1', '2', '3'], ['INF', '2']] as $point) {
+            $result = (new BuildingQuantityCalculator)->calculate($this->model(['rooms' => [[
+                'id' => 'bad', 'polygon' => [$point, ['2', '0'], ['0', '2']], 'evidence_ids' => ['e'],
+            ]]]));
+            self::assertNull($result->get('floor_area'));
+            self::assertContains('invalid_polygon_coordinate', array_column($result->diagnostics, 'code'));
+        }
+    }
+
+    public function test_polygon_topology_handles_containment_and_boundary_touch_exactly(): void
+    {
+        $outer = [['0', '0'], ['10', '0'], ['10', '10'], ['0', '10']];
+        $inner = [['2', '2'], ['3', '2'], ['3', '3'], ['2', '3']];
+        foreach ([[$outer, $inner], [$inner, $outer]] as [$first, $second]) {
+            $result = (new BuildingQuantityCalculator)->calculate($this->model(['rooms' => [
+                ['id' => 'a', 'polygon' => $first, 'evidence_ids' => ['a']],
+                ['id' => 'b', 'polygon' => $second, 'evidence_ids' => ['b']],
+            ]]));
+            self::assertNull($result->get('floor_area'));
+            self::assertContains('ambiguous_polygon_overlap', array_column($result->diagnostics, 'code'));
+        }
+
+        foreach ([
+            [[['0', '0'], ['1', '0'], ['1', '1'], ['0', '1']], [['1', '0'], ['2', '0'], ['2', '1'], ['1', '1']]],
+            [[['0', '0'], ['1', '0'], ['1', '1'], ['0', '1']], [['1', '1'], ['2', '1'], ['2', '2'], ['1', '2']]],
+        ] as [$first, $second]) {
+            $result = (new BuildingQuantityCalculator)->calculate($this->model(['rooms' => [
+                ['id' => 'a', 'polygon' => $first, 'evidence_ids' => ['a']],
+                ['id' => 'b', 'polygon' => $second, 'evidence_ids' => ['b']],
+            ]]));
+            self::assertSame('2.000000', $result->get('floor_area')?->amount);
+        }
+    }
+
+    public function test_nonadjacent_vertex_touch_and_collinear_self_overlap_are_invalid(): void
+    {
+        foreach ([
+            [['0', '0'], ['2', '0'], ['2', '2'], ['1', '1'], ['0', '2'], ['1', '1']],
+            [['0', '0'], ['3', '0'], ['1', '0'], ['1', '2'], ['0', '2']],
+        ] as $polygon) {
+            $result = (new BuildingQuantityCalculator)->calculate($this->model(['rooms' => [[
+                'id' => 'bad', 'polygon' => $polygon, 'evidence_ids' => ['e'],
+            ]]]));
+            self::assertNull($result->get('floor_area'));
+        }
+    }
+
+    public function test_formula_inputs_are_per_operand_and_permutation_stable(): void
+    {
+        $walls = [
+            ['id' => 'b', 'length' => '2', 'height' => '3', 'opening_ids' => [], 'evidence_ids' => ['b']],
+            ['id' => 'a', 'length' => '4', 'height' => '5', 'opening_ids' => [], 'evidence_ids' => ['a']],
+        ];
+        $first = (new BuildingQuantityCalculator)->calculate($this->model(['walls' => $walls]));
+        $second = (new BuildingQuantityCalculator)->calculate($this->model(['walls' => array_reverse($walls)]));
+
+        self::assertSame($first->get('gross_wall_area')?->formulaInputs, $second->get('gross_wall_area')?->formulaInputs);
+        $operand = $first->get('gross_wall_area')?->formulaInputs['items'][0]['named_operands']['length'] ?? null;
+        self::assertSame(['role', 'value', 'unit', 'source', 'evidence_ids', 'assumptions', 'context_id', 'provenance_version'], array_keys($operand));
+    }
+
+    public function test_whitespace_duplicate_evidence_is_rejected(): void
+    {
+        $result = (new BuildingQuantityCalculator)->calculate($this->model(['rooms' => [[
+            'id' => 'r', 'area' => '1', 'evidence_ids' => [' e ', 'e'],
+        ]]]));
+        self::assertNull($result->get('floor_area'));
+    }
+
     /** @param array<string, mixed> $override */
     private function model(array $override): array
     {

@@ -121,7 +121,9 @@ final class BuildingQuantityCalculator
             $roomRecord = $areaOperand === null
                 ? $room + ['_operand_contexts' => ['model:'.$modelVersion], '_operand_provenance_versions' => [$modelVersion]]
                 : $this->recordFromOperand($room, $areaOperand);
-            $roomRecord['_formula_operands'] = ['area' => (string) $area];
+            $roomRecord['_formula_operands'] = $areaOperand !== null ? ['area' => $areaOperand->toFormulaOperand()] : [
+                'area' => $this->derivedFormulaOperand('area', $area, 'm2', $roomRecord),
+            ];
             $roomItems[] = $this->item($area, $roomRecord);
         }
         if ($ambiguousOverlap) {
@@ -156,7 +158,6 @@ final class BuildingQuantityCalculator
                 continue;
             }
             $openingRecord = $this->recordFromOperands($opening, [$width, $height]);
-            $openingRecord['_formula_operands'] = ['width' => (string) $width->value, 'height' => (string) $height->value];
             $openings[$id] = $openingRecord + ['_area' => $width->value->multipliedBy($height->value)];
             $openingItems[] = $this->item($width->value->multipliedBy($height->value), $openingRecord);
         }
@@ -195,10 +196,7 @@ final class BuildingQuantityCalculator
             $wallRecord = $this->recordFromOperands($wall, [$length, $height]);
             $sideMultiplier = ($wall['shared'] ?? false) === true && ($wall['side_policy'] ?? null) === 'both_faces'
                 ? BigDecimal::of('2') : BigDecimal::one();
-            $wallRecord['_formula_operands'] = [
-                'length' => (string) $length->value, 'height' => (string) $height->value,
-                'side_multiplier' => (string) $sideMultiplier,
-            ];
+            $wallRecord['_formula_operands']['side_multiplier'] = $this->derivedFormulaOperand('side_multiplier', $sideMultiplier, 'count', $wallRecord);
             $gross = $length->value->multipliedBy($height->value)->multipliedBy($sideMultiplier);
             $grossItems[] = $this->item($gross, $wallRecord);
             $net = $gross;
@@ -251,7 +249,10 @@ final class BuildingQuantityCalculator
                 'assumptions' => $netAssumptions, 'identity' => (string) ($wall['id'] ?? "wall-$index"),
                 'contexts' => $this->uniqueSorted($netContexts),
                 'provenance_versions' => $this->uniqueSorted($netVersions),
-                'named_operands' => ['gross_wall_area' => (string) $gross, 'openings' => $openingOperands],
+                'named_operands' => [
+                    'gross_wall_area' => $this->derivedFormulaOperand('gross_wall_area', $gross, 'm2', $wallRecord),
+                    'openings' => array_map(fn (string $value, string $role): array => $this->derivedFormulaOperand('opening:'.$role, BigDecimal::of($value), 'm2', $wallRecord), $openingOperands, array_keys($openingOperands)),
+                ],
             ];
         }
         if ($grossItems !== []) {
@@ -271,7 +272,6 @@ final class BuildingQuantityCalculator
                 continue;
             }
             $foundationRecord = $this->recordFromOperands($foundation, array_filter($operands));
-            $foundationRecord['_formula_operands'] = ['length' => (string) $values[0], 'width' => (string) $values[1], 'depth' => (string) $values[2]];
             $foundationItems[] = $this->item($values[0]->multipliedBy($values[1])->multipliedBy($values[2]), $foundationRecord);
         }
         if ($foundationItems !== []) {
@@ -287,7 +287,6 @@ final class BuildingQuantityCalculator
                 continue;
             }
             $roofRecord = $this->recordFromOperand($roof, $area);
-            $roofRecord['_formula_operands'] = ['area' => (string) $area->value];
             $roofItems[] = $this->item($area->value, $roofRecord);
         }
         if ($roofItems !== []) {
@@ -327,7 +326,6 @@ final class BuildingQuantityCalculator
             }
             $engineeringGroups[$key]['unit'] = $unit;
             $engineeringRecord = $this->recordFromOperand($element, $amount);
-            $engineeringRecord['_formula_operands'] = ['measurement' => (string) $amount->value];
             $engineeringGroups[$key]['items'][] = $this->item($amount->value, $engineeringRecord);
         }
         foreach ($engineeringGroups as $key => $group) {
@@ -365,7 +363,7 @@ final class BuildingQuantityCalculator
                 reviewBlockers: ['operand_provenance_missing'],
             );
         }
-        usort($items, static fn (array $a, array $b): int => [(string) $a['amount'], implode('|', $a['evidence'])] <=> [(string) $b['amount'], implode('|', $b['evidence'])]);
+        usort($items, fn (array $a, array $b): int => $this->canonicalItem($key, $a) <=> $this->canonicalItem($key, $b));
         $sum = BigDecimal::zero();
         $source = QuantitySource::Evidenced;
         $evidence = [];
@@ -381,8 +379,8 @@ final class BuildingQuantityCalculator
         $catalog = (new QuantityFormulaCatalog)->definition($key);
         $evidence = $this->uniqueSorted($evidence);
         $assumptions = $this->uniqueSorted($assumptions);
-        $formulaItems = array_map(static fn (array $item): QuantityFormulaItemData => new QuantityFormulaItemData(
-            identity: $item['identity'], amount: (string) $item['amount'], namedOperands: $item['named_operands'],
+        $formulaItems = array_map(fn (array $item): QuantityFormulaItemData => new QuantityFormulaItemData(
+            identity: hash('sha256', $this->canonicalItem($key, $item)), amount: (string) $item['amount'], namedOperands: $item['named_operands'],
             source: $item['source'], evidenceIds: $item['evidence'], assumptions: $item['assumptions'],
             contexts: $item['contexts'], provenanceVersions: $item['provenance_versions'],
         ), $items);
@@ -475,8 +473,25 @@ final class BuildingQuantityCalculator
         $record['source'] = $source->value;
         $record['_operand_contexts'] = $this->uniqueSorted($contexts);
         $record['_operand_provenance_versions'] = $this->uniqueSorted($versions);
+        $record['_formula_operands'] = [];
+        foreach ($operands as $operand) {
+            $record['_formula_operands'][$operand->role] = $operand->toFormulaOperand();
+        }
 
         return $record;
+    }
+
+    /** @param array<string, mixed> $record @return array<string, mixed> */
+    private function derivedFormulaOperand(string $role, BigDecimal $value, string $unit, array $record): array
+    {
+        return [
+            'role' => $role, 'value' => (string) $value, 'unit' => $unit,
+            'source' => $this->source($record)->value,
+            'evidence_ids' => $this->strings($record['evidence_ids'] ?? []),
+            'assumptions' => $this->strings($record['assumptions'] ?? []),
+            'context_id' => $this->strings($record['_operand_contexts'] ?? [])[0] ?? 'derived',
+            'provenance_version' => $this->strings($record['_operand_provenance_versions'] ?? [])[0] ?? QuantityFormulaCatalog::VERSION,
+        ];
     }
 
     private function decimal(mixed $value): ?BigDecimal
@@ -502,6 +517,14 @@ final class BuildingQuantityCalculator
         }
         $sum = BigDecimal::zero();
         $points = array_values($polygon);
+        foreach ($points as $point) {
+            if (! is_array($point) || ! array_is_list($point) || count($point) !== 2
+                || $this->coordinate($point[0]) === null || $this->coordinate($point[1]) === null) {
+                $this->diagnostic('invalid_polygon_coordinate', $path);
+
+                return null;
+            }
+        }
         $identities = array_map(static fn (array $point): string => (string) $point[0].','.(string) $point[1], $points);
         if (count($identities) !== count(array_unique($identities))) {
             $this->diagnostic('duplicate_polygon_vertex', $path);
@@ -514,7 +537,7 @@ final class BuildingQuantityCalculator
                 if ($j === $i + 1 || ($i === 0 && $j === $edgeCount - 1)) {
                     continue;
                 }
-                if ($this->segmentsProperlyIntersect($points[$i], $points[($i + 1) % $edgeCount], $points[$j], $points[($j + 1) % $edgeCount])) {
+                if ($this->segmentsIntersectOrTouch($points[$i], $points[($i + 1) % $edgeCount], $points[$j], $points[($j + 1) % $edgeCount])) {
                     $this->diagnostic('self_intersecting_polygon', $path);
 
                     return null;
@@ -528,10 +551,10 @@ final class BuildingQuantityCalculator
 
                 return null;
             }
-            $x = $this->decimal($point[0]);
-            $y = $this->decimal($point[1]);
-            $nextX = $this->decimal($next[0]);
-            $nextY = $this->decimal($next[1]);
+            $x = $this->coordinate($point[0]);
+            $y = $this->coordinate($point[1]);
+            $nextX = $this->coordinate($next[0]);
+            $nextY = $this->coordinate($next[1]);
             if ($x === null || $y === null || $nextX === null || $nextY === null) {
                 $this->diagnostic('invalid_polygon_coordinate', $path);
 
@@ -594,6 +617,17 @@ final class BuildingQuantityCalculator
         return $values;
     }
 
+    /** @param array<string, mixed> $item */
+    private function canonicalItem(string $formulaKey, array $item): string
+    {
+        return json_encode([
+            'formula' => $formulaKey, 'identity' => $item['identity'],
+            'named_operands' => $item['named_operands'], 'contexts' => $item['contexts'],
+            'provenance_versions' => $item['provenance_versions'], 'source' => $item['source']->value,
+            'evidence' => $item['evidence'], 'assumptions' => $item['assumptions'],
+        ], JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION);
+    }
+
     private function diagnostic(string $code, string $path, string $severity = 'blocking'): void
     {
         $this->diagnostics[] = compact('code', 'severity', 'path');
@@ -633,7 +667,94 @@ final class BuildingQuantityCalculator
             }
         }
 
+        foreach ($first as $point) {
+            if ($this->pointInPolygon($point, $second) === 1) {
+                return true;
+            }
+        }
+        foreach ($second as $point) {
+            if ($this->pointInPolygon($point, $first) === 1) {
+                return true;
+            }
+        }
+
+        if ($this->boundingBoxesHavePositiveAreaOverlap($first, $second)) {
+            $collinearOverlaps = 0;
+            for ($i = 0; $i < count($first); $i++) {
+                for ($j = 0; $j < count($second); $j++) {
+                    if ($this->segmentsCollinearlyOverlap($first[$i], $first[($i + 1) % count($first)], $second[$j], $second[($j + 1) % count($second)])) {
+                        $collinearOverlaps++;
+                    }
+                }
+            }
+            if ($collinearOverlaps >= 2) {
+                return true;
+            }
+        }
+
         return false;
+    }
+
+    private function segmentsIntersectOrTouch(array $a, array $b, array $c, array $d): bool
+    {
+        if ($this->segmentsProperlyIntersect($a, $b, $c, $d)) {
+            return true;
+        }
+
+        return ($this->orientation($a, $b, $c) === 0 && $this->pointOnSegment($c, $a, $b))
+            || ($this->orientation($a, $b, $d) === 0 && $this->pointOnSegment($d, $a, $b))
+            || ($this->orientation($c, $d, $a) === 0 && $this->pointOnSegment($a, $c, $d))
+            || ($this->orientation($c, $d, $b) === 0 && $this->pointOnSegment($b, $c, $d));
+    }
+
+    private function pointOnSegment(array $point, array $a, array $b): bool
+    {
+        $px = $this->coordinate($point[0]);
+        $py = $this->coordinate($point[1]);
+        $ax = $this->coordinate($a[0]);
+        $ay = $this->coordinate($a[1]);
+        $bx = $this->coordinate($b[0]);
+        $by = $this->coordinate($b[1]);
+        if ($px === null || $py === null || $ax === null || $ay === null || $bx === null || $by === null) {
+            return false;
+        }
+
+        $minX = $ax->isLessThan($bx) ? $ax : $bx;
+        $maxX = $ax->isGreaterThan($bx) ? $ax : $bx;
+        $minY = $ay->isLessThan($by) ? $ay : $by;
+        $maxY = $ay->isGreaterThan($by) ? $ay : $by;
+
+        return $px->isGreaterThanOrEqualTo($minX) && $px->isLessThanOrEqualTo($maxX)
+            && $py->isGreaterThanOrEqualTo($minY) && $py->isLessThanOrEqualTo($maxY);
+    }
+
+    /** 1 inside, 0 boundary, -1 outside */
+    private function pointInPolygon(array $point, array $polygon): int
+    {
+        $winding = 0;
+        $py = $this->coordinate($point[1]);
+        if ($py === null) {
+            return -1;
+        }
+        for ($i = 0; $i < count($polygon); $i++) {
+            $a = $polygon[$i];
+            $b = $polygon[($i + 1) % count($polygon)];
+            if ($this->orientation($a, $b, $point) === 0 && $this->pointOnSegment($point, $a, $b)) {
+                return 0;
+            }
+            $ay = $this->coordinate($a[1]);
+            $by = $this->coordinate($b[1]);
+            if ($ay === null || $by === null) {
+                return -1;
+            }
+            if ($ay->isLessThanOrEqualTo($py) && $by->isGreaterThan($py) && $this->orientation($a, $b, $point) > 0) {
+                $winding++;
+            } elseif ($ay->isGreaterThan($py) && $by->isLessThanOrEqualTo($py) && $this->orientation($a, $b, $point) < 0) {
+                $winding--;
+            }
+        }
+
+        return $winding === 0 ? -1 : 1;
     }
 
     private function segmentsProperlyIntersect(mixed $a, mixed $b, mixed $c, mixed $d): bool
@@ -651,17 +772,88 @@ final class BuildingQuantityCalculator
 
     private function orientation(array $a, array $b, array $c): int
     {
-        $ax = $this->decimal($a[0] ?? null);
-        $ay = $this->decimal($a[1] ?? null);
-        $bx = $this->decimal($b[0] ?? null);
-        $by = $this->decimal($b[1] ?? null);
-        $cx = $this->decimal($c[0] ?? null);
-        $cy = $this->decimal($c[1] ?? null);
+        $ax = $this->coordinate($a[0] ?? null);
+        $ay = $this->coordinate($a[1] ?? null);
+        $bx = $this->coordinate($b[0] ?? null);
+        $by = $this->coordinate($b[1] ?? null);
+        $cx = $this->coordinate($c[0] ?? null);
+        $cy = $this->coordinate($c[1] ?? null);
         if ($ax === null || $ay === null || $bx === null || $by === null || $cx === null || $cy === null) {
             return 0;
         }
         $cross = $bx->minus($ax)->multipliedBy($cy->minus($ay))->minus($by->minus($ay)->multipliedBy($cx->minus($ax)));
 
         return $cross->compareTo(BigDecimal::zero());
+    }
+
+    private function segmentsCollinearlyOverlap(array $a, array $b, array $c, array $d): bool
+    {
+        if ($this->orientation($a, $b, $c) !== 0 || $this->orientation($a, $b, $d) !== 0) {
+            return false;
+        }
+        $ax = $this->coordinate($a[0]);
+        $ay = $this->coordinate($a[1]);
+        $bx = $this->coordinate($b[0]);
+        $by = $this->coordinate($b[1]);
+        $cx = $this->coordinate($c[0]);
+        $cy = $this->coordinate($c[1]);
+        $dx = $this->coordinate($d[0]);
+        $dy = $this->coordinate($d[1]);
+        if ($ax === null || $ay === null || $bx === null || $by === null || $cx === null || $cy === null || $dx === null || $dy === null) {
+            return false;
+        }
+        if (! $ax->isEqualTo($bx)) {
+            $left = ($ax->isGreaterThan($cx) ? $ax : $cx);
+            $right = ($bx->isLessThan($dx) ? $bx : $dx);
+            if ($ax->isGreaterThan($bx)) {
+                [$ax, $bx] = [$bx, $ax];
+            }
+            if ($cx->isGreaterThan($dx)) {
+                [$cx, $dx] = [$dx, $cx];
+            }
+            $left = $ax->isGreaterThan($cx) ? $ax : $cx;
+            $right = $bx->isLessThan($dx) ? $bx : $dx;
+
+            return $left->isLessThan($right);
+        }
+        if ($ay->isGreaterThan($by)) {
+            [$ay, $by] = [$by, $ay];
+        }
+        if ($cy->isGreaterThan($dy)) {
+            [$cy, $dy] = [$dy, $cy];
+        }
+        $bottom = $ay->isGreaterThan($cy) ? $ay : $cy;
+        $top = $by->isLessThan($dy) ? $by : $dy;
+
+        return $bottom->isLessThan($top);
+    }
+
+    private function boundingBoxesHavePositiveAreaOverlap(array $first, array $second): bool
+    {
+        $bounds = static function (array $polygon): array {
+            $xs = array_map(static fn (array $p): BigDecimal => BigDecimal::of($p[0]), $polygon);
+            $ys = array_map(static fn (array $p): BigDecimal => BigDecimal::of($p[1]), $polygon);
+            usort($xs, static fn (BigDecimal $a, BigDecimal $b): int => $a->compareTo($b));
+            usort($ys, static fn (BigDecimal $a, BigDecimal $b): int => $a->compareTo($b));
+
+            return [$xs[0], $ys[0], $xs[array_key_last($xs)], $ys[array_key_last($ys)]];
+        };
+        $a = $bounds($first);
+        $b = $bounds($second);
+
+        return $a[0]->isLessThan($b[2]) && $a[2]->isGreaterThan($b[0])
+            && $a[1]->isLessThan($b[3]) && $a[3]->isGreaterThan($b[1]);
+    }
+
+    private function coordinate(mixed $value): ?BigDecimal
+    {
+        if (! is_string($value) && ! is_int($value)) {
+            return null;
+        }
+        try {
+            return BigDecimal::of($value);
+        } catch (\Throwable) {
+            return null;
+        }
     }
 }
