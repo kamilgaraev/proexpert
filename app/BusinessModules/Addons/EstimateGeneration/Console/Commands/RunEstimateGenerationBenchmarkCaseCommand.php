@@ -70,6 +70,17 @@ final class RunEstimateGenerationBenchmarkCaseCommand extends Command
                 $reference,
             );
         }
+        if ($reference === 'repository-production-replay:v1') {
+            return new BenchmarkCorpus(
+                BenchmarkManifest::fromFile(
+                    $this->fixtureRoot.'/production-replay-manifest.json',
+                    $this->fixtureRoot,
+                    false,
+                ),
+                new LocalBenchmarkObjectReader($this->fixtureRoot),
+                $reference,
+            );
+        }
         if ($this->acceptanceOrganizationId === null || $this->acceptanceManifestLocator === null) {
             throw new \InvalidArgumentException('acceptance_worker_not_configured');
         }

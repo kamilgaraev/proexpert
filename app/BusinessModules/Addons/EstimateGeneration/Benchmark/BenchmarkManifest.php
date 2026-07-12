@@ -27,7 +27,7 @@ final readonly class BenchmarkManifest
         private array $cases,
     ) {}
 
-    public static function fromFile(string $manifestPath, string $fixtureRoot): self
+    public static function fromFile(string $manifestPath, string $fixtureRoot, bool $requireAllSourceTypes = true): self
     {
         $size = @filesize($manifestPath);
         if (! is_int($size) || $size < 2 || $size > 2_000_000) {
@@ -47,7 +47,7 @@ final readonly class BenchmarkManifest
             throw new BenchmarkManifestException('manifest_invalid_shape');
         }
 
-        return self::fromArray($payload, $fixtureRoot, hash('sha256', $contents));
+        return self::fromArray($payload, $fixtureRoot, hash('sha256', $contents), $requireAllSourceTypes);
     }
 
     /** @param array<string, mixed> $payload */

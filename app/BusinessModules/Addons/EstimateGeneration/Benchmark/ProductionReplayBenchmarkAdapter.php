@@ -151,6 +151,7 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
             foreach ($quantities->all() as $quantity) {
                 $quantityMap[$quantity->key] = $quantity->amount;
             }
+            $workIds = array_values(array_unique($workIds));
             sort($workIds, SORT_STRING);
             ksort($rankings);
             ksort($costs);

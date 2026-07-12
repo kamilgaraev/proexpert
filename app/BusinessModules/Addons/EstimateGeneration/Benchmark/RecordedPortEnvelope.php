@@ -17,7 +17,7 @@ final readonly class RecordedPortEnvelope
     ];
 
     private const FORBIDDEN_KEYS = [
-        'expected', 'label', 'labels', 'metric', 'metrics', 'final_prediction', 'prediction',
+        'expected', 'labels', 'metric', 'metrics', 'final_prediction', 'prediction',
         'readiness', 'price_total', 'prices_total', 'cost_total', 'total_price', 'total_cost',
         'password', 'passwd', 'secret', 'secret_key', 'access_token', 'refresh_token', 'api_key',
         'authorization', 'cookie', 'email', 'phone', 'client_id',

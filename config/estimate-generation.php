@@ -118,6 +118,15 @@ return [
     'benchmark' => [
         'acceptance_manifest' => $envValue('ESTIMATE_GENERATION_ACCEPTANCE_BENCHMARK_MANIFEST'),
         'acceptance_organization_id' => (int) env('ESTIMATE_GENERATION_ACCEPTANCE_BENCHMARK_ORGANIZATION_ID', 0),
-        'production_replay_projections' => [],
+        'production_replay_projections' => [
+            'reg-replay-vector-wall-opening-001' => [
+                'reference' => 'projections/vector-wall-opening-v1.json',
+                'sha256' => 'e5317c23f3cf11af9f6c6d651427fc6d16bacd184037b73c141172c7904ce193',
+            ],
+            'reg-replay-vision-sketch-001' => [
+                'reference' => 'projections/vision-sketch-v1.json',
+                'sha256' => '8b1b58f68fb44514394aec0e8817d4587b3b1c4c0d647610adfd6cb34d7fe507',
+            ],
+        ],
     ],
 ];

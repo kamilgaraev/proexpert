@@ -23,6 +23,7 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
         {--dataset=regression : development|regression|acceptance}
         {--format=json : json|table}
         {--output= : Relative path under the benchmark output root}
+        {--manifest= : Relative two-case replay manifest under the fixture root}
         {--adapter= : Explicit registered adapter}
         {--pipeline-version= : Version of the evaluated pipeline}
         {--prompt-version=none:v1 : Version of the evaluated prompt set}
@@ -94,10 +95,30 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
     private function corpus(BenchmarkDatasetType $dataset): BenchmarkCorpus
     {
         if ($dataset !== BenchmarkDatasetType::Acceptance) {
+            $manifestPath = $this->repositoryManifestPath;
+            $requireAllSourceTypes = true;
+            $manifest = $this->option('manifest');
+            if (is_string($manifest) && $manifest !== '') {
+                if (! preg_match('#^[a-zA-Z0-9._/-]+\.json$#D', $manifest)
+                    || str_contains($manifest, '..') || str_starts_with($manifest, '/')) {
+                    throw new BenchmarkCommandException('manifest_path_invalid');
+                }
+                $manifestPath = rtrim($this->fixtureRoot, '/\\').DIRECTORY_SEPARATOR
+                    .str_replace('/', DIRECTORY_SEPARATOR, $manifest);
+                $root = realpath($this->fixtureRoot);
+                $resolved = realpath($manifestPath);
+                if ($root === false || $resolved === false || is_link($manifestPath)
+                    || ! str_starts_with(str_replace('\\', '/', $resolved), rtrim(str_replace('\\', '/', $root), '/').'/')) {
+                    throw new BenchmarkCommandException('manifest_path_invalid');
+                }
+                $manifestPath = $resolved;
+                $requireAllSourceTypes = false;
+            }
+
             return new BenchmarkCorpus(
-                BenchmarkManifest::fromFile($this->repositoryManifestPath, $this->fixtureRoot),
+                BenchmarkManifest::fromFile($manifestPath, $this->fixtureRoot, $requireAllSourceTypes),
                 new \App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkObjectReader,
-                'repository:v1',
+                $requireAllSourceTypes ? 'repository:v1' : 'repository-production-replay:v1',
             );
         }
         if (($this->environment)() === 'production') {
