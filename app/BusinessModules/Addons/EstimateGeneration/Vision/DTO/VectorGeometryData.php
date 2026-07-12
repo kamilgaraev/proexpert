@@ -84,7 +84,7 @@ final readonly class VectorGeometryData
         self::assertBounds($data['bounds']);
         self::assertCollection($data['layers'], ['name', 'visible'], ['name', 'visible'], 'layer');
         self::assertCollection($data['blocks'], ['name', 'handle', 'owner', 'entities'], ['name', 'handle', 'owner', 'entities'], 'block');
-        self::assertCollection($data['entities'], ['handle', 'type', 'layer'], ['handle', 'type', 'layer', 'points', 'segments', 'center', 'radius', 'start_angle', 'end_angle', 'closed', 'block', 'transform', 'transform_lineage', 'source_lineage', 'source_member_handle', 'layout', 'owner', 'bbox', 'style'], 'entity');
+        self::assertCollection($data['entities'], ['handle', 'type', 'layer'], ['handle', 'type', 'layer', 'points', 'segments', 'center', 'radius', 'start_angle', 'end_angle', 'closed', 'block', 'transform', 'transform_lineage', 'source_lineage', 'source_member_handle', 'layout', 'owner', 'bbox', 'style', 'semantic'], 'entity');
         self::assertCollection($data['texts'], ['handle', 'type', 'layer', 'text', 'position', 'layout'], ['handle', 'type', 'layer', 'text', 'position', 'layout', 'source_operator', 'source_lineage', 'source_member_handle', 'block', 'transform', 'owner', 'bbox'], 'text');
         self::assertCollection($data['dimensions'], ['handle', 'type', 'layer', 'text', 'layout'], ['handle', 'type', 'layer', 'text', 'layout', 'definition_points', 'source_lineage', 'source_member_handle', 'block', 'transform', 'owner'], 'dimension');
         self::assertCollection($data['pages'], ['page_number', 'width', 'height', 'rotation', 'media_box', 'crop_box', 'transform', 'classification'], ['page_number', 'width', 'height', 'rotation', 'media_box', 'crop_box', 'transform', 'classification'], 'page');
@@ -347,6 +347,19 @@ final readonly class VectorGeometryData
             }
             if ((float) $entity['bbox']['width'] < 0 || (float) $entity['bbox']['height'] < 0) {
                 throw new \InvalidArgumentException('geometry_contract_bounds_invalid');
+            }
+        }
+        if (isset($entity['semantic'])) {
+            $semantic = $entity['semantic'];
+            $keys = is_array($semantic) ? array_keys($semantic) : [];
+            sort($keys, SORT_STRING);
+            if ($keys !== ['height', 'kind', 'offset', 'opening_type', 'wall_handle', 'width']
+                || $semantic['kind'] !== 'opening' || ! self::isReferenceString($semantic['wall_handle'])
+                || ! in_array($semantic['opening_type'], ['door', 'window', 'gate', 'other'], true)
+                || ! self::isFiniteNumber($semantic['offset']) || (float) $semantic['offset'] < 0
+                || ! self::isFiniteNumber($semantic['width']) || (float) $semantic['width'] <= 0
+                || ! self::isFiniteNumber($semantic['height']) || (float) $semantic['height'] <= 0) {
+                throw new \InvalidArgumentException('geometry_contract_entity_semantic_invalid');
             }
         }
     }

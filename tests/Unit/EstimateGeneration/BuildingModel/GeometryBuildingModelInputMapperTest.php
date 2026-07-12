@@ -78,4 +78,51 @@ final class GeometryBuildingModelInputMapperTest extends TestCase
         self::assertNull($result->model->floors[0]->rooms[0]->polygon);
         self::assertContains('scale_missing', array_map(static fn ($item): string => $item->code, $result->model->assumptions));
     }
+
+    public function test_vision_opening_requires_closed_geometry_metadata_and_preserves_provenance(): void
+    {
+        $fingerprint = 'sha256:'.str_repeat('d', 64);
+        $vision = VisionAnalysisData::fromProviderArray([
+            'schema_version' => 1, 'sheet_type' => 'floor_plan',
+            'evidence' => [
+                ['key' => 'wall-evidence', 'locator' => ['page_id' => 1, 'page_number' => 1, 'processing_unit_id' => 2, 'source_version' => $fingerprint, 'coordinate_space' => 'normalized_source_v1']],
+                ['key' => 'opening-evidence', 'locator' => ['page_id' => 1, 'page_number' => 1, 'processing_unit_id' => 2, 'source_version' => $fingerprint, 'coordinate_space' => 'normalized_source_v1']],
+            ],
+            'elements' => [
+                ['key' => 'wall-1', 'type' => 'wall', 'label' => null, 'polygon' => [[0.0, 0.0], [1.0, 0.0]], 'confidence' => 0.95, 'evidence_ref' => 'wall-evidence'],
+                ['key' => 'opening-1', 'type' => 'opening', 'label' => 'door', 'polygon' => [[0.2, 0.0], [0.4, 0.0]], 'confidence' => 0.94, 'evidence_ref' => 'opening-evidence',
+                    'geometry' => ['wall_key' => 'wall-1', 'opening_type' => 'door', 'offset' => 0.2, 'width' => 0.2, 'height' => 0.21]],
+            ],
+            'scale_candidates' => [['source' => 'manual_reference', 'meters_per_unit' => 10.0, 'confidence' => 1.0, 'evidence_ref' => 'wall-evidence', 'detail' => 'confirmed_control_dimension']], 'warnings' => [],
+        ], 'timeweb', 'vision/model', 'vision/model', 'provider:v1', 'unavailable', null, null, 50);
+
+        $result = (new \App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelAssembler)->assembleVision(
+            (new GeometryBuildingModelInputMapper)->map($vision, null, ['wall-evidence' => 403, 'opening-evidence' => 404]),
+        );
+
+        self::assertSame('wall-1', $result->model->floors[0]->openings[0]->wallKey);
+        self::assertSame([404], $result->model->floors[0]->openings[0]->evidenceIds);
+    }
+
+    public function test_vector_opening_requires_explicit_semantics(): void
+    {
+        $vector = VectorGeometryData::fromArray([
+            'schema_version' => 1, 'runtime_version' => 'cad-geometry:v1;ezdxf:1.4.4', 'source_fingerprint' => 'sha256:'.str_repeat('e', 64),
+            'source_unit' => 'mm', 'unit_status' => 'confirmed', 'bounds' => [0, 0, 4000, 3000],
+            'layers' => [['name' => 'A-WALL', 'visible' => true]], 'blocks' => [],
+            'entities' => [
+                ['handle' => 'W1', 'type' => 'line', 'layer' => 'A-WALL', 'points' => [[0, 0], [4000, 0]]],
+                ['handle' => 'O1', 'type' => 'line', 'layer' => 'A-WALL', 'points' => [[1000, 0], [1900, 0]],
+                    'semantic' => ['kind' => 'opening', 'wall_handle' => 'W1', 'opening_type' => 'door', 'offset' => 1000, 'width' => 900, 'height' => 2100]],
+            ],
+            'texts' => [], 'dimensions' => [], 'pages' => [], 'scale_candidates' => [], 'warnings' => [],
+        ]);
+
+        $result = (new \App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelAssembler)->assembleVision(
+            (new GeometryBuildingModelInputMapper)->map(null, $vector, ['vector:W1' => 501, 'vector:O1' => 502]),
+        );
+
+        self::assertSame('vector-w1', $result->model->floors[0]->openings[0]->wallKey);
+        self::assertSame([502], $result->model->floors[0]->openings[0]->evidenceIds);
+    }
 }

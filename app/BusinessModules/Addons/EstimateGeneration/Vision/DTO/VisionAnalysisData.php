@@ -99,7 +99,7 @@ final readonly class VisionAnalysisData
         $mapped = array_map(static function (VisionElementData $element) use ($transform): VisionElementData {
             $polygon = array_map($transform->toSource(...), $element->polygon);
 
-            return new VisionElementData($element->key, $element->type, $element->label, $polygon, $element->confidence, $element->evidenceRef);
+            return new VisionElementData($element->key, $element->type, $element->label, $polygon, $element->confidence, $element->evidenceRef, $element->geometry);
         }, $this->elements);
 
         $evidence = array_map(static fn (VisionEvidenceData $item): VisionEvidenceData => $item->toSourceSpace(), $this->evidence);

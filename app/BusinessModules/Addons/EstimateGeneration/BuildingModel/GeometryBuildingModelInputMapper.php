@@ -78,6 +78,7 @@ final readonly class GeometryBuildingModelInputMapper
             $geometry = match ($item->type) {
                 'room' => ['polygon' => $item->polygon],
                 'wall' => ['start' => $item->polygon[0], 'end' => $item->polygon[1], 'thickness' => null, 'height' => null],
+                'opening' => $item->geometry,
                 'engineering_element' => $this->visionEngineeringGeometry($item->label, $item->polygon),
                 default => null,
             };
@@ -114,7 +115,13 @@ final readonly class GeometryBuildingModelInputMapper
             $type = $entity['type'];
             $geometryType = null;
             $geometry = null;
-            if (in_array($type, ['lwpolyline', 'polyline'], true) && $entity['closed'] === true && count($entity['points']) >= 3) {
+            if (($entity['semantic']['kind'] ?? null) === 'opening') {
+                $semantic = $entity['semantic'];
+                $geometryType = 'opening';
+                $geometry = ['wall_key' => 'vector-'.strtolower((string) $semantic['wall_handle']),
+                    'opening_type' => $semantic['opening_type'], 'offset' => $semantic['offset'],
+                    'width' => $semantic['width'], 'height' => $semantic['height']];
+            } elseif (in_array($type, ['lwpolyline', 'polyline'], true) && $entity['closed'] === true && count($entity['points']) >= 3) {
                 $geometryType = 'room';
                 $geometry = ['polygon' => $entity['points']];
             } elseif ($type === 'line') {

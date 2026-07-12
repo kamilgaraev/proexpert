@@ -18,6 +18,7 @@ final readonly class VisionElementData
         public array $polygon,
         public float $confidence,
         public string $evidenceRef,
+        public ?array $geometry = null,
     ) {
         if (preg_match('/^[a-z0-9][a-z0-9._:-]{0,79}$/', $key) !== 1
             || ! in_array($type, self::TYPES, true) || ! is_finite($confidence) || $confidence < 0.0 || $confidence > 1.0
@@ -37,7 +38,7 @@ final readonly class VisionElementData
             throw new VisionContractException('repeated_polygon_point');
         }
         if (count($polygon) === 2) {
-            if (in_array($type, ['room', 'wall', 'opening'], true)
+            if ($type === 'room'
                 || hypot($polygon[1][0] - $polygon[0][0], $polygon[1][1] - $polygon[0][1]) <= 1.0e-10) {
                 throw new VisionContractException('invalid_polyline');
             }
@@ -45,12 +46,18 @@ final readonly class VisionElementData
         if (count($polygon) >= 3 && $this->selfIntersects($polygon)) {
             throw new VisionContractException('self_intersecting_polygon');
         }
+        if (($type === 'opening') !== ($geometry !== null)
+            || $geometry !== null && ! self::validOpeningGeometry($geometry)) {
+            throw new VisionContractException('invalid_opening_geometry');
+        }
     }
 
     /** @param array<string, mixed> $data */
     public static function fromArray(array $data): self
     {
-        if (! self::hasExactKeys($data, ['key', 'type', 'label', 'polygon', 'confidence', 'evidence_ref'])
+        $keys = ['key', 'type', 'label', 'polygon', 'confidence', 'evidence_ref'];
+        if (($data['type'] ?? null) === 'opening') { $keys[] = 'geometry'; }
+        if (! self::hasExactKeys($data, $keys)
             || ! is_string($data['key']) || ! is_string($data['type']) || ! is_array($data['polygon'])
             || $data['label'] !== null && ! is_string($data['label'])
             || ! is_int($data['confidence']) && ! is_float($data['confidence']) || ! is_string($data['evidence_ref'])) {
@@ -64,13 +71,24 @@ final readonly class VisionElementData
             $polygon[] = [(float) $point[0], (float) $point[1]];
         }
 
-        return new self($data['key'], $data['type'], $data['label'], $polygon, (float) $data['confidence'], $data['evidence_ref']);
+        return new self($data['key'], $data['type'], $data['label'], $polygon, (float) $data['confidence'], $data['evidence_ref'], $data['geometry'] ?? null);
     }
 
     /** @return array<string, mixed> */
     public function toArray(): array
     {
-        return ['key' => $this->key, 'type' => $this->type, 'label' => $this->label, 'polygon' => $this->polygon, 'confidence' => $this->confidence, 'evidence_ref' => $this->evidenceRef];
+        return array_filter(['key' => $this->key, 'type' => $this->type, 'label' => $this->label, 'polygon' => $this->polygon, 'confidence' => $this->confidence, 'evidence_ref' => $this->evidenceRef, 'geometry' => $this->geometry], static fn (mixed $value): bool => $value !== null);
+    }
+
+    private static function validOpeningGeometry(array $geometry): bool
+    {
+        $keys = array_keys($geometry); sort($keys); $expected = ['height', 'offset', 'opening_type', 'wall_key', 'width']; sort($expected);
+        return $keys === $expected
+            && is_string($geometry['wall_key']) && preg_match('/^[a-z0-9][a-z0-9._:-]{0,79}$/D', $geometry['wall_key']) === 1
+            && in_array($geometry['opening_type'], ['door', 'window', 'gate', 'other'], true)
+            && is_numeric($geometry['offset']) && (float) $geometry['offset'] >= 0
+            && is_numeric($geometry['width']) && (float) $geometry['width'] > 0
+            && is_numeric($geometry['height']) && (float) $geometry['height'] > 0;
     }
 
     /** @param array<int, array{0: float, 1: float}> $polygon */
