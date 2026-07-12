@@ -106,3 +106,9 @@ Second corrective verification:
 - PHPStan/Larastan expanded corrective scope: **89 paths, 0 errors**.
 - Pint, `php -l` and `git diff --check`: passed for all changed/new PHP files.
 - PostgreSQL expand/backfill/concurrent-index/validate contract remains opt-in and was not executed locally.
+
+## Sixth corrective pass
+
+The PostgreSQL contract now exercises a moving backfill high-water mark, trigger-populated retrieval fields on a future insert after enablement, lexical discovery, and both lexical/semantic index plans. A table-driven fault matrix interrupts rollout after the first index, first constraint, and validation, verifies durable failed phase state, and proves an idempotent no-fault retry reaches `enabled` while indexes and constraints remain present. Both PostgreSQL feature contracts require an explicit disposable `_contract` database (or `ALLOW_DESTRUCTIVE_CONTRACT_DB=1`), run concurrent deployment outside a transaction, use unique fixture identifiers, and clean up only their own dataset graph; they never drop global indexes or the singleton rollout marker.
+
+Sixth corrective DB-less verification: **28 tests, 63 assertions, 0 failures** for the normative unit suite; targeted PHPStan/Larastan and Pint checks pass. PostgreSQL opt-in contracts remain authored but intentionally unrun locally.

@@ -26,7 +26,9 @@ final class NormativeOldClientPinPostgresTest extends TestCase
 
     public function test_old_client_post_persists_server_pin_and_rejects_missing_unapproved_or_mismatch(): void
     {
-        if (getenv('RUN_POSTGRES_NORMATIVE_CONTRACT') !== '1' || DB::getDriverName() !== 'pgsql') {
+        $database = (string) DB::connection()->getDatabaseName();
+        $disposable = str_ends_with($database, '_contract') || getenv('ALLOW_DESTRUCTIVE_CONTRACT_DB') === '1';
+        if (getenv('RUN_POSTGRES_NORMATIVE_CONTRACT') !== '1' || DB::getDriverName() !== 'pgsql' || ! $disposable) {
             self::markTestSkipped('Requires opt-in migrated PostgreSQL contract database.');
         }
 
