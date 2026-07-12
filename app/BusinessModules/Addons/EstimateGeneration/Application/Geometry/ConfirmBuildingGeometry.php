@@ -70,10 +70,19 @@ final class ConfirmBuildingGeometry
             DB::table('estimate_generation_evidence')->insert([
                 'id' => $evidenceId,
                 'organization_id' => $command->organizationId, 'project_id' => $command->projectId, 'session_id' => $command->sessionId,
-                'type' => 'source_fact', 'source_type' => 'user_input', 'source_ref' => 'user-geometry-confirmation:'.$command->actorId,
-                'source_version' => $newInputVersion, 'locator' => json_encode(['building_model_id' => $head->getKey()], JSON_THROW_ON_ERROR),
-                'value' => json_encode($evidenceValue, JSON_THROW_ON_ERROR), 'confidence' => 1, 'producer_name' => 'user_input_normalizer',
+                'type' => 'source_fact', 'source_type' => 'user_input', 'source_ref' => 'input:'.$command->actorId,
+                'source_version' => $newInputVersion, 'locator' => json_encode(['source_key' => 'source:'.substr($fingerprint, 0, 64)], JSON_THROW_ON_ERROR),
+                'value' => json_encode(['fact_key' => 'element_type_code', 'fact_value' => 'element_type:room'], JSON_THROW_ON_ERROR),
+                'confidence' => 1, 'producer_name' => 'user_input_normalizer',
                 'producer_version' => 'model:v1', 'fingerprint' => $fingerprint, 'created_at' => now(), 'updated_at' => now(),
+            ]);
+            DB::table('estimate_generation_geometry_confirmations')->insert([
+                'organization_id' => $command->organizationId, 'project_id' => $command->projectId,
+                'session_id' => $command->sessionId, 'evidence_id' => $evidenceId, 'actor_id' => $command->actorId,
+                'input_version' => $command->expectedInputVersion, 'previous_model_version' => $command->expectedModelVersion,
+                'source_class' => 'user_geometry_confirmation', 'reviewer_ref' => 'user:'.$command->actorId,
+                'confirmed_at' => now(), 'semantic_payload' => json_encode($evidenceValue, JSON_THROW_ON_ERROR),
+                'created_at' => now(), 'updated_at' => now(),
             ]);
             $new = new EstimateGenerationBuildingModel;
             $new->forceFill([

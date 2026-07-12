@@ -18,10 +18,10 @@ return new class extends Migration
             $table->string('status', 50)->default('created');
             $table->string('processing_stage', 100)->default('created');
             $table->unsignedTinyInteger('processing_progress')->default(0);
-            $table->json('input_payload');
-            $table->json('analysis_payload')->nullable();
-            $table->json('draft_payload')->nullable();
-            $table->json('problem_flags')->nullable();
+            $table->jsonb('input_payload');
+            $table->jsonb('analysis_payload')->nullable();
+            $table->jsonb('draft_payload')->nullable();
+            $table->jsonb('problem_flags')->nullable();
             $table->foreignId('applied_estimate_id')->nullable()->constrained('estimates')->nullOnDelete();
             $table->text('last_error')->nullable();
             $table->timestamps();

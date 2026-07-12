@@ -13,12 +13,15 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryR
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationRetryDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelRepository;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelStore;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentBuildingModelStore;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\FloorData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\PackageInputVersionBackfill;
@@ -34,6 +37,7 @@ use Illuminate\Support\Facades\Queue;
 use Mockery;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
+use Tymon\JWTAuth\Facades\JWTAuth;
 
 #[Group('postgres-contract')]
 final class EstimateGenerationGeometryPostgresTest extends TestCase
@@ -42,8 +46,95 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
     {
         $app = require dirname(__DIR__, 4).'/bootstrap/app.php';
         $app->make(Kernel::class)->bootstrap();
+        $app->singleton(BuildingModelStore::class, static fn ($app): EloquentBuildingModelStore =>
+            new EloquentBuildingModelStore($app->make('db')->connection()));
 
         return $app;
+    }
+
+    #[Test]
+    public function source_confirmation_endpoint_persists_server_audit_model_evidence_invalidation_and_outbox(): void
+    {
+        $this->requirePostgres();
+        $fixture = $this->fixture();
+        $sourceEvidenceId = $this->attachVectorCapture($fixture);
+        Queue::fake();
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->shouldReceive('can')->andReturnTrue();
+        $authorization->shouldReceive('canAccessInterface')->andReturnTrue();
+        $this->app->instance(AuthorizationService::class, $authorization);
+        $this->actingAs($fixture['user'], 'api_admin');
+        try {
+            $preview = app(\App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\AssemblePersistedVectorGeometry::class)
+                ->handle($this->sourceCommand($fixture));
+            self::assertSame('room-1', $preview->floors[0]->rooms[0]->key);
+            $payloadTypes = DB::select("SELECT attname, format_type(atttypid, atttypmod) AS type FROM pg_attribute WHERE attrelid = 'estimate_generation_sessions'::regclass AND attname IN ('input_payload','analysis_payload','draft_payload','problem_flags')");
+            self::assertSame(['jsonb'], array_values(array_unique(array_column($payloadTypes, 'type'))));
+            $url = "/api/v1/admin/projects/{$fixture['project']->id}/estimate-generation/sessions/{$fixture['session']->id}/geometry/confirm";
+            $response = $this->withHeader('Authorization', 'Bearer '.JWTAuth::fromUser($fixture['user']))
+                ->postJson($url, $this->sourcePayload($fixture));
+            self::assertSame(200, $response->status(), json_encode($response->json(), JSON_UNESCAPED_UNICODE));
+            $response->assertOk()->assertJsonPath('data.building_model.scale_status', 'confirmed')
+                ->assertJsonPath('data.building_model.floors.0.rooms.0.key', 'room-1');
+            $newModelId = DB::table('estimate_generation_building_models')->where('session_id', $fixture['session']->id)->max('id');
+            self::assertTrue(DB::table('estimate_generation_building_model_evidence')->where('building_model_id', $newModelId)
+                ->where('evidence_id', $sourceEvidenceId)->exists());
+            $audit = DB::table('estimate_generation_geometry_confirmations')->where('session_id', $fixture['session']->id)->latest('id')->first();
+            self::assertNotNull($audit);
+            self::assertSame('user_geometry_confirmation', $audit->source_class);
+            self::assertSame('user:'.$fixture['user']->id, $audit->reviewer_ref);
+            self::assertSame((int) $fixture['user']->id, (int) $audit->actor_id);
+            self::assertSame($fixture['inputVersion'], $audit->input_version);
+            self::assertSame($fixture['model_version'], $audit->previous_model_version);
+            self::assertTrue(DB::table('estimate_generation_evidence')->where('id', $audit->evidence_id)
+                ->where('session_id', $fixture['session']->id)->exists());
+            self::assertNotEmpty($audit->confirmed_at);
+            try {
+                DB::table('estimate_generation_geometry_confirmations')->where('id', $audit->id)
+                    ->update(['source_class' => 'changed']);
+                self::fail('Geometry confirmation audit row was mutable.');
+            } catch (QueryException $exception) {
+                self::assertStringContainsString('geometry_confirmation_immutable', $exception->getMessage());
+            }
+            self::assertSame(1, DB::table('estimate_generation_geometry_regeneration_outbox')->where('session_id', $fixture['session']->id)->count());
+            self::assertNotNull(DB::table('estimate_generation_evidence')->where('id', $fixture['derived_root_id'])->value('invalidated_at'));
+        } finally {
+            $this->cleanup($fixture);
+        }
+    }
+
+    #[Test]
+    public function source_confirmation_rejects_wrong_version_ambiguous_capture_and_rolls_back_fault(): void
+    {
+        $this->requirePostgres();
+        $fixture = $this->fixture();
+        $this->attachVectorCapture($fixture);
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->shouldReceive('can')->andReturnTrue();
+        $authorization->shouldReceive('canAccessInterface')->andReturnTrue();
+        $this->app->instance(AuthorizationService::class, $authorization);
+        $this->actingAs($fixture['user'], 'api_admin');
+        $url = "/api/v1/admin/projects/{$fixture['project']->id}/estimate-generation/sessions/{$fixture['session']->id}/geometry/confirm";
+        $before = $this->counts($fixture);
+        try {
+            $this->withHeader('Authorization', 'Bearer '.JWTAuth::fromUser($fixture['user']))
+                ->postJson($url, [...$this->sourcePayload($fixture), 'input_version' => 'sha256:'.str_repeat('f', 64)])->assertConflict();
+            self::assertSame($before, $this->counts($fixture));
+            $this->app->instance(GeometryConfirmationFaultInjector::class, new class implements GeometryConfirmationFaultInjector {
+                public function afterLocksAcquired(): void {}
+                public function afterInvalidation(): void { throw new \RuntimeException('source-contract-failure'); }
+            });
+            try {
+                app(ConfirmBuildingGeometry::class)->handle($this->sourceCommand($fixture));
+                self::fail('Source confirmation fault was not propagated.');
+            } catch (\RuntimeException $exception) {
+                self::assertSame('source-contract-failure', $exception->getMessage());
+            }
+            self::assertSame($before, $this->counts($fixture));
+            self::assertSame(1, (int) $fixture['session']->fresh()->state_version);
+        } finally {
+            $this->cleanup($fixture);
+        }
     }
 
     #[Test]
@@ -394,26 +485,30 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
     private function fixture(): array
     {
         $organization = Organization::factory()->create();
-        $project = Project::factory()->for($organization)->create();
+        $project = Project::factory()->for($organization)->make();
+        $project->saveQuietly();
         $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        DB::table('organization_user')->insert(['organization_id' => $organization->id, 'user_id' => $user->id,
+            'is_owner' => true, 'is_active' => true, 'project_access_mode' => 'all_projects',
+            'created_at' => now(), 'updated_at' => now()]);
         $session = EstimateGenerationSession::query()->create(['organization_id' => $organization->id, 'project_id' => $project->id,
             'user_id' => $user->id, 'status' => 'input_review_required', 'processing_stage' => 'input_review_required',
             'processing_progress' => 100, 'input_payload' => [], 'state_version' => 1]);
         $inputVersion = 'sha256:'.str_repeat('b', 64);
         $evidence = (new EloquentEvidenceRepository(DB::connection()))->insertOrGet(new EvidenceData((int) $organization->id,
             (int) $project->id, (int) $session->id, EvidenceType::Extracted, EvidenceSourceType::Document, 'document:1',
-            'sha256:'.str_repeat('a', 64), ['document_id' => 1], ['field_key' => 'height', 'field_value' => 3], 1, 'contract', 'contract:abcdef'));
+            'sha256:'.str_repeat('a', 64), ['document_id' => 1], ['field_key' => 'floor_height', 'field_value' => 3], 1, 'contract', 'contract:abcdef'));
         $model = new NormalizedBuildingModelData('m', 'confirmed', 0.01,
             [new FloorData('floor-1', 0, 3, [], [], [], [], [$evidence->id], 1, 'confirmed')], [], 'building-model:v1');
         $stored = app(BuildingModelRepository::class)->store(new BuildingModelOperationContext((int) $organization->id,
             (int) $project->id, (int) $session->id, $inputVersion), $model);
         $evidenceRepository = new EloquentEvidenceRepository(DB::connection());
         $derivedRoot = $evidenceRepository->insertOrGet(new EvidenceData((int) $organization->id, (int) $project->id,
-            (int) $session->id, EvidenceType::Inferred, EvidenceSourceType::Pipeline, 'building-model', $inputVersion,
-            ['building_model_id' => $stored->id], ['field_key' => 'derived_geometry', 'field_value' => true], 1, 'contract', 'pipeline:v1'));
+            (int) $session->id, EvidenceType::Inferred, EvidenceSourceType::Pipeline, 'pipeline:quantity_takeoff', $inputVersion,
+            ['inference_key' => 'inference:'.$stored->id], ['result_code' => 'element_type:room'], 1, 'contract', 'pipeline:v1'));
         $derivedChild = $evidenceRepository->insertOrGet(new EvidenceData((int) $organization->id, (int) $project->id,
-            (int) $session->id, EvidenceType::WorkItem, EvidenceSourceType::Pipeline, 'work-items', $inputVersion,
-            ['building_model_id' => $stored->id], ['field_key' => 'work_item', 'field_value' => 'item-1'], 1, 'contract', 'pipeline:v1'));
+            (int) $session->id, EvidenceType::WorkItem, EvidenceSourceType::Pipeline, 'pipeline:decompose', $inputVersion,
+            ['item_key' => 'item:'.$stored->id], ['work_code' => 'work_type:'.$stored->id, 'quantity' => '1', 'unit' => 'm'], 1, 'contract', 'pipeline:v1'));
         DB::table('estimate_generation_evidence_edges')->insert([
             ['organization_id' => $organization->id, 'project_id' => $project->id, 'session_id' => $session->id,
                 'parent_id' => $evidence->id, 'child_id' => $derivedRoot->id, 'relation' => 'supports', 'created_at' => now()],
@@ -455,6 +550,60 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
     {
         return ['state_version' => 1, 'model_version' => $fixture['model_version'], 'input_version' => $fixture['inputVersion'],
             'operations' => [['op' => 'replace', 'path' => '/floors/floor-1/height_m', 'value' => 3.2]]];
+    }
+
+    private function attachVectorCapture(array $fixture): int
+    {
+        $payload = $this->vectorPayload();
+        DB::table('estimate_generation_processing_units')->where('id', $fixture['unit_id'])->update([
+            'status' => 'completed', 'output_version' => $fixture['inputVersion'], 'output_count' => 1,
+            'completed_at' => now(), 'metadata' => json_encode(['vector_geometry' => $payload], JSON_THROW_ON_ERROR),
+            'updated_at' => now(),
+        ]);
+        $evidence = (new EloquentEvidenceRepository(DB::connection()))->insertOrGet(new EvidenceData(
+            (int) $fixture['organization']->id, (int) $fixture['project']->id, (int) $fixture['session']->id,
+            EvidenceType::Extracted, EvidenceSourceType::Document, 'document:'.$fixture['document_id'], $fixture['inputVersion'],
+            ['document_id' => $fixture['document_id']], ['field_key' => 'area', 'field_value' => 12], 1,
+            'pdf_geometry', 'model:v1',
+        ));
+
+        return $evidence->id;
+    }
+
+    private function sourcePayload(array $fixture): array
+    {
+        return ['state_version' => 1, 'model_version' => $fixture['model_version'], 'input_version' => $fixture['inputVersion'],
+            'operations' => [], 'source_confirmation' => $this->sourceConfirmation()];
+    }
+
+    private function sourceCommand(array $fixture): GeometryConfirmationCommand
+    {
+        return new GeometryConfirmationCommand((int) $fixture['organization']->id, (int) $fixture['project']->id,
+            (int) $fixture['session']->id, (int) $fixture['user']->id, 1, $fixture['model_version'],
+            $fixture['inputVersion'], null, [], $this->sourceConfirmation());
+    }
+
+    private function sourceConfirmation(): array
+    {
+        $vector = VectorGeometryData::fromArray($this->vectorPayload());
+
+        return ['schema_version' => 1, 'source_fingerprint' => $vector->sourceFingerprint,
+            'geometry_payload_sha256' => $vector->payloadSha256(),
+            'scale_evidence' => [['role' => 'measured_segment', 'entity_handle' => 'W1', 'point_indexes' => [0, 1],
+                'real_world_value' => 4000, 'unit' => 'mm']],
+            'elements' => [['key' => 'room-1', 'type' => 'room', 'boundary_handle' => 'R1'],
+                ['key' => 'wall-1', 'type' => 'wall', 'segment_handles' => ['W1']]]];
+    }
+
+    private function vectorPayload(): array
+    {
+        return ['schema_version' => 1, 'runtime_version' => 'cad-geometry:v1;ezdxf:1.4.4',
+            'source_fingerprint' => 'sha256:'.str_repeat('9', 64), 'source_unit' => 'mm', 'unit_status' => 'confirmed',
+            'bounds' => [0, 0, 4000, 3000], 'layers' => [['name' => 'A', 'visible' => true]], 'blocks' => [],
+            'entities' => [['handle' => 'R1', 'type' => 'lwpolyline', 'layer' => 'A',
+                'points' => [[0, 0], [4000, 0], [4000, 3000], [0, 3000]], 'closed' => true],
+                ['handle' => 'W1', 'type' => 'line', 'layer' => 'A', 'points' => [[0, 0], [4000, 0]]]],
+            'texts' => [], 'dimensions' => [], 'pages' => [], 'scale_candidates' => [], 'warnings' => []];
     }
 
     private function command(array $fixture): GeometryConfirmationCommand
@@ -650,9 +799,9 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
     {
         DB::table('estimates')->where('id', $fixture['estimate_id'])->delete();
         DB::table('estimate_generation_sessions')->where('id', $fixture['session']->id)->delete();
-        $fixture['project']->delete();
-        $fixture['organization']->delete();
-        $fixture['user']->delete();
+        $fixture['project']->deleteQuietly();
+        $fixture['organization']->deleteQuietly();
+        $fixture['user']->deleteQuietly();
     }
 
     private function requirePostgres(): void

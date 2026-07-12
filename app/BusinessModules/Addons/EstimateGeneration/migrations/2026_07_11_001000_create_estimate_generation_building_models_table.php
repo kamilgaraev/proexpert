@@ -94,11 +94,12 @@ ALTER TABLE estimate_generation_building_models
 
 CREATE FUNCTION eg_building_model_semantic_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    IF eg_building_model_json_object_length(NEW.metrics) <> 7
-        OR NOT NEW.metrics ?& ARRAY['floor_count','room_count','wall_count','opening_count','engineering_element_count','evidence_count','minimum_confidence']
-        OR EXISTS (SELECT 1 FROM jsonb_each(NEW.metrics) entry WHERE jsonb_typeof(entry.value) <> 'number')
-        OR EXISTS (SELECT 1 FROM jsonb_each(NEW.metrics) entry WHERE entry.key <> 'minimum_confidence' AND entry.value::text !~ '^[0-9]+$')
-        OR EXISTS (SELECT 1 FROM jsonb_each(NEW.metrics) entry WHERE entry.key <> 'minimum_confidence' AND (entry.value::text)::numeric > 10000)
+    IF eg_building_model_json_object_length(NEW.metrics) <> 8
+        OR NOT NEW.metrics ?& ARRAY['floor_count','room_count','wall_count','opening_count','engineering_element_count','evidence_count','minimum_confidence','complete']
+        OR jsonb_typeof(NEW.metrics->'complete') <> 'boolean'
+        OR EXISTS (SELECT 1 FROM jsonb_each(NEW.metrics) entry WHERE entry.key <> 'complete' AND jsonb_typeof(entry.value) <> 'number')
+        OR EXISTS (SELECT 1 FROM jsonb_each(NEW.metrics) entry WHERE entry.key NOT IN ('minimum_confidence','complete') AND entry.value::text !~ '^[0-9]+$')
+        OR EXISTS (SELECT 1 FROM jsonb_each(NEW.metrics) entry WHERE entry.key NOT IN ('minimum_confidence','complete') AND (entry.value::text)::numeric > 10000)
         OR (NEW.metrics->>'floor_count')::numeric > 100
         OR (NEW.metrics->>'minimum_confidence')::numeric NOT BETWEEN 0 AND 1
         OR (NEW.metrics->>'evidence_count')::numeric < 1
@@ -129,9 +130,9 @@ BEGIN
             WHERE assumption->>'code' IN ('scale_estimated','scale_missing','scale_conflict')
         ))
     THEN RAISE EXCEPTION 'estimate_generation.building_model_scale_blocker_invalid'; END IF;
-    IF EXISTS (SELECT 1 FROM jsonb_array_elements(NEW.assumptions) assumption, jsonb_array_elements(assumption->'affected_keys') value WHERE jsonb_typeof(value) <> 'string' OR value #>> '{}' !~ '^[a-z][a-z0-9_-]{0,127}$')
-        OR EXISTS (SELECT 1 FROM jsonb_array_elements(NEW.assumptions) assumption, jsonb_array_elements(assumption->'evidence_ids') value WHERE jsonb_typeof(value) <> 'number' OR value #>> '{}' !~ '^[1-9][0-9]*$')
-        OR EXISTS (SELECT 1 FROM jsonb_array_elements(NEW.model->'evidence_ids') value WHERE jsonb_typeof(value) <> 'number' OR value #>> '{}' !~ '^[1-9][0-9]*$')
+    IF EXISTS (SELECT 1 FROM jsonb_array_elements(NEW.assumptions) assumption, jsonb_array_elements(assumption->'affected_keys') item_value WHERE jsonb_typeof(item_value) <> 'string' OR item_value #>> '{}' !~ '^[a-z][a-z0-9_-]{0,127}$')
+        OR EXISTS (SELECT 1 FROM jsonb_array_elements(NEW.assumptions) assumption, jsonb_array_elements(assumption->'evidence_ids') item_value WHERE jsonb_typeof(item_value) <> 'number' OR item_value #>> '{}' !~ '^[1-9][0-9]*$')
+        OR EXISTS (SELECT 1 FROM jsonb_array_elements(NEW.model->'evidence_ids') item_value WHERE jsonb_typeof(item_value) <> 'number' OR item_value #>> '{}' !~ '^[1-9][0-9]*$')
     THEN RAISE EXCEPTION 'estimate_generation.building_model_reference_invalid'; END IF;
     RETURN NEW;
 END; $$;

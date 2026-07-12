@@ -29,7 +29,7 @@ final class AssemblePersistedVectorGeometryTest extends TestCase
         $vector = VectorGeometryData::fromArray($vectorPayload);
         $confirmation = $this->confirmation($vector);
         $service = $this->service([(object) [
-            'id' => 91, 'value' => json_encode(['vector_geometry' => $vectorPayload], JSON_THROW_ON_ERROR),
+            'id' => 81, 'document_id' => 71, 'metadata' => json_encode(['vector_geometry' => $vectorPayload], JSON_THROW_ON_ERROR),
         ]]);
 
         $model = $service->handle(new GeometryConfirmationCommand(
@@ -60,15 +60,25 @@ final class AssemblePersistedVectorGeometryTest extends TestCase
     private function service(array $rows): AssemblePersistedVectorGeometry
     {
         $query = Mockery::mock();
-        $query->shouldReceive('where')->once()->with('organization_id', 11)->andReturnSelf();
-        $query->shouldReceive('where')->once()->with('project_id', 22)->andReturnSelf();
-        $query->shouldReceive('where')->once()->with('session_id', 33)->andReturnSelf();
-        $query->shouldReceive('where')->once()->with('source_version', 'sha256:'.str_repeat('b', 64))->andReturnSelf();
-        $query->shouldReceive('whereIn')->once()->with('producer_name', ['pdf_geometry', 'contract'])->andReturnSelf();
+        foreach ([['organization_id', 11], ['project_id', 22], ['session_id', 33], ['source_version', 'sha256:'.str_repeat('b', 64)], ['status', 'completed']] as $where) {
+            $query->shouldReceive('where')->once()->with(...$where)->andReturnSelf();
+        }
+        $query->shouldReceive('whereIn')->once()->with('unit_type', ['pdf_page', 'cad_drawing'])->andReturnSelf();
         $query->shouldReceive('limit')->once()->with(2)->andReturnSelf();
-        $query->shouldReceive('get')->once()->with(['id', 'value'])->andReturn(new Collection($rows));
+        $query->shouldReceive('get')->once()->with(['id', 'document_id', 'metadata'])->andReturn(new Collection($rows));
         $database = Mockery::mock(DatabaseManager::class);
-        $database->shouldReceive('table')->once()->with('estimate_generation_evidence')->andReturn($query);
+        $database->shouldReceive('table')->once()->with('estimate_generation_processing_units')->andReturn($query);
+        if (count($rows) === 1) {
+            $evidence = Mockery::mock();
+            foreach ([['organization_id', 11], ['project_id', 22], ['session_id', 33], ['source_version', 'sha256:'.str_repeat('b', 64)],
+                ['source_ref', 'document:71'], ['producer_name', 'pdf_geometry']] as $where) {
+                $evidence->shouldReceive('where')->once()->with(...$where)->andReturnSelf();
+            }
+            $evidence->shouldReceive('whereNull')->once()->with('invalidated_at')->andReturnSelf();
+            $evidence->shouldReceive('limit')->once()->with(2)->andReturnSelf();
+            $evidence->shouldReceive('get')->once()->with(['id'])->andReturn(new Collection([(object) ['id' => 91]]));
+            $database->shouldReceive('table')->once()->with('estimate_generation_evidence')->andReturn($evidence);
+        }
 
         return new AssemblePersistedVectorGeometry($database, new GeometryBuildingModelInputMapper, new BuildingModelAssembler);
     }

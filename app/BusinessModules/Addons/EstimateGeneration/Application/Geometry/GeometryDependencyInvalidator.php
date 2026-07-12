@@ -35,7 +35,8 @@ final class GeometryDependencyInvalidator
             ]);
         $units = $this->database->table('estimate_generation_processing_units')->where('session_id', $sessionId)
             ->where('source_version', $inputVersion)->whereNotIn('status', ['superseded'])->update([
-                'status' => 'superseded', 'claim_token' => null, 'lease_expires_at' => null, 'updated_at' => $now,
+                'status' => 'superseded', 'claim_token' => null, 'lease_expires_at' => null,
+                'output_version' => null, 'updated_at' => $now,
             ]);
         $packages = $this->database->table('estimate_generation_packages')->where('session_id', $sessionId)
             ->where('input_version', $inputVersion)->get();

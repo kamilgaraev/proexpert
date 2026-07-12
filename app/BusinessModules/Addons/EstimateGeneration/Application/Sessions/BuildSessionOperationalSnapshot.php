@@ -298,7 +298,7 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
                 (SELECT MAX(a.updated_at) FROM estimate_generation_audit_events a JOIN estimate_generation_sessions s ON s.id = a.session_id WHERE s.organization_id = ? AND s.project_id = ? AND a.session_id = ?) AS audit_max_updated_at,
                 (SELECT COUNT(*) FROM estimate_generation_failure_events WHERE organization_id = ? AND project_id = ? AND session_id = ?) AS failure_events_count,
                 (SELECT COALESCE(MAX(sequence), 0) FROM estimate_generation_failure_events WHERE organization_id = ? AND project_id = ? AND session_id = ?) AS failure_events_max_sequence
-            SQL, array_merge(...array_fill(0, 25, [$organizationId, $projectId, $sessionId])));
+            SQL, array_merge(...array_fill(0, 26, [$organizationId, $projectId, $sessionId])));
 
         return $row instanceof stdClass ? $this->row($row) : [];
     }

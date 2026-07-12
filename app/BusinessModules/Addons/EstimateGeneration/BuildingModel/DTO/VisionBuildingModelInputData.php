@@ -52,8 +52,5 @@ final readonly class VisionBuildingModelInputData
                 throw new InvalidArgumentException('Vision evidence mapping is incomplete.');
             }
         }
-        if (count($evidenceIdsByRef) !== count(array_unique($evidenceIdsByRef))) {
-            throw new InvalidArgumentException('Vision evidence mapping must be unique.');
-        }
     }
 }
