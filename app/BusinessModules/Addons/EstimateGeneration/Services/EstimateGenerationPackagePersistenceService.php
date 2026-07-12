@@ -283,10 +283,36 @@ class EstimateGenerationPackagePersistenceService
         $evidenceId = $this->positiveInt($workItem['quantity_evidence_id'] ?? null);
         $evidenceFingerprint = $workItem['quantity_evidence_fingerprint'] ?? null;
         if ($evidenceId === null || ! is_string($evidenceFingerprint)) {
+            $descriptor = is_array($workItem['quantity_evidence_descriptor'] ?? null)
+                ? $workItem['quantity_evidence_descriptor']
+                : [];
+            $descriptorFingerprint = $descriptor['fingerprint'] ?? null;
+            $expectedLocator = 'item:'.hash('sha256', $logicalKey);
+            if (is_string($descriptorFingerprint)
+                && ($descriptor['locator']['item_key'] ?? null) === $expectedLocator) {
+                $accepted = DB::table('estimate_generation_accepted_evidence as accepted')
+                    ->join('estimate_generation_pipeline_checkpoints as checkpoint', 'checkpoint.id', '=', 'accepted.checkpoint_id')
+                    ->where('accepted.organization_id', $session->organization_id)
+                    ->where('accepted.project_id', $session->project_id)
+                    ->where('accepted.session_id', $session->id)
+                    ->where('accepted.descriptor_fingerprint', $descriptorFingerprint)
+                    ->where('checkpoint.stage', 'plan_work_items')
+                    ->where('checkpoint.status', 'completed')
+                    ->whereColumn('checkpoint.output_version', 'accepted.output_version')
+                    ->orderByDesc('accepted.checkpoint_id')
+                    ->first(['accepted.evidence_id', 'accepted.descriptor_fingerprint']);
+                if ($accepted !== null) {
+                    $evidenceId = (int) $accepted->evidence_id;
+                    $evidenceFingerprint = (string) $accepted->descriptor_fingerprint;
+                }
+            }
+        }
+        if ($evidenceId === null || ! is_string($evidenceFingerprint)) {
             return null;
         }
         $evidence = app(EvidenceRepository::class)->node((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $evidenceId);
         if ($evidence === null || $evidence->fingerprint !== $evidenceFingerprint || $evidence->invalidatedAt !== null
+            || ! is_string($evidence->value['quantity'] ?? null)
             || $this->positiveDecimal($evidence->value['quantity'] ?? null)?->compareTo($quantity) !== 0
             || ($evidence->value['unit'] ?? null) !== $unit) {
             return null;
@@ -322,7 +348,7 @@ class EstimateGenerationPackagePersistenceService
 
     private function positiveDecimal(mixed $value): ?BigDecimal
     {
-        if (! is_int($value) && ! is_string($value)) {
+        if (! is_int($value) && ! is_string($value) && ! (is_float($value) && is_finite($value))) {
             return null;
         }
 

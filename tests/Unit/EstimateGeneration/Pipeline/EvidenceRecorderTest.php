@@ -249,6 +249,7 @@ final class EvidenceRecorderTest extends TestCase
             [EvidenceType::SourceFact, ['fact_key' => 'area', 'fact_value' => -1]],
             [EvidenceType::Measured, ['quantity' => -1, 'unit' => 'm']],
             [EvidenceType::WorkItem, ['work_code' => 'work_type:1', 'quantity' => 1_000_000_000_001]],
+            [EvidenceType::WorkItem, ['work_code' => 'work_type:1', 'quantity' => 1.25, 'unit' => 'm2']],
             [EvidenceType::Price, ['amount' => -0.01, 'currency' => 'RUB', 'price_version' => 'price:1']],
         ];
 
@@ -260,6 +261,18 @@ final class EvidenceRecorderTest extends TestCase
                 self::assertTrue(true);
             }
         }
+    }
+
+    #[Test]
+    public function work_item_quantity_preserves_canonical_high_precision_decimal(): void
+    {
+        $data = $this->data(type: EvidenceType::WorkItem, value: [
+            'work_code' => 'work_type:1',
+            'quantity' => '123456789.123456789123456789',
+            'unit' => 'm2',
+        ]);
+
+        self::assertSame('123456789.123456789123456789', $data->value['quantity']);
     }
 
     #[Test]

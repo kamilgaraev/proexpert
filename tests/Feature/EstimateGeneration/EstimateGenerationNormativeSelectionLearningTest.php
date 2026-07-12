@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationReviewController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\EstimateGenerationFeedbackRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationLearningExample;
@@ -241,8 +245,27 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
     {
         [$user, $project, $session] = $this->makeSession();
         $this->createPackageItem($session, 'rough.walls');
+        $identity = hash('sha256', 'rough.walls');
+        $oldEvidence = app(EvidenceRepository::class)->insertOrGet(new EvidenceData(
+            (int) $session->organization_id,
+            (int) $session->project_id,
+            (int) $session->id,
+            EvidenceType::WorkItem,
+            EvidenceSourceType::Pipeline,
+            'pipeline:decompose',
+            'pipeline:v1',
+            ['item_key' => 'item:'.$identity],
+            ['work_code' => 'work_type:'.$identity, 'quantity' => '220.5', 'unit' => 'm2'],
+            0.75,
+            'work_planner',
+            'pipeline:v1',
+        ));
+        $draft = $this->quantityReviewDraftPayload();
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['unit'] = 'm2';
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['quantity_evidence_id'] = $oldEvidence->id;
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['quantity_evidence_fingerprint'] = $oldEvidence->fingerprint;
         $session->forceFill([
-            'draft_payload' => $this->quantityReviewDraftPayload(),
+            'draft_payload' => $draft,
         ])->save();
 
         $request = EstimateGenerationFeedbackRequest::create('/feedback', 'POST', [
@@ -251,7 +274,7 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
             'work_item_key' => 'rough.walls',
             'payload' => [
                 'quantity' => 218.25,
-                'unit' => 'м2',
+                'unit' => 'm2',
                 'quantity_basis' => 'Проверено по планировке, площадь стен 218,25 м2.',
             ],
             'comments' => 'Проверил площадь стен по планировке.',
@@ -277,12 +300,30 @@ final class EstimateGenerationNormativeSelectionLearningTest extends TestCase
         $this->assertSame('rough.walls', $example->context_payload['work_item_key']);
         $this->assertSame('rough.walls', $example->context_payload['quantity_key']);
         $this->assertSame(218.25, $example->context_payload['quantity_snapshot']['quantity']);
-        $this->assertSame('м2', $example->context_payload['quantity_snapshot']['unit']);
+        $this->assertSame('m2', $example->context_payload['quantity_snapshot']['unit']);
         $this->assertTrue($example->context_payload['quantity_snapshot']['confirmed_by_user']);
         $this->assertSame('wall_area_from_floor_plan', $example->context_payload['calculation_basis']);
         $this->assertSame('Проверил площадь стен по планировке.', $example->context_payload['comments']);
         $this->assertSame('confirmed_by_user', $updatedWorkItem['metadata']['quantity_feedback']['status']);
         $this->assertSame(218.25, $updatedWorkItem['metadata']['quantity_feedback']['quantity']);
+        $confirmedEvidence = app(EvidenceRepository::class)->node(
+            (int) $session->organization_id,
+            (int) $session->project_id,
+            (int) $session->id,
+            (int) $updatedWorkItem['quantity_evidence_id'],
+        );
+        $this->assertNotNull($confirmedEvidence);
+        $this->assertSame(EvidenceSourceType::UserInput, $confirmedEvidence->sourceType);
+        $this->assertSame('218.25', $confirmedEvidence->value['quantity']);
+        $this->assertSame('m2', $confirmedEvidence->value['unit']);
+        $this->assertSame($confirmedEvidence->fingerprint, $updatedWorkItem['quantity_evidence_fingerprint']);
+        $this->assertNotSame($oldEvidence->id, $confirmedEvidence->id);
+        $this->assertNotNull(app(EvidenceRepository::class)->node(
+            (int) $session->organization_id,
+            (int) $session->project_id,
+            (int) $session->id,
+            $oldEvidence->id,
+        )?->invalidatedAt);
     }
 
     /**

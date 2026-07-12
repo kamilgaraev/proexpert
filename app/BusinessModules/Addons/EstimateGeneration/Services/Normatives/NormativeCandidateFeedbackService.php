@@ -134,12 +134,12 @@ final class NormativeCandidateFeedbackService
                         type: EvidenceType::WorkItem,
                         sourceType: EvidenceSourceType::UserInput,
                         sourceRef: 'input:'.(int) $feedback->id,
-                        sourceVersion: 'user:v1',
+                        sourceVersion: 'semver:v1',
                         locator: ['item_key' => 'item:'.$identity],
-                        value: ['work_code' => 'work_type:'.$identity, 'quantity' => $workItem['quantity'], 'unit' => $workItem['unit']],
+                        value: ['work_code' => 'work_type:'.$identity, 'quantity' => (string) $workItem['quantity'], 'unit' => $workItem['unit']],
                         confidence: 1.0,
                         producerName: 'user_input_normalizer',
-                        producerVersion: 'user:v1',
+                        producerVersion: 'semver:v1',
                     ));
                     $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex]['quantity_evidence_id'] = $node->id;
                     $draft['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$workIndex]['quantity_evidence_fingerprint'] = $node->fingerprint;

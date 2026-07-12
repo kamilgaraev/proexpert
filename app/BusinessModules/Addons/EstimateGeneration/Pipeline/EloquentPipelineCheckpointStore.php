@@ -195,7 +195,7 @@ final class EloquentPipelineCheckpointStore implements PipelineCheckpointStore
                 throw new RuntimeException('estimate_generation.pipeline_artifact_budget_exceeded');
             }
 
-            return $checkpoint->newQuery()
+            $completed = $checkpoint->newQuery()
                 ->whereKey($checkpoint->getKey())
                 ->where('status', CheckpointStatus::Running->value)
                 ->where('claim_token', $claim->claimToken)
@@ -215,6 +215,11 @@ final class EloquentPipelineCheckpointStore implements PipelineCheckpointStore
                     'last_error_fingerprint' => null,
                     'updated_at' => $completedAt,
                 ]) === 1;
+            if (! $completed) {
+                throw new RuntimeException('estimate_generation.pipeline_checkpoint_completion_lost');
+            }
+
+            return true;
         }, 3);
     }
 

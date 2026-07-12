@@ -57,6 +57,9 @@ class NormativeCandidateSelectionService
                         'section_title' => $section['title'] ?? null,
                         'source_refs' => $section['source_refs'] ?? $localEstimate['source_refs'] ?? [],
                         'regional_context' => $regionalContext,
+                        'normative_dataset_version' => is_array($regionalContext)
+                            ? ($regionalContext['normative_dataset_version'] ?? null)
+                            : null,
                         'selection_source' => $allowCatalogSelection ? 'catalog_search' : 'offered_candidate',
                     ];
 

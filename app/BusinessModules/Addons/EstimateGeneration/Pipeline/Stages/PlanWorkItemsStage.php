@@ -6,7 +6,6 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages;
 
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
-use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
@@ -18,6 +17,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RenewsPipelineLease;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\PackagePlannerService;
+use Brick\Math\BigDecimal;
 
 final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
 {
@@ -29,7 +29,6 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         private NormativeWorkItemPlannerService $workItemPlanner,
         private NormativeContextPinResolver $normativePins,
         private StageResultFactory $results,
-        private EvidenceRepository $evidence,
     ) {}
 
     public function stage(): ProcessingStage
@@ -77,7 +76,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         }
         $workItem['unit'] = $unit;
         $identity = hash('sha256', (string) ($workItem['key'] ?? json_encode($workItem, JSON_THROW_ON_ERROR)));
-        $node = $this->evidence->insertOrGet(new EvidenceData(
+        $data = new EvidenceData(
             organizationId: $context->organizationId,
             projectId: $context->projectId,
             sessionId: $context->sessionId,
@@ -86,13 +85,24 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             sourceRef: 'pipeline:decompose',
             sourceVersion: 'pipeline:v1',
             locator: ['item_key' => 'item:'.$identity],
-            value: ['work_code' => 'work_type:'.$identity, 'quantity' => (float) $quantity, 'unit' => $unit],
+            value: ['work_code' => 'work_type:'.$identity, 'quantity' => BigDecimal::of((string) $quantity)->stripTrailingZeros()->__toString(), 'unit' => $unit],
             confidence: (float) ($workItem['confidence'] ?? 1),
             producerName: 'work_planner',
             producerVersion: 'pipeline:v1',
-        ));
-        $workItem['quantity_evidence_id'] = $node->id;
-        $workItem['quantity_evidence_fingerprint'] = $node->fingerprint;
+        );
+        $workItem['quantity_evidence_descriptor'] = [
+            'fingerprint' => $data->fingerprint(),
+            'quantity' => BigDecimal::of((string) $quantity)->stripTrailingZeros()->__toString(),
+            'unit' => $unit,
+            'locator' => $data->locator,
+            'source_type' => $data->sourceType->value,
+            'source_ref' => $data->sourceRef,
+            'source_version' => $data->sourceVersion,
+            'producer_name' => $data->producerName,
+            'producer_version' => $data->producerVersion,
+            'confidence' => number_format($data->confidence, 6, '.', ''),
+            'work_code' => $data->value['work_code'],
+        ];
 
         return $workItem;
     }

@@ -20,10 +20,16 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
         private AdvanceEstimateGeneration $advance,
         private PipelineArtifactStore $artifacts,
         private FinalizationOutbox $finalizations,
+        private AcceptedQuantityEvidenceMaterializer $acceptedEvidence,
     ) {}
 
     public function beforeComplete(CheckpointClaim $claim, PipelineStageResult $result, DateTimeImmutable $completedAt): void
     {
+        if ($result->stage === ProcessingStage::PlanWorkItems) {
+            $this->acceptedEvidence->materialize($claim, $result);
+
+            return;
+        }
         if ($result->stage !== ProcessingStage::ValidateDraft) {
             return;
         }
