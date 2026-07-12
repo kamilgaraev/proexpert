@@ -12,11 +12,90 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\FloorData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\OpeningData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\RoomData;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\VisionBuildingModelAssemblyResult;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\VisionBuildingModelInputData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\WallData;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\FusedGeometryElementData;
 use InvalidArgumentException;
 
 final class BuildingModelAssembler
 {
+    public function assembleVision(VisionBuildingModelInputData $input): VisionBuildingModelAssemblyResult
+    {
+        $confirmed = $input->scale->status === 'confirmed';
+        $rooms = [];
+        $floorEvidence = [];
+        foreach ($input->geometry->elements as $element) {
+            $evidenceId = $input->evidenceIdsByRef[$element->evidenceRef];
+            $floorEvidence[] = $evidenceId;
+            if ($element->type !== 'room') {
+                continue;
+            }
+            $rooms[] = new RoomData(
+                $element->key,
+                null,
+                $confirmed ? $this->metricPolygon($element, $input->scale->metersPerUnit) : null,
+                [$evidenceId],
+                $element->confidence,
+                $confirmed ? 'confirmed' : 'unknown',
+            );
+        }
+        foreach ($input->scale->evidenceRefs as $reference) {
+            $floorEvidence[] = $input->evidenceIdsByRef[$reference];
+        }
+        foreach ($input->geometry->issues as $issue) {
+            foreach ($issue['evidence_refs'] as $reference) {
+                $floorEvidence[] = $input->evidenceIdsByRef[$reference];
+            }
+        }
+        sort($floorEvidence, SORT_NUMERIC);
+        $floorEvidence = array_values(array_unique($floorEvidence));
+        $floor = new FloorData(
+            $input->floorKey,
+            null,
+            null,
+            $rooms,
+            [],
+            [],
+            [],
+            $floorEvidence,
+            $this->minimumElementConfidence($input->geometry->elements),
+            $confirmed ? 'confirmed' : 'unknown',
+        );
+        $model = $this->assemble([new BuildingModelDetectionData(
+            $input->producerVersion,
+            $confirmed ? 'confirmed' : 'unknown',
+            $confirmed ? $input->scale->metersPerUnit : null,
+            [$floor],
+            $floorEvidence,
+        )]);
+
+        $clarifications = $input->questions;
+        if ($input->scale->blockingIssue !== null) {
+            $scaleIssue = ['key' => $input->scale->blockingIssue];
+            if ($input->scale->evidenceRefs !== []) {
+                $scaleIssue['evidence_refs'] = $input->scale->evidenceRefs;
+                sort($scaleIssue['evidence_refs'], SORT_STRING);
+            }
+            $clarifications[] = $scaleIssue;
+        }
+        foreach ($input->geometry->issues as $issue) {
+            $clarifications[] = [
+                'key' => $issue['code'],
+                'element_key' => $issue['element_key'],
+                'evidence_refs' => $issue['evidence_refs'],
+            ];
+        }
+        usort($clarifications, static fn (array $left, array $right): int => json_encode($left, JSON_THROW_ON_ERROR) <=> json_encode($right, JSON_THROW_ON_ERROR));
+
+        return new VisionBuildingModelAssemblyResult(
+            $model,
+            array_map(static fn (FusedGeometryElementData $element): array => $element->toArray(), $input->geometry->elements),
+            $input->sketchAssumptions,
+            $clarifications,
+        );
+    }
+
     public function assemble(array $detections): NormalizedBuildingModelData
     {
         if ($detections === [] || ! array_is_list($detections)) {
@@ -165,5 +244,23 @@ final class BuildingModelAssembler
     {
         $conflicts[$key] = array_values(array_unique([...$conflicts[$key] ?? [], ...$leftEvidence, ...$rightEvidence]));
         sort($conflicts[$key], SORT_NUMERIC);
+    }
+
+    private function metricPolygon(FusedGeometryElementData $element, ?float $scale): array
+    {
+        if ($scale === null) {
+            throw new InvalidArgumentException('Confirmed vision scale is missing.');
+        }
+
+        return array_map(static fn (array $point): array => [(float) $point[0] * $scale, (float) $point[1] * $scale], $element->geometry);
+    }
+
+    private function minimumElementConfidence(array $elements): float
+    {
+        if ($elements === []) {
+            return 1.0;
+        }
+
+        return min(array_map(static fn (FusedGeometryElementData $element): float => $element->confidence, $elements));
     }
 }
