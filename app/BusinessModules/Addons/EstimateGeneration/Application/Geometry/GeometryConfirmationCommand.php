@@ -21,12 +21,13 @@ final readonly class GeometryConfirmationCommand
         public string $expectedInputVersion,
         public ?array $scale,
         array $operations,
+        public ?array $sourceConfirmation = null,
     ) {
         if (! preg_match('/^sha256:[a-f0-9]{64}$/', $expectedModelVersion)
             || ! preg_match('/^sha256:[a-f0-9]{64}$/', $expectedInputVersion)) {
             throw new InvalidArgumentException('Geometry version is invalid.');
         }
-        if ($scale === null && $operations === []) {
+        if ($scale === null && $operations === [] && $sourceConfirmation === null) {
             throw new InvalidArgumentException('Geometry confirmation must contain a change.');
         }
         if ($scale !== null) {
@@ -40,7 +41,7 @@ final readonly class GeometryConfirmationCommand
         if (count($operations) > 100) {
             throw new InvalidArgumentException('Too many geometry operations.');
         }
-        $encoded = json_encode(['scale' => $scale, 'operations' => $operations]);
+        $encoded = json_encode(['scale' => $scale, 'operations' => $operations, 'source_confirmation' => $sourceConfirmation]);
         if (is_string($encoded) && strlen($encoded) > 262144) {
             throw new InvalidArgumentException('Geometry confirmation payload is too large.');
         }
@@ -80,6 +81,9 @@ final readonly class GeometryConfirmationCommand
             ];
         }
         $this->operations = $normalized;
+        if ($sourceConfirmation !== null) {
+            \App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\GeometryConfirmationData::fromArray($sourceConfirmation);
+        }
     }
 
     private function point(mixed $value): bool

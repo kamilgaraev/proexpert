@@ -77,30 +77,29 @@ final readonly class GeometryBuildingModelInputMapper
             || ! hash_equals($vector->payloadSha256(), $confirmation->geometryPayloadSha256)) {
             throw new InvalidArgumentException('geometry_confirmation_source_mismatch');
         }
-        $unitScale = match ($vector->sourceUnit) {
-            'mm' => 0.001, 'cm' => 0.01, 'm' => 1.0, 'in' => 0.0254, 'ft' => 0.3048, default => null,
-        };
-        if ($vector->unitStatus === 'confirmed' && ($unitScale === null || abs($unitScale - $confirmation->metersPerUnit) > 1.0E-12)) {
-            throw new InvalidArgumentException('geometry_confirmation_scale_conflict');
-        }
         $entities = array_column($vector->entities, null, 'handle');
-        $knownHandles = array_fill_keys(array_column([...$vector->entities, ...$vector->texts, ...$vector->dimensions], 'handle'), true);
-        foreach ($confirmation->scaleEvidenceHandles as $handle) {
-            if (! isset($knownHandles[$handle])) {
-                throw new InvalidArgumentException('geometry_confirmation_evidence_unknown');
+        $values = array_column([...$vector->texts, ...$vector->dimensions], null, 'handle');
+        $scale = $this->confirmedScale($vector, $confirmation, $entities, $values);
+        $wallGeometry = [];
+        foreach ($confirmation->elements as $mapping) {
+            if ($mapping['type'] === 'wall') {
+                $wallGeometry[$mapping['key']] = $this->confirmedWallGeometry($mapping['segment_handles'], $entities);
             }
         }
         $elements = [];
         foreach ($confirmation->elements as $mapping) {
-            $entity = $entities[$mapping['entity_handle']] ?? throw new InvalidArgumentException('geometry_confirmation_entity_unknown');
+            $handle = match ($mapping['type']) {
+                'room' => $mapping['boundary_handle'],
+                'wall' => $mapping['segment_handles'][0],
+                'opening' => $mapping['dimension_handle'],
+            };
+            $entity = $entities[$handle] ?? $values[$handle] ?? throw new InvalidArgumentException('geometry_confirmation_entity_unknown');
             $geometry = match ($mapping['type']) {
                 'room' => $this->confirmedRoomGeometry($entity),
-                'wall' => $this->confirmedWallGeometry($entity, $mapping['point_indexes']),
-                'opening' => $this->confirmedOpeningGeometry($mapping, $knownHandles),
+                'wall' => $wallGeometry[$mapping['key']],
+                'opening' => $this->confirmedOpeningGeometry($mapping, $entities, $values, $wallGeometry, $scale),
             };
-            $reference = $mapping['type'] === 'opening'
-                ? 'confirmation:'.$mapping['evidence_handles'][0]
-                : 'vector:'.$mapping['entity_handle'];
+            $reference = $mapping['type'] === 'opening' ? 'confirmation:'.$handle : 'vector:'.$handle;
             $elements[] = new FusedGeometryElementData(
                 $mapping['key'], $mapping['type'], $geometry, 'vector', $reference,
                 $vector->sourceFingerprint, $this->vectorPageNumber($entity), 'source_units_v1',
@@ -121,27 +120,73 @@ final readonly class GeometryBuildingModelInputMapper
         return ['polygon' => $points];
     }
 
-    /** @param list<int> $indexes */
-    private function confirmedWallGeometry(array $entity, array $indexes): array
+    /** @param list<string> $handles @param array<string, array<string, mixed>> $entities */
+    private function confirmedWallGeometry(array $handles, array $entities): array
     {
-        $points = $entity['points'] ?? null;
-        if (! is_array($points) || ! isset($points[$indexes[0]], $points[$indexes[1]]) || $indexes[0] === $indexes[1]) {
+        $segments = [];
+        foreach ($handles as $handle) {
+            $points = $entities[$handle]['points'] ?? null;
+            if (! is_array($points) || count($points) !== 2) {
+                throw new InvalidArgumentException('geometry_confirmation_wall_invalid');
+            }
+            $segments[] = $points;
+        }
+        $origin = $segments[0][0];
+        $direction = [(float) $segments[0][1][0] - (float) $origin[0], (float) $segments[0][1][1] - (float) $origin[1]];
+        $length = hypot($direction[0], $direction[1]);
+        if ($length <= 0) {
             throw new InvalidArgumentException('geometry_confirmation_wall_invalid');
         }
+        $unit = [$direction[0] / $length, $direction[1] / $length];
+        $projected = [];
+        foreach ($segments as $segment) {
+            foreach ($segment as $point) {
+                $cross = abs(((float) $point[0] - (float) $origin[0]) * $unit[1] - ((float) $point[1] - (float) $origin[1]) * $unit[0]);
+                if ($cross > max(1.0E-7, $length * 1.0E-7)) {
+                    throw new InvalidArgumentException('geometry_confirmation_wall_not_collinear');
+                }
+                $projected[] = ['value' => ((float) $point[0] - (float) $origin[0]) * $unit[0]
+                    + ((float) $point[1] - (float) $origin[1]) * $unit[1], 'point' => $point];
+            }
+        }
+        usort($projected, static fn (array $a, array $b): int => $a['value'] <=> $b['value']);
 
-        return ['start' => $points[$indexes[0]], 'end' => $points[$indexes[1]], 'thickness' => null, 'height' => null];
+        return ['start' => $projected[0]['point'], 'end' => $projected[array_key_last($projected)]['point'],
+            'thickness' => null, 'height' => null];
     }
 
-    private function confirmedOpeningGeometry(array $mapping, array $knownHandles): array
+    private function confirmedOpeningGeometry(array $mapping, array $entities, array $values, array $walls, float $scale): array
     {
-        foreach ($mapping['evidence_handles'] as $handle) {
-            if (! isset($knownHandles[$handle])) {
-                throw new InvalidArgumentException('geometry_confirmation_evidence_unknown');
-            }
+        $left = $entities[$mapping['boundary_handles'][0]]['points'] ?? null;
+        $right = $entities[$mapping['boundary_handles'][1]]['points'] ?? null;
+        $wall = $walls[$mapping['wall_key']] ?? null;
+        $text = $values[$mapping['dimension_handle']]['text'] ?? null;
+        if (! is_array($left) || count($left) !== 2 || ! is_array($right) || count($right) !== 2 || ! is_array($wall)
+            || ! is_string($text) || preg_match('/(?:OPENING\s*)?(\d+(?:\.\d+)?)\s*[x×]\s*(\d+(?:\.\d+)?)\s*(mm|cm|m|in|ft)\b/i', $text, $match) !== 1) {
+            throw new InvalidArgumentException('geometry_confirmation_opening_evidence_invalid');
+        }
+        $axis = [(float) $wall['end'][0] - (float) $wall['start'][0], (float) $wall['end'][1] - (float) $wall['start'][1]];
+        $wallLength = hypot($axis[0], $axis[1]);
+        $axis = [$axis[0] / $wallLength, $axis[1] / $wallLength];
+        $positions = static fn (array $segment): array => array_map(static fn (array $point): float =>
+            ((float) $point[0] - (float) $wall['start'][0]) * $axis[0] + ((float) $point[1] - (float) $wall['start'][1]) * $axis[1], $segment);
+        $a = $positions($left);
+        $b = $positions($right);
+        sort($a); sort($b);
+        $gapStart = min(max($a), max($b));
+        $gapEnd = max(min($a), min($b));
+        if ($gapEnd <= $gapStart) {
+            throw new InvalidArgumentException('geometry_confirmation_opening_gap_invalid');
+        }
+        $factor = $this->unitMeters(strtolower($match[3]));
+        $declaredWidth = (float) $match[1] * $factor / $scale;
+        $gapWidth = $gapEnd - $gapStart;
+        if (abs($declaredWidth - $gapWidth) > max(1.0E-6, $gapWidth * 1.0E-6)) {
+            throw new InvalidArgumentException('geometry_confirmation_opening_dimension_mismatch');
         }
 
         return ['wall_key' => $mapping['wall_key'], 'opening_type' => $mapping['opening_type'],
-            'offset' => $mapping['offset'], 'width' => $mapping['width'], 'height' => $mapping['height']];
+            'offset' => $gapStart, 'width' => $gapWidth, 'height' => (float) $match[2] * $factor / $scale];
     }
 
     /** @param list<FusedGeometryElementData> $elements @return list<ScaleCandidateData> */
@@ -151,10 +196,71 @@ final readonly class GeometryBuildingModelInputMapper
             return [];
         }
 
-        return array_map(static fn (string $handle): ScaleCandidateData => new ScaleCandidateData(
-            'vector', $confirmation->metersPerUnit, 'confirmation:'.$handle, $vector->sourceFingerprint,
+        $entities = array_column($vector->entities, null, 'handle');
+        $values = array_column([...$vector->texts, ...$vector->dimensions], null, 'handle');
+        $scale = $this->confirmedScale($vector, $confirmation, $entities, $values);
+
+        return array_map(static fn (array $evidence): ScaleCandidateData => new ScaleCandidateData(
+            'vector', $scale, ($evidence['role'] === 'measured_segment' ? 'vector:' : 'confirmation:')
+                .($evidence['value_handle'] ?? $evidence['entity_handle']), $vector->sourceFingerprint,
             $elements[0]->pageNumber, 'source-units:v1', $vector->runtimeVersion, 'geometry-confirmation:v1', 1.0,
-        ), $confirmation->scaleEvidenceHandles);
+        ), $confirmation->scaleEvidence);
+    }
+
+    private function confirmedScale(VectorGeometryData $vector, GeometryConfirmationData $confirmation, array $entities, array $values): float
+    {
+        $candidates = [];
+        foreach ($confirmation->scaleEvidence as $evidence) {
+            if ($evidence['role'] === 'measured_segment') {
+                $entity = $entities[$evidence['entity_handle']] ?? throw new InvalidArgumentException('geometry_confirmation_scale_entity_unknown');
+                $points = $entity['points'] ?? null;
+                [$first, $second] = $evidence['point_indexes'];
+                if (! is_array($points) || ! isset($points[$first], $points[$second])) {
+                    throw new InvalidArgumentException('geometry_confirmation_scale_segment_invalid');
+                }
+                $span = hypot((float) $points[$second][0] - (float) $points[$first][0], (float) $points[$second][1] - (float) $points[$first][1]);
+                $candidates[] = (float) $evidence['real_world_value'] * $this->unitMeters($evidence['unit']) / $span;
+            } elseif ($evidence['role'] === 'dimension') {
+                $value = $values[$evidence['value_handle']]['text'] ?? null;
+                $entity = $entities[$evidence['entity_handle']] ?? null;
+                $points = is_array($entity) ? ($entity['points'] ?? null) : null;
+                [$first, $second] = $evidence['point_indexes'];
+                if (! is_string($value) || preg_match('/\b(\d+(?:\.\d+)?)\s*(mm|cm|m|in|ft)\b/i', $value, $match) !== 1
+                    || ! is_array($points) || ! isset($points[$first], $points[$second])) {
+                    throw new InvalidArgumentException('geometry_confirmation_dimension_invalid');
+                }
+                $span = hypot((float) $points[$second][0] - (float) $points[$first][0], (float) $points[$second][1] - (float) $points[$first][1]);
+                $candidates[] = (float) $match[1] * $this->unitMeters(strtolower($match[2])) / $span;
+            } else {
+                $text = $values[$evidence['value_handle']]['text'] ?? null;
+                if (! is_string($text) || preg_match('/(?:UNITS?|INSUNITS)\s*[:=]?\s*(mm|cm|m|in|ft)\b/i', $text, $match) !== 1) {
+                    throw new InvalidArgumentException('geometry_confirmation_unit_declaration_invalid');
+                }
+                $candidates[] = $this->unitMeters(strtolower($match[1]));
+            }
+        }
+        $first = $candidates[0] ?? throw new InvalidArgumentException('geometry_confirmation_scale_missing');
+        foreach ($candidates as $candidate) {
+            if (! is_finite($candidate) || $candidate <= 0 || abs($candidate - $first) > max(1.0E-12, $first * 1.0E-6)) {
+                throw new InvalidArgumentException('geometry_confirmation_scale_conflict');
+            }
+        }
+        $declared = match ($vector->sourceUnit) {
+            'mm' => 0.001, 'cm' => 0.01, 'm' => 1.0, 'in' => 0.0254, 'ft' => 0.3048, default => null,
+        };
+        if ($vector->unitStatus === 'confirmed' && ($declared === null || abs($declared - $first) > 1.0E-12)) {
+            throw new InvalidArgumentException('geometry_confirmation_scale_conflict');
+        }
+
+        return $first;
+    }
+
+    private function unitMeters(string $unit): float
+    {
+        return match ($unit) {
+            'mm' => 0.001, 'cm' => 0.01, 'm' => 1.0, 'in' => 0.0254, 'ft' => 0.3048,
+            default => throw new InvalidArgumentException('geometry_confirmation_unit_invalid'),
+        };
     }
 
     /** @return array{list<FusedGeometryElementData>, list<array{code: string, severity: string, element_key: string, evidence_refs: list<string>}>} */

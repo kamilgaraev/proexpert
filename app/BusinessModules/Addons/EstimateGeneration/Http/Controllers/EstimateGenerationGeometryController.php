@@ -41,6 +41,7 @@ final class EstimateGenerationGeometryController extends Controller
                 (int) $validated['state_version'], (string) $validated['model_version'], (string) $validated['input_version'],
                 is_array($validated['scale'] ?? null) ? $validated['scale'] : null,
                 is_array($validated['operations'] ?? null) ? $validated['operations'] : [],
+                is_array($validated['source_confirmation'] ?? null) ? $validated['source_confirmation'] : null,
             ));
 
             $freshSession = $session->fresh() ?? $session;

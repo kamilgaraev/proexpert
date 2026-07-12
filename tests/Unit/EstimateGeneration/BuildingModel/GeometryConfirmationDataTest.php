@@ -21,7 +21,7 @@ final class GeometryConfirmationDataTest extends TestCase
         $result = (new GeometryBuildingModelInputMapper)->map(
             null,
             $vector,
-            ['vector:R1' => 1, 'vector:W1' => 2, 'confirmation:T1' => 3],
+            ['vector:R1' => 1, 'vector:W1' => 2, 'vector:W2' => 3, 'confirmation:T1' => 4],
             'floor-1',
             $confirmation,
         );
@@ -44,7 +44,7 @@ final class GeometryConfirmationDataTest extends TestCase
         (new GeometryBuildingModelInputMapper)->map(
             null,
             $vector,
-            ['vector:R1' => 1, 'vector:W1' => 2, 'confirmation:T1' => 3],
+            ['vector:R1' => 1, 'vector:W1' => 2, 'vector:W2' => 3, 'confirmation:T1' => 4],
             'floor-1',
             GeometryConfirmationData::fromArray($payload),
         );
@@ -55,8 +55,12 @@ final class GeometryConfirmationDataTest extends TestCase
         return [
             'source hash' => [static fn (array $p): array => [...$p, 'source_fingerprint' => 'sha256:'.str_repeat('f', 64)]],
             'payload hash' => [static fn (array $p): array => [...$p, 'geometry_payload_sha256' => str_repeat('f', 64)]],
-            'unknown entity' => [static function (array $p): array { $p['elements'][0]['entity_handle'] = 'UNKNOWN'; return $p; }],
-            'conflicting scale' => [static fn (array $p): array => [...$p, 'meters_per_unit' => 1.0]],
+            'unknown entity' => [static function (array $p): array { $p['elements'][0]['boundary_handle'] = 'UNKNOWN'; return $p; }],
+            'conflicting scale' => [static function (array $p): array { $p['scale_evidence'][] = ['role' => 'measured_segment', 'entity_handle' => 'W2', 'point_indexes' => [0, 1], 'real_world_value' => 2100, 'unit' => 'm']; return $p; }],
+            'duplicate element key' => [static function (array $p): array { $p['elements'][1]['key'] = 'room-1'; return $p; }],
+            'same entity has room and wall ownership' => [static function (array $p): array { $p['elements'][1]['segment_handles'] = ['R1', 'W2']; return $p; }],
+            'opening references missing wall' => [static function (array $p): array { $p['elements'][2]['wall_key'] = 'missing'; return $p; }],
+            'unrelated text is not unit declaration' => [static function (array $p): array { $p['scale_evidence'] = [['role' => 'unit_declaration', 'value_handle' => 'T1']]; return $p; }],
         ];
     }
 
@@ -68,9 +72,10 @@ final class GeometryConfirmationDataTest extends TestCase
             'bounds' => [0, 0, 4000, 3000], 'layers' => [['name' => 'A', 'visible' => true]], 'blocks' => [],
             'entities' => [
                 ['handle' => 'R1', 'type' => 'lwpolyline', 'layer' => 'A', 'points' => [[0, 0], [4000, 0], [4000, 3000], [0, 3000]], 'closed' => true],
-                ['handle' => 'W1', 'type' => 'line', 'layer' => 'A', 'points' => [[0, 0], [4000, 0]]],
+                ['handle' => 'W1', 'type' => 'line', 'layer' => 'A', 'points' => [[0, 0], [1000, 0]]],
+                ['handle' => 'W2', 'type' => 'line', 'layer' => 'A', 'points' => [[1900, 0], [4000, 0]]],
             ],
-            'texts' => [['handle' => 'T1', 'type' => 'text', 'layer' => 'A', 'text' => '900 mm', 'position' => [1000, 100], 'layout' => 'model']],
+            'texts' => [['handle' => 'T1', 'type' => 'text', 'layer' => 'A', 'text' => 'OPENING 900x2100 mm', 'position' => [1000, 100], 'layout' => 'model']],
             'dimensions' => [], 'pages' => [], 'scale_candidates' => [], 'warnings' => [],
         ]);
     }
@@ -84,12 +89,11 @@ final class GeometryConfirmationDataTest extends TestCase
             'confirmation_source' => 'user_review',
             'reviewer_ref' => 'maintainer:plan3-task11',
             'confirmed_at' => '2026-07-12T00:00:00Z',
-            'meters_per_unit' => 0.001,
-            'scale_evidence_handles' => ['T1'],
+            'scale_evidence' => [['role' => 'measured_segment', 'entity_handle' => 'W1', 'point_indexes' => [0, 1], 'real_world_value' => 1000, 'unit' => 'mm']],
             'elements' => [
-                ['key' => 'room-1', 'type' => 'room', 'entity_handle' => 'R1'],
-                ['key' => 'wall-1', 'type' => 'wall', 'entity_handle' => 'W1', 'point_indexes' => [0, 1]],
-                ['key' => 'opening-1', 'type' => 'opening', 'entity_handle' => 'W1', 'wall_key' => 'wall-1', 'opening_type' => 'door', 'offset' => 1000, 'width' => 900, 'height' => 2100, 'evidence_handles' => ['T1']],
+                ['key' => 'room-1', 'type' => 'room', 'boundary_handle' => 'R1'],
+                ['key' => 'wall-1', 'type' => 'wall', 'segment_handles' => ['W1', 'W2']],
+                ['key' => 'opening-1', 'type' => 'opening', 'wall_key' => 'wall-1', 'opening_type' => 'door', 'boundary_handles' => ['W1', 'W2'], 'dimension_handle' => 'T1'],
             ],
         ];
     }

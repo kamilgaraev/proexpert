@@ -33,6 +33,7 @@ final class ConfirmEstimateGenerationGeometryRequest extends FormRequest
             'operations.*.op' => ['required', 'in:replace'],
             'operations.*.path' => ['required', 'string', 'max:256'],
             'operations.*.value' => ['present'],
+            'source_confirmation' => ['nullable', 'array'],
         ];
     }
 

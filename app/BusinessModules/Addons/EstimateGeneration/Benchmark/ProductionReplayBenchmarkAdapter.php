@@ -72,7 +72,8 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
                 $raw = $ports->require($rawPort);
                 RecordedPortRequestHasher::verify(
                     $ports->require(RecordedPort::GeometryConfirmation)->inputDependencySha256,
-                    RecordedPortRequestHasher::geometryConfirmation($case, $raw->payloadSha256),
+                    RecordedPortRequestHasher::geometryConfirmation($case, $raw->payloadSha256,
+                        $ports->require(RecordedPort::GeometryConfirmation)->payload),
                     'recorded_geometry_confirmation_dependency_invalid',
                 );
             }
@@ -253,12 +254,13 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
             }
         }
         if ($geometry['confirmation'] instanceof GeometryConfirmationData) {
-            foreach ($geometry['confirmation']->scaleEvidenceHandles as $handle) {
-                $refs[] = 'confirmation:'.$handle;
+            foreach ($geometry['confirmation']->scaleEvidence as $item) {
+                $refs[] = ($item['role'] === 'measured_segment' ? 'vector:' : 'confirmation:')
+                    .($item['value_handle'] ?? $item['entity_handle']);
             }
             foreach ($geometry['confirmation']->elements as $element) {
-                foreach ($element['evidence_handles'] ?? [] as $handle) {
-                    $refs[] = 'confirmation:'.$handle;
+                if ($element['type'] === 'opening') {
+                    $refs[] = 'confirmation:'.$element['dimension_handle'];
                 }
             }
         }

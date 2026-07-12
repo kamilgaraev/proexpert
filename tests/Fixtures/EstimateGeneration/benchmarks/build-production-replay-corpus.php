@@ -137,7 +137,7 @@ foreach ($specs as [$slug, $type, $filename, $source, $port, $intent]) {
    'provider'=>'maintainer-confirmation-capture', 'model_version'=>'geometry-confirmation-2026-07',
    'prompt_version'=>'not-applicable:user-review', 'payload_schema_version'=>'geometry-confirmation:v1'];
   $confirmationEnvelope = $builder->envelope($confirmationMeta, $confirmationPayload,
-   RecordedPortRequestHasher::geometryConfirmation($case, $envelope['payload_sha256']), $sha);
+   RecordedPortRequestHasher::geometryConfirmation($case, $envelope['payload_sha256'], $confirmationPayload), $sha);
   $confirmationRecording = "recordings/$slug-geometry-confirmation.json";
   writeJson("$root/$confirmationRecording", $confirmationEnvelope);
   $recordingDescriptors[] = ['case_id'=>$id,'port'=>RecordedPort::GeometryConfirmation->value,
@@ -213,7 +213,7 @@ writeJson("$root/recordings/manifest.json",$recordingManifest);
 
 function writeJson(string $path, array $data): void { file_put_contents($path, json_encode($data, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_PRESERVE_ZERO_FRACTION|JSON_THROW_ON_ERROR)."\n"); }
 function visionPayload(string $intent,string $sha): array { $wall="$intent-wall-evidence";$room="$intent-room-evidence";$locator=['page_id'=>1,'page_number'=>1,'processing_unit_id'=>1,'source_version'=>"sha256:$sha",'coordinate_space'=>'normalized_source_v1'];$evidence=[['key'=>$wall,'locator'=>$locator]];$elements=[['key'=>"$intent-wall",'type'=>'wall','label'=>null,'polygon'=>[[0.1,0.1],[0.7,0.1]],'confidence'=>$intent==='freehand'?0.62:0.95,'evidence_ref'=>$wall]];if($intent!=='freehand'){$evidence[]=['key'=>$room,'locator'=>$locator];$elements[]=['key'=>"$intent-room",'type'=>'room','label'=>'Комната','polygon'=>[[0.1,0.1],[0.7,0.1],[0.7,0.5],[0.1,0.5]],'confidence'=>0.96,'evidence_ref'=>$room];}return ['schema_version'=>1,'sheet_type'=>'floor_plan','evidence'=>$evidence,'elements'=>$elements,'scale_candidates'=>$intent==='freehand'?[]:[['source'=>'dimension_text','meters_per_unit'=>10.0,'confidence'=>0.99,'evidence_ref'=>$wall,'detail'=>'visible_dimension'],['source'=>'manual_reference','meters_per_unit'=>10.0,'confidence'=>1.0,'evidence_ref'=>$room,'detail'=>'confirmed_control_dimension']],'warnings'=>$intent==='freehand'?['scale_missing']:[]]; }
-function vectorPdf(): string { $s="2 w\n60 650 m 260 650 l S\n320 650 m 500 650 l 500 360 l 60 360 l 60 650 l S\n90 610 m 230 610 l 230 410 l 90 410 l h S\n60 500 m 260 500 l 260 650 l S\n55 680 m 505 680 l S\n55 675 m 55 685 l S\n505 675 m 505 685 l S\nBT /F1 14 Tf 235 700 Td (4400 mm) Tj ET\n530 355 m 530 655 l S\n525 355 m 535 355 l S\n525 655 m 535 655 l S\nBT /F1 14 Tf 540 490 Td (2900 mm) Tj ET\nBT /F1 12 Tf 270 665 Td (OPENING 600 mm) Tj ET\nBT /F1 16 Tf 120 520 Td (ROOM A) Tj ET\n"; return makePdf(["<< /Type /Catalog /Pages 2 0 R >>","<< /Type /Pages /Kids [3 0 R] /Count 1 >>","<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>","<< /Length ".strlen($s)." >>\nstream\n$s"."endstream","<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]); }
+function vectorPdf(): string { $s="2 w\n60 650 m 260 650 l S\n320 650 m 500 650 l 500 360 l 60 360 l 60 650 l S\n90 610 m 230 610 l 230 410 l 90 410 l h S\n60 500 m 260 500 l 260 650 l S\n55 680 m 505 680 l S\n55 675 m 55 685 l S\n505 675 m 505 685 l S\nBT /F1 14 Tf 235 700 Td (4400 mm) Tj ET\n530 355 m 530 655 l S\n525 355 m 535 355 l S\n525 655 m 535 655 l S\nBT /F1 14 Tf 540 490 Td (2900 mm) Tj ET\nBT /F1 12 Tf 270 665 Td (OPENING 600x2100 mm) Tj ET\nBT /F1 16 Tf 120 520 Td (ROOM A) Tj ET\n"; return makePdf(["<< /Type /Catalog /Pages 2 0 R >>","<< /Type /Pages /Kids [3 0 R] /Count 1 >>","<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>","<< /Length ".strlen($s)." >>\nstream\n$s"."endstream","<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]); }
 function scannedPdf(): string { $i=planPixels(400,300,true); $s="q 500 0 0 375 45 300 cm /Im0 Do Q\n"; return makePdf(["<< /Type /Catalog /Pages 2 0 R >>","<< /Type /Pages /Kids [3 0 R] /Count 1 >>","<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /XObject << /Im0 5 0 R >> >> /Contents 4 0 R >>","<< /Length ".strlen($s)." >>\nstream\n$s"."endstream","<< /Type /XObject /Subtype /Image /Width 400 /Height 300 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length ".strlen($i)." >>\nstream\n$i\nendstream"]); }
 function makePdf(array $objects): string { $out="%PDF-1.4\n";$offsets=[];foreach($objects as $n=>$o){$offsets[]=strlen($out);$out.=($n+1)." 0 obj\n$o\nendobj\n";}$xref=strlen($out);$out.="xref\n0 ".(count($objects)+1)."\n0000000000 65535 f \n";foreach($offsets as $offset){$out.=sprintf('%010d 00000 n ',$offset)."\n";}return $out."trailer << /Size ".(count($objects)+1)." /Root 1 0 R >>\nstartxref\n$xref\n%%EOF\n"; }
 function raster(): string { return "P6\n400 300\n255\n".planPixels(400,300,false); }
@@ -245,7 +245,7 @@ function productionGeometry(array $payload, RecordedPort $port, ?array $confirma
  if($vision!==null){foreach($vision->evidence as $row)$refs[]=$row->key;}
  if($vector!==null){foreach($vector->entities as $row)$refs[]='vector:'.$row['handle'];}
  $confirmation=$confirmationPayload!==null?GeometryConfirmationData::fromArray($confirmationPayload):null;
- if($confirmation!==null){foreach($confirmation->scaleEvidenceHandles as $handle)$refs[]='confirmation:'.$handle;foreach($confirmation->elements as $element)foreach($element['evidence_handles']??[] as $handle)$refs[]='confirmation:'.$handle;}
+ if($confirmation!==null){foreach($confirmation->scaleEvidence as $item)$refs[]=($item['role']==='measured_segment'?'vector:':'confirmation:').($item['value_handle']??$item['entity_handle']);foreach($confirmation->elements as $element)if($element['type']==='opening')$refs[]='confirmation:'.$element['dimension_handle'];}
  $refs=array_values(array_unique($refs));sort($refs,SORT_STRING);$evidence=[];
  foreach($refs as $index=>$ref)$evidence[$ref]=$index+1;
  $assembled=(new BuildingModelAssembler)->assembleVision((new GeometryBuildingModelInputMapper)->map($vision,$vector,$evidence,'floor-1',$confirmation));
@@ -261,16 +261,19 @@ function geometryConfirmation(string $slug, array $payload): array
   'geometry_payload_sha256'=>$vector->payloadSha256(),'reviewer_ref'=>'maintainer:plan3-task11',
   'confirmed_at'=>'2026-07-12T00:00:00Z'];
  return match($slug){
-  'vector-pdf-001'=>[...$base,'confirmation_source'=>'dimension_evidence','meters_per_unit'=>0.01,
-   'scale_evidence_handles'=>['page:1:object:7','page:1:object:11'],'elements'=>[
-    ['key'=>'vector-room-a','type'=>'room','entity_handle'=>'page:1:object:2'],
-    ['key'=>'vector-wall-top','type'=>'wall','entity_handle'=>'page:1:object:1','point_indexes'=>[4,1]],
-    ['key'=>'vector-opening-600','type'=>'opening','entity_handle'=>'page:1:object:1','wall_key'=>'vector-wall-top','opening_type'=>'door','offset'=>200,'width'=>60,'height'=>210,'evidence_handles'=>['page:1:object:12']],
+  'vector-pdf-001'=>[...$base,'confirmation_source'=>'dimension_evidence','scale_evidence'=>[
+    ['role'=>'dimension','value_handle'=>'page:1:object:7','entity_handle'=>'page:1:object:1','point_indexes'=>[4,1]],
+    ['role'=>'dimension','value_handle'=>'page:1:object:11','entity_handle'=>'page:1:object:1','point_indexes'=>[1,2]],
+   ],'elements'=>[
+    ['key'=>'vector-room-a','type'=>'room','boundary_handle'=>'page:1:object:2'],
+    ['key'=>'vector-wall-top','type'=>'wall','segment_handles'=>['page:1:object:0','page:1:object:1']],
+    ['key'=>'vector-opening-600','type'=>'opening','wall_key'=>'vector-wall-top','opening_type'=>'door','boundary_handles'=>['page:1:object:0','page:1:object:1'],'dimension_handle'=>'page:1:object:12'],
    ]],
-  'dwg-layout-001'=>[...$base,'confirmation_source'=>'cad_unit_review','meters_per_unit'=>0.001,
-   'scale_evidence_handles'=>['A2'],'elements'=>[
-    ['key'=>'dwg-room-a2','type'=>'room','entity_handle'=>'A2'],
-    ['key'=>'dwg-wall-a1','type'=>'wall','entity_handle'=>'A1','point_indexes'=>[0,1]],
+  'dwg-layout-001'=>[...$base,'confirmation_source'=>'user_review','scale_evidence'=>[
+    ['role'=>'measured_segment','entity_handle'=>'A1','point_indexes'=>[0,1],'real_world_value'=>12000,'unit'=>'mm'],
+   ],'elements'=>[
+    ['key'=>'dwg-room-a2','type'=>'room','boundary_handle'=>'A2'],
+    ['key'=>'dwg-wall-a1','type'=>'wall','segment_handles'=>['A1']],
    ]],
   default=>throw new RuntimeException('geometry confirmation case unsupported'),
  };

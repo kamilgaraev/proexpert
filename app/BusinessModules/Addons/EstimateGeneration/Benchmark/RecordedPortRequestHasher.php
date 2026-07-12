@@ -23,11 +23,11 @@ final class RecordedPortRequestHasher
             'input_locator' => $case->inputLocator, 'source_sha256' => $case->inputSha256]);
     }
 
-    public static function geometryConfirmation(BenchmarkPredictionCaseData $case, string $geometryPayloadSha256): string
+    public static function geometryConfirmation(BenchmarkPredictionCaseData $case, string $geometryPayloadSha256, array $confirmation): string
     {
         return self::hash(['schema_version' => 'recorded-geometry-confirmation-request:v1',
             'input_locator' => $case->inputLocator, 'source_sha256' => $case->inputSha256,
-            'geometry_payload_sha256' => $geometryPayloadSha256]);
+            'geometry_payload_sha256' => $geometryPayloadSha256, 'confirmation' => $confirmation]);
     }
 
     public static function planner(array $buildingModel, array $quantities, array $evidence): string

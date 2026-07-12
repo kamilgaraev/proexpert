@@ -21,6 +21,7 @@ final class ConfirmBuildingGeometry
         private BuildingGeometryMutator $mutator,
         private GeometryDependencyInvalidator $invalidator,
         private GeometryConfirmationFaultInjector $faultInjector,
+        private AssemblePersistedVectorGeometry $sourceAssembler,
     ) {}
 
     /** @return array<string, mixed> */
@@ -44,17 +45,22 @@ final class ConfirmBuildingGeometry
                 throw new StaleEstimateGenerationState($command->sessionId, $command->expectedStateVersion);
             }
             $this->faultInjector->afterLocksAcquired();
-            $provisional = $this->mutator->mutate($head->model, $command);
+            $provisional = $command->sourceConfirmation === null
+                ? $this->mutator->mutate($head->model, $command)
+                : $this->sourceAssembler->handle($command);
             if ($provisional->contentVersion() === $head->content_version) {
                 throw new InvalidArgumentException('Geometry confirmation does not change the model.');
             }
             $evidenceId = $this->reserveEvidenceId();
-            $normalized = $this->mutator->mutate($head->model, $command, $evidenceId);
+            $normalized = $command->sourceConfirmation === null
+                ? $this->mutator->mutate($head->model, $command, $evidenceId)
+                : $this->sourceAssembler->handle($command, $evidenceId);
             $newInputVersion = 'sha256:'.hash('sha256', $command->expectedInputVersion.'|'.$normalized->contentVersion().'|'.($command->expectedStateVersion + 1));
             $sourceEvidenceIds = array_values(array_map('intval', $head->model['evidence_ids'] ?? []));
             $evidenceValue = [
                 'actor_id' => $command->actorId, 'confirmed_at' => now()->toIso8601String(),
-                'operations' => $command->operations, 'scale' => $command->scale, 'source_evidence_ids' => $sourceEvidenceIds,
+                'operations' => $command->operations, 'scale' => $command->scale,
+                'source_confirmation' => $command->sourceConfirmation, 'source_evidence_ids' => $sourceEvidenceIds,
                 'previous_state_version' => $command->expectedStateVersion, 'new_state_version' => $command->expectedStateVersion + 1,
                 'previous_model_version' => $command->expectedModelVersion, 'new_model_version' => $normalized->contentVersion(),
                 'previous_input_version' => $command->expectedInputVersion, 'new_input_version' => $newInputVersion,
