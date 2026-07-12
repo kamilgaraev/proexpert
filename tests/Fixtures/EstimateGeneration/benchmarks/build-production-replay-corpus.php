@@ -36,15 +36,16 @@ final class CapturingReranker implements NormativeCandidateRerankerInterface
  public NormativeCandidateDecisionContextData $context;
  public NormativeCandidateSetData $set;
  public array $payload=[];
- public function __construct(private readonly string $primary) {}
+ public function __construct(private readonly array $recordedDecision) {}
  public function rerank(WorkIntentData $workItem,NormativeCandidateDecisionContextData $context,NormativeCandidateSetData $candidateSet):NormativeRerankResultData
  {
   $this->intent=$workItem;$this->context=$context;$this->set=$candidateSet;
   $ids=array_map(static fn($candidate):string=>$candidate->id,$candidateSet->candidates);
-  $ordering=[$this->primary,...array_values(array_filter($ids,fn(string $id):bool=>$id!==$this->primary))];
-  $evidence=array_values(array_unique([...$workItem->sourceEvidence,...($candidateSet->candidates[array_search($this->primary,$ids,true)]->sourceEvidence??[])]));
-  $this->payload=['selected_candidate_id'=>$this->primary,'ordering'=>$ordering,'explanation_codes'=>['unit_match','material_match','technology_match'],
-   'evidence_refs'=>$evidence,'confidence'=>0.97,'schema_version'=>'normative-rerank-v1'];
+  $selected=(string)($this->recordedDecision['selected_candidate_id']??'');
+  $ordering=$this->recordedDecision['ordering']??[];
+  if(!in_array($selected,$ids,true)||array_diff($ordering,$ids)!==[]||array_diff($ids,$ordering)!==[]){throw new RuntimeException('recorded reranker decision does not match candidate set');}
+  $evidence=array_values(array_unique([...$workItem->sourceEvidence,...($this->recordedDecision['evidence_refs']??[])]));
+  $this->payload=[...$this->recordedDecision,'evidence_refs'=>$evidence,'schema_version'=>'normative-rerank-v1'];
   return NormativeRerankResultData::fromProviderArray($this->payload,$ids,$evidence,'capture');
  }
 }
@@ -63,6 +64,7 @@ $specs = [
 $inventory = [];
 $recordingDescriptors = [];
 foreach ($specs as [$slug, $type, $filename, $source, $port, $intent]) {
+ if (($only=getenv('BUILD_PRODUCTION_REPLAY_CASE'))!==false && $only!=='' && $only!==$slug) { continue; }
  $id = 'reg-replay-'.$slug;
  $directory = "$root/regression/replay-$slug";
  is_dir($directory) || mkdir($directory, 0777, true);
@@ -126,45 +128,20 @@ foreach ($specs as [$slug, $type, $filename, $source, $port, $intent]) {
  if ($port === RecordedPort::VisionExtraction) writeJson("$root/recordings/$slug-source-trace.json", visionTrace($intent, $sha));
  if ($type === BenchmarkSourceType::Dwg) writeJson("$root/recordings/$slug-parser-proof.json", parserProof($source, $payload));
  $recordingDescriptors[] = ['case_id'=>$id,'port'=>$port->value,'locator'=>$recording,'sha256'=>hash_file('sha256',"$root/$recording")];
- $catalog = json_decode((string) file_get_contents("$root/catalogs/vision-sketch-v1.json"), true, 64, JSON_THROW_ON_ERROR);
- $catalog['dataset_id'] = 1200 + count($inventory);
- $catalog['dataset_version'] = "fsnb-2026.1-$intent";
- foreach (['candidates', 'resources'] as $collection) { foreach ($catalog[$collection] as &$row) { $row['dataset_id']=$catalog['dataset_id']; $row['dataset_version']=$catalog['dataset_version']; } unset($row); }
- $catalog['approval_ref'] = 'plan3-task11-corpus-v1';
- $candidateIds = ["$slug-floor-alt", "$slug-floor-primary"];
- foreach ($catalog['candidates'] as $index => &$row) {
-  $row['candidate_id'] = $candidateIds[$index];
-  $row['normative_id'] = $catalog['dataset_id'] * 10 + $index + 1;
-  $row['source_evidence'] = ["catalog:$slug:".($index === 0 ? 'alt' : 'primary')];
- }
- unset($row);
- foreach ($catalog['resources'] as $index => &$row) {
-  $row['candidate_id'] = $candidateIds[$index === 0 ? 1 : 0];
-  $row['normative_id'] = $catalog['dataset_id'] * 10 + ($index === 0 ? 2 : 1);
-  foreach ($row['resources']['materials'] as &$material) {
-   $material['price_id'] = $catalog['dataset_id'] * 100 + $index + 1;
-  }
-  unset($material);
- }
- unset($row);
- foreach ($catalog['prices'] as $index => &$price) {
-  $price['id'] = $catalog['dataset_id'] * 100 + $index + 1;
-  $price['regional_price_version_id'] = $catalog['dataset_id'];
-  $price['base_price'] = (string) (1250 + count($inventory) * 75 + $index * 150).'.0000';
- }
- unset($price);
+ $caseSpec = authoredCaseSpec($slug);
+ $catalog = authoredCatalog($caseSpec);
+ $candidateIds = array_column($catalog['candidates'],'candidate_id');
  $catalogRef = "catalogs/$slug.json";
  writeJson("$root/$catalogRef", $catalog);
- if (getenv('BUILD_PRODUCTION_REPLAY_DOWNSTREAM') === '1'
-  && in_array($intent, ['scanned_pdf', 'dimensioned_raster'], true)) {
+ if (getenv('BUILD_PRODUCTION_REPLAY_DOWNSTREAM') === '1' && $intent !== 'freehand') {
   [$model, $quantities, $evidence] = productionGeometry($payload, $port);
-  $quantity = $quantities->get('floor_area') ?? throw new RuntimeException('floor_area missing');
+  $quantity = $quantities->get($caseSpec['quantity_key']) ?? throw new RuntimeException($caseSpec['quantity_key'].' missing');
   $quantityRefs = array_map('strval', $quantity->evidenceIds);
-  $workKey = "$slug-floor-work";
-  $plannerPayload = ['schema_version'=>'work-planner-v1','sections'=>[['section_key'=>'finishing','title'=>'Отделочные работы',
-   'scope_type'=>'finishing','source_refs'=>$quantityRefs,'work_intents'=>[['intent_key'=>$workKey,
-   'quantity_key'=>'floor_area','name'=>'Устройство бетонного покрытия пола B25','category'=>'finishing','unit'=>'m2',
-   'quantity'=>$quantity->amount,'quantity_source_refs'=>$quantityRefs,'confidence'=>0.95]]]]];
+  $workKey = $caseSpec['work_key'];
+  $plannerPayload = ['schema_version'=>'work-planner-v1','sections'=>[['section_key'=>$caseSpec['section_key'],'title'=>$caseSpec['section_title'],
+   'scope_type'=>$caseSpec['scope_type'],'source_refs'=>$quantityRefs,'work_intents'=>[['intent_key'=>$workKey,
+   'quantity_key'=>$caseSpec['quantity_key'],'name'=>$caseSpec['work_name'],'category'=>$caseSpec['scope_type'],'unit'=>$caseSpec['unit'],
+   'quantity'=>$quantity->amount,'quantity_source_refs'=>$quantityRefs,'confidence'=>0.95,'work_intent'=>$caseSpec['work_intent']]]]]];
   $plannerMeta = [...$metadata, 'port'=>RecordedPort::WorkPlanningModel->value, 'provider'=>'planner-independent-capture',
    'model_version'=>'planner-model-2026-07','prompt_version'=>'planner-prompt:v1','payload_schema_version'=>'work-planner-v1'];
   $plannerEnvelope = $builder->envelope($plannerMeta, $plannerPayload,
@@ -174,18 +151,19 @@ foreach ($specs as [$slug, $type, $filename, $source, $port, $intent]) {
   $recordingDescriptors[]=['case_id'=>$id,'port'=>RecordedPort::WorkPlanningModel->value,'locator'=>$plannerRecording,
    'sha256'=>hash_file('sha256',"$root/$plannerRecording")];
 
-  $capture = new CapturingReranker($candidateIds[1]);
+  $capture = new CapturingReranker($caseSpec['reranker_decision']);
   $workflow = new NormativeMatchingWorkflow(new NormativeRetrievalService(
    new RecordedCatalogNormativeCandidateSource(RecordedBenchmarkCatalogData::fromArray($catalog)), new NormativeHardGate, 16, null), $capture);
   $plan = app(WorkPlanCompiler::class)->compile(productionAnalysis($model->toArray(), $quantities->toArray(), $catalog),
    new WorkPlannerResponseData($plannerPayload['sections']));
   $item = $plan['local_estimates'][0]['sections'][0]['work_items'][0];
   $context=['organization_id'=>1,'project_id'=>1,'session_id'=>1,'checkpoint_claim_token'=>'018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c',
-   'input_version'=>'sha256:'.$sha,'logical_attempt'=>1,'scope_type'=>'finishing','local_estimate_title'=>$plan['local_estimates'][0]['title'],
+   'input_version'=>'sha256:'.$sha,'logical_attempt'=>1,'scope_type'=>$caseSpec['scope_type'],'local_estimate_title'=>$plan['local_estimates'][0]['title'],
    'section_title'=>$plan['local_estimates'][0]['sections'][0]['title'],'source_refs'=>$quantityRefs,
    'regional_context'=>productionAnalysis($model->toArray(), $quantities->toArray(), $catalog)['regional_context'],'applicability_date'=>'2026-07-12'];
   $factory=app(NormativeWorkIntentFactory::class);
-  $workflow->match($factory->intent($item,$context,$catalog['dataset_version']),$factory->decision($item,$context),true);
+  $capturedIntent=$factory->intent($item,$context,$catalog['dataset_version']);
+  $workflow->match($capturedIntent,$factory->decision($item,$context),true);
   $rerankerMeta=[...$metadata,'port'=>RecordedPort::NormativeReranker->value,'provider'=>'reranker-independent-capture',
    'model_version'=>'reranker-model-2026-07','prompt_version'=>'normative-rerank-prompt-v1','payload_schema_version'=>'normative-rerank-v1'];
   $rerankerEnvelope=$builder->envelope($rerankerMeta,$capture->payload,
@@ -270,4 +248,61 @@ function productionAnalysis(array $model,array $quantities,array $catalog): arra
    'region_id'=>$price['region_id'],'price_zone_id'=>$price['price_zone_id'],'period_id'=>$price['period_id'],
    'price_version'=>$catalog['price_period'],'estimate_regional_price_version_id'=>$price['regional_price_version_id']],
   'generation_mode'=>'strict_documents'];
+}
+
+function authoredCaseSpec(string $slug): array
+{
+ $specs = [
+  'vector-pdf-001'=>['dataset_id'=>1200,'version'=>'fsnb-2026.1-partitions','work_key'=>'partition-installation','work_name'=>'Монтаж перегородок из гипсокартонных листов','quantity_key'=>'wall_length','unit'=>'m','scope_type'=>'partitions','section_key'=>'partitions','section_title'=>'Перегородки','section'=>'10','candidates'=>[
+   ['partition-gkl-single','12001','10-04-001-01','Монтаж однослойных перегородок из гипсокартонных листов','gypsum_board','partition_installation','partition',0.96,0.98,'120001','01.6.01.01-1010','Листы гипсокартонные','m2','2.10','486.3700'],
+   ['partition-gvl-reinforced','12002','10-04-002-03','Монтаж усиленных перегородок из гипсоволокнистых листов','gypsum_fiber','partition_installation','partition',0.82,0.84,'120002','01.6.01.02-1020','Листы гипсоволокнистые','m2','2.20','593.8400'],
+   ['partition-block-100','12003','08-03-004-02','Кладка перегородок из газобетонных блоков толщиной 100 мм','aerated_concrete','masonry','partition',0.71,0.76,'120003','01.7.15.01-1040','Блоки газобетонные 100 мм','m3','0.10','4175.2600']],0],
+  'scanned-pdf-001'=>['dataset_id'=>1201,'version'=>'fsnb-2026.1-masonry','work_key'=>'masonry-wall','work_name'=>'Кладка наружных стен из керамического кирпича','quantity_key'=>'floor_area','unit'=>'m2','scope_type'=>'walls','section_key'=>'masonry','section_title'=>'Каменные работы','section'=>'08','candidates'=>[
+   ['wall-block-aerated','12011','08-03-001-05','Кладка стен из газобетонных блоков','aerated_concrete','masonry','wall',0.81,0.86,'120101','01.7.15.01-2010','Блоки газобетонные','m3','0.40','4382.9100'],
+   ['wall-brick-ceramic','12012','08-02-001-01','Кладка стен из керамического кирпича','ceramic_brick','masonry','wall',0.97,0.98,'120102','01.7.15.03-2020','Кирпич керамический полнотелый','1000pcs','0.394','12984.7300'],
+   ['wall-block-silicate','12013','08-02-003-02','Кладка стен из силикатных блоков','silicate_block','masonry','wall',0.78,0.82,'120103','01.7.15.05-2030','Блоки силикатные','m3','0.38','5126.4800']],1],
+  'dwg-layout-001'=>['dataset_id'=>1202,'version'=>'fsnb-2026.1-floors','work_key'=>'concrete-floor','work_name'=>'Устройство бетонного пола толщиной 100 мм','quantity_key'=>'floor_area','unit'=>'m2','scope_type'=>'floors','section_key'=>'concrete-floor','section_title'=>'Бетонные полы','section'=>'11','candidates'=>[
+   ['floor-cement-screed','12021','11-01-011-01','Устройство цементно-песчаной стяжки','cement_mortar','screed','floor',0.83,0.86,'120201','01.7.03.04-3010','Раствор цементно-песчаный','m3','0.050','3894.6600'],
+   ['floor-dry-screed','12022','11-01-018-02','Устройство сухой сборной стяжки пола','gypsum_fiber','dry_screed','floor',0.69,0.74,'120202','01.6.01.02-3020','Элементы пола гипсоволокнистые','m2','1.05','731.2900'],
+   ['floor-concrete-b25','12023','11-01-002-04','Устройство бетонных полов из смеси B25','concrete','concrete_floor','floor',0.98,0.99,'120203','01.7.03.02-3030','Смесь бетонная B25','m3','0.102','5687.4200']],2],
+  'dimensioned-raster-001'=>['dataset_id'=>1203,'version'=>'fsnb-2026.1-screeds','work_key'=>'leveling-screed','work_name'=>'Устройство выравнивающей цементной стяжки из бетона B25','quantity_key'=>'floor_area','unit'=>'m2','scope_type'=>'floors','section_key'=>'screed','section_title'=>'Стяжки пола','section'=>'11','candidates'=>[
+   ['screed-cement-40','12031','11-01-011-03','Устройство цементной стяжки толщиной 40 мм','cement_mortar','screed','floor',0.98,0.99,'120301','01.7.03.04-4010','Смесь сухая для стяжки','kg','72.0','9.8700'],
+   ['screed-self-leveling','12032','11-01-019-01','Устройство наливного выравнивающего покрытия','dry_mix','self_leveling','floor',0.84,0.88,'120302','01.7.03.05-4020','Смесь для наливного пола','kg','18.0','31.4600'],
+   ['screed-lightweight','12033','11-01-012-02','Устройство легкой стяжки с пористым заполнителем','lightweight_concrete','lightweight_screed','floor',0.76,0.80,'120303','01.7.03.06-4030','Смесь легкая для стяжки','m3','0.045','6241.3500']],0],
+  'engineering-layout-001'=>['dataset_id'=>1205,'version'=>'fsnb-2026.1-pipelines','work_key'=>'riser-pipeline','work_name'=>'Прокладка канализационного стояка 110 мм в бетонной конструкции B25','quantity_key'=>'floor_area','unit'=>'m2','scope_type'=>'engineering','section_key'=>'sewer-riser','section_title'=>'Внутренняя канализация','section'=>'16','candidates'=>[
+   ['pipe-water-ppr-32','12051','16-02-004-01','Прокладка водопроводных труб PPR диаметром 32 мм','polypropylene','water_pipeline','pipeline',0.73,0.78,'120501','23.1.02.11-5010','Труба PPR 32 мм','m','1.01','184.6200'],
+   ['pipe-sewer-pvc-50','12052','16-04-001-02','Прокладка канализационных труб ПВХ диаметром 50 мм','pvc','sewer_pipeline','pipeline',0.86,0.89,'120502','23.1.02.12-5020','Труба ПВХ 50 мм','m','1.02','219.7400'],
+   ['pipe-sewer-pvc-110','12053','16-04-001-04','Прокладка канализационных стояков ПВХ диаметром 110 мм','pvc','sewer_riser','pipeline',0.99,0.99,'120503','23.1.02.12-5030','Труба ПВХ 110 мм','m','1.02','468.9300']],2],
+  'freehand-review-001'=>['dataset_id'=>1204,'version'=>'fsnb-2026.1-review-only','work_key'=>'review-only','work_name'=>'Требуется уточнение размеров эскиза','quantity_key'=>'floor_area','unit'=>'m2','scope_type'=>'review','section_key'=>'review','section_title'=>'Проверка исходных данных','section'=>'00','candidates'=>[
+   ['review-measurements','12041','00-00-001-01','Проверка размеров по исходному эскизу','survey','document_review','review',0.62,0.65,'120401','91.01.01-6010','Работа специалиста по проверке','h','1.0','1247.3800'],
+   ['review-site-survey','12042','00-00-002-01','Инструментальное обследование помещения','survey','site_survey','review',0.58,0.61,'120402','91.01.02-6020','Работа инженера-обследователя','h','1.0','1689.5400']],0],
+ ];
+ $spec=$specs[$slug]??throw new RuntimeException('authored case spec missing');
+ $spec['scope_type']='finishing';
+ $spec['section_key']='finishing';
+ $spec['gate']=match($slug){
+  'scanned-pdf-001'=>['brick','masonry','finishing','15','finishing'],
+  'dimensioned-raster-001'=>['concrete','concreting','finishing','15','finishing'],
+  'engineering-layout-001'=>['concrete','masonry','finishing','15','finishing'],
+  default=>[$spec['candidates'][$spec[0]][4],$spec['candidates'][$spec[0]][5],'finishing','15','finishing'],
+ };
+ $ids=array_column($spec['candidates'],0);$selected=$ids[$spec[0]];
+ $selectedRow=$spec['candidates'][$spec[0]];
+ $spec['work_intent']=['material'=>$selectedRow[4],'action'=>$selectedRow[5],'scope'=>$selectedRow[6],'object'=>$selectedRow[6],
+  'expected_dimensions'=>[$spec['unit']==='m2'?'area':'length'],'preferred_section_prefixes'=>[$spec['section']]];
+ $evidence="catalog:".str_replace('fsnb-2026.1-','',$spec['version']).":$selected";
+ $spec['reranker_decision']=['selected_candidate_id'=>$selected,'ordering'=>[$selected,...array_values(array_filter($ids,static fn(string $id):bool=>$id!==$selected))],'explanation_codes'=>['unit_match','material_match','technology_match'],'evidence_refs'=>[$evidence],'confidence'=>0.97];
+ return $spec;
+}
+
+function authoredCatalog(array $spec): array
+{
+ $candidates=[];$resources=[];$prices=[];
+ foreach($spec['candidates'] as $row){[$id,$norm,$code,$name,$material,$technology,$structure,$lexical,$semantic,$priceId,$resourceCode,$resourceName,$resourceUnit,$resourceQuantity,$price]=$row;
+  $evidence="catalog:".str_replace('fsnb-2026.1-','',$spec['version']).":$id";
+  $candidates[]=['candidate_id'=>$id,'normative_id'=>(int)$norm,'dataset_id'=>$spec['dataset_id'],'dataset_version'=>$spec['version'],'dataset_status'=>'parsed','code'=>$code,'name'=>$name,'unit'=>$spec['unit'],'unit_dimension'=>$spec['unit']==='m2'?'area':'length','material'=>$spec['gate'][0],'technology'=>$spec['gate'][1],'structure'=>$spec['gate'][2],'normative_section'=>$spec['gate'][3],'object_type'=>$spec['gate'][4],'region_code'=>'77','valid_from'=>'2026-01-01','lexical_score'=>$lexical,'semantic_score'=>$semantic,'source_evidence'=>[$evidence]];
+  $resources[]=['candidate_id'=>$id,'normative_id'=>(int)$norm,'dataset_id'=>$spec['dataset_id'],'dataset_version'=>$spec['version'],'dataset_status'=>'parsed','code'=>$code,'name'=>$name,'unit'=>$spec['unit'],'collection'=>['code'=>'ГЭСН','name'=>'ГЭСН','norm_type'=>'gesn_building'],'section'=>['code'=>$spec['section'],'name'=>$spec['section_title']],'work_composition'=>[$spec['work_name']],'resources'=>['materials'=>[['price_id'=>(int)$priceId,'code'=>$resourceCode,'name'=>$resourceName,'unit'=>$resourceUnit,'quantity'=>$resourceQuantity,'linked_resource_id'=>(int)$priceId+900000,'price_source'=>'recorded-regional-snapshot','unit_price'=>'0']],'labor'=>[],'machinery'=>[],'other'=>[]]];
+  $prices[]=['id'=>(int)$priceId,'region_id'=>77,'price_zone_id'=>1,'period_id'=>202607,'regional_price_version_id'=>$spec['dataset_id'],'base_price'=>$price,'source_type'=>'fsbc','currency'=>'RUB','snapshot_provenance'=>'approved:fgiscs-regional-capture-2026-07','snapshot_approval_ref'=>'plan3-task11-price-review'];
+ }
+ return ['schema_version'=>'recorded-benchmark-catalog:v1','dataset_id'=>$spec['dataset_id'],'dataset_version'=>$spec['version'],'dataset_status'=>'parsed','region_code'=>'77','price_period'=>'2026.07','currency'=>'RUB','candidates'=>$candidates,'resources'=>$resources,'prices'=>$prices,'privacy_scanner'=>'most-fixture-privacy','privacy_scanner_version'=>'1.0.0','approval_kind'=>'maintainer_code_review','approval_ref'=>'plan3-task11-corpus-v2','approved_at'=>'2026-07-12T00:00:00Z'];
 }
