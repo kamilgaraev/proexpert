@@ -22,7 +22,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\MatchNormativesStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\PlanWorkItemsStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\StageResultFactory;
-use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
@@ -66,6 +65,7 @@ final class NormativeOldClientPinPostgresTest extends TestCase
         config()->set('estimate-generation.normative_matching.approved_dataset_version', $version);
         $this->actingAs($user, 'api_admin');
         $url = "/api/v1/admin/projects/{$project->id}/estimate-generation/sessions";
+        $fixtureDatasetIds = [];
 
         try {
             $response = $this->postJson($url, ['description' => 'Кладка кирпичных стен', 'area' => 100]);
@@ -95,23 +95,16 @@ final class NormativeOldClientPinPostgresTest extends TestCase
             self::assertNotSame($planContext->inputVersion, $changedPlanContext->inputVersion);
             self::assertNotSame($planResult->outputVersion, $changedPlan->outputVersion);
 
-            $normId = $this->seedCompatibleNorm((int) $dataset->id, $version);
+            $priceDatasetId = $this->dataset('fsbc', 'prices-'.$version);
+            $fixtureDatasetIds[] = $priceDatasetId;
+            $normId = $this->seedCompatibleNorm((int) $dataset->id, $priceDatasetId, $version);
+            $competingDatasetId = $this->dataset('fsnb_2022', 'latest-'.$version);
+            $fixtureDatasetIds[] = $competingDatasetId;
+            $competingNormId = $this->seedNorm($competingDatasetId, 'latest-'.$version, 'Кладка наружных кирпичных стен');
             DB::table('estimate_normative_retrieval_rollouts')->updateOrInsert(
                 ['schema_version' => 'normative-retrieval-v1'],
                 ['backfill_status' => 'complete', 'deploy_phase' => 'enabled', 'deploy_status' => 'enabled', 'updated_at' => now(), 'created_at' => now()],
             );
-            $matcher = Mockery::mock(ResourceAssemblyService::class);
-            $matcher->shouldReceive('enrich')->andReturnUsing(static function (array $items, array $context) use ($normId): array {
-                if (! isset($context['selected_norm_id'])) {
-                    return $items;
-                }
-                self::assertSame($normId, (int) $context['selected_norm_id']);
-                $items[0]['normative_rate_code'] = '08-01-001-01';
-                $items[0]['materials'] = [['name' => 'Кирпич', 'quantity' => 120.0]];
-
-                return $items;
-            });
-            $this->app->instance(ResourceAssemblyService::class, $matcher);
             foreach ([MatchNormativesStage::class, \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeCandidateSource::class, \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRetrievalService::class, \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeMatchingWorkflow::class] as $abstract) {
                 $this->app->forgetInstance($abstract);
             }
@@ -123,6 +116,17 @@ final class NormativeOldClientPinPostgresTest extends TestCase
             self::assertSame($version, $matched['normative_retrieval']['dataset_version']);
             self::assertSame('normative-combined-v1', $matched['normative_retrieval']['scoring_version']);
             self::assertSame('08-01-001-01', $matched['normative_rate_code']);
+            self::assertSame($normId, $matched['normative_match']['norm_id']);
+            self::assertNotSame($competingNormId, $matched['normative_match']['norm_id']);
+            self::assertSame($version, $matched['normative_match']['dataset_version']['version_key']);
+            self::assertSame('Кирпич керамический', $matched['materials'][0]['name']);
+            self::assertSame(1.2, $matched['materials'][0]['quantity_per_unit']);
+            self::assertSame(15.0, $matched['materials'][0]['unit_price']);
+            self::assertSame(
+                round($matched['materials'][0]['quantity'] * 15, 2),
+                $matched['materials'][0]['total_price'],
+            );
+            self::assertSame(['Подготовка основания', 'Кладка стены'], $matched['work_composition']);
             self::assertNotEmpty($matched['materials']);
             $changedPin = [...$pin, 'dataset_version' => $version.'-changed'];
             self::assertNotSame(
@@ -140,6 +144,7 @@ final class NormativeOldClientPinPostgresTest extends TestCase
             self::assertSame($before, EstimateGenerationSession::query()->where('organization_id', $organization->id)->count());
         } finally {
             EstimateGenerationSession::query()->where('organization_id', $organization->id)->delete();
+            DB::table('estimate_dataset_versions')->whereIn('id', $fixtureDatasetIds)->delete();
             $dataset->delete();
             $project->delete();
             $user->delete();
@@ -245,9 +250,40 @@ final class NormativeOldClientPinPostgresTest extends TestCase
         );
     }
 
-    private function seedCompatibleNorm(int $datasetId, string $version): int
+    private function seedCompatibleNorm(int $datasetId, int $priceDatasetId, string $version): int
     {
-        $collection = DB::table('estimate_norm_collections')->insertGetId([
+        $normId = $this->seedNorm($datasetId, $version, 'Кладка наружных кирпичных стен');
+        DB::table('estimate_norm_resources')->insert([
+            'estimate_norm_id' => $normId,
+            'construction_resource_id' => null,
+            'resource_code' => '04.3.01.01-0001',
+            'resource_name' => 'Кирпич керамический',
+            'unit' => 'шт',
+            'quantity' => 1.2,
+            'resource_type' => 'material',
+            'raw_payload' => json_encode(['source' => 'contract'], JSON_THROW_ON_ERROR),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('estimate_resource_prices')->insert([
+            'dataset_version_id' => $priceDatasetId,
+            'construction_resource_id' => null,
+            'resource_code' => '04.3.01.01-0001',
+            'resource_name' => 'Кирпич керамический',
+            'unit' => 'шт',
+            'base_price' => 15,
+            'price_type' => 'material',
+            'raw_payload' => json_encode(['source' => 'contract'], JSON_THROW_ON_ERROR),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $normId;
+    }
+
+    private function seedNorm(int $datasetId, string $version, string $name): int
+    {
+        $collection = (int) DB::table('estimate_norm_collections')->insertGetId([
             'dataset_version_id' => $datasetId,
             'code' => '08-'.$version,
             'name' => 'Каменные конструкции',
@@ -260,7 +296,7 @@ final class NormativeOldClientPinPostgresTest extends TestCase
         return (int) DB::table('estimate_norms')->insertGetId([
             'collection_id' => $collection,
             'code' => '08-01-001-01',
-            'name' => 'Кладка наружных кирпичных стен',
+            'name' => $name,
             'unit' => 'м2',
             'canonical_unit' => 'м2',
             'unit_dimension' => 'area',
@@ -269,7 +305,26 @@ final class NormativeOldClientPinPostgresTest extends TestCase
             'structure' => 'стена',
             'object_type' => 'house',
             'section_code' => '08',
+            'section_name' => 'Каменные конструкции',
+            'work_composition' => json_encode(['Подготовка основания', 'Кладка стены'], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
             'valid_from' => '2026-01-01',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function dataset(string $sourceType, string $version): int
+    {
+        return (int) DB::table('estimate_dataset_versions')->insertGetId([
+            'source_type' => $sourceType,
+            'version_key' => $version,
+            'bucket' => 'contract',
+            'prefix' => $version,
+            'status' => 'parsed',
+            'files_count' => 0,
+            'rows_read' => 0,
+            'rows_imported' => 0,
+            'errors_count' => 0,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
