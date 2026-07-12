@@ -35,4 +35,11 @@ final class ConfirmEstimateGenerationGeometryRequest extends FormRequest
             'operations.*.value' => ['present'],
         ];
     }
+
+    protected function prepareForValidation(): void
+    {
+        if (strlen($this->getContent()) > 262144) {
+            $this->merge(['operations' => array_fill(0, 101, [])]);
+        }
+    }
 }

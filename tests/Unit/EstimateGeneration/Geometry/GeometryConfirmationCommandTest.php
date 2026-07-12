@@ -57,4 +57,13 @@ final class GeometryConfirmationCommandTest extends TestCase
 
         self::assertSame($first->idempotencyKey, $retry->idempotencyKey);
     }
+
+    #[Test]
+    public function aggregate_payload_limit_is_enforced_before_storage(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        new GeometryConfirmationCommand(1, 2, 3, 4, 5, 'sha256:'.str_repeat('a', 64), 'sha256:'.str_repeat('b', 64), null, [
+            ['op' => 'replace', 'path' => '/floors/floor-1/rooms/room-1/name', 'value' => str_repeat('x', 262145)],
+        ]);
+    }
 }

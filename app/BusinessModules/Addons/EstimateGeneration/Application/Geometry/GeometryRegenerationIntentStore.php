@@ -8,7 +8,8 @@ interface GeometryRegenerationIntentStore
 {
     public function append(GeometryRegenerationIntent $intent): int;
 
-    public function deliver(int $intentId): void;
+    public function deliver(int $intentId): bool;
 
-    public function recover(int $limit = 100): int;
+    /** @return array{claimed:int,delivered:int,failed:int} */
+    public function recover(int $limit = 100): array;
 }

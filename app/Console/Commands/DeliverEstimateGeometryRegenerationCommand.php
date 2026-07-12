@@ -16,7 +16,8 @@ final class DeliverEstimateGeometryRegenerationCommand extends Command
     public function handle(GeometryRegenerationIntentStore $outbox): int
     {
         $limit = max(1, min(500, (int) $this->option('limit')));
-        $this->components->info('Обработано заданий: '.$outbox->recover($limit));
+        $result = $outbox->recover($limit);
+        $this->components->info(sprintf('Получено: %d; доставлено: %d; отложено: %d', $result['claimed'], $result['delivered'], $result['failed']));
 
         return self::SUCCESS;
     }

@@ -35,3 +35,24 @@
 ## Commit
 
 `3b2d9f99c72bd8dc94d7ad9532eba072be4f5b7d` (до технического amend отчёта).
+
+## Corrective review
+
+- Отсутствовала высота этажа → добавлен закрытый путь `/floors/{floor_key}/height_m` и стабильное разрешение floor key.
+- Разрешённые операции не имели полного поведенческого покрытия → `BuildingGeometryMutatorTest` реально применяет все 12 вариантов к нормализованной модели, проверяет evidence и чужой ключ.
+- Повтор значения создавал новую историю → provisional normalized content сравнивается с locked head до evidence/model/outbox и отклоняется как no-op.
+- Инвалидация была неполной → выделен `GeometryDependencyInvalidator`: recursive evidence closure, checkpoints, processing units, packages и items старой input version; исходные evidence не затрагиваются.
+- Evidence не содержал полный provenance → фиксируются actor/time, операции/scale, source evidence IDs и old/new state/input/model versions; итоговая модель ссылается на user evidence.
+- Не было общего лимита → до транзакции действуют 256 KiB raw/aggregate limits, 100 операций, 2 000 точек, 500 точек на polygon и закрытые scalar/string contracts.
+- Ответ расходился со snapshot → контроллер использует `SessionOperationalSnapshotBuilder`, добавляет geometry extension и tenant-scoped `ETag`/`Cache-Control`.
+- Outbox мог ложно стать delivered → dispatcher возвращает enqueue acknowledgement; false/exception переводит intent в recoverable failed. Recovery сообщает claimed/delivered/failed.
+- Лог был недостаточным → добавлены exception, opaque failure ID, organization/project/session/actor и ограниченные metadata запроса.
+- Оркестратор был перегружен → отдельно выделены typed mutator и dependency invalidator.
+
+### Corrective verification
+
+- DB-less behavioral/API/RBAC/building-model/retry suite: **127 passed, 459 assertions**.
+- Larastan затронутого модуля: **No errors** (`--memory-limit=1G`).
+- Pint: PASS; `git diff --check`: PASS.
+- PostgreSQL opt-in inventory: `EstimateGenerationGeometryPostgresTest` (`postgres-contract`) проверяет composite tenant FK, outbox idempotency/claim index, immutable model/evidence triggers, rollback invariant и CAS-supporting unique indexes. Не запускался локально: требуется `RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT=1` и изолированный PostgreSQL; миграции/DB локально не запускались.
+- Corrective commit: `a626cbcbf6b830974ff57d82a120b3fdcafa3e61` до технического amend отчёта.

@@ -283,9 +283,11 @@ final class RetryDispatcherFake implements EstimateGenerationRetryDispatcher
         $this->documents = $documentIds;
     }
 
-    public function dispatchGeneration(int $sessionId, int $stateVersion, string $attemptId): void
+    public function dispatchGeneration(int $sessionId, int $stateVersion, string $attemptId): bool
     {
         $this->generation[] = [$sessionId, $stateVersion, $attemptId];
+
+        return true;
     }
 }
 

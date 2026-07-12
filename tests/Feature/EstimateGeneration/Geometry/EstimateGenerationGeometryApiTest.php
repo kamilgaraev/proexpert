@@ -4,48 +4,44 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration\Geometry;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionSnapshotEtag;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ConfirmEstimateGenerationGeometryRequest;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
 final class EstimateGenerationGeometryApiTest extends TestCase
 {
     #[Test]
-    public function geometry_confirmation_route_uses_review_permission(): void
+    public function request_contract_requires_all_three_cas_versions_and_closed_operations(): void
     {
-        $routes = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/routes.php');
+        $rules = (new ConfirmEstimateGenerationGeometryRequest)->rules();
 
-        self::assertIsString($routes);
-        self::assertStringContainsString("Route::post('/{session}/geometry/confirm'", $routes);
-        self::assertStringContainsString("middleware('authorize:estimate_generation.review,project,project')->name('geometry.confirm')", $routes);
-        self::assertLessThan(strpos($routes, "Route::get('/{session}',"), strpos($routes, "Route::post('/{session}/geometry/confirm'"));
+        self::assertContains('required', $rules['state_version']);
+        self::assertContains('required', $rules['model_version']);
+        self::assertContains('required', $rules['input_version']);
+        self::assertSame(['array:op,path,value'], $rules['operations.*']);
+        self::assertContains('in:replace', $rules['operations.*.op']);
     }
 
     #[Test]
-    public function geometry_confirmation_has_closed_versioned_request_contract(): void
+    public function snapshot_etag_is_tenant_scoped_and_supports_conditional_semantics(): void
     {
-        $request = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Http/Requests/ConfirmEstimateGenerationGeometryRequest.php');
+        $etag = SessionSnapshotEtag::forRevision(10, 20, 'revision-1');
 
-        self::assertIsString($request);
-        self::assertStringContainsString("'state_version' => ['required', 'integer', 'min:0']", $request);
-        self::assertStringContainsString("'model_version' => ['required', 'string'", $request);
-        self::assertStringContainsString("'input_version' => ['required', 'string'", $request);
-        self::assertStringContainsString("'operations.*' => ['array:op,path,value']", $request);
+        self::assertTrue(SessionSnapshotEtag::matches($etag, $etag));
+        self::assertTrue(SessionSnapshotEtag::matches('W/'.$etag, $etag));
+        self::assertFalse(SessionSnapshotEtag::matches(SessionSnapshotEtag::forRevision(11, 20, 'revision-1'), $etag));
+        self::assertFalse(SessionSnapshotEtag::matches(SessionSnapshotEtag::forRevision(10, 20, 'revision-2'), $etag));
     }
 
     #[Test]
-    public function response_translations_and_recoverable_outbox_are_declared(): void
+    public function geometry_response_translation_keys_are_non_empty(): void
     {
         $translations = require dirname(__DIR__, 4).'/lang/ru/estimate_generation.php';
-        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_000100_create_geometry_regeneration_outbox_table.php');
-        $command = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Application/Geometry/ConfirmBuildingGeometry.php');
 
-        self::assertNotSame('', $translations['geometry_confirmed'] ?? '');
-        self::assertNotSame('', $translations['geometry_invalid'] ?? '');
-        self::assertIsString($migration);
-        self::assertStringContainsString('idempotency_key', $migration);
-        self::assertStringContainsString("'pending','delivering','delivered','failed'", $migration);
-        self::assertIsString($command);
-        self::assertStringNotContainsString('ApplyGeneratedEstimate', $command);
-        self::assertStringNotContainsString("table('estimates')", $command);
+        foreach (['geometry_confirmed', 'geometry_invalid', 'geometry_not_found', 'geometry_error'] as $key) {
+            self::assertIsString($translations[$key] ?? null);
+            self::assertNotSame('', trim($translations[$key]));
+        }
     }
 }

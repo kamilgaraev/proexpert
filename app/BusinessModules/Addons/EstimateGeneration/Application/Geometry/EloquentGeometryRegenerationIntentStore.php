@@ -26,41 +26,49 @@ final class EloquentGeometryRegenerationIntentStore implements GeometryRegenerat
             ->where('idempotency_key', $intent->idempotencyKey)->value('id');
     }
 
-    public function deliver(int $intentId): void
+    public function deliver(int $intentId): bool
     {
         $row = $this->database->table('estimate_generation_geometry_regeneration_outbox')->where('id', $intentId)->first();
         if ($row === null || $row->status === 'delivered') {
-            return;
+            return false;
         }
         $claimed = $this->database->table('estimate_generation_geometry_regeneration_outbox')->where('id', $intentId)
             ->whereIn('status', ['pending', 'failed'])->where('available_at', '<=', now())
             ->update(['status' => 'delivering', 'attempt_count' => (int) $row->attempt_count + 1,
                 'available_at' => now()->addMinutes(5), 'updated_at' => now()]);
         if ($claimed !== 1) {
-            return;
+            return false;
         }
         try {
-            $this->dispatcher->dispatchGeneration((int) $row->session_id, (int) $row->state_version, (string) $row->generation_attempt_id);
+            $acknowledged = $this->dispatcher->dispatchGeneration((int) $row->session_id, (int) $row->state_version, (string) $row->generation_attempt_id);
+            if (! $acknowledged) {
+                throw new \RuntimeException('estimate_generation.geometry_regeneration_not_enqueued');
+            }
             $this->database->table('estimate_generation_geometry_regeneration_outbox')->where('id', $intentId)
                 ->where('status', 'delivering')->update(['status' => 'delivered', 'delivered_at' => now(),
                     'last_error_code' => null, 'updated_at' => now()]);
+
+            return true;
         } catch (Throwable) {
             $this->database->table('estimate_generation_geometry_regeneration_outbox')->where('id', $intentId)
                 ->where('status', 'delivering')->update(['status' => 'failed',
                     'last_error_code' => 'dispatch_failed', 'available_at' => now()->addMinutes(5), 'updated_at' => now()]);
+
+            return false;
         }
     }
 
-    public function recover(int $limit = 100): int
+    public function recover(int $limit = 100): array
     {
         $this->database->table('estimate_generation_geometry_regeneration_outbox')->where('status', 'delivering')
             ->where('available_at', '<=', now())->update(['status' => 'failed', 'last_error_code' => 'delivery_lease_expired', 'updated_at' => now()]);
         $ids = $this->database->table('estimate_generation_geometry_regeneration_outbox')->whereIn('status', ['pending', 'failed'])
             ->where('available_at', '<=', now())->orderBy('id')->limit($limit)->pluck('id');
+        $delivered = 0;
         foreach ($ids as $id) {
-            $this->deliver((int) $id);
+            $delivered += $this->deliver((int) $id) ? 1 : 0;
         }
 
-        return $ids->count();
+        return ['claimed' => $ids->count(), 'delivered' => $delivered, 'failed' => $ids->count() - $delivered];
     }
 }

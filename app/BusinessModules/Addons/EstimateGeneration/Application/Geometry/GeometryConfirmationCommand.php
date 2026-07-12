@@ -40,12 +40,23 @@ final readonly class GeometryConfirmationCommand
         if (count($operations) > 100) {
             throw new InvalidArgumentException('Too many geometry operations.');
         }
+        $encoded = json_encode(['scale' => $scale, 'operations' => $operations]);
+        if (is_string($encoded) && strlen($encoded) > 262144) {
+            throw new InvalidArgumentException('Geometry confirmation payload is too large.');
+        }
         $normalized = [];
+        $totalPoints = 0;
         foreach ($operations as $operation) {
             if (! is_array($operation) || array_keys($operation) !== ['op', 'path', 'value']
                 || $operation['op'] !== 'replace' || ! is_string($operation['path'])
                 || str_contains($operation['path'], '~') || strlen($operation['path']) > 256) {
                 throw new InvalidArgumentException('Geometry operation is invalid.');
+            }
+            if (preg_match('#^/floors/([a-z][a-z0-9_-]{0,127})/height_m$#', $operation['path'], $floorMatches)) {
+                $this->assertValue('height_m', $operation['value']);
+                $normalized[] = $operation + ['floor_key' => $floorMatches[1], 'collection' => 'floors', 'element_key' => $floorMatches[1], 'field' => 'height_m'];
+
+                continue;
             }
             if (! preg_match('#^/floors/([a-z][a-z0-9_-]{0,127})/(rooms|walls|openings)/([a-z][a-z0-9_-]{0,127})/(name|polygon|start|end|type|material|offset_m|width_m|height_m)$#', $operation['path'], $matches)) {
                 throw new InvalidArgumentException('Geometry operation path is not allowed.');
@@ -59,6 +70,10 @@ final readonly class GeometryConfirmationCommand
                 throw new InvalidArgumentException('Geometry field is not allowed for this element.');
             }
             $this->assertValue($matches[4], $operation['value']);
+            $totalPoints += $matches[4] === 'polygon' ? count($operation['value']) : (in_array($matches[4], ['start', 'end'], true) ? 1 : 0);
+            if ($totalPoints > 2000) {
+                throw new InvalidArgumentException('Geometry coordinate limit is exceeded.');
+            }
             $normalized[] = $operation + [
                 'floor_key' => $matches[1], 'collection' => $matches[2],
                 'element_key' => $matches[3], 'field' => $matches[4],

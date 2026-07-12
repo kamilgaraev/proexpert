@@ -6,6 +6,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\ConfirmBuildingGeometry;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryConfirmationCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionSnapshotEtag;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ConfirmEstimateGenerationGeometryRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -21,7 +23,10 @@ use function trans_message;
 
 final class EstimateGenerationGeometryController extends Controller
 {
-    public function __construct(private ConfirmBuildingGeometry $confirmGeometry) {}
+    public function __construct(
+        private ConfirmBuildingGeometry $confirmGeometry,
+        private SessionOperationalSnapshotBuilder $snapshotBuilder,
+    ) {}
 
     public function confirm(ConfirmEstimateGenerationGeometryRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse
     {
@@ -38,16 +43,36 @@ final class EstimateGenerationGeometryController extends Controller
                 is_array($validated['operations'] ?? null) ? $validated['operations'] : [],
             ));
 
-            return AdminResponse::success($result, trans_message('estimate_generation.geometry_confirmed'));
+            $freshSession = $session->fresh() ?? $session;
+            $snapshot = $this->snapshotBuilder->handle($freshSession, ['estimate_generation.review']);
+            $payload = [...$snapshot->toArray(), ...$result];
+            $etag = SessionSnapshotEtag::forRevision($organizationId, (int) $session->getKey(), $snapshot->operationalVersion);
+
+            return AdminResponse::success($payload, trans_message('estimate_generation.geometry_confirmed'))->withHeaders([
+                'ETag' => $etag,
+                'Cache-Control' => 'private, no-cache',
+            ]);
         } catch (NotFoundHttpException) {
             return AdminResponse::error(trans_message('estimate_generation.geometry_not_found'), 404);
         } catch (StaleEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
         } catch (InvalidArgumentException) {
             return AdminResponse::error(trans_message('estimate_generation.geometry_invalid'), 422);
-        } catch (\Throwable) {
+        } catch (\Throwable $exception) {
             $failureId = bin2hex(random_bytes(8));
-            Log::error('[EstimateGeneration] Geometry confirmation failed', ['failure_id' => $failureId, 'session_id' => $session->getKey()]);
+            Log::error('[EstimateGeneration] Geometry confirmation failed', [
+                'exception' => $exception,
+                'failure_id' => $failureId,
+                'organization_id' => (int) ($request->user()?->current_organization_id ?? 0),
+                'project_id' => (int) $project->getKey(),
+                'session_id' => (int) $session->getKey(),
+                'actor_id' => (int) ($request->user()?->getKey() ?? 0),
+                'request' => [
+                    'body_bytes' => strlen($request->getContent()),
+                    'operations_count' => is_array($request->input('operations')) ? count($request->input('operations')) : 0,
+                    'has_scale' => $request->filled('scale'),
+                ],
+            ]);
 
             return AdminResponse::error(trans_message('estimate_generation.geometry_error'), 500, null, ['failure_id' => $failureId]);
         }

@@ -35,11 +35,11 @@ final class LaravelEstimateGenerationRetryDispatcher implements EstimateGenerati
         }
     }
 
-    public function dispatchGeneration(int $sessionId, int $stateVersion, string $attemptId): void
+    public function dispatchGeneration(int $sessionId, int $stateVersion, string $attemptId): bool
     {
         $session = EstimateGenerationSession::query()->find($sessionId);
         if (! $session instanceof EstimateGenerationSession || (int) $session->state_version !== $stateVersion) {
-            return;
+            return false;
         }
         GenerateEstimateDraftJob::dispatch(
             $sessionId,
@@ -49,5 +49,7 @@ final class LaravelEstimateGenerationRetryDispatcher implements EstimateGenerati
         )
             ->onQueue(GenerateEstimateDraftJob::QUEUE)
             ->afterCommit();
+
+        return true;
     }
 }
