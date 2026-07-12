@@ -46,7 +46,10 @@ final class RunEstimateGenerationBenchmarkCaseCommand extends Command
             $adapter = $adapterId === 'current-baseline'
                 ? new CurrentBaselineBenchmarkAdapter($corpus->objects, $this->pdfText, $this->drawing)
                 : $this->adapters->get($adapterId);
-            $this->line($adapter->run($case, 3_600_000)->protocolJson());
+            $this->line($adapter->run(
+                \App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPredictionCaseData::fromCase($case),
+                3_600_000,
+            )->protocolJson());
 
             return self::SUCCESS;
         } catch (Throwable) {
@@ -63,7 +66,7 @@ final class RunEstimateGenerationBenchmarkCaseCommand extends Command
         if ($reference === 'repository:v1') {
             return new BenchmarkCorpus(
                 BenchmarkManifest::fromFile($this->repositoryManifestPath, $this->fixtureRoot),
-                new LocalBenchmarkObjectReader,
+                new LocalBenchmarkObjectReader($this->fixtureRoot),
                 $reference,
             );
         }

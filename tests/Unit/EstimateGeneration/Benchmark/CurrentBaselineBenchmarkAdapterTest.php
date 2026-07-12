@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Benchmark;
 
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkManifest;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPredictionCaseData;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\CurrentBaselineBenchmarkAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkObjectReader;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DrawingGeometryAnalyzer;
@@ -44,12 +45,12 @@ final class CurrentBaselineBenchmarkAdapterTest extends TestCase
         $root = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/benchmarks';
         $case = BenchmarkManifest::fromFile($root.'/manifest.json', $root)->case('dev-vector-pdf-001');
         $adapter = new CurrentBaselineBenchmarkAdapter(
-            new LocalBenchmarkObjectReader,
+            new LocalBenchmarkObjectReader($root),
             new PdfTextLayerExtractor(new PdfParserRuntime),
             new DrawingGeometryAnalyzer,
         );
 
-        $result = $adapter->run($case, 10_000);
+        $result = $adapter->run(BenchmarkPredictionCaseData::fromCase($case), 10_000);
 
         self::assertSame('technical_failure', $result->status);
         self::assertSame('current-baseline', $adapter->id());
@@ -62,12 +63,12 @@ final class CurrentBaselineBenchmarkAdapterTest extends TestCase
         $root = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/benchmarks';
         $case = BenchmarkManifest::fromFile($root.'/manifest.json', $root)->case('reg-dxf-001');
         $adapter = new CurrentBaselineBenchmarkAdapter(
-            new LocalBenchmarkObjectReader,
+            new LocalBenchmarkObjectReader($root),
             new PdfTextLayerExtractor(new PdfParserRuntime),
             new DrawingGeometryAnalyzer,
         );
 
-        $result = $adapter->run($case, 10_000);
+        $result = $adapter->run(BenchmarkPredictionCaseData::fromCase($case), 10_000);
 
         self::assertSame('unsupported', $result->status);
         self::assertSame('source_type_unsupported', $result->failureCode);

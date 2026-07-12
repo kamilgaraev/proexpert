@@ -8,5 +8,5 @@ interface BenchmarkPipelineAdapter
 {
     public function id(): string;
 
-    public function run(BenchmarkCaseData $case, int $timeoutMs): BenchmarkPipelineResultData;
+    public function run(BenchmarkPredictionCaseData $case, int $timeoutMs): BenchmarkPipelineResultData;
 }

@@ -11,16 +11,22 @@ final readonly class PrivateBenchmarkObjectReader implements BenchmarkObjectRead
         private int $organizationId,
     ) {}
 
-    public function read(BenchmarkCaseData $case, string $role, int $maxBytes): string
+    public function read(BenchmarkCaseData|BenchmarkPredictionCaseData $case, string $role, int $maxBytes): string
     {
         $locator = match ($role) {
             'input' => $case->inputLocator,
-            'expected' => $case->expectedLocator,
+            'expected' => $case instanceof BenchmarkCaseData
+                ? $case->expectedLocator
+                : throw new BenchmarkContractException('prediction_expected_read_forbidden'),
             default => throw new BenchmarkContractException('object_role_invalid'),
         };
         $path = $this->path($locator);
         $content = $this->store->read($path, $maxBytes);
-        $expectedHash = $role === 'input' ? $case->inputSha256 : $case->expectedSha256;
+        $expectedHash = $role === 'input'
+            ? $case->inputSha256
+            : ($case instanceof BenchmarkCaseData
+                ? $case->expectedSha256
+                : throw new BenchmarkContractException('prediction_expected_read_forbidden'));
         if (! hash_equals($expectedHash, hash('sha256', $content))) {
             throw new BenchmarkContractException('private_object_hash_mismatch');
         }

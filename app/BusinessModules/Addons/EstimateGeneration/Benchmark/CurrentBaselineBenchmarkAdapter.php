@@ -21,7 +21,7 @@ final readonly class CurrentBaselineBenchmarkAdapter implements BenchmarkPipelin
         return 'current-baseline';
     }
 
-    public function run(BenchmarkCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
+    public function run(BenchmarkPredictionCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
     {
         if ($case->sourceType !== BenchmarkSourceType::VectorPdf) {
             return BenchmarkPipelineResultData::unsupported('source_type_unsupported');

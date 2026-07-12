@@ -34,7 +34,7 @@ final class ProcessBenchmarkCaseExecutorTest extends TestCase
                 return 'current-baseline';
             }
 
-            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseData $case, int $timeoutMs): \App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPipelineResultData
+            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPredictionCaseData $case, int $timeoutMs): \App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPipelineResultData
             {
                 return \App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPipelineResultData::technicalFailure('not_called');
             }

@@ -104,7 +104,7 @@ final class EstimateGenerationBenchmarkCommandTest extends TestCase
                 return 'preflight-spy';
             }
 
-            public function run(BenchmarkCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
+            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPredictionCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
             {
                 $this->calls++;
 
@@ -176,7 +176,7 @@ final class EstimateGenerationBenchmarkCommandTest extends TestCase
                 return 'always-fails';
             }
 
-            public function run(BenchmarkCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
+            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPredictionCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
             {
                 return BenchmarkPipelineResultData::technicalFailure('provider_unavailable');
             }
@@ -238,7 +238,7 @@ final class EstimateGenerationBenchmarkCommandTest extends TestCase
                 return 'fixture-pipeline';
             }
 
-            public function run(BenchmarkCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
+            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPredictionCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
             {
                 return BenchmarkPipelineResultData::success(
                     [

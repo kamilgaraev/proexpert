@@ -29,13 +29,14 @@ final class BenchmarkWorkerCommandTest extends TestCase
                 return 'must-not-run-parent';
             }
 
-            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseData $case, int $timeoutMs): \App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPipelineResultData
+            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPredictionCaseData $case, int $timeoutMs): \App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPipelineResultData
             {
                 throw new \LogicException('Parent adapter executed.');
             }
         });
 
-        self::assertSame('success', $result->status);
-        self::assertSame('current-baseline-prediction:v1', $result->prediction['model_schema_version']);
+        self::assertSame('technical_failure', $result->status);
+        self::assertSame('normalized_building_model_required', $result->failureCode);
+        self::assertSame([], $result->prediction);
     }
 }

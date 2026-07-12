@@ -6,5 +6,5 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Benchmark;
 
 interface BenchmarkObjectReader
 {
-    public function read(BenchmarkCaseData $case, string $role, int $maxBytes): string;
+    public function read(BenchmarkCaseData|BenchmarkPredictionCaseData $case, string $role, int $maxBytes): string;
 }

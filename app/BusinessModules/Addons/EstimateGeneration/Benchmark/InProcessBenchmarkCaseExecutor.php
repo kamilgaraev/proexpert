@@ -11,6 +11,6 @@ final class InProcessBenchmarkCaseExecutor implements BenchmarkCaseExecutor
         BenchmarkCaseData $case,
         BenchmarkPipelineAdapter $adapter,
     ): BenchmarkPipelineResultData {
-        return $adapter->run($case, $request->timeoutMs);
+        return $adapter->run(BenchmarkPredictionCaseData::fromCase($case), $request->timeoutMs);
     }
 }

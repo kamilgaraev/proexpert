@@ -34,4 +34,15 @@
 - Required command ещё не может дать `attempted >= 8`, `failure=skip=0` и целевые метрики.
 - Полный Plan 3 test/phpstan gate и двукратный deterministic CLI replay не запускались.
 
+## Продолжение: anti-oracle projection
+
+- Добавлен `BenchmarkPredictionCaseData`: адаптер получает только идентификатор, dataset/source type, input locator/hash, tags/capabilities и ссылки/хэши recorded envelopes.
+- `expectedLocator`, `expectedSha256`, expected content и fixture root отсутствуют в свойствах и сериализованном projection; это проверено adversarial reflection/serialization test.
+- In-process executor и изолированный worker передают адаптеру только projection. Полный `BenchmarkCaseData` остаётся на dispatch/evaluation стороне.
+- Local/private object readers запрещают чтение expected через projection; input разрешён только после проверки ограниченного locator, containment и SHA-256.
+- Traversal, абсолютные пути и произвольные URI закрыты; для acceptance разрешён только точный org-scoped S3 locator contract.
+- Benchmark gate после изменения: `90 passed`, `300 assertions`, `4` ожидаемых DB-contract skips; PHPStan benchmark/worker: `No errors`.
+
+Этапы payload validators, production replay adapter и первые два end-to-end кейса ещё не реализованы.
+
 Task 11 нельзя отмечать `DONE`, пока все открытые gates не закрыты без снижения порогов и oracle-подстановок.

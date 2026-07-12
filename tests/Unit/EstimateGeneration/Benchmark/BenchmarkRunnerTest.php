@@ -28,7 +28,7 @@ final class BenchmarkRunnerTest extends TestCase
         {
             public function __construct(private array &$events) {}
 
-            public function read(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseData $case, string $role, int $maxBytes): string
+            public function read(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseData|\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPredictionCaseData $case, string $role, int $maxBytes): string
             {
                 $this->events[] = $role;
 
@@ -44,7 +44,7 @@ final class BenchmarkRunnerTest extends TestCase
                 return 'separate-ports';
             }
 
-            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
+            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPredictionCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
             {
                 $this->events[] = 'prediction';
 
@@ -75,11 +75,14 @@ final class BenchmarkRunnerTest extends TestCase
                 return 'test-adapter';
             }
 
-            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
+            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPredictionCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
             {
-                $expected = json_decode((string) file_get_contents($case->expectedPath()), true, 512, JSON_THROW_ON_ERROR);
-
-                return BenchmarkPipelineResultData::success([...$expected['expected'], 'model_schema_version' => 'benchmark-prediction:v1'], ['vision' => 'synthetic:v1'], null, null);
+                return BenchmarkPipelineResultData::success([
+                    'sheet_type' => 'unknown', 'room_cells' => [], 'wall_cells' => [], 'opening_ids' => [],
+                    'areas' => [], 'quantities' => [], 'work_ids' => [], 'normative_rankings' => [],
+                    'costs' => [], 'applicable_item_ids' => [], 'evidence_ids_by_item' => [],
+                    'model_schema_version' => 'benchmark-prediction:v1',
+                ], ['vision' => 'synthetic:v1'], null, null);
             }
         };
         $runner = new BenchmarkRunner(MetricRegistry::standard(), new InProcessBenchmarkCaseExecutor, static fn (): float => 1000.0);
@@ -114,7 +117,7 @@ final class BenchmarkRunnerTest extends TestCase
                 return 'failing';
             }
 
-            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
+            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPredictionCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
             {
                 throw new \RuntimeException('C:\\clients\\secret-house.pdf token=secret');
             }
@@ -149,7 +152,7 @@ final class BenchmarkRunnerTest extends TestCase
                 return 'capture';
             }
 
-            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
+            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPredictionCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
             {
                 $this->seen[] = $case->dataset->value;
 
@@ -182,13 +185,17 @@ final class BenchmarkRunnerTest extends TestCase
                 return 'costed';
             }
 
-            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
+            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPredictionCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
             {
                 $this->attempt++;
-                $expected = json_decode((string) file_get_contents($case->expectedPath()), true, 64, JSON_THROW_ON_ERROR);
 
                 return BenchmarkPipelineResultData::success(
-                    [...$expected['expected'], 'model_schema_version' => 'benchmark-prediction:v1'],
+                    [
+                        'sheet_type' => 'unknown', 'room_cells' => [], 'wall_cells' => [], 'opening_ids' => [],
+                        'areas' => [], 'quantities' => [], 'work_ids' => [], 'normative_rankings' => [],
+                        'costs' => [], 'applicable_item_ids' => [], 'evidence_ids_by_item' => [],
+                        'model_schema_version' => 'benchmark-prediction:v1',
+                    ],
                     ['vision' => 'synthetic:v1'],
                     $this->attempt === 1 ? null : '0.100000001',
                     $this->attempt === 1 ? null : 'RUB',
@@ -224,7 +231,7 @@ final class BenchmarkRunnerTest extends TestCase
                     return 'privacy-failure';
                 }
 
-                public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
+                public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPredictionCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
                 {
                     return BenchmarkPipelineResultData::technicalFailure('pipeline_not_configured');
                 }
@@ -250,7 +257,7 @@ final class BenchmarkRunnerTest extends TestCase
                 return 'unsupported';
             }
 
-            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
+            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPredictionCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
             {
                 return BenchmarkPipelineResultData::unsupported();
             }
@@ -281,7 +288,7 @@ final class BenchmarkRunnerTest extends TestCase
                 return 'malformed';
             }
 
-            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
+            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPredictionCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
             {
                 return BenchmarkPipelineResultData::success(['unknown' => ['nested' => true]], [], null, null);
             }
