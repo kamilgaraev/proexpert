@@ -1,0 +1,159 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Support\EstimateGeneration;
+
+use Illuminate\Database\ConnectionInterface;
+use InvalidArgumentException;
+
+final class EstimateGenerationContractDatabaseProvisioner
+{
+    private const INVENTORY_DIGEST = [
+        'geometry' => 'f61bab3389d9d603a80b1b70770d4b996005f539f002a88626dd99555be6d12d',
+        'training' => 'c95cb2cc331fe5c1b041784f226061fd5f1540c95c38e15d84b63e801d47081f',
+        'pricing' => 'c95cb2cc331fe5c1b041784f226061fd5f1540c95c38e15d84b63e801d47081f',
+    ];
+
+    private const CORE = [
+        'database/migrations/0001_01_01_000000_create_users_table.php',
+        'database/migrations/2025_01_01_000010_create_organizations_table.php',
+        'database/migrations/2025_01_01_000015_create_measurement_units_table.php',
+        'database/migrations/2025_01_01_000020_create_projects_table.php',
+        'database/migrations/2025_01_01_000025_create_work_types_table.php',
+        'database/migrations/2025_01_01_000030_create_contractors_table.php',
+        'database/migrations/2025_01_01_000070_create_project_organization_table.php',
+        'database/migrations/2025_05_03_161545_create_organization_user_table.php',
+        'database/migrations/2025_05_03_161553_add_fields_to_users_table.php',
+        'database/migrations/2025_05_03_173813_create_project_user_table.php',
+        'database/migrations/2025_05_08_221011_add_accounting_fields_to_projects_table.php',
+        'database/migrations/2025_05_15_000002_create_contracts_table.php',
+        'database/migrations/2025_05_16_000001_add_customer_and_designer_to_projects_table.php',
+        'database/migrations/2025_06_22_164437_add_verification_fields_to_organizations_table.php',
+        'database/migrations/2025_09_12_000002_create_new_modules_table.php',
+        'database/migrations/2025_09_12_000003_create_new_organization_module_activations_table.php',
+        'database/migrations/2025_09_12_000004_add_can_deactivate_to_modules_table.php',
+        'database/migrations/2025_09_12_200001_create_authorization_contexts_table.php',
+        'database/migrations/2025_09_12_200002_create_user_role_assignments_table.php',
+        'database/migrations/2025_09_12_200003_create_organization_custom_roles_table.php',
+        'database/migrations/2025_09_12_200004_create_role_conditions_table.php',
+        'database/migrations/2025_09_16_000000_add_extra_fields_to_projects_table.php',
+        'database/migrations/2025_10_10_120230_add_coordinates_to_projects_table.php',
+        'database/migrations/2025_10_17_163745_extend_project_organization_table.php',
+        'database/migrations/2025_10_21_120000_create_estimates_table.php',
+        'database/migrations/2025_10_21_120100_create_estimate_sections_table.php',
+        'database/migrations/2025_10_21_120200_create_estimate_items_table.php',
+        'database/migrations/2026_05_14_120000_add_project_access_mode_to_organization_user_table.php',
+        'database/migrations/2026_05_14_120100_extend_project_user_assignments.php',
+        'app/BusinessModules/Core/Mdm/migrations/2026_05_16_000000_create_mdm_core_tables.php',
+        'app/BusinessModules/Core/Mdm/migrations/2026_05_16_010000_extend_mdm_product_tables.php',
+    ];
+
+    private const MODULE = [
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_03_24_100000_create_estimate_generation_sessions_table.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_03_24_100100_create_estimate_generation_documents_table.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_03_24_100200_create_estimate_generation_feedback_table.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_05_07_000001_create_estimate_normative_sources_tables.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_05_07_000002_add_estimate_norm_sections_table.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_05_08_000001_extend_estimate_resource_prices_for_machine_and_labor_components.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_05_08_000002_create_estimate_regional_price_tables.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_05_09_000001_create_estimate_generation_package_tables.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_05_29_100000_extend_estimate_generation_documents_for_ocr.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_05_29_100100_create_estimate_generation_document_pages_table.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_05_29_100200_create_estimate_generation_document_facts_table.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_05_30_000001_create_estimate_generation_learning_examples_table.php',
+        'database/migrations/2026_06_28_000002_create_estimate_generation_understanding_tables.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000001_rebuild_estimate_generation_session_workflow.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000100_create_estimate_generation_pipeline_checkpoints_table.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000200_create_estimate_generation_processing_units_table.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000300_create_estimate_generation_evidence_table.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000400_create_estimate_generation_ai_usage_table.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000500_create_estimate_generation_failures_table.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000600_create_estimate_generation_finalization_outbox_table.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000900_guard_review_summary_source_version.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_001000_create_estimate_generation_building_models_table.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_001100_add_price_snapshots_to_estimate_generation_package_items.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_000100_create_geometry_regeneration_outbox_table.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_000200_add_input_version_to_estimate_generation_packages.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_000250_convert_session_payloads_to_jsonb.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_000300_create_geometry_confirmations_table.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001000_add_normative_retrieval_contract.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001200_harden_estimate_generation_pricing_boundary.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001300_close_activated_pricing_catalog_insert_boundary.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001400_finalize_estimate_generation_pricing_boundary.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001500_publish_accepted_evidence_and_close_pricing_provenance.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001600_harden_accepted_evidence_mapping.php',
+    ];
+
+    public static function assertSafe(array $connection, bool $enabled): void
+    {
+        if (! $enabled
+            || ($connection['driver'] ?? null) !== 'pgsql'
+            || ($connection['host'] ?? null) !== '127.0.0.1'
+            || (int) ($connection['port'] ?? 0) !== 55432
+            || ($connection['database'] ?? null) !== 'most_ai_estimator_contract'
+            || ! str_ends_with((string) ($connection['database'] ?? ''), '_contract')) {
+            throw new InvalidArgumentException('estimate_generation_contract_database_unsafe');
+        }
+    }
+
+    public static function inventoryDigest(string $root, array $entries): string
+    {
+        $manifest = [];
+        foreach ($entries as $entry) {
+            $path = $root.DIRECTORY_SEPARATOR.$entry;
+            $manifest[] = $entry.':'.(is_file($path) ? hash_file('sha256', $path) : 'missing');
+        }
+
+        return hash('sha256', implode("\n", $manifest));
+    }
+
+    public static function validateInventory(string $root, array $entries, string $expectedDigest): array
+    {
+        if ($entries === [] || count($entries) !== count(array_unique($entries, SORT_STRING))) {
+            throw new InvalidArgumentException('estimate_generation_contract_inventory_invalid');
+        }
+        foreach ($entries as $entry) {
+            if (! is_string($entry) || $entry === '' || str_contains($entry, '..')
+                || ! is_file($root.DIRECTORY_SEPARATOR.$entry)) {
+                throw new InvalidArgumentException('estimate_generation_contract_inventory_invalid');
+            }
+        }
+        if (! hash_equals($expectedDigest, self::inventoryDigest($root, $entries))) {
+            throw new InvalidArgumentException('estimate_generation_contract_inventory_tampered');
+        }
+
+        return $entries;
+    }
+
+    public static function inventory(string $phase = 'training'): array
+    {
+        $module = self::MODULE;
+        if ($phase === 'geometry') {
+            $module = array_values(array_filter($module, static fn (string $path): bool => ! str_contains($path, '_000250_convert_session_payloads_')
+                && ! str_contains($path, '_000900_guard_review_summary_')));
+        } elseif (! in_array($phase, ['training', 'pricing'], true)) {
+            throw new InvalidArgumentException('estimate_generation_contract_phase_invalid');
+        }
+
+        return [...self::CORE, ...$module];
+    }
+
+    public static function provision(ConnectionInterface $connection, string $root, string $phase): void
+    {
+        $configuration = $connection->getConfig();
+        self::assertSafe($configuration, getenv('RUN_ESTIMATE_GENERATION_CONTRACT_PROVISIONER') === '1');
+        $entries = self::validateInventory($root, self::inventory($phase), self::INVENTORY_DIGEST[$phase] ?? '');
+
+        $connection->unprepared('DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION most_contract');
+        $connection->statement('CREATE TABLE estimate_generation_contract_migrations (path text PRIMARY KEY, sha256 char(64) NOT NULL, applied_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)');
+        foreach ($entries as $entry) {
+            $migration = require $root.DIRECTORY_SEPARATOR.$entry;
+            $migration->up();
+            $connection->table('estimate_generation_contract_migrations')->insert([
+                'path' => $entry,
+                'sha256' => hash_file('sha256', $root.DIRECTORY_SEPARATOR.$entry),
+            ]);
+        }
+    }
+}

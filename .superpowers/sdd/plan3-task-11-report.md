@@ -21,6 +21,25 @@ php artisan estimate-generation:benchmark --dataset=regression --adapter=product
 
 PostgreSQL full gate пока не закрыт. После восстановления доступа combined запуск доказал, что suites нельзя выполнять на общей уже мутировавшей схеме: `15 passed (101 assertions)`, `13 failed`, `2 Windows PCNTL/POSIX skips`. Причины — schema baseline/interference (`eg_evidence_immutable_trg`, `mdm_quality_policies`, `estimate_dataset_versions`, package revision contract, training duplicate function/constraint). Требуется repo-owned guarded provisioner с отдельным reset/provision перед geometry, training/benchmark и pricing suites. Production и обычные сметы не затрагивались.
 
+### Sequential disposable PostgreSQL gate
+
+Добавлен tests-only `EstimateGenerationContractDatabaseProvisioner` и CLI `tests/Runtime/provision-estimate-generation-contract.php`. До `DROP SCHEMA public` provisioner требует одновременно: explicit opt-in, `pgsql`, host `127.0.0.1`, port `55432`, точное имя `most_ai_estimator_contract` и suffix `_contract`. Inventory содержит только официальные core/MDM/AI-estimator migrations в закрытом dependency order, проверяет уникальность/наличие и aggregate SHA-256 каждого фазового набора. Каждая применённая миграция фиксируется path+SHA в `estimate_generation_contract_migrations`.
+
+TDD: guard/inventory тест сначала падал отсутствующим классом, затем прошёл `2 tests, 10 assertions`. Первый реальный provision обнаружил неверный порядок understanding migration до sessions; после переноса за базовые module tables clean provision проходит. Geometry phase исключает self-applied rollout `000250` и зависимый review-summary guard `000900`; training/pricing phase заканчивается на `001600`. Это предотвращает duplicate-function/down-up interference между suites.
+
+Каждый набор запускался после отдельного fresh reset/provision, два раза:
+
+```text
+geometry run 1: 21 passed, 167 assertions, 0 skipped
+geometry run 2: 21 passed, 167 assertions, 0 skipped
+training/benchmark/adoption run 1: 4 passed, 91 assertions, 0 skipped
+training/benchmark/adoption run 2: 4 passed, 91 assertions, 0 skipped
+pricing run 1: 5 passed, 123 assertions, 0 skipped
+pricing run 2: 5 passed, 123 assertions, 0 skipped
+```
+
+WSL PHP отсутствует. Два geometry contention tests сохраняют исходный `pcntl` path на Unix и используют эквивалентный Windows `proc_open` path: отдельные PHP processes и DB connections. CAS test удерживает winner lock bounded 1.5 секунды, loser получает typed stale; outbox workers одновременно claim один intent, результаты `[0,1]`, probe увеличивается ровно один раз. Focused Windows gate: `2 passed, 17 assertions`, затем оба полных geometry runs выше прошли без skips.
+
 ## Task A — INTERMEDIATE: реальные источники и geometry captures
 
 ### Повторная проверка Task A: независимая source traceability

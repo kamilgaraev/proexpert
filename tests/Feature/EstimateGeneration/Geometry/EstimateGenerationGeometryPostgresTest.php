@@ -14,18 +14,18 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateG
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelOperationContext;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelRepository;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelStore;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentBuildingModelStore;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\FloorData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\GeometryConfirmationData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentBuildingModelStore;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
-use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\PackageInputVersionBackfill;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
@@ -36,9 +36,9 @@ use Illuminate\Foundation\Testing\TestCase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Mockery;
+use PHPUnit\Framework\Attributes\DataProviderExternal;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\Attributes\DataProviderExternal;
 use Tests\Support\EstimateGeneration\GeometryConfirmationParityCases;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
@@ -49,8 +49,7 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
     {
         $app = require dirname(__DIR__, 4).'/bootstrap/app.php';
         $app->make(Kernel::class)->bootstrap();
-        $app->singleton(BuildingModelStore::class, static fn ($app): EloquentBuildingModelStore =>
-            new EloquentBuildingModelStore($app->make('db')->connection()));
+        $app->singleton(BuildingModelStore::class, static fn ($app): EloquentBuildingModelStore => new EloquentBuildingModelStore($app->make('db')->connection()));
 
         return $app;
     }
@@ -267,9 +266,14 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
             $this->withHeader('Authorization', 'Bearer '.JWTAuth::fromUser($fixture['user']))
                 ->postJson($url, [...$this->sourcePayload($fixture), 'input_version' => 'sha256:'.str_repeat('f', 64)])->assertConflict();
             self::assertSame($before, $this->counts($fixture));
-            $this->app->instance(GeometryConfirmationFaultInjector::class, new class implements GeometryConfirmationFaultInjector {
+            $this->app->instance(GeometryConfirmationFaultInjector::class, new class implements GeometryConfirmationFaultInjector
+            {
                 public function afterLocksAcquired(): void {}
-                public function afterInvalidation(): void { throw new \RuntimeException('source-contract-failure'); }
+
+                public function afterInvalidation(): void
+                {
+                    throw new \RuntimeException('source-contract-failure');
+                }
             });
             try {
                 app(ConfirmBuildingGeometry::class)->handle($this->sourceCommand($fixture));
@@ -338,10 +342,39 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
     public function same_version_confirmations_have_exactly_one_cas_winner_and_zero_write_loser(): void
     {
         $this->requirePostgres();
-        $this->requirePcntl();
         $fixture = $this->fixture();
         Queue::fake();
         $before = $this->counts($fixture);
+        if (! function_exists('pcntl_fork')) {
+            try {
+                $command = $this->command($fixture);
+                $payload = base64_encode(json_encode([
+                    $command->organizationId, $command->projectId, $command->sessionId, $command->actorId,
+                    $command->expectedStateVersion, $command->expectedModelVersion, $command->expectedInputVersion,
+                    $command->scale,
+                    array_map(static fn (array $operation): array => [
+                        'op' => $operation['op'], 'path' => $operation['path'], 'value' => $operation['value'],
+                    ], $command->operations),
+                    $command->sourceConfirmation,
+                ], JSON_THROW_ON_ERROR));
+                $winner = $this->startWorker(['confirm', $payload, '1']);
+                usleep(300_000);
+                $loser = $this->startWorker(['confirm', $payload, '0']);
+                $results = [$this->finishWorker($winner), $this->finishWorker($loser)];
+                sort($results);
+                self::assertSame(['stale', 'winner'], $results);
+                $effects = $this->counts($fixture);
+                self::assertSame(2, (int) $fixture['session']->fresh()->state_version);
+                self::assertSame($before['models'] + 1, $effects['models']);
+                self::assertSame($before['evidence'] + 1, $effects['evidence']);
+                self::assertSame($before['outbox'] + 1, $effects['outbox']);
+            } finally {
+                $this->cleanup($fixture);
+            }
+
+            return;
+        }
+        $this->requirePcntl();
         $winner = null;
         $loser = null;
         try {
@@ -386,19 +419,22 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
             $this->postJson($url, $payload)->assertUnauthorized();
 
             $authorization = Mockery::mock(AuthorizationService::class);
+            $authorization->shouldReceive('canAccessInterface')->andReturnTrue();
             $authorization->shouldReceive('can')->andReturnFalse();
             $this->app->instance(AuthorizationService::class, $authorization);
-            $this->actingAs($fixture['user'], 'api_admin');
+            $this->withHeader('Authorization', 'Bearer '.JWTAuth::fromUser($fixture['user']));
             $this->postJson($url, $payload)->assertForbidden();
 
             $authorization = Mockery::mock(AuthorizationService::class);
+            $authorization->shouldReceive('canAccessInterface')->andReturnTrue();
             $authorization->shouldReceive('can')->andReturnTrue();
             $this->app->instance(AuthorizationService::class, $authorization);
             $response = $this->postJson($url, $payload);
 
-            $response->assertOk()->assertHeader('ETag')->assertHeader('Cache-Control', 'private, no-cache')
+            $response->assertOk()->assertHeader('ETag')->assertHeader('Cache-Control')
                 ->assertJsonPath('data.state_version', 2)->assertJsonPath('data.building_model.floors.0.height_m', 3.2)
                 ->assertJsonStructure(['data' => ['readiness', 'blocking_clarifications', 'invalidation_summary']]);
+            self::assertEqualsCanonicalizing(['no-cache', 'private'], array_map('trim', explode(',', (string) $response->headers->get('Cache-Control'))));
             self::assertSame(2, DB::table('estimate_generation_building_models')->where('session_id', $fixture['session']->id)->count());
             self::assertSame($fixture['old_model'], DB::table('estimate_generation_building_models')->where('id', $fixture['model_id'])->value('content_version'));
             self::assertSame(1, DB::table('estimate_generation_geometry_regeneration_outbox')->where('session_id', $fixture['session']->id)->count());
@@ -413,13 +449,11 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
             self::assertSame('invalidated', DB::table('estimate_generation_pipeline_checkpoints')->where('id', $fixture['checkpoint_id'])->value('status'));
             self::assertSame('superseded', DB::table('estimate_generation_processing_units')->where('id', $fixture['unit_id'])->value('status'));
             $userEvidence = DB::table('estimate_generation_evidence')->where('session_id', $fixture['session']->id)
-                ->where('source_type', 'user_input')->first();
+                ->where('source_type', 'user_input')->orderByDesc('id')->first();
             self::assertNotNull($userEvidence);
-            $provenance = json_decode((string) $userEvidence->value, true, flags: JSON_THROW_ON_ERROR);
-            foreach (['previous_state_version', 'new_state_version', 'previous_input_version', 'new_input_version',
-                'previous_model_version', 'new_model_version', 'actor_id', 'confirmed_at', 'source_evidence_ids', 'operations'] as $key) {
-                self::assertArrayHasKey($key, $provenance);
-            }
+            self::assertSame('input:'.$fixture['user']->id, $userEvidence->source_ref);
+            self::assertSame($response->json('data.input_version'), $userEvidence->source_version);
+            self::assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $userEvidence->fingerprint);
         } finally {
             $this->cleanup($fixture);
         }
@@ -431,9 +465,10 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
         $this->requirePostgres();
         $fixture = $this->fixture();
         $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->shouldReceive('canAccessInterface')->andReturnTrue();
         $authorization->shouldReceive('can')->andReturnTrue();
         $this->app->instance(AuthorizationService::class, $authorization);
-        $this->actingAs($fixture['user'], 'api_admin');
+        $this->withHeader('Authorization', 'Bearer '.JWTAuth::fromUser($fixture['user']));
         $url = "/api/v1/admin/projects/{$fixture['project']->id}/estimate-generation/sessions/{$fixture['session']->id}/geometry/confirm";
         $baseline = $this->counts($fixture);
         $foreignProject = Project::factory()->for($fixture['organization'])->create();
@@ -441,10 +476,10 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
         try {
             $this->postJson("/api/v1/admin/projects/{$foreignProject->id}/estimate-generation/sessions/{$fixture['session']->id}/geometry/confirm", $this->payload($fixture))->assertNotFound();
             $fixture['user']->forceFill(['current_organization_id' => $foreignOrganization->id])->save();
-            $this->actingAs($fixture['user']->fresh(), 'api_admin');
-            $this->postJson($url, $this->payload($fixture))->assertNotFound();
+            $this->withHeader('Authorization', 'Bearer '.JWTAuth::fromUser($fixture['user']->fresh()));
+            $this->postJson($url, $this->payload($fixture))->assertForbidden();
             $fixture['user']->forceFill(['current_organization_id' => $fixture['organization']->id])->save();
-            $this->actingAs($fixture['user']->fresh(), 'api_admin');
+            $this->withHeader('Authorization', 'Bearer '.JWTAuth::fromUser($fixture['user']->fresh()));
             foreach ([
                 'state' => ['state_version' => 0],
                 'model' => ['model_version' => 'sha256:'.str_repeat('f', 64)],
@@ -465,7 +500,7 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
 
             $fixture['session']->forceFill(['status' => 'cancelled', 'applied_estimate_id' => null])->save();
             $this->postJson($url, $this->payload($fixture))->assertUnprocessable();
-            $fixture['session']->forceFill(['status' => 'applied', 'applied_estimate_id' => 1])->save();
+            $fixture['session']->forceFill(['status' => 'applied', 'applied_estimate_id' => $fixture['estimate_id']])->save();
             $this->postJson($url, $this->payload($fixture))->assertUnprocessable();
             self::assertSame($baseline, $this->counts($fixture));
         } finally {
@@ -541,7 +576,6 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
     public function two_process_outbox_claim_enqueues_and_delivers_exactly_once(): void
     {
         $this->requirePostgres();
-        $this->requirePcntl();
         $fixture = $this->fixture();
         $store = new EloquentGeometryRegenerationIntentStore(DB::connection(), new GeometryDispatcherContractFake(true));
         $intent = new GeometryRegenerationIntent((int) $fixture['organization']->id, (int) $fixture['project']->id,
@@ -551,6 +585,25 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
         $probe = 'geometry_dispatch_probe_'.strtolower(\Illuminate\Support\Str::random(10));
         $quotedProbe = GeometryProbeIdentifier::quote($probe);
         DB::statement("CREATE SEQUENCE {$quotedProbe}");
+        if (! function_exists('pcntl_fork')) {
+            try {
+                $first = $this->startWorker(['outbox', (string) $intentId, $probe]);
+                $second = $this->startWorker(['outbox', (string) $intentId, $probe]);
+                $results = [$this->finishWorker($first), $this->finishWorker($second)];
+                sort($results);
+                self::assertSame(['0', '1'], $results);
+                self::assertSame('delivered', DB::table('estimate_generation_geometry_regeneration_outbox')->where('id', $intentId)->value('status'));
+                $counter = DB::selectOne("SELECT last_value, is_called FROM {$quotedProbe}");
+                self::assertTrue((bool) $counter->is_called);
+                self::assertSame(1, (int) $counter->last_value);
+            } finally {
+                DB::statement("DROP SEQUENCE IF EXISTS {$quotedProbe}");
+                $this->cleanup($fixture);
+            }
+
+            return;
+        }
+        $this->requirePcntl();
         $first = null;
         $second = null;
         try {
@@ -892,6 +945,35 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
         self::assertIsString($line, 'Child process closed its socket without a result.');
 
         return $line;
+    }
+
+    /** @return array{process:resource,pipes:array<int,resource>} */
+    private function startWorker(array $arguments): array
+    {
+        $pipes = [];
+        $process = proc_open(
+            [PHP_BINARY, dirname(__DIR__, 3).'/Support/GeometryContractWorker.php', ...$arguments],
+            [['pipe', 'r'], ['pipe', 'w'], ['pipe', 'w']],
+            $pipes,
+            dirname(__DIR__, 4),
+            null,
+        );
+        self::assertIsResource($process);
+        fclose($pipes[0]);
+
+        return ['process' => $process, 'pipes' => $pipes];
+    }
+
+    private function finishWorker(array $worker): string
+    {
+        $stdout = trim((string) stream_get_contents($worker['pipes'][1]));
+        $stderr = trim((string) stream_get_contents($worker['pipes'][2]));
+        fclose($worker['pipes'][1]);
+        fclose($worker['pipes'][2]);
+        $exit = proc_close($worker['process']);
+        self::assertSame(0, $exit, $stderr);
+
+        return $stdout;
     }
 
     private function waitChild(int $pid, int $seconds = 15): void

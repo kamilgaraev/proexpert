@@ -208,6 +208,11 @@ final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
         $item['validation_flags'] = ['quantity_review_required'];
         $item['metadata'] = ['quantity_key' => 'item-1', 'display_role' => 'quantity_review'];
         $item['source_refs'] = [['type' => 'document', 'filename' => 'contract.pdf', 'page_number' => 1]];
+        $contentVersion = 'sha256:'.hash('sha256', json_encode($draft['local_estimates'], JSON_THROW_ON_ERROR));
+        $draft['quality_summary'] = [
+            'content_version' => $contentVersion,
+            'review_items' => ['source_version' => $contentVersion, 'classifier_version' => 1],
+        ];
         $session->forceFill(['status' => 'estimate_review_required', 'draft_payload' => $draft])->save();
         $beforeCount = DB::table('estimate_generation_evidence')->where('session_id', $session->id)->count();
 
