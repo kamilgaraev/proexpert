@@ -80,6 +80,9 @@ final class EstimateGenerationContractDatabaseProvisionerTest extends TestCase
         $expected = ['database' => 'most_ai_estimator_contract', 'user' => 'most_contract_runner', 'marker_owner' => 'most_contract_guard', 'address' => '172.18.0.2', 'port' => 5432, 'marker' => (string) Str::uuid()];
         $facts = $expected + ['session_user' => 'most_contract_runner', 'marker_count' => 1,
             'marker_insert' => false, 'marker_update' => false, 'marker_delete' => false, 'superuser' => false,
+            'marker_truncate' => false, 'marker_trigger' => false, 'marker_references' => false,
+            'column_insert' => false, 'column_update' => false, 'column_references' => false,
+            'schema_create' => false, 'owner_membership' => false, 'owner_login' => false, 'owner_superuser' => false,
             'createdb' => false, 'createrole' => false, 'replication' => false, 'bypassrls' => false];
 
         EstimateGenerationContractDatabaseProvisioner::validateAttestation($facts, $expected);
@@ -89,6 +92,9 @@ final class EstimateGenerationContractDatabaseProvisionerTest extends TestCase
             'database' => 'prohelper', 'user' => 'postgres', 'session_user' => 'postgres', 'address' => '127.0.0.1',
             'port' => 55432, 'marker' => (string) Str::uuid(), 'marker_count' => 2,
             'marker_owner' => 'most_contract', 'marker_insert' => true, 'marker_update' => true, 'marker_delete' => true,
+            'marker_truncate' => true, 'marker_trigger' => true, 'marker_references' => true,
+            'column_insert' => true, 'column_update' => true, 'column_references' => true,
+            'schema_create' => true, 'owner_membership' => true, 'owner_login' => true, 'owner_superuser' => true,
             'superuser' => true, 'createdb' => true, 'createrole' => true, 'replication' => true, 'bypassrls' => true,
         ] as $key => $invalidValue) {
             $invalid = $facts;
@@ -96,6 +102,36 @@ final class EstimateGenerationContractDatabaseProvisionerTest extends TestCase
             try {
                 EstimateGenerationContractDatabaseProvisioner::validateAttestation($invalid, $expected);
                 self::fail('Invalid server attestation was accepted.');
+            } catch (InvalidArgumentException $exception) {
+                self::assertSame('estimate_generation_contract_server_attestation_failed', $exception->getMessage());
+            }
+        }
+    }
+
+    #[Test]
+    public function lock_function_attestation_rejects_owner_acl_configuration_and_definition_mismatches(): void
+    {
+        $facts = [
+            'signature' => 'contract_guard.lock_instance_identity()',
+            'owner' => 'most_contract_guard',
+            'security_definer' => true,
+            'configuration' => 'search_path=pg_catalog, contract_guard',
+            'language' => 'plpgsql',
+            'volatility' => 'v',
+            'acl' => '{most_contract_guard=X/most_contract_guard,most_contract_runner=X/most_contract_guard}',
+            'definition_sha256' => '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8',
+        ];
+
+        EstimateGenerationContractDatabaseProvisioner::validateLockFunction($facts, 'most_contract_guard');
+        self::addToAssertionCount(1);
+
+        foreach (['owner' => 'most_contract', 'security_definer' => false, 'configuration' => 'search_path=public',
+            'acl' => '{=X/most_contract_guard}', 'definition_sha256' => str_repeat('0', 64)] as $key => $value) {
+            $invalid = $facts;
+            $invalid[$key] = $value;
+            try {
+                EstimateGenerationContractDatabaseProvisioner::validateLockFunction($invalid, 'most_contract_guard');
+                self::fail('Invalid lock function attestation was accepted.');
             } catch (InvalidArgumentException $exception) {
                 self::assertSame('estimate_generation_contract_server_attestation_failed', $exception->getMessage());
             }
@@ -125,5 +161,16 @@ final class EstimateGenerationContractDatabaseProvisionerTest extends TestCase
             'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_002100_finalize_training_benchmark_architecture.php',
             'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_002200_close_training_benchmark_races.php',
         ], EstimateGenerationContractDatabaseProvisioner::subjectInventory('training', $root));
+
+        self::assertStringEndsWith('/2026_07_12_002200_close_training_benchmark_races.php',
+            EstimateGenerationContractDatabaseProvisioner::subjectMigration('training', '2026_07_12_002200_close_training_benchmark_races.php', $root));
+        foreach (['missing.php', '../2026_07_12_002200_close_training_benchmark_races.php'] as $basename) {
+            try {
+                EstimateGenerationContractDatabaseProvisioner::subjectMigration('training', $basename, $root);
+                self::fail('Invalid subject migration lookup was accepted.');
+            } catch (InvalidArgumentException) {
+                self::addToAssertionCount(1);
+            }
+        }
     }
 }

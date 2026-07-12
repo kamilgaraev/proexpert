@@ -169,9 +169,9 @@ final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
     public function test_follow_up_migrations_roll_back_to_001400_and_reapply_cleanly(): void
     {
         $this->requireDisposablePostgres();
-        $subjects = EstimateGenerationContractDatabaseProvisioner::subjectInventory('pricing', dirname(__DIR__, 4));
-        $migration1500 = require dirname(__DIR__, 4).'/'.$subjects[0];
-        $migration1600 = require dirname(__DIR__, 4).'/'.$subjects[1];
+        $root = dirname(__DIR__, 4);
+        $migration1500 = require EstimateGenerationContractDatabaseProvisioner::subjectMigration('pricing', '2026_07_12_001500_publish_accepted_evidence_and_close_pricing_provenance.php', $root);
+        $migration1600 = require EstimateGenerationContractDatabaseProvisioner::subjectMigration('pricing', '2026_07_12_001600_harden_accepted_evidence_mapping.php', $root);
 
         $migration1600->down();
         $migration1500->down();

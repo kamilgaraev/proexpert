@@ -9,6 +9,8 @@ use InvalidArgumentException;
 
 final class EstimateGenerationContractDatabaseProvisioner
 {
+    private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
+
     private const INVENTORY_DIGEST = [
         'geometry' => 'f61bab3389d9d603a80b1b70770d4b996005f539f002a88626dd99555be6d12d',
         'training' => 'c95cb2cc331fe5c1b041784f226061fd5f1540c95c38e15d84b63e801d47081f',
@@ -166,11 +168,36 @@ final class EstimateGenerationContractDatabaseProvisioner
             && ($facts['marker_owner'] ?? null) === $expected['marker_owner']
             && ($facts['marker_insert'] ?? null) === false
             && ($facts['marker_update'] ?? null) === false
-            && ($facts['marker_delete'] ?? null) === false;
+            && ($facts['marker_delete'] ?? null) === false
+            && ($facts['marker_truncate'] ?? null) === false
+            && ($facts['marker_trigger'] ?? null) === false
+            && ($facts['marker_references'] ?? null) === false
+            && ($facts['column_insert'] ?? null) === false
+            && ($facts['column_update'] ?? null) === false
+            && ($facts['column_references'] ?? null) === false
+            && ($facts['schema_create'] ?? null) === false
+            && ($facts['owner_membership'] ?? null) === false
+            && ($facts['owner_login'] ?? null) === false
+            && ($facts['owner_superuser'] ?? null) === false;
         foreach (['superuser', 'createdb', 'createrole', 'replication', 'bypassrls'] as $flag) {
             $valid = $valid && ($facts[$flag] ?? null) === false;
         }
         if (! $valid) {
+            throw new InvalidArgumentException('estimate_generation_contract_server_attestation_failed');
+        }
+    }
+
+    public static function validateLockFunction(array $facts, string $expectedOwner): void
+    {
+        $expectedAcl = sprintf('{%1$s=X/%1$s,most_contract_runner=X/%1$s}', $expectedOwner);
+        if (($facts['signature'] ?? null) !== 'contract_guard.lock_instance_identity()'
+            || ($facts['owner'] ?? null) !== $expectedOwner
+            || ($facts['security_definer'] ?? null) !== true
+            || ($facts['configuration'] ?? null) !== 'search_path=pg_catalog, contract_guard'
+            || ($facts['language'] ?? null) !== 'plpgsql'
+            || ($facts['volatility'] ?? null) !== 'v'
+            || ($facts['acl'] ?? null) !== $expectedAcl
+            || ($facts['definition_sha256'] ?? null) !== self::LOCK_FUNCTION_DEFINITION_SHA256) {
             throw new InvalidArgumentException('estimate_generation_contract_server_attestation_failed');
         }
     }
@@ -184,6 +211,20 @@ final class EstimateGenerationContractDatabaseProvisioner
         return $root === null
             ? self::SUBJECT[$phase]
             : self::validateInventory($root, self::SUBJECT[$phase], self::SUBJECT_DIGEST[$phase]);
+    }
+
+    public static function subjectMigration(string $phase, string $basename, string $root): string
+    {
+        if (basename($basename) !== $basename || ! str_ends_with($basename, '.php')) {
+            throw new InvalidArgumentException('estimate_generation_contract_subject_invalid');
+        }
+        $matches = array_values(array_filter(self::subjectInventory($phase, $root),
+            static fn (string $path): bool => basename($path) === $basename));
+        if (count($matches) !== 1) {
+            throw new InvalidArgumentException('estimate_generation_contract_subject_invalid');
+        }
+
+        return $root.DIRECTORY_SEPARATOR.$matches[0];
     }
 
     public static function completeInventory(): array
@@ -210,10 +251,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         self::assertSafe($configuration, getenv('RUN_ESTIMATE_GENERATION_CONTRACT_PROVISIONER') === '1');
         $entries = self::validateInventory($root, self::inventory($phase), self::INVENTORY_DIGEST[$phase] ?? '');
         self::validateCompleteInventory($root);
-        self::attestServer($connection);
-
-        $role = getenv('ESTIMATE_GENERATION_CONTRACT_DB_ROLE') ?: '';
-        $connection->unprepared('DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION "'.$role.'"');
+        self::resetPublicSchema($connection);
         $connection->statement('CREATE TABLE estimate_generation_contract_migrations (path text PRIMARY KEY, sha256 char(64) NOT NULL, applied_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)');
         foreach ($entries as $entry) {
             $migration = require $root.DIRECTORY_SEPARATOR.$entry;
@@ -246,7 +284,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         }
     }
 
-    private static function attestServer(ConnectionInterface $connection): void
+    private static function resetPublicSchema(ConnectionInterface $connection): void
     {
         $expected = [
             'database' => 'most_ai_estimator_contract',
@@ -262,26 +300,59 @@ final class EstimateGenerationContractDatabaseProvisioner
             throw new InvalidArgumentException('estimate_generation_contract_server_attestation_failed');
         }
 
+        $role = $expected['user'];
         $connection->beginTransaction();
         try {
-            $connection->statement('LOCK TABLE contract_guard.instance_identity IN ACCESS SHARE MODE');
+            $lockFunction = (array) $connection->selectOne(<<<'SQL'
+SELECT p.oid::regprocedure::text AS signature, pg_get_userbyid(p.proowner) AS owner,
+       p.prosecdef AS security_definer, array_to_string(p.proconfig, ',') AS configuration,
+       l.lanname AS language, p.provolatile AS volatility, p.proacl::text AS acl,
+       pg_get_functiondef(p.oid) AS definition
+FROM pg_proc p
+JOIN pg_language l ON l.oid = p.prolang
+WHERE p.oid = 'contract_guard.lock_instance_identity()'::regprocedure
+SQL);
+            $lockFunction['definition_sha256'] = hash('sha256', (string) ($lockFunction['definition'] ?? ''));
+            self::validateLockFunction($lockFunction, $expected['marker_owner']);
+            $markerRow = (array) $connection->selectOne('SELECT * FROM contract_guard.lock_instance_identity()');
             $row = (array) $connection->selectOne(<<<'SQL'
 SELECT current_database() AS database, current_user AS "user", session_user AS session_user,
        host(inet_server_addr()) AS address, inet_server_port() AS port,
        role.rolsuper AS superuser, role.rolcreatedb AS createdb, role.rolcreaterole AS createrole,
        role.rolreplication AS replication, role.rolbypassrls AS bypassrls,
-       marker.instance_identity::text AS marker,
-       (SELECT count(*) FROM contract_guard.instance_identity) AS marker_count,
        pg_get_userbyid(cls.relowner) AS marker_owner,
        has_table_privilege(current_user, 'contract_guard.instance_identity', 'INSERT') AS marker_insert,
        has_table_privilege(current_user, 'contract_guard.instance_identity', 'UPDATE') AS marker_update,
-       has_table_privilege(current_user, 'contract_guard.instance_identity', 'DELETE') AS marker_delete
+       has_table_privilege(current_user, 'contract_guard.instance_identity', 'DELETE') AS marker_delete,
+       has_table_privilege(current_user, 'contract_guard.instance_identity', 'TRUNCATE') AS marker_truncate,
+       has_table_privilege(current_user, 'contract_guard.instance_identity', 'TRIGGER') AS marker_trigger,
+       has_table_privilege(current_user, 'contract_guard.instance_identity', 'REFERENCES') AS marker_references,
+       has_any_column_privilege(current_user, 'contract_guard.instance_identity', 'INSERT') AS column_insert,
+       has_any_column_privilege(current_user, 'contract_guard.instance_identity', 'UPDATE') AS column_update,
+       has_any_column_privilege(current_user, 'contract_guard.instance_identity', 'REFERENCES') AS column_references,
+       has_schema_privilege(current_user, 'contract_guard', 'CREATE') AS schema_create,
+       pg_has_role(current_user, pg_get_userbyid(cls.relowner), 'MEMBER') AS owner_membership,
+       owner.rolcanlogin AS owner_login, owner.rolsuper AS owner_superuser
 FROM pg_roles role
-CROSS JOIN contract_guard.instance_identity marker
 JOIN pg_class cls ON cls.oid = 'contract_guard.instance_identity'::regclass
+JOIN pg_roles owner ON owner.oid = cls.relowner
 WHERE role.rolname = current_user
 SQL);
+            $row['marker'] = $markerRow['marker'] ?? null;
+            $row['marker_count'] = $markerRow['marker_count'] ?? 0;
             self::validateAttestation($row, $expected);
+            $holdMilliseconds = (int) (getenv('ESTIMATE_CONTRACT_HOLD_AFTER_ATTEST_MS') ?: 0);
+            if ($holdMilliseconds < 0 || $holdMilliseconds > 5000) {
+                throw new InvalidArgumentException('estimate_generation_contract_server_attestation_failed');
+            }
+            if ($holdMilliseconds > 0) {
+                usleep($holdMilliseconds * 1000);
+            }
+            $connection->unprepared('DROP SCHEMA public CASCADE');
+            if (getenv('ESTIMATE_CONTRACT_INJECT_AFTER_DROP') === '1') {
+                throw new \RuntimeException('estimate_generation_contract_injected_reset_failure');
+            }
+            $connection->unprepared('CREATE SCHEMA public AUTHORIZATION "'.$role.'"');
             $connection->commit();
         } catch (\Throwable $exception) {
             $connection->rollBack();

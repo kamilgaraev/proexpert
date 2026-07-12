@@ -95,7 +95,7 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
         try {
             $statementTimeout = DB::selectOne('SHOW statement_timeout')->statement_timeout;
             $lockTimeout = DB::selectOne('SHOW lock_timeout')->lock_timeout;
-            $migration = require dirname(__DIR__, 4).'/'.EstimateGenerationContractDatabaseProvisioner::subjectInventory('geometry', dirname(__DIR__, 4))[0];
+            $migration = require EstimateGenerationContractDatabaseProvisioner::subjectMigration('geometry', '2026_07_12_000250_convert_session_payloads_to_jsonb.php', dirname(__DIR__, 4));
             $migration->down();
             DB::statement('ALTER TABLE estimate_generation_sessions ADD COLUMN input_payload__jsonb_shadow jsonb');
             try {

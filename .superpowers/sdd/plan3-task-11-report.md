@@ -17,6 +17,12 @@ php artisan estimate-generation:benchmark --dataset=regression --adapter=product
 php artisan estimate-generation:benchmark --dataset=regression --adapter=production-replay --pipeline-version=production-replay-cases:v1 --prompt-version=recorded-ports:v1 --manifest=production-replay-manifest.json --format=json --output=task11/full-gate-run-2.json
 ```
 
+### Финальная транзакционная аттестация PostgreSQL
+
+Внешний disposable fixture содержит узкую `SECURITY DEFINER`-функцию блокировки маркера. Provisioner не создаёт и не изменяет её: до вызова он сверяет сигнатуру, владельца NOLOGIN/NOSUPER guard-роли, `SECURITY DEFINER`, фиксированный `search_path`, язык, volatility, точный ACL без PUBLIC и SHA-256 канонического определения. В одной runner-транзакции функция берёт `SHARE` lock и возвращает marker/cardinality; затем выполняются аттестация, `DROP SCHEMA public` и `CREATE SCHEMA public`. Runner не имеет DML на marker, membership в guard-роли и CREATE в guard-схеме.
+
+Live-проверки подтвердили: искусственный сбой после DROP откатывает транзакцию и сохраняет sentinel; конкурентный UPDATE маркера владельцем guard блокируется до `statement_timeout`; подмена owner, ACL, search_path или определения функции отклоняется до DROP. После hardening повторно зелёные geometry `21/167`, training+adoption `4/91` и pricing `5/123`, без skips.
+
 Оба запуска: `attempted=8`, `succeeded=8`, `failed=0`, `skipped=0`; `work_recall=1`, `normative_top3=1`, `evidenced_applicable_items=1`, `technical_success_rate=1`. Fingerprint обоих запусков: `626cddcec28410f8621c1cb4c556db7e1ca0b06b8288cfa357b32daf2b99a89d`; `case_results` идентичны; acceptance references отсутствуют.
 
 PostgreSQL full gate пока не закрыт. После восстановления доступа combined запуск доказал, что suites нельзя выполнять на общей уже мутировавшей схеме: `15 passed (101 assertions)`, `13 failed`, `2 Windows PCNTL/POSIX skips`. Причины — schema baseline/interference (`eg_evidence_immutable_trg`, `mdm_quality_policies`, `estimate_dataset_versions`, package revision contract, training duplicate function/constraint). Требуется repo-owned guarded provisioner с отдельным reset/provision перед geometry, training/benchmark и pricing suites. Production и обычные сметы не затрагивались.

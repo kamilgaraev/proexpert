@@ -8,6 +8,7 @@ use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationContractDatabaseProvisioner;
 use Tests\Support\SharedVersionedBenchmarkObjectStore;
 
 #[Group('postgres-contract')]
@@ -31,7 +32,7 @@ final class TrainingBenchmarkObjectAdoptionRaceTest extends TestCase
             self::markTestSkipped('Requires disposable PostgreSQL contract database.');
         }
         $this->verifyUnsafeWorkerGuard();
-        (require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_002200_close_training_benchmark_races.php')->up();
+        (require EstimateGenerationContractDatabaseProvisioner::subjectMigration('training', '2026_07_12_002200_close_training_benchmark_races.php', dirname(__DIR__, 4)))->up();
     }
 
     protected function tearDown(): void
