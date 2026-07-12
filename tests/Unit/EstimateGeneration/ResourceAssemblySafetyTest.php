@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNoAirWorkItemPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNoAirWorkItemPolicy;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidatePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeMatchDecisionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeScopeRuleCatalog;
@@ -26,12 +26,13 @@ final class ResourceAssemblySafetyTest extends TestCase
     {
         parent::setUp();
 
-        $container = new Container();
-        $loader = new FileLoader(new Filesystem(), dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'lang');
+        $container = new Container;
+        $loader = new FileLoader(new Filesystem, dirname(__DIR__, 3).DIRECTORY_SEPARATOR.'lang');
         $translator = new Translator($loader, 'ru');
         $config = new Repository(['app' => ['fallback_locale' => 'ru']]);
 
-        $container->instance('app', new class {
+        $container->instance('app', new class
+        {
             public function getLocale(): string
             {
                 return 'ru';
@@ -41,7 +42,8 @@ final class ResourceAssemblySafetyTest extends TestCase
         $container->instance(\Illuminate\Contracts\Config\Repository::class, $config);
         $container->instance('translator', $translator);
         $container->instance(\Illuminate\Contracts\Translation\Translator::class, $translator);
-        $container->instance('log', new class {
+        $container->instance('log', new class
+        {
             public function warning(string $message, array $context = []): void {}
         });
 
@@ -86,9 +88,10 @@ final class ResourceAssemblySafetyTest extends TestCase
         ];
 
         $service = new ResourceAssemblyService(
-            new class ($match) extends EstimateNormativeMatcher {
+            new class($match) extends EstimateNormativeMatcher
+            {
                 /**
-                 * @param array<string, mixed> $match
+                 * @param  array<string, mixed>  $match
                  */
                 public function __construct(private readonly array $match) {}
 
@@ -97,13 +100,13 @@ final class ResourceAssemblySafetyTest extends TestCase
                     return $this->match;
                 }
             },
-            new NormativeMatchDecisionService(),
-            new NormativeCandidatePresenter(),
-            new WorkIntentClassifier(new NormativeScopeRuleCatalog()),
+            new NormativeMatchDecisionService,
+            new NormativeCandidatePresenter,
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog),
         );
 
         $item = $service->enrich([$workItem], ['scope_type' => 'roof'])[0];
-        $item = (new EstimatePricingService())->price([$item])[0];
+        $item = (new EstimatePricingService)->price([$item])[0];
 
         $this->assertSame('candidate', $item['normative_match']['status']);
         $this->assertSame([], $item['materials']);
@@ -142,9 +145,10 @@ final class ResourceAssemblySafetyTest extends TestCase
         ];
 
         $service = new ResourceAssemblyService(
-            new class ($match) extends EstimateNormativeMatcher {
+            new class($match) extends EstimateNormativeMatcher
+            {
                 /**
-                 * @param array<string, mixed> $match
+                 * @param  array<string, mixed>  $match
                  */
                 public function __construct(private readonly array $match) {}
 
@@ -153,18 +157,18 @@ final class ResourceAssemblySafetyTest extends TestCase
                     return $this->match;
                 }
             },
-            new NormativeMatchDecisionService(),
-            new NormativeCandidatePresenter(),
-            new WorkIntentClassifier(new NormativeScopeRuleCatalog()),
+            new NormativeMatchDecisionService,
+            new NormativeCandidatePresenter,
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog),
         );
 
         $item = $service->enrich([$workItem], ['scope_type' => 'roof'])[0];
-        $item = (new EstimatePricingService())->price([$item])[0];
+        $item = (new EstimatePricingService)->price([$item])[0];
 
         $this->assertSame('matched', $item['normative_match']['status']);
         $this->assertSame('review_priced', $item['normative_match']['decision']['status']);
-        $this->assertSame('calculated_review_required', $item['pricing_status']);
-        $this->assertGreaterThan(0, $item['total_cost']);
+        $this->assertSame('not_calculated', $item['pricing_status']);
+        $this->assertEquals(0.0, $item['total_cost']);
         $this->assertNotContains('safe_norm_required', $item['validation_flags']);
         $this->assertNotContains('pricing_not_calculated', $item['validation_flags']);
         $this->assertContains('safe_normative_analog', $item['validation_flags']);
@@ -199,7 +203,8 @@ final class ResourceAssemblySafetyTest extends TestCase
         ];
 
         $service = new ResourceAssemblyService(
-            new class extends EstimateNormativeMatcher {
+            new class extends EstimateNormativeMatcher
+            {
                 public function __construct() {}
 
                 public function matchWorkItem(array $workItem, array $context = [], int $limit = 5): ?array
@@ -207,13 +212,13 @@ final class ResourceAssemblySafetyTest extends TestCase
                     throw new \RuntimeException('Quantity review item must not be matched before confirmation.');
                 }
             },
-            new NormativeMatchDecisionService(),
-            new NormativeCandidatePresenter(),
-            new WorkIntentClassifier(new NormativeScopeRuleCatalog()),
+            new NormativeMatchDecisionService,
+            new NormativeCandidatePresenter,
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog),
         );
 
         $item = $service->enrich([$workItem], ['scope_type' => 'finishing'])[0];
-        $item = (new EstimatePricingService())->price([$item])[0];
+        $item = (new EstimatePricingService)->price([$item])[0];
 
         $this->assertSame('quantity_review', $item['item_type']);
         $this->assertNull($item['normative_rate_code']);
@@ -256,7 +261,8 @@ final class ResourceAssemblySafetyTest extends TestCase
         ];
 
         $service = new ResourceAssemblyService(
-            new class extends EstimateNormativeMatcher {
+            new class extends EstimateNormativeMatcher
+            {
                 public function __construct() {}
 
                 public function matchWorkItem(array $workItem, array $context = [], int $limit = 5): ?array
@@ -264,13 +270,13 @@ final class ResourceAssemblySafetyTest extends TestCase
                     throw new \RuntimeException('Quantity review flagged item must not be matched before confirmation.');
                 }
             },
-            new NormativeMatchDecisionService(),
-            new NormativeCandidatePresenter(),
-            new WorkIntentClassifier(new NormativeScopeRuleCatalog()),
+            new NormativeMatchDecisionService,
+            new NormativeCandidatePresenter,
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog),
         );
 
         $item = $service->enrich([$workItem], ['scope_type' => 'finishing'])[0];
-        $item = (new EstimatePricingService())->price([$item])[0];
+        $item = (new EstimatePricingService)->price([$item])[0];
 
         $this->assertSame('quantity_review', $item['item_type']);
         $this->assertNull($item['normative_rate_code']);
@@ -311,7 +317,8 @@ final class ResourceAssemblySafetyTest extends TestCase
         ];
 
         $service = new ResourceAssemblyService(
-            new class extends EstimateNormativeMatcher {
+            new class extends EstimateNormativeMatcher
+            {
                 public function __construct() {}
 
                 public function matchWorkItem(array $workItem, array $context = [], int $limit = 5): ?array
@@ -319,13 +326,13 @@ final class ResourceAssemblySafetyTest extends TestCase
                     throw new \RuntimeException('Generic priced item must not be matched.');
                 }
             },
-            new NormativeMatchDecisionService(),
-            new NormativeCandidatePresenter(),
-            new WorkIntentClassifier(new NormativeScopeRuleCatalog()),
+            new NormativeMatchDecisionService,
+            new NormativeCandidatePresenter,
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog),
         );
 
         $item = $service->enrich([$workItem], ['scope_type' => 'site'])[0];
-        $item = (new EstimatePricingService())->price([$item])[0];
+        $item = (new EstimatePricingService)->price([$item])[0];
 
         $this->assertSame('priced_work', $item['item_type']);
         $this->assertSame([], $item['materials']);
@@ -334,7 +341,7 @@ final class ResourceAssemblySafetyTest extends TestCase
         $this->assertEquals(0.0, $item['total_cost']);
         $this->assertNull($item['price_source']);
         $this->assertSame('not_calculated', $item['pricing_status']);
-        $this->assertSame(EstimateGenerationNoAirWorkItemPolicy::BLOCKER, $item['pricing_blocker']);
+        $this->assertSame('missing_price_snapshot', $item['pricing_blocker']);
         $this->assertContains(EstimateGenerationNoAirWorkItemPolicy::FLAG, $item['validation_flags']);
         $this->assertContains(EstimateGenerationNoAirWorkItemPolicy::NO_AIR_FLAG, $item['validation_flags']);
     }
@@ -367,11 +374,11 @@ final class ResourceAssemblySafetyTest extends TestCase
         ];
 
         $item = $this->manualSelectionService()->applySelectedNormativeMatch($workItem, $match, ['scope_type' => 'finishing']);
-        $item = (new EstimatePricingService())->price([$item])[0];
+        $item = (new EstimatePricingService)->price([$item])[0];
 
         $this->assertSame('candidate', $item['normative_match']['status']);
         $this->assertSame('not_calculated', $item['pricing_status']);
-        $this->assertSame('scope_mismatch', $item['pricing_blocker']);
+        $this->assertSame('missing_price_snapshot', $item['pricing_blocker']);
         $this->assertSame([], $item['materials']);
         $this->assertEquals(0.0, $item['total_cost']);
         $this->assertContains('scope_mismatch', $item['normative_match']['warnings']);
@@ -401,11 +408,11 @@ final class ResourceAssemblySafetyTest extends TestCase
         ];
 
         $item = $this->manualSelectionService()->applySelectedNormativeMatch($workItem, $match, ['scope_type' => 'foundation']);
-        $item = (new EstimatePricingService())->price([$item])[0];
+        $item = (new EstimatePricingService)->price([$item])[0];
 
         $this->assertSame('candidate', $item['normative_match']['status']);
         $this->assertSame('not_calculated', $item['pricing_status']);
-        $this->assertSame('scope_mismatch', $item['pricing_blocker']);
+        $this->assertSame('missing_price_snapshot', $item['pricing_blocker']);
         $this->assertEquals(0.0, $item['total_cost']);
         $this->assertContains('scope_mismatch', $item['normative_match']['warnings']);
         $this->assertContains('safe_norm_required', $item['validation_flags']);
@@ -438,11 +445,11 @@ final class ResourceAssemblySafetyTest extends TestCase
         ];
 
         $item = $this->manualSelectionService()->applySelectedNormativeMatch($workItem, $match, ['scope_type' => 'foundation']);
-        $item = (new EstimatePricingService())->price([$item])[0];
+        $item = (new EstimatePricingService)->price([$item])[0];
 
         $this->assertSame('matched', $item['normative_match']['status']);
-        $this->assertSame('calculated', $item['pricing_status']);
-        $this->assertGreaterThan(0, $item['total_cost']);
+        $this->assertSame('not_calculated', $item['pricing_status']);
+        $this->assertEquals(0.0, $item['total_cost']);
         $this->assertNotContains('scope_mismatch', $item['normative_match']['warnings']);
     }
 
@@ -473,13 +480,13 @@ final class ResourceAssemblySafetyTest extends TestCase
         ];
 
         $item = $this->manualSelectionService()->applySelectedNormativeMatch($workItem, $match, ['scope_type' => 'roof']);
-        $item = (new EstimatePricingService())->price([$item])[0];
+        $item = (new EstimatePricingService)->price([$item])[0];
 
         $this->assertSame('matched', $item['normative_match']['status']);
         $this->assertTrue($item['normative_match']['selected_by_user']);
         $this->assertSame('review_priced', $item['normative_match']['decision']['status']);
-        $this->assertSame('calculated_review_required', $item['pricing_status']);
-        $this->assertGreaterThan(0, $item['total_cost']);
+        $this->assertSame('not_calculated', $item['pricing_status']);
+        $this->assertEquals(0.0, $item['total_cost']);
         $this->assertContains('requires_normative_review', $item['normative_match']['warnings']);
         $this->assertContains('safe_normative_analog', $item['normative_match']['warnings']);
         $this->assertContains('requires_normative_review', $item['validation_flags']);
@@ -568,11 +575,11 @@ final class ResourceAssemblySafetyTest extends TestCase
         ];
 
         $item = $this->manualSelectionService()->applySelectedNormativeMatch($workItem, $match, ['scope_type' => 'foundation']);
-        $item = (new EstimatePricingService())->price([$item])[0];
+        $item = (new EstimatePricingService)->price([$item])[0];
 
         $this->assertSame('candidate', $item['normative_match']['status']);
         $this->assertSame('not_calculated', $item['pricing_status']);
-        $this->assertSame('norm_with_unpriced_resources', $item['pricing_blocker']);
+        $this->assertSame('missing_price_snapshot', $item['pricing_blocker']);
         $this->assertEquals(0.0, $item['total_cost']);
         $this->assertContains('norm_with_unpriced_resources', $item['normative_match']['warnings']);
         $this->assertContains('safe_norm_required', $item['validation_flags']);
@@ -606,11 +613,11 @@ final class ResourceAssemblySafetyTest extends TestCase
         ];
 
         $item = $this->manualSelectionService()->applySelectedNormativeMatch($workItem, $match, ['scope_type' => 'foundation']);
-        $item = (new EstimatePricingService())->price([$item])[0];
+        $item = (new EstimatePricingService)->price([$item])[0];
 
         $this->assertSame('candidate', $item['normative_match']['status']);
         $this->assertSame('not_calculated', $item['pricing_status']);
-        $this->assertSame('normative_resources_or_prices_missing', $item['pricing_blocker']);
+        $this->assertSame('missing_price_snapshot', $item['pricing_blocker']);
         $this->assertEquals(0.0, $item['total_cost']);
         $this->assertContains('norm_without_prices', $item['normative_match']['warnings']);
         $this->assertContains('safe_norm_required', $item['validation_flags']);
@@ -621,9 +628,9 @@ final class ResourceAssemblySafetyTest extends TestCase
     {
         return new ResourceAssemblyService(
             $this->createMock(EstimateNormativeMatcher::class),
-            new NormativeMatchDecisionService(),
-            new NormativeCandidatePresenter(),
-            new WorkIntentClassifier(new NormativeScopeRuleCatalog()),
+            new NormativeMatchDecisionService,
+            new NormativeCandidatePresenter,
+            new WorkIntentClassifier(new NormativeScopeRuleCatalog),
         );
     }
 

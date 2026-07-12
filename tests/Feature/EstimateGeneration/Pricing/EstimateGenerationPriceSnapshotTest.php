@@ -36,7 +36,7 @@ final class EstimateGenerationPriceSnapshotTest extends TestCase
 
         self::assertSame('250.00', $item->price_snapshot['base_amount']);
         self::assertSame('295.00', $item->price_snapshot['final_amount']);
-        self::assertSame(295.0, $item->total_cost);
+        self::assertSame('295.00', $item->total_cost);
     }
 
     #[Test]
@@ -65,6 +65,18 @@ final class EstimateGenerationPriceSnapshotTest extends TestCase
         self::assertSame(0, $priced['total_cost']);
         self::assertSame('missing_price_snapshot', $priced['pricing_blocker']);
         self::assertContains('missing_price_snapshot', $priced['validation_flags']);
+    }
+
+    #[Test]
+    public function incomplete_regional_context_fails_closed_for_priced_item(): void
+    {
+        $priced = (new EstimatePricingService(new ResolveRegionalPrice(static fn (): array => [])))
+            ->price([$this->workItem()], [])[0];
+
+        self::assertNull($priced['price_snapshot']);
+        self::assertSame(0, $priced['total_cost']);
+        self::assertNull($priced['price_source']);
+        self::assertSame('missing_price_snapshot', $priced['pricing_blocker']);
     }
 
     private function workItem(): array

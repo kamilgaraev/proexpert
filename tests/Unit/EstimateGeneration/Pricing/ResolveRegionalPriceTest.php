@@ -52,6 +52,22 @@ final class ResolveRegionalPriceTest extends TestCase
         self::assertSame('RUB', $snapshot->currency);
     }
 
+    #[Test]
+    public function catalog_price_is_the_only_money_source(): void
+    {
+        $resolver = new ResolveRegionalPrice(static fn (int $priceId): array => [
+            'id' => $priceId, 'region_id' => 16, 'price_zone_id' => 3, 'period_id' => 8,
+            'regional_price_version_id' => 11, 'base_price' => '0.1000', 'source_type' => 'fgiscs',
+        ]);
+
+        $snapshot = $resolver->handle([
+            'price_id' => 42, 'quantity' => '3', 'unit_price' => '999999.99', 'total_price' => '0.01',
+        ], $this->context());
+
+        self::assertSame('0.1000', $snapshot->baseAmount);
+        self::assertSame('0.30', $snapshot->finalAmount);
+    }
+
     private function resource(): array
     {
         return ['price_id' => 42, 'quantity' => 2.5, 'unit_price' => 100.0, 'total_price' => 250.0];

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Pricing;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateResourcePrice;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use Closure;
 
 class ResolveRegionalPrice
@@ -41,11 +43,10 @@ class ResolveRegionalPrice
             sourceType: (string) ($payload['source_type'] ?? 'regional_catalog'),
             sourceReference: 'estimate_resource_prices:'.$priceId,
             baseAmount: $this->decimal($payload['base_price'] ?? 0, 4),
-            coefficients: [
-                'quantity' => $this->decimal($resource['quantity'] ?? 0, 6),
-                'unit_price' => $this->decimal($resource['unit_price'] ?? 0, 4),
-            ],
-            finalAmount: $this->decimal($resource['total_price'] ?? 0, 2),
+            coefficients: ['quantity' => $this->decimal($resource['quantity'] ?? 0, 6)],
+            finalAmount: (string) BigDecimal::of((string) ($payload['base_price'] ?? '0'))
+                ->multipliedBy(BigDecimal::of((string) ($resource['quantity'] ?? '0')))
+                ->toScale(2, RoundingMode::HalfUp),
             currency: (string) ($payload['currency'] ?? 'RUB'),
             capturedAt: now()->toIso8601String(),
         );
@@ -86,6 +87,6 @@ class ResolveRegionalPrice
 
     private function decimal(mixed $value, int $scale): string
     {
-        return number_format((float) $value, $scale, '.', '');
+        return (string) BigDecimal::of((string) $value)->toScale($scale, RoundingMode::HalfUp);
     }
 }

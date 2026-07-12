@@ -7,6 +7,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use Illuminate\Support\Facades\DB;
 
 class EstimateGenerationPackagePersistenceService
@@ -376,10 +378,13 @@ class EstimateGenerationPackagePersistenceService
                 ? (float) $workItem['normative_match']['confidence']
                 : null,
             'unit_price' => $this->unitPrice($workItem),
-            'direct_cost' => (float) ($workItem['materials_cost'] ?? 0) + (float) ($workItem['labor_cost'] ?? 0) + (float) ($workItem['machinery_cost'] ?? 0),
-            'overhead_cost' => 0,
-            'profit_cost' => 0,
-            'total_cost' => (float) ($workItem['total_cost'] ?? 0),
+            'direct_cost' => (string) BigDecimal::of((string) ($workItem['materials_cost'] ?? '0'))
+                ->plus((string) ($workItem['labor_cost'] ?? '0'))
+                ->plus((string) ($workItem['machinery_cost'] ?? '0'))
+                ->toScale(2, RoundingMode::HalfUp),
+            'overhead_cost' => '0.00',
+            'profit_cost' => '0.00',
+            'total_cost' => (string) ($workItem['total_cost'] ?? '0.00'),
             'resources' => [
                 'materials' => $workItem['materials'] ?? [],
                 'labor' => $workItem['labor'] ?? [],
@@ -428,14 +433,15 @@ class EstimateGenerationPackagePersistenceService
     /**
      * @param  array<string, mixed>  $workItem
      */
-    private function unitPrice(array $workItem): float
+    private function unitPrice(array $workItem): string
     {
-        $quantity = (float) ($workItem['quantity'] ?? 0);
+        $quantity = BigDecimal::of((string) ($workItem['quantity'] ?? '0'));
 
-        if ($quantity <= 0) {
-            return 0.0;
+        if ($quantity->isLessThanOrEqualTo(0)) {
+            return '0.000000';
         }
 
-        return round((float) ($workItem['total_cost'] ?? 0) / $quantity, 6);
+        return (string) BigDecimal::of((string) ($workItem['total_cost'] ?? '0'))
+            ->dividedBy($quantity, 6, RoundingMode::HalfUp);
     }
 }

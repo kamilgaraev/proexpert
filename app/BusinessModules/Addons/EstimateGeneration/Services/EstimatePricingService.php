@@ -7,6 +7,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\MissingRegionalPrice;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\PriceSnapshotData;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveRegionalPrice;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 
 class EstimatePricingService
 {
@@ -49,29 +51,27 @@ class EstimatePricingService
                 continue;
             }
 
-            $materialsCost = array_sum(array_column($workItem['materials'], 'total_price'));
-            $laborCost = array_sum(array_column($workItem['labor'], 'total_price'));
-            $machineryCost = array_sum(array_column($workItem['machinery'], 'total_price'));
-            $workCost = round($laborCost + ($materialsCost * 0.18), 2);
-            $total = round($materialsCost + $laborCost + $machineryCost + $workCost, 2);
+            try {
+                [$workItem, $resourceSnapshots, $costs] = $this->resolveResources($workItem, $regionalContext);
+                $materialsCost = $costs['materials'];
+                $laborCost = $costs['labor'];
+                $machineryCost = $costs['machinery'];
+                $otherCost = $costs['other_resources'];
+                $workCost = $laborCost->plus($materialsCost->multipliedBy('0.18'))->toScale(2, RoundingMode::HalfUp);
+                $total = $materialsCost->plus($laborCost)->plus($machineryCost)->plus($otherCost)->plus($workCost)->toScale(2, RoundingMode::HalfUp);
+                $workItem['work_cost'] = (string) $workCost;
+                $workItem['materials_cost'] = (string) $materialsCost->toScale(2, RoundingMode::HalfUp);
+                $workItem['machinery_cost'] = (string) $machineryCost->toScale(2, RoundingMode::HalfUp);
+                $workItem['labor_cost'] = (string) $laborCost->toScale(2, RoundingMode::HalfUp);
+                $workItem['total_cost'] = (string) $total;
+                $workItem['price_snapshot'] = $this->snapshot($resourceSnapshots, $workCost, $total)->toArray();
+            } catch (MissingRegionalPrice|\Brick\Math\Exception\MathException) {
+                $this->blockMissingSnapshot($workItem);
 
-            $workItem['work_cost'] = $workCost;
-            $workItem['materials_cost'] = round($materialsCost, 2);
-            $workItem['machinery_cost'] = round($machineryCost, 2);
-            $workItem['labor_cost'] = round($laborCost, 2);
-            $workItem['total_cost'] = $total;
-
-            if ($regionalContext !== [] && $total > 0) {
-                try {
-                    $workItem['price_snapshot'] = $this->snapshot($workItem, $regionalContext, $workCost, $total)->toArray();
-                } catch (MissingRegionalPrice) {
-                    $this->blockMissingSnapshot($workItem);
-
-                    continue;
-                }
+                continue;
             }
 
-            if ($total <= 0) {
+            if ($total->isLessThanOrEqualTo(0)) {
                 $workItem['pricing_status'] = 'not_calculated';
                 $workItem['pricing_blocker'] = $workItem['pricing_blocker'] ?? 'pricing_not_calculated';
                 $workItem['validation_flags'] = array_values(array_unique([
@@ -84,20 +84,32 @@ class EstimatePricingService
         return $workItems;
     }
 
-    private function snapshot(array $workItem, array $regionalContext, float $workCost, float $total): PriceSnapshotData
+    private function resolveResources(array $workItem, array $regionalContext): array
     {
         $resourceSnapshots = [];
+        $costs = [];
         foreach (['materials', 'labor', 'machinery', 'other_resources'] as $group) {
-            foreach ($workItem[$group] ?? [] as $resource) {
-                if (! is_array($resource) || (float) ($resource['total_price'] ?? 0) <= 0) {
-                    continue;
+            $costs[$group] = BigDecimal::zero();
+            foreach ($workItem[$group] ?? [] as $index => $resource) {
+                if (! is_array($resource)) {
+                    throw MissingRegionalPrice::forResource(0);
                 }
-                $resourceSnapshots[] = $this->regionalPrice->handle($resource, $regionalContext)->toArray();
+                $snapshot = $this->regionalPrice->handle($resource, $regionalContext)->toArray();
+                $resourceSnapshots[] = $snapshot;
+                $costs[$group] = $costs[$group]->plus($snapshot['final_amount']);
+                $workItem[$group][$index]['unit_price'] = $snapshot['base_amount'];
+                $workItem[$group][$index]['total_price'] = $snapshot['final_amount'];
             }
         }
         if ($resourceSnapshots === []) {
             throw MissingRegionalPrice::forResource(0);
         }
+
+        return [$workItem, $resourceSnapshots, $costs];
+    }
+
+    private function snapshot(array $resourceSnapshots, BigDecimal $workCost, BigDecimal $total): PriceSnapshotData
+    {
 
         $first = $resourceSnapshots[0];
         foreach ($resourceSnapshots as $snapshot) {
@@ -110,7 +122,10 @@ class EstimatePricingService
             }
         }
 
-        $base = round(array_sum(array_column($resourceSnapshots, 'final_amount')), 2);
+        $base = BigDecimal::zero();
+        foreach ($resourceSnapshots as $resourceSnapshot) {
+            $base = $base->plus($resourceSnapshot['final_amount']);
+        }
         $references = array_column($resourceSnapshots, 'source_reference');
         sort($references, SORT_STRING);
 
@@ -121,12 +136,12 @@ class EstimatePricingService
             versionId: $first['version_id'],
             sourceType: 'regional_resource_aggregate',
             sourceReference: 'sha256:'.hash('sha256', implode('|', $references)),
-            baseAmount: number_format($base, 2, '.', ''),
+            baseAmount: (string) $base->toScale(2, RoundingMode::HalfUp),
             coefficients: [
-                'work_cost' => number_format($workCost, 2, '.', ''),
+                'work_cost' => (string) $workCost->toScale(2, RoundingMode::HalfUp),
                 'resource_evidence' => $resourceSnapshots,
             ],
-            finalAmount: number_format($total, 2, '.', ''),
+            finalAmount: (string) $total->toScale(2, RoundingMode::HalfUp),
             currency: $first['currency'],
             capturedAt: now()->toIso8601String(),
         );
