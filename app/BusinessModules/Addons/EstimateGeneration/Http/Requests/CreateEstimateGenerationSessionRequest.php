@@ -43,7 +43,6 @@ class CreateEstimateGenerationSessionRequest extends FormRequest
             'price_zone_id' => ['nullable', 'integer', 'exists:estimate_price_zones,id'],
             'period_id' => ['nullable', 'integer', 'exists:estimate_price_periods,id'],
             'normative_dataset_version' => ['nullable', 'string', 'max:100'],
-            'business_date' => ['nullable', 'date_format:Y-m-d'],
             'normative_rerank_requested' => ['nullable', 'boolean'],
             'area' => ['nullable', 'numeric', 'min:0'],
             'parameters' => ['nullable', 'array'],

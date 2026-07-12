@@ -90,6 +90,7 @@ return [
         ],
     ],
     'normative_matching' => [
+        'approved_dataset_version' => $envValue('ESTIMATE_GENERATION_NORM_APPROVED_DATASET_VERSION'),
         'retrieval' => [
             'max_candidates' => (int) env('ESTIMATE_GENERATION_NORM_RETRIEVAL_MAX_CANDIDATES', 16),
             'semantic_index_version' => $envValue('ESTIMATE_GENERATION_NORM_SEMANTIC_INDEX_VERSION'),

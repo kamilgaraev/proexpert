@@ -37,10 +37,21 @@ return new class extends Migration
             $table->unique(['estimate_norm_id', 'index_version', 'query_hash'], 'estimate_norm_semantic_version_uq');
             $table->index(['index_version', 'query_hash', 'score'], 'estimate_norm_semantic_lookup_idx');
         });
+        Schema::create('estimate_normative_retrieval_rollouts', function (Blueprint $table): void {
+            $table->string('schema_version', 100)->primary();
+            $table->unsignedBigInteger('cursor')->default(0);
+            $table->unsignedBigInteger('target_max_id')->default(0);
+            $table->string('status', 30)->default('pending');
+            $table->timestampTz('started_at')->nullable();
+            $table->timestampTz('completed_at')->nullable();
+            $table->text('last_error')->nullable();
+            $table->timestampsTz();
+        });
     }
 
     public function down(): void
     {
+        Schema::dropIfExists('estimate_normative_retrieval_rollouts');
         Schema::dropIfExists('estimate_norm_semantic_scores');
         if (DB::connection()->getDriverName() === 'pgsql') {
             DB::statement('ALTER TABLE estimate_norms DROP COLUMN IF EXISTS search_vector');

@@ -9,13 +9,13 @@ use Illuminate\Console\Command;
 
 final class BackfillNormativeRetrievalCommand extends Command
 {
-    protected $signature = 'estimate-generation:normative-retrieval-backfill {--cursor=0} {--batch=1000}';
+    protected $signature = 'estimate-generation:normative-retrieval-backfill {--batch=1000}';
 
     protected $description = 'Безопасно заполняет поля поиска нормативов одной возобновляемой порцией';
 
     public function handle(NormativeRetrievalBackfillService $service): int
     {
-        $result = $service->backfill((int) $this->option('cursor'), (int) $this->option('batch'));
+        $result = $service->resume((int) $this->option('batch'));
         $this->line(json_encode($result, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
 
         return self::SUCCESS;

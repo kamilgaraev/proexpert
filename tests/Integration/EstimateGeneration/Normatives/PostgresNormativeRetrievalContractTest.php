@@ -44,8 +44,8 @@ final class PostgresNormativeRetrievalContractTest extends TestCase
             }
 
             $backfill = new NormativeRetrievalBackfillService(DB::connection());
-            $firstBatch = $backfill->backfill(0, 1);
-            $secondBatch = $backfill->backfill($firstBatch['next_cursor'], 1);
+            $firstBatch = $backfill->resume(1);
+            $secondBatch = $backfill->resume(1);
             self::assertSame(1, $firstBatch['processed']);
             self::assertGreaterThan($firstBatch['next_cursor'], $secondBatch['next_cursor']);
             self::assertNull(DB::table('estimate_norms')->orderBy('id')->value('valid_to'));
@@ -61,8 +61,9 @@ final class PostgresNormativeRetrievalContractTest extends TestCase
 
             DB::statement('SET LOCAL enable_seqscan = off');
             $plan = DB::select('EXPLAIN (FORMAT JSON) '.PostgresNormativeCandidateSource::QUERY_CONTRACT, [
-                'dataset_version' => 'contract-v1', 'query' => 'кладка', 'limit' => 16,
+                'lexical_dataset_version' => 'contract-v1', 'semantic_dataset_version' => 'contract-v1', 'query' => 'кладка',
                 'query_hash' => hash('sha256', 'кладка'), 'semantic_index_version' => null,
+                'lexical_limit' => 16, 'semantic_limit' => 16,
             ]);
             self::assertNotEmpty($plan);
             $encodedPlan = json_encode($plan, JSON_THROW_ON_ERROR);

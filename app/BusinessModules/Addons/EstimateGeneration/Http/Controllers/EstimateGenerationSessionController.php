@@ -13,6 +13,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\CreateEstimateGe
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionListResource;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionResource;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Exceptions\NormativeContextPinUnavailable;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeDatasetPinPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationRegionalContextResolver;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
@@ -34,6 +36,7 @@ final class EstimateGenerationSessionController extends Controller
         private readonly CreateEstimateGenerationSession $createSession,
         private readonly EstimateGenerationRegionalContextResolver $regionalContextResolver,
         private readonly SessionOperationalSnapshotBuilder $operationalSnapshot,
+        private readonly NormativeDatasetPinPolicy $normativePins,
     ) {}
 
     public function index(Request $request, Project $project): JsonResponse
@@ -62,6 +65,7 @@ final class EstimateGenerationSessionController extends Controller
         try {
             $validated = $request->validated();
             $generationMode = EstimateGenerationMode::fromInput($validated['generation_mode'] ?? null)->value;
+            $normativePin = $this->normativePins->resolve(is_string($validated['normative_dataset_version'] ?? null) ? $validated['normative_dataset_version'] : null);
             $session = $this->createSession->handle([
                 'organization_id' => $request->user()->current_organization_id,
                 'project_id' => $project->id,
@@ -74,8 +78,7 @@ final class EstimateGenerationSessionController extends Controller
                     'parameters' => $validated['parameters'] ?? [],
                     'regional_context' => [
                         ...$this->regionalContextResolver->resolve($validated),
-                        'normative_dataset_version' => $validated['normative_dataset_version'] ?? null,
-                        'business_date' => $validated['business_date'] ?? null,
+                        ...$normativePin,
                         'normative_rerank_requested' => ($validated['normative_rerank_requested'] ?? false) === true,
                     ],
                 ]),
@@ -87,6 +90,8 @@ final class EstimateGenerationSessionController extends Controller
                 trans_message('estimate_generation.session_created'),
                 201,
             );
+        } catch (NormativeContextPinUnavailable) {
+            return AdminResponse::error(trans_message('estimate_generation.normative_context_unavailable'), 422);
         } catch (\Throwable) {
             Log::error('[EstimateGeneration] Failed to create session', [
                 'failure_code' => 'session_create_failed',

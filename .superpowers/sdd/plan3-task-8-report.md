@@ -83,6 +83,12 @@ Rollback must run in reverse order. Concurrent index removal cannot be wrapped i
 
 The second corrective pass also introduced an upstream deterministic context pin in `PlanWorkItems` output, a shared bounded reranker model-set resolver, full-pool hard gating before top-N, and explicit combined/lexical/semantic versions in the stage output.
 
+Third corrective deployment requirement: set `ESTIMATE_GENERATION_NORM_APPROVED_DATASET_VERSION` to the exact parsed `fsnb_2022` version approved for generation. Session creation verifies this exact identity server-side. Old clients receive the server policy pin and an immutable server-clock business date; an explicit conflicting client version or an unavailable policy returns HTTP 422 before a session is created.
+
+Backfill progress is persisted in `estimate_normative_retrieval_rollouts` under schema version `normative-retrieval-v1`. The command resumes the stored cursor/target and marks completion atomically; runtime retrieval and index/validation migrations fail closed until the matching completion marker exists.
+
+The third corrective pass moved pin authority fully server-side through `NormativeDatasetPinPolicy`, split retrieval into independently bounded lexical and semantic CTE branches with canonical deduplication, and made the rollout marker a runtime/deployment readiness fence. Final DB-less verification: **52 tests, 144 assertions, 0 failures**; PHPStan/Larastan: **104 paths, 0 errors**. The expanded PostgreSQL contract remains authored but unrun locally.
+
 Second corrective verification:
 
 - DB-less normative, container model-set, attempt-aware usage and pipeline set: **50 tests, 142 assertions, 0 failures**.

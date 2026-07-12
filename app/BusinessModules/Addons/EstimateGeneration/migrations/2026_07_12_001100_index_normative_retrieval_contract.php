@@ -14,6 +14,9 @@ return new class extends Migration
         if (DB::connection()->getDriverName() !== 'pgsql') {
             return;
         }
+        if (! DB::table('estimate_normative_retrieval_rollouts')->where('schema_version', 'normative-retrieval-v1')->where('status', 'complete')->exists()) {
+            throw new RuntimeException('Normative retrieval backfill is incomplete.');
+        }
         DB::statement('CREATE INDEX CONCURRENTLY IF NOT EXISTS estimate_norms_collection_unit_idx ON estimate_norms (collection_id, canonical_unit)');
         DB::statement('CREATE INDEX CONCURRENTLY IF NOT EXISTS estimate_norms_section_dimension_idx ON estimate_norms (section_code, unit_dimension)');
         DB::statement('CREATE INDEX CONCURRENTLY IF NOT EXISTS estimate_norms_search_vector_gin ON estimate_norms USING gin (search_vector)');

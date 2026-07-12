@@ -11,32 +11,48 @@ use Illuminate\Database\ConnectionInterface;
 final readonly class PostgresNormativeCandidateSource implements NormativeCandidateSource
 {
     public const QUERY_CONTRACT = <<<'SQL'
+WITH lexical AS (
+ SELECT n.id, ts_rank_cd(n.search_vector, websearch_to_tsquery('russian', :query)) AS lexical_score, NULL::numeric AS semantic_score
+ FROM estimate_norms n JOIN estimate_norm_collections c ON c.id=n.collection_id JOIN estimate_dataset_versions d ON d.id=c.dataset_version_id
+ WHERE d.source_type='fsnb_2022' AND d.version_key=:lexical_dataset_version AND d.status='parsed'
+  AND n.search_vector @@ websearch_to_tsquery('russian', :query)
+ ORDER BY lexical_score DESC, n.id LIMIT :lexical_limit
+), semantic AS (
+ SELECT s.estimate_norm_id AS id, NULL::real AS lexical_score, s.score AS semantic_score
+ FROM estimate_norm_semantic_scores s JOIN estimate_norms n ON n.id=s.estimate_norm_id JOIN estimate_norm_collections c ON c.id=n.collection_id JOIN estimate_dataset_versions d ON d.id=c.dataset_version_id
+ WHERE d.source_type='fsnb_2022' AND d.version_key=:semantic_dataset_version AND d.status='parsed'
+  AND s.index_version=:semantic_index_version AND s.query_hash=:query_hash
+ ORDER BY s.score DESC, s.estimate_norm_id LIMIT :semantic_limit
+), candidates AS (
+ SELECT id, max(lexical_score) AS lexical_score, max(semantic_score) AS semantic_score FROM (SELECT * FROM lexical UNION ALL SELECT * FROM semantic) p GROUP BY id
+)
 SELECT n.id, c.dataset_version_id, n.code, n.name, n.canonical_unit AS unit, n.unit_dimension,
        n.material, n.technology, n.structure, n.section_code, n.object_type,
        n.region_code, n.valid_from, n.valid_to, d.version_key, d.status,
-       ts_rank_cd(n.search_vector, websearch_to_tsquery('russian', :query)) AS lexical_score,
-       s.score AS semantic_score
-FROM estimate_norms n
+       candidates.lexical_score, candidates.semantic_score
+FROM candidates JOIN estimate_norms n ON n.id=candidates.id
 JOIN estimate_norm_collections c ON c.id = n.collection_id
 JOIN estimate_dataset_versions d ON d.id = c.dataset_version_id
-LEFT JOIN estimate_norm_semantic_scores s ON s.estimate_norm_id = n.id
- AND s.index_version = :semantic_index_version AND s.query_hash = :query_hash
-WHERE d.source_type = 'fsnb_2022' AND d.version_key = :dataset_version AND d.status = 'parsed'
- AND (n.search_vector @@ websearch_to_tsquery('russian', :query) OR s.score IS NOT NULL)
-ORDER BY lexical_score DESC, semantic_score DESC NULLS LAST, n.id ASC
-LIMIT :limit
+ORDER BY n.id
 SQL;
 
     public function __construct(private ConnectionInterface $connection) {}
 
     public function find(int $organizationId, int $projectId, string $datasetVersion, string $query, int $limit, ?string $semanticIndexVersion): array
     {
+        $ready = $this->connection->table('estimate_normative_retrieval_rollouts')
+            ->where('schema_version', NormativeRetrievalBackfillService::VERSION)->where('status', 'complete')->exists();
+        if (! $ready) {
+            throw new \RuntimeException('Normative retrieval rollout is incomplete.');
+        }
         $rows = $this->connection->select(self::QUERY_CONTRACT, [
-            'dataset_version' => $datasetVersion,
+            'lexical_dataset_version' => $datasetVersion,
+            'semantic_dataset_version' => $datasetVersion,
             'query' => mb_substr($query, 0, 1000),
             'query_hash' => hash('sha256', mb_strtolower(trim($query))),
             'semantic_index_version' => $semanticIndexVersion,
-            'limit' => min(128, max(1, $limit)),
+            'lexical_limit' => min(128, max(1, $limit)),
+            'semantic_limit' => min(128, max(1, $limit)),
         ]);
 
         return array_map(static fn (object $row): NormativeCandidateData => new NormativeCandidateData(

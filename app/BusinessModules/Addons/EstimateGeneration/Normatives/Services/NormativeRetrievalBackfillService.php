@@ -9,6 +9,8 @@ use InvalidArgumentException;
 
 final readonly class NormativeRetrievalBackfillService
 {
+    public const VERSION = 'normative-retrieval-v1';
+
     public function __construct(private ConnectionInterface $connection) {}
 
     /** @return array{processed: int, next_cursor: int, complete: bool} */
@@ -40,5 +42,30 @@ WHERE id = ANY(:ids)
 SQL, ['ids' => '{'.implode(',', $ids).'}']);
 
         return ['processed' => count($ids), 'next_cursor' => max($ids), 'complete' => count($ids) < $batchSize];
+    }
+
+    public function resume(int $batchSize): array
+    {
+        try {
+            return $this->connection->transaction(function () use ($batchSize): array {
+                $state = $this->connection->table('estimate_normative_retrieval_rollouts')->where('schema_version', self::VERSION)->lockForUpdate()->first();
+                if ($state === null) {
+                    $target = (int) $this->connection->table('estimate_norms')->max('id');
+                    $this->connection->table('estimate_normative_retrieval_rollouts')->insert(['schema_version' => self::VERSION, 'cursor' => 0, 'target_max_id' => $target, 'status' => 'running', 'started_at' => now(), 'created_at' => now(), 'updated_at' => now()]);
+                    $state = (object) ['cursor' => 0, 'target_max_id' => $target];
+                }
+                $result = $this->backfill((int) $state->cursor, $batchSize);
+                $complete = $result['next_cursor'] >= (int) $state->target_max_id;
+                $this->connection->table('estimate_normative_retrieval_rollouts')->where('schema_version', self::VERSION)->update(['cursor' => $result['next_cursor'], 'status' => $complete ? 'complete' : 'running', 'completed_at' => $complete ? now() : null, 'last_error' => null, 'updated_at' => now()]);
+
+                return [...$result, 'complete' => $complete];
+            });
+        } catch (\Throwable $exception) {
+            $this->connection->table('estimate_normative_retrieval_rollouts')->updateOrInsert(
+                ['schema_version' => self::VERSION],
+                ['status' => 'failed', 'last_error' => mb_substr($exception::class, 0, 255), 'updated_at' => now()],
+            );
+            throw $exception;
+        }
     }
 }

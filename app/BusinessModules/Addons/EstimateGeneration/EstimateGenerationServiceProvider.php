@@ -76,6 +76,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\Qu
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\RollbackRegionalPricePeriodCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\SyncFgiscsBuildingResourcePricesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\SyncFgiscsRegionalPricesCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ApprovedNormativeDatasetLookup;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EloquentApprovedNormativeDatasetLookup;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsBuildingResourcePriceUpdateService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Fgiscs\FgiscsClient;
@@ -92,11 +94,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\Fgi
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeCandidateSource;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeHardGate;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeMatchingWorkflow;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativePinClock;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRerankerModelSet;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRetrievalService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeWorkIntentFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\PostgresNormativeCandidateSource;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\SystemNormativePinClock;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AttemptAwareNormativeLlmClient;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EloquentAiUsageStore;
@@ -334,6 +338,8 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(NormativeCandidateSearchService::class);
         $this->app->singleton(NormativeCandidateSource::class, PostgresNormativeCandidateSource::class);
         $this->app->singleton(NormativeHardGate::class);
+        $this->app->singleton(ApprovedNormativeDatasetLookup::class, EloquentApprovedNormativeDatasetLookup::class);
+        $this->app->singleton(NormativePinClock::class, SystemNormativePinClock::class);
         $this->app->singleton(NormativeRerankerModelSet::class);
         $this->app->singleton(NormativeMatchingWorkflow::class);
         $this->app->singleton(NormativeWorkIntentFactory::class);
