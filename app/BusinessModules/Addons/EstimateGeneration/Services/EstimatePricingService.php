@@ -126,8 +126,7 @@ class EstimatePricingService
         foreach ($resourceSnapshots as $resourceSnapshot) {
             $base = $base->plus($resourceSnapshot['final_amount']);
         }
-        $references = array_column($resourceSnapshots, 'source_reference');
-        sort($references, SORT_STRING);
+        $manifest = self::canonicalEvidenceManifest($resourceSnapshots);
 
         return new PriceSnapshotData(
             regionId: $first['region_id'],
@@ -135,7 +134,7 @@ class EstimatePricingService
             periodId: $first['period_id'],
             versionId: $first['version_id'],
             sourceType: 'regional_resource_aggregate',
-            sourceReference: 'sha256:'.hash('sha256', implode('|', $references)),
+            sourceReference: 'sha256:'.hash('sha256', $manifest),
             baseAmount: (string) $base->toScale(2, RoundingMode::HalfUp),
             coefficients: [
                 'work_cost' => (string) $workCost->toScale(2, RoundingMode::HalfUp),
@@ -145,6 +144,14 @@ class EstimatePricingService
             currency: $first['currency'],
             capturedAt: now()->toIso8601String(),
         );
+    }
+
+    private static function canonicalEvidenceManifest(array $resourceSnapshots): string
+    {
+        $references = array_column($resourceSnapshots, 'source_reference');
+        sort($references, SORT_STRING);
+
+        return implode('|', $references);
     }
 
     private function blockMissingSnapshot(array &$workItem): void
@@ -157,7 +164,7 @@ class EstimatePricingService
         $workItem['price_source'] = null;
         $workItem['price_snapshot'] = null;
         $workItem['pricing_status'] = 'not_calculated';
-        $workItem['pricing_blocker'] = 'missing_price_snapshot';
+        $workItem['pricing_blocker'] ??= 'missing_price_snapshot';
         $workItem['validation_flags'] = array_values(array_unique([
             ...(is_array($workItem['validation_flags'] ?? null) ? $workItem['validation_flags'] : []),
             'missing_price_snapshot',

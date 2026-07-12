@@ -75,15 +75,41 @@ final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
             $this->assertRejected(fn () => DB::table('estimate_generation_package_items')->insert([
                 'package_id' => $packageId, 'key' => 'missing', 'name' => 'Missing', 'item_type' => 'priced_work', 'total_cost' => '1.00',
             ]));
-            $forged = $priced['price_snapshot'];
-            $forged['final_amount'] = '1.00';
-            $this->assertRejected(fn () => DB::table('estimate_generation_package_items')->insert([
-                'package_id' => $packageId, 'key' => 'forged', 'name' => 'Forged', 'item_type' => 'priced_work',
-                'total_cost' => '2.00', 'price_snapshot' => json_encode($forged, JSON_THROW_ON_ERROR),
-            ]));
+            $invalidSnapshots = [
+                'empty-object' => [],
+                'empty-evidence' => $this->withEvidence($priced['price_snapshot'], []),
+                'object-without-evidence' => $this->withEvidence($priced['price_snapshot'], null),
+                'evidence-without-keys' => $this->withEvidence($priced['price_snapshot'], [[]]),
+                'fractional-id' => array_replace($priced['price_snapshot'], ['region_id' => 1.5]),
+                'resource-arithmetic' => $this->mutateEvidence($priced['price_snapshot'], 'final_amount', '249.99'),
+                'aggregate-base' => array_replace($priced['price_snapshot'], ['base_amount' => '249.99']),
+                'aggregate-work' => array_replace_recursive($priced['price_snapshot'], ['coefficients' => ['work_cost' => '249.99']]),
+                'aggregate-final' => array_replace($priced['price_snapshot'], ['final_amount' => '499.99']),
+                'wrong-hash' => array_replace($priced['price_snapshot'], ['source_reference' => 'sha256:'.str_repeat('0', 64)]),
+            ];
+            foreach ($invalidSnapshots as $key => $snapshot) {
+                $this->assertRejected(fn () => DB::table('estimate_generation_package_items')->insert([
+                    'package_id' => $packageId, 'key' => $key, 'name' => 'Forged', 'item_type' => 'priced_work',
+                    'total_cost' => $snapshot['final_amount'] ?? '1.00', 'price_snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR),
+                ]));
+            }
         } finally {
             DB::rollBack();
         }
+    }
+
+    private function mutateEvidence(array $snapshot, string $key, mixed $value): array
+    {
+        $snapshot['coefficients']['resource_evidence'][0][$key] = $value;
+
+        return $snapshot;
+    }
+
+    private function withEvidence(array $snapshot, mixed $evidence): array
+    {
+        $snapshot['coefficients']['resource_evidence'] = $evidence;
+
+        return $snapshot;
     }
 
     private function assertRejected(callable $write): void

@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration\Pricing;
 
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\MissingRegionalPrice;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveRegionalPrice;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -66,6 +67,28 @@ final class ResolveRegionalPriceTest extends TestCase
 
         self::assertSame('0.1000', $snapshot->baseAmount);
         self::assertSame('0.30', $snapshot->finalAmount);
+    }
+
+    #[DataProvider('invalidPositiveIdentifiers')]
+    #[Test]
+    public function identifiers_must_be_positive_integers_or_canonical_digit_strings(mixed $invalid): void
+    {
+        $resolver = new ResolveRegionalPrice(static fn (int $priceId): never => throw new \RuntimeException('Invalid identifier reached lookup.'));
+
+        $this->expectException(MissingRegionalPrice::class);
+        $resolver->handle(['price_id' => $invalid, 'quantity' => '1'], $this->context());
+    }
+
+    public static function invalidPositiveIdentifiers(): array
+    {
+        return [
+            'decimal' => ['1.5'],
+            'exponent' => ['1e2'],
+            'plus sign' => ['+1'],
+            'leading zero' => ['01'],
+            'zero' => [0],
+            'overflow' => [(string) PHP_INT_MAX.'0'],
+        ];
     }
 
     private function resource(): array

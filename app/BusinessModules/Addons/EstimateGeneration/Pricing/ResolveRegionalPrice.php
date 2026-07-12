@@ -15,7 +15,7 @@ class ResolveRegionalPrice
 
     public function handle(array $resource, array $regionalContext): PriceSnapshotData
     {
-        $priceId = $this->positiveInt($resource['price_id'] ?? null);
+        $priceId = $this->positiveInt($resource['price_id'] ?? $resource['normative_ref']['price_id'] ?? null);
         $regionId = $this->positiveInt($regionalContext['region_id'] ?? null);
         $zoneId = $this->positiveInt($regionalContext['price_zone_id'] ?? null);
         $periodId = $this->positiveInt($regionalContext['period_id'] ?? null);
@@ -82,7 +82,21 @@ class ResolveRegionalPrice
 
     private function positiveInt(mixed $value): ?int
     {
-        return is_numeric($value) && (int) $value > 0 ? (int) $value : null;
+        if (is_int($value)) {
+            return $value > 0 ? $value : null;
+        }
+
+        if (! is_string($value) || preg_match('/^[1-9][0-9]*$/D', $value) !== 1) {
+            return null;
+        }
+
+        $normalizedMaximum = (string) PHP_INT_MAX;
+        if (strlen($value) > strlen($normalizedMaximum)
+            || (strlen($value) === strlen($normalizedMaximum) && strcmp($value, $normalizedMaximum) > 0)) {
+            return null;
+        }
+
+        return (int) $value;
     }
 
     private function decimal(mixed $value, int $scale): string

@@ -23,39 +23,60 @@ return new class extends Migration
 CREATE OR REPLACE FUNCTION eg_price_resource_evidence_valid(snapshot jsonb) RETURNS boolean
 LANGUAGE plpgsql IMMUTABLE STRICT AS $$
 DECLARE evidence jsonb;
+DECLARE evidence_count integer := 0;
+DECLARE resource_total numeric := 0;
+DECLARE manifest text;
 BEGIN
+    IF NOT ((snapshot ?& ARRAY['region_id','zone_id','period_id','version_id','source_type','source_reference','base_amount','coefficients','final_amount','currency','captured_at']) IS TRUE)
+       OR NOT ((snapshot->'coefficients' ?& ARRAY['work_cost','resource_evidence']) IS TRUE)
+       OR NOT (jsonb_typeof(snapshot->'coefficients'->'resource_evidence') = 'array') IS TRUE
+       OR NOT (jsonb_array_length(snapshot->'coefficients'->'resource_evidence') > 0) IS TRUE THEN
+        RETURN false;
+    END IF;
     FOR evidence IN SELECT value FROM jsonb_array_elements(snapshot->'coefficients'->'resource_evidence') LOOP
-        IF jsonb_typeof(evidence) <> 'object'
-           OR evidence - ARRAY['region_id','zone_id','period_id','version_id','source_type','source_reference','base_amount','coefficients','final_amount','currency','captured_at'] <> '{}'::jsonb
-           OR evidence->>'source_type' NOT IN ('fgiscs','regional_catalog','fsbc','fgis_labor_prices')
-           OR evidence->>'source_reference' !~ '^estimate_resource_prices:[1-9][0-9]*$'
-           OR evidence->>'base_amount' !~ '^[0-9]+(\.[0-9]{4})$'
-           OR evidence->>'final_amount' !~ '^[0-9]+(\.[0-9]{2})$'
-           OR evidence->>'currency' <> snapshot->>'currency'
-           OR evidence->>'region_id' <> snapshot->>'region_id'
-           OR evidence->>'zone_id' <> snapshot->>'zone_id'
-           OR evidence->>'period_id' <> snapshot->>'period_id'
-           OR evidence->>'version_id' <> snapshot->>'version_id'
-           OR jsonb_typeof(evidence->'coefficients') <> 'object'
-           OR (evidence->'coefficients') - ARRAY['quantity'] <> '{}'::jsonb
-           OR evidence->'coefficients'->>'quantity' !~ '^[0-9]+(\.[0-9]{6})$' THEN
+        evidence_count := evidence_count + 1;
+        IF NOT (jsonb_typeof(evidence) = 'object') IS TRUE
+           OR NOT ((evidence ?& ARRAY['region_id','zone_id','period_id','version_id','source_type','source_reference','base_amount','coefficients','final_amount','currency','captured_at']) IS TRUE)
+           OR NOT (evidence - ARRAY['region_id','zone_id','period_id','version_id','source_type','source_reference','base_amount','coefficients','final_amount','currency','captured_at'] = '{}'::jsonb) IS TRUE
+           OR NOT (jsonb_typeof(evidence->'region_id') = 'number' AND jsonb_typeof(evidence->'zone_id') = 'number' AND jsonb_typeof(evidence->'period_id') = 'number' AND jsonb_typeof(evidence->'version_id') = 'number') IS TRUE
+           OR NOT ((evidence->>'region_id')::numeric = trunc((evidence->>'region_id')::numeric) AND (evidence->>'region_id')::numeric > 0) IS TRUE
+           OR NOT ((evidence->>'zone_id')::numeric = trunc((evidence->>'zone_id')::numeric) AND (evidence->>'zone_id')::numeric > 0) IS TRUE
+           OR NOT ((evidence->>'period_id')::numeric = trunc((evidence->>'period_id')::numeric) AND (evidence->>'period_id')::numeric > 0) IS TRUE
+           OR NOT ((evidence->>'version_id')::numeric = trunc((evidence->>'version_id')::numeric) AND (evidence->>'version_id')::numeric > 0) IS TRUE
+           OR NOT (jsonb_typeof(evidence->'source_type') = 'string' AND evidence->>'source_type' IN ('fgiscs','regional_catalog','fsbc','fgis_labor_prices')) IS TRUE
+           OR NOT (jsonb_typeof(evidence->'source_reference') = 'string' AND evidence->>'source_reference' ~ '^estimate_resource_prices:[1-9][0-9]*$') IS TRUE
+           OR NOT (jsonb_typeof(evidence->'base_amount') = 'string' AND evidence->>'base_amount' ~ '^[0-9]+(\.[0-9]{4})$') IS TRUE
+           OR NOT (jsonb_typeof(evidence->'final_amount') = 'string' AND evidence->>'final_amount' ~ '^[0-9]+(\.[0-9]{2})$') IS TRUE
+           OR NOT (jsonb_typeof(evidence->'currency') = 'string' AND evidence->>'currency' = snapshot->>'currency') IS TRUE
+           OR NOT (evidence->>'region_id' = snapshot->>'region_id' AND evidence->>'zone_id' = snapshot->>'zone_id' AND evidence->>'period_id' = snapshot->>'period_id' AND evidence->>'version_id' = snapshot->>'version_id') IS TRUE
+           OR NOT (jsonb_typeof(evidence->'captured_at') = 'string') IS TRUE
+           OR NOT (jsonb_typeof(evidence->'coefficients') = 'object' AND (evidence->'coefficients' ?& ARRAY['quantity']) AND (evidence->'coefficients') - ARRAY['quantity'] = '{}'::jsonb) IS TRUE
+           OR NOT (jsonb_typeof(evidence->'coefficients'->'quantity') = 'string' AND evidence->'coefficients'->>'quantity' ~ '^[0-9]+(\.[0-9]{6})$') IS TRUE
+           OR NOT ((evidence->>'final_amount')::numeric = round((evidence->>'base_amount')::numeric * (evidence->'coefficients'->>'quantity')::numeric, 2)) IS TRUE THEN
             RETURN false;
         END IF;
+        resource_total := resource_total + (evidence->>'final_amount')::numeric;
     END LOOP;
-    RETURN true;
+    SELECT string_agg(value->>'source_reference', '|' ORDER BY value->>'source_reference') INTO manifest
+    FROM jsonb_array_elements(snapshot->'coefficients'->'resource_evidence');
+    RETURN (evidence_count > 0
+        AND (snapshot->>'base_amount')::numeric = round(resource_total, 2)
+        AND (snapshot->>'final_amount')::numeric = round(resource_total + (snapshot->'coefficients'->>'work_cost')::numeric, 2)
+        AND snapshot->>'source_reference' = 'sha256:' || encode(sha256(convert_to(manifest, 'UTF8')), 'hex')) IS TRUE;
 EXCEPTION WHEN others THEN
     RETURN false;
 END;
 $$;
 SQL);
-        DB::statement(<<<'SQL'
+        DB::unprepared(<<<'SQL'
 ALTER TABLE estimate_generation_package_items
 ADD CONSTRAINT eg_package_items_price_snapshot_required_ck
 CHECK (total_cost <= 0 OR price_snapshot IS NOT NULL) NOT VALID,
 ADD CONSTRAINT eg_package_items_price_snapshot_shape_ck
 CHECK (
     price_snapshot IS NULL OR (
-        jsonb_typeof(price_snapshot) = 'object'
+        (jsonb_typeof(price_snapshot) = 'object') IS TRUE
+        AND (price_snapshot ?& ARRAY['region_id','zone_id','period_id','version_id','source_type','source_reference','base_amount','coefficients','final_amount','currency','captured_at']) IS TRUE
         AND price_snapshot - ARRAY['region_id','zone_id','period_id','version_id','source_type','source_reference','base_amount','coefficients','final_amount','currency','captured_at'] = '{}'::jsonb
         AND jsonb_typeof(price_snapshot->'region_id') = 'number'
         AND jsonb_typeof(price_snapshot->'zone_id') = 'number'
@@ -79,12 +100,13 @@ CHECK (
         AND price_snapshot->>'final_amount' ~ '^[0-9]+(\.[0-9]{1,2})?$'
         AND (price_snapshot->>'final_amount')::numeric = total_cost
         AND price_snapshot->>'captured_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?[+-][0-9]{2}:[0-9]{2}$'
-        AND (price_snapshot->'coefficients') - ARRAY['work_cost','resource_evidence'] = '{}'::jsonb
+        AND (price_snapshot->'coefficients' ?& ARRAY['work_cost','resource_evidence']) IS TRUE
+        AND ((price_snapshot->'coefficients') - ARRAY['work_cost','resource_evidence'] = '{}'::jsonb) IS TRUE
         AND jsonb_typeof(price_snapshot->'coefficients'->'work_cost') = 'string'
         AND price_snapshot->'coefficients'->>'work_cost' ~ '^[0-9]+(\.[0-9]{1,2})?$'
         AND jsonb_typeof(price_snapshot->'coefficients'->'resource_evidence') = 'array'
         AND jsonb_array_length(price_snapshot->'coefficients'->'resource_evidence') > 0
-        AND eg_price_resource_evidence_valid(price_snapshot)
+        AND eg_price_resource_evidence_valid(price_snapshot) IS TRUE
         AND octet_length(price_snapshot::text) <= 262144
     )
 ) NOT VALID
