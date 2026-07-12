@@ -59,6 +59,7 @@ BEGIN
         OR jsonb_typeof(item->'entity_handle') <> 'string' OR length(item->>'entity_handle') NOT BETWEEN 1 AND 512
         OR jsonb_typeof(item->'point_indexes') <> 'array' OR jsonb_array_length(item->'point_indexes') <> 2
         OR jsonb_typeof(item->'point_indexes'->0) <> 'number' OR jsonb_typeof(item->'point_indexes'->1) <> 'number'
+        OR item->'point_indexes'->>0 !~ '^(0|[1-9][0-9]*)$' OR item->'point_indexes'->>1 !~ '^(0|[1-9][0-9]*)$'
         OR (item->'point_indexes'->>0)::integer < 0 OR (item->'point_indexes'->>1)::integer < 0
         OR item->'point_indexes'->0 = item->'point_indexes'->1 OR jsonb_typeof(item->'real_world_value') <> 'number'
         OR (item->>'real_world_value')::numeric <= 0 OR item->>'unit' NOT IN ('mm','cm','m','in','ft') THEN RETURN false; END IF;
@@ -67,6 +68,7 @@ BEGIN
         OR jsonb_typeof(item->'value_handle') <> 'string' OR length(item->>'value_handle') NOT BETWEEN 1 AND 512 OR jsonb_typeof(item->'entity_handle') <> 'string' OR length(item->>'entity_handle') NOT BETWEEN 1 AND 512
         OR jsonb_typeof(item->'point_indexes') <> 'array' OR jsonb_array_length(item->'point_indexes') <> 2
         OR jsonb_typeof(item->'point_indexes'->0) <> 'number' OR jsonb_typeof(item->'point_indexes'->1) <> 'number'
+        OR item->'point_indexes'->>0 !~ '^(0|[1-9][0-9]*)$' OR item->'point_indexes'->>1 !~ '^(0|[1-9][0-9]*)$'
         OR (item->'point_indexes'->>0)::integer < 0 OR (item->'point_indexes'->>1)::integer < 0 OR item->'point_indexes'->0 = item->'point_indexes'->1 THEN RETURN false; END IF;
     ELSIF role IN ('unit_declaration','cad_header') THEN
       IF (item - ARRAY['role','value_handle']) <> '{}'::jsonb OR NOT item ?& ARRAY['role','value_handle'] OR jsonb_typeof(item->'value_handle') <> 'string' OR length(item->>'value_handle') NOT BETWEEN 1 AND 512 THEN RETURN false; END IF;

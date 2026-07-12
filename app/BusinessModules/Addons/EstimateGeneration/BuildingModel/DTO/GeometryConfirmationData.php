@@ -88,7 +88,8 @@ final readonly class GeometryConfirmationData
             throw new InvalidArgumentException('geometry_confirmation_scale_evidence_invalid');
         }
         if ($evidence['role'] === 'measured_segment'
-            && (! is_numeric($evidence['real_world_value']) || (float) $evidence['real_world_value'] <= 0
+            && ((! is_int($evidence['real_world_value']) && ! is_float($evidence['real_world_value']))
+                || ! is_finite((float) $evidence['real_world_value']) || (float) $evidence['real_world_value'] <= 0
                 || ! in_array($evidence['unit'], ['mm', 'cm', 'm', 'in', 'ft'], true))) {
             throw new InvalidArgumentException('geometry_confirmation_scale_evidence_invalid');
         }

@@ -16,6 +16,7 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelRep
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelStore;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentBuildingModelStore;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\FloorData;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\GeometryConfirmationData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
@@ -37,6 +38,8 @@ use Illuminate\Support\Facades\Queue;
 use Mockery;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\Attributes\DataProviderExternal;
+use Tests\Support\EstimateGeneration\GeometryConfirmationParityCases;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
 #[Group('postgres-contract')]
@@ -50,6 +53,38 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
             new EloquentBuildingModelStore($app->make('db')->connection()));
 
         return $app;
+    }
+
+    #[Test]
+    #[DataProviderExternal(GeometryConfirmationParityCases::class, 'cases')]
+    public function geometry_confirmation_number_contract_has_php_postgres_parity(mixed $realValue, array $indexes, bool $valid): void
+    {
+        $this->requirePostgres();
+        $payload = GeometryConfirmationParityCases::payload($realValue, $indexes);
+        $phpAccepted = true;
+        try {
+            GeometryConfirmationData::fromArray($payload);
+        } catch (\InvalidArgumentException) {
+            $phpAccepted = false;
+        }
+        self::assertSame($valid, $phpAccepted);
+        try {
+            $encoded = json_encode($payload, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION);
+        } catch (\JsonException) {
+            self::assertFalse($valid);
+
+            return;
+        }
+        DB::statement('DROP TABLE IF EXISTS geometry_confirmation_numeric_parity');
+        DB::statement('CREATE TEMP TABLE geometry_confirmation_numeric_parity (payload jsonb NOT NULL CHECK (eg_geometry_confirmation_semantic_valid_v1(payload)))');
+        try {
+            DB::insert('INSERT INTO geometry_confirmation_numeric_parity(payload) VALUES (CAST(? AS jsonb))', [$encoded]);
+            self::assertTrue($valid);
+        } catch (QueryException) {
+            self::assertFalse($valid);
+        } finally {
+            DB::statement('DROP TABLE geometry_confirmation_numeric_parity');
+        }
     }
 
     #[Test]
@@ -224,6 +259,11 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
         $url = "/api/v1/admin/projects/{$fixture['project']->id}/estimate-generation/sessions/{$fixture['session']->id}/geometry/confirm";
         $before = $this->counts($fixture);
         try {
+            $typedInvalid = $this->sourcePayload($fixture);
+            $typedInvalid['source_confirmation']['scale_evidence'][0]['real_world_value'] = '4000';
+            $this->withHeader('Authorization', 'Bearer '.JWTAuth::fromUser($fixture['user']))
+                ->postJson($url, $typedInvalid)->assertUnprocessable();
+            self::assertSame($before, $this->counts($fixture));
             $this->withHeader('Authorization', 'Bearer '.JWTAuth::fromUser($fixture['user']))
                 ->postJson($url, [...$this->sourcePayload($fixture), 'input_version' => 'sha256:'.str_repeat('f', 64)])->assertConflict();
             self::assertSame($before, $this->counts($fixture));
