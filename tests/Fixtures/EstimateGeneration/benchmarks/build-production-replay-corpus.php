@@ -51,7 +51,36 @@ final class CapturingReranker implements NormativeCandidateRerankerInterface
  }
 }
 
-$root = __DIR__;
+$sourceRoot = __DIR__;
+$knownCases = ['vector-pdf-001', 'scanned-pdf-001', 'dwg-layout-001', 'dimensioned-raster-001', 'freehand-review-001', 'engineering-layout-001'];
+$only = getenv('BUILD_PRODUCTION_REPLAY_CASE');
+$only = $only === false ? '' : $only;
+$geometryOnly = getenv('BUILD_PRODUCTION_REPLAY_GEOMETRY_ONLY');
+$geometryOnly = $geometryOnly === false ? '' : $geometryOnly;
+if (($only !== '' && ! in_array($only, $knownCases, true)) || ! in_array($geometryOnly, ['', '1'], true)) {
+ builderReject('partial_mode_invalid');
+}
+$partial = $only !== '' || $geometryOnly === '1';
+$output = getenv('BUILD_PRODUCTION_REPLAY_OUTPUT_DIR');
+$output = $output === false ? '' : $output;
+if ($partial && $output === '') {
+ builderReject('partial_output_dir_required');
+}
+$staging = null;
+if ($partial) {
+ $output = isolatedOutputPath($output, $sourceRoot);
+ $parent = dirname($output);
+ $staging = $parent.DIRECTORY_SEPARATOR.'.'.basename($output).'.staging-'.bin2hex(random_bytes(8));
+ if (! mkdir($staging, 0700, true)) throw new RuntimeException('partial_staging_failed');
+ register_shutdown_function(static function () use (&$staging): void {
+  if (is_string($staging) && is_dir($staging)) removeTree($staging);
+ });
+ $root = $staging;
+ foreach (['catalogs', 'projections', 'recordings', 'regression'] as $directory) mkdir("$root/$directory", 0700, true);
+} else {
+ if ($output !== '' && normalizePath($output) !== normalizePath($sourceRoot)) builderReject('full_output_dir_invalid');
+ $root = $sourceRoot;
+}
 $manifestSha = getenv('BENCHMARK_MANIFEST_SHA256') ?: str_repeat('0', 64);
 $builder = new RecordedFixtureCaptureBuilder;
 $specs = [
@@ -65,7 +94,7 @@ $specs = [
 $inventory = [];
 $recordingDescriptors = [];
 foreach ($specs as [$slug, $type, $filename, $source, $port, $intent]) {
- if (($only=getenv('BUILD_PRODUCTION_REPLAY_CASE'))!==false && $only!=='' && $only!==$slug) { continue; }
+ if ($only !== '' && $only !== $slug) { continue; }
  $id = 'reg-replay-'.$slug;
  $directory = "$root/regression/replay-$slug";
  is_dir($directory) || mkdir($directory, 0777, true);
@@ -217,6 +246,7 @@ foreach ($specs as [$slug, $type, $filename, $source, $port, $intent]) {
  unset($plannerRecording, $rerankerRecording, $confirmationRecording);
 }
 writeJson("$root/production-replay-corpus-inventory.json", ['schema_version'=>1,'cases'=>$inventory]);
+if (! $partial) {
 refreshBaselineCatalog($root, $builder, [
  'case_id'=>'reg-replay-vector-wall-opening-001','slug'=>'vector','geometry'=>'vector-geometry.json','planner'=>'vector-planner.json',
  'reranker'=>'vector-reranker.json','catalog'=>'vector-wall-opening-v1.json','projection'=>'vector-wall-opening-v1.json',
@@ -243,7 +273,9 @@ refreshBaselineCatalog($root, $builder, [
  'price_id_map'=>[11201=>438571,11202=>892643],
  'decision'=>decision(1102,'fsnb-2026.1-vision','11-02-001-01',['cf8bb01ba48bf05fbbdcdf3321d84f378272de8df19b847cb069142eca370574','22626fe66eb72ca95a342f23f4ee81455fb129dd2b2ea7f037051688772e805c'],'catalog:vision:cast-b25'),
 ]);
-$recordingManifest=json_decode((string)file_get_contents("$root/recordings/manifest.json"),true,32,JSON_THROW_ON_ERROR);
+}
+$recordingManifest=$partial ? ['schema_version'=>1,'fixtures'=>[]]
+ : json_decode((string)file_get_contents("$root/recordings/manifest.json"),true,32,JSON_THROW_ON_ERROR);
 $recordingManifest['fixtures']=array_map(static function(array $row)use($root):array{
  $path="$root/{$row['locator']}";
  return is_file($path)?[...$row,'sha256'=>hash_file('sha256',$path)]:$row;
@@ -251,8 +283,42 @@ $recordingManifest['fixtures']=array_map(static function(array $row)use($root):a
 $recordingManifest['fixtures']=array_values(array_filter($recordingManifest['fixtures'],static fn(array $row):bool=>!str_starts_with($row['case_id'],'reg-replay-')||in_array($row['case_id'],['reg-replay-vector-wall-opening-001','reg-replay-vision-sketch-001'],true)));
 $recordingManifest['fixtures']=[...$recordingManifest['fixtures'],...$recordingDescriptors];
 writeJson("$root/recordings/manifest.json",$recordingManifest);
+if ($partial) {
+ $sourceManifest=json_decode((string)file_get_contents("$sourceRoot/production-replay-manifest.json"),true,64,JSON_THROW_ON_ERROR);
+ $caseIds=array_column($inventory,'id');
+ $sourceManifest['cases']=array_values(array_filter($sourceManifest['cases'],static fn(array $case):bool=>in_array($case['id'],$caseIds,true)));
+ foreach($sourceManifest['cases'] as $case){
+  $expected=$case['expected_locator'];$target="$root/$expected";is_dir(dirname($target))||mkdir(dirname($target),0700,true);
+  if(!copy("$sourceRoot/$expected",$target))throw new RuntimeException('partial_expected_copy_failed');
+ }
+ writeJson("$root/production-replay-manifest.json",$sourceManifest);
+ publishIsolatedOutput($root,$output);
+ $staging=null;
+}
 
 function writeJson(string $path, array $data): void { file_put_contents($path, json_encode($data, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_PRESERVE_ZERO_FRACTION|JSON_THROW_ON_ERROR)."\n"); }
+
+function isolatedOutputPath(string $path,string $sourceRoot): string
+{
+ $portable=str_replace('\\','/',$path);
+ if(str_contains($portable,'/../')||str_ends_with($portable,'/..'))builderReject('partial_output_dir_unsafe');
+ if(!preg_match('#^(?:[A-Za-z]:[\\\\/]|/)#',$path))builderReject('partial_output_dir_unsafe');
+ $parent=realpath(dirname($path));
+ if($parent===false||is_link(dirname($path))||pathHasLink(dirname($path)))builderReject('partial_output_dir_unsafe');
+ $candidate=$parent.DIRECTORY_SEPARATOR.basename($path);$resolved=normalizePath($candidate);
+ $repo=normalizePath(dirname(__DIR__,4));$source=normalizePath($sourceRoot);
+ if($resolved===$source||str_starts_with($resolved,$source.'/')||$resolved===$repo||str_starts_with($resolved,$repo.'/'))builderReject('partial_output_dir_unsafe');
+ if(file_exists($path)||is_link($path)){
+  $existing=realpath($path);
+  if(is_link($path)||!is_dir($path)||$existing===false||normalizePath($existing)!==$resolved||pathHasLink($path)||(new FilesystemIterator($path))->valid())builderReject('partial_output_dir_unsafe');
+ }
+ return $candidate;
+}
+function normalizePath(string $path):string{return rtrim(strtolower(str_replace('\\','/',trim($path))),'/');}
+function builderReject(string $code):never{fwrite(STDERR,$code.PHP_EOL);exit(2);}
+function pathHasLink(string $path):bool{$current=$path;while($current!==dirname($current)){if(is_link($current))return true;$current=dirname($current);}return is_link($current);}
+function publishIsolatedOutput(string $staging,string $output):void{if(is_dir($output)&&!rmdir($output))throw new RuntimeException('partial_output_publish_failed');if(!rename($staging,$output))throw new RuntimeException('partial_output_publish_failed');}
+function removeTree(string $path):void{$iterator=new RecursiveIteratorIterator(new RecursiveDirectoryIterator($path,FilesystemIterator::SKIP_DOTS),RecursiveIteratorIterator::CHILD_FIRST);foreach($iterator as $item){$item->isDir()?rmdir($item->getPathname()):unlink($item->getPathname());}rmdir($path);}
 
 function refreshBaselineCatalog(string $root, RecordedFixtureCaptureBuilder $builder, array $spec): void
 {
@@ -321,7 +387,7 @@ function engineering(): string { return '<svg xmlns="http://www.w3.org/2000/svg"
 function dwg(): string { $b=@file_get_contents(dirname(__DIR__).'/Vision/simple-house.dwg');if(is_string($b))return $b;throw new RuntimeException('dwg fixture missing'); }
 function runCapture(array $command): array {$json=shell_exec(implode(' ',array_map('escapeshellarg',$command)));if(!is_string($json)||$json==='')throw new RuntimeException('geometry capture failed');return json_decode($json,true,128,JSON_THROW_ON_ERROR);}
 function captureVectorPdf(string $path): array {return runCapture(['python',dirname(__DIR__,4).'/app/BusinessModules/Addons/EstimateGeneration/bin/pdf_geometry_extract.py','--input',$path,'--workspace',dirname($path),'--contract-vector']);}
-function captureDwg(string $path): array {$binary=getenv('LIBREDWG_DWGREAD_BINARY')?:getenv('USERPROFILE').'/.cache/most-libredwg/0.13.4/win64/dwgread.exe';return runCapture(['python',dirname(__DIR__,4).'/app/BusinessModules/Addons/EstimateGeneration/bin/cad_geometry_extract.py','--input',$path,'--workspace',dirname($path),'--dwgread',$binary]);}
+function captureDwg(string $path): array {$binary=getenv('LIBREDWG_DWGREAD_BINARY')?:getenv('USERPROFILE').'/.cache/most-libredwg/0.13.4/win64/dwgread.exe';$workspace=sys_get_temp_dir().DIRECTORY_SEPARATOR.'most-replay-dwg-'.bin2hex(random_bytes(8));if(!mkdir($workspace,0700,true))throw new RuntimeException('dwg_workspace_failed');$input=$workspace.DIRECTORY_SEPARATOR.'input.dwg';if(!copy($path,$input)){removeTree($workspace);throw new RuntimeException('dwg_workspace_failed');}try{return runCapture(['python',dirname(__DIR__,4).'/app/BusinessModules/Addons/EstimateGeneration/bin/cad_geometry_extract.py','--input',$input,'--workspace',$workspace,'--dwgread',$binary]);}finally{removeTree($workspace);}}
 function parserProof(string $source,array $payload): array {$canonical=json_encode($payload,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_PRESERVE_ZERO_FRACTION|JSON_THROW_ON_ERROR);return ['schema_version'=>1,'source_sha256'=>hash('sha256',$source),'runtime_version'=>$payload['runtime_version'],'canonical_output_sha256'=>hash('sha256',$canonical),'entity_count'=>count($payload['entities']),'text_count'=>count($payload['texts']),'dimension_count'=>count($payload['dimensions'])];}
 function visionFormat(string $intent): string {return match($intent){'scanned_pdf'=>'raster_pdf','dimensioned_raster'=>'ppm',default=>'svg'};}
 function visionTrace(string $intent,string $sha): array {
