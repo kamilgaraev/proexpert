@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration\Benchmark;
 
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationTrainingDatasetJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationTrainingDataset;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Training\EstimateGenerationTrainingDatasetService;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
 
@@ -35,7 +38,15 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
         $migration = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001700_rebuild_estimate_generation_training_and_benchmarks.php';
         $hardening = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001800_harden_estimate_generation_training_and_benchmarks.php';
         $edgeHardening = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001900_close_training_benchmark_edge_contracts.php';
+        $storageHardening = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_002000_enforce_training_benchmark_storage_contracts.php';
         if (\Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_training_datasets', 'dataset_key')) {
+            if (\Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_training_datasets', 'processing_token')
+                && ! \Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_benchmark_runs', 'case_results_version_scheme')) {
+                DB::statement('ALTER TABLE estimate_generation_training_datasets DROP COLUMN processing_token');
+            }
+            if (\Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_benchmark_runs', 'case_results_version_scheme')) {
+                $storageHardening->down();
+            }
             if (\Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_benchmark_runs', 'case_results_sha256')) {
                 $edgeHardening->down();
             }
@@ -48,6 +59,7 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
         $migration->up();
         $hardening->up();
         $edgeHardening->up();
+        $storageHardening->up();
 
         $organizationId = (int) DB::table('organizations')->insertGetId(['name' => 'Contract organization A']);
         $otherOrganizationId = (int) DB::table('organizations')->insertGetId(['name' => 'Contract organization B']);
@@ -83,6 +95,8 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
         }
 
         $this->assertRejected(fn () => DB::table('estimate_generation_training_examples')->where('id', $exampleId)->update(['work_name' => 'Изменено']));
+        $this->assertRejected(fn () => DB::table('estimate_generation_training_examples')->where('id', $exampleId)->update(['reviewed_by' => null, 'reviewed_at' => null]));
+        $this->assertRejected(fn () => DB::table('estimate_generation_training_examples')->where('id', $exampleId)->update(['quality_score' => 0.1]));
         $this->assertRejected(fn () => DB::table('estimate_generation_training_examples')->insert([
             'training_dataset_id' => $datasetId, 'organization_id' => $organizationId, 'dataset_version' => 1, 'source_row_hash' => hash('sha256', 'late-row'),
             'work_name' => 'Поздняя работа', 'status' => 'pending', 'created_at' => now(), 'updated_at' => now(),
@@ -122,13 +136,48 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
             'status' => 'pending', 'created_at' => now(), 'updated_at' => now(),
         ]));
 
+        $queueDatasetId = $this->insertDataset($organizationId, $reviewerId, fake()->uuid(), 1, 'development', 'draft');
+        $queueDataset = EstimateGenerationTrainingDataset::query()->findOrFail($queueDatasetId);
+        $service = app(EstimateGenerationTrainingDatasetService::class);
+        Queue::fake();
+        $service->queueProcessing($queueDataset);
+        try {
+            $service->queueProcessing($queueDataset->fresh());
+            self::fail('Duplicate stale queue request dispatched a second job.');
+        } catch (\DomainException $exception) {
+            self::assertSame('training_dataset_processing_claim_lost', $exception->getMessage());
+        }
+        Queue::assertPushed(ProcessEstimateGenerationTrainingDatasetJob::class, 1);
+        $job = null;
+        Queue::assertPushed(ProcessEstimateGenerationTrainingDatasetJob::class, function (ProcessEstimateGenerationTrainingDatasetJob $queued) use (&$job): bool {
+            $job = $queued;
+
+            return true;
+        });
+        self::assertInstanceOf(ProcessEstimateGenerationTrainingDatasetJob::class, $job);
+        try {
+            $job->handle($service);
+            self::fail('Missing reference file did not reject processing.');
+        } catch (\RuntimeException) {
+            self::assertSame('rejected', DB::table('estimate_generation_training_datasets')->where('id', $queueDatasetId)->value('status'));
+        }
+        try {
+            $job->handle($service);
+            self::fail('The same processing token was claimed twice.');
+        } catch (\DomainException $exception) {
+            self::assertSame('training_dataset_processing_claim_lost', $exception->getMessage());
+        }
+
+        $storageHardening->down();
         $edgeHardening->down();
         $hardening->down();
         $migration->down();
         $migration->up();
         $hardening->up();
         $edgeHardening->up();
+        $storageHardening->up();
         self::assertTrue(\Illuminate\Support\Facades\Schema::hasTable('estimate_generation_benchmark_runs'));
+        self::assertTrue(\Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_benchmark_runs', 'case_results_version_scheme'));
     }
 
     private function insertDataset(int $organizationId, int $reviewerId, string $key, int $version, string $type, string $status = 'approved'): int
@@ -203,6 +252,11 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
                 return $output;
             }
             if (! proc_get_status($process)['running']) {
+                stream_set_blocking($stdout, true);
+                $output .= (string) stream_get_contents($stdout);
+                if (str_contains($output, $token)) {
+                    return $output;
+                }
                 self::fail(trim((string) stream_get_contents($stderr)) ?: 'Concurrent writer stopped before '.$token.'.');
             }
         } while (hrtime(true) < $deadline);
@@ -233,6 +287,16 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
                     $table->id();
                 });
             }
+        }
+        if (! $schema->hasColumn('projects', 'organization_id')) {
+            $schema->table('projects', static function (\Illuminate\Database\Schema\Blueprint $table): void {
+                $table->unsignedBigInteger('organization_id')->nullable();
+            });
+        }
+        if (! $schema->hasColumn('organizations', 'name')) {
+            $schema->table('organizations', static function (\Illuminate\Database\Schema\Blueprint $table): void {
+                $table->string('name')->nullable();
+            });
         }
         if (! $schema->hasTable('estimate_generation_learning_examples')) {
             $schema->create('estimate_generation_learning_examples', static function (\Illuminate\Database\Schema\Blueprint $table): void {

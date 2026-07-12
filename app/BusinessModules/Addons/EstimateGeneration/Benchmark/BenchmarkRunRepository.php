@@ -87,10 +87,24 @@ final class BenchmarkRunRepository
         if (($caseResults === null) === ($s3Path === null)) {
             throw new DomainException('exactly_one_case_results_location_required');
         }
+        $object = null;
         if ($caseResults !== null) {
             $this->assertInlineResults($caseResults);
         } else {
-            $this->assertS3Object($organizationId, $uuid, (string) $s3Path, $s3Size, $s3Sha256, $s3Etag, $s3Version, $s3ContentType);
+            $this->assertExternalPath($organizationId, $uuid, (string) $s3Path);
+            $terminal = DB::getFacadeRoot() === null
+                ? null
+                : $this->matchingTerminalCompletion($organizationId, $uuid, $metrics, (string) $s3Path, $durationMs, $cost);
+            if ($terminal instanceof EstimateGenerationBenchmarkRun) {
+                return $terminal;
+            }
+            $object = $this->assertS3Object($organizationId, $uuid, (string) $s3Path);
+            $s3Path = $object->path;
+            $s3Size = $object->contentLength;
+            $s3Sha256 = $object->sha256;
+            $s3Etag = $object->etag;
+            $s3Version = $object->versionId;
+            $s3ContentType = $object->contentType;
         }
 
         return $this->transition($organizationId, $uuid, EstimateGenerationBenchmarkRun::STATUS_COMPLETED, [
@@ -98,6 +112,7 @@ final class BenchmarkRunRepository
             'case_results_storage_disk' => $s3Path === null ? null : 's3', 'case_results_storage_path' => $s3Path,
             'case_results_size' => $s3Size, 'case_results_sha256' => $s3Sha256,
             'case_results_etag' => $s3Etag, 'case_results_version' => $s3Version,
+            'case_results_version_scheme' => $s3Path === null ? null : 'sha256',
             'case_results_content_type' => $s3ContentType,
             'duration_ms' => $durationMs, 'cost_amount' => $cost, 'completed_at' => now(),
         ]);
@@ -219,15 +234,59 @@ final class BenchmarkRunRepository
         }
     }
 
-    private function assertS3Object(int $organizationId, string $uuid, string $path, ?int $size, ?string $sha256, ?string $etag, ?string $version, ?string $contentType): void
+    private function assertS3Object(int $organizationId, string $uuid, string $path): BenchmarkPrivateObject
     {
-        if (! str_starts_with($path, "org-{$organizationId}/estimate-generation/benchmarks/{$uuid}/") || $size === null || $size < 1 || $size > 64_000_000 || ! preg_match('/^[a-f0-9]{64}$/', (string) $sha256) || ! str_contains(basename($path), (string) $sha256) || (($etag === null || trim($etag) === '') && ($version === null || trim($version) === '')) || $contentType === null || trim($contentType) === '') {
-            throw new DomainException('benchmark_results_object_invalid');
+        preg_match('#/([a-f0-9]{64})\.json$#', $path, $matches);
+        if ($this->objectStore instanceof BenchmarkImmutableObjectStore) {
+            $source = $this->objectStore->describe($path, 64_000_000);
+        } else {
+            $body = $this->objectStore->read($path, 64_000_000);
+            $hash = hash('sha256', $body);
+            $source = new BenchmarkPrivateObject($path, $body, strlen($body), $hash, null, 'sha256:'.$hash, 'application/json');
         }
-        $contents = $this->objectStore->read($path, $size);
-        if (strlen($contents) !== $size || ! hash_equals((string) $sha256, hash('sha256', $contents))) {
+        if (! hash_equals($matches[1], $source->sha256) || $source->contentType !== 'application/json') {
             throw new DomainException('benchmark_results_object_integrity_mismatch');
         }
+        try {
+            $decoded = json_decode($source->body, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            throw new DomainException('benchmark_case_results_invalid');
+        }
+        if (! is_array($decoded)) {
+            throw new DomainException('benchmark_case_results_invalid');
+        }
+        $this->assertInlineResults($decoded);
+
+        return $this->objectStore instanceof BenchmarkImmutableObjectStore
+            ? $this->objectStore->putImmutable($path, $source->body, 'application/json')
+            : $source;
+    }
+
+    private function assertExternalPath(int $organizationId, string $uuid, string $path): void
+    {
+        if (! preg_match('#^org-'.$organizationId.'/estimate-generation/benchmarks/'.preg_quote($uuid, '#').'/[a-f0-9]{64}\.json$#', $path)) {
+            throw new DomainException('benchmark_results_object_invalid');
+        }
+    }
+
+    /** @param array<string, mixed> $metrics */
+    private function matchingTerminalCompletion(int $organizationId, string $uuid, array $metrics, string $path, int $durationMs, string $cost): ?EstimateGenerationBenchmarkRun
+    {
+        return DB::transaction(function () use ($organizationId, $uuid, $metrics, $path, $durationMs, $cost): ?EstimateGenerationBenchmarkRun {
+            $run = EstimateGenerationBenchmarkRun::query()->where('organization_id', $organizationId)->where('uuid', $uuid)->lockForUpdate()->first();
+            if (! $run instanceof EstimateGenerationBenchmarkRun || $run->status === EstimateGenerationBenchmarkRun::STATUS_RUNNING) {
+                return null;
+            }
+            if ($run->status !== EstimateGenerationBenchmarkRun::STATUS_COMPLETED
+                || $this->canonicalJson($run->metrics) !== $this->canonicalJson($metrics)
+                || (string) $run->case_results_storage_path !== $path
+                || (int) $run->duration_ms !== $durationMs
+                || $this->decimal($run->cost_amount) !== $this->decimal($cost)) {
+                throw new DomainException('benchmark_terminal_payload_conflict');
+            }
+
+            return $run;
+        });
     }
 
     private function decimal(mixed $value): string

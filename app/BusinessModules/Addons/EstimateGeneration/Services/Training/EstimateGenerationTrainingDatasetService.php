@@ -114,14 +114,22 @@ final class EstimateGenerationTrainingDatasetService
     public function queueProcessing(EstimateGenerationTrainingDataset $dataset): void
     {
         $this->trustPolicy->assertCanProcess($dataset);
+        $token = (string) Str::uuid();
+        $affected = EstimateGenerationTrainingDataset::query()
+            ->whereKey($dataset->getKey())
+            ->where('organization_id', $dataset->organization_id)
+            ->where('status', EstimateGenerationTrainingDataset::STATUS_DRAFT)
+            ->update([
+                'status' => EstimateGenerationTrainingDataset::STATUS_PROCESSING,
+                'processing_token' => $token,
+                'queued_at' => now(),
+                'error_message' => null,
+            ]);
+        if ($affected !== 1) {
+            throw new \DomainException('training_dataset_processing_claim_lost');
+        }
 
-        $dataset->forceFill([
-            'status' => EstimateGenerationTrainingDataset::STATUS_PROCESSING,
-            'queued_at' => now(),
-            'error_message' => null,
-        ])->save();
-
-        \App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationTrainingDatasetJob::dispatch((int) $dataset->id);
+        \App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationTrainingDatasetJob::dispatch((int) $dataset->id, $token);
     }
 
     public function appendVersion(EstimateGenerationTrainingDataset $source, ?SystemAdmin $actor): EstimateGenerationTrainingDataset
@@ -177,33 +185,30 @@ final class EstimateGenerationTrainingDatasetService
     /**
      * @return array<string, int>
      */
-    public function process(EstimateGenerationTrainingDataset $dataset): array
+    public function process(EstimateGenerationTrainingDataset $dataset, string $processingToken): array
     {
-        $dataset = EstimateGenerationTrainingDataset::query()->whereKey($dataset->getKey())->firstOrFail();
-        if ($dataset->status !== EstimateGenerationTrainingDataset::STATUS_PROCESSING) {
+        $claimed = EstimateGenerationTrainingDataset::query()
+            ->whereKey($dataset->getKey())
+            ->where('organization_id', $dataset->organization_id)
+            ->where('status', EstimateGenerationTrainingDataset::STATUS_PROCESSING)
+            ->where('processing_token', $processingToken)
+            ->update(['processing_token' => null]);
+        if ($claimed !== 1) {
             throw new \DomainException('training_dataset_processing_claim_lost');
         }
-        $dataset->loadMissing('files');
-        $referenceFile = $dataset->files()
-            ->where('file_role', EstimateGenerationTrainingFile::ROLE_REFERENCE_ESTIMATE)
-            ->first();
-
-        if (! $referenceFile instanceof EstimateGenerationTrainingFile) {
-            throw new \RuntimeException(trans_message('estimate_generation.training_reference_estimate_required'));
-        }
-
-        $dataset->forceFill([
-            'status' => EstimateGenerationTrainingDataset::STATUS_PROCESSING,
-            'error_message' => null,
-        ])->save();
-
-        $tempPath = $this->downloadToTemp($referenceFile);
-
+        $dataset = EstimateGenerationTrainingDataset::query()->whereKey($dataset->getKey())->firstOrFail();
+        $tempPath = null;
         try {
+            $dataset->loadMissing('files');
+            $referenceFile = $dataset->files()->where('file_role', EstimateGenerationTrainingFile::ROLE_REFERENCE_ESTIMATE)->first();
+            if (! $referenceFile instanceof EstimateGenerationTrainingFile) {
+                throw new \RuntimeException(trans_message('estimate_generation.training_reference_estimate_required'));
+            }
+            $tempPath = $this->downloadToTemp($referenceFile);
             $stats = $this->parseAndRecord($dataset, $referenceFile, $tempPath);
 
             $dataset->forceFill([
-                'status' => EstimateGenerationTrainingDataset::STATUS_REJECTED,
+                'status' => EstimateGenerationTrainingDataset::STATUS_REVIEW_REQUIRED,
                 'quality_status' => 'needs_review',
                 'stats' => $stats,
                 'processed_at' => now(),
@@ -213,7 +218,7 @@ final class EstimateGenerationTrainingDatasetService
             return $stats;
         } catch (Throwable $e) {
             $dataset->forceFill([
-                'status' => EstimateGenerationTrainingDataset::STATUS_REVIEW_REQUIRED,
+                'status' => EstimateGenerationTrainingDataset::STATUS_REJECTED,
                 'quality_status' => 'failed',
                 'error_message' => 'training_dataset_processing_failed',
                 'processed_at' => now(),
@@ -227,7 +232,7 @@ final class EstimateGenerationTrainingDatasetService
 
             throw $e;
         } finally {
-            if (is_file($tempPath)) {
+            if (is_string($tempPath) && is_file($tempPath)) {
                 @unlink($tempPath);
             }
         }
@@ -307,6 +312,8 @@ final class EstimateGenerationTrainingDatasetService
             'raw_payload' => $normalized['raw_payload'],
             'source_refs' => $this->sourceRefs($dataset, $referenceFile, $normalized),
             'error_message' => null,
+            'reviewed_by' => null,
+            'reviewed_at' => null,
         ]);
     }
 

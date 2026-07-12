@@ -54,6 +54,7 @@ class EstimateGenerationTrainingDataset extends Model
         'notes',
         'stats',
         'processing_payload',
+        'processing_token',
         'error_message',
         'queued_at',
         'processed_at',

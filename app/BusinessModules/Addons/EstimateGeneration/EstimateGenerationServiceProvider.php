@@ -47,9 +47,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkObjectReade
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPrivateObjectStore;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\CurrentBaselineBenchmarkAdapter;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\FileServiceAcceptanceBenchmarkObjectStore;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\FileServiceBenchmarkPrivateObjectStore;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkObjectReader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\Metrics\MetricRegistry;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\PrivateBenchmarkObjectReader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\ProcessBenchmarkCaseExecutor;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\BootstrapEstimateGenerationLearningCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\InspectEstimateGenerationProductionCommand;
@@ -199,6 +201,9 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         ));
         $this->app->singleton(BenchmarkObjectReader::class, LocalBenchmarkObjectReader::class);
         $this->app->singleton(BenchmarkPrivateObjectStore::class, FileServiceBenchmarkPrivateObjectStore::class);
+        $this->app->when([AcceptanceBenchmarkCorpusLoader::class, PrivateBenchmarkObjectReader::class])
+            ->needs(BenchmarkPrivateObjectStore::class)
+            ->give(FileServiceAcceptanceBenchmarkObjectStore::class);
         $this->app->singleton(AcceptanceBenchmarkCorpusLoader::class);
         $this->app->singleton(BenchmarkRunner::class);
         $this->app->singleton(RasterPreprocessor::class);

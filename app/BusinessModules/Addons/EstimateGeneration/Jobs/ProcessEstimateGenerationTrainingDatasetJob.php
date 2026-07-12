@@ -25,11 +25,11 @@ final class ProcessEstimateGenerationTrainingDatasetJob implements ShouldQueue
 
     public const QUEUE = 'estimate-generation';
 
-    public int $tries = 2;
+    public int $tries = 1;
 
     public int $timeout = 1800;
 
-    public function __construct(private readonly int $datasetId)
+    public function __construct(private readonly int $datasetId, private readonly string $processingToken)
     {
         $this->onConnection(self::CONNECTION);
         $this->onQueue(self::QUEUE);
@@ -44,7 +44,7 @@ final class ProcessEstimateGenerationTrainingDatasetJob implements ShouldQueue
             (new WithoutOverlapping("estimate-generation-training-dataset-{$this->datasetId}"))
                 ->releaseAfter(120)
                 ->expireAfter($this->timeout + 300),
-            (new WithoutOverlapping('estimate-generation-training:' . $this->rateLimitKey()))
+            (new WithoutOverlapping('estimate-generation-training:'.$this->rateLimitKey()))
                 ->shared()
                 ->releaseAfter(180)
                 ->expireAfter($this->timeout + 300),
@@ -59,13 +59,13 @@ final class ProcessEstimateGenerationTrainingDatasetJob implements ShouldQueue
             ->value('organization_id');
 
         return $organizationId !== null
-            ? 'organization:' . (int) $organizationId
-            : 'dataset:' . $this->datasetId;
+            ? 'organization:'.(int) $organizationId
+            : 'dataset:'.$this->datasetId;
     }
 
     public function handle(EstimateGenerationTrainingDatasetService $service): void
     {
         $dataset = EstimateGenerationTrainingDataset::query()->findOrFail($this->datasetId);
-        $service->process($dataset);
+        $service->process($dataset, $this->processingToken);
     }
 }

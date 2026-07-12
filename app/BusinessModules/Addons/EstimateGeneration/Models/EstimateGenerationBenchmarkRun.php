@@ -20,6 +20,7 @@ final class EstimateGenerationBenchmarkRun extends Model
         'pipeline_version', 'model_versions', 'normative_version', 'price_version', 'metrics',
         'case_results', 'case_results_storage_disk', 'case_results_storage_path', 'duration_ms',
         'case_results_size', 'case_results_sha256', 'case_results_etag', 'case_results_version',
+        'case_results_version_scheme',
         'case_results_content_type', 'cost_amount', 'currency', 'status', 'failure_code',
         'error_summary', 'started_at', 'completed_at',
     ];
