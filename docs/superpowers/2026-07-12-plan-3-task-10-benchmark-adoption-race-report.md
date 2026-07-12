@@ -26,4 +26,17 @@
 - Полный PostgreSQL-контракт с миграцией `002200`, запуск 1: `1 test, 57 assertions`.
 - Полный PostgreSQL-контракт с миграцией `002200`, запуск 2 на той же базе: `1 test, 57 assertions`.
 - Immutable storage unit suite: `9 tests, 23 assertions`.
+
+## Авторитетный финальный статус
+
+Этот раздел заменяет приведённые выше промежуточные результаты.
+
+- Focused adoption suite, запуск 1: `3 tests, 34 assertions`.
+- Focused adoption suite, запуск 2: `3 tests, 34 assertions`.
+- Полный PostgreSQL benchmark contract, запуск 1: `11 tests, 112 assertions`.
+- Полный PostgreSQL benchmark contract, запуск 2 на той же `_contract` базе: `11 tests, 112 assertions`.
+- Immutable storage unit suite: `20 tests, 41 assertions`.
+- PHPStan по изменённым файлам: ошибок нет.
+- PHP syntax и `git diff --check`: успешно.
+- Production-код в финальных safety-коммитах не изменялся.
 - PHPStan по benchmark-модулю и fake store: ошибок нет.
