@@ -21,6 +21,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\PackageInputVersionBackfill;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
 use App\Models\Project;
@@ -56,6 +57,14 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
         self::assertStringContainsString('FOREIGN KEY (session_id, organization_id, project_id)', $definitions);
         self::assertStringContainsString('idempotency_key', $definitions);
         self::assertNotEmpty(DB::select("SELECT 1 FROM pg_indexes WHERE tablename = 'estimate_generation_geometry_regeneration_outbox' AND indexdef LIKE '%status%available_at%'"));
+    }
+
+    #[Test]
+    public function probe_identifier_is_strictly_validated_and_quoted(): void
+    {
+        self::assertSame('"geometry_dispatch_probe_abcdefghij"', GeometryProbeIdentifier::quote('geometry_dispatch_probe_abcdefghij'));
+        $this->expectException(\InvalidArgumentException::class);
+        GeometryProbeIdentifier::quote('geometry_dispatch_probe_bad";drop table users');
     }
 
     #[Test]
@@ -302,7 +311,8 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
             'sha256:'.str_repeat('4', 64), (string) \Illuminate\Support\Str::uuid());
         $intentId = $store->append($intent);
         $probe = 'geometry_dispatch_probe_'.strtolower(\Illuminate\Support\Str::random(10));
-        DB::statement("CREATE SEQUENCE {$probe}");
+        $quotedProbe = GeometryProbeIdentifier::quote($probe);
+        DB::statement("CREATE SEQUENCE {$quotedProbe}");
         $first = null;
         $second = null;
         try {
@@ -318,7 +328,7 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
             $this->waitChild($first['pid']);
             $this->waitChild($second['pid']);
             self::assertSame('delivered', DB::table('estimate_generation_geometry_regeneration_outbox')->where('id', $intentId)->value('status'));
-            $counter = DB::selectOne("SELECT last_value, is_called FROM {$probe}");
+            $counter = DB::selectOne("SELECT last_value, is_called FROM {$quotedProbe}");
             self::assertTrue((bool) $counter->is_called);
             self::assertSame(1, (int) $counter->last_value);
         } finally {
@@ -332,7 +342,7 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
                     fclose($socket);
                 }
             }
-            DB::statement("DROP SEQUENCE IF EXISTS {$probe}");
+            DB::statement("DROP SEQUENCE IF EXISTS {$quotedProbe}");
             $this->cleanup($fixture);
         }
     }
@@ -362,7 +372,7 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
                 'name' => 'Historical', 'metadata' => '{}', 'created_at' => now(), 'updated_at' => now()]);
             $otherItem = DB::table('estimate_generation_package_items')->insertGetId(['package_id' => $otherId, 'key' => 'other-item',
                 'name' => 'Other', 'metadata' => '{}', 'created_at' => now(), 'updated_at' => now()]);
-            DB::statement("UPDATE estimate_generation_packages SET input_version = metadata->>'input_version' WHERE input_version IS NULL AND metadata->>'generated_from' = 'estimate_generation_v2' AND metadata->>'input_version' ~ '^sha256:[a-f0-9]{64}$'");
+            (new PackageInputVersionBackfill)->run(DB::connection());
             self::assertSame($version, DB::table('estimate_generation_packages')->where('id', $historicalId)->value('input_version'));
             self::assertNull(DB::table('estimate_generation_packages')->where('id', $legacyId)->value('input_version'));
             self::assertNull(DB::table('estimate_generation_packages')->where('id', $invalidId)->value('input_version'));
@@ -608,12 +618,32 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
 
     private function terminateChild(int $pid): void
     {
-        if (pcntl_waitpid($pid, $status, WNOHANG) === 0) {
-            if (function_exists('posix_kill')) {
-                @posix_kill($pid, SIGKILL);
-            }
-            pcntl_waitpid($pid, $status);
+        $observed = pcntl_waitpid($pid, $status, WNOHANG);
+        if ($observed === $pid || $observed === -1) {
+            return;
         }
+        @posix_kill($pid, SIGTERM);
+        if ($this->reapChildWithin($pid, 2.0)) {
+            return;
+        }
+        @posix_kill($pid, SIGKILL);
+        if (! $this->reapChildWithin($pid, 2.0)) {
+            self::fail("Child process {$pid} could not be reaped after TERM/KILL deadlines.");
+        }
+    }
+
+    private function reapChildWithin(int $pid, float $seconds): bool
+    {
+        $deadline = microtime(true) + $seconds;
+        do {
+            $result = pcntl_waitpid($pid, $status, WNOHANG);
+            if ($result === $pid || $result === -1) {
+                return true;
+            }
+            usleep(50_000);
+        } while (microtime(true) < $deadline);
+
+        return false;
     }
 
     private function cleanup(array $fixture): void
@@ -634,8 +664,8 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
 
     private function requirePcntl(): void
     {
-        if (! function_exists('pcntl_fork') || ! function_exists('stream_socket_pair')) {
-            self::markTestSkipped('Requires PCNTL and Unix socket support for contention contract.');
+        if (! function_exists('pcntl_fork') || ! function_exists('stream_socket_pair') || ! function_exists('posix_kill')) {
+            self::markTestSkipped('Requires PCNTL, POSIX signals and Unix socket support for contention contract.');
         }
     }
 }
@@ -666,11 +696,25 @@ final class GeometryProbeDispatcher implements EstimateGenerationRetryDispatcher
 
     public function dispatchGeneration(int $sessionId, int $stateVersion, string $attemptId): bool
     {
-        if (preg_match('/^geometry_dispatch_probe_[a-z0-9]{10}$/', $this->probe) !== 1) {
-            throw new \RuntimeException('invalid_probe_name');
-        }
-        DB::selectOne("SELECT nextval('{$this->probe}')");
+        DB::selectOne('SELECT nextval(CAST(? AS regclass))', [GeometryProbeIdentifier::validate($this->probe)]);
 
         return true;
+    }
+}
+
+final class GeometryProbeIdentifier
+{
+    public static function validate(string $identifier): string
+    {
+        if (preg_match('/^geometry_dispatch_probe_[a-z0-9]{10}$/', $identifier) !== 1) {
+            throw new \InvalidArgumentException('Invalid geometry probe identifier.');
+        }
+
+        return $identifier;
+    }
+
+    public static function quote(string $identifier): string
+    {
+        return '"'.self::validate($identifier).'"';
     }
 }

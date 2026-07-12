@@ -86,3 +86,11 @@
 - Immutable-trigger test обёрнут во внешний try/finally с обязательным rollback активной транзакции и fixture cleanup.
 - Добавлен девятый PostgreSQL behavior method: реальный `EstimateGenerationPackagePersistenceService::syncFromDraft` подтверждает column/metadata agreement; transaction-scoped historical backfill обновляет только valid generation-v2, legacy/invalid остаются NULL; exact invalidation supersedes matching package/item, different version остаётся active.
 - PostgreSQL inventory: **9 test methods**, статически Pint/PHPStan/php-l clean, намеренно не запускался без isolated PostgreSQL + opt-in env; DB-less gates остаются green.
+
+## Fifth corrective review
+
+- `requirePcntl()` теперь требует `pcntl_fork`, Unix sockets и `posix_kill`. Все socket reads имеют timeout/EOF metadata checks; child wait использует только bounded `WNOHANG` polling. Cleanup посылает TERM, затем KILL, каждый этап имеет отдельный bounded reap deadline и явный failure без блокирующего `waitpid`.
+- Child harness всегда сериализует безопасный class-only error, возвращает non-zero при unexpected/error и parent требует normal exit code 0.
+- Package backfill SQL вынесен в production `PackageInputVersionBackfill::SQL/run()`. Migration и behavioral test вызывают один helper, исключая drift; transaction rollback сохраняет общую test schema.
+- Probe sequence больше не интерполируется без проверки: `GeometryProbeIdentifier` имеет закрытый regex, quoted identifier для DDL и parameter-bound `regclass` для `nextval`; отдельный contract test отклоняет injection-like имя.
+- PostgreSQL inventory: **10 методов**, не запускался локально. PHPStan/Pint/php-l/diff-check и DB-less regression gates остаются зелёными.
