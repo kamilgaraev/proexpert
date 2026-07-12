@@ -1,5 +1,7 @@
 # Plan 3 / Task 8 — implementation report
 
+> **Authoritative final status (supersedes all earlier “not run” statements): DONE.** The disposable PostgreSQL contracts were executed repeatedly, including the final production-RBAC pass. The current authoritative result is **2 tests, 63 assertions, 0 failures**, repeated successfully on the same database. Earlier notes saying PostgreSQL was not run are historical and superseded by the final execution sections below.
+
 ## Scope
 
 - Added immutable typed normative work-intent, decision-context, candidate, rejected-candidate, candidate-set and rerank-result DTOs.
@@ -141,3 +143,21 @@ Final command, executed twice consecutively without resetting the database:
 - second combined run on the same database: **2 passed, 61 assertions, 5.44s**;
 - final post-format verification on the same database: **2 passed, 61 assertions, 5.49s**;
 - isolation/idempotency gate: **PASS**.
+
+## Final production authorization review pass
+
+The allow-all `AuthorizationService` mock was removed from `NormativeOldClientPinPostgresTest`. The test now follows the production fixture pattern used by `AdminApiTestContext` and `UserProjectAccessTest`: real `organization_user` and `project_user` assignments, `AuthorizationContext::getOrganizationContext`, `UserRoleAssignment::assignRole`, JWT organization claims, a real active `estimate-generation` module, and the container-resolved production `AuthorizationService`/`PermissionResolver` middleware chain.
+
+The negative branch authenticates an active organization/project member with no RBAC role or `estimate_generation.create` permission. Its POST returns **403**, and the organization session count remains **0**. The positive branch assigns the real system role `organization_admin` in the organization context and then executes the full old-client POST/pin/PlanWorkItems/MatchNormatives/resource flow.
+
+Additional existing migrations required by the production authorization path were applied to the disposable bootstrap with the same `php artisan migrate --force --path=<migration> --no-interaction` command: `2025_09_12_200002_create_user_role_assignments_table`, `2025_09_12_200003_create_organization_custom_roles_table`, `2025_09_12_200004_create_role_conditions_table`, `2025_09_12_000002_create_new_modules_table`, `2025_09_12_000003_create_new_organization_module_activations_table`, `2025_09_12_000004_add_can_deactivate_to_modules_table`, `2025_01_01_000100_create_subscription_plans_table`, `2025_08_01_000000_create_organization_subscriptions_table`, and `2026_03_04_000001_create_organization_package_subscriptions_table`.
+
+Exact PostgreSQL evidence:
+
+- feature test: `php artisan test tests/Feature/EstimateGeneration/NormativeOldClientPinPostgresTest.php` — **1 passed, 31 assertions, 8.55s**;
+- combined run #1: **2 passed, 63 assertions, 6.22s**;
+- immediate combined run #2 on the same database: **2 passed, 63 assertions, 5.59s**;
+- final post-format combined verification: **2 passed, 63 assertions, 6.22s**;
+- DB-less normative plus route/middleware RBAC coverage: **57 passed, 153 assertions**;
+- Pint, `php -l`, targeted PHPStan and `git diff --check`: **PASS**;
+- production authorization, negative no-write, isolation and idempotency gates: **PASS**.

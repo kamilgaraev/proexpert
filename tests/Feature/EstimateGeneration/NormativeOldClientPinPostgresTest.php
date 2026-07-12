@@ -22,13 +22,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\MatchNormativesStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\PlanWorkItemsStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\StageResultFactory;
-use App\Domain\Authorization\Services\AuthorizationService;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
 use DateTimeImmutable;
 use Illuminate\Support\Facades\DB;
-use Mockery;
 use Tests\TestCase;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
@@ -71,10 +71,26 @@ final class NormativeOldClientPinPostgresTest extends TestCase
             'version_key' => $version, 'bucket' => 'contract', 'prefix' => $version,
             'status' => EstimateImportStatus::PARSED,
         ]);
-        $authorization = Mockery::mock(AuthorizationService::class);
-        $authorization->shouldReceive('can')->andReturnTrue();
-        $authorization->shouldReceive('canAccessInterface')->andReturnTrue();
-        $this->app->instance(AuthorizationService::class, $authorization);
+        $moduleId = (int) DB::table('modules')->insertGetId([
+            'name' => 'AI-сметчик',
+            'slug' => 'estimate-generation',
+            'version' => '1.0.0',
+            'type' => 'feature',
+            'billing_model' => 'free',
+            'category' => 'estimates',
+            'permissions' => json_encode(['estimate_generation.create'], JSON_THROW_ON_ERROR),
+            'display_order' => 1,
+            'is_active' => true,
+            'is_system_module' => true,
+            'can_deactivate' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        UserRoleAssignment::assignRole(
+            $user,
+            'organization_admin',
+            AuthorizationContext::getOrganizationContext((int) $organization->id),
+        );
         $this->app->instance(NormativePinClock::class, new class implements NormativePinClock
         {
             public function now(): DateTimeImmutable
@@ -83,12 +99,41 @@ final class NormativeOldClientPinPostgresTest extends TestCase
             }
         });
         config()->set('estimate-generation.normative_matching.approved_dataset_version', $version);
-        $this->actingAs($user, 'api_admin');
-        $this->withHeader('Authorization', 'Bearer '.JWTAuth::fromUser($user));
         $url = "/api/v1/admin/projects/{$project->id}/estimate-generation/sessions";
         $fixtureDatasetIds = [];
+        $unauthorized = null;
 
         try {
+            $unauthorized = User::factory()->create(['current_organization_id' => $organization->id]);
+            DB::table('organization_user')->insert([
+                'organization_id' => $organization->id,
+                'user_id' => $unauthorized->id,
+                'is_owner' => false,
+                'is_active' => true,
+                'project_access_mode' => 'assigned_only',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            DB::table('project_user')->insert([
+                'project_id' => $project->id,
+                'user_id' => $unauthorized->id,
+                'role' => 'viewer',
+                'is_active' => true,
+                'assigned_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            $this->actingAs($unauthorized, 'api_admin');
+            $this->withHeader('Authorization', 'Bearer '.JWTAuth::claims([
+                'organization_id' => $organization->id,
+            ])->fromUser($unauthorized));
+            $this->postJson($url, ['description' => 'Кладка кирпичных стен', 'area' => 100])->assertForbidden();
+            self::assertSame(0, EstimateGenerationSession::query()->where('organization_id', $organization->id)->count());
+
+            $this->actingAs($user, 'api_admin');
+            $this->withHeader('Authorization', 'Bearer '.JWTAuth::claims([
+                'organization_id' => $organization->id,
+            ])->fromUser($user));
             $response = $this->postJson($url, ['description' => 'Кладка кирпичных стен', 'area' => 100]);
             $response->assertCreated();
             $session = EstimateGenerationSession::query()->where('organization_id', $organization->id)->latest('id')->firstOrFail();
@@ -169,7 +214,9 @@ final class NormativeOldClientPinPostgresTest extends TestCase
             EstimateGenerationSession::query()->where('organization_id', $organization->id)->delete();
             DB::table('estimate_dataset_versions')->whereIn('id', $fixtureDatasetIds)->delete();
             $dataset->delete();
+            DB::table('modules')->where('id', $moduleId)->delete();
             $project->delete();
+            $unauthorized?->delete();
             $user->delete();
             $organization->delete();
         }
