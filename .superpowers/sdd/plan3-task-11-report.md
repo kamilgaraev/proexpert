@@ -23,6 +23,8 @@ php artisan estimate-generation:benchmark --dataset=regression --adapter=product
 
 Live-проверки подтвердили: искусственный сбой после DROP откатывает транзакцию и сохраняет sentinel; конкурентный UPDATE маркера владельцем guard блокируется до `statement_timeout`; подмена owner, ACL, search_path или определения функции отклоняется до DROP. После hardening повторно зелёные geometry `21/167`, training+adoption `4/91` и pricing `5/123`, без skips.
 
+Финальный post-refactor gate выполнен с новым session-only credential и отдельным fresh reset/provision перед каждым запуском. Individually rendered результаты: geometry run 1 `21/167/0 skips`, geometry run 2 `21/167/0 skips`; training+adoption run 1 `4/91/0 skips`, run 2 `4/91/0 skips`; pricing run 1 `5/123/0 skips`, run 2 `5/123/0 skips`. После gate временный credential удалён.
+
 Оба запуска: `attempted=8`, `succeeded=8`, `failed=0`, `skipped=0`; `work_recall=1`, `normative_top3=1`, `evidenced_applicable_items=1`, `technical_success_rate=1`. Fingerprint обоих запусков: `626cddcec28410f8621c1cb4c556db7e1ca0b06b8288cfa357b32daf2b99a89d`; `case_results` идентичны; acceptance references отсутствуют.
 
 PostgreSQL full gate пока не закрыт. После восстановления доступа combined запуск доказал, что suites нельзя выполнять на общей уже мутировавшей схеме: `15 passed (101 assertions)`, `13 failed`, `2 Windows PCNTL/POSIX skips`. Причины — schema baseline/interference (`eg_evidence_immutable_trg`, `mdm_quality_policies`, `estimate_dataset_versions`, package revision contract, training duplicate function/constraint). Требуется repo-owned guarded provisioner с отдельным reset/provision перед geometry, training/benchmark и pricing suites. Production и обычные сметы не затрагивались.
