@@ -22,6 +22,7 @@ final class LocalBenchmarkObjectReader implements BenchmarkObjectReader
         $size = @filesize($path);
         if ($case instanceof BenchmarkCaseData) {
             $root = realpath($case->fixtureRoot());
+            $this->assertSafePathComponents($path, $case->fixtureRoot());
             $resolved = realpath($path);
             $expectedHash = $role === 'expected' ? $case->expectedSha256 : $case->inputSha256;
             $prefix = $root === false ? '' : rtrim(str_replace('\\', '/', $root), '/').'/';
@@ -41,6 +42,28 @@ final class LocalBenchmarkObjectReader implements BenchmarkObjectReader
         }
 
         return $content;
+    }
+
+    private function assertSafePathComponents(string $path, string $root): void
+    {
+        $normalizedRoot = rtrim(str_replace('\\', '/', $root), '/');
+        $normalizedPath = str_replace('\\', '/', $path);
+        if (! str_starts_with($normalizedPath, $normalizedRoot.'/')) {
+            throw new BenchmarkContractException('object_path_invalid');
+        }
+        $current = $normalizedRoot;
+        foreach (explode('/', substr($normalizedPath, strlen($normalizedRoot) + 1)) as $component) {
+            if ($component === '' || $component === '.' || $component === '..') {
+                throw new BenchmarkContractException('object_path_invalid');
+            }
+            $current .= '/'.$component;
+            $stat = @lstat($current);
+            if (! is_array($stat) || is_link($current)
+                || (PHP_OS_FAMILY !== 'Windows' && @readlink($current) !== false)
+                || (((int) ($stat['mode'] ?? 0)) & 0170000) === 0120000) {
+                throw new BenchmarkContractException('object_path_invalid');
+            }
+        }
     }
 
     private function predictionInputPath(BenchmarkPredictionCaseData $case): string

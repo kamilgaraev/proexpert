@@ -31,13 +31,23 @@ final class RecordedPortRequestHasher
 
     public static function reranker(WorkIntentData $intent, NormativeCandidateDecisionContextData $context, NormativeCandidateSetData $set): string
     {
-        return self::rerankerFixture(
-            array_map(static fn ($candidate): string => $candidate->id, $set->candidates),
-            ['work_item_id' => $intent->workItemId, 'intent' => $intent->intent, 'unit' => $intent->canonicalUnit,
-                'quantity_evidence' => $intent->sourceEvidence, 'dataset_version' => $intent->datasetVersion,
-                'checkpoint_claim_token' => $context->checkpointClaimToken, 'input_version' => $context->inputVersion,
-                'logical_attempt' => $context->logicalAttempt],
-        );
+        return self::hash([
+            'schema_version' => 'recorded-reranker-request:v2',
+            'work_intent' => self::normalize(get_object_vars($intent)),
+            'decision_context' => self::normalize(get_object_vars($context)),
+            'candidate_set' => [
+                'organization_id' => $set->organizationId, 'project_id' => $set->projectId,
+                'session_id' => $set->sessionId, 'work_item_id' => $set->workItemId,
+                'dataset_version' => $set->datasetVersion, 'lexical_algorithm_version' => $set->lexicalAlgorithmVersion,
+                'semantic_index_version' => $set->semanticIndexVersion, 'status' => $set->status,
+                'blocking_issues' => $set->blockingIssues, 'scoring_version' => $set->scoringVersion,
+                'candidates' => array_map(static fn ($candidate): array => self::normalize($candidate->toArray()), $set->candidates),
+                'rejected' => array_map(static fn ($rejected): array => [
+                    'candidate' => self::normalize($rejected->candidate->toArray()),
+                    'reason_codes' => $rejected->reasonCodes, 'evidence' => $rejected->evidence,
+                ], $set->rejected),
+            ],
+        ]);
     }
 
     public static function rerankerFixture(array $orderedCandidateIds, array $context): string
@@ -52,6 +62,19 @@ final class RecordedPortRequestHasher
 
         return hash('sha256', (string) json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
             | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR));
+    }
+
+    private static function normalize(array $payload): array
+    {
+        foreach ($payload as $key => $value) {
+            if ($value instanceof \DateTimeInterface) {
+                $payload[$key] = $value->format('Y-m-d\TH:i:s.uP');
+            } elseif (is_array($value)) {
+                $payload[$key] = self::normalize($value);
+            }
+        }
+
+        return $payload;
     }
 
     private static function sort(array &$value): void

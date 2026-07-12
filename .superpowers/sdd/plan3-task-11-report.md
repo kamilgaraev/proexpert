@@ -137,3 +137,27 @@ php artisan estimate-generation:benchmark --dataset=regression --adapter=product
 Оба запуска: attempted=2, succeeded=2, failed=0, skipped=0. `case_results` и metrics идентичны. Fingerprint обоих запусков: `a644bf519955c4b6b342d8fb7762da018e159227a1c2623c79e192ae3a8626c7`.
 
 Threshold completion не заявляется: два кейса не закрывают требование полного разнообразного regression corpus и Plan 3 gate.
+
+## Re-review: full reranker request и expected path components
+
+Статус: **INTERMEDIATE**.
+
+- Reranker dependency SHA переведён на `recorded-reranker-request:v2`: полный `WorkIntentData`, полный `NormativeCandidateDecisionContextData`, полный ordered `NormativeCandidateSetData`, каждый candidate DTO, rejected candidates, metadata/status/blocking/scoring versions. DateTime нормализуется с microseconds/timezone, key ordering canonical, float semantics сохраняются JSON_PRESERVE_ZERO_FRACTION.
+- Tests подтверждают изменение SHA для одинаковых IDs при изменении semantic score, material, candidate/source evidence, intent region/applicability, context schema/model contract, set status/blocking issues и candidate order; dependency verifier отклоняет mismatch.
+- Expected reader теперь до `realpath` проходит каждый component через `lstat`, отвергает traversal, terminal symlink и symlinked parent. На Windows test создаёт directory junction через `mklink /J` без admin и проходит без skip; на Unix используется symlink.
+
+```text
+Fresh full covering suite после junction fallback: OK (48 tests, 813 assertions), без skips.
+PHPStan changed production files: [OK] No errors.
+```
+
+Финальные CLI после нового reranker request hash и projection SHA:
+
+```text
+php artisan estimate-generation:benchmark --dataset=regression --adapter=production-replay --pipeline-version=production-replay-cases:v3 --prompt-version=recorded-ports:v3 --manifest=production-replay-manifest.json --format=json --output=task11/production-replay-rereview-run-1.json
+php artisan estimate-generation:benchmark --dataset=regression --adapter=production-replay --pipeline-version=production-replay-cases:v3 --prompt-version=recorded-ports:v3 --manifest=production-replay-manifest.json --format=json --output=task11/production-replay-rereview-run-2.json
+```
+
+Оба: attempted=2, succeeded=2, failed=0, skipped=0; `case_results` идентичны; fingerprint `ce95a125af47dcc4213e7533e606cff6a52cb972688b12518d5dfd2af537ea4e`.
+
+Task 11 thresholds не заявляются завершёнными.
