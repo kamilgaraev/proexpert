@@ -87,8 +87,7 @@ final class AssemblePersistedVectorGeometryTest extends TestCase
     private function confirmation(VectorGeometryData $vector): array
     {
         return ['schema_version' => 1, 'source_fingerprint' => $vector->sourceFingerprint,
-            'geometry_payload_sha256' => $vector->payloadSha256(), 'confirmation_source' => 'user_review',
-            'reviewer_ref' => 'user:44', 'confirmed_at' => '2026-07-12T00:00:00Z',
+            'geometry_payload_sha256' => $vector->payloadSha256(),
             'scale_evidence' => [['role' => 'measured_segment', 'entity_handle' => 'W1', 'point_indexes' => [0, 1],
                 'real_world_value' => 4000, 'unit' => 'mm']],
             'elements' => [

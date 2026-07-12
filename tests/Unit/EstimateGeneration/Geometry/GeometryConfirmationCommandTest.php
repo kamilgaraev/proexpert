@@ -12,6 +12,29 @@ use PHPUnit\Framework\TestCase;
 
 final class GeometryConfirmationCommandTest extends TestCase
 {
+    public function test_source_confirmation_rejects_spoofed_audit_and_mixed_mutation_modes(): void
+    {
+        $semantic = ['schema_version' => 1, 'source_fingerprint' => 'sha256:'.str_repeat('a', 64),
+            'geometry_payload_sha256' => str_repeat('b', 64),
+            'scale_evidence' => [['role' => 'measured_segment', 'entity_handle' => 'W1', 'point_indexes' => [0, 1], 'real_world_value' => 1, 'unit' => 'm']],
+            'elements' => [['key' => 'wall-1', 'type' => 'wall', 'segment_handles' => ['W1']]]];
+        foreach ([
+            [...$semantic, 'reviewer_ref' => 'user:999'],
+            [...$semantic, 'confirmed_at' => '2020-01-01T00:00:00Z'],
+            [...$semantic, 'confirmation_source' => 'maintainer'],
+        ] as $spoofed) {
+            try {
+                new GeometryConfirmationCommand(1, 2, 3, 4, 5, 'sha256:'.str_repeat('c', 64),
+                    'sha256:'.str_repeat('d', 64), null, [], $spoofed);
+                self::fail('Client audit metadata must be rejected.');
+            } catch (InvalidArgumentException) {
+                self::addToAssertionCount(1);
+            }
+        }
+        $this->expectException(InvalidArgumentException::class);
+        new GeometryConfirmationCommand(1, 2, 3, 4, 5, 'sha256:'.str_repeat('c', 64),
+            'sha256:'.str_repeat('d', 64), ['pixel_start' => [0, 0], 'pixel_end' => [1, 0], 'meters' => 1], [], $semantic);
+    }
     #[Test]
     public function it_rejects_arbitrary_json_pointer_paths(): void
     {

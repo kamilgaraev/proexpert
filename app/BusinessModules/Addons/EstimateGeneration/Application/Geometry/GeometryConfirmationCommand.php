@@ -30,6 +30,9 @@ final readonly class GeometryConfirmationCommand
         if ($scale === null && $operations === [] && $sourceConfirmation === null) {
             throw new InvalidArgumentException('Geometry confirmation must contain a change.');
         }
+        if ($sourceConfirmation !== null && ($scale !== null || $operations !== [])) {
+            throw new InvalidArgumentException('Geometry source confirmation cannot be combined with geometry mutations.');
+        }
         if ($scale !== null) {
             if (array_keys($scale) !== ['pixel_start', 'pixel_end', 'meters']
                 || ! $this->point($scale['pixel_start']) || ! $this->point($scale['pixel_end'])

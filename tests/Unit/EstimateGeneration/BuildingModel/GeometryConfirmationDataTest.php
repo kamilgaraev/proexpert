@@ -86,9 +86,6 @@ final class GeometryConfirmationDataTest extends TestCase
             'schema_version' => 1,
             'source_fingerprint' => $vector->sourceFingerprint,
             'geometry_payload_sha256' => $vector->payloadSha256(),
-            'confirmation_source' => 'user_review',
-            'reviewer_ref' => 'maintainer:plan3-task11',
-            'confirmed_at' => '2026-07-12T00:00:00Z',
             'scale_evidence' => [['role' => 'measured_segment', 'entity_handle' => 'W1', 'point_indexes' => [0, 1], 'real_world_value' => 1000, 'unit' => 'mm']],
             'elements' => [
                 ['key' => 'room-1', 'type' => 'room', 'boundary_handle' => 'R1'],

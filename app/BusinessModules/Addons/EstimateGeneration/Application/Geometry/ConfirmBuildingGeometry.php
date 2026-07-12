@@ -58,7 +58,8 @@ final class ConfirmBuildingGeometry
             $newInputVersion = 'sha256:'.hash('sha256', $command->expectedInputVersion.'|'.$normalized->contentVersion().'|'.($command->expectedStateVersion + 1));
             $sourceEvidenceIds = array_values(array_map('intval', $head->model['evidence_ids'] ?? []));
             $evidenceValue = [
-                'actor_id' => $command->actorId, 'confirmed_at' => now()->toIso8601String(),
+                'source_class' => 'user_geometry_confirmation', 'actor_id' => $command->actorId,
+                'reviewer_ref' => 'user:'.$command->actorId, 'confirmed_at' => now()->toIso8601String(),
                 'operations' => $command->operations, 'scale' => $command->scale,
                 'source_confirmation' => $command->sourceConfirmation, 'source_evidence_ids' => $sourceEvidenceIds,
                 'previous_state_version' => $command->expectedStateVersion, 'new_state_version' => $command->expectedStateVersion + 1,
@@ -69,9 +70,9 @@ final class ConfirmBuildingGeometry
             DB::table('estimate_generation_evidence')->insert([
                 'id' => $evidenceId,
                 'organization_id' => $command->organizationId, 'project_id' => $command->projectId, 'session_id' => $command->sessionId,
-                'type' => 'source_fact', 'source_type' => 'user_input', 'source_ref' => 'geometry-confirmation:'.$command->actorId,
+                'type' => 'source_fact', 'source_type' => 'user_input', 'source_ref' => 'user-geometry-confirmation:'.$command->actorId,
                 'source_version' => $newInputVersion, 'locator' => json_encode(['building_model_id' => $head->getKey()], JSON_THROW_ON_ERROR),
-                'value' => json_encode($evidenceValue, JSON_THROW_ON_ERROR), 'confidence' => 1, 'producer_name' => 'geometry-confirmation',
+                'value' => json_encode($evidenceValue, JSON_THROW_ON_ERROR), 'confidence' => 1, 'producer_name' => 'user_input_normalizer',
                 'producer_version' => 'model:v1', 'fingerprint' => $fingerprint, 'created_at' => now(), 'updated_at' => now(),
             ]);
             $new = new EstimateGenerationBuildingModel;

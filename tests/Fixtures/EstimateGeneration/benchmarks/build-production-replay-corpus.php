@@ -258,10 +258,9 @@ function geometryConfirmation(string $slug, array $payload): array
 {
  $vector=VectorGeometryData::fromArray($payload);
  $base=['schema_version'=>1,'source_fingerprint'=>$vector->sourceFingerprint,
-  'geometry_payload_sha256'=>$vector->payloadSha256(),'reviewer_ref'=>'maintainer:plan3-task11',
-  'confirmed_at'=>'2026-07-12T00:00:00Z'];
+  'geometry_payload_sha256'=>$vector->payloadSha256()];
  return match($slug){
-  'vector-pdf-001'=>[...$base,'confirmation_source'=>'dimension_evidence','scale_evidence'=>[
+  'vector-pdf-001'=>[...$base,'scale_evidence'=>[
     ['role'=>'dimension','value_handle'=>'page:1:object:7','entity_handle'=>'page:1:object:1','point_indexes'=>[4,1]],
     ['role'=>'dimension','value_handle'=>'page:1:object:11','entity_handle'=>'page:1:object:1','point_indexes'=>[1,2]],
    ],'elements'=>[
@@ -269,7 +268,7 @@ function geometryConfirmation(string $slug, array $payload): array
     ['key'=>'vector-wall-top','type'=>'wall','segment_handles'=>['page:1:object:0','page:1:object:1']],
     ['key'=>'vector-opening-600','type'=>'opening','wall_key'=>'vector-wall-top','opening_type'=>'door','boundary_handles'=>['page:1:object:0','page:1:object:1'],'dimension_handle'=>'page:1:object:12'],
    ]],
-  'dwg-layout-001'=>[...$base,'confirmation_source'=>'user_review','scale_evidence'=>[
+  'dwg-layout-001'=>[...$base,'scale_evidence'=>[
     ['role'=>'measured_segment','entity_handle'=>'A1','point_indexes'=>[0,1],'real_world_value'=>12000,'unit'=>'mm'],
    ],'elements'=>[
     ['key'=>'dwg-room-a2','type'=>'room','boundary_handle'=>'A2'],

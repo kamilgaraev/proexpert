@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO;
 
-use DateTimeImmutable;
 use InvalidArgumentException;
 
 final readonly class GeometryConfirmationData
@@ -13,9 +12,6 @@ final readonly class GeometryConfirmationData
     public function __construct(
         public string $sourceFingerprint,
         public string $geometryPayloadSha256,
-        public string $confirmationSource,
-        public string $reviewerRef,
-        public string $confirmedAt,
         public array $scaleEvidence,
         public array $elements,
     ) {}
@@ -23,14 +19,10 @@ final readonly class GeometryConfirmationData
     /** @param array<string, mixed> $data */
     public static function fromArray(array $data): self
     {
-        self::exactKeys($data, ['schema_version', 'source_fingerprint', 'geometry_payload_sha256',
-            'confirmation_source', 'reviewer_ref', 'confirmed_at', 'scale_evidence', 'elements']);
+        self::exactKeys($data, ['schema_version', 'source_fingerprint', 'geometry_payload_sha256', 'scale_evidence', 'elements']);
         if ($data['schema_version'] !== 1
             || preg_match('/^sha256:[a-f0-9]{64}$/D', (string) $data['source_fingerprint']) !== 1
             || preg_match('/^[a-f0-9]{64}$/D', (string) $data['geometry_payload_sha256']) !== 1
-            || ! in_array($data['confirmation_source'], ['user_review', 'dimension_evidence', 'cad_unit_review'], true)
-            || ! is_string($data['reviewer_ref']) || trim($data['reviewer_ref']) === ''
-            || DateTimeImmutable::createFromFormat('!Y-m-d\TH:i:s\Z', (string) $data['confirmed_at']) === false
             || ! self::nonEmptyList($data['scale_evidence']) || ! self::nonEmptyList($data['elements'])) {
             throw new InvalidArgumentException('geometry_confirmation_invalid');
         }
@@ -71,8 +63,7 @@ final readonly class GeometryConfirmationData
             $openingSignatures[$signature] = true;
         }
 
-        return new self($data['source_fingerprint'], $data['geometry_payload_sha256'], $data['confirmation_source'],
-            $data['reviewer_ref'], $data['confirmed_at'], $data['scale_evidence'], $data['elements']);
+        return new self($data['source_fingerprint'], $data['geometry_payload_sha256'], $data['scale_evidence'], $data['elements']);
     }
 
     private static function assertScaleEvidence(mixed $evidence): void
