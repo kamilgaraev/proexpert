@@ -24,22 +24,37 @@ final class TrainingBenchmarkObjectAdoptionRaceTest extends TestCase
         parent::setUp();
         $app = require dirname(__DIR__, 4).'/bootstrap/app.php';
         $app->make(Kernel::class)->bootstrap();
-        if (getenv('RUN_POSTGRES_TRAINING_BENCHMARK_CONTRACT') !== '1' || DB::getDriverName() !== 'pgsql') {
+        $database = (string) DB::connection()->getDatabaseName();
+        if (getenv('RUN_POSTGRES_TRAINING_BENCHMARK_CONTRACT') !== '1' || DB::getDriverName() !== 'pgsql' || ! str_ends_with($database, '_contract')) {
             self::markTestSkipped('Requires disposable PostgreSQL contract database.');
+        }
+        $workerSource = (string) file_get_contents(dirname(__DIR__, 3).'/Support/TrainingBenchmarkAdoptionWriter.php');
+        $workerGuard = strpos($workerSource, "str_ends_with(\$database, '_contract')");
+        $workerRoleAction = strpos($workerSource, "if (\$role === 'A')");
+        if (! is_int($workerGuard) || ! is_int($workerRoleAction) || $workerGuard >= $workerRoleAction) {
+            throw new \LogicException('Benchmark adoption worker contract database guard is missing or late.');
         }
         (require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_002200_close_training_benchmark_races.php')->up();
     }
 
     protected function tearDown(): void
     {
-        if (DB::getFacadeRoot() !== null && DB::getDriverName() === 'pgsql') {
+        $database = DB::getFacadeRoot() === null ? '' : (string) DB::connection()->getDatabaseName();
+        if (getenv('RUN_POSTGRES_TRAINING_BENCHMARK_CONTRACT') === '1' && DB::getFacadeRoot() !== null && DB::getDriverName() === 'pgsql' && str_ends_with($database, '_contract')) {
             DB::unprepared('DROP TRIGGER IF EXISTS eg_benchmark_run_immutable ON estimate_generation_benchmark_runs; DROP TRIGGER IF EXISTS eg_approved_dataset_example_guard ON estimate_generation_training_examples; DROP TRIGGER IF EXISTS eg_training_example_immutable ON estimate_generation_training_examples; DROP TRIGGER IF EXISTS eg_training_dataset_immutable ON estimate_generation_training_datasets;');
-            DB::table('estimate_generation_benchmark_runs')->whereIn('organization_id', $this->organizationIds)->delete();
-            DB::table('estimate_generation_training_examples')->whereIn('organization_id', $this->organizationIds)->delete();
-            DB::table('estimate_generation_training_datasets')->whereIn('organization_id', $this->organizationIds)->delete();
-            DB::table('organizations')->whereIn('id', $this->organizationIds)->delete();
-            DB::table('system_admins')->whereIn('id', $this->reviewerIds)->delete();
-            DB::unprepared('CREATE TRIGGER eg_benchmark_run_immutable BEFORE UPDATE OR DELETE ON estimate_generation_benchmark_runs FOR EACH ROW EXECUTE FUNCTION eg_guard_benchmark_run_immutable(); CREATE TRIGGER eg_approved_dataset_example_guard BEFORE INSERT OR UPDATE OR DELETE ON estimate_generation_training_examples FOR EACH ROW EXECUTE FUNCTION eg_guard_example_for_approved_dataset(); CREATE TRIGGER eg_training_example_immutable BEFORE UPDATE OR DELETE ON estimate_generation_training_examples FOR EACH ROW EXECUTE FUNCTION eg_guard_training_example_immutable(); CREATE TRIGGER eg_training_dataset_immutable BEFORE UPDATE OR DELETE ON estimate_generation_training_datasets FOR EACH ROW EXECUTE FUNCTION eg_guard_training_dataset_immutable();');
+            try {
+                DB::table('estimate_generation_benchmark_runs')->whereIn('organization_id', $this->organizationIds)->delete();
+                DB::table('estimate_generation_training_examples')->whereIn('organization_id', $this->organizationIds)->delete();
+                DB::table('estimate_generation_training_datasets')->whereIn('organization_id', $this->organizationIds)->delete();
+                DB::table('organizations')->whereIn('id', $this->organizationIds)->delete();
+                DB::table('system_admins')->whereIn('id', $this->reviewerIds)->delete();
+            } finally {
+                DB::unprepared('DROP TRIGGER IF EXISTS eg_benchmark_run_immutable ON estimate_generation_benchmark_runs; DROP TRIGGER IF EXISTS eg_approved_dataset_example_guard ON estimate_generation_training_examples; DROP TRIGGER IF EXISTS eg_training_example_immutable ON estimate_generation_training_examples; DROP TRIGGER IF EXISTS eg_training_dataset_immutable ON estimate_generation_training_datasets; CREATE TRIGGER eg_benchmark_run_immutable BEFORE UPDATE OR DELETE ON estimate_generation_benchmark_runs FOR EACH ROW EXECUTE FUNCTION eg_guard_benchmark_run_immutable(); CREATE TRIGGER eg_approved_dataset_example_guard BEFORE INSERT OR UPDATE OR DELETE ON estimate_generation_training_examples FOR EACH ROW EXECUTE FUNCTION eg_guard_example_for_approved_dataset(); CREATE TRIGGER eg_training_example_immutable BEFORE UPDATE OR DELETE ON estimate_generation_training_examples FOR EACH ROW EXECUTE FUNCTION eg_guard_training_example_immutable(); CREATE TRIGGER eg_training_dataset_immutable BEFORE UPDATE OR DELETE ON estimate_generation_training_datasets FOR EACH ROW EXECUTE FUNCTION eg_guard_training_dataset_immutable();');
+                $restored = (int) (DB::selectOne("SELECT count(*) AS aggregate FROM pg_trigger WHERE tgname IN ('eg_benchmark_run_immutable', 'eg_approved_dataset_example_guard', 'eg_training_example_immutable', 'eg_training_dataset_immutable') AND NOT tgisinternal")->aggregate ?? 0);
+                if ($restored !== 4) {
+                    throw new \RuntimeException('Benchmark contract triggers were not restored.');
+                }
+            }
         }
         \Illuminate\Foundation\Bootstrap\HandleExceptions::flushState($this);
         \Illuminate\Support\Facades\Facade::clearResolvedInstances();

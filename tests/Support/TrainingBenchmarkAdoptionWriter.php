@@ -12,6 +12,11 @@ require dirname(__DIR__, 2).'/vendor/autoload.php';
 $app = require dirname(__DIR__, 2).'/bootstrap/app.php';
 $app->make(Kernel::class)->bootstrap();
 [$script, $role, $organizationId, $uuid, $path, $directory] = $argv;
+$database = (string) DB::connection()->getDatabaseName();
+if (getenv('RUN_POSTGRES_TRAINING_BENCHMARK_CONTRACT') !== '1' || DB::getDriverName() !== 'pgsql' || ! str_ends_with($database, '_contract')) {
+    fwrite(STDERR, "UNSAFE_CONTRACT_DATABASE\n");
+    exit(2);
+}
 $app->instance(BenchmarkPrivateObjectStore::class, new SharedVersionedBenchmarkObjectStore($directory));
 if ($role === 'A') {
     DB::statement("SET application_name = 'benchmark_adoption_fail'");
