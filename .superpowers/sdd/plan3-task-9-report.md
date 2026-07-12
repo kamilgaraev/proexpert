@@ -188,3 +188,11 @@ Reviewer findings устранены одной TDD-волной после comm
 - High-cardinality контракт создаёт 3000 логических позиций и три ревизии каждой. Production refresh выполняет один агрегирующий `SELECT` с `ROW_NUMBER()`, без `SELECT *` и гидрации 9000 моделей; проверены 2700 финализированных позиций, 300 blockers, статус, progress, flag и точная `BigDecimal` сумма.
 - API presenter сохраняет quantity с масштабом `decimal:18` без float-преобразования.
 - PostgreSQL contract два раза подряд: `5 tests, 123 assertions` в каждом запуске. DB-less refresh/pipeline/presenter/latest-revision suite: `153 tests, 2487 assertions`, без failures (2 существующих deprecation notice). Targeted Larastan, PHP syntax, Pint и `git diff --check` прошли. Админка: `npx tsc --noEmit` прошёл; сборка не запускалась.
+
+## I2 sign-off corrections
+
+- The checkpoint completion rollback contract now uses a fresh evidence descriptor and fingerprint. Its injected completion hook first invokes the production `PublishValidatedDraft` path, including `AcceptedQuantityEvidenceMaterializer` and the production evidence repository, and only then throws.
+- The rollback assertion observes no prior successful fingerprint: after the injected failure the checkpoint remains `running`, while both the fresh evidence node and accepted mapping counts are zero. A normal production retry completes the checkpoint and creates exactly one evidence node and one mapping.
+- Focused PostgreSQL contract ran twice on the same disposable database: `1 test, 19 assertions` per run. The complete price PostgreSQL contract then ran twice on the same database: `5 tests, 123 assertions` per run.
+- PHP syntax, Pint and targeted PHPStan/Larastan pass for the changed backend test. Production and ordinary estimates were not touched; `.cbmignore` and `.codebase-memory/` remain untracked and unstaged.
+- Admin canonical quantity coverage preserves `123456789.123456789123456789` through package normalization, review editing payload and evidence-facing work item state without a JavaScript `Number` conversion. Targeted Vitest passes `54 tests`. Full TypeScript checking reports zero EstimateGeneration errors; the only remaining diagnostic is the pre-existing unrelated `src/services/warehouseService.ts:253` `TS2352` on the input HEAD.

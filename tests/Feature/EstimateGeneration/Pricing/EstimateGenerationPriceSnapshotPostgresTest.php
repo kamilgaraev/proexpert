@@ -96,40 +96,73 @@ final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
         self::assertSame(1, DB::table('estimate_generation_accepted_evidence')->where('checkpoint_id', $claim->checkpointId)->count());
         self::assertSame(1, DB::table('estimate_generation_evidence')->where('fingerprint', $data->fingerprint())->count());
 
+        $freshData = new EvidenceData(
+            $session->organization_id, $session->project_id, $session->id, EvidenceType::WorkItem,
+            EvidenceSourceType::UserInput, 'input:100', 'contract:fedcba',
+            ['item_key' => 'item:'.hash('sha256', 'fresh-checkpoint-item')],
+            ['work_code' => 'work_type:100', 'quantity' => '987654321.987654', 'unit' => 'm3'],
+            1.0, 'pipeline', 'contract:fedcba',
+        );
+        $freshDescriptor = [
+            'source_type' => 'user_input', 'source_ref' => 'input:100', 'source_version' => 'contract:fedcba',
+            'locator' => $freshData->locator, 'work_code' => 'work_type:100', 'quantity' => '987654321.987654',
+            'unit' => 'm3', 'confidence' => 1.0, 'producer_name' => 'pipeline',
+            'producer_version' => 'contract:fedcba', 'fingerprint' => $freshData->fingerprint(),
+        ];
+        $freshTransient = ['local_estimates' => [['sections' => [['work_items' => [[
+            'key' => 'fresh-checkpoint-item', 'quantity_evidence_descriptor' => $freshDescriptor,
+        ]]]]]]];
         $secondContext = new PipelineContext(
             $session->id, $session->organization_id, $session->project_id, 7,
             'sha256:'.str_repeat('e', 64), 'generating', generationAttemptId: $attempt,
             baseInputVersion: 'sha256:'.str_repeat('d', 64), stage: ProcessingStage::PlanWorkItems,
             dependencyVersions: $dependencies,
         );
-        $failingStore = new EloquentPipelineCheckpointStore(DB::connection(), new class implements \App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineCompletionHook
+        $freshArtifact = new PipelineArtifactReference(
+            'memory_json_v1', 'contract/checkpoint-fresh',
+            'sha256:'.hash('sha256', CanonicalPipelineJson::encode($freshTransient)), 128,
+        );
+        $freshOutput = PipelineStageOutput::create($definition, $secondContext->inputVersion, $dependencies, $freshArtifact);
+        $freshResult = new PipelineStageResult(
+            ProcessingStage::PlanWorkItems,
+            $freshOutput->version,
+            [],
+            output: $freshOutput,
+            transientData: $freshTransient,
+        );
+        $productionPublisher = app(PublishValidatedDraft::class);
+        $failingStore = new EloquentPipelineCheckpointStore(DB::connection(), new class($productionPublisher) implements \App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineCompletionHook
         {
+            public function __construct(private readonly PublishValidatedDraft $productionPublisher) {}
+
             public function beforeComplete(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointClaim $claim, PipelineStageResult $result, \DateTimeImmutable $completedAt): void
             {
-                throw new \RuntimeException('injected-after-guarded-update');
+                $this->productionPublisher->beforeComplete($claim, $result, $completedAt);
+
+                throw new \RuntimeException('injected-after-production-materialization');
             }
         });
         $failedClaim = $failingStore->claim($secondContext, ProcessingStage::PlanWorkItems, $now, $now->modify('+5 minutes'));
         try {
-            $failingStore->complete($failedClaim, $result, $now->modify('+1 second'));
+            $failingStore->complete($failedClaim, $freshResult, $now->modify('+1 second'));
             self::fail('Injected completion failure was not propagated.');
         } catch (\RuntimeException $exception) {
-            self::assertSame('injected-after-guarded-update', $exception->getMessage());
+            self::assertSame('injected-after-production-materialization', $exception->getMessage());
         }
         $running = DB::table('estimate_generation_pipeline_checkpoints')->where('id', $failedClaim->checkpointId)->first();
         self::assertSame('running', $running->status);
         self::assertSame($failedClaim->claimToken, $running->claim_token);
         self::assertNull($running->output_version);
         self::assertSame(0, DB::table('estimate_generation_accepted_evidence')->where('checkpoint_id', $failedClaim->checkpointId)->count());
-        self::assertSame(1, DB::table('estimate_generation_evidence')->where('fingerprint', $data->fingerprint())->count());
+        self::assertSame(0, DB::table('estimate_generation_evidence')->where('fingerprint', $freshData->fingerprint())->count());
 
         $retryAt = $now->modify('+6 minutes');
         $retry = $store->claim($secondContext, ProcessingStage::PlanWorkItems, $retryAt, $retryAt->modify('+5 minutes'));
-        self::assertFalse($store->complete($failedClaim, $result, $retryAt->modify('+1 second')));
+        self::assertFalse($store->complete($failedClaim, $freshResult, $retryAt->modify('+1 second')));
         self::assertSame(0, DB::table('estimate_generation_accepted_evidence')->where('checkpoint_id', $failedClaim->checkpointId)->count());
-        self::assertTrue($store->complete($retry, $result, $retryAt->modify('+1 second')));
+        self::assertTrue($store->complete($retry, $freshResult, $retryAt->modify('+1 second')));
         self::assertSame(1, DB::table('estimate_generation_accepted_evidence')->where('checkpoint_id', $retry->checkpointId)->count());
-        self::assertSame(1, DB::table('estimate_generation_evidence')->where('fingerprint', $data->fingerprint())->count());
+        self::assertSame(1, DB::table('estimate_generation_evidence')->where('fingerprint', $freshData->fingerprint())->count());
     }
 
     public function test_follow_up_migrations_roll_back_to_001400_and_reapply_cleanly(): void
