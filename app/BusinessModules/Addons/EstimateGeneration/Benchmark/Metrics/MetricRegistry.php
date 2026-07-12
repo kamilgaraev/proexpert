@@ -27,6 +27,7 @@ final readonly class MetricRegistry
             new MapeMetric('area_mape', 'areas'),
             new MapeMetric('quantity_mape', 'quantities'),
             new RecallMetric('work_recall', 'work_ids'),
+            new RecallMetric('review_recall', 'review_codes'),
             new TopKMetric('normative_top1', 1),
             new TopKMetric('normative_top3', 3),
             new MapeMetric('cost_mape', 'costs'),

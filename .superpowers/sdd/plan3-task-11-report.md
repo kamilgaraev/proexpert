@@ -1,5 +1,21 @@
 # Plan 3 — Task 11: промежуточный отчёт
 
+## INTERMEDIATE: capture tooling и typed review outcome
+
+Добавлен tests-only `RecordedFixtureCaptureBuilder`, использующий production request hashers для geometry, planner и reranker. Tooling не читает expected, отклоняет oracle-поля, проверяет source SHA, privacy/approval metadata и формирует стабильный reviewable inventory.
+
+Production replay теперь моделирует clarification/incomplete geometry как технически успешный typed review outcome: `review_codes` и `review_items` содержат вопросы и ссылки на evidence, а work/normative/price коллекции остаются пустыми. Hard apply/readiness граница не ослаблена. Добавлена отдельная метрика `review_recall`.
+
+```text
+vendor/bin/phpunit tests/Unit/EstimateGeneration/Benchmark/RecordedFixtureCaptureBuilderTest.php tests/Unit/EstimateGeneration/Benchmark/BenchmarkMetricTest.php tests/Unit/EstimateGeneration/Benchmark/BenchmarkContractValidatorTest.php tests/Unit/EstimateGeneration/Benchmark/ProductionReplayBenchmarkAdapterTest.php
+OK (14 tests, 76 assertions)
+
+vendor/bin/phpstan analyse app/BusinessModules/Addons/EstimateGeneration/Benchmark/BenchmarkExpectedContract.php app/BusinessModules/Addons/EstimateGeneration/Benchmark/Metrics/MetricRegistry.php app/BusinessModules/Addons/EstimateGeneration/Benchmark/ProductionReplayBenchmarkAdapter.php --memory-limit=1G --no-progress
+[OK] No errors
+```
+
+Статус остаётся `INTERMEDIATE`: corpus gate из восьми кейсов на этом этапе ещё не заявлен.
+
 Статус: **INTERMEDIATE — benchmark gate открыт, Task 11 не завершена**.
 
 ## Безопасно реализовано

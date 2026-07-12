@@ -11,6 +11,8 @@ final class BenchmarkExpectedContract
         'work_ids', 'normative_rankings', 'costs', 'applicable_item_ids', 'evidence_ids_by_item',
     ];
 
+    private const OPTIONAL_DATA_KEYS = ['review_codes', 'review_items'];
+
     /** @param array<string, mixed> $payload @return array<string, mixed> */
     public static function expected(array $payload, string $expectedVersion): array
     {
@@ -27,7 +29,7 @@ final class BenchmarkExpectedContract
     /** @param array<string, mixed> $payload @return array<string, mixed> */
     public static function prediction(array $payload): array
     {
-        self::exactKeys($payload, [...self::DATA_KEYS, 'model_schema_version']);
+        self::dataKeys($payload, true);
         self::token($payload['model_schema_version'] ?? null, 'prediction_model_schema_invalid');
         self::data($payload);
 
@@ -39,7 +41,7 @@ final class BenchmarkExpectedContract
     {
         $data = $payload;
         unset($data['model_schema_version']);
-        self::exactKeys($data, self::DATA_KEYS);
+        self::dataKeys($data, false);
         self::token($data['sheet_type'] ?? null, 'sheet_type_invalid');
         $rooms = self::tokenList($data['room_cells'] ?? null, 'room_cells_invalid', 10_000);
         self::tokenList($data['wall_cells'] ?? null, 'wall_cells_invalid', 50_000);
@@ -51,6 +53,8 @@ final class BenchmarkExpectedContract
         self::decimalMap($data['costs'] ?? null, 'costs_invalid', $workIds);
         $applicable = self::tokenList($data['applicable_item_ids'] ?? null, 'applicable_items_invalid', 10_000);
         self::evidence($data['evidence_ids_by_item'] ?? null, $applicable);
+        self::tokenList($data['review_codes'] ?? [], 'review_codes_invalid', 100);
+        self::reviewItems($data['review_items'] ?? []);
     }
 
     /** @param mixed $value @return list<string> */
@@ -132,6 +136,37 @@ final class BenchmarkExpectedContract
         sort($expected, SORT_STRING);
         if ($actual !== $expected) {
             throw new BenchmarkContractException('contract_keys_invalid');
+        }
+    }
+
+    private static function dataKeys(array $payload, bool $prediction): void
+    {
+        $actual = array_keys($payload);
+        $required = $prediction ? [...self::DATA_KEYS, 'model_schema_version'] : self::DATA_KEYS;
+        foreach ($required as $key) {
+            if (! in_array($key, $actual, true)) {
+                throw new BenchmarkContractException('contract_keys_invalid');
+            }
+        }
+        $allowed = [...$required, ...self::OPTIONAL_DATA_KEYS];
+        if (array_diff($actual, $allowed) !== []) {
+            throw new BenchmarkContractException('contract_keys_invalid');
+        }
+    }
+
+    private static function reviewItems(mixed $items): void
+    {
+        if (! is_array($items) || ! array_is_list($items) || count($items) > 100) {
+            throw new BenchmarkContractException('review_items_invalid');
+        }
+        foreach ($items as $item) {
+            if (! is_array($item)) {
+                throw new BenchmarkContractException('review_items_invalid');
+            }
+            self::exactKeys($item, ['code', 'question', 'evidence_refs']);
+            self::token($item['code'] ?? null, 'review_items_invalid');
+            self::token($item['question'] ?? null, 'review_items_invalid');
+            self::tokenList($item['evidence_refs'] ?? null, 'review_items_invalid', 100);
         }
     }
 }

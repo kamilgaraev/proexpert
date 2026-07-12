@@ -76,7 +76,24 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
             ));
             $model = $assemblyResult->model;
             if ($assemblyResult->clarifications !== [] || ($model->metrics['complete'] ?? false) !== true) {
-                return BenchmarkPipelineResultData::technicalFailure('production_readiness_blocked');
+                $reviewItems = array_map(static fn ($item): array => [
+                    'code' => $item->code,
+                    'question' => $item->code,
+                    'evidence_refs' => array_values(array_unique($item->evidenceRefs)),
+                ], $assemblyResult->clarifications);
+                if ($reviewItems === []) {
+                    $reviewItems[] = ['code' => 'geometry_incomplete', 'question' => 'geometry_incomplete', 'evidence_refs' => []];
+                }
+                $reviewCodes = array_values(array_unique(array_column($reviewItems, 'code')));
+                sort($reviewCodes, SORT_STRING);
+
+                return BenchmarkPipelineResultData::success([
+                    'sheet_type' => $geometry['vision']?->sheetType ?? 'floor_plan',
+                    'room_cells' => [], 'wall_cells' => [], 'opening_ids' => [], 'areas' => [], 'quantities' => [],
+                    'work_ids' => [], 'normative_rankings' => [], 'costs' => [], 'applicable_item_ids' => [],
+                    'evidence_ids_by_item' => [], 'review_codes' => $reviewCodes, 'review_items' => $reviewItems,
+                    'model_schema_version' => 'production-replay-prediction:v1',
+                ], ['building_model' => $model->modelVersion, 'geometry_mapper' => 'geometry-input-mapper:v1'], null, null);
             }
             $quantities = $this->quantityCalculator->calculate($this->quantityMapper->map($model));
             $plannerEnvelope = $ports->require(RecordedPort::WorkPlanningModel);

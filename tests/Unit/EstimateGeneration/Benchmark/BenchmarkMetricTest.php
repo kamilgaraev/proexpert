@@ -86,6 +86,20 @@ final class BenchmarkMetricTest extends TestCase
         self::assertSame(0.0, $results['area_mape']->rawValue);
     }
 
+    #[Test]
+    public function typed_review_codes_are_recalled_without_work_or_price_labels(): void
+    {
+        $expected = $this->expected();
+        $expected['review_codes'] = ['geometry_scale_uncertain'];
+        $prediction = $expected;
+
+        $results = MetricRegistry::standard()->calculate($expected, $prediction, true);
+
+        self::assertSame(1.0, $results['review_recall']->value);
+        $prediction['review_codes'] = [];
+        self::assertSame(0.0, MetricRegistry::standard()->calculate($expected, $prediction, true)['review_recall']->value);
+    }
+
     /** @return array<string, mixed> */
     private function expected(): array
     {
