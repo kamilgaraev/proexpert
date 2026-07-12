@@ -152,4 +152,14 @@ Reviewer findings устранены одной TDD-волной после comm
 - A literal two-process/two-connection contention test coordinates through a pipe signal without sleeps: the leader holds the package row lock, the follower overlaps, and both complete without a unique failure or lost update. Exactly revisions `[1, 2]` remain with the correct `supersedes_item_id` chain and deterministic final money.
 - The complete PostgreSQL contract passed twice consecutively on the same database: `2 tests, 71 assertions` per run.
 - DB-less covering suite passed: `31 tests, 176 assertions`; PHP syntax, Pint, targeted Larastan and `git diff --check` passed. Ordinary estimates were untouched and codebase-memory artifacts remained unstaged.
+
+## Accepted evidence and closed provenance wave (2026-07-12)
+
+- `PlanWorkItemsStage` больше не пишет в `EvidenceRepository`: immutable artifact содержит только закрытый deterministic descriptor с canonical decimal quantity, unit, locator, fingerprint и producer/source versions.
+- `AcceptedQuantityEvidenceMaterializer` выполняется внутри транзакции завершения checkpoint. Он публикует evidence и связывает его с `checkpoint_id + output_version + descriptor_fingerprint`; потерянное завершение бросает исключение и откатывает все побочные записи.
+- Persistence разрешает pipeline evidence ID только через завершённый `plan_work_items` checkpoint с совпадающим output version и logical locator. Подменённый draft не может создать или выбрать замену. UserInput confirmation остаётся отдельным транзакционным источником.
+- WorkItem evidence quantity хранится canonical decimal string. PHP и PostgreSQL отклоняют float JSON evidence, сохраняя строки высокой точности без преобразования; transient draft quantity при этом может быть числом.
+- Реальный manual confirmation contract доказывает scoped UserInput evidence, новый ID/fingerprint, invalidation старого evidence, полный rollback feedback/evidence/draft при поздней ошибке, повторный успешный commit, выбор новой нормы и DB-finalized append-only revision.
+- Follow-up migration `001500` добавляет accepted-evidence mapping, закрывает `estimate_norm_resources` для INSERT/UPDATE/DELETE после финализации и сохраняет полное bounded provenance: normative/resource/price/dataset/regional/conversion identities, безопасные значения и SHA-256 canonical JSON raw payload.
+- PostgreSQL contract на `most_ai_estimator_contract` прошёл дважды подряд: `3 tests, 98 assertions` в каждом запуске. DB-less covering suite: `188 tests, 2628 assertions`. PHP syntax, Pint, targeted Larastan и `git diff --check` прошли. Production и обычные сметы не затрагивались; codebase-memory artifacts остались unstaged.
 - Two append-only revisions with `12345.678901 × 123456789.1234` prove exact PostgreSQL `numeric` item money and latest-revision package accumulation. The expected values are independently calculated with `Brick\\Math\\BigDecimal`; no float enters the assertion.
