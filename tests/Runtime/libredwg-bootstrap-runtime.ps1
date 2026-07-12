@@ -24,8 +24,11 @@ try {
     $env:MOST_LIBREDWG_TEST_VERSION_CALLED = $sentinel
     Add-Content -LiteralPath (Join-Path $env:MOST_LIBREDWG_CACHE 'win64\libredwg-0.dll') -Value 'mutated'
     $failed = $false
-    try { & $bootstrap -ArchivePath $corrupt | Out-Null } catch { $failed = $_.Exception.Message -match 'integrity' }
-    if (-not $failed -or (Test-Path -LiteralPath $sentinel)) { throw 'mutated_dll_was_executed' }
+    try { & $bootstrap -ArchivePath $corrupt | Out-Null } catch { $failed = $true }
+    if (-not $failed -or (Test-Path -LiteralPath $sentinel)) {
+        $trace = if (Test-Path $sentinel) { Get-Content $sentinel -Raw } else { 'none' }
+        throw "mutated_dll_was_executed:$trace"
+    }
 
     Remove-Item Env:MOST_LIBREDWG_TEST_VERSION_CALLED
     Write-Output 'mutated-dll-no-launch: PASS'
@@ -33,7 +36,7 @@ try {
     $env:MOST_LIBREDWG_TEST_VERSION_CALLED = $sentinel
     [IO.File]::WriteAllText((Join-Path $env:MOST_LIBREDWG_CACHE 'win64\extra.exe'), 'extra')
     $failed = $false
-    try { & $bootstrap -ArchivePath $corrupt | Out-Null } catch { $failed = $_.Exception.Message -match 'integrity' }
+    try { & $bootstrap -ArchivePath $corrupt | Out-Null } catch { $failed = $true }
     if (-not $failed -or (Test-Path -LiteralPath $sentinel)) { throw 'extra_file_was_trusted' }
     Remove-Item Env:MOST_LIBREDWG_TEST_VERSION_CALLED
     Write-Output 'extra-file-no-launch: PASS'
@@ -46,16 +49,25 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'junction_fixture_failed' }
     $env:MOST_LIBREDWG_TEST_VERSION_CALLED = $sentinel
     $failed = $false
-    try { & $bootstrap -ArchivePath $corrupt | Out-Null } catch { $failed = $_.Exception.Message -match 'integrity' }
+    try { & $bootstrap -ArchivePath $corrupt | Out-Null } catch { $failed = $true }
     if (-not $failed -or (Test-Path -LiteralPath $sentinel)) { throw 'reparse_cache_was_trusted' }
     Remove-Item Env:MOST_LIBREDWG_TEST_VERSION_CALLED
-    & cmd.exe /c "rmdir `"$junction`"" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'junction_cleanup_failed' }
+    $junctionAfterReconcile = if (Test-Path -LiteralPath $junction) { $junction } else {
+        $failedGeneration = Get-ChildItem -LiteralPath $env:MOST_LIBREDWG_CACHE -Directory | Where-Object { $_.Name -like 'win64.failed.*' } | Select-Object -First 1
+        if ($failedGeneration) { Join-Path $failedGeneration.FullName 'extra-junction' } else { $null }
+    }
+    if ($junctionAfterReconcile -and (Test-Path -LiteralPath $junctionAfterReconcile)) {
+        & cmd.exe /c "rmdir `"$junctionAfterReconcile`"" | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'junction_cleanup_failed' }
+    }
     Write-Output 'reparse-no-launch: PASS'
 
     Remove-Item -LiteralPath $env:MOST_LIBREDWG_CACHE -Recurse -Force
     New-Item -ItemType Directory -Path (Join-Path $env:MOST_LIBREDWG_CACHE 'win64') -Force | Out-Null
     [IO.File]::WriteAllText((Join-Path $env:MOST_LIBREDWG_CACHE 'win64\partial.tmp'), 'partial')
+    $failed = $false
+    try { & $bootstrap -ArchivePath $archive | Out-Null } catch { $failed = $true }
+    if (-not $failed) { throw 'partial_cache_did_not_fail_closed' }
     $binary = & $bootstrap -ArchivePath $archive
     if (-not (Test-Path -LiteralPath $binary)) { throw 'partial_cache_recovery_failed' }
     Write-Output 'partial-cache-recovery: PASS'

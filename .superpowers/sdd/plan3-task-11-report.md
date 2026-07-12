@@ -269,3 +269,21 @@ libredwg bootstrap rollback: PASS
 ```
 
 Каждый сценарий проверяет неизменный marker старой установки, отсутствие `win64.backup.*`/`win64.failed.*`/`win64.retired.*`, точный `dwgread 0.13.4` восстановленного runtime и чистый следующий idempotent cache-hit.
+
+### Final reconciliation precision
+
+Reconciliation больше не удаляет backup при одном лишь наличии final. Сначала полностью аутентифицируется final. Только valid final разрешает bounded cleanup backup/failed/retired. Если final invalid, ищется ровно один authenticated backup: invalid final уходит в quarantine, backup атомарно возвращается, повторно аутентифицируется, после чего quarantine очищается. При отсутствии или неоднозначности authenticated backup выполнение закрывается без уничтожения последней доверенной generation.
+
+Backup-cleanup тест исправлен: injection происходит внутри `Remove-TreeBounded` после `backup -> win64.retired.*`. Первый вызов оставляет valid current final и один stale retired; следующий cache-hit сначала аутентифицирует final, затем очищает retired и возвращает runtime. Это не называется rollback старого runtime.
+
+```text
+libredwg-bootstrap-rollback.ps1 -Scenario CRASH_STATE_RESTORE
+crash-state-restore: PASS
+libredwg bootstrap rollback: PASS
+
+libredwg-bootstrap-rollback.ps1 -Scenario FAIL_RETIRED_CLEANUP
+publication-scenario-FAIL_RETIRED_CLEANUP: PASS
+libredwg bootstrap rollback: PASS
+```
+
+Seeded crash state содержит invalid incomplete final и authenticated backup. Вызов использует отсутствующий archive path, поэтому восстановление доказано без download/extraction. Process seam записывает SHA каждого executable, достигшего version check; все записи равны pinned SHA `88f3c398bc1ff5a83c365fe8180018ef26947a63fff21fad8a032dd056a47c94`, то есть invalid final не запускался.

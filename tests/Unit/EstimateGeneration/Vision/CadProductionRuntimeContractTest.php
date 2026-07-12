@@ -33,14 +33,14 @@ final class CadProductionRuntimeContractTest extends TestCase
         self::assertStringContainsString('be36775704db58bd820cad03c0e50212fa2d1041512c578d322ff1996a94de7a', $script);
         self::assertStringContainsString('[Threading.Mutex]', $script);
         self::assertStringContainsString('[IO.FileShare]::None', $script);
-        self::assertStringContainsString('Get-CanonicalFileManifestSha256 $final', $script);
+        self::assertStringContainsString('Get-CanonicalFileManifestSha256 $Root', $script);
         self::assertStringContainsString('[IO.Directory]::Move($final, $backup)', $script);
         self::assertStringContainsString('[IO.Directory]::Move($backup, $final)', $script);
         self::assertStringContainsString('Reconcile-PublicationState', $script);
         self::assertStringContainsString('win64.failed.', $script);
         self::assertStringContainsString('win64.retired.', $script);
         self::assertStringContainsString('MOST_LIBREDWG_TEST_FAIL_POST_VALIDATE', $script);
-        self::assertStringContainsString('MOST_LIBREDWG_TEST_FAIL_BACKUP_CLEANUP', $script);
+        self::assertStringContainsString('MOST_LIBREDWG_TEST_FAIL_RETIRED_CLEANUP', $script);
         self::assertStringContainsString('[IO.Directory]::Move($staging, $final)', $script);
         self::assertLessThan(
             strpos($script, 'Assert-AndExtractArchive $privateArchive'),

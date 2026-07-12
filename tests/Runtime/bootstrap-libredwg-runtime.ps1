@@ -31,7 +31,7 @@ function Assert-NoReparseComponents([string]$Path) {
     }
 }
 function Test-ExactVersion([string]$Binary) {
-    if ($env:MOST_LIBREDWG_TEST_VERSION_CALLED) { [IO.File]::WriteAllText($env:MOST_LIBREDWG_TEST_VERSION_CALLED, 'called') }
+    if ($env:MOST_LIBREDWG_TEST_VERSION_CALLED) { Add-Content -LiteralPath $env:MOST_LIBREDWG_TEST_VERSION_CALLED -Value (Get-LowerSha256 $Binary) }
     $output = & $Binary --version 2>&1 | Out-String
     $exitCode = $LASTEXITCODE
     $match = [regex]::Match($output.Trim(), '^dwgread\s+(?<version>\d+\.\d+\.\d+)$', 'CultureInvariant')
@@ -66,17 +66,18 @@ function Get-CanonicalLayoutSha256([string]$Root) {
     $names.Sort([StringComparer]::Ordinal)
     Get-BytesSha256 ([Text.Encoding]::UTF8.GetBytes([string]::Join("`n", [string[]]$names)))
 }
-function Test-AuthenticatedInstall {
+function Test-AuthenticatedInstall([string]$Root = $final) {
     try {
-        Assert-NoReparseComponents $final
-        if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) { return $false }
-        $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
+        Assert-NoReparseComponents $Root
+        $rootMarker = Join-Path $Root 'most-libredwg-install.json'
+        if (-not (Test-Path -LiteralPath $rootMarker -PathType Leaf)) { return $false }
+        $marker = Get-Content -LiteralPath $rootMarker -Raw | ConvertFrom-Json
         if ($marker.version -ne $version -or $marker.archive_sha256 -ne $archiveSha256 -or
             $marker.binary_relative_path -ne $binaryRelativePath -or $marker.binary_sha256 -ne $binarySha256 -or
             $marker.file_manifest_sha256 -ne $fileManifestSha256) { return $false }
-        if ((Get-CanonicalLayoutSha256 $final) -ne $entryListSha256 -or
-            (Get-CanonicalFileManifestSha256 $final) -ne $fileManifestSha256) { return $false }
-        $binary = Join-Path $final $binaryRelativePath
+        if ((Get-CanonicalLayoutSha256 $Root) -ne $entryListSha256 -or
+            (Get-CanonicalFileManifestSha256 $Root) -ne $fileManifestSha256) { return $false }
+        $binary = Join-Path $Root $binaryRelativePath
         if ((Get-LowerSha256 $binary) -ne $binarySha256) { return $false }
         Test-ExactVersion $binary
     } catch { return $false }
@@ -132,6 +133,9 @@ function Copy-ArchivePrivately([string]$Source, [string]$Destination) {
 }
 function Remove-TreeBounded([string]$Path) {
     Assert-NoReparseComponents $Path
+    if ($env:MOST_LIBREDWG_TEST_FAIL_RETIRED_CLEANUP -eq '1' -and (Split-Path $Path -Leaf) -like 'win64.retired.*') {
+        throw 'libredwg_test_retired_cleanup_failure'
+    }
     foreach ($attempt in 1..20) {
         if (-not (Test-Path -LiteralPath $Path)) { return }
         try { Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop } catch { Start-Sleep -Milliseconds 50 }
@@ -141,13 +145,24 @@ function Remove-TreeBounded([string]$Path) {
 function Reconcile-PublicationState {
     $backups = @(Get-ChildItem -LiteralPath $cacheRoot -Directory -Force | Where-Object { $_.Name -like 'win64.backup.*' })
     $failed = @(Get-ChildItem -LiteralPath $cacheRoot -Directory -Force | Where-Object { $_.Name -like 'win64.failed.*' -or $_.Name -like 'win64.retired.*' })
-    if (-not (Test-Path -LiteralPath $final) -and $backups.Count -eq 1) {
-        Assert-NoReparseComponents $backups[0].FullName
-        [IO.Directory]::Move($backups[0].FullName, $final)
-        $backups = @()
-        if (-not (Test-AuthenticatedInstall)) { throw 'libredwg_reconciled_install_invalid' }
+    if (-not (Test-Path -LiteralPath $final) -and $backups.Count -eq 0) { return }
+    $finalValid = (Test-Path -LiteralPath $final) -and (Test-AuthenticatedInstall $final)
+    if (-not $finalValid) {
+        $authenticatedBackups = @($backups | Where-Object { Test-AuthenticatedInstall $_.FullName })
+        $quarantine = $null
+        if (Test-Path -LiteralPath $final) {
+            Assert-NoReparseComponents $final
+            $quarantine = Join-Path $cacheRoot ('win64.failed.' + [guid]::NewGuid().ToString('N'))
+            [IO.Directory]::Move($final, $quarantine)
+            $failed += Get-Item -LiteralPath $quarantine
+        }
+        if ($authenticatedBackups.Count -ne 1) { throw 'libredwg_reconciliation_no_unique_authenticated_backup' }
+        [IO.Directory]::Move($authenticatedBackups[0].FullName, $final)
+        $backups = @($backups | Where-Object { $_.FullName -ne $authenticatedBackups[0].FullName })
+        if (-not (Test-AuthenticatedInstall $final)) { throw 'libredwg_reconciled_install_invalid' }
+        $finalValid = $true
     }
-    if ($backups.Count -gt 1) { throw 'libredwg_backup_state_ambiguous' }
+    if (-not $finalValid) { throw 'libredwg_reconciliation_final_invalid' }
     foreach ($path in @($backups + $failed)) { Remove-TreeBounded $path.FullName }
 }
 
@@ -206,7 +221,6 @@ try {
         if ($env:MOST_LIBREDWG_TEST_FAIL_POST_VALIDATE -eq '1') { throw 'libredwg_test_post_validate_failure' }
         if (-not (Test-AuthenticatedInstall)) { throw 'libredwg_published_install_invalid' }
         if ($backup -and (Test-Path -LiteralPath $backup)) {
-            if ($env:MOST_LIBREDWG_TEST_FAIL_BACKUP_CLEANUP -eq '1') { throw 'libredwg_test_backup_cleanup_failure' }
             $retired = Join-Path $cacheRoot ('win64.retired.' + [guid]::NewGuid().ToString('N'))
             [IO.Directory]::Move($backup, $retired)
             $backup = $null
