@@ -370,6 +370,7 @@ class EstimateGenerationPackagePersistenceService
                 'formula' => $workItem['quantity_formula'] ?? null,
             ],
             'price_source' => $workItem['price_source'] ?? null,
+            'price_snapshot' => $workItem['price_snapshot'] ?? null,
             'normative_status' => $workItem['normative_match']['status'] ?? null,
             'normative_confidence' => isset($workItem['normative_match']['confidence'])
                 ? (float) $workItem['normative_match']['confidence']

@@ -27,7 +27,10 @@ final readonly class ResolvePricesStage implements LeaseAwarePipelineStage
         $data = $context->priorOutputs->payload(ProcessingStage::AssembleResources);
         foreach ($data['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
-                $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'] = $this->pricing->price($section['work_items']);
+                $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'] = $this->pricing->price(
+                    $section['work_items'],
+                    is_array($data['regional_context'] ?? null) ? $data['regional_context'] : [],
+                );
             }
         }
 
