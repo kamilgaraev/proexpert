@@ -46,6 +46,9 @@ class FileService
             ]);
             $etag = is_string($result['ETag'] ?? null) ? trim($result['ETag'], '"') : null;
             $version = is_string($result['VersionId'] ?? null) ? $result['VersionId'] : null;
+            if ($version === null || trim($version) === '') {
+                throw new \RuntimeException('s3_bucket_versioning_required');
+            }
 
             return ['path' => $path, 'body' => $body, 'size' => strlen($body),
                 'sha256' => hash('sha256', $body), 'etag' => $etag, 'version_id' => $version,
@@ -63,7 +66,7 @@ class FileService
     }
 
     /** @return array{path:string,body:string,size:int,sha256:string,etag:?string,version_id:?string,content_type:string} */
-    public function describeVersion(string $path, ?string $versionId): array
+    public function describeVersion(string $path, ?string $versionId, int $maxBytes = 64_000_000): array
     {
         $client = $this->s3Client();
         $bucket = $this->disk()->getConfig()['bucket'] ?? null;
@@ -76,11 +79,37 @@ class FileService
         }
         $head = $client->headObject($arguments);
         $resolvedVersion = is_string($head['VersionId'] ?? null) ? $head['VersionId'] : $versionId;
-        if ($resolvedVersion !== null) {
-            $arguments['VersionId'] = $resolvedVersion;
+        if ($resolvedVersion === null || trim($resolvedVersion) === '') {
+            throw new \RuntimeException('s3_bucket_versioning_required');
         }
+        $contentLength = $head['ContentLength'] ?? null;
+        if (! is_numeric($contentLength) || (int) $contentLength < 0 || (int) $contentLength > $maxBytes) {
+            throw new \RuntimeException('s3_object_size_invalid');
+        }
+        $arguments['VersionId'] = $resolvedVersion;
         $object = $client->getObject($arguments);
-        $body = (string) $object['Body'];
+        if (isset($object['VersionId']) && (string) $object['VersionId'] !== $resolvedVersion) {
+            throw new \RuntimeException('s3_object_version_mismatch');
+        }
+        $stream = $object['Body'] ?? null;
+        if (! is_object($stream) || ! method_exists($stream, 'read') || ! method_exists($stream, 'eof')) {
+            throw new \RuntimeException('s3_object_stream_invalid');
+        }
+        $body = '';
+        while (! $stream->eof()) {
+            $remaining = $maxBytes + 1 - strlen($body);
+            if ($remaining <= 0) {
+                throw new \RuntimeException('s3_object_size_invalid');
+            }
+            $chunk = $stream->read(min(8192, $remaining));
+            if (! is_string($chunk)) {
+                throw new \RuntimeException('s3_object_stream_invalid');
+            }
+            $body .= $chunk;
+        }
+        if (strlen($body) !== (int) $contentLength) {
+            throw new \RuntimeException('s3_object_size_mismatch');
+        }
 
         return ['path' => $path, 'body' => $body, 'size' => strlen($body),
             'sha256' => hash('sha256', $body),
@@ -95,10 +124,10 @@ class FileService
         if (! is_string($bucket) || $bucket === '') {
             throw new \RuntimeException('s3_versioned_delete_unavailable');
         }
-        $arguments = ['Bucket' => $bucket, 'Key' => $path];
-        if ($versionId !== null && $versionId !== '') {
-            $arguments['VersionId'] = $versionId;
+        if ($versionId === null || trim($versionId) === '') {
+            throw new \RuntimeException('s3_versioned_delete_requires_version');
         }
+        $arguments = ['Bucket' => $bucket, 'Key' => $path, 'VersionId' => $versionId];
         $this->s3Client()->deleteObject($arguments);
     }
 

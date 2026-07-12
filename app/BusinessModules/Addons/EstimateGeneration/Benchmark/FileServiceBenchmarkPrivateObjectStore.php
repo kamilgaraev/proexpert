@@ -19,7 +19,7 @@ final readonly class FileServiceBenchmarkPrivateObjectStore implements Benchmark
     {
         $this->assertPath($path, $maxBytes);
         try {
-            $descriptor = $this->files->describeVersion($path, null);
+            $descriptor = $this->files->describeVersion($path, null, $maxBytes);
         } catch (\Throwable) {
             throw new BenchmarkContractException('private_object_unavailable');
         }
@@ -50,7 +50,8 @@ final readonly class FileServiceBenchmarkPrivateObjectStore implements Benchmark
             throw new BenchmarkContractException('private_object_write_failed');
         }
         if (! hash_equals($expectedHash, $stored['sha256']) || $stored['size'] !== strlen($body)
-            || $stored['content_type'] !== $contentType) {
+            || $stored['content_type'] !== $contentType || ! is_string($stored['version_id'])
+            || trim($stored['version_id']) === '') {
             throw new BenchmarkContractException($stored['created'] ? 'private_object_write_integrity_mismatch' : 'private_object_immutable_conflict');
         }
 

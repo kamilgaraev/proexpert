@@ -13,6 +13,7 @@ return new class extends Migration
         DB::statement('ALTER TABLE estimate_generation_training_datasets ADD COLUMN processing_attempt integer NOT NULL DEFAULT 0');
         DB::statement('CREATE INDEX eg_training_processing_lease_idx ON estimate_generation_training_datasets (status, processing_lease_expires_at)');
         DB::statement('ALTER TABLE estimate_generation_training_datasets DROP CONSTRAINT eg_training_processing_token_chk');
+        DB::statement("UPDATE estimate_generation_training_datasets SET status = 'draft', processing_token = NULL, processing_lease_expires_at = NULL, error_message = 'training_dataset_processing_lease_expired' WHERE status = 'processing'");
         DB::statement("ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT eg_training_processing_lease_chk CHECK ((status = 'processing' AND processing_token IS NOT NULL AND processing_lease_expires_at IS NOT NULL AND processing_attempt > 0) OR (status <> 'processing' AND processing_token IS NULL AND processing_lease_expires_at IS NULL))");
         DB::statement("ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT eg_training_approval_pair_chk CHECK ((status = 'approved' AND approved_by IS NOT NULL AND approved_at IS NOT NULL) OR status <> 'approved')");
 

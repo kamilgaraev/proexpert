@@ -73,13 +73,13 @@ final class FileServiceBenchmarkPrivateObjectStoreTest extends TestCase
                 return $this->adapter;
             }
 
-            public function describeVersion(string $path, ?string $versionId): array
+            public function describeVersion(string $path, ?string $versionId, int $maxBytes = 64_000_000): array
             {
                 $body = $this->adapter->get($path);
 
                 return ['path' => $path, 'body' => $body, 'size' => strlen($body),
                     'sha256' => hash('sha256', $body), 'etag' => hash('md5', $body),
-                    'version_id' => $versionId, 'content_type' => 'application/json'];
+                    'version_id' => $versionId ?? 'test-version', 'content_type' => 'application/json'];
             }
 
             public function putImmutable(string $path, string $body, string $contentType): array

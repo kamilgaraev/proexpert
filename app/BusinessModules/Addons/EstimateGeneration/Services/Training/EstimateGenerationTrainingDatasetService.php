@@ -114,7 +114,13 @@ final class EstimateGenerationTrainingDatasetService
     public function queueProcessing(EstimateGenerationTrainingDataset $dataset): void
     {
         $this->trustPolicy->assertCanProcess($dataset);
-        \App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationTrainingDatasetJob::dispatch((int) $dataset->id);
+        $scheduled = EstimateGenerationTrainingDataset::query()->whereKey($dataset->id)
+            ->where('status', EstimateGenerationTrainingDataset::STATUS_DRAFT)
+            ->whereNull('queued_at')
+            ->update(['queued_at' => now(), 'error_message' => null]);
+        if ($scheduled === 1) {
+            \App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationTrainingDatasetJob::dispatch((int) $dataset->id);
+        }
     }
 
     public function appendVersion(EstimateGenerationTrainingDataset $source, ?SystemAdmin $actor): EstimateGenerationTrainingDataset

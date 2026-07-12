@@ -7,7 +7,6 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Jobs;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationTrainingDataset;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Training\EstimateGenerationTrainingDatasetService;
 use Illuminate\Bus\Queueable;
-use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
@@ -15,7 +14,7 @@ use Illuminate\Queue\Middleware\RateLimited;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 
-final class ProcessEstimateGenerationTrainingDatasetJob implements ShouldBeUnique, ShouldQueue
+final class ProcessEstimateGenerationTrainingDatasetJob implements ShouldQueue
 {
     use Dispatchable;
     use InteractsWithQueue;
@@ -26,19 +25,20 @@ final class ProcessEstimateGenerationTrainingDatasetJob implements ShouldBeUniqu
 
     public const QUEUE = 'estimate-generation';
 
-    public int $tries = 8;
+    public int $tries = 0;
+
+    public int $maxExceptions = 8;
 
     /** @var array<int, int> */
     public array $backoff = [30, 60, 120, 240, 480];
 
-    public int $uniqueFor = 2100;
-
     public int $timeout = 1800;
 
-    private ?string $leaseToken = null;
+    public readonly \DateTimeImmutable $retryDeadline;
 
-    public function __construct(private readonly int $datasetId)
+    public function __construct(public readonly int $datasetId, ?\DateTimeImmutable $retryDeadline = null)
     {
+        $this->retryDeadline = $retryDeadline ?? new \DateTimeImmutable('+24 hours');
         $this->onConnection(self::CONNECTION);
         $this->onQueue(self::QUEUE);
     }
@@ -79,16 +79,11 @@ final class ProcessEstimateGenerationTrainingDatasetJob implements ShouldBeUniqu
     public function handle(EstimateGenerationTrainingDatasetService $service): void
     {
         $dataset = EstimateGenerationTrainingDataset::query()->findOrFail($this->datasetId);
-        $this->leaseToken = (string) \Illuminate\Support\Str::uuid();
-        $service->process($dataset, $this->leaseToken);
+        $service->process($dataset, (string) \Illuminate\Support\Str::uuid());
     }
 
-    public function failed(\Throwable $exception): void
+    public function retryUntil(): \DateTimeInterface
     {
-        app(EstimateGenerationTrainingDatasetService::class)->rejectOwnedLease(
-            $this->datasetId,
-            $this->leaseToken,
-            'training_dataset_processing_failed'
-        );
+        return $this->retryDeadline;
     }
 }

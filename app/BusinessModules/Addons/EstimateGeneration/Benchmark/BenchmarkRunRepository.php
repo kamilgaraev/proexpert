@@ -88,6 +88,7 @@ final class BenchmarkRunRepository
             throw new DomainException('exactly_one_case_results_location_required');
         }
         $object = null;
+        $storageLockKey = null;
         if ($caseResults !== null) {
             $this->assertInlineResults($caseResults);
         } else {
@@ -98,7 +99,14 @@ final class BenchmarkRunRepository
             if ($terminal instanceof EstimateGenerationBenchmarkRun) {
                 return $terminal;
             }
-            $object = $this->assertS3Object($organizationId, $uuid, (string) $s3Path);
+            $storageLockKey = $organizationId.'|'.$uuid.'|'.basename((string) $s3Path, '.json');
+            $this->lockStorageObject($storageLockKey);
+            try {
+                $object = $this->assertS3Object($organizationId, $uuid, (string) $s3Path);
+            } catch (\Throwable $exception) {
+                $this->unlockStorageObject($storageLockKey);
+                throw $exception;
+            }
             $s3Path = $object->path;
             $s3Size = $object->contentLength;
             $s3Sha256 = $object->sha256;
@@ -113,15 +121,25 @@ final class BenchmarkRunRepository
                 'case_results_storage_disk' => $s3Path === null ? null : 's3', 'case_results_storage_path' => $s3Path,
                 'case_results_size' => $s3Size, 'case_results_sha256' => $s3Sha256,
                 'case_results_etag' => $s3Etag, 'case_results_version' => $s3Version,
-                'case_results_version_scheme' => $s3Path === null ? null : 'sha256',
+                'case_results_version_scheme' => $s3Path === null ? null : 'provider+sha256',
                 'case_results_content_type' => $s3ContentType,
                 'duration_ms' => $durationMs, 'cost_amount' => $cost, 'completed_at' => now(),
             ]);
         } catch (\Throwable $exception) {
             if ($object?->created === true && $this->objectStore instanceof BenchmarkImmutableObjectStore) {
-                $this->objectStore->removeCreated($object);
+                $referenced = EstimateGenerationBenchmarkRun::query()
+                    ->where('case_results_storage_path', $object->path)
+                    ->where('case_results_version', $object->versionId)
+                    ->where('status', EstimateGenerationBenchmarkRun::STATUS_COMPLETED)->exists();
+                if (! $referenced) {
+                    $this->objectStore->removeCreated($object);
+                }
             }
             throw $exception;
+        } finally {
+            if ($storageLockKey !== null) {
+                $this->unlockStorageObject($storageLockKey);
+            }
         }
     }
 
@@ -324,6 +342,20 @@ final class BenchmarkRunRepository
         $json = json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if (strlen($json) > self::MAX_JSON_BYTES) {
             throw new DomainException('benchmark_payload_too_large');
+        }
+    }
+
+    private function lockStorageObject(string $key): void
+    {
+        if (DB::getFacadeRoot() !== null && DB::connection()->getDriverName() === 'pgsql') {
+            DB::select('SELECT pg_advisory_lock(hashtextextended(?, 0))', [$key]);
+        }
+    }
+
+    private function unlockStorageObject(string $key): void
+    {
+        if (DB::getFacadeRoot() !== null && DB::connection()->getDriverName() === 'pgsql') {
+            DB::select('SELECT pg_advisory_unlock(hashtextextended(?, 0))', [$key]);
         }
     }
 

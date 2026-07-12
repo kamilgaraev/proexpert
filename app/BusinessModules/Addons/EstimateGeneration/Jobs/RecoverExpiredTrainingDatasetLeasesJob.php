@@ -29,8 +29,24 @@ final class RecoverExpiredTrainingDatasetLeasesJob implements ShouldQueue
                         'error_message' => 'training_dataset_processing_lease_expired',
                     ]);
                 if ($recovered === 1) {
-                    ProcessEstimateGenerationTrainingDatasetJob::dispatch((int) $dataset->id);
+                    try {
+                        ProcessEstimateGenerationTrainingDatasetJob::dispatch((int) $dataset->id);
+                    } catch (\Throwable $exception) {
+                        EstimateGenerationTrainingDataset::query()->whereKey($dataset->id)
+                            ->where('status', EstimateGenerationTrainingDataset::STATUS_DRAFT)
+                            ->update([
+                                'status' => EstimateGenerationTrainingDataset::STATUS_PROCESSING,
+                                'processing_token' => $dataset->processing_token,
+                                'processing_lease_expires_at' => now()->subSecond(),
+                            ]);
+                        throw $exception;
+                    }
                 }
             });
+
+        EstimateGenerationTrainingDataset::query()
+            ->where('status', EstimateGenerationTrainingDataset::STATUS_DRAFT)
+            ->whereNotNull('queued_at')->orderBy('id')->limit(100)->pluck('id')
+            ->each(static fn (int $datasetId) => ProcessEstimateGenerationTrainingDatasetJob::dispatch($datasetId));
     }
 }

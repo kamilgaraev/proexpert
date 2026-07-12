@@ -41,8 +41,12 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
         $edgeHardening = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001900_close_training_benchmark_edge_contracts.php';
         $storageHardening = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_002000_enforce_training_benchmark_storage_contracts.php';
         $finalHardening = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_002100_finalize_training_benchmark_architecture.php';
+        $raceHardening = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_002200_close_training_benchmark_races.php';
         if (\Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_training_datasets', 'dataset_key')) {
             if (\Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_training_datasets', 'processing_lease_expires_at')) {
+                if (DB::selectOne("SELECT 1 FROM pg_constraint WHERE conname = 'eg_benchmark_closed_state_chk'") !== null) {
+                    $raceHardening->down();
+                }
                 $finalHardening->down();
             }
             if (\Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_training_datasets', 'processing_token')
@@ -66,6 +70,7 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
         $edgeHardening->up();
         $storageHardening->up();
         $finalHardening->up();
+        $raceHardening->up();
 
         $organizationId = (int) DB::table('organizations')->insertGetId(['name' => 'Contract organization A']);
         $otherOrganizationId = (int) DB::table('organizations')->insertGetId(['name' => 'Contract organization B']);
@@ -171,6 +176,16 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
             'status' => 'approved', 'approved_by' => $reviewerId, 'approved_at' => now(),
         ]));
 
+        $approvalRaceId = $this->insertDataset($organizationId, $reviewerId, fake()->uuid(), 1, 'development', 'review_required');
+        DB::table('estimate_generation_training_examples')->insert([
+            'training_dataset_id' => $approvalRaceId, 'organization_id' => $organizationId, 'dataset_version' => 1,
+            'source_row_hash' => hash('sha256', 'approval-reviewed'), 'work_name' => 'reviewed', 'status' => 'accepted',
+            'reviewed_by' => $reviewerId, 'reviewed_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $approvalOutputs = $this->runConcurrentWriters('approval', $approvalRaceId, $organizationId, 'approval', ['reviewer_id' => $reviewerId]);
+        self::assertSame(['APPROVED', 'REJECTED'], array_map(fn (string $output): string => $this->doneValue($output), $approvalOutputs));
+        self::assertSame(1, DB::table('estimate_generation_training_examples')->where('training_dataset_id', $approvalRaceId)->count());
+
         $expiredId = $this->insertDataset($organizationId, $reviewerId, fake()->uuid(), 1, 'development', 'draft');
         $expiredToken = fake()->uuid();
         DB::table('estimate_generation_training_datasets')->where('id', $expiredId)->update([
@@ -182,6 +197,31 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
         self::assertNull(DB::table('estimate_generation_training_datasets')->where('id', $expiredId)->value('processing_token'));
         Queue::assertPushed(ProcessEstimateGenerationTrainingDatasetJob::class, fn (ProcessEstimateGenerationTrainingDatasetJob $queued): bool => $queued->uniqueId() === (string) $expiredId);
 
+        $dispatchFailureId = $this->insertDataset($organizationId, $reviewerId, fake()->uuid(), 1, 'development', 'draft');
+        $dispatchFailureToken = fake()->uuid();
+        DB::table('estimate_generation_training_datasets')->where('id', $dispatchFailureId)->update([
+            'status' => 'processing', 'processing_token' => $dispatchFailureToken,
+            'processing_lease_expires_at' => now()->subMinute(), 'processing_attempt' => 1,
+        ]);
+        $queueFake = Queue::getFacadeRoot();
+        Queue::shouldReceive('connection')->once()->andReturnSelf();
+        Queue::shouldReceive('push')->once()->andThrow(new \RuntimeException('dispatch failed'));
+        try {
+            (new RecoverExpiredTrainingDatasetLeasesJob)->handle();
+            self::fail('Dispatch failure was not propagated.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('dispatch failed', $exception->getMessage());
+        }
+        self::assertSame('processing', DB::table('estimate_generation_training_datasets')->where('id', $dispatchFailureId)->value('status'));
+        self::assertSame($dispatchFailureToken, (string) DB::table('estimate_generation_training_datasets')->where('id', $dispatchFailureId)->value('processing_token'));
+        Queue::swap($queueFake);
+        app()->instance(\Illuminate\Contracts\Queue\Factory::class, $queueFake);
+        app()->forgetInstance(\Illuminate\Contracts\Bus\Dispatcher::class);
+        (new RecoverExpiredTrainingDatasetLeasesJob)->handle();
+        self::assertSame('draft', DB::table('estimate_generation_training_datasets')->where('id', $dispatchFailureId)->value('status'));
+        Queue::assertPushed(ProcessEstimateGenerationTrainingDatasetJob::class, fn (ProcessEstimateGenerationTrainingDatasetJob $queued): bool => $queued->uniqueId() === (string) $dispatchFailureId);
+
+        $raceHardening->down();
         $finalHardening->down();
         $storageHardening->down();
         $edgeHardening->down();
@@ -192,6 +232,7 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
         $edgeHardening->up();
         $storageHardening->up();
         $finalHardening->up();
+        $raceHardening->up();
         self::assertTrue(\Illuminate\Support\Facades\Schema::hasTable('estimate_generation_benchmark_runs'));
         self::assertTrue(\Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_benchmark_runs', 'case_results_version_scheme'));
     }
