@@ -124,5 +124,6 @@ final class GeometryBuildingModelInputMapperTest extends TestCase
 
         self::assertSame('vector-w1', $result->model->floors[0]->openings[0]->wallKey);
         self::assertSame([502], $result->model->floors[0]->openings[0]->evidenceIds);
+        self::assertTrue($result->model->metrics['complete']);
     }
 }

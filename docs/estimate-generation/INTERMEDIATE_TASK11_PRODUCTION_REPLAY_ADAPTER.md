@@ -56,3 +56,37 @@ Static analysis:
 Ещё не добавлены два независимых committed replay case с envelopes/catalog/projection/expected и CLI-прогон
 двухслучайного manifest дважды. До этого нельзя заявлять Task 11 завершённой и нельзя делать threshold claim.
 
+## Review fixes: RED → GREEN
+
+После независимого review устранены shortcuts первого intermediate slice:
+
+- Work intent больше не строится из первого catalog candidate. Adapter вызывает общий production
+  `NormativeWorkIntentFactory`, который использует `WorkIntentClassifier` и тот же decision context, что
+  `MatchNormativesStage`.
+- `metrics.complete` теперь является производной метрикой `NormalizedBuildingModelData`; adapter не меняет её.
+- `EstimateValidationService::validate()` рассчитывает duplicates, quality summary и review snapshot.
+- Planner evidence принимается только при exact совпадении с evidence конкретных `QuantityData`; evidence всего
+  building model больше не присваивается каждой позиции.
+- Pricing finalization marker выводится из реально созданного price snapshot.
+- `timeoutMs` проверяется до чтения fixtures, между тяжёлыми стадиями и в цикле позиций.
+- `production-replay` зарегистрирован в Laravel `BenchmarkAdapterRegistry`, используемом обеими CLI-командами.
+
+RED evidence:
+
+`php artisan test tests/Unit/EstimateGeneration/Benchmark/ProductionReplayBenchmarkAdapterTest.php tests/Unit/EstimateGeneration/BuildingModel/GeometryBuildingModelInputMapperTest.php`
+
+- source assertion обнаружил `catalog->candidates[0]`, подставленные readiness поля и model-wide evidence;
+- confirmed vector model не содержал производную `metrics.complete`;
+- registry до изменения не содержал `production-replay`;
+- нулевой CLI budget не имел раннего typed результата.
+
+GREEN evidence:
+
+`php artisan test tests/Unit/EstimateGeneration/Benchmark/ProductionReplayBenchmarkAdapterTest.php tests/Unit/EstimateGeneration/Benchmark/ProductionReplayBenchmarkLaravelIntegrationTest.php tests/Unit/EstimateGeneration/BuildingModel tests/Unit/EstimateGeneration/Normatives/AcceptedNormativeDecisionDataTest.php tests/Unit/EstimateGeneration/Quality/ProductionReadinessGateTest.php`
+
+- `73 passed`, `259 assertions` на покрывающем прогоне до добавления отдельного exact-evidence regression;
+- exact-evidence regression отдельно: `5 passed`, `14 assertions` в adapter test;
+- `vendor/bin/phpstan analyse` для adapter, normalized model и service provider: `[OK] No errors`.
+
+Anti-oracle constraints не ослаблялись: adapter не читает expected и не принимает final prediction через ports
+или catalog. Committed two-case replay corpus и двойной CLI replay по-прежнему остаются открытым gate.

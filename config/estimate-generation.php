@@ -118,5 +118,6 @@ return [
     'benchmark' => [
         'acceptance_manifest' => $envValue('ESTIMATE_GENERATION_ACCEPTANCE_BENCHMARK_MANIFEST'),
         'acceptance_organization_id' => (int) env('ESTIMATE_GENERATION_ACCEPTANCE_BENCHMARK_ORGANIZATION_ID', 0),
+        'production_replay_projections' => [],
     ],
 ];

@@ -53,6 +53,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkObject
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\Metrics\MetricRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\PrivateBenchmarkObjectReader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\ProcessBenchmarkCaseExecutor;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\ProductionReplayBenchmarkAdapter;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedBenchmarkCatalogLoader;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedPortEnvelopeLoader;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedReplayProjectionLoader;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\BootstrapEstimateGenerationLearningCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\InspectEstimateGenerationProductionCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\RunEstimateGenerationBenchmarkCaseCommand;
@@ -147,8 +151,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingServic
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\ConstructionDocumentClassifierService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentUnderstandingSummaryBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DrawingGeometryAnalyzer;
-use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\CadGeometryProvider;
-use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\DwgDxfGeometryProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationAuditService;
@@ -174,8 +176,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\SpreadsheetDocume
 use App\BusinessModules\Addons\EstimateGeneration\Services\ProjectDocumentNormativeReferenceExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorReadinessService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\CadGeometryProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionResponseBodyReader;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\DwgDxfGeometryProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\GeometryResourceLimits;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPreprocessor;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Providers\BoundedVisionResponseBodyReader;
@@ -219,6 +223,19 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(CadGeometryProvider::class, DwgDxfGeometryProvider::class);
         $this->app->singleton(BenchmarkAdapterRegistry::class, static fn ($app): BenchmarkAdapterRegistry => new BenchmarkAdapterRegistry([
             $app->make(CurrentBaselineBenchmarkAdapter::class),
+            new ProductionReplayBenchmarkAdapter(
+                new RecordedReplayProjectionLoader(base_path('tests/Fixtures/EstimateGeneration/benchmarks')),
+                new RecordedPortEnvelopeLoader(
+                    base_path('tests/Fixtures/EstimateGeneration/benchmarks'),
+                    base_path('tests/Fixtures/EstimateGeneration/benchmarks/recordings/manifest.json'),
+                ),
+                new RecordedBenchmarkCatalogLoader(base_path('tests/Fixtures/EstimateGeneration/benchmarks')),
+                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler::class),
+                $app->make(ResourceAssemblyService::class),
+                $app->make(NormativeWorkIntentFactory::class),
+                $app->make(EstimateValidationService::class),
+                (array) config('estimate-generation.benchmark.production_replay_projections', []),
+            ),
         ]));
         $this->app->singleton(RunEstimateGenerationBenchmarkCaseCommand::class, fn ($app): RunEstimateGenerationBenchmarkCaseCommand => new RunEstimateGenerationBenchmarkCaseCommand(
             $app->make(BenchmarkAdapterRegistry::class),

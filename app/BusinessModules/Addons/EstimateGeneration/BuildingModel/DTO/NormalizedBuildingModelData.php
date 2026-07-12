@@ -166,6 +166,8 @@ final readonly class NormalizedBuildingModelData
             'engineering_element_count' => array_sum(array_map(static fn (FloorData $floor): int => count($floor->engineeringElements), $floors)),
             'evidence_count' => count($evidence),
             'minimum_confidence' => $this->minimumConfidence($floors),
+            'complete' => $scaleStatus === 'confirmed' && $floors !== [] && $evidence !== []
+                && array_filter($assumptions, static fn (AssumptionData $item): bool => $item->severity === 'blocking') === [],
         ];
         if (strlen(BuildingModelSchema::canonicalJson($this->toArray())) > BuildingModelSchema::MAX_JSON_BYTES) {
             throw new InvalidArgumentException('Building model JSON exceeds the limit.');

@@ -7,21 +7,20 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Benchmark;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelAssembler;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\GeometryBuildingModelInputMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\AcceptedNormativeDecisionData;
-use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateDecisionContextData;
-use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\WorkIntentData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeHardGate;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeMatchingWorkflow;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRetrievalService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeWorkIntentFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveRegionalPrice;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\BuildingQuantityCalculator;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\NormalizedBuildingModelQuantityInputMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessInspector;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
-use DateTimeImmutable;
 use Throwable;
 
 final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipelineAdapter
@@ -35,6 +34,8 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
         private RecordedBenchmarkCatalogLoader $catalogLoader,
         private WorkPlanCompiler $compiler,
         private ResourceAssemblyService $assembly,
+        private NormativeWorkIntentFactory $intentFactory,
+        private EstimateValidationService $validation,
         private array $projections,
         private GeometryBuildingModelInputMapper $geometryMapper = new GeometryBuildingModelInputMapper,
         private BuildingModelAssembler $buildingAssembler = new BuildingModelAssembler,
@@ -43,20 +44,34 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
         private DraftReadinessInspector $readiness = new DraftReadinessInspector,
     ) {}
 
-    public function id(): string { return self::ID; }
+    public function id(): string
+    {
+        return self::ID;
+    }
 
     public function run(BenchmarkPredictionCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
     {
+        if ($timeoutMs < 1) {
+            return BenchmarkPipelineResultData::technicalFailure('case_timeout');
+        }
+        $deadline = hrtime(true) + $timeoutMs * 1_000_000;
         try {
             $descriptor = $this->projections[$case->id] ?? throw new \InvalidArgumentException('recorded_projection_missing');
             $case = $this->projectionsLoader->load($case, $descriptor['reference'], $descriptor['sha256']);
             $ports = $this->envelopesLoader->loadProjection($case);
             $catalog = $this->catalogLoader->load($case);
+            if ($this->expired($deadline)) {
+                return BenchmarkPipelineResultData::technicalFailure('case_timeout');
+            }
             $geometry = $this->geometry($ports);
             $evidence = $this->evidenceMap($geometry);
-            $model = $this->buildingAssembler->assembleVision($this->geometryMapper->map(
+            $assemblyResult = $this->buildingAssembler->assembleVision($this->geometryMapper->map(
                 $geometry['vision'], $geometry['vector'], $evidence,
-            ))->model;
+            ));
+            $model = $assemblyResult->model;
+            if ($assemblyResult->clarifications !== [] || ($model->metrics['complete'] ?? false) !== true) {
+                return BenchmarkPipelineResultData::technicalFailure('production_readiness_blocked');
+            }
             $quantities = $this->quantityCalculator->calculate($this->quantityMapper->map($model));
             $analysis = $this->analysis($model->toArray(), $quantities->toArray(), $catalog);
             $plan = $this->compiler->compile($analysis, (new RecordedWorkPlannerProvider(
@@ -76,19 +91,31 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
             foreach ($plan['local_estimates'] as &$estimate) {
                 foreach ($estimate['sections'] as &$section) {
                     foreach ($section['work_items'] as &$item) {
-                        if (($item['metadata']['generation_source'] ?? null) !== 'work_planner_provider') { continue; }
-                        $intent = $this->intent($item, $catalog);
-                        $context = new NormativeCandidateDecisionContextData(1, 1, 1, (string) $item['key'],
-                            '018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c', 'sha256:'.$case->inputSha256, 1,
-                            'recorded-replay:v1', 'normative-rerank-v1', 'recorded-replay:v1', $intent->sourceEvidence);
-                        $result = $workflow->match($intent, $context, true);
+                        if ($this->expired($deadline)) {
+                            return BenchmarkPipelineResultData::technicalFailure('case_timeout');
+                        }
+                        if (($item['metadata']['generation_source'] ?? null) !== 'work_planner_provider') {
+                            continue;
+                        }
+                        $sourceRefs = $this->quantityEvidence($item, $quantities->all());
+                        $factoryContext = ['organization_id' => 1, 'project_id' => 1, 'session_id' => 1,
+                            'checkpoint_claim_token' => '018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c',
+                            'input_version' => 'sha256:'.$case->inputSha256, 'logical_attempt' => 1,
+                            'scope_type' => $estimate['scope_type'] ?? null, 'local_estimate_title' => $estimate['title'] ?? null,
+                            'section_title' => $section['title'] ?? null, 'source_refs' => $sourceRefs,
+                            'regional_context' => $regional, 'applicability_date' => '2026-07-12'];
+                        $intent = $this->intentFactory->intent($item, $factoryContext, $catalog->datasetVersion);
+                        $result = $workflow->match($intent, $this->intentFactory->decision($item, $factoryContext), true);
                         $selected = $result->selectedCandidateId();
                         $record = collect($catalog->resources)->firstWhere('candidate_id', $selected);
                         $item = $this->assembly->assembleFromDecision($item,
                             AcceptedNormativeDecisionData::fromWorkflowResult($result, is_array($record) ? $record : []), $regional);
                         $item = $pricing->price([$item], $regional)[0];
-                        $item['pricing_finalized_at'] = '2026-07-12T00:00:00Z';
-                        $item['evidence_ids'] = array_map('strval', $model->evidenceIds);
+                        if (! is_array($item['price_snapshot'] ?? null) || ! is_string($item['price_snapshot']['captured_at'] ?? null)) {
+                            return BenchmarkPipelineResultData::technicalFailure('production_readiness_blocked');
+                        }
+                        $item['pricing_finalized_at'] = $item['price_snapshot']['captured_at'];
+                        $item['evidence_ids'] = array_map('intval', $sourceRefs);
                         $workIds[] = (string) $item['key'];
                         $rankings[(string) $item['key']] = $result->rerankResult?->ordering ?? [];
                         $costs[(string) $item['key']] = (string) $item['total_cost'];
@@ -96,21 +123,43 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
                     }
                 }
             }
-            $draft = ['building_model' => [...$model->toArray(), 'metrics' => [...$model->metrics, 'complete' => true]],
-                'local_estimates' => $plan['local_estimates'], 'quality_summary' => ['duplicate_work_items' => 0, 'review_items' => ['blocking' => 0]]];
+            $draft = $this->validation->validate(['building_model' => $model->toArray(),
+                'local_estimates' => $plan['local_estimates'], 'regional_context' => $regional]);
             if ($this->readiness->inspect($draft)->blockingIssues !== []) {
                 return BenchmarkPipelineResultData::technicalFailure('production_readiness_blocked');
             }
 
-            $rooms = []; $walls = []; $openings = []; $areas = [];
+            $rooms = [];
+            $walls = [];
+            $openings = [];
+            $areas = [];
             foreach ($model->floors as $floor) {
-                foreach ($floor->rooms as $room) { $rooms[] = $room->key; if (($q = $quantities->get('floor_area')) !== null) { $areas[$room->key] = $q->amount; } }
-                foreach ($floor->walls as $wall) { $walls[] = $wall->key; }
-                foreach ($floor->openings as $opening) { $openings[] = $opening->key; }
+                foreach ($floor->rooms as $room) {
+                    $rooms[] = $room->key;
+                    if (($q = $quantities->get('floor_area')) !== null) {
+                        $areas[$room->key] = $q->amount;
+                    }
+                }
+                foreach ($floor->walls as $wall) {
+                    $walls[] = $wall->key;
+                }
+                foreach ($floor->openings as $opening) {
+                    $openings[] = $opening->key;
+                }
             }
             $quantityMap = [];
-            foreach ($quantities->all() as $quantity) { $quantityMap[$quantity->key] = $quantity->amount; }
-            sort($workIds, SORT_STRING); ksort($rankings); ksort($costs); ksort($evidenceByItem); ksort($quantityMap);
+            foreach ($quantities->all() as $quantity) {
+                $quantityMap[$quantity->key] = $quantity->amount;
+            }
+            sort($workIds, SORT_STRING);
+            ksort($rankings);
+            ksort($costs);
+            ksort($evidenceByItem);
+            ksort($quantityMap);
+
+            if ($this->expired($deadline)) {
+                return BenchmarkPipelineResultData::technicalFailure('case_timeout');
+            }
 
             return BenchmarkPipelineResultData::success([
                 'sheet_type' => $geometry['vision']?->sheetType ?? 'floor_plan', 'room_cells' => $rooms,
@@ -128,7 +177,8 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
 
     private function geometry(RecordedPortEnvelopeSet $ports): array
     {
-        $vision = null; $vector = null;
+        $vision = null;
+        $vector = null;
         foreach ($ports->ports() as $port) {
             $envelope = $ports->require($port);
             if ($port === RecordedPort::VisionExtraction) {
@@ -138,16 +188,30 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
                 $vector = VectorGeometryData::fromArray($envelope->payload);
             }
         }
+
         return ['vision' => $vision, 'vector' => $vector];
     }
 
     private function evidenceMap(array $geometry): array
     {
         $refs = [];
-        if ($geometry['vision'] instanceof VisionAnalysisData) { foreach ($geometry['vision']->evidence as $e) { $refs[] = $e->key; } }
-        if ($geometry['vector'] instanceof VectorGeometryData) { foreach ($geometry['vector']->entities as $e) { $refs[] = 'vector:'.$e['handle']; } }
-        $refs = array_values(array_unique($refs)); sort($refs, SORT_STRING);
-        $mapped = []; foreach ($refs as $index => $ref) { $mapped[$ref] = $index + 1; }
+        if ($geometry['vision'] instanceof VisionAnalysisData) {
+            foreach ($geometry['vision']->evidence as $e) {
+                $refs[] = $e->key;
+            }
+        }
+        if ($geometry['vector'] instanceof VectorGeometryData) {
+            foreach ($geometry['vector']->entities as $e) {
+                $refs[] = 'vector:'.$e['handle'];
+            }
+        }
+        $refs = array_values(array_unique($refs));
+        sort($refs, SORT_STRING);
+        $mapped = [];
+        foreach ($refs as $index => $ref) {
+            $mapped[$ref] = $index + 1;
+        }
+
         return $mapped;
     }
 
@@ -156,23 +220,38 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
         $takeoffs = array_map(static fn (array $q): array => ['scope_key' => $q['key'],
             'quantity_key' => $q['key'] === 'floor_area' ? 'finish.floor' : $q['key'],
             'normalized_payload' => ['quantity_key' => $q['key'] === 'floor_area' ? 'finish.floor' : $q['key']]], $quantities['quantities']);
+        $price = $catalog->prices[0] ?? [];
+
         return ['object' => ['object_type' => 'floor_plan_geometry', 'description' => 'floor plan',
             'area' => isset($quantities['quantities'][0]['amount']) ? (float) $quantities['quantities'][0]['amount'] : 0],
             'detected_structure' => ['scopes' => [['scope_type' => 'finishing', 'title' => 'Finishing', 'source_refs' => []]]],
             'document_context' => ['quantity_takeoffs' => $takeoffs], 'building_model' => $model,
             'regional_context' => ['dataset_id' => $catalog->datasetId, 'dataset_version' => $catalog->datasetVersion,
-                'region_code' => $catalog->regionCode, 'region_id' => 77, 'price_zone_id' => 1, 'period_id' => 202607,
-                'price_version' => $catalog->pricePeriod, 'estimate_regional_price_version_id' => 8],
+                'region_code' => $catalog->regionCode, 'region_id' => $price['region_id'] ?? null,
+                'price_zone_id' => $price['price_zone_id'] ?? null, 'period_id' => $price['period_id'] ?? null,
+                'price_version' => $catalog->pricePeriod,
+                'estimate_regional_price_version_id' => $price['regional_price_version_id'] ?? null],
             'generation_mode' => 'strict_documents'];
     }
 
-    private function intent(array $item, RecordedBenchmarkCatalogData $catalog): WorkIntentData
+    private function quantityEvidence(array $item, array $quantities): array
     {
-        $candidate = $catalog->candidates[0];
-        return new WorkIntentData(1, 1, 1, (string) $item['key'], (string) $item['name'], (string) $item['unit'],
-            (string) $candidate['unit_dimension'], (string) $candidate['material'], (string) $candidate['technology'],
-            (string) $candidate['structure'], (string) $candidate['normative_section'], (string) $candidate['object_type'],
-            $catalog->datasetVersion, $catalog->datasetStatus, $catalog->regionCode, new DateTimeImmutable('2026-07-12'),
-            array_values(array_map('strval', $item['metadata']['quantity_source_refs'] ?? [])));
+        $allowed = [];
+        foreach ($quantities as $quantity) {
+            foreach ($quantity->evidenceIds as $id) {
+                $allowed[(string) $id] = true;
+            }
+        }
+        $refs = array_values(array_unique(array_map('strval', $item['metadata']['quantity_source_refs'] ?? [])));
+        if ($refs === [] || array_filter($refs, static fn (string $ref): bool => ! isset($allowed[$ref])) !== []) {
+            throw new \InvalidArgumentException('recorded_planner_quantity_evidence_invalid');
+        }
+
+        return $refs;
+    }
+
+    private function expired(int $deadline): bool
+    {
+        return hrtime(true) >= $deadline;
     }
 }
