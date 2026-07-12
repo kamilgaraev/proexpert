@@ -24,7 +24,7 @@ final class ProductionReplayCommittedCasesTest extends TestCase
         return $app;
     }
 
-    public function test_two_committed_cases_run_through_registered_adapter_without_prediction_oracle(): void
+    public function test_diverse_committed_corpus_runs_through_registered_adapter_without_prediction_oracle(): void
     {
         $root = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/benchmarks';
         $manifest = BenchmarkManifest::fromFile($root.'/production-replay-manifest.json', $root, false);
@@ -39,8 +39,8 @@ final class ProductionReplayCommittedCasesTest extends TestCase
             'repository-production-replay:v1',
         );
 
-        self::assertSame(2, $report->attemptedCount);
-        self::assertSame(2, $report->succeededCount);
+        self::assertSame(8, $report->attemptedCount);
+        self::assertSame(8, $report->succeededCount);
         self::assertSame(0, $report->failedCount);
         self::assertSame(0, $report->skippedCount);
         self::assertSame(ProductionReplayBenchmarkAdapter::class, $adapter::class);
@@ -87,12 +87,12 @@ final class ProductionReplayCommittedCasesTest extends TestCase
         $manifestCases = array_column(json_decode((string) file_get_contents($root.'/production-replay-manifest.json'), true, 64, JSON_THROW_ON_ERROR)['cases'], null, 'id');
         foreach (glob($root.'/recordings/*-*.json') ?: [] as $recordingPath) {
             $recording = json_decode((string) file_get_contents($recordingPath), true, 64, JSON_THROW_ON_ERROR);
-            $caseId = str_starts_with(basename($recordingPath), 'vector-')
-                ? 'reg-replay-vector-wall-opening-001' : 'reg-replay-vision-sketch-001';
+            $caseId = array_search($recording['source_sha256'], array_column($manifestCases, 'input_sha256', 'id'), true);
+            self::assertIsString($caseId);
             self::assertSame($manifestCases[$caseId]['input_sha256'], $recording['source_sha256']);
             self::assertSame('contract_fixture', $recording['capture_kind']);
             self::assertSame('passed', $recording['privacy_result']);
-            self::assertSame('plan3-task11-recorded-fixtures-v1', $recording['approval_ref']);
+            self::assertContains($recording['approval_ref'], ['plan3-task11-recorded-fixtures-v1', 'plan3-task11-corpus-v1']);
             if (! str_ends_with(basename($recordingPath), '-geometry.json')) {
                 self::assertNotSame($recording['source_sha256'], $recording['input_dependency_sha256']);
             }

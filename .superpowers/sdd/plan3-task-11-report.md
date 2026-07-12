@@ -1,5 +1,32 @@
 # Plan 3 — Task 11: промежуточный отчёт
 
+## Corpus gate: восемь production replay случаев
+
+Статус: **DONE_WITH_CONCERNS — corpus/threshold/LibreDWG gates закрыты; полный Plan 3 suite/review остаётся отдельным воротом**.
+
+Корпус расширен до восьми независимых источников: dimensioned DXF, raster sketch, vector PDF, scanned PDF, DWG, dimensioned raster, uncertain freehand sketch и engineering layout. Только freehand остаётся typed review; остальные пять новых случаев проходят production `GeometryBuildingModelInputMapper → BuildingModelAssembler → NormalizedBuildingModelQuantityInputMapper → BuildingQuantityCalculator → WorkPlanCompiler → NormativeMatchingWorkflow → ResourceAssemblyService → EstimatePricingService`.
+
+Tests-only capture builder вычисляет planner dependency из фактической модели/quantities/evidence. `CapturingReranker` вызывается внутри production matching workflow и фиксирует фактические `WorkIntentData`, decision context и candidate set для `RecordedPortRequestHasher::reranker`; decision payload авторизован независимо. Expected labels созданы вручную по источникам, спецификации work intent, catalog snapshots и точным ценам; `expected-authoring-plan3-task11.json` фиксирует `prediction_output_used=false`.
+
+RED: первоначальный corpus test ожидал 8, но получал 2; первый фактический CLI после добавления geometry-only artifacts имел 6 review-only случаев. GREEN: пять определённых случаев получили закрытые planner/reranker envelopes, отдельные catalogs с двумя кандидатами (alt перед primary), exact regional prices и полную hash chain.
+
+```text
+ProductionReplayCommittedCasesTest: PASS
+Focused benchmark/adapter/envelope/catalog/CLI: OK (56 tests, 105 assertions)
+PHPStan changed production + capture builder: [OK] No errors
+```
+
+Два свежих CLI-запуска:
+
+```text
+attempted=8 succeeded=8 failed=0 skipped=0
+work_recall=1 normative_top3=1 evidenced_applicable_items=1 technical_success_rate=1
+fingerprint=ca0747e3153505bf295938d60795f4f9e26e7c251785a74aeb5d52faa4d8f8ab
+case_results identical=true; fingerprint identical=true
+```
+
+LibreDWG выполнен scoped, без изменения глобального PATH: security runtime harness завершился `libredwg bootstrap runtime: PASS`; свежий cache вернул `dwgread 0.13.4`; реальный decode `simple-house.dwg` — `OK (1 test, 3 assertions)`.
+
 ## INTERMEDIATE: capture tooling и typed review outcome
 
 Добавлен tests-only `RecordedFixtureCaptureBuilder`, использующий production request hashers для geometry, planner и reranker. Tooling не читает expected, отклоняет oracle-поля, проверяет source SHA, privacy/approval metadata и формирует стабильный reviewable inventory.

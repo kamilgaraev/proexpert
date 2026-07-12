@@ -250,6 +250,11 @@ final class BenchmarkFixtureDescriptorValidator
     /** @param list<string> $allowedCapabilities */
     private function dwg(string $content, array $allowedCapabilities): void
     {
+        if (in_array('geometry', $allowedCapabilities, true)
+            && strlen($content) >= 512 && strlen($content) <= 16_000_000
+            && preg_match('/^AC(?:1015|1018|1021|1024|1027|1032)/D', $content) === 1) {
+            return;
+        }
         if (! in_array('descriptor_validation', $allowedCapabilities, true)
             || ! in_array('unsupported_conversion', $allowedCapabilities, true)
             || preg_match('/^AC(?:1015|1018|1021|1024|1027|1032) SYNTHETIC-LICENSED-DESCRIPTOR DWG conversion intentionally unsupported in Task 1\n?$/', $content) !== 1) {

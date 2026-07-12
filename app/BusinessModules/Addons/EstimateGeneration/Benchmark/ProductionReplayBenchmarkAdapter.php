@@ -198,8 +198,13 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
             ], ['building_model' => $model->modelVersion, 'geometry_mapper' => 'geometry-input-mapper:v1',
                 'quantity' => 'building-quantity:v1', 'planner' => 'work-planner-v1', 'normative' => 'normative-rerank-v1'],
                 '0', $catalog->currency);
-        } catch (Throwable) {
-            return BenchmarkPipelineResultData::technicalFailure('production_replay_failed');
+        } catch (Throwable $exception) {
+            $code = $exception->getMessage();
+
+            return BenchmarkPipelineResultData::technicalFailure(
+                is_string($code) && preg_match('/^[a-z][a-z0-9_]{2,63}$/D', $code) === 1
+                    ? $code : 'production_replay_failed',
+            );
         }
     }
 

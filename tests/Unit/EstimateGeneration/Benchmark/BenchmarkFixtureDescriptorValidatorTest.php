@@ -63,6 +63,19 @@ final class BenchmarkFixtureDescriptorValidatorTest extends TestCase
         self::addToAssertionCount(1);
     }
 
+    #[Test]
+    public function real_dwg_with_supported_magic_and_content_is_accepted_for_geometry_capture(): void
+    {
+        $path = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/Vision/simple-house.dwg';
+        $bytes = (string) file_get_contents($path);
+
+        (new BenchmarkFixtureDescriptorValidator)->validateBytes(
+            $bytes, BenchmarkSourceType::Dwg, 'input.dwg', ['geometry'],
+        );
+
+        self::assertGreaterThan(512, strlen($bytes));
+    }
+
     /** @return iterable<string, array{string, BenchmarkSourceType, string, list<string>}> */
     public static function invalidDescriptors(): iterable
     {
