@@ -78,6 +78,36 @@ final class TrainingDatasetTrustPolicyTest extends TestCase
     }
 
     #[Test]
+    public function inline_results_reject_normalized_sensitive_key_variants(): void
+    {
+        $repository = $this->repository('unused');
+        $this->expectExceptionMessage('benchmark_sensitive_case_result_rejected');
+        $repository->complete(7, 'unused', $this->metrics(), [['meta' => ['Access-Token-Value' => 'secret']]], durationMs: 1);
+    }
+
+    #[Test]
+    public function inline_results_reject_excessive_recursion_depth(): void
+    {
+        $value = ['case_id' => '1'];
+        for ($depth = 0; $depth < 40; $depth++) {
+            $value = ['nested' => $value];
+        }
+
+        $repository = $this->repository('unused');
+        $this->expectExceptionMessage('benchmark_case_results_complexity_exceeded');
+        $repository->complete(7, 'unused', $this->metrics(), [$value], durationMs: 1);
+    }
+
+    #[Test]
+    public function external_results_require_content_addressed_immutable_key(): void
+    {
+        $contents = 'payload';
+        $repository = $this->repository($contents);
+        $this->expectExceptionMessage('benchmark_results_object_invalid');
+        $repository->complete(7, 'unused', $this->metrics(), s3Path: 'org-7/estimate-generation/benchmarks/run.json', durationMs: 1, s3Size: strlen($contents), s3Sha256: hash('sha256', $contents));
+    }
+
+    #[Test]
     public function inline_benchmark_results_reject_too_many_cases(): void
     {
         $repository = $this->repository('unused');
@@ -90,7 +120,7 @@ final class TrainingDatasetTrustPolicyTest extends TestCase
     {
         $repository = $this->repository('payload');
         $this->expectExceptionMessage('benchmark_results_object_integrity_mismatch');
-        $repository->complete(7, 'unused', $this->metrics(), s3Path: 'org-7/estimate-generation/benchmarks/run.json', durationMs: 1, s3Size: 7, s3Sha256: str_repeat('0', 64));
+        $repository->complete(7, 'unused', $this->metrics(), s3Path: 'org-7/estimate-generation/benchmarks/unused/'.str_repeat('0', 64).'.json', durationMs: 1, s3Size: 7, s3Sha256: str_repeat('0', 64), s3Etag: 'etag', s3ContentType: 'application/json');
     }
 
     #[Test]

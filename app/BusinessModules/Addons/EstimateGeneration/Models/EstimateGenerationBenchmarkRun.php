@@ -19,7 +19,9 @@ final class EstimateGenerationBenchmarkRun extends Model
         'uuid', 'idempotency_key', 'organization_id', 'training_dataset_id', 'dataset_version',
         'pipeline_version', 'model_versions', 'normative_version', 'price_version', 'metrics',
         'case_results', 'case_results_storage_disk', 'case_results_storage_path', 'duration_ms',
-        'cost_amount', 'currency', 'status', 'failure_code', 'started_at', 'completed_at',
+        'case_results_size', 'case_results_sha256', 'case_results_etag', 'case_results_version',
+        'case_results_content_type', 'cost_amount', 'currency', 'status', 'failure_code',
+        'error_summary', 'started_at', 'completed_at',
     ];
 
     protected $casts = [
@@ -30,6 +32,7 @@ final class EstimateGenerationBenchmarkRun extends Model
         'metrics' => 'array',
         'case_results' => 'array',
         'duration_ms' => 'integer',
+        'case_results_size' => 'integer',
         'cost_amount' => 'decimal:8',
         'started_at' => 'immutable_datetime',
         'completed_at' => 'immutable_datetime',

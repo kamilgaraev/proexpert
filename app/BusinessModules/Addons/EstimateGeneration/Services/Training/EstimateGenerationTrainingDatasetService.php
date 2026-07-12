@@ -135,6 +135,16 @@ final class EstimateGenerationTrainingDatasetService
 
         return DB::transaction(function () use ($source, $actor): EstimateGenerationTrainingDataset {
             DB::select('SELECT pg_advisory_xact_lock(hashtext(?), hashtext(?))', [(string) $source->organization_id, (string) $source->dataset_key]);
+            $source = EstimateGenerationTrainingDataset::query()
+                ->whereKey($source->getKey())
+                ->where('organization_id', $source->organization_id)
+                ->where('dataset_key', $source->dataset_key)
+                ->where('version', $source->version)
+                ->lockForUpdate()
+                ->firstOrFail();
+            if (! in_array($source->status, [EstimateGenerationTrainingDataset::STATUS_APPROVED, EstimateGenerationTrainingDataset::STATUS_ARCHIVED], true)) {
+                throw new \DomainException('dataset_version_source_not_final');
+            }
             $latestVersion = (int) EstimateGenerationTrainingDataset::query()
                 ->where('organization_id', $source->organization_id)
                 ->where('dataset_key', $source->dataset_key)
@@ -169,7 +179,10 @@ final class EstimateGenerationTrainingDatasetService
      */
     public function process(EstimateGenerationTrainingDataset $dataset): array
     {
-        $this->trustPolicy->assertCanProcess($dataset);
+        $dataset = EstimateGenerationTrainingDataset::query()->whereKey($dataset->getKey())->firstOrFail();
+        if ($dataset->status !== EstimateGenerationTrainingDataset::STATUS_PROCESSING) {
+            throw new \DomainException('training_dataset_processing_claim_lost');
+        }
         $dataset->loadMissing('files');
         $referenceFile = $dataset->files()
             ->where('file_role', EstimateGenerationTrainingFile::ROLE_REFERENCE_ESTIMATE)
@@ -190,7 +203,7 @@ final class EstimateGenerationTrainingDatasetService
             $stats = $this->parseAndRecord($dataset, $referenceFile, $tempPath);
 
             $dataset->forceFill([
-                'status' => EstimateGenerationTrainingDataset::STATUS_REVIEW_REQUIRED,
+                'status' => EstimateGenerationTrainingDataset::STATUS_REJECTED,
                 'quality_status' => 'needs_review',
                 'stats' => $stats,
                 'processed_at' => now(),
@@ -327,8 +340,6 @@ final class EstimateGenerationTrainingDatasetService
             ->first();
 
         if (! $norm instanceof EstimateNorm) {
-            $this->markTrainingExample($trainingExample, EstimateGenerationTrainingExample::STATUS_SKIPPED, ['norm_not_found']);
-
             return ['status' => 'norm_not_found', 'created' => 0];
         }
 
@@ -336,8 +347,6 @@ final class EstimateGenerationTrainingDatasetService
         $workUnit = $trainingExample->work_unit;
 
         if ($workUnit === null || ! NormativeUnitNormalizer::compatible($workUnit, (string) $norm->unit)) {
-            $this->markTrainingExample($trainingExample, EstimateGenerationTrainingExample::STATUS_SKIPPED, ['unit_mismatch']);
-
             return ['status' => 'unit_mismatch', 'created' => 0];
         }
 

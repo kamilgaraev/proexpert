@@ -34,7 +34,11 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
         $this->ensureLegacyTrainingSchema();
         $migration = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001700_rebuild_estimate_generation_training_and_benchmarks.php';
         $hardening = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001800_harden_estimate_generation_training_and_benchmarks.php';
+        $edgeHardening = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001900_close_training_benchmark_edge_contracts.php';
         if (\Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_training_datasets', 'dataset_key')) {
+            if (\Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_benchmark_runs', 'case_results_sha256')) {
+                $edgeHardening->down();
+            }
             if (\Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_training_examples', 'dataset_version')) {
                 $hardening->down();
             }
@@ -43,6 +47,7 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
         self::assertFalse(\Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_training_datasets', 'dataset_key'));
         $migration->up();
         $hardening->up();
+        $edgeHardening->up();
 
         $organizationId = (int) DB::table('organizations')->insertGetId(['name' => 'Contract organization A']);
         $otherOrganizationId = (int) DB::table('organizations')->insertGetId(['name' => 'Contract organization B']);
@@ -90,6 +95,7 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
             'status' => 'completed', 'metrics' => json_encode(['technical_success_rate' => ['macro' => 1]]), 'case_results' => json_encode([['case_id' => 'contract']]), 'duration_ms' => 10,
             'completed_at' => now(), 'updated_at' => now(),
         ]);
+        $this->assertRejected(fn () => DB::table('estimate_generation_benchmark_runs')->where('id', $runId)->update(['metrics' => json_encode([])]));
         $this->assertRejected(fn () => DB::table('estimate_generation_benchmark_runs')->where('id', $runId)->update(['pipeline_version' => 'mutated']));
         $this->assertRejected(fn () => DB::table('estimate_generation_benchmark_runs')->where('id', $runId)->delete());
         DB::table('estimate_generation_training_datasets')->where('id', $datasetId)->update(['status' => 'archived', 'updated_at' => now()]);
@@ -97,28 +103,31 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
         $this->assertRejected(fn () => DB::table('estimate_generation_training_datasets')->where('id', $datasetId)->delete());
         $this->assertRejected(fn () => DB::table('organizations')->where('id', $organizationId)->delete());
 
-        $developmentId = $this->insertDataset($organizationId, $reviewerId, $key, 2, 'development');
-        self::assertSame(2, (int) DB::table('estimate_generation_training_datasets')->where('id', $developmentId)->value('version'));
-        $this->assertRejected(fn () => $this->insertDataset($organizationId, $reviewerId, $key, 2, 'development'));
+        $developmentKey = fake()->uuid();
+        $developmentId = $this->insertDataset($organizationId, $reviewerId, $developmentKey, 1, 'development');
+        self::assertSame(1, (int) DB::table('estimate_generation_training_datasets')->where('id', $developmentId)->value('version'));
+        $this->assertRejected(fn () => $this->insertDataset($organizationId, $reviewerId, $developmentKey, 1, 'development'));
         $this->assertRejected(fn () => DB::table('estimate_generation_training_examples')->insert([
-            'training_dataset_id' => $developmentId, 'organization_id' => $organizationId, 'dataset_version' => 2, 'source_row_hash' => hash('sha256', 'unreviewed'),
+            'training_dataset_id' => $developmentId, 'organization_id' => $organizationId, 'dataset_version' => 1, 'source_row_hash' => hash('sha256', 'unreviewed'),
             'work_name' => 'Без проверки', 'status' => 'accepted', 'created_at' => now(), 'updated_at' => now(),
         ]));
         $versionOutputs = $this->runConcurrentWriters('version', $developmentId, $organizationId, 'unused', []);
         $versions = array_map(fn (string $output): int => (int) $this->doneValue($output), $versionOutputs);
         sort($versions);
-        self::assertSame([3, 4], $versions);
-        self::assertSame([1, 2, 3, 4], DB::table('estimate_generation_training_datasets')->where('organization_id', $organizationId)->where('dataset_key', $key)->orderBy('version')->pluck('version')->map(fn ($value): int => (int) $value)->all());
+        self::assertSame([2, 3], $versions);
+        self::assertSame([1, 2, 3], DB::table('estimate_generation_training_datasets')->where('organization_id', $organizationId)->where('dataset_key', $developmentKey)->orderBy('version')->pluck('version')->map(fn ($value): int => (int) $value)->all());
         $this->assertRejected(fn () => DB::table('estimate_generation_training_examples')->insert([
-            'training_dataset_id' => $developmentId, 'organization_id' => $otherOrganizationId, 'dataset_version' => 2,
+            'training_dataset_id' => $developmentId, 'organization_id' => $otherOrganizationId, 'dataset_version' => 1,
             'source_row_hash' => hash('sha256', 'cross-org-membership'), 'work_name' => 'cross org',
             'status' => 'pending', 'created_at' => now(), 'updated_at' => now(),
         ]));
 
+        $edgeHardening->down();
         $hardening->down();
         $migration->down();
         $migration->up();
         $hardening->up();
+        $edgeHardening->up();
         self::assertTrue(\Illuminate\Support\Facades\Schema::hasTable('estimate_generation_benchmark_runs'));
     }
 

@@ -34,7 +34,6 @@ final class TrainingDatasetTrustPolicy
         if (! in_array($dataset->status, [
             EstimateGenerationTrainingDataset::STATUS_DRAFT,
             EstimateGenerationTrainingDataset::STATUS_PROCESSING,
-            EstimateGenerationTrainingDataset::STATUS_REVIEW_REQUIRED,
         ], true)) {
             throw new DomainException('training_dataset_is_immutable');
         }

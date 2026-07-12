@@ -27,3 +27,12 @@
 ## Открытые замечания
 
 Нет.
+
+## Edge-hardening 001900
+
+- Terminal retry сравнивает канонический полный payload; совпадение возвращает исходную запись и timestamp, расхождение даёт `benchmark_terminal_payload_conflict`.
+- External result закреплён immutable content-addressed S3 key с UUID run и SHA-256; в строке хранятся size, checksum, ETag/version и content type.
+- `001900` закрывает JSONB null/3VL, inline/external/failed/running storage invariants, immutable manifest/result metadata, gap-free dataset chain и reviewed-example content immutability.
+- `appendVersion` повторно загружает exact source под lock. Processing принимает только CAS-claimed `processing`; stale review job отклоняется, processing failure становится `rejected`.
+- Approved learning error paths больше не меняют example. Privacy gate нормализует sensitive keys и ограничивает depth/node count.
+- DB-less: 18 tests / 39 assertions. PostgreSQL: 32 assertions, два последовательных down/up цикла на disposable БД. PHPStan, Pint и `git diff --check`: PASS.
