@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\AcceptedNormativeDecisionData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidatePresenter;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeMatchDecisionService;
@@ -25,6 +26,34 @@ class ResourceAssemblyService
         protected ?WorkIntentClassifier $workIntentClassifier = null,
         protected EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy,
     ) {}
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @param array<string, mixed> $regionalContext
+     * @return array<string, mixed>
+     */
+    public function assembleFromDecision(array $workItem, AcceptedNormativeDecisionData $decision, array $regionalContext): array
+    {
+        foreach (['dataset_id', 'dataset_version', 'region_id', 'price_zone_id', 'period_id', 'price_version'] as $key) {
+            if (! array_key_exists($key, $regionalContext) || $regionalContext[$key] === null || $regionalContext[$key] === '') {
+                throw new \InvalidArgumentException('accepted_normative_regional_context_incomplete');
+            }
+        }
+        if ((int) $regionalContext['dataset_id'] !== $decision->datasetId
+            || (string) $regionalContext['dataset_version'] !== $decision->datasetVersion) {
+            throw new \InvalidArgumentException('accepted_normative_dataset_mismatch');
+        }
+        $match = $decision->legacyMatch();
+        $match['price_version'] = [
+            'source_type' => 'regional_catalog',
+            'version_key' => (string) $regionalContext['price_version'],
+        ];
+
+        return $this->assembleAcceptedDecision($workItem, $decision, $match, [
+            'status' => 'accepted', 'can_use_for_pricing' => true, 'confidence' => $decision->confidence,
+            'reasons' => $decision->matchReasons, 'warnings' => $decision->warnings,
+        ], false);
+    }
 
     public function enrich(array $workItems, array $context = []): array
     {
@@ -319,7 +348,8 @@ class ResourceAssemblyService
         }
 
         $decisionPayload = $decision->toArray();
-        $workItem = $this->applyNormativeResources($workItem, $match, $selectedByUser, $decisionPayload);
+        $accepted = AcceptedNormativeDecisionData::fromLegacyMatch($match, $decisionPayload);
+        $workItem = $this->assembleAcceptedDecision($workItem, $accepted, $match, $decisionPayload, $selectedByUser);
         $flags = $this->acceptedFlags($workItem['validation_flags'] ?? []);
 
         if ($decision->status === 'review_priced') {
@@ -346,6 +376,27 @@ class ResourceAssemblyService
         $workItem['validation_flags'] = array_values(array_unique($flags));
 
         return $workItem;
+    }
+
+    /**
+     * @param array<string, mixed> $workItem
+     * @param array<string, mixed> $match
+     * @param array<string, mixed> $decision
+     * @return array<string, mixed>
+     */
+    private function assembleAcceptedDecision(
+        array $workItem,
+        AcceptedNormativeDecisionData $accepted,
+        array $match,
+        array $decision,
+        bool $selectedByUser,
+    ): array {
+        if ((int) ($match['selected']['norm_id'] ?? 0) !== $accepted->normativeId
+            || (string) ($match['version']['version_key'] ?? '') !== $accepted->datasetVersion) {
+            throw new \InvalidArgumentException('accepted_normative_decision_mismatch');
+        }
+
+        return $this->applyNormativeResources($workItem, $match, $selectedByUser, $decision);
     }
 
     /**
