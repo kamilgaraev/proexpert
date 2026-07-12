@@ -4,19 +4,15 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages;
 
-use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
-use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\RenewsPipelineLease;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\PackagePlannerService;
 use Brick\Math\BigDecimal;
 use Brick\Math\Exception\MathException;
 
@@ -25,10 +21,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
     use RenewsPipelineLease;
 
     public function __construct(
-        private PackagePlannerService $packagePlanner,
-        private EstimateDecompositionService $decomposition,
-        private NormativeWorkItemPlannerService $workItemPlanner,
-        private NormativeContextPinResolver $normativePins,
+        private WorkPlanCompiler $compiler,
         private StageResultFactory $results,
     ) {}
 
@@ -44,28 +37,19 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         if ($hints !== []) {
             $analysis['document_context']['quantity_learning_hints'] = $hints;
         }
-        $profile = $this->packagePlanner->profileFromAnalysis($analysis);
-        $plan = $this->packagePlanner->plan($profile);
-        $localEstimates = $this->decomposition->decomposePackagePlan($analysis, $plan);
-        foreach ($localEstimates as $localIndex => $localEstimate) {
+        $payload = $this->compiler->compile($analysis);
+        foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
-                $items = $this->workItemPlanner->build($localEstimate, $section, $analysis);
-                foreach ($items as $itemIndex => $item) {
-                    $items[$itemIndex] = $this->attachQuantityEvidence($context, $item);
+                foreach ($section['work_items'] as $itemIndex => $item) {
+                    $payload['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] =
+                        $this->attachQuantityEvidence($context, $item);
                 }
-                $localEstimates[$localIndex]['sections'][$sectionIndex]['work_items'] = $items;
             }
         }
 
-        return $this->results->make($context, $this->stage(), [
-            'object_profile' => $profile->toArray(),
-            'package_plan' => $plan->toArray(),
-            'document_requirements' => $this->packagePlanner->documentRequirements($profile),
-            'generation_mode' => EstimateGenerationMode::fromInput($profile->planningSignals['generation_mode'] ?? null)->value,
-            'regional_context' => $analysis['regional_context'] ?? [],
-            'normative_context_pin' => $this->normativePins->resolve(is_array($analysis['regional_context'] ?? null) ? $analysis['regional_context'] : []),
-            'local_estimates' => $localEstimates,
-        ], ['local_estimates_count' => count($localEstimates)]);
+        return $this->results->make($context, $this->stage(), $payload, [
+            'local_estimates_count' => count($payload['local_estimates']),
+        ]);
     }
 
     private function attachQuantityEvidence(PipelineContext $context, array $workItem): array

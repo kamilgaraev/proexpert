@@ -4,12 +4,19 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Benchmark;
 
+use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlannerResponseData;
+
 final readonly class RecordedWorkPlannerResponseData
 {
     private const UNITS = ['m', 'm2', 'm3', 'pcs', 'kg', 't', 'h'];
 
     /** @param list<array<string, mixed>> $sections */
     private function __construct(public array $sections) {}
+
+    public function toWorkPlannerResponse(): WorkPlannerResponseData
+    {
+        return new WorkPlannerResponseData($this->sections);
+    }
 
     /** @param array<string, mixed> $payload */
     public static function fromProviderArray(array $payload): self
