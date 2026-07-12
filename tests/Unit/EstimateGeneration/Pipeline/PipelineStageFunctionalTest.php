@@ -5,7 +5,15 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Pipeline;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\AssembleMatchedResources;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateDecisionContextData;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateSetData;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeRerankResultData;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\WorkIntentData;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeCandidateSource;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeHardGate;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeMatchingWorkflow;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRetrievalService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeWorkIntentFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData;
@@ -37,6 +45,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingServic
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Learning\EstimateGenerationQuantityLearningEvidenceService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\NormativeCandidateRerankerInterface;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\PackagePlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ProjectDocumentNormativeReferenceExtractor;
@@ -65,6 +74,21 @@ final class PipelineStageFunctionalTest extends TestCase
         };
         $matcher = $this->createMock(ResourceAssemblyService::class);
         $matcher->method('enrich')->willReturnCallback(static fn (array $items): array => $items);
+        $source = new class implements NormativeCandidateSource
+        {
+            public function find(int $organizationId, int $projectId, string $datasetVersion, string $query, int $limit, ?string $semanticIndexVersion): array
+            {
+                return [];
+            }
+        };
+        $reranker = new class implements NormativeCandidateRerankerInterface
+        {
+            public function rerank(WorkIntentData $workItem, NormativeCandidateDecisionContextData $context, NormativeCandidateSetData $candidateSet): NormativeRerankResultData
+            {
+                throw new \LogicException('Empty retrieval must not rerank.');
+            }
+        };
+        $workflow = new NormativeMatchingWorkflow(new NormativeRetrievalService($source, new NormativeHardGate, 16, null), $reranker);
         $artifacts = new InMemoryPipelineArtifactStore;
         $graph = PipelineDefinitionGraph::standard();
         $results = new StageResultFactory($artifacts, $graph);
@@ -72,8 +96,8 @@ final class PipelineStageFunctionalTest extends TestCase
             new UnderstandDocumentsStage($gateway, $results),
             new UnderstandObjectStage(new ConstructionSemanticParser, $gateway, $results),
             new ExtractQuantitiesStage(new EstimateGenerationQuantityLearningEvidenceService, $results),
-            new PlanWorkItemsStage(new PackagePlannerService, new EstimateDecompositionService, new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService), $results),
-            new MatchNormativesStage($matcher, $this->createMock(NormativeMatchingWorkflow::class), new NormativeWorkIntentFactory, $results),
+            new PlanWorkItemsStage(new PackagePlannerService, new EstimateDecompositionService, new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService), new NormativeContextPinResolver, $results),
+            new MatchNormativesStage($matcher, $workflow, new NormativeWorkIntentFactory, $results),
             new AssembleResourcesStage(new AssembleMatchedResources, $results),
             new ResolvePricesStage(new EstimatePricingService, $results),
             new BuildDraftStage($results),

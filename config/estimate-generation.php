@@ -100,6 +100,7 @@ return [
             'low_confidence_threshold' => 0.6,
         ],
         'reranker' => [
+            'models' => $envValue('ESTIMATE_GENERATION_NORM_RERANKER_MODELS', 'openai/gpt-5-mini,openai/gpt-5-nano'),
             'max_candidates' => (int) env('ESTIMATE_GENERATION_NORM_RERANKER_MAX_CANDIDATES', 8),
             'timeout_seconds' => (int) env('ESTIMATE_GENERATION_NORM_RERANKER_TIMEOUT', 15),
             'prompt_version' => 'normative-rerank-prompt-v1',

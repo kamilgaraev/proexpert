@@ -11,7 +11,7 @@ use DateTimeImmutable;
 
 final class NormativeWorkIntentFactory
 {
-    public function __construct(private ?WorkIntentClassifier $classifier = null) {}
+    public function __construct(private ?WorkIntentClassifier $classifier = null, private ?NormativeRerankerModelSet $modelSet = null) {}
 
     public function intent(array $item, array $context, string $datasetVersion): WorkIntentData
     {
@@ -45,7 +45,7 @@ final class NormativeWorkIntentFactory
             (int) $context['organization_id'], (int) $context['project_id'], (int) $context['session_id'],
             (string) ($item['key'] ?? $item['id'] ?? hash('sha256', json_encode($item, JSON_THROW_ON_ERROR))),
             (string) $context['checkpoint_claim_token'], (string) $context['input_version'], (int) $context['logical_attempt'],
-            'normative-rerank-prompt-v1', 'normative-rerank-v1', (string) config('estimate-generation.normative_matching.reranker.models.0', 'configured'),
+            'normative-rerank-prompt-v1', 'normative-rerank-v1', ($this->modelSet ?? new NormativeRerankerModelSet)->version(),
             $this->evidence($context['source_refs'] ?? []),
         );
     }

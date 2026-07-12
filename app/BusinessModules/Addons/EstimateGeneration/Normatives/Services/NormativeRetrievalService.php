@@ -34,6 +34,14 @@ final readonly class NormativeRetrievalService
         $byId = array_column($candidates, null, 'id');
         $candidates = array_map(static fn (array $score) => $byId[$score['id']], $ranked);
 
-        return $this->hardGate->filter($intent, array_slice($candidates, 0, $this->limit));
+        $gated = $this->hardGate->filter($intent, $candidates);
+
+        return new NormativeCandidateSetData(
+            $gated->organizationId, $gated->projectId, $gated->sessionId, $gated->workItemId,
+            $gated->datasetVersion, $gated->lexicalAlgorithmVersion, $gated->semanticIndexVersion,
+            array_slice($gated->candidates, 0, $this->limit), array_slice($gated->rejected, 0, 128),
+            $gated->candidates === [] ? 'review_required' : 'retrieval_only',
+            $gated->candidates === [] ? ['normative_not_found'] : [],
+        );
     }
 }

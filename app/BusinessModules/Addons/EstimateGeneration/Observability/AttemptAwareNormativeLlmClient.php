@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Observability;
 
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRerankerModelSet;
 use Closure;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -17,6 +18,7 @@ final readonly class AttemptAwareNormativeLlmClient
         private AiUsageStore $usageStore,
         private ?array $configuredModels = null,
         private ?array $configuredPrices = null,
+        private ?NormativeRerankerModelSet $modelSet = null,
     ) {}
 
     /**
@@ -114,7 +116,10 @@ final readonly class AttemptAwareNormativeLlmClient
     /** @return array<int, string> */
     private function models(): array
     {
-        $models = $this->configuredModels ?? config('estimate-generation.normative_matching.reranker.models', []);
+        if ($this->configuredModels === null) {
+            return ($this->modelSet ?? new NormativeRerankerModelSet)->models;
+        }
+        $models = $this->configuredModels;
         $models = is_string($models) ? explode(',', $models) : $models;
 
         return array_values(array_filter(array_map(static fn (mixed $model): string => trim((string) $model), is_array($models) ? $models : [])));

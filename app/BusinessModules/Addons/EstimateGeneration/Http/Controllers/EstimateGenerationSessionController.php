@@ -72,7 +72,12 @@ final class EstimateGenerationSessionController extends Controller
                 'input_payload' => array_merge($validated, [
                     'generation_mode' => $generationMode,
                     'parameters' => $validated['parameters'] ?? [],
-                    'regional_context' => $this->regionalContextResolver->resolve($validated),
+                    'regional_context' => [
+                        ...$this->regionalContextResolver->resolve($validated),
+                        'normative_dataset_version' => $validated['normative_dataset_version'] ?? null,
+                        'business_date' => $validated['business_date'] ?? null,
+                        'normative_rerank_requested' => ($validated['normative_rerank_requested'] ?? false) === true,
+                    ],
                 ]),
                 'problem_flags' => [],
             ]);

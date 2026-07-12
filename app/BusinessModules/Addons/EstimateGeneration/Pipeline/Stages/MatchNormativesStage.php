@@ -48,8 +48,9 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
     {
         $data = $context->priorOutputs->payload(ProcessingStage::PlanWorkItems);
         $regionalContext = $data['regional_context'] ?? [];
-        $datasetVersion = is_array($regionalContext) ? ($regionalContext['normative_dataset_version'] ?? null) : null;
-        $applicabilityDate = is_array($regionalContext) ? ($regionalContext['applicability_date'] ?? null) : null;
+        $pin = is_array($data['normative_context_pin'] ?? null) ? $data['normative_context_pin'] : [];
+        $datasetVersion = $pin['dataset_version'] ?? null;
+        $applicabilityDate = $pin['applicability_date'] ?? null;
         $rerankRequested = is_array($regionalContext) && ($regionalContext['normative_rerank_requested'] ?? false) === true;
         foreach ($data['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
@@ -98,7 +99,9 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                     $enriched[0]['normative_retrieval'] = [
                         'status' => $result->status,
                         'dataset_version' => $datasetVersion,
-                        'scoring_version' => $result->candidateSet->lexicalAlgorithmVersion,
+                        'scoring_version' => $result->candidateSet->scoringVersion,
+                        'lexical_algorithm_version' => $result->candidateSet->lexicalAlgorithmVersion,
+                        'semantic_index_version' => $result->candidateSet->semanticIndexVersion,
                         'reranker_version' => $result->rerankResult?->schemaVersion,
                         'blocking_issues' => [],
                     ];

@@ -6,6 +6,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO;
 
 final readonly class NormativeCandidateSetData
 {
+    public string $scoringVersion;
+
     /** @param list<NormativeCandidateData> $candidates @param list<RejectedNormativeCandidateData> $rejected */
     public function __construct(
         public int $organizationId,
@@ -19,7 +21,9 @@ final readonly class NormativeCandidateSetData
         public array $rejected = [],
         public string $status = 'retrieval_only',
         public array $blockingIssues = [],
-    ) {}
+    ) {
+        $this->scoringVersion = 'normative-combined-v1';
+    }
 
     public function hash(): string
     {

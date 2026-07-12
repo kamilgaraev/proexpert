@@ -14,6 +14,29 @@ use PHPUnit\Framework\TestCase;
 
 final class NormativeRetrievalServiceTest extends TestCase
 {
+    public function test_hard_gates_full_pool_before_top_n(): void
+    {
+        $valid = $this->candidate('valid', 0.1);
+        $invalid = [];
+        for ($index = 0; $index < 17; $index++) {
+            $invalid[] = $this->candidate('bad-'.$index, 1.0 - ($index / 100), 'м3');
+        }
+        $source = new class([...$invalid, $valid]) implements NormativeCandidateSource
+        {
+            public function __construct(private array $rows) {}
+
+            public function find(int $organizationId, int $projectId, string $datasetVersion, string $query, int $limit, ?string $semanticIndexVersion): array
+            {
+                return $this->rows;
+            }
+        };
+
+        $set = (new NormativeRetrievalService($source, new NormativeHardGate, 16, null))->retrieve($this->intent());
+
+        self::assertSame(['valid'], array_map(static fn ($candidate): string => $candidate->id, $set->candidates));
+        self::assertCount(17, $set->rejected);
+    }
+
     public function test_retrieval_is_scoped_bounded_and_deterministically_ordered(): void
     {
         $source = new class implements NormativeCandidateSource
@@ -40,5 +63,15 @@ final class NormativeRetrievalServiceTest extends TestCase
         self::assertSame([7, 8, 'v1'], array_slice($source->scope, 0, 3));
         self::assertSame(['a', 'b'], array_map(static fn ($candidate): string => $candidate->id, $set->candidates));
         self::assertNull($set->semanticIndexVersion);
+    }
+
+    private function intent(): WorkIntentData
+    {
+        return new WorkIntentData(7, 8, 9, 'w', 'кладка', 'м2', 'area', 'кирпич', 'кладка', 'стена', '08', 'жилой', 'v1', 'published', '78', new DateTimeImmutable('2026-01-01'), ['doc:1']);
+    }
+
+    private function candidate(string $id, float $score, string $unit = 'м2'): NormativeCandidateData
+    {
+        return new NormativeCandidateData($id, 1, 20, 'v1', 'published', '08', 'Кладка', $unit, $unit === 'м2' ? 'area' : 'volume', 'кирпич', 'кладка', 'стена', '08', 'жилой', '78', new DateTimeImmutable('2025-01-01'), null, $score, null, 'lex-v1', null, ['norm:1']);
     }
 }

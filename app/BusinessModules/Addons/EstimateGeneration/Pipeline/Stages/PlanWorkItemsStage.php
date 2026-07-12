@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages;
 
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
@@ -22,6 +23,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         private PackagePlannerService $packagePlanner,
         private EstimateDecompositionService $decomposition,
         private NormativeWorkItemPlannerService $workItemPlanner,
+        private NormativeContextPinResolver $normativePins,
         private StageResultFactory $results,
     ) {}
 
@@ -52,6 +54,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             'document_requirements' => $this->packagePlanner->documentRequirements($profile),
             'generation_mode' => EstimateGenerationMode::fromInput($profile->planningSignals['generation_mode'] ?? null)->value,
             'regional_context' => $analysis['regional_context'] ?? [],
+            'normative_context_pin' => $this->normativePins->resolve(is_array($analysis['regional_context'] ?? null) ? $analysis['regional_context'] : []),
             'local_estimates' => $localEstimates,
         ], ['local_estimates_count' => count($localEstimates)]);
     }

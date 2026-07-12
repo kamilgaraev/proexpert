@@ -70,3 +70,22 @@ Corrective verification:
 - PHPStan/Larastan corrective scope: **29 paths, 0 errors**.
 - Pint: **25 changed/new PHP files passed**.
 - `php -l` and `git diff --check`: **passed**.
+
+## Production rollout order
+
+1. Run expand migration `2026_07_12_001000`: nullable columns, nullable `tsvector`, and empty semantic table only.
+2. Repeatedly run `estimate-generation:normative-retrieval-backfill --cursor=<next_cursor> --batch=1000`; persist the returned cursor externally until `complete=true`. Batches are bounded, ordered and idempotent; invalid dates are ignored through PostgreSQL `pg_input_is_valid`.
+3. Run `2026_07_12_001100`: concurrent lookup and GIN indexes outside a transaction.
+4. Run `2026_07_12_001200`: add constraints as `NOT VALID`, then validate after backfill.
+5. Enable pinned normative retrieval only after the PostgreSQL opt-in contract passes against the migrated staging schema.
+
+Rollback must run in reverse order. Concurrent index removal cannot be wrapped in a transaction; dropping the expand migration removes retrieval metadata and semantic scores and therefore requires a backup/rebuild plan.
+
+The second corrective pass also introduced an upstream deterministic context pin in `PlanWorkItems` output, a shared bounded reranker model-set resolver, full-pool hard gating before top-N, and explicit combined/lexical/semantic versions in the stage output.
+
+Second corrective verification:
+
+- DB-less normative, container model-set, attempt-aware usage and pipeline set: **50 tests, 142 assertions, 0 failures**.
+- PHPStan/Larastan expanded corrective scope: **89 paths, 0 errors**.
+- Pint, `php -l` and `git diff --check`: passed for all changed/new PHP files.
+- PostgreSQL expand/backfill/concurrent-index/validate contract remains opt-in and was not executed locally.

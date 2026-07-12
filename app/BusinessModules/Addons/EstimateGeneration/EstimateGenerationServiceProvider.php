@@ -68,6 +68,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGeneration
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverEstimateGenerationPipelinesJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverEstimateGenerationUnitsJob;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\BackfillNormativeRetrievalCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ClassifyEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\ImportEstimateNormativesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\InspectEstimateNormativesCommand;
@@ -91,6 +92,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\Fgi
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeCandidateSource;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeHardGate;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeMatchingWorkflow;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRerankerModelSet;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRetrievalService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeWorkIntentFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\PostgresNormativeCandidateSource;
@@ -332,6 +334,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(NormativeCandidateSearchService::class);
         $this->app->singleton(NormativeCandidateSource::class, PostgresNormativeCandidateSource::class);
         $this->app->singleton(NormativeHardGate::class);
+        $this->app->singleton(NormativeRerankerModelSet::class);
         $this->app->singleton(NormativeMatchingWorkflow::class);
         $this->app->singleton(NormativeWorkIntentFactory::class);
         $this->app->singleton(NormativeRetrievalService::class, fn ($app) => new NormativeRetrievalService(
@@ -401,6 +404,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 SyncFgiscsRegionalPricesCommand::class,
                 SyncFgiscsBuildingResourcePricesCommand::class,
                 RollbackRegionalPricePeriodCommand::class,
+                BackfillNormativeRetrievalCommand::class,
             ]);
         }
     }

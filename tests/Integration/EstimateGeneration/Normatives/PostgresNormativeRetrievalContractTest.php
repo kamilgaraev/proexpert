@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Integration\EstimateGeneration\Normatives;
 
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRetrievalBackfillService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\PostgresNormativeCandidateSource;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -38,8 +39,16 @@ final class PostgresNormativeRetrievalContractTest extends TestCase
                     'unit' => 'м2', 'canonical_unit' => 'м2', 'unit_dimension' => 'area', 'material' => 'кирпич',
                     'technology' => 'кладка', 'structure' => 'стена', 'object_type' => 'жилой',
                     'section_code' => '08', 'valid_from' => '2025-01-01', 'created_at' => now(), 'updated_at' => now(),
+                    'raw_payload' => json_encode(['valid_to' => '2026-99-99'], JSON_THROW_ON_ERROR),
                 ]);
             }
+
+            $backfill = new NormativeRetrievalBackfillService(DB::connection());
+            $firstBatch = $backfill->backfill(0, 1);
+            $secondBatch = $backfill->backfill($firstBatch['next_cursor'], 1);
+            self::assertSame(1, $firstBatch['processed']);
+            self::assertGreaterThan($firstBatch['next_cursor'], $secondBatch['next_cursor']);
+            self::assertNull(DB::table('estimate_norms')->orderBy('id')->value('valid_to'));
 
             $source = new PostgresNormativeCandidateSource(DB::connection());
             $first = $source->find(10, 20, 'contract-v1', 'кладка кирпичных стен', 1, null);
@@ -50,11 +59,15 @@ final class PostgresNormativeRetrievalContractTest extends TestCase
             self::assertSame($first[0]->id, $secondTenant[0]->id, 'Global catalog is tenant-neutral; tenant fence belongs to decision context.');
             self::assertLessThanOrEqual(1, count($first));
 
+            DB::statement('SET LOCAL enable_seqscan = off');
             $plan = DB::select('EXPLAIN (FORMAT JSON) '.PostgresNormativeCandidateSource::QUERY_CONTRACT, [
                 'dataset_version' => 'contract-v1', 'query' => 'кладка', 'limit' => 16,
                 'query_hash' => hash('sha256', 'кладка'), 'semantic_index_version' => null,
             ]);
             self::assertNotEmpty($plan);
+            $encodedPlan = json_encode($plan, JSON_THROW_ON_ERROR);
+            self::assertStringContainsString('estimate_norms_search_vector_gin', $encodedPlan);
+            self::assertStringNotContainsString('Seq Scan', $encodedPlan);
         } finally {
             DB::rollBack();
         }

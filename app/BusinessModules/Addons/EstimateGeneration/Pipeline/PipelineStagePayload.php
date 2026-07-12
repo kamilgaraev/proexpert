@@ -12,7 +12,7 @@ final readonly class PipelineStagePayload
         'understand_documents' => ['base_input_version', 'documents', 'documents_count', 'rebuild_section_key'],
         'understand_object' => ['analysis'],
         'extract_quantities' => ['quantity_learning_hints'],
-        'plan_work_items' => ['object_profile', 'package_plan', 'document_requirements', 'generation_mode', 'regional_context', 'local_estimates'],
+        'plan_work_items' => ['object_profile', 'package_plan', 'document_requirements', 'generation_mode', 'regional_context', 'normative_context_pin', 'local_estimates'],
         'match_normatives' => ['local_estimates'],
         'assemble_resources' => ['local_estimates'],
         'resolve_prices' => ['local_estimates'],
