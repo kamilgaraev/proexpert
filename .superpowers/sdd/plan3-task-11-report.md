@@ -2,6 +2,14 @@
 
 ## Task A — INTERMEDIATE: реальные источники и geometry captures
 
+### Повторная проверка Task A: независимая source traceability
+
+После review tests-only capture boundary дополнен `RecordedVisionSourceTraceVerifier`. До создания envelope он независимо читает source bytes: PPM raster, embedded image stream scanned PDF или SVG DOM. Проверяются SHA источника, реальные wall segments, bitmap-глифы размеров, SVG IDs/text, точные координаты заявленных элементов, scalar масштаба и площадь 44 м². Verifier не читает expected labels или prediction. Негативные тесты отклоняют подменённый dimension label, SVG source ID и capture point.
+
+Raster и scanned PDF используют помещение 320×220 px с подписями `8.0 m` и `5.5 m`, arrow/extension lines и единым масштабом `0.025 m/px`; площадь равна 44 м². Engineering SVG использует единый scalar `0.01 m/unit`, размеры 650×370, стабильные IDs, точные door/riser coordinates. Freehand capture воспроизводит точки source path и остаётся typed review из-за отсутствующего масштаба. Vector PDF теперь имеет реальный разрыв верхней стены 260→320, текст `OPENING 600 mm` и не содержит перекрывающего gap segment; fresh pypdfium gate проверяет это по production path primitives.
+
+Повторный focused gate: `OK (6 tests, 66 assertions)`.
+
 Шесть новых fixtures заменены на содержательные трассируемые входы. Vector PDF содержит замкнутый многолинейный план, внутреннюю стену, проём и видимые размеры `4400 mm`/`2900 mm`; recording создаётся production worker на pinned `pypdfium2 5.8.0`. Валидный maintainer-authored DWG декодируется тем же production CAD worker через scoped LibreDWG `0.13.4`; parser proof связывает source SHA-256, runtime version, canonical output SHA-256 и фактические entity/text/dimension counts.
 
 Scanned PDF содержит встроенный raster 400×300 с видимыми стенами, дверным разрывом, размерными линиями и bitmap-глифами. Dimensioned raster — отдельный 400×300 PPM с реальными пикселями, без размеров в комментариях. Engineering SVG имеет стабильные IDs помещения, проёма, стояка, узла и двух размеров; recording связывает `riser-110` с `engineering-riser-110`. Freehand SVG содержит неуверенный пунктирный контур, кривую перегородку и видимый вопрос; recording использует согласованный `freehand-evidence` и typed `scale_missing`.

@@ -28,6 +28,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
 use Tests\Support\EstimateGeneration\RecordedFixtureCaptureBuilder;
+use Tests\Support\EstimateGeneration\RecordedVisionSourceTraceVerifier;
 
 final class CapturingReranker implements NormativeCandidateRerankerInterface
 {
@@ -78,15 +79,30 @@ foreach ($specs as [$slug, $type, $filename, $source, $port, $intent]) {
  if (in_array($intent, ['scanned_pdf', 'dimensioned_raster', 'engineering'], true)) {
   $polygons = ['scanned_pdf'=>[[0.12,0.16],[0.82,0.16],[0.82,0.72],[0.12,0.72]], 'dimensioned_raster'=>[[0.15,0.18],[0.85,0.18],[0.85,0.78],[0.15,0.78]], 'engineering'=>[[0.0875,0.12],[0.9,0.12],[0.9,0.86],[0.0875,0.86]]];
   $payload['elements'][0]['polygon'] = [$polygons[$intent][0], $polygons[$intent][1]];
-  $payload['elements'][1]['polygon'] = $polygons[$intent];
+ $payload['elements'][1]['polygon'] = $polygons[$intent];
+ }
+ if (in_array($intent, ['scanned_pdf', 'dimensioned_raster'], true)) {
+  $payload['elements'][0]['polygon'] = [[0.1,0.133333],[0.9,0.133333]];
+  $payload['elements'][1]['polygon'] = [[0.1,0.133333],[0.9,0.133333],[0.9,0.866667],[0.1,0.866667]];
+  $payload['scale_candidates'] = [['source'=>'dimension_text','meters_per_unit'=>0.025,'confidence'=>1.0,'evidence_ref'=>$payload['evidence'][0]['key'],'detail'=>'visible_dimension']];
  }
  if ($intent === 'engineering') {
   $payload['evidence'][] = ['key'=>'riser-110','locator'=>$payload['evidence'][0]['locator']];
   $payload['elements'][] = ['key'=>'engineering-riser-110','type'=>'engineering_element','label'=>'Стояк 110','polygon'=>[[0.225,0.16],[0.225,0.82]],'confidence'=>1.0,'evidence_ref'=>'riser-110'];
+  $payload['evidence'][] = ['key'=>'door-opening','locator'=>$payload['evidence'][0]['locator']];
+  $payload['elements'][] = ['key'=>'engineering-door','type'=>'opening','label'=>'Дверной проём','polygon'=>[[0.4375,0.12],[0.55,0.12]],'confidence'=>1.0,'evidence_ref'=>'door-opening','geometry'=>['wall_key'=>'engineering-wall','opening_type'=>'door','offset'=>0.35,'width'=>0.1125,'height'=>0.21]];
+  $payload['scale_candidates'] = [['source'=>'dimension_text','meters_per_unit'=>0.01,'confidence'=>1.0,'evidence_ref'=>'riser-110','detail'=>'visible_dimension']];
  }
  if ($intent === 'freehand') {
   $payload['evidence'][0]['key'] = 'freehand-evidence';
   $payload['elements'][0]['evidence_ref'] = 'freehand-evidence';
+  $payload['elements'][0]['polygon'] = [[0.116667,0.225],[0.85,0.1925],[0.875,0.825],[0.136667,0.8625]];
+  $payload['evidence'][] = ['key'=>'uncertain-divider','locator'=>$payload['evidence'][0]['locator']];
+  $payload['evidence'][] = ['key'=>'freehand-opening','locator'=>$payload['evidence'][0]['locator']];
+  $payload['warnings'] = ['scale_missing','geometry_incomplete'];
+ }
+ if ($port === RecordedPort::VisionExtraction) {
+  (new RecordedVisionSourceTraceVerifier)->verify(visionFormat($intent), $source, $payload, visionTrace($intent, $sha));
  }
  $metadata = [
   'schema_version' => 1, 'port' => $port->value, 'source_sha256' => $sha,
@@ -101,6 +117,7 @@ foreach ($specs as [$slug, $type, $filename, $source, $port, $intent]) {
  $envelope = $builder->envelope($metadata, $payload, $builder->geometryDependency($case, $port, $source), $sha);
  $recording = "recordings/$slug-geometry.json";
  writeJson("$root/$recording", $envelope);
+ if ($port === RecordedPort::VisionExtraction) writeJson("$root/recordings/$slug-source-trace.json", visionTrace($intent, $sha));
  if ($type === BenchmarkSourceType::Dwg) writeJson("$root/recordings/$slug-parser-proof.json", parserProof($source, $payload));
  $recordingDescriptors[] = ['case_id'=>$id,'port'=>$port->value,'locator'=>$recording,'sha256'=>hash_file('sha256',"$root/$recording")];
  $catalog = json_decode((string) file_get_contents("$root/catalogs/vision-sketch-v1.json"), true, 64, JSON_THROW_ON_ERROR);
@@ -132,7 +149,8 @@ foreach ($specs as [$slug, $type, $filename, $source, $port, $intent]) {
  unset($price);
  $catalogRef = "catalogs/$slug.json";
  writeJson("$root/$catalogRef", $catalog);
- if (in_array($intent, ['scanned_pdf', 'dimensioned_raster'], true)) {
+ if (getenv('BUILD_PRODUCTION_REPLAY_DOWNSTREAM') === '1'
+  && in_array($intent, ['scanned_pdf', 'dimensioned_raster'], true)) {
   [$model, $quantities, $evidence] = productionGeometry($payload, $port);
   $quantity = $quantities->get('floor_area') ?? throw new RuntimeException('floor_area missing');
   $quantityRefs = array_map('strval', $quantity->evidenceIds);
@@ -195,18 +213,27 @@ writeJson("$root/recordings/manifest.json",$recordingManifest);
 
 function writeJson(string $path, array $data): void { file_put_contents($path, json_encode($data, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_PRESERVE_ZERO_FRACTION|JSON_THROW_ON_ERROR)."\n"); }
 function visionPayload(string $intent,string $sha): array { $wall="$intent-wall-evidence";$room="$intent-room-evidence";$locator=['page_id'=>1,'page_number'=>1,'processing_unit_id'=>1,'source_version'=>"sha256:$sha",'coordinate_space'=>'normalized_source_v1'];$evidence=[['key'=>$wall,'locator'=>$locator]];$elements=[['key'=>"$intent-wall",'type'=>'wall','label'=>null,'polygon'=>[[0.1,0.1],[0.7,0.1]],'confidence'=>$intent==='freehand'?0.62:0.95,'evidence_ref'=>$wall]];if($intent!=='freehand'){$evidence[]=['key'=>$room,'locator'=>$locator];$elements[]=['key'=>"$intent-room",'type'=>'room','label'=>'Комната','polygon'=>[[0.1,0.1],[0.7,0.1],[0.7,0.5],[0.1,0.5]],'confidence'=>0.96,'evidence_ref'=>$room];}return ['schema_version'=>1,'sheet_type'=>'floor_plan','evidence'=>$evidence,'elements'=>$elements,'scale_candidates'=>$intent==='freehand'?[]:[['source'=>'dimension_text','meters_per_unit'=>10.0,'confidence'=>0.99,'evidence_ref'=>$wall,'detail'=>'visible_dimension'],['source'=>'manual_reference','meters_per_unit'=>10.0,'confidence'=>1.0,'evidence_ref'=>$room,'detail'=>'confirmed_control_dimension']],'warnings'=>$intent==='freehand'?['scale_missing']:[]]; }
-function vectorPdf(): string { $s="2 w\n60 650 m 500 650 l 500 360 l 60 360 l h S\n60 500 m 260 500 l 260 650 l S\n320 650 m 400 650 l S\n55 680 m 505 680 l S\n55 675 m 55 685 l S\n505 675 m 505 685 l S\nBT /F1 14 Tf 235 700 Td (4400 mm) Tj ET\n530 355 m 530 655 l S\n525 355 m 535 355 l S\n525 655 m 535 655 l S\nBT /F1 14 Tf 540 490 Td (2900 mm) Tj ET\nBT /F1 16 Tf 180 560 Td (ROOM A) Tj ET\n"; return makePdf(["<< /Type /Catalog /Pages 2 0 R >>","<< /Type /Pages /Kids [3 0 R] /Count 1 >>","<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>","<< /Length ".strlen($s)." >>\nstream\n$s"."endstream","<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]); }
+function vectorPdf(): string { $s="2 w\n60 650 m 260 650 l S\n320 650 m 500 650 l 500 360 l 60 360 l 60 650 l S\n90 610 m 230 610 l 230 410 l 90 410 l h S\n60 500 m 260 500 l 260 650 l S\n55 680 m 505 680 l S\n55 675 m 55 685 l S\n505 675 m 505 685 l S\nBT /F1 14 Tf 235 700 Td (4400 mm) Tj ET\n530 355 m 530 655 l S\n525 355 m 535 355 l S\n525 655 m 535 655 l S\nBT /F1 14 Tf 540 490 Td (2900 mm) Tj ET\nBT /F1 12 Tf 270 665 Td (OPENING 600 mm) Tj ET\nBT /F1 16 Tf 120 520 Td (ROOM A) Tj ET\n"; return makePdf(["<< /Type /Catalog /Pages 2 0 R >>","<< /Type /Pages /Kids [3 0 R] /Count 1 >>","<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>","<< /Length ".strlen($s)." >>\nstream\n$s"."endstream","<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]); }
 function scannedPdf(): string { $i=planPixels(400,300,true); $s="q 500 0 0 375 45 300 cm /Im0 Do Q\n"; return makePdf(["<< /Type /Catalog /Pages 2 0 R >>","<< /Type /Pages /Kids [3 0 R] /Count 1 >>","<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /XObject << /Im0 5 0 R >> >> /Contents 4 0 R >>","<< /Length ".strlen($s)." >>\nstream\n$s"."endstream","<< /Type /XObject /Subtype /Image /Width 400 /Height 300 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length ".strlen($i)." >>\nstream\n$i\nendstream"]); }
 function makePdf(array $objects): string { $out="%PDF-1.4\n";$offsets=[];foreach($objects as $n=>$o){$offsets[]=strlen($out);$out.=($n+1)." 0 obj\n$o\nendobj\n";}$xref=strlen($out);$out.="xref\n0 ".(count($objects)+1)."\n0000000000 65535 f \n";foreach($offsets as $offset){$out.=sprintf('%010d 00000 n ',$offset)."\n";}return $out."trailer << /Size ".(count($objects)+1)." /Root 1 0 R >>\nstartxref\n$xref\n%%EOF\n"; }
 function raster(): string { return "P6\n400 300\n255\n".planPixels(400,300,false); }
-function planPixels(int $w,int $h,bool $scan): string {$p=str_repeat("\xff\xff\xff",$w*$h);$black=function(int $x,int $y)use(&$p,$w,$h):void{if($x<0||$y<0||$x>=$w||$y>=$h)return;$o=($y*$w+$x)*3;$p[$o]=$p[$o+1]=$p[$o+2]="\0";};for($t=0;$t<6;$t++){for($x=50;$x<=350;$x++){if($x<170||$x>220){$black($x,45+$t);$black($x,245+$t);}}for($y=45;$y<=250;$y++){$black(50+$t,$y);$black(345+$t,$y);}}for($x=50;$x<=350;$x++)$black($x,275);for($y=45;$y<=250;$y++)$black(370,$y);foreach($scan?[[120,260],[145,260],[220,260],[245,260]]:[[105,260],[130,260],[230,260],[255,260]] as [$gx,$gy])for($y=0;$y<10;$y++)for($x=0;$x<7;$x++)if($x===0||$x===6||$y===0||$y===9||(($x+$y)%5===0))$black($gx+$x,$gy+$y);return $p;}
-function freehand(): string { return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400"><title>Неуверенный эскиз</title><path id="uncertain-outline" d="M70 90 L510 77 L525 330 L82 345 Z" fill="none" stroke="black" stroke-width="7" stroke-dasharray="18 7"/><path id="uncertain-divider" d="M80 210 Q260 180 520 220" fill="none" stroke="black" stroke-width="5"/><text id="review-question" x="245" y="375" font-size="26">? размер</text></svg>'; }
+function planPixels(int $w,int $h,bool $scan): string {$p=str_repeat("\xff\xff\xff",$w*$h);$black=function(int $x,int $y)use(&$p,$w,$h):void{if($x<0||$y<0||$x>=$w||$y>=$h)return;$o=($y*$w+$x)*3;$p[$o]=$p[$o+1]=$p[$o+2]="\0";};for($t=0;$t<5;$t++){for($x=40;$x<=360;$x++){if($x<180||$x>220)$black($x,40+$t);$black($x,256+$t);}for($y=40;$y<=260;$y++){$black(40+$t,$y);$black(356+$t,$y);}}for($x=40;$x<=360;$x++)$black($x,282);for($y=275;$y<=289;$y++){$black(40,$y);$black(360,$y);}for($y=40;$y<=260;$y++)$black(382,$y);for($x=375;$x<=389;$x++){$black($x,40);$black($x,260);}drawBitmapText($black,$scan?130:120,270,'8.0 m');drawBitmapText($black,300,125,'5.5 m');return $p;}
+function bitmapFont(): array {return ['8'=>['111','101','111','101','111'],'5'=>['111','100','111','001','111'],'0'=>['111','101','101','101','111'],'.'=>['0','0','0','0','1'],'m'=>['00000','11011','10101','10101','10101'],' '=>['0','0','0','0','0']];}
+function bitmapPoints(string $text): array {$points=[];$cursor=0;foreach(str_split($text) as $char){$rows=bitmapFont()[$char];$width=strlen($rows[0]);foreach($rows as $y=>$row)foreach(str_split($row) as $x=>$on)if($on==='1')$points[]=[$cursor+$x,$y];$cursor+=$width+1;}return $points;}
+function drawBitmapText(Closure $black,int $x,int $y,string $text): void {foreach(bitmapPoints($text) as [$dx,$dy])for($sy=0;$sy<2;$sy++)for($sx=0;$sx<2;$sx++)$black($x+$dx*2+$sx,$y+$dy*2+$sy);}
+function freehand(): string { return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400"><title>Неуверенный эскиз</title><path id="uncertain-outline" d="M70 90 L510 77 L525 330 L82 345 Z" fill="none" stroke="black" stroke-width="7" stroke-dasharray="18 7"/><path id="uncertain-divider" d="M80 210 Q260 180 520 220" fill="none" stroke="black" stroke-width="5"/><path id="freehand-opening" d="M265 82 L330 80" fill="none" stroke="red" stroke-width="9"/><text id="review-question" x="245" y="375" font-size="26">? размер</text></svg>'; }
 function engineering(): string { return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500"><title>Инженерный план</title><rect id="room-outline" x="70" y="60" width="650" height="370" fill="none" stroke="black" stroke-width="4"/><path id="door-opening" d="M350 60 h90" stroke="white" stroke-width="10"/><line id="riser-110" x1="180" y1="80" x2="180" y2="410" stroke="blue" stroke-width="8"/><circle id="riser-node" cx="180" cy="245" r="24" fill="none" stroke="blue" stroke-width="6"/><text id="riser-label" x="215" y="250" font-size="26">Стояк 110</text><text id="dimension-width" x="300" y="470" font-size="22">6500 mm</text><text id="dimension-height" x="730" y="250" font-size="22">3700 mm</text></svg>'; }
 function dwg(): string { $b=@file_get_contents(dirname(__DIR__).'/Vision/simple-house.dwg');if(is_string($b))return $b;throw new RuntimeException('dwg fixture missing'); }
 function runCapture(array $command): array {$json=shell_exec(implode(' ',array_map('escapeshellarg',$command)));if(!is_string($json)||$json==='')throw new RuntimeException('geometry capture failed');return json_decode($json,true,128,JSON_THROW_ON_ERROR);}
 function captureVectorPdf(string $path): array {return runCapture(['python',dirname(__DIR__,4).'/app/BusinessModules/Addons/EstimateGeneration/bin/pdf_geometry_extract.py','--input',$path,'--workspace',dirname($path),'--contract-vector']);}
 function captureDwg(string $path): array {$binary=getenv('LIBREDWG_DWGREAD_BINARY')?:getenv('USERPROFILE').'/.cache/most-libredwg/0.13.4/win64/dwgread.exe';return runCapture(['python',dirname(__DIR__,4).'/app/BusinessModules/Addons/EstimateGeneration/bin/cad_geometry_extract.py','--input',$path,'--workspace',dirname($path),'--dwgread',$binary]);}
 function parserProof(string $source,array $payload): array {$canonical=json_encode($payload,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_PRESERVE_ZERO_FRACTION|JSON_THROW_ON_ERROR);return ['schema_version'=>1,'source_sha256'=>hash('sha256',$source),'runtime_version'=>$payload['runtime_version'],'canonical_output_sha256'=>hash('sha256',$canonical),'entity_count'=>count($payload['entities']),'text_count'=>count($payload['texts']),'dimension_count'=>count($payload['dimensions'])];}
+function visionFormat(string $intent): string {return match($intent){'scanned_pdf'=>'raster_pdf','dimensioned_raster'=>'ppm',default=>'svg'};}
+function visionTrace(string $intent,string $sha): array {
+ if(in_array($intent,['scanned_pdf','dimensioned_raster'],true))return ['source_sha256'=>$sha,'walls'=>[[40,40,179,40],[221,40,360,40],[40,260,360,260],[40,40,40,260],[360,40,360,260]],'labels'=>[['x'=>$intent==='scanned_pdf'?130:120,'y'=>270,'black_pixels'=>array_map(static fn(array $p):array=>[$p[0]*2,$p[1]*2],bitmapPoints('8.0 m'))],['x'=>300,'y'=>125,'black_pixels'=>array_map(static fn(array $p):array=>[$p[0]*2,$p[1]*2],bitmapPoints('5.5 m'))]],'room_polygon'=>[[0.1,0.133333],[0.9,0.133333],[0.9,0.866667],[0.1,0.866667]],'meters_per_pixel'=>0.025,'width_pixels'=>320,'height_pixels'=>220];
+ if($intent==='engineering')return ['source_sha256'=>$sha,'source_ids'=>['room-outline','door-opening','riser-110','riser-node','dimension-width','dimension-height'],'text'=>['dimension-width'=>'6500 mm','dimension-height'=>'3700 mm'],'evidence_ids'=>['riser-110','door-opening'],'element_points'=>['engineering-riser-110'=>[[0.225,0.16],[0.225,0.82]],'engineering-door'=>[[0.4375,0.12],[0.55,0.12]]]];
+ return ['source_sha256'=>$sha,'source_ids'=>['uncertain-outline','uncertain-divider','freehand-opening','review-question'],'text'=>['review-question'=>'? размер'],'attributes'=>['uncertain-outline'=>['d'=>'M70 90 L510 77 L525 330 L82 345 Z'],'uncertain-divider'=>['d'=>'M80 210 Q260 180 520 220'],'freehand-opening'=>['d'=>'M265 82 L330 80']],'evidence_ids'=>['freehand-evidence','uncertain-divider','freehand-opening'],'element_points'=>['freehand-wall'=>[[0.116667,0.225],[0.85,0.1925],[0.875,0.825],[0.136667,0.8625]]]];
+}
 
 function productionGeometry(array $payload, RecordedPort $port): array
 {

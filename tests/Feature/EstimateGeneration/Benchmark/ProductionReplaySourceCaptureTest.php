@@ -6,6 +6,7 @@ namespace Tests\Feature\EstimateGeneration\Benchmark;
 
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\EstimateGeneration\RecordedVisionSourceTraceVerifier;
 
 final class ProductionReplaySourceCaptureTest extends TestCase
 {
@@ -30,6 +31,12 @@ final class ProductionReplaySourceCaptureTest extends TestCase
         self::assertGreaterThanOrEqual(7, count($actual['entities']));
         self::assertContains('4400 mm', array_column($actual['texts'], 'text'));
         self::assertContains('2900 mm', array_column($actual['texts'], 'text'));
+        self::assertContains('OPENING 600 mm', array_column($actual['texts'], 'text'));
+        $segments = array_merge(...array_map(static fn (array $entity): array => $entity['segments'], $actual['entities']));
+        $lines = array_values(array_filter($segments, static fn (array $segment): bool => $segment['operator'] === 'line'));
+        self::assertTrue($this->hasLine($lines, [60.0, 650.0], [260.0, 650.0]));
+        self::assertTrue($this->hasLine($lines, [320.0, 650.0], [500.0, 650.0]));
+        self::assertFalse($this->hasLine($lines, [260.0, 650.0], [320.0, 650.0]));
         self::assertSame('vector', $actual['pages'][0]['classification']);
     }
 
@@ -73,7 +80,7 @@ final class ProductionReplaySourceCaptureTest extends TestCase
         self::assertSame(360_000, strlen($pixels));
         self::assertGreaterThan(5_000, substr_count($pixels, "\0\0\0"));
         self::assertSame("\xff\xff\xff", substr($pixels, (47 * 400 + 190) * 3, 3));
-        self::assertSame("\0\0\0", substr($pixels, (275 * 400 + 150) * 3, 3));
+        self::assertSame("\0\0\0", substr($pixels, (282 * 400 + 150) * 3, 3));
 
         $pdf = (string) file_get_contents($this->root.'/regression/replay-scanned-pdf-001/input.pdf');
         self::assertStringContainsString('/Width 400 /Height 300', $pdf);
@@ -92,13 +99,16 @@ final class ProductionReplaySourceCaptureTest extends TestCase
         self::assertContains('riser-110', array_column($engineeringRecording['payload']['evidence'], 'key'));
         self::assertContains('engineering-riser-110', array_column($engineeringRecording['payload']['elements'], 'key'));
         $freehand = (string) file_get_contents($this->root.'/regression/replay-freehand-review-001/input.svg');
-        foreach (['uncertain-outline', 'uncertain-divider', 'review-question', '?'] as $feature) {
+        foreach (['uncertain-outline', 'uncertain-divider', 'freehand-opening', 'review-question', '?'] as $feature) {
             self::assertStringContainsString($feature, $freehand);
         }
         $recording = $this->recording('freehand-review-001-geometry.json');
         self::assertSame('freehand-evidence', $recording['payload']['evidence'][0]['key']);
         self::assertSame('freehand-evidence', $recording['payload']['elements'][0]['evidence_ref']);
         self::assertContains('scale_missing', $recording['payload']['warnings']);
+        self::assertContains('geometry_incomplete', $recording['payload']['warnings']);
+        self::assertContains('uncertain-divider', array_column($recording['payload']['evidence'], 'key'));
+        self::assertContains('freehand-opening', array_column($recording['payload']['evidence'], 'key'));
     }
 
     #[Test]
@@ -113,6 +123,47 @@ final class ProductionReplaySourceCaptureTest extends TestCase
             $hashes[] = $capture['payload_sha256'];
         }
         self::assertCount(6, array_unique($hashes));
+    }
+
+    #[Test]
+    public function vision_trace_verifier_rejects_tampered_svg_label_source_id_and_capture_point(): void
+    {
+        $source = (string) file_get_contents($this->root.'/regression/replay-engineering-layout-001/input.svg');
+        $payload = $this->recording('engineering-layout-001-geometry.json')['payload'];
+        $verifier = new RecordedVisionSourceTraceVerifier;
+
+        foreach ([
+            str_replace('6500 mm', '6400 mm', $source),
+            str_replace('id="riser-110"', 'id="riser-999"', $source),
+        ] as $tamperedSource) {
+            try {
+                $verifier->verify('svg', $tamperedSource, $payload, $this->engineeringTrace(hash('sha256', $tamperedSource)));
+                self::fail('Tampered SVG was accepted.');
+            } catch (\InvalidArgumentException) {
+                self::assertTrue(true);
+            }
+        }
+        $payload['elements'][array_search('engineering-riser-110', array_column($payload['elements'], 'key'), true)]['polygon'][1][1] = 0.81;
+        $this->expectException(\InvalidArgumentException::class);
+        $verifier->verify('svg', $source, $payload, $this->engineeringTrace(hash('sha256', $source)));
+    }
+
+    private function engineeringTrace(string $sha): array
+    {
+        return ['source_sha256'=>$sha,'source_ids'=>['room-outline','door-opening','riser-110','riser-node','dimension-width','dimension-height'],
+            'text'=>['dimension-width'=>'6500 mm','dimension-height'=>'3700 mm'],'evidence_ids'=>['riser-110','door-opening'],
+            'element_points'=>['engineering-riser-110'=>[[0.225,0.16],[0.225,0.82]],'engineering-door'=>[[0.4375,0.12],[0.55,0.12]]]];
+    }
+
+    private function hasLine(array $lines, array $start, array $end): bool
+    {
+        foreach ($lines as $line) {
+            if (($line['points'][0] === $start && $line['points'][1] === $end)
+                || ($line['points'][0] === $end && $line['points'][1] === $start)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private function recording(string $name): array

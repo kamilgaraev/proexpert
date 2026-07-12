@@ -9,12 +9,13 @@ endobj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>
 endobj
 4 0 obj
-<< /Length 347 >>
+<< /Length 443 >>
 stream
 2 w
-60 650 m 500 650 l 500 360 l 60 360 l h S
+60 650 m 260 650 l S
+320 650 m 500 650 l 500 360 l 60 360 l 60 650 l S
+90 610 m 230 610 l 230 410 l 90 410 l h S
 60 500 m 260 500 l 260 650 l S
-320 650 m 400 650 l S
 55 680 m 505 680 l S
 55 675 m 55 685 l S
 505 675 m 505 685 l S
@@ -23,7 +24,8 @@ BT /F1 14 Tf 235 700 Td (4400 mm) Tj ET
 525 355 m 535 355 l S
 525 655 m 535 655 l S
 BT /F1 14 Tf 540 490 Td (2900 mm) Tj ET
-BT /F1 16 Tf 180 560 Td (ROOM A) Tj ET
+BT /F1 12 Tf 270 665 Td (OPENING 600 mm) Tj ET
+BT /F1 16 Tf 120 520 Td (ROOM A) Tj ET
 endstream
 endobj
 5 0 obj
@@ -36,8 +38,8 @@ xref
 0000000058 00000 n 
 0000000115 00000 n 
 0000000241 00000 n 
-0000000638 00000 n 
+0000000734 00000 n 
 trailer << /Size 6 /Root 1 0 R >>
 startxref
-708
+804
 %%EOF
