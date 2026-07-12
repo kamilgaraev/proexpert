@@ -35,8 +35,9 @@ final class EstimateGenerationPriceSnapshotTest extends TestCase
         $catalog['amount'] = '900.0000';
 
         self::assertSame('250.00', $item->price_snapshot['base_amount']);
-        self::assertSame('295.00', $item->price_snapshot['final_amount']);
-        self::assertSame('295.00', $item->total_cost);
+        self::assertSame('250.00', $item->price_snapshot['final_amount']);
+        self::assertSame('250.00', $item->total_cost);
+        self::assertSame('0.00', $item->price_snapshot['coefficients']['work_cost']);
     }
 
     #[Test]

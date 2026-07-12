@@ -33,7 +33,7 @@ class EstimateGenerationPackagePersistenceService
                 $this->syncLocalEstimate($session, $localEstimate, (int) $localIndex);
             }
 
-            $this->deleteStalePackages($session, $activePackageKeys);
+            $this->retainHistoricalPackages($session, $activePackageKeys);
         });
     }
 
@@ -128,13 +128,37 @@ class EstimateGenerationPackagePersistenceService
             ]
         );
 
-        EstimateGenerationPackageItem::query()
-            ->where('package_id', $package->id)
-            ->delete();
-
         foreach ($workItems as $workIndex => $workItem) {
-            EstimateGenerationPackageItem::query()->create($this->itemPayload($package, $workItem, $workIndex));
+            $this->appendItemRevision($package, $workItem, $workIndex);
         }
+    }
+
+    private function appendItemRevision(EstimateGenerationPackage $package, array $workItem, int $index): void
+    {
+        $logicalKey = (string) ($workItem['key'] ?? $package->key.'.item.'.($index + 1));
+        $latest = EstimateGenerationPackageItem::query()
+            ->where('package_id', $package->id)
+            ->where(fn ($query) => $query->where('logical_key', $logicalKey)->orWhere(fn ($legacy) => $legacy->whereNull('logical_key')->where('key', $logicalKey)))
+            ->orderByDesc('revision')->orderByDesc('id')->first();
+        $revision = max(1, (int) ($latest?->revision ?? 0) + 1);
+        $payload = $this->itemPayload($package, $workItem, $index);
+        $payload['logical_key'] = $logicalKey;
+        $payload['revision'] = $revision;
+        $payload['supersedes_item_id'] = $latest?->id;
+        $payload['key'] = $logicalKey.'#r'.$revision;
+
+        if ($latest !== null && $this->revisionFingerprint($latest->getAttributes()) === $this->revisionFingerprint($payload)) {
+            return;
+        }
+
+        EstimateGenerationPackageItem::query()->create($payload);
+    }
+
+    private function revisionFingerprint(array $payload): string
+    {
+        unset($payload['id'], $payload['key'], $payload['revision'], $payload['supersedes_item_id'], $payload['created_at'], $payload['updated_at']);
+
+        return hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION));
     }
 
     private function packageInputVersion(EstimateGenerationSession $session, array $localEstimate): ?string
@@ -167,7 +191,7 @@ class EstimateGenerationPackagePersistenceService
     /**
      * @param  array<int, string>  $activePackageKeys
      */
-    private function deleteStalePackages(EstimateGenerationSession $session, array $activePackageKeys): void
+    private function retainHistoricalPackages(EstimateGenerationSession $session, array $activePackageKeys): void
     {
         $query = EstimateGenerationPackage::query()
             ->where('session_id', $session->id);
@@ -176,19 +200,7 @@ class EstimateGenerationPackagePersistenceService
             $query->whereNotIn('key', $activePackageKeys);
         }
 
-        $stalePackageIds = array_values(array_map('intval', $query->pluck('id')->all()));
-
-        if ($stalePackageIds === []) {
-            return;
-        }
-
-        EstimateGenerationPackageItem::query()
-            ->whereIn('package_id', $stalePackageIds)
-            ->delete();
-
-        EstimateGenerationPackage::query()
-            ->whereIn('id', $stalePackageIds)
-            ->delete();
+        $query->update(['status' => 'superseded']);
     }
 
     /**
@@ -342,12 +354,14 @@ class EstimateGenerationPackagePersistenceService
     /**
      * @param  array<int, array<string, mixed>>  $workItems
      */
-    private function workItemsTotal(array $workItems): float
+    private function workItemsTotal(array $workItems): string
     {
-        return round(array_sum(array_map(
-            static fn (array $workItem): float => (float) ($workItem['total_cost'] ?? 0),
-            $workItems
-        )), 2);
+        $total = BigDecimal::zero();
+        foreach ($workItems as $workItem) {
+            $total = $total->plus((string) ($workItem['total_cost'] ?? '0'));
+        }
+
+        return (string) $total->toScale(2, RoundingMode::HalfUp);
     }
 
     /**

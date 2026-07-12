@@ -57,7 +57,7 @@ class EstimatePricingService
                 $laborCost = $costs['labor'];
                 $machineryCost = $costs['machinery'];
                 $otherCost = $costs['other_resources'];
-                $workCost = $laborCost->plus($materialsCost->multipliedBy('0.18'))->toScale(2, RoundingMode::HalfUp);
+                $workCost = BigDecimal::zero()->toScale(2);
                 $total = $materialsCost->plus($laborCost)->plus($machineryCost)->plus($otherCost)->plus($workCost)->toScale(2, RoundingMode::HalfUp);
                 $workItem['work_cost'] = (string) $workCost;
                 $workItem['materials_cost'] = (string) $materialsCost->toScale(2, RoundingMode::HalfUp);

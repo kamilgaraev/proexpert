@@ -18,6 +18,9 @@ class EstimateGenerationPackageItem extends Model
     protected $fillable = [
         'package_id',
         'key',
+        'logical_key',
+        'revision',
+        'supersedes_item_id',
         'parent_key',
         'level',
         'item_type',
@@ -27,6 +30,13 @@ class EstimateGenerationPackageItem extends Model
         'quantity_basis',
         'price_source',
         'price_snapshot',
+        'quantity_evidence_id',
+        'quantity_evidence_fingerprint',
+        'estimate_norm_id',
+        'region_id',
+        'price_zone_id',
+        'period_id',
+        'regional_price_version_id',
         'normative_status',
         'normative_confidence',
         'unit_price',
@@ -42,6 +52,7 @@ class EstimateGenerationPackageItem extends Model
 
     protected $casts = [
         'level' => 'integer',
+        'revision' => 'integer',
         'quantity' => 'float',
         'quantity_basis' => 'array',
         'price_snapshot' => 'array',
