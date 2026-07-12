@@ -209,3 +209,43 @@ dwgread 0.13.4
 Scoped real DWG decode:
 OK (1 test, 3 assertions)
 ```
+
+### Second security re-review LibreDWG bootstrap
+
+Предыдущая версия marker покрывала только executable и список путей архива, поэтому не гарантировала неизменность DLL и остальных extracted files. Контракт заменён на pinned canonical manifest всех 63 regular files: для каждого фиксируются normalized relative path, length и SHA-256; SHA-256 полного манифеста — `be36775704db58bd820cad03c0e50212fa2d1041512c578d322ff1996a94de7a`. Marker связывает version, archive SHA, binary path/hash и file-manifest SHA. При каждом cache hit весь манифест пересчитывается до запуска `dwgread`; missing, extra, mutated или reparse file закрывает cache.
+
+Archive source сначала канонизируется и единожды копируется через handle без совместного доступа на запись в private work. Hash, structural inspection и extraction используют только private copy. Каждый extraction target повторно канонизируется непосредственно перед `CreateNew` и проверяется внутри staging; reparse components запрещены.
+
+Публикация не удаляет текущий final: под canonical mutex он переименовывается в unique backup, staging переименовывается в final, затем новый final полностью аутентифицируется. При injected second-move failure backup восстанавливается. Mutex вычисляется как SHA-256 canonical absolute lower-case Windows cache path; relative, case и `..` aliases получают одно имя.
+
+```text
+tests/Runtime/libredwg-bootstrap-runtime.ps1
+libredwg bootstrap runtime: PASS
+
+Поведенческие проверки: mutated DLL и extra executable не достигают version-process seam; archive replacement после private copy не влияет на extraction и traversal не выходит из staging; relative/case aliases имеют одинаковый mutex; два concurrent alias process публикуют одну установку; injected publish failure восстанавливает прежний authenticated final.
+
+Clean-cache bootstrap: dwgread 0.13.4
+Scoped real DWG decode: OK (1 test, 3 assertions)
+```
+
+Финальная проверка edge cases после добавления exact cache layout (75 entries, включая directories) и запрета reparse components:
+
+```text
+tests/Runtime/libredwg-bootstrap-runtime.ps1
+clean-install: PASS
+idempotent-marker: PASS
+mutated-dll-no-launch: PASS
+extra-file-no-launch: PASS
+reparse-no-launch: PASS
+partial-cache-recovery: PASS
+traversal-rejection: PASS
+archive-swap-isolation: PASS
+canonical-mutex-alias: PASS
+libredwg bootstrap runtime: PASS
+
+tests/Runtime/libredwg-bootstrap-concurrency.ps1
+libredwg bootstrap concurrency: PASS
+
+tests/Runtime/libredwg-bootstrap-rollback.ps1
+libredwg bootstrap rollback: PASS
+```

@@ -30,9 +30,17 @@ final class CadProductionRuntimeContractTest extends TestCase
         self::assertStringContainsString("'--tlsv1.2'", $script);
         self::assertStringContainsString('most-libredwg-install.json', $script);
         self::assertStringContainsString('88f3c398bc1ff5a83c365fe8180018ef26947a63fff21fad8a032dd056a47c94', $script);
+        self::assertStringContainsString('be36775704db58bd820cad03c0e50212fa2d1041512c578d322ff1996a94de7a', $script);
         self::assertStringContainsString('[Threading.Mutex]', $script);
+        self::assertStringContainsString('[IO.FileShare]::None', $script);
+        self::assertStringContainsString('Get-CanonicalFileManifestSha256 $final', $script);
+        self::assertStringContainsString('[IO.Directory]::Move($final, $backup)', $script);
+        self::assertStringContainsString('[IO.Directory]::Move($backup, $final)', $script);
         self::assertStringContainsString('[IO.Directory]::Move($staging, $final)', $script);
-        self::assertLessThan(strpos($script, 'Expand-SafeArchive $archive'), strpos($script, 'Assert-SafeArchive $archive'));
+        self::assertLessThan(
+            strpos($script, 'Assert-AndExtractArchive $privateArchive'),
+            strpos($script, 'Get-LowerSha256 $privateArchive'),
+        );
     }
     #[Test]
     public function production_image_pins_geometry_runtimes_and_licenses(): void

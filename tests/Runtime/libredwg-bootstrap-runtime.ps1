@@ -12,23 +12,53 @@ try {
     $env:MOST_LIBREDWG_CACHE = Join-Path $root 'cache'
     $binary = & $bootstrap -ArchivePath $archive
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $binary)) { throw 'clean_install_failed' }
+    Write-Output 'clean-install: PASS'
 
     $corrupt = Join-Path $root 'corrupt.zip'
     [IO.File]::WriteAllText($corrupt, 'corrupt')
     $second = & $bootstrap -ArchivePath $corrupt
     if ($second -ne $binary) { throw 'idempotent_marker_failed' }
+    Write-Output 'idempotent-marker: PASS'
 
-    $sentinel = Join-Path $root 'executed.txt'
-    [IO.File]::WriteAllText($binary, "MZ fake $sentinel")
+    $sentinel = Join-Path $root 'version-called.txt'
+    $env:MOST_LIBREDWG_TEST_VERSION_CALLED = $sentinel
+    Add-Content -LiteralPath (Join-Path $env:MOST_LIBREDWG_CACHE 'win64\libredwg-0.dll') -Value 'mutated'
     $failed = $false
     try { & $bootstrap -ArchivePath $corrupt | Out-Null } catch { $failed = $_.Exception.Message -match 'integrity' }
-    if (-not $failed -or (Test-Path -LiteralPath $sentinel)) { throw 'fake_cache_was_trusted' }
+    if (-not $failed -or (Test-Path -LiteralPath $sentinel)) { throw 'mutated_dll_was_executed' }
+
+    Remove-Item Env:MOST_LIBREDWG_TEST_VERSION_CALLED
+    Write-Output 'mutated-dll-no-launch: PASS'
+    $binary = & $bootstrap -ArchivePath $archive
+    $env:MOST_LIBREDWG_TEST_VERSION_CALLED = $sentinel
+    [IO.File]::WriteAllText((Join-Path $env:MOST_LIBREDWG_CACHE 'win64\extra.exe'), 'extra')
+    $failed = $false
+    try { & $bootstrap -ArchivePath $corrupt | Out-Null } catch { $failed = $_.Exception.Message -match 'integrity' }
+    if (-not $failed -or (Test-Path -LiteralPath $sentinel)) { throw 'extra_file_was_trusted' }
+    Remove-Item Env:MOST_LIBREDWG_TEST_VERSION_CALLED
+    Write-Output 'extra-file-no-launch: PASS'
+
+    $binary = & $bootstrap -ArchivePath $archive
+    $junctionTarget = Join-Path $root 'junction-target'
+    New-Item -ItemType Directory -Path $junctionTarget | Out-Null
+    $junction = Join-Path $env:MOST_LIBREDWG_CACHE 'win64\extra-junction'
+    & cmd.exe /c "mklink /J `"$junction`" `"$junctionTarget`"" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'junction_fixture_failed' }
+    $env:MOST_LIBREDWG_TEST_VERSION_CALLED = $sentinel
+    $failed = $false
+    try { & $bootstrap -ArchivePath $corrupt | Out-Null } catch { $failed = $_.Exception.Message -match 'integrity' }
+    if (-not $failed -or (Test-Path -LiteralPath $sentinel)) { throw 'reparse_cache_was_trusted' }
+    Remove-Item Env:MOST_LIBREDWG_TEST_VERSION_CALLED
+    & cmd.exe /c "rmdir `"$junction`"" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'junction_cleanup_failed' }
+    Write-Output 'reparse-no-launch: PASS'
 
     Remove-Item -LiteralPath $env:MOST_LIBREDWG_CACHE -Recurse -Force
     New-Item -ItemType Directory -Path (Join-Path $env:MOST_LIBREDWG_CACHE 'win64') -Force | Out-Null
     [IO.File]::WriteAllText((Join-Path $env:MOST_LIBREDWG_CACHE 'win64\partial.tmp'), 'partial')
     $binary = & $bootstrap -ArchivePath $archive
     if (-not (Test-Path -LiteralPath $binary)) { throw 'partial_cache_recovery_failed' }
+    Write-Output 'partial-cache-recovery: PASS'
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $traversal = Join-Path $root 'traversal.zip'
@@ -41,7 +71,27 @@ try {
     $failed = $false
     try { & $bootstrap -InspectArchive $traversal | Out-Null } catch { $failed = $_.Exception.Message -match 'path' }
     if (-not $failed) { throw 'traversal_archive_accepted' }
+    Write-Output 'traversal-rejection: PASS'
 
+    $swapArchive = Join-Path $root 'swap.zip'
+    Copy-Item -LiteralPath $archive -Destination $swapArchive
+    $swapCache = Join-Path $root 'swap-cache'
+    $env:MOST_LIBREDWG_CACHE = $swapCache
+    $env:MOST_LIBREDWG_TEST_SWAP_SOURCE_AFTER_COPY = $traversal
+    $swapBinary = & $bootstrap -ArchivePath $swapArchive
+    Remove-Item Env:MOST_LIBREDWG_TEST_SWAP_SOURCE_AFTER_COPY
+    if (-not (Test-Path -LiteralPath $swapBinary) -or (Test-Path -LiteralPath (Join-Path $root 'escape.txt'))) { throw 'archive_swap_isolation_failed' }
+    Write-Output 'archive-swap-isolation: PASS'
+
+    $aliasCache = Join-Path $root 'alias-cache'
+    $alias = Join-Path $root 'child\..\alias-cache'
+    New-Item -ItemType Directory -Path (Join-Path $root 'child') | Out-Null
+    $env:MOST_LIBREDWG_CACHE = $aliasCache
+    $mutexA = & $bootstrap -MutexNameOnly
+    $env:MOST_LIBREDWG_CACHE = $alias.ToUpperInvariant()
+    $mutexB = & $bootstrap -MutexNameOnly
+    if ($mutexA -ne $mutexB) { throw 'canonical_mutex_alias_mismatch' }
+    Write-Output 'canonical-mutex-alias: PASS'
     foreach ($version in @('0.13.40', 'prefix 0.13.4', '0.13.4 malicious')) {
         $fake = Join-Path $root ("fake-" + [guid]::NewGuid().ToString('N') + '.cmd')
         [IO.File]::WriteAllText($fake, "@echo dwgread $version`r`n@exit /b 0`r`n")
