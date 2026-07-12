@@ -98,6 +98,8 @@ Final verification inventory: **54 DB-less tests, 155 assertions, 0 failures**. 
 
 Fifth corrective pass: PostgreSQL contract fixtures now use unique version prefixes and no explicit transaction around concurrent DDL; deploy asserts transaction level zero and cleanup is explicit. Durable rollout state separates backfill status from deploy phase/status, retains failed phase, and replays idempotent phase work under an advisory lock until `enabled`. The opt-in contract remains unrun locally.
 
+The mandatory old-client persistence deliverable is authored in `NormativeOldClientPinPostgresTest`: real authenticated POST route/controller, real approved dataset lookup and session persistence, injected fixed clock, persisted regional pin/date, upstream pin/canonical hash verification, and 422/no-write checks for mismatch and missing policy. It is PostgreSQL opt-in and was not run locally; Pint, syntax and PHPStan checks pass. The nonempty real workflow assertion is covered by the DB-less companion `NormativePinHashAndMatchTest`.
+
 Second corrective verification:
 
 - DB-less normative, container model-set, attempt-aware usage and pipeline set: **50 tests, 142 assertions, 0 failures**.
