@@ -15,9 +15,9 @@ final class NormativeWorkItemPlannerService
     ) {}
 
     /**
-     * @param array<string, mixed> $localEstimate
-     * @param array<string, mixed> $section
-     * @param array<string, mixed> $analysis
+     * @param  array<string, mixed>  $localEstimate
+     * @param  array<string, mixed>  $section
+     * @param  array<string, mixed>  $analysis
      * @return array<int, array<string, mixed>>
      */
     public function build(array $localEstimate, array $section, array $analysis): array
@@ -41,15 +41,15 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $row
-     * @param array<string, mixed> $localEstimate
-     * @param array<string, mixed> $section
+     * @param  array<string, mixed>  $row
+     * @param  array<string, mixed>  $localEstimate
+     * @param  array<string, mixed>  $section
      * @return array<string, mixed>
      */
     private function workItemFromProjectReference(array $reference, array $localEstimate, array $section, int $index): array
     {
         $packageKey = (string) ($localEstimate['key'] ?? 'package');
-        $key = $packageKey . '-project-ref-' . ($index + 1);
+        $key = $packageKey.'-project-ref-'.($index + 1);
 
         return $this->basePricedWorkItem(
             key: $key,
@@ -72,11 +72,11 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $definition
-     * @param array<string, mixed> $localEstimate
-     * @param array<string, mixed> $section
-     * @param array<string, mixed> $analysis
-     * @param array<string, mixed> $quantityModel
+     * @param  array<string, mixed>  $definition
+     * @param  array<string, mixed>  $localEstimate
+     * @param  array<string, mixed>  $section
+     * @param  array<string, mixed>  $analysis
+     * @param  array<string, mixed>  $quantityModel
      * @return array<string, mixed>|null
      */
     private function workItemFromDefinition(
@@ -90,10 +90,10 @@ final class NormativeWorkItemPlannerService
         $quantity = $this->quantityForDefinition($definition, $analysis, $quantityModel);
 
         $packageKey = (string) ($localEstimate['key'] ?? 'package');
-        $key = $packageKey . '-norm-intent-' . ($index + 1);
+        $key = $packageKey.'-norm-intent-'.($index + 1);
 
         if ($this->isPlannerFallbackQuantity($quantity)) {
-            if (!$this->shouldExposePlannerFallback($definition, $localEstimate, $analysis)) {
+            if (! $this->shouldExposePlannerFallback($definition, $localEstimate, $analysis)) {
                 return null;
             }
 
@@ -162,12 +162,12 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $localEstimate
-     * @param array<string, mixed> $section
-     * @param array<int, array<string, mixed>> $sourceRefs
-     * @param array<int, string> $validationFlags
-     * @param array<string, mixed> $metadata
-     * @param array<int, string> $operations
+     * @param  array<string, mixed>  $localEstimate
+     * @param  array<string, mixed>  $section
+     * @param  array<int, array<string, mixed>>  $sourceRefs
+     * @param  array<int, string>  $validationFlags
+     * @param  array<string, mixed>  $metadata
+     * @param  array<int, string>  $operations
      * @return array<string, mixed>
      */
     private function basePricedWorkItem(
@@ -204,7 +204,7 @@ final class NormativeWorkItemPlannerService
             'normative_rate_code' => $normativeRateCode,
             'work_category' => $category,
             'unit' => $unit,
-            'quantity' => round(max($quantity, 0.01), 4),
+            'quantity' => $this->canonicalPlannedQuantity($quantity),
             'quantity_formula' => $quantityFormula,
             'quantity_basis' => $quantityBasis,
             'work_cost' => 0,
@@ -235,10 +235,10 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $definition
-     * @param array<string, mixed> $localEstimate
-     * @param array<string, mixed> $section
-     * @param array<string, mixed> $quantity
+     * @param  array<string, mixed>  $definition
+     * @param  array<string, mixed>  $localEstimate
+     * @param  array<string, mixed>  $section
+     * @param  array<string, mixed>  $quantity
      * @return array<string, mixed>
      */
     private function quantityReviewItemFromDefinition(
@@ -270,7 +270,7 @@ final class NormativeWorkItemPlannerService
             'normative_rate_code' => isset($definition['normative_rate_code']) ? (string) $definition['normative_rate_code'] : null,
             'work_category' => (string) $definition['category'],
             'unit' => (string) $quantity['unit'],
-            'quantity' => round(max((float) $quantity['value'], 0.01), 4),
+            'quantity' => $this->canonicalPlannedQuantity((float) $quantity['value']),
             'quantity_formula' => (string) $definition['quantity_key'],
             'quantity_basis' => (string) $quantity['basis'],
             'work_cost' => 0,
@@ -306,10 +306,10 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $localEstimate
-     * @param array<string, mixed> $section
-     * @param array<string, mixed> $analysis
-     * @param array<string, mixed> $quantityModel
+     * @param  array<string, mixed>  $localEstimate
+     * @param  array<string, mixed>  $section
+     * @param  array<string, mixed>  $analysis
+     * @param  array<string, mixed>  $quantityModel
      * @return array<int, array<string, mixed>>
      */
     private function definitions(array $localEstimate, array $section, array $analysis, array $quantityModel): array
@@ -331,8 +331,8 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<int, array<string, mixed>> $definitions
-     * @param array<string, mixed> $quantityModel
+     * @param  array<int, array<string, mixed>>  $definitions
+     * @param  array<string, mixed>  $quantityModel
      * @return array<string, bool>
      */
     private function sourceBackedPackageQuantityKeys(array $definitions, array $quantityModel): array
@@ -354,7 +354,7 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $quantityModel
+     * @param  array<string, mixed>  $quantityModel
      * @return array<int, array<string, mixed>>
      */
     private function packageDefinitions(string $packageKey, string $scopeType, array $quantityModel): array
@@ -505,19 +505,18 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $analysis
+     * @param  array<string, mixed>  $analysis
      * @return array<int, array<string, mixed>>
      */
     /**
-     * @param array<string, bool> $sourceBackedPackageQuantityKeys
+     * @param  array<string, bool>  $sourceBackedPackageQuantityKeys
      */
     private function scopeInferenceDefinitions(
         array $analysis,
         string $scopeType,
         string $packageKey,
         array $sourceBackedPackageQuantityKeys = []
-    ): array
-    {
+    ): array {
         $definitions = [];
         $isUnmappedReviewPackage = $packageKey === 'unmapped_quantity_rows';
 
@@ -528,7 +527,7 @@ final class NormativeWorkItemPlannerService
             $quantityKey = (string) ($payload['quantity_key'] ?? '');
             $isUnmappedQuantity = $inferenceType === 'unmapped_quantity_row' || str_starts_with($quantityKey, 'unmapped.');
 
-            if ($quantityKey === '' || !$this->scopeCompatible($inferenceScope, $scopeType)) {
+            if ($quantityKey === '' || ! $this->scopeCompatible($inferenceScope, $scopeType)) {
                 continue;
             }
 
@@ -536,7 +535,7 @@ final class NormativeWorkItemPlannerService
                 continue;
             }
 
-            if (!$isUnmappedQuantity && isset($sourceBackedPackageQuantityKeys[$quantityKey])) {
+            if (! $isUnmappedQuantity && isset($sourceBackedPackageQuantityKeys[$quantityKey])) {
                 continue;
             }
 
@@ -557,9 +556,9 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $definition
-     * @param array<string, mixed> $analysis
-     * @param array<string, mixed> $quantityModel
+     * @param  array<string, mixed>  $definition
+     * @param  array<string, mixed>  $analysis
+     * @param  array<string, mixed>  $quantityModel
      * @return array{value: float, unit: string, basis: string, confidence: float, source_refs: array<int, array<string, mixed>>, review_required: bool, source: string, learning_hint?: array<string, mixed>}
      */
     private function quantityForDefinition(array $definition, array $analysis, array $quantityModel): array
@@ -617,20 +616,19 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $quantity
+     * @param  array<string, mixed>  $quantity
      */
     private function isPlannerFallbackQuantity(array $quantity): bool
     {
-        return (
+        return
             ($quantity['source'] ?? null) === 'planner_fallback'
-            && ($quantity['source_refs'] ?? []) === []
-        );
+            && ($quantity['source_refs'] ?? []) === [];
     }
 
     /**
-     * @param array<string, mixed> $definition
-     * @param array<string, mixed> $localEstimate
-     * @param array<string, mixed> $analysis
+     * @param  array<string, mixed>  $definition
+     * @param  array<string, mixed>  $localEstimate
+     * @param  array<string, mixed>  $analysis
      */
     private function shouldExposePlannerFallback(array $definition, array $localEstimate, array $analysis): bool
     {
@@ -668,7 +666,7 @@ final class NormativeWorkItemPlannerService
             });
         }
 
-        if (!in_array($packageKey, ['ventilation', 'fire_safety'], true) && $category !== 'ventilation') {
+        if (! in_array($packageKey, ['ventilation', 'fire_safety'], true) && $category !== 'ventilation') {
             return true;
         }
 
@@ -685,8 +683,8 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $analysis
-     * @param array<int, string> $needles
+     * @param  array<string, mixed>  $analysis
+     * @param  array<int, string>  $needles
      */
     private function analysisMentionsAny(array $analysis, array $needles): bool
     {
@@ -705,7 +703,7 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $analysis
+     * @param  array<string, mixed>  $analysis
      * @return array{quantities: array<string, array<string, mixed>>, features: array<string, mixed>}
      */
     private function documentQuantityModel(array $analysis): array
@@ -728,7 +726,7 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $documentContext
+     * @param  array<string, mixed>  $documentContext
      * @return array<string, array<string, mixed>>
      */
     private function quantitiesFromTakeoffs(array $documentContext): array
@@ -738,7 +736,7 @@ final class NormativeWorkItemPlannerService
         $hasFloorAreaAggregate = $this->hasTakeoffScope($takeoffs, ['floor_finish_area', 'rough_floor_area']);
 
         foreach ($takeoffs as $takeoff) {
-            if (!is_array($takeoff)) {
+            if (! is_array($takeoff)) {
                 continue;
             }
 
@@ -773,8 +771,8 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, array<string, mixed>> $quantities
-     * @param array<string, mixed> $documentContext
+     * @param  array<string, array<string, mixed>>  $quantities
+     * @param  array<string, mixed>  $documentContext
      * @return array<string, array<string, mixed>>
      */
     private function withQuantityLearningHints(array $quantities, array $documentContext): array
@@ -806,8 +804,8 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $quantity
-     * @param array<string, mixed> $hint
+     * @param  array<string, mixed>  $quantity
+     * @param  array<string, mixed>  $hint
      */
     private function hasQuantityLearningConflict(array $quantity, array $hint): bool
     {
@@ -821,7 +819,7 @@ final class NormativeWorkItemPlannerService
         $currentUnit = (string) ($quantity['unit'] ?? '');
         $learnedUnit = (string) ($hint['unit'] ?? '');
 
-        if ($currentUnit === '' || $learnedUnit === '' || !NormativeUnitNormalizer::compatible($currentUnit, $learnedUnit)) {
+        if ($currentUnit === '' || $learnedUnit === '' || ! NormativeUnitNormalizer::compatible($currentUnit, $learnedUnit)) {
             return false;
         }
 
@@ -845,7 +843,7 @@ final class NormativeWorkItemPlannerService
     {
         try {
             if (function_exists('app') && app()->bound('translator') && function_exists('trans_message')) {
-                return trans_message('estimate_generation.' . $key);
+                return trans_message('estimate_generation.'.$key);
             }
         } catch (Throwable) {
             return $fallback;
@@ -855,12 +853,12 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $quantity
+     * @param  array<string, mixed>  $quantity
      * @return array<string, mixed>
      */
     private function quantityLearningMetadata(array $quantity): array
     {
-        if (!is_array($quantity['learning_hint'] ?? null)) {
+        if (! is_array($quantity['learning_hint'] ?? null)) {
             return [];
         }
 
@@ -870,7 +868,7 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $hint
+     * @param  array<string, mixed>  $hint
      * @return array<string, mixed>
      */
     private function quantityLearningHintForMetadata(array $hint): array
@@ -892,8 +890,8 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<int, mixed> $takeoffs
-     * @param array<int, string> $scopeKeys
+     * @param  array<int, mixed>  $takeoffs
+     * @param  array<int, string>  $scopeKeys
      */
     private function hasTakeoffScope(array $takeoffs, array $scopeKeys): bool
     {
@@ -907,7 +905,7 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $documentContext
+     * @param  array<string, mixed>  $documentContext
      * @return array<string, array<string, mixed>>
      */
     private function quantitiesFromFactsSummary(array $documentContext): array
@@ -934,7 +932,7 @@ final class NormativeWorkItemPlannerService
         }
 
         foreach (($factsSummary['zones'] ?? []) as $zone) {
-            if (!is_array($zone)) {
+            if (! is_array($zone)) {
                 continue;
             }
 
@@ -988,7 +986,7 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<int, mixed> $sourceRefs
+     * @param  array<int, mixed>  $sourceRefs
      * @return array{value: float, unit: string, basis: string, confidence: float, source_refs: array<int, array<string, mixed>>, review_required: bool, source: string}
      */
     private function modelQuantity(
@@ -1011,9 +1009,14 @@ final class NormativeWorkItemPlannerService
         ];
     }
 
+    private function canonicalPlannedQuantity(float $quantity): string
+    {
+        return rtrim(rtrim(number_format(max($quantity, 0.01), 4, '.', ''), '0'), '.');
+    }
+
     /**
-     * @param array{value: float, unit: string, basis: string, confidence: float, source_refs: array<int, array<string, mixed>>, review_required: bool, source: string} $left
-     * @param array{value: float, unit: string, basis: string, confidence: float, source_refs: array<int, array<string, mixed>>, review_required: bool, source: string} $right
+     * @param  array{value: float, unit: string, basis: string, confidence: float, source_refs: array<int, array<string, mixed>>, review_required: bool, source: string}  $left
+     * @param  array{value: float, unit: string, basis: string, confidence: float, source_refs: array<int, array<string, mixed>>, review_required: bool, source: string}  $right
      * @return array{value: float, unit: string, basis: string, confidence: float, source_refs: array<int, array<string, mixed>>, review_required: bool, source: string}
      */
     private function mergeModelQuantities(array $left, array $right): array
@@ -1033,7 +1036,7 @@ final class NormativeWorkItemPlannerService
             return [
                 'value' => (float) ($left['value'] ?? 0),
                 'unit' => (string) ($left['unit'] ?? ''),
-                'basis' => trim($basis . '; единицы измерения извлеченных объемов различаются и требуют проверки.'),
+                'basis' => trim($basis.'; единицы измерения извлеченных объемов различаются и требуют проверки.'),
                 'confidence' => round(min((float) ($left['confidence'] ?? 0.5), (float) ($right['confidence'] ?? 0.5), 0.5), 4),
                 'source_refs' => $sourceRefs,
                 'review_required' => true,
@@ -1059,8 +1062,8 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $left
-     * @param array<string, mixed> $right
+     * @param  array<string, mixed>  $left
+     * @param  array<string, mixed>  $right
      */
     private function isDuplicateFactsSummaryArea(array $left, array $right): bool
     {
@@ -1076,7 +1079,7 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $quantity
+     * @param  array<string, mixed>  $quantity
      */
     private function isFactsSummaryAreaQuantity(array $quantity): bool
     {
@@ -1084,17 +1087,17 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $quantity
+     * @param  array<string, mixed>  $quantity
      */
     private function hasSourceBackedQuantity(array $quantity): bool
     {
-        return !$this->isFactsSummaryAreaQuantity($quantity)
+        return ! $this->isFactsSummaryAreaQuantity($quantity)
             && ($quantity['source_refs'] ?? []) !== [];
     }
 
     /**
-     * @param array<string, mixed> $left
-     * @param array<string, mixed> $right
+     * @param  array<string, mixed>  $left
+     * @param  array<string, mixed>  $right
      * @return array{value: float, unit: string, basis: string, confidence: float, source_refs: array<int, array<string, mixed>>, review_required: bool, source: string}
      */
     private function sourceBackedQuantity(array $left, array $right): array
@@ -1113,8 +1116,8 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $analysis
-     * @param array<string, mixed> $documentContext
+     * @param  array<string, mixed>  $analysis
+     * @param  array<string, mixed>  $documentContext
      */
     private function roofTypeFromDocumentContext(array $analysis, array $documentContext): string
     {
@@ -1124,8 +1127,8 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $analysis
-     * @param array<string, mixed> $documentContext
+     * @param  array<string, mixed>  $analysis
+     * @param  array<string, mixed>  $documentContext
      * @return array<int, string>
      */
     private function documentTextFragments(array $analysis, array $documentContext): array
@@ -1143,7 +1146,7 @@ final class NormativeWorkItemPlannerService
             $items = is_array($documentContext[$collectionKey] ?? null) ? $documentContext[$collectionKey] : [];
 
             foreach ($items as $item) {
-                if (!is_array($item)) {
+                if (! is_array($item)) {
                     continue;
                 }
 
@@ -1159,8 +1162,8 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $payload
-     * @param array<int, string> $keys
+     * @param  array<string, mixed>  $payload
+     * @param  array<int, string>  $keys
      */
     private function firstNumeric(array $payload, array $keys): ?float
     {
@@ -1189,7 +1192,7 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $analysis
+     * @param  array<string, mixed>  $analysis
      * @return array<int, array<string, mixed>>
      */
     private function sourceRefsForQuantityKey(array $analysis, string $quantityKey): array
@@ -1199,7 +1202,7 @@ final class NormativeWorkItemPlannerService
         $refs = [];
 
         foreach ($takeoffs as $takeoff) {
-            if (!is_array($takeoff)) {
+            if (! is_array($takeoff)) {
                 continue;
             }
 
@@ -1218,7 +1221,7 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<int, array<string, mixed>> $items
+     * @param  array<int, array<string, mixed>>  $items
      * @return array<int, array<string, mixed>>
      */
     private function uniquePricedItems(array $items): array
@@ -1234,7 +1237,7 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<int, mixed> $sourceRefs
+     * @param  array<int, mixed>  $sourceRefs
      * @return array<int, array<string, mixed>>
      */
     private function normalizeSourceRefs(array $sourceRefs): array
@@ -1243,7 +1246,7 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<string, mixed> $inference
+     * @param  array<string, mixed>  $inference
      * @return array<int, array<string, mixed>>
      */
     private function sourceRefsFromScopeInference(array $inference): array
@@ -1275,8 +1278,8 @@ final class NormativeWorkItemPlannerService
     }
 
     /**
-     * @param array<int, string> $operations
-     * @param array<string, mixed> $metadata
+     * @param  array<int, string>  $operations
+     * @param  array<string, mixed>  $metadata
      * @return array<string, mixed>
      */
     private function definition(

@@ -20,6 +20,27 @@ use Tests\TestCase;
 #[Group('postgres-contract')]
 final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
 {
+    public function test_follow_up_migrations_roll_back_to_001400_and_reapply_cleanly(): void
+    {
+        $this->requireDisposablePostgres();
+        $root = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/';
+        $migration1500 = require $root.'2026_07_12_001500_publish_accepted_evidence_and_close_pricing_provenance.php';
+        $migration1600 = require $root.'2026_07_12_001600_harden_accepted_evidence_mapping.php';
+
+        $migration1600->down();
+        $migration1500->down();
+        self::assertSame(null, DB::selectOne("SELECT to_regclass('public.estimate_generation_accepted_evidence') AS object_name")->object_name);
+        self::assertSame(null, DB::selectOne("SELECT to_regprocedure('public.eg_pricing_provenance(bigint)') AS object_name")->object_name);
+        $definition = (string) DB::selectOne("SELECT pg_get_functiondef('public.eg_finalize_package_item_price(bigint)'::regprocedure) AS definition")->definition;
+        self::assertStringContainsString('eg_expected_package_item_price(p_item_id)', $definition);
+        self::assertStringNotContainsString('eg_expected_package_item_price_closed', $definition);
+
+        $migration1500->up();
+        $migration1600->up();
+        self::assertNotNull(DB::selectOne("SELECT to_regclass('public.estimate_generation_accepted_evidence') AS object_name")->object_name);
+        self::assertNotNull(DB::selectOne("SELECT to_regprocedure('public.eg_bounded_pricing_json_hash(jsonb)') AS object_name")->object_name);
+    }
+
     public function test_manual_quantity_confirmation_persists_scoped_user_evidence_and_rolls_back_atomically(): void
     {
         $this->requireDisposablePostgres();

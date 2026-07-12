@@ -139,8 +139,8 @@ class EstimateGenerationPackagePersistenceService
     private function refreshPackagePricingState(EstimateGenerationPackage $package): void
     {
         $latest = EstimateGenerationPackageItem::query()->where('package_id', $package->id)
-            ->orderBy('logical_key')->orderByDesc('revision')->orderByDesc('id')->get()
-            ->unique(fn (EstimateGenerationPackageItem $item): string => (string) ($item->logical_key ?? $item->key));
+            ->latestLogicalRevisions()
+            ->orderBy('sort_order')->orderBy('id')->get();
         $priced = $latest->filter(fn (EstimateGenerationPackageItem $item): bool => $item->item_type === 'priced_work' && $item->pricing_finalized_at !== null);
         $unfinalized = $latest->contains(fn (EstimateGenerationPackageItem $item): bool => $item->item_type === 'priced_work' && $item->pricing_finalized_at === null);
         $total = $priced->reduce(

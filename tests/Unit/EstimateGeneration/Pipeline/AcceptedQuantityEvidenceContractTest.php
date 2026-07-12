@@ -66,6 +66,13 @@ final class AcceptedQuantityEvidenceContractTest extends TestCase
         self::assertStringContainsString("jsonb_build_object('is_active'", $migration);
         self::assertStringContainsString('COALESCE(logical_key, key), revision DESC, id DESC', $migration);
         self::assertStringContainsString('eg_package_item_latest_revision_idx', $migration);
+        self::assertStringContainsString('pricing_provenance_payload_too_large', $migration);
+        self::assertStringContainsString('octet_length(COALESCE(payload', $migration);
+        foreach (['norm_collection', 'work_composition_hash', 'meta_hash', 'metadata_hash',
+            'eg_used_norm_immutable', 'eg_used_norm_collection_immutable', 'eg_used_dataset_version_immutable',
+            'eg_used_resource_price_immutable', 'eg_used_regional_version_immutable'] as $contract) {
+            self::assertStringContainsString($contract, $migration);
+        }
     }
 
     #[Test]

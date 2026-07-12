@@ -162,4 +162,20 @@ Reviewer findings устранены одной TDD-волной после comm
 - Реальный manual confirmation contract доказывает scoped UserInput evidence, новый ID/fingerprint, invalidation старого evidence, полный rollback feedback/evidence/draft при поздней ошибке, повторный успешный commit, выбор новой нормы и DB-finalized append-only revision.
 - Follow-up migration `001500` добавляет accepted-evidence mapping, закрывает `estimate_norm_resources` для INSERT/UPDATE/DELETE после финализации и сохраняет полное bounded provenance: normative/resource/price/dataset/regional/conversion identities, безопасные значения и SHA-256 canonical JSON raw payload.
 - PostgreSQL contract на `most_ai_estimator_contract` прошёл дважды подряд: `3 tests, 98 assertions` в каждом запуске. DB-less covering suite: `188 tests, 2628 assertions`. PHP syntax, Pint, targeted Larastan и `git diff --check` прошли. Production и обычные сметы не затрагивались; codebase-memory artifacts остались unstaged.
+
+## Acceptance hardening: latest revisions, evidence mapping and closed provenance
+
+- API и пересчёт package state выбирают последнюю физическую ревизию каждого `logical_key` в SQL до сортировки и `LIMIT`; изолированный SQLite-контракт на 202 исторических строках подтверждает 100 актуальных логических позиций и корректные счётчики.
+- Accepted-evidence mapping связан составными FK с фактическими scope checkpoint/evidence. PostgreSQL trigger независимо проверяет stage, completed state, output version, fingerprint, locator и active evidence; mapping immutable. Persistence читает scope из checkpoint/evidence, а не доверяет дублированным колонкам mapping.
+- Quantity evidence принимает только canonical integer/string и проходит напрямую в `BigDecimal`; float evidence отклоняется. Planner публикует canonical decimal string. High-precision regression сохраняет `123456789.123456789123456789` без изменения fingerprint input.
+- `ResolveUnitConversion` выполняет exact active versioned lookup. Реальный pricing flow переносит conversion ID/version/fingerprint и применяет точный `BigDecimal` factor; DB-less min→h contract даёт `60.00` без вручную внедрённого conversion ID.
+- Provenance закрывает norm, collection, norm/price dataset, norm resources, price components, regional context и conversion. Все JSON payload ограничены 1 MiB до SHA-256; oversized input отклоняется. Использованные finalized sources immutable, неиспользованные/draft источники не замораживаются.
+- `001500 down()` восстанавливает определения и ACL `001400`; executable PostgreSQL contract выполняет `001600 down → 001500 down`, проверяет отсутствие follow-up объектов и старый finalizer, затем чисто применяет обе миграции снова.
+
+### Verification
+
+- Disposable PostgreSQL `most_ai_estimator_contract`: rollback/reapply contract — `1 test, 6 assertions`; полный contract два раза подряд — `4 tests, 104 assertions` каждый.
+- DB-less covering suite — `207 tests, 3372 assertions`, одно существующее deprecation.
+- Targeted Larastan/PHPStan — no errors; PHP syntax, Pint и `git diff --check` — PASS.
+- Production, обычные сметы и `BusinessModules/Features/BudgetEstimates` не затрагивались. `.cbmignore` и `.codebase-memory/` остались untracked/unstaged.
 - Two append-only revisions with `12345.678901 × 123456789.1234` prove exact PostgreSQL `numeric` item money and latest-revision package accumulation. The expected values are independently calculated with `Brick\\Math\\BigDecimal`; no float enters the assertion.

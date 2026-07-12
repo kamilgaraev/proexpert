@@ -607,6 +607,7 @@ class EstimateNormativeMatcher
                 'name' => $resource->resource_name,
                 'resource_type' => $type,
                 'unit' => $resource->unit,
+                'price_unit' => $price?->unit,
                 'quantity' => $resource->quantity !== null ? (float) $resource->quantity : null,
                 'unit_price' => $unitPrice,
                 'total_price' => $price !== null && $resource->quantity !== null
@@ -843,6 +844,7 @@ class EstimateNormativeMatcher
     {
         return [
             'base_price' => $price?->base_price !== null ? (float) $price->base_price : 0.0,
+            'unit' => $price?->unit,
             'machine_salary_price' => $price?->machine_salary_price !== null ? (float) $price->machine_salary_price : null,
             'machine_price_without_salary' => $price?->machine_price_without_salary !== null ? (float) $price->machine_price_without_salary : null,
             'machine_labor_quantity' => $price?->machine_labor_quantity !== null ? (float) $price->machine_labor_quantity : null,

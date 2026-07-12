@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\MissingRegionalPrice;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\PriceSnapshotData;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveRegionalPrice;
+use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveUnitConversion;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 
@@ -14,9 +15,12 @@ class EstimatePricingService
 {
     private ResolveRegionalPrice $regionalPrice;
 
-    public function __construct(?ResolveRegionalPrice $regionalPrice = null)
+    private ResolveUnitConversion $unitConversion;
+
+    public function __construct(?ResolveRegionalPrice $regionalPrice = null, ?ResolveUnitConversion $unitConversion = null)
     {
         $this->regionalPrice = $regionalPrice ?? new ResolveRegionalPrice;
+        $this->unitConversion = $unitConversion ?? new ResolveUnitConversion;
     }
 
     public function price(array $workItems, array $regionalContext = []): array
@@ -93,6 +97,22 @@ class EstimatePricingService
             foreach ($workItem[$group] ?? [] as $index => $resource) {
                 if (! is_array($resource)) {
                     throw MissingRegionalPrice::forResource(0);
+                }
+                $fromUnit = trim((string) ($resource['unit'] ?? ''));
+                $toUnit = trim((string) ($resource['price_unit'] ?? $resource['pricing']['unit'] ?? $fromUnit));
+                $version = (int) ($resource['unit_conversion_version'] ?? $regionalContext['unit_conversion_version'] ?? 1);
+                $conversion = $this->unitConversion->handle($fromUnit, $toUnit, $version);
+                if ($conversion !== null) {
+                    $resource['quantity'] = (string) BigDecimal::of((string) ($resource['quantity'] ?? '0'))
+                        ->multipliedBy($conversion->factor);
+                    $resource['normative_ref'] = [
+                        ...(is_array($resource['normative_ref'] ?? null) ? $resource['normative_ref'] : []),
+                        'unit_conversion_id' => $conversion->id,
+                        'unit_conversion_factor' => $conversion->factor,
+                        'unit_conversion_version' => $conversion->version,
+                        'unit_conversion_fingerprint' => $conversion->fingerprint,
+                    ];
+                    $workItem[$group][$index] = $resource;
                 }
                 $snapshot = $this->regionalPrice->handle($resource, $regionalContext)->toArray();
                 $resourceSnapshots[] = $snapshot;

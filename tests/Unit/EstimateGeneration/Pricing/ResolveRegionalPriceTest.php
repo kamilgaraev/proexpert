@@ -6,6 +6,8 @@ namespace Tests\Unit\EstimateGeneration\Pricing;
 
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\MissingRegionalPrice;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveRegionalPrice;
+use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveUnitConversion;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -67,6 +69,35 @@ final class ResolveRegionalPriceTest extends TestCase
 
         self::assertSame('0.1000', $snapshot->baseAmount);
         self::assertSame('0.30', $snapshot->finalAmount);
+    }
+
+    #[Test]
+    public function real_pricing_flow_resolves_exact_unit_conversion_and_applies_factor(): void
+    {
+        $prices = new ResolveRegionalPrice(static fn (int $priceId): array => [
+            'id' => $priceId, 'region_id' => 16, 'price_zone_id' => 3, 'period_id' => 8,
+            'regional_price_version_id' => 11, 'base_price' => '60.0000', 'source_type' => 'fgiscs',
+        ]);
+        $conversions = new ResolveUnitConversion(static fn (string $from, string $to, int $version): array => [[
+            'id' => 9, 'from_unit' => $from, 'to_unit' => $to, 'factor' => '0.016666666667',
+            'version' => $version, 'fingerprint' => str_repeat('c', 64), 'is_active' => true,
+        ]]);
+        $item = [
+            'item_type' => 'priced_work',
+            'materials' => [],
+            'labor' => [[
+                'price_id' => 42, 'unit' => 'min', 'price_unit' => 'h', 'quantity' => '60',
+                'normative_ref' => ['price_id' => 42, 'norm_resource_id' => 7],
+            ]],
+            'machinery' => [],
+            'other_resources' => [],
+        ];
+
+        $priced = (new EstimatePricingService($prices, $conversions))->price([$item], $this->context())[0];
+
+        self::assertSame('60.00', $priced['total_cost']);
+        self::assertSame(9, $priced['labor'][0]['normative_ref']['unit_conversion_id']);
+        self::assertSame('1.000000000020', $priced['labor'][0]['quantity']);
     }
 
     #[DataProvider('invalidPositiveIdentifiers')]

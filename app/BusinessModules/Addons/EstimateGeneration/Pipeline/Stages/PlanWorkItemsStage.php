@@ -18,6 +18,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecomposition
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\PackagePlannerService;
 use Brick\Math\BigDecimal;
+use Brick\Math\Exception\MathException;
 
 final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
 {
@@ -69,11 +70,12 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
 
     private function attachQuantityEvidence(PipelineContext $context, array $workItem): array
     {
-        $quantity = filter_var($workItem['quantity'] ?? null, FILTER_VALIDATE_FLOAT);
+        $quantity = $this->canonicalQuantity($workItem['quantity'] ?? null);
         $unit = $this->evidenceUnit($workItem['unit'] ?? null);
-        if ($quantity === false || $quantity <= 0 || $unit === null) {
+        if ($quantity === null || $unit === null) {
             return $workItem;
         }
+        $workItem['quantity'] = $quantity;
         $workItem['unit'] = $unit;
         $identity = hash('sha256', (string) ($workItem['key'] ?? json_encode($workItem, JSON_THROW_ON_ERROR)));
         $data = new EvidenceData(
@@ -85,14 +87,14 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
             sourceRef: 'pipeline:decompose',
             sourceVersion: 'pipeline:v1',
             locator: ['item_key' => 'item:'.$identity],
-            value: ['work_code' => 'work_type:'.$identity, 'quantity' => BigDecimal::of((string) $quantity)->stripTrailingZeros()->__toString(), 'unit' => $unit],
+            value: ['work_code' => 'work_type:'.$identity, 'quantity' => $quantity, 'unit' => $unit],
             confidence: (float) ($workItem['confidence'] ?? 1),
             producerName: 'work_planner',
             producerVersion: 'pipeline:v1',
         );
         $workItem['quantity_evidence_descriptor'] = [
             'fingerprint' => $data->fingerprint(),
-            'quantity' => BigDecimal::of((string) $quantity)->stripTrailingZeros()->__toString(),
+            'quantity' => $quantity,
             'unit' => $unit,
             'locator' => $data->locator,
             'source_type' => $data->sourceType->value,
@@ -105,6 +107,29 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         ];
 
         return $workItem;
+    }
+
+    private function canonicalQuantity(mixed $quantity): ?string
+    {
+        if (is_int($quantity)) {
+            $quantity = (string) $quantity;
+        }
+        if (! is_string($quantity) || strlen($quantity) > 64
+            || preg_match('/^(0|[1-9][0-9]*)(\.[0-9]+)?$/D', $quantity) !== 1) {
+            return null;
+        }
+
+        try {
+            $decimal = BigDecimal::of($quantity);
+        } catch (MathException) {
+            return null;
+        }
+
+        if ($decimal->isLessThanOrEqualTo(0)) {
+            return null;
+        }
+
+        return (string) $decimal->stripTrailingZeros();
     }
 
     private function evidenceUnit(mixed $unit): ?string

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -73,5 +74,19 @@ class EstimateGenerationPackageItem extends Model
     public function package(): BelongsTo
     {
         return $this->belongsTo(EstimateGenerationPackage::class, 'package_id');
+    }
+
+    public function scopeLatestLogicalRevisions(Builder $query): Builder
+    {
+        return $query->whereRaw(<<<'SQL'
+estimate_generation_package_items.id = (
+    SELECT latest.id
+    FROM estimate_generation_package_items AS latest
+    WHERE latest.package_id = estimate_generation_package_items.package_id
+      AND COALESCE(latest.logical_key, latest.key) = COALESCE(estimate_generation_package_items.logical_key, estimate_generation_package_items.key)
+    ORDER BY latest.revision DESC, latest.id DESC
+    LIMIT 1
+)
+SQL);
     }
 }

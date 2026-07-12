@@ -48,7 +48,11 @@ final class EstimateGenerationPackageController extends Controller
             }
             $perPage = min(max((int) $request->query('per_page', 100), 1), 500);
             $items = $package->items()->whereNotIn('item_type', EstimateGenerationPackageItem::SERVICE_ITEM_TYPES)
-                ->limit($perPage)->get();
+                ->latestLogicalRevisions()
+                ->orderBy('sort_order')
+                ->orderBy('id')
+                ->limit($perPage)
+                ->get();
 
             return AdminResponse::success($this->presenter->detail($package, $items));
         }, 'show package', $project, $session);
