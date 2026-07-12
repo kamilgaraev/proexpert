@@ -88,6 +88,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\Est
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateResourceClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateSourceImportService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\FgiscsBuildingResourcePriceSpreadsheetParser;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeCandidateSource;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeHardGate;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRetrievalService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\PostgresNormativeCandidateSource;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AttemptAwareNormativeLlmClient;
@@ -143,7 +147,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeC
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeScopeRuleCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\LLMNormativeCandidateReranker;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\NormativeCandidateRerankerInterface;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\RuleBasedNormativeCandidateReranker;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Clients\TimewebVisionOcrClient;
@@ -325,22 +328,22 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(NormativeScopeRuleCatalog::class);
         $this->app->singleton(WorkIntentClassifier::class);
         $this->app->singleton(NormativeCandidateSearchService::class);
+        $this->app->singleton(NormativeCandidateSource::class, PostgresNormativeCandidateSource::class);
+        $this->app->singleton(NormativeHardGate::class);
+        $this->app->singleton(NormativeRetrievalService::class, fn ($app) => new NormativeRetrievalService(
+            $app->make(NormativeCandidateSource::class),
+            $app->make(NormativeHardGate::class),
+            max(1, min(32, (int) config('estimate-generation.normative_matching.retrieval.max_candidates', 16))),
+            is_string(config('estimate-generation.normative_matching.retrieval.semantic_index_version'))
+                ? config('estimate-generation.normative_matching.retrieval.semantic_index_version')
+                : null,
+        ));
         $this->app->singleton(EstimateGenerationLearningEvidenceService::class);
-        $this->app->singleton(RuleBasedNormativeCandidateReranker::class);
         $this->app->singleton(LLMNormativeCandidateReranker::class, fn ($app) => new LLMNormativeCandidateReranker(
             $app->make(LLMProviderInterface::class),
-            $app->make(RuleBasedNormativeCandidateReranker::class),
-            null,
             $app->make(AttemptAwareNormativeLlmClient::class),
         ));
-        $this->app->singleton(NormativeCandidateRerankerInterface::class, function ($app): NormativeCandidateRerankerInterface {
-            $provider = (string) config('estimate-generation.normative_matching.reranker.provider', 'rule_based');
-            $llmEnabled = (bool) config('estimate-generation.normative_matching.reranker.llm_enabled', false);
-
-            return $provider === 'llm' && $llmEnabled
-                ? $app->make(LLMNormativeCandidateReranker::class)
-                : $app->make(RuleBasedNormativeCandidateReranker::class);
-        });
+        $this->app->singleton(NormativeCandidateRerankerInterface::class, LLMNormativeCandidateReranker::class);
         $this->app->singleton(EstimateSourceStorageService::class);
         $this->app->singleton(EstimateSourceImportService::class);
         $this->app->singleton(EstimateImportStatisticsService::class);
