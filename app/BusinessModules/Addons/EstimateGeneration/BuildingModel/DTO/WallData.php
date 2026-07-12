@@ -60,10 +60,11 @@ final readonly class WallData
 
     public static function fromArray(array $data): self
     {
-        $legacy = ! array_key_exists('type', $data) && ! array_key_exists('material', $data);
-        BuildingModelSchema::exactKeys($data, $legacy
-            ? ['key', 'start', 'end', 'thickness_m', 'height_m', 'evidence_ids', 'confidence', 'geometry_certainty']
-            : ['key', 'start', 'end', 'thickness_m', 'height_m', 'type', 'material', 'evidence_ids', 'confidence', 'geometry_certainty']);
+        $required = ['key', 'start', 'end', 'thickness_m', 'height_m', 'evidence_ids', 'confidence', 'geometry_certainty'];
+        $allowed = [...$required, 'type', 'material'];
+        if (array_diff($required, array_keys($data)) !== [] || array_diff(array_keys($data), $allowed) !== []) {
+            throw new InvalidArgumentException('Wall contains unknown or missing fields.');
+        }
 
         return BuildingModelSchema::typed(static fn (): self => new self($data['key'], $data['start'], $data['end'], $data['thickness_m'], $data['height_m'], $data['evidence_ids'], $data['confidence'], $data['geometry_certainty'], $data['type'] ?? null, $data['material'] ?? null));
     }

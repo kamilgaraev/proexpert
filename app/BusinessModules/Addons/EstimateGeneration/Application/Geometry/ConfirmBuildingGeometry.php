@@ -20,6 +20,7 @@ final class ConfirmBuildingGeometry
         private GeometryRegenerationIntentStore $outbox,
         private BuildingGeometryMutator $mutator,
         private GeometryDependencyInvalidator $invalidator,
+        private GeometryConfirmationFaultInjector $faultInjector,
     ) {}
 
     /** @return array<string, mixed> */
@@ -80,6 +81,7 @@ final class ConfirmBuildingGeometry
                 'project_id' => $command->projectId, 'session_id' => $command->sessionId, 'created_at' => now(),
             ], $normalized->evidenceIds));
             $invalidation = $this->invalidator->invalidate($command->sessionId, $command->expectedInputVersion, $command->expectedStateVersion + 1);
+            $this->faultInjector->afterInvalidation();
             $session->forceFill(['state_version' => $command->expectedStateVersion + 1, 'draft_payload' => null])->save();
             $intentId = $this->outbox->append(new GeometryRegenerationIntent(
                 $command->organizationId, $command->projectId, $command->sessionId, (int) $session->state_version,
@@ -108,7 +110,6 @@ final class ConfirmBuildingGeometry
 
             return (int) $row->id;
         }
-
-        return (int) $connection->table('estimate_generation_evidence')->lockForUpdate()->max('id') + 1;
+        throw new \RuntimeException('estimate_generation.geometry_evidence_sequence_unsupported');
     }
 }

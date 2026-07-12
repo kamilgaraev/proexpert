@@ -37,14 +37,13 @@ final class GeometryDependencyInvalidator
             ->where('source_version', $inputVersion)->whereNotIn('status', ['superseded'])->update([
                 'status' => 'superseded', 'claim_token' => null, 'lease_expires_at' => null, 'updated_at' => $now,
             ]);
-        $packages = $this->database->table('estimate_generation_packages')->where('session_id', $sessionId)->get();
+        $packages = $this->database->table('estimate_generation_packages')->where('session_id', $sessionId)
+            ->where('input_version', $inputVersion)->get();
         $packageCount = 0;
         $itemCount = 0;
         foreach ($packages as $package) {
             $metadata = $this->decode($package->metadata ?? null);
-            $sourceRefs = $this->decode($package->source_refs ?? null);
-            if ((! $this->containsVersion($metadata, $inputVersion) && ! $this->containsVersion($sourceRefs, $inputVersion))
-                || ($metadata['superseded_at'] ?? null) !== null) {
+            if (($metadata['superseded_at'] ?? null) !== null) {
                 continue;
             }
             $metadata['superseded_at'] = $now->toIso8601String();
@@ -74,16 +73,5 @@ final class GeometryDependencyInvalidator
         }
 
         return is_string($value) ? (array) json_decode($value, true, flags: JSON_THROW_ON_ERROR) : [];
-    }
-
-    private function containsVersion(array $value, string $version): bool
-    {
-        foreach ($value as $item) {
-            if ($item === $version || (is_array($item) && $this->containsVersion($item, $version))) {
-                return true;
-            }
-        }
-
-        return false;
     }
 }

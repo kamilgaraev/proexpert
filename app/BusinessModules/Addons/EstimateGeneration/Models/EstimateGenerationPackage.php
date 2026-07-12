@@ -14,6 +14,7 @@ class EstimateGenerationPackage extends Model
 
     protected $fillable = [
         'session_id',
+        'input_version',
         'key',
         'title',
         'scope_type',

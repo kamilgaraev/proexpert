@@ -12,11 +12,11 @@ use Illuminate\Support\Facades\DB;
 class EstimateGenerationPackagePersistenceService
 {
     public function __construct(
-        private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy(),
+        private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy,
     ) {}
 
     /**
-     * @param array<string, mixed> $draft
+     * @param  array<string, mixed>  $draft
      */
     public function syncFromDraft(EstimateGenerationSession $session, array $draft): void
     {
@@ -24,7 +24,7 @@ class EstimateGenerationPackagePersistenceService
             $activePackageKeys = $this->draftPackageKeys($draft);
 
             foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
-                if (!is_array($localEstimate)) {
+                if (! is_array($localEstimate)) {
                     continue;
                 }
 
@@ -36,12 +36,12 @@ class EstimateGenerationPackagePersistenceService
     }
 
     /**
-     * @param array<string, mixed> $draft
+     * @param  array<string, mixed>  $draft
      */
     public function syncWorkItemPackageFromDraft(EstimateGenerationSession $session, array $draft, string $workItemKey): bool
     {
         foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
-            if (!is_array($localEstimate) || !$this->localEstimateContainsWorkItem($localEstimate, $workItemKey)) {
+            if (! is_array($localEstimate) || ! $this->localEstimateContainsWorkItem($localEstimate, $workItemKey)) {
                 continue;
             }
 
@@ -56,7 +56,7 @@ class EstimateGenerationPackagePersistenceService
     }
 
     /**
-     * @param array<string, mixed> $draft
+     * @param  array<string, mixed>  $draft
      * @return array<int, string>
      */
     private function draftPackageKeys(array $draft): array
@@ -64,7 +64,7 @@ class EstimateGenerationPackagePersistenceService
         $keys = [];
 
         foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
-            if (!is_array($localEstimate)) {
+            if (! is_array($localEstimate)) {
                 continue;
             }
 
@@ -75,15 +75,15 @@ class EstimateGenerationPackagePersistenceService
     }
 
     /**
-     * @param array<string, mixed> $localEstimate
+     * @param  array<string, mixed>  $localEstimate
      */
     private function packageKey(array $localEstimate, int $localIndex): string
     {
-        return (string) ($localEstimate['key'] ?? 'package-' . ($localIndex + 1));
+        return (string) ($localEstimate['key'] ?? 'package-'.($localIndex + 1));
     }
 
     /**
-     * @param array<string, mixed> $localEstimate
+     * @param  array<string, mixed>  $localEstimate
      */
     private function syncLocalEstimate(EstimateGenerationSession $session, array $localEstimate, int $localIndex): void
     {
@@ -98,6 +98,7 @@ class EstimateGenerationPackagePersistenceService
                 'key' => $packageKey,
             ],
             [
+                'input_version' => $this->packageInputVersion($session, $localEstimate),
                 'title' => (string) ($localEstimate['title'] ?? 'Локальная смета'),
                 'scope_type' => (string) ($localEstimate['scope_type'] ?? 'custom'),
                 'status' => $this->packageStatus($quality),
@@ -115,6 +116,7 @@ class EstimateGenerationPackagePersistenceService
                 'source_refs' => $localEstimate['source_refs'] ?? [],
                 'metadata' => [
                     'generated_from' => 'estimate_generation_v2',
+                    'input_version' => $this->packageInputVersion($session, $localEstimate),
                 ],
                 'sort_order' => ($localIndex + 1) * 100,
                 'finished_at' => now(),
@@ -133,13 +135,20 @@ class EstimateGenerationPackagePersistenceService
         }
     }
 
+    private function packageInputVersion(EstimateGenerationSession $session, array $localEstimate): ?string
+    {
+        $version = $localEstimate['input_version'] ?? $session->input_payload['input_version'] ?? null;
+
+        return is_string($version) && preg_match('/^sha256:[a-f0-9]{64}$/', $version) === 1 ? $version : null;
+    }
+
     /**
-     * @param array<string, mixed> $localEstimate
+     * @param  array<string, mixed>  $localEstimate
      */
     private function localEstimateContainsWorkItem(array $localEstimate, string $workItemKey): bool
     {
         foreach ($localEstimate['sections'] ?? [] as $section) {
-            if (!is_array($section)) {
+            if (! is_array($section)) {
                 continue;
             }
 
@@ -154,7 +163,7 @@ class EstimateGenerationPackagePersistenceService
     }
 
     /**
-     * @param array<int, string> $activePackageKeys
+     * @param  array<int, string>  $activePackageKeys
      */
     private function deleteStalePackages(EstimateGenerationSession $session, array $activePackageKeys): void
     {
@@ -181,7 +190,7 @@ class EstimateGenerationPackagePersistenceService
     }
 
     /**
-     * @param array<string, mixed> $localEstimate
+     * @param  array<string, mixed>  $localEstimate
      * @return array<int, array<string, mixed>>
      */
     private function workItems(array $localEstimate): array
@@ -200,7 +209,7 @@ class EstimateGenerationPackagePersistenceService
     }
 
     /**
-     * @param array<int, array<string, mixed>> $workItems
+     * @param  array<int, array<string, mixed>>  $workItems
      * @return array<int, array<string, mixed>>
      */
     private function estimateWorkItems(array $workItems): array
@@ -219,16 +228,16 @@ class EstimateGenerationPackagePersistenceService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function isEstimateWorkItem(array $workItem): bool
     {
-        return !in_array((string) ($workItem['item_type'] ?? 'priced_work'), EstimateGenerationPackageItem::SERVICE_ITEM_TYPES, true);
+        return ! in_array((string) ($workItem['item_type'] ?? 'priced_work'), EstimateGenerationPackageItem::SERVICE_ITEM_TYPES, true);
     }
 
     /**
-     * @param array<string, mixed> $localEstimate
-     * @param array<int, array<string, mixed>> $workItems
+     * @param  array<string, mixed>  $localEstimate
+     * @param  array<int, array<string, mixed>>  $workItems
      * @return array<string, mixed>
      */
     private function packageQuality(array $localEstimate, array $workItems): array
@@ -250,6 +259,7 @@ class EstimateGenerationPackagePersistenceService
             foreach ($workItem['validation_flags'] ?? [] as $flag) {
                 if (in_array($flag, ['missing_price', 'missing_resources'], true)) {
                     $critical[] = (string) $flag;
+
                     continue;
                 }
 
@@ -260,6 +270,7 @@ class EstimateGenerationPackagePersistenceService
                     'safe_norm_required',
                 ], true)) {
                     $critical[] = (string) $flag;
+
                     continue;
                 }
 
@@ -278,7 +289,7 @@ class EstimateGenerationPackagePersistenceService
     }
 
     /**
-     * @param array<string, mixed> $quality
+     * @param  array<string, mixed>  $quality
      */
     private function packageStatus(array $quality): string
     {
@@ -290,7 +301,7 @@ class EstimateGenerationPackagePersistenceService
     }
 
     /**
-     * @param array<int, array<string, mixed>> $workItems
+     * @param  array<int, array<string, mixed>>  $workItems
      * @return array<string, int>
      */
     private function itemCounters(array $workItems): array
@@ -303,6 +314,7 @@ class EstimateGenerationPackagePersistenceService
 
             if ($type === EstimateGenerationPackageItem::QUANTITY_REVIEW_ITEM_TYPE) {
                 $quantityReviews++;
+
                 continue;
             }
 
@@ -326,7 +338,7 @@ class EstimateGenerationPackagePersistenceService
     }
 
     /**
-     * @param array<int, array<string, mixed>> $workItems
+     * @param  array<int, array<string, mixed>>  $workItems
      */
     private function workItemsTotal(array $workItems): float
     {
@@ -337,7 +349,7 @@ class EstimateGenerationPackagePersistenceService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      * @return array<string, mixed>
      */
     private function itemPayload(EstimateGenerationPackage $package, array $workItem, int $index): array
@@ -346,7 +358,7 @@ class EstimateGenerationPackagePersistenceService
 
         return [
             'package_id' => $package->id,
-            'key' => (string) ($workItem['key'] ?? $package->key . '.item.' . ($index + 1)),
+            'key' => (string) ($workItem['key'] ?? $package->key.'.item.'.($index + 1)),
             'parent_key' => $workItem['parent_key'] ?? null,
             'level' => (int) ($workItem['level'] ?? 0),
             'item_type' => (string) ($workItem['item_type'] ?? 'work'),
@@ -392,7 +404,7 @@ class EstimateGenerationPackagePersistenceService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      * @return array<int, string>
      */
     private function workComposition(array $workItem): array
@@ -402,7 +414,7 @@ class EstimateGenerationPackagePersistenceService
             ?? $workItem['normative_match']['work_composition']
             ?? [];
 
-        if (!is_array($composition)) {
+        if (! is_array($composition)) {
             return [];
         }
 
@@ -413,7 +425,7 @@ class EstimateGenerationPackagePersistenceService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function unitPrice(array $workItem): float
     {

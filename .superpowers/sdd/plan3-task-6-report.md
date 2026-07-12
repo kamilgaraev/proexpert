@@ -56,3 +56,13 @@
 - Pint: PASS; `git diff --check`: PASS.
 - PostgreSQL opt-in inventory: `EstimateGenerationGeometryPostgresTest` (`postgres-contract`) проверяет composite tenant FK, outbox idempotency/claim index, immutable model/evidence triggers, rollback invariant и CAS-supporting unique indexes. Не запускался локально: требуется `RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT=1` и изолированный PostgreSQL; миграции/DB локально не запускались.
 - Corrective commit: `a626cbcbf6b830974ff57d82a120b3fdcafa3e61` до технического amend отчёта.
+
+## Second corrective review
+
+- Legacy wall compatibility: `type` и `material` стали независимо optional при строгом required/allowed key contract; отдельные regression cases начинают с payload без обоих полей, изменяют каждое поле раздельно и подтверждают canonical roundtrip.
+- Evidence ID: небезопасный `max(id)+1` удалён; production использует атомарный PostgreSQL sequence reservation, неподдерживаемый driver закрывается явной ошибкой без конкурентной коллизии.
+- Package dependency: добавлена типизированная индексируемая колонка `estimate_generation_packages.input_version`, PostgreSQL constraint/backfill только для `estimate_generation_v2`, persistence заполняет колонку и metadata; invalidator использует точное равенство, произвольный recursive JSON scan удалён.
+- Rollback seam: добавлен production-noop `GeometryConfirmationFaultInjector`; opt-in test внедряет сбой после staged invalidation и проверяет полный rollback evidence/model/state/outbox.
+- PostgreSQL behavioral inventory расширен реальным admin POST, permission deny/allow, ETag/snapshot/history/outbox assertions, same-version winner/typed stale loser, idempotent append, false enqueue recovery и acknowledged delivery. Группа `postgres-contract` не запускалась локально согласно запрету.
+- Auth/error matrix в opt-in endpoint test: foreign project 404; stale state/model/input 409; no-op, unsafe path, oversized body и applied lifecycle 422; ordinary estimate sentinel остаётся неизменным.
+- PostgreSQL inventory: **7 test methods**, включая forked independent-process CAS loser, real post-invalidation fault rollback и recoverable outbox delivery. Статически проверены Pint, PHPStan и `php -l`; запуск PostgreSQL намеренно не выполнялся.

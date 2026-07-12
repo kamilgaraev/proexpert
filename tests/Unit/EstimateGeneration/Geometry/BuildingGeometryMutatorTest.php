@@ -60,6 +60,26 @@ final class BuildingGeometryMutatorTest extends TestCase
         self::assertSame(NormalizedBuildingModelData::fromArray($model)->contentVersion(), $result->contentVersion());
     }
 
+    #[Test]
+    #[DataProvider('legacyWallFields')]
+    public function legacy_wall_without_new_fields_can_replace_each_field_independently(string $field, string $value): void
+    {
+        $model = $this->model();
+        unset($model['floors'][0]['walls'][0]['type'], $model['floors'][0]['walls'][0]['material']);
+
+        $result = (new BuildingGeometryMutator)->mutate($model, $this->command("/floors/floor-1/walls/wall-1/{$field}", $value))->toArray();
+
+        self::assertSame($value, $result['floors'][0]['walls'][0][$field]);
+        self::assertArrayHasKey($field === 'type' ? 'material' : 'type', $result['floors'][0]['walls'][0]);
+        self::assertSame($result, NormalizedBuildingModelData::fromArray($result)->toArray());
+    }
+
+    public static function legacyWallFields(): iterable
+    {
+        yield 'type' => ['type', 'bearing'];
+        yield 'material' => ['material', 'brick'];
+    }
+
     private function command(string $path, mixed $value): GeometryConfirmationCommand
     {
         return new GeometryConfirmationCommand(1, 2, 3, 4, 5, 'sha256:'.str_repeat('a', 64), 'sha256:'.str_repeat('b', 64), null, [
