@@ -203,7 +203,7 @@ final class EloquentPipelineCheckpointStore implements PipelineCheckpointStore
                     'output_version' => $result->outputVersion,
                     'output_payload' => json_encode($result->output->envelope(), JSON_THROW_ON_ERROR),
                     'artifact_bytes' => $artifactBytes,
-                    'metrics' => json_encode($result->metrics, JSON_THROW_ON_ERROR),
+                    'metrics' => json_encode((object) $result->metrics, JSON_THROW_ON_ERROR),
                     'warnings' => json_encode($result->warnings, JSON_THROW_ON_ERROR),
                     'claim_token' => null,
                     'lease_expires_at' => null,

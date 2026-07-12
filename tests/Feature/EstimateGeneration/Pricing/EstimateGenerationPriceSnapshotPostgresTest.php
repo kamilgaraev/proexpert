@@ -4,9 +4,21 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration\Pricing;
 
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceData;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceSourceType;
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceType;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationFeedback;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CanonicalPipelineJson;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentPipelineCheckpointStore;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineArtifactReference;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineDefinitionGraph;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageOutput;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PublishValidatedDraft;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateFeedbackService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidateSelectionService;
@@ -20,6 +32,106 @@ use Tests\TestCase;
 #[Group('postgres-contract')]
 final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
 {
+    public function test_plan_checkpoint_completion_materializes_accepted_quantity_atomically_and_idempotently(): void
+    {
+        $this->requireDisposablePostgres();
+        $fixture = $this->fixture();
+        $attempt = '11111111-2222-4333-8444-555555555555';
+        $session = EstimateGenerationSession::query()->findOrFail($fixture['session_id']);
+        $session->forceFill(['status' => 'generating', 'state_version' => 7, 'input_payload' => ['generation_attempt_id' => $attempt]])->save();
+        $dependencies = [
+            ProcessingStage::UnderstandObject->value => 'sha256:'.str_repeat('a', 64),
+            ProcessingStage::ExtractQuantities->value => 'sha256:'.str_repeat('b', 64),
+        ];
+        foreach ($dependencies as $stage => $version) {
+            DB::table('estimate_generation_pipeline_checkpoints')->insert([
+                'organization_id' => $session->organization_id, 'project_id' => $session->project_id,
+                'session_id' => $session->id, 'generation_attempt_id' => $attempt, 'stage' => $stage,
+                'base_input_version' => 'sha256:'.str_repeat('d', 64),
+                'input_version' => 'sha256:'.str_repeat($stage === 'understand_object' ? '1' : '2', 64),
+                'dependency_versions' => '{}', 'status' => 'completed', 'output_version' => $version,
+                'output_payload' => '{}', 'artifact_bytes' => 1, 'metrics' => '{}', 'warnings' => '[]',
+                'attempt_count' => 1, 'started_at' => now(), 'completed_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+            ]);
+        }
+        $context = new PipelineContext(
+            $session->id, $session->organization_id, $session->project_id, 7,
+            'sha256:'.str_repeat('c', 64), 'generating', generationAttemptId: $attempt,
+            baseInputVersion: 'sha256:'.str_repeat('d', 64), stage: ProcessingStage::PlanWorkItems,
+            dependencyVersions: $dependencies,
+        );
+        $data = new EvidenceData(
+            $session->organization_id, $session->project_id, $session->id, EvidenceType::WorkItem,
+            EvidenceSourceType::UserInput, 'input:99', 'contract:abcdef',
+            ['item_key' => 'item:'.hash('sha256', 'checkpoint-item')],
+            ['work_code' => 'work_type:99', 'quantity' => '123456789.123456', 'unit' => 'm2'],
+            1.0, 'pipeline', 'contract:abcdef',
+        );
+        $descriptor = [
+            'source_type' => 'user_input', 'source_ref' => 'input:99', 'source_version' => 'contract:abcdef',
+            'locator' => $data->locator, 'work_code' => 'work_type:99', 'quantity' => '123456789.123456',
+            'unit' => 'm2', 'confidence' => 1.0, 'producer_name' => 'pipeline',
+            'producer_version' => 'contract:abcdef', 'fingerprint' => $data->fingerprint(),
+        ];
+        $transient = ['local_estimates' => [['sections' => [['work_items' => [[
+            'key' => 'checkpoint-item', 'quantity_evidence_descriptor' => $descriptor,
+        ]]]]]]];
+        $definition = PipelineDefinitionGraph::standard()->get(ProcessingStage::PlanWorkItems);
+        $artifact = new PipelineArtifactReference(
+            'memory_json_v1', 'contract/checkpoint',
+            'sha256:'.hash('sha256', CanonicalPipelineJson::encode($transient)), 128,
+        );
+        $output = PipelineStageOutput::create($definition, $context->inputVersion, $dependencies, $artifact);
+        $result = new PipelineStageResult(ProcessingStage::PlanWorkItems, $output->version, [], output: $output, transientData: $transient);
+        $now = new \DateTimeImmutable('2026-07-12T12:00:00+00:00');
+        $store = new EloquentPipelineCheckpointStore(DB::connection(), app(PublishValidatedDraft::class));
+        $claim = $store->claim($context, ProcessingStage::PlanWorkItems, $now, $now->modify('+5 minutes'));
+        self::assertTrue($store->complete($claim, $result, $now->modify('+1 second')));
+        $checkpoint = DB::table('estimate_generation_pipeline_checkpoints')->where('id', $claim->checkpointId)->first();
+        self::assertSame('completed', $checkpoint->status);
+        self::assertSame($output->version, $checkpoint->output_version);
+        self::assertSame(1, DB::table('estimate_generation_accepted_evidence')->where('checkpoint_id', $claim->checkpointId)->count());
+        self::assertSame(1, DB::table('estimate_generation_evidence')->where('fingerprint', $data->fingerprint())->count());
+        self::assertFalse($store->complete($claim, $result, $now->modify('+2 seconds')));
+        self::assertSame(1, DB::table('estimate_generation_accepted_evidence')->where('checkpoint_id', $claim->checkpointId)->count());
+        self::assertSame(1, DB::table('estimate_generation_evidence')->where('fingerprint', $data->fingerprint())->count());
+
+        $secondContext = new PipelineContext(
+            $session->id, $session->organization_id, $session->project_id, 7,
+            'sha256:'.str_repeat('e', 64), 'generating', generationAttemptId: $attempt,
+            baseInputVersion: 'sha256:'.str_repeat('d', 64), stage: ProcessingStage::PlanWorkItems,
+            dependencyVersions: $dependencies,
+        );
+        $failingStore = new EloquentPipelineCheckpointStore(DB::connection(), new class implements \App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineCompletionHook
+        {
+            public function beforeComplete(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointClaim $claim, PipelineStageResult $result, \DateTimeImmutable $completedAt): void
+            {
+                throw new \RuntimeException('injected-after-guarded-update');
+            }
+        });
+        $failedClaim = $failingStore->claim($secondContext, ProcessingStage::PlanWorkItems, $now, $now->modify('+5 minutes'));
+        try {
+            $failingStore->complete($failedClaim, $result, $now->modify('+1 second'));
+            self::fail('Injected completion failure was not propagated.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('injected-after-guarded-update', $exception->getMessage());
+        }
+        $running = DB::table('estimate_generation_pipeline_checkpoints')->where('id', $failedClaim->checkpointId)->first();
+        self::assertSame('running', $running->status);
+        self::assertSame($failedClaim->claimToken, $running->claim_token);
+        self::assertNull($running->output_version);
+        self::assertSame(0, DB::table('estimate_generation_accepted_evidence')->where('checkpoint_id', $failedClaim->checkpointId)->count());
+        self::assertSame(1, DB::table('estimate_generation_evidence')->where('fingerprint', $data->fingerprint())->count());
+
+        $retryAt = $now->modify('+6 minutes');
+        $retry = $store->claim($secondContext, ProcessingStage::PlanWorkItems, $retryAt, $retryAt->modify('+5 minutes'));
+        self::assertFalse($store->complete($failedClaim, $result, $retryAt->modify('+1 second')));
+        self::assertSame(0, DB::table('estimate_generation_accepted_evidence')->where('checkpoint_id', $failedClaim->checkpointId)->count());
+        self::assertTrue($store->complete($retry, $result, $retryAt->modify('+1 second')));
+        self::assertSame(1, DB::table('estimate_generation_accepted_evidence')->where('checkpoint_id', $retry->checkpointId)->count());
+        self::assertSame(1, DB::table('estimate_generation_evidence')->where('fingerprint', $data->fingerprint())->count());
+    }
+
     public function test_follow_up_migrations_roll_back_to_001400_and_reapply_cleanly(): void
     {
         $this->requireDisposablePostgres();

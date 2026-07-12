@@ -179,3 +179,12 @@ Reviewer findings устранены одной TDD-волной после comm
 - Targeted Larastan/PHPStan — no errors; PHP syntax, Pint и `git diff --check` — PASS.
 - Production, обычные сметы и `BusinessModules/Features/BudgetEstimates` не затрагивались. `.cbmignore` и `.codebase-memory/` остались untracked/unstaged.
 - Two append-only revisions with `12345.678901 × 123456789.1234` prove exact PostgreSQL `numeric` item money and latest-revision package accumulation. The expected values are independently calculated with `Brick\\Math\\BigDecimal`; no float enters the assertion.
+
+## Финальные исполняемые доказательства
+
+- Настоящий opt-in PostgreSQL-сценарий проходит через `EloquentPipelineCheckpointStore::claim()` и `complete()` с production `PublishValidatedDraft`, `AcceptedQuantityEvidenceMaterializer` и `EloquentEvidenceRepository`. Успешное завершение фиксирует checkpoint, output version, evidence и accepted mapping под ограничениями migration `001600`.
+- Ошибка completion hook после guarded update откатывает весь переход: checkpoint остаётся `running` с прежним claim token, output/evidence/mapping отсутствуют. Потерянный claim не публикует данные; повторный claim создаёт ровно один mapping и переиспользует evidence по fingerprint.
+- RED выявил production-дефект: пустая карта metrics сериализовалась как `[]` и отклонялась `ai_ckpt_json_ck`. `complete()` теперь сохраняет карту как JSON-объект `{}`.
+- High-cardinality контракт создаёт 3000 логических позиций и три ревизии каждой. Production refresh выполняет один агрегирующий `SELECT` с `ROW_NUMBER()`, без `SELECT *` и гидрации 9000 моделей; проверены 2700 финализированных позиций, 300 blockers, статус, progress, flag и точная `BigDecimal` сумма.
+- API presenter сохраняет quantity с масштабом `decimal:18` без float-преобразования.
+- PostgreSQL contract два раза подряд: `5 tests, 123 assertions` в каждом запуске. DB-less refresh/pipeline/presenter/latest-revision suite: `153 tests, 2487 assertions`, без failures (2 существующих deprecation notice). Targeted Larastan, PHP syntax, Pint и `git diff --check` прошли. Админка: `npx tsc --noEmit` прошёл; сборка не запускалась.
