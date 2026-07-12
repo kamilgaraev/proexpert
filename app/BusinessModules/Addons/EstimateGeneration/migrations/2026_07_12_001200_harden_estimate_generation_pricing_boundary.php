@@ -200,6 +200,7 @@ SQL);
         Schema::table('estimate_generation_package_items', function (Blueprint $table): void {
             $table->dropUnique('eg_package_item_revision_uq');
             $table->dropColumn(['logical_key', 'revision', 'supersedes_item_id', 'quantity_evidence_id', 'quantity_evidence_fingerprint', 'estimate_norm_id', 'region_id', 'price_zone_id', 'period_id', 'regional_price_version_id']);
+            $table->unique(['package_id', 'key'], 'estimate_generation_package_items_package_id_key_unique');
         });
         Schema::dropIfExists('estimate_generation_unit_conversions');
     }

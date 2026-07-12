@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -131,17 +132,61 @@ class EstimateGenerationPackagePersistenceService
         foreach ($workItems as $workIndex => $workItem) {
             $this->appendItemRevision($package, $workItem, $workIndex);
         }
+
+        $this->refreshPackagePricingState($package);
+    }
+
+    private function refreshPackagePricingState(EstimateGenerationPackage $package): void
+    {
+        $latest = EstimateGenerationPackageItem::query()->where('package_id', $package->id)
+            ->orderBy('logical_key')->orderByDesc('revision')->orderByDesc('id')->get()
+            ->unique(fn (EstimateGenerationPackageItem $item): string => (string) ($item->logical_key ?? $item->key));
+        $priced = $latest->filter(fn (EstimateGenerationPackageItem $item): bool => $item->item_type === 'priced_work' && $item->pricing_finalized_at !== null);
+        $unfinalized = $latest->contains(fn (EstimateGenerationPackageItem $item): bool => $item->item_type === 'priced_work' && $item->pricing_finalized_at === null);
+        $total = $priced->reduce(
+            fn (BigDecimal $sum, EstimateGenerationPackageItem $item): BigDecimal => $sum->plus((string) $item->total_cost),
+            BigDecimal::zero(),
+        )->toScale(2, RoundingMode::HalfUp);
+        $quality = is_array($package->quality_summary) ? $package->quality_summary : [];
+        if ($unfinalized) {
+            $quality['level'] = 'blocked';
+            $quality['critical_flags'] = array_values(array_unique([...(array) ($quality['critical_flags'] ?? []), 'missing_price_snapshot']));
+        }
+        $totals = is_array($package->totals) ? $package->totals : [];
+        $totals['total_cost'] = (string) $total;
+        $totals['priced_items_count'] = $priced->count();
+        $package->forceFill([
+            'status' => $unfinalized ? 'blocked' : $package->status,
+            'generation_progress' => $unfinalized ? 99 : 100,
+            'finished_at' => $unfinalized ? null : now(),
+            'quality_summary' => $quality,
+            'totals' => $totals,
+        ])->save();
     }
 
     private function appendItemRevision(EstimateGenerationPackage $package, array $workItem, int $index): void
     {
+        EstimateGenerationPackage::query()->whereKey($package->id)->lockForUpdate()->firstOrFail();
         $logicalKey = (string) ($workItem['key'] ?? $package->key.'.item.'.($index + 1));
         $latest = EstimateGenerationPackageItem::query()
             ->where('package_id', $package->id)
             ->where(fn ($query) => $query->where('logical_key', $logicalKey)->orWhere(fn ($legacy) => $legacy->whereNull('logical_key')->where('key', $logicalKey)))
-            ->orderByDesc('revision')->orderByDesc('id')->first();
+            ->orderByDesc('revision')->orderByDesc('id')->lockForUpdate()->first();
         $revision = max(1, (int) ($latest?->revision ?? 0) + 1);
+        $pricing = $this->authoritativePricing($package, $workItem, $logicalKey);
+        if ($latest !== null && $pricing !== null && $this->samePricingIdentity($latest, $pricing)) {
+            return;
+        }
         $payload = $this->itemPayload($package, $workItem, $index);
+        if ((string) ($workItem['item_type'] ?? 'priced_work') === 'priced_work') {
+            $payload = array_replace($payload, [
+                'price_snapshot' => null, 'price_source' => null, 'unit_price' => '0.000000',
+                'direct_cost' => '0.00', 'overhead_cost' => '0.00', 'profit_cost' => '0.00', 'total_cost' => '0.00',
+            ]);
+        }
+        if ($pricing !== null) {
+            $payload = array_replace($payload, $pricing['item']);
+        }
         $payload['logical_key'] = $logicalKey;
         $payload['revision'] = $revision;
         $payload['supersedes_item_id'] = $latest?->id;
@@ -151,7 +196,118 @@ class EstimateGenerationPackagePersistenceService
             return;
         }
 
-        EstimateGenerationPackageItem::query()->create($payload);
+        $item = EstimateGenerationPackageItem::query()->create($payload);
+        if ($pricing === null) {
+            return;
+        }
+        foreach ($pricing['inputs'] as $ordinal => $input) {
+            DB::table('estimate_generation_package_item_price_inputs')->insert([
+                ...$input,
+                'package_item_id' => $item->id,
+                'ordinal' => $ordinal + 1,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+        DB::select('SELECT public.eg_finalize_package_item_price(?)', [$item->id]);
+    }
+
+    /** @param array{item: array<string, mixed>, inputs: list<array<string, int|null>>} $pricing */
+    private function samePricingIdentity(EstimateGenerationPackageItem $latest, array $pricing): bool
+    {
+        foreach (['quantity_evidence_id', 'quantity_evidence_fingerprint', 'estimate_norm_id', 'region_id', 'price_zone_id', 'period_id', 'regional_price_version_id'] as $column) {
+            if ((string) $latest->getAttribute($column) !== (string) ($pricing['item'][$column] ?? null)) {
+                return false;
+            }
+        }
+        $stored = DB::table('estimate_generation_package_item_price_inputs')->where('package_item_id', $latest->id)
+            ->orderBy('ordinal')->get(['norm_resource_id', 'resource_price_id', 'unit_conversion_id'])
+            ->map(static fn (object $input): array => [
+                'norm_resource_id' => (int) $input->norm_resource_id,
+                'resource_price_id' => (int) $input->resource_price_id,
+                'unit_conversion_id' => $input->unit_conversion_id === null ? null : (int) $input->unit_conversion_id,
+            ])->all();
+
+        return $stored === $pricing['inputs'];
+    }
+
+    /** @return array{item: array<string, mixed>, inputs: list<array<string, int|null>>}|null */
+    private function authoritativePricing(EstimateGenerationPackage $package, array $workItem, string $logicalKey): ?array
+    {
+        if ((string) ($workItem['item_type'] ?? 'priced_work') !== 'priced_work') {
+            return null;
+        }
+        $snapshot = is_array($workItem['price_snapshot'] ?? null) ? $workItem['price_snapshot'] : [];
+        $normId = $this->positiveInt($workItem['normative_match']['norm_id'] ?? null);
+        $context = [
+            'region_id' => $this->positiveInt($snapshot['region_id'] ?? null),
+            'price_zone_id' => $this->positiveInt($snapshot['zone_id'] ?? null),
+            'period_id' => $this->positiveInt($snapshot['period_id'] ?? null),
+            'regional_price_version_id' => $this->positiveInt($snapshot['version_id'] ?? null),
+        ];
+        $inputs = [];
+        foreach (['materials', 'labor', 'machinery', 'other_resources'] as $group) {
+            foreach ($workItem[$group] ?? [] as $resource) {
+                $reference = is_array($resource['normative_ref'] ?? null) ? $resource['normative_ref'] : [];
+                $normResourceId = $this->positiveInt($reference['norm_resource_id'] ?? null);
+                $priceId = $this->positiveInt($reference['price_id'] ?? null);
+                if ($normResourceId === null || $priceId === null) {
+                    return null;
+                }
+                $inputs[] = [
+                    'norm_resource_id' => $normResourceId,
+                    'resource_price_id' => $priceId,
+                    'unit_conversion_id' => $this->positiveInt($reference['unit_conversion_id'] ?? null),
+                ];
+            }
+        }
+        if ($normId === null || in_array(null, $context, true) || $inputs === []) {
+            return null;
+        }
+        $quantity = filter_var($workItem['quantity'] ?? null, FILTER_VALIDATE_FLOAT);
+        $unit = $workItem['unit'] ?? null;
+        if ($quantity === false || $quantity <= 0 || ! is_string($unit) || $unit === '') {
+            return null;
+        }
+        $session = $package->session()->firstOrFail();
+        $evidenceId = $this->positiveInt($workItem['quantity_evidence_id'] ?? null);
+        $evidenceFingerprint = $workItem['quantity_evidence_fingerprint'] ?? null;
+        if ($evidenceId === null || ! is_string($evidenceFingerprint)) {
+            return null;
+        }
+        $evidence = app(EvidenceRepository::class)->node((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $evidenceId);
+        if ($evidence === null || $evidence->fingerprint !== $evidenceFingerprint || $evidence->invalidatedAt !== null
+            || (float) ($evidence->value['quantity'] ?? -1) !== (float) $quantity
+            || ($evidence->value['unit'] ?? null) !== $unit) {
+            return null;
+        }
+
+        return ['item' => [
+            'price_snapshot' => null,
+            'price_source' => null,
+            'quantity' => null,
+            'unit_price' => '0.000000',
+            'direct_cost' => '0.00',
+            'overhead_cost' => '0.00',
+            'profit_cost' => '0.00',
+            'total_cost' => '0.00',
+            'quantity_evidence_id' => $evidenceId,
+            'quantity_evidence_fingerprint' => $evidenceFingerprint,
+            'estimate_norm_id' => $normId,
+            ...$context,
+        ], 'inputs' => $inputs];
+    }
+
+    private function positiveInt(mixed $value): ?int
+    {
+        if (is_int($value) && $value > 0) {
+            return $value;
+        }
+        if (! is_string($value) || preg_match('/^[1-9][0-9]*$/D', $value) !== 1 || (int) $value < 1) {
+            return null;
+        }
+
+        return (int) $value;
     }
 
     private function revisionFingerprint(array $payload): string

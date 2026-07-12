@@ -616,6 +616,7 @@ class EstimateNormativeMatcher
                     ? $price->datasetVersion->source_type->value.'_base'
                     : null,
                 'price_id' => $price?->id,
+                'norm_resource_id' => $resource->id,
                 'linked_resource_id' => $resource->construction_resource_id,
                 'pricing' => $this->pricePayload($price),
             ];

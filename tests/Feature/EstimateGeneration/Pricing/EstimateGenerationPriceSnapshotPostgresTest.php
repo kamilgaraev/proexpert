@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration\Pricing;
 
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Illuminate\Database\QueryException;
@@ -28,7 +30,8 @@ final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
 
             $item = DB::table('estimate_generation_package_items')->find($fixture['item_id']);
             $snapshot = json_decode((string) $item->price_snapshot, true, 512, JSON_THROW_ON_ERROR);
-            $canonical = $fixture['norm_resource_id'].':'.$fixture['price_id'].':'.$fixture['conversion_id'].'|'
+            $canonical = $fixture['norm_resource_id'].':'.$fixture['norm_id'].':'.$fixture['resource_code'].':labor:min:3.000000:'
+                .$fixture['price_id'].':'.$fixture['version_id'].':h:600.0000:'.$fixture['conversion_id'].':0.016666666667|'
                 .$fixture['evidence_id'].':'.$fixture['fingerprint'];
 
             self::assertSame('75.00', $item->direct_cost);
@@ -41,6 +44,41 @@ final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
             self::assertSame('0.00', $snapshot['coefficients']['work_cost']);
             self::assertSame($fixture['region_id'], $snapshot['region_id']);
             self::assertSame($fixture['version_id'], $snapshot['version_id']);
+            self::assertSame('3.000000', $snapshot['coefficients']['resource_evidence'][0]['norm_quantity']);
+            self::assertSame('600.0000', $snapshot['coefficients']['resource_evidence'][0]['base_price']);
+
+            DB::statement('SET CONSTRAINTS ALL DEFERRED');
+            $session = EstimateGenerationSession::query()->findOrFail($fixture['session_id']);
+            app(EstimateGenerationPackagePersistenceService::class)->syncFromDraft($session, $this->serviceDraft($fixture, '2.5'));
+            $servicePackageId = DB::table('estimate_generation_packages')->where('session_id', $fixture['session_id'])->where('key', 'service-package')->value('id');
+            $serviceItem = DB::table('estimate_generation_package_items')->where('package_id', $servicePackageId)->where('logical_key', 'item-1')->first();
+            self::assertNotNull($serviceItem->pricing_finalized_at);
+            self::assertSame('75.00', $serviceItem->total_cost);
+
+            app(EstimateGenerationPackagePersistenceService::class)->syncFromDraft($session, $this->serviceDraft($fixture, '9'));
+            $tampered = DB::table('estimate_generation_package_items')->where('package_id', $servicePackageId)->where('logical_key', 'item-1')->orderByDesc('revision')->first();
+            self::assertNull($tampered->pricing_finalized_at);
+            self::assertNull($tampered->price_snapshot);
+            self::assertSame('0.00', $tampered->total_cost);
+            DB::statement('SET CONSTRAINTS ALL IMMEDIATE');
+            DB::statement('SET CONSTRAINTS ALL DEFERRED');
+            $this->assertRejected(fn () => DB::table('estimate_generation_package_item_price_inputs')->insert([
+                'package_item_id' => $serviceItem->id, 'norm_resource_id' => $fixture['norm_resource_id'],
+                'resource_price_id' => $fixture['price_id'], 'unit_conversion_id' => $fixture['conversion_id'],
+                'ordinal' => 2, 'created_at' => now(), 'updated_at' => now(),
+            ]));
+            $this->assertRejected(fn () => DB::table('estimate_generation_package_items')->insert(array_replace(
+                $this->itemPayload($fixture, 'forged-priced', 1, null),
+                ['pricing_finalized_at' => now(), 'price_snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR)],
+            )));
+            $this->assertRejected(fn () => DB::table('estimate_regional_price_versions')->where('id', $fixture['version_id'])->update(['status' => 'superseded']));
+            $this->assertRejected(fn () => DB::table('estimate_norm_resources')->where('id', $fixture['norm_resource_id'])->update(['quantity' => 99]));
+            $this->assertRejected(fn () => DB::table('estimate_dataset_versions')->where('id', $fixture['dataset_id'])->update(['version_key' => strtolower((string) str()->ulid())]));
+
+            $function = DB::selectOne("SELECT p.prosecdef, p.proconfig, NOT EXISTS (SELECT 1 FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE') AS public_revoked FROM pg_proc p WHERE p.oid='public.eg_finalize_package_item_price(bigint)'::regprocedure");
+            self::assertTrue($function->prosecdef);
+            self::assertStringContainsString('search_path=pg_catalog, public', (string) $function->proconfig);
+            self::assertTrue($function->public_revoked);
 
             foreach (['null' => null, 'zero' => '0.0000', 'negative' => '-1.0000'] as $case => $basePrice) {
                 $invalidCatalog = $this->catalogPrice($fixture, $fixture['resource_code'], $basePrice, 'invalid-'.$case);
@@ -104,6 +142,23 @@ final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
         }
     }
 
+    private function serviceDraft(array $f, string $quantity): array
+    {
+        return ['local_estimates' => [[
+            'key' => 'service-package', 'title' => 'Service contract', 'target_items_min' => 1,
+            'sections' => [['work_items' => [[
+                'key' => 'item-1', 'item_type' => 'priced_work', 'name' => 'Item', 'unit' => 'h', 'quantity' => $quantity,
+                'quantity_evidence_id' => $f['evidence_id'], 'quantity_evidence_fingerprint' => $f['fingerprint'],
+                'normative_match' => ['status' => 'matched', 'norm_id' => $f['norm_id']],
+                'labor' => [[
+                    'normative_ref' => ['norm_resource_id' => $f['norm_resource_id'], 'price_id' => $f['price_id'], 'unit_conversion_id' => $f['conversion_id']],
+                ]],
+                'price_snapshot' => ['region_id' => $f['region_id'], 'zone_id' => $f['zone_id'], 'period_id' => $f['period_id'], 'version_id' => $f['version_id'], 'final_amount' => '999.00'],
+                'pricing_status' => 'calculated', 'total_cost' => '999.00', 'labor_cost' => '999.00', 'validation_flags' => [],
+            ]]]],
+        ]]];
+    }
+
     private function fixture(): array
     {
         $now = now();
@@ -130,9 +185,9 @@ final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
         DB::table('estimate_regional_price_versions')->where('id', $versionId)->update(['status' => 'active']);
         $conversionId = DB::table('estimate_generation_unit_conversions')->insertGetId(['from_unit' => 'min', 'to_unit' => 'h', 'factor' => '0.016666666667', 'version' => 1, 'fingerprint' => str_repeat('c', 64), 'created_at' => $now, 'updated_at' => $now]);
         $fingerprint = hash('sha256', $suffix);
-        $evidenceId = DB::table('estimate_generation_evidence')->insertGetId(['organization_id' => $organizationId, 'project_id' => $projectId, 'session_id' => $sessionId, 'type' => 'work_item', 'source_type' => 'user_input', 'source_ref' => 'input:1', 'source_version' => 'contract:abcdef', 'locator' => json_encode(['item_key' => 'item:1'], JSON_THROW_ON_ERROR), 'value' => json_encode(['work_code' => 'work_type:1', 'quantity' => 2.5, 'unit' => 'h'], JSON_THROW_ON_ERROR), 'confidence' => 1, 'producer_name' => 'contract', 'producer_version' => 'contract:abcdef', 'fingerprint' => $fingerprint, 'created_at' => $now, 'updated_at' => $now]);
+        $evidenceId = DB::table('estimate_generation_evidence')->insertGetId(['organization_id' => $organizationId, 'project_id' => $projectId, 'session_id' => $sessionId, 'type' => 'work_item', 'source_type' => 'user_input', 'source_ref' => 'input:1', 'source_version' => 'contract:abcdef', 'locator' => json_encode(['item_key' => 'item:'.hash('sha256', 'item-1')], JSON_THROW_ON_ERROR), 'value' => json_encode(['work_code' => 'work_type:1', 'quantity' => 2.5, 'unit' => 'h'], JSON_THROW_ON_ERROR), 'confidence' => 1, 'producer_name' => 'contract', 'producer_version' => 'contract:abcdef', 'fingerprint' => $fingerprint, 'created_at' => $now, 'updated_at' => $now]);
         $resourceCode = $suffix;
-        $fixture = compact('packageId', 'datasetId', 'collectionId', 'resourceCode', 'normId', 'normResourceId', 'regionId', 'zoneId', 'periodId', 'versionId', 'priceId', 'conversionId', 'evidenceId', 'fingerprint');
+        $fixture = compact('sessionId', 'packageId', 'datasetId', 'collectionId', 'resourceCode', 'normId', 'normResourceId', 'regionId', 'zoneId', 'periodId', 'versionId', 'priceId', 'conversionId', 'evidenceId', 'fingerprint');
         $fixture = array_combine(array_map(fn (string $key): string => strtolower((string) preg_replace('/(?<!^)[A-Z]/', '_$0', $key)), array_keys($fixture)), array_values($fixture));
         $fixture['item_id'] = $this->unpricedItem($fixture, 'item-1', 1, null);
         DB::table('estimate_generation_package_item_price_inputs')->insert(['package_item_id' => $fixture['item_id'], 'norm_resource_id' => $normResourceId, 'resource_price_id' => $priceId, 'unit_conversion_id' => $conversionId, 'ordinal' => 1, 'created_at' => $now, 'updated_at' => $now]);
@@ -287,7 +342,7 @@ final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
             'project_id' => DB::table('estimate_generation_evidence')->where('id', $fixture['evidence_id'])->value('project_id'),
             'session_id' => DB::table('estimate_generation_evidence')->where('id', $fixture['evidence_id'])->value('session_id'),
             'type' => 'work_item', 'source_type' => 'user_input', 'source_ref' => 'input:2',
-            'source_version' => 'contract:abcdef', 'locator' => json_encode(['item_key' => 'item:2'], JSON_THROW_ON_ERROR),
+            'source_version' => 'contract:abcdef', 'locator' => json_encode(['item_key' => 'item:'.hash('sha256', 'large-decimal')], JSON_THROW_ON_ERROR),
             'value' => json_encode(['work_code' => 'work_type:2', 'quantity' => 12345.678901, 'unit' => 'h'], JSON_THROW_ON_ERROR),
             'confidence' => 1, 'producer_name' => 'contract', 'producer_version' => 'contract:abcdef',
             'fingerprint' => $fingerprint, 'created_at' => $now, 'updated_at' => $now,

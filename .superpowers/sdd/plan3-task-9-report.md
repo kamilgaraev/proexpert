@@ -141,4 +141,13 @@ Reviewer findings устранены одной TDD-волной после comm
 - Clean disposable bootstrap exposed invalid PostgreSQL operator precedence around dynamic `CASE` JSONB keys in the existing evidence migration. Parentheses now allow the real evidence schema to be created without weakening its contract.
 - Exact contract passed twice consecutively on the same `most_ai_estimator_contract`: `1 test, 35 assertions` per run. Production was untouched.
 - Mandatory matrix completion: separate inactive catalog versions are populated with `NULL`, zero and negative base prices before activation; every finalized item fails closed. A two-resource norm proves omitted resource rejection, a foreign-norm third input proves extra-input rejection, and a same-context price for the other resource proves price-to-norm mismatch rejection.
+
+## Final integration review wave (2026-07-12)
+
+- Quantity evidence is created upstream in `PlanWorkItemsStage` through the immutable `EvidenceRepository`; tenant/project/session scope, ID and fingerprint travel unchanged to persistence.
+- `syncFromDraft()` discards client money/snapshot, writes an unpriced append-only revision and normalized exact inputs, then invokes the PostgreSQL finalizer. Tampered quantity with an original fingerprint remains unpriced and blocking; persistence cannot mint replacement evidence.
+- Follow-up `001400` adds explicit finalization state, closes input mutations, reconstructs the complete expected snapshot and money, hashes full normative/resource/conversion values, protects activated versions and finalized references, and secures functions with `SECURITY DEFINER`, fixed `search_path` and revoked PUBLIC execution.
+- Revision allocation is serialized by a package row lock and protected by `(package_id, logical_key, revision)` uniqueness. The `001200` rollback restores `(package_id, key)` uniqueness.
+- Disposable PostgreSQL contract invokes the real service, rejects forged priced state and protected mutations, inspects `pg_proc`/ACL security and passed twice: `1 test, 58 assertions` per run.
+- DB-less covering suite passed: `31 tests, 176 assertions`; PHP syntax, Pint, targeted Larastan and `git diff --check` passed. Ordinary estimates were untouched and codebase-memory artifacts remained unstaged.
 - Two append-only revisions with `12345.678901 × 123456789.1234` prove exact PostgreSQL `numeric` item money and latest-revision package accumulation. The expected values are independently calculated with `Brick\\Math\\BigDecimal`; no float enters the assertion.

@@ -37,6 +37,7 @@ class EstimateGenerationPackageItem extends Model
         'price_zone_id',
         'period_id',
         'regional_price_version_id',
+        'pricing_finalized_at',
         'normative_status',
         'normative_confidence',
         'unit_price',
@@ -66,6 +67,7 @@ class EstimateGenerationPackageItem extends Model
         'flags' => 'array',
         'metadata' => 'array',
         'sort_order' => 'integer',
+        'pricing_finalized_at' => 'immutable_datetime',
     ];
 
     public function package(): BelongsTo

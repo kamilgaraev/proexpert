@@ -533,6 +533,7 @@ class ResourceAssemblyService
                         'norm_code' => $selected['code'],
                         'resource_code' => $resource['code'],
                         'resource_id' => $resource['linked_resource_id'],
+                        'norm_resource_id' => $resource['norm_resource_id'] ?? null,
                         'price_id' => $resource['price_id'],
                         'price_source' => $resource['price_source'],
                     ],

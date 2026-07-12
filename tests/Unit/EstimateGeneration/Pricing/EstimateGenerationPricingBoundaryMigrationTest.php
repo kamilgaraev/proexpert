@@ -42,6 +42,39 @@ final class EstimateGenerationPricingBoundaryMigrationTest extends TestCase
         self::assertStringNotContainsString('BusinessModules/Features/BudgetEstimates', $this->source());
     }
 
+    #[Test]
+    public function final_hardening_closes_every_write_path_and_secures_database_functions(): void
+    {
+        $source = (string) file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001400_finalize_estimate_generation_pricing_boundary.php');
+
+        foreach ([
+            'pricing_finalized_at',
+            'BEFORE INSERT OR UPDATE OR DELETE ON public.estimate_generation_package_item_price_inputs',
+            'estimate_generation.price_input_set_closed',
+            'estimate_norm_resources',
+            'estimate_regional_price_versions',
+            'estimate_dataset_versions',
+            'SECURITY DEFINER',
+            'SET search_path = pg_catalog, public',
+            'REVOKE ALL ON FUNCTION public.eg_finalize_package_item_price(bigint) FROM PUBLIC',
+            'CREATE CONSTRAINT TRIGGER eg_package_item_price_input_validate',
+            'lockForUpdate()',
+        ] as $required) {
+            self::assertStringContainsString($required, $required === 'lockForUpdate()'
+                ? (string) file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Services/EstimateGenerationPackagePersistenceService.php')
+                : $source);
+        }
+    }
+
+    #[Test]
+    public function follow_up_down_restores_legacy_package_key_uniqueness(): void
+    {
+        self::assertStringContainsString(
+            "unique(['package_id', 'key'], 'estimate_generation_package_items_package_id_key_unique')",
+            $this->source(),
+        );
+    }
+
     private function source(): string
     {
         return (string) file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001200_harden_estimate_generation_pricing_boundary.php');
