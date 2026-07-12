@@ -315,6 +315,76 @@ final class QuantityTrustBoundaryTest extends TestCase
         self::assertNull($result->get('floor_area'));
     }
 
+    public function test_net_wall_uses_opening_derived_operand_provenance(): void
+    {
+        $estimatedWidth = [
+            'value' => '1', 'unit' => 'm', 'source' => 'estimated', 'evidence_ids' => ['opening-width'],
+            'assumptions' => ['user_opening_width'], 'context' => ['id' => 'ctx'], 'provenance_version' => '1',
+        ];
+        $evidencedHeight = [
+            'value' => '2', 'unit' => 'm', 'source' => 'evidenced', 'evidence_ids' => ['opening-height'],
+            'assumptions' => [], 'context' => ['id' => 'ctx'], 'provenance_version' => '1', 'metric_independent' => true,
+        ];
+        $wallOperand = static fn (string $role, string $value): array => [
+            'value' => $value, 'unit' => 'm', 'source' => 'evidenced', 'evidence_ids' => ['wall-'.$role],
+            'assumptions' => [], 'context' => ['id' => 'ctx'], 'provenance_version' => '1', 'metric_independent' => true,
+        ];
+        $result = (new BuildingQuantityCalculator)->calculate($this->model([
+            'walls' => [['id' => 'w', 'length' => $wallOperand('length', '4'), 'height' => $wallOperand('height', '3'), 'opening_ids' => ['o']]],
+            'openings' => [['id' => 'o', 'wall_id' => 'w', 'width' => $estimatedWidth, 'height' => $evidencedHeight]],
+        ]));
+
+        $net = $result->get('net_wall_area');
+        self::assertSame('estimated', $net?->source->value);
+        self::assertSame(['user_opening_width'], $net?->assumptions);
+        $opening = $net?->formulaInputs['items'][0]['named_operands']['openings'][0] ?? [];
+        self::assertSame('estimated', $opening['source']);
+        self::assertSame(['opening-height', 'opening-width'], $opening['evidence_ids']);
+        self::assertNotContains('wall-length', $opening['evidence_ids']);
+    }
+
+    public function test_full_model_serialization_is_permutation_invariant(): void
+    {
+        $model = $this->model([
+            'rooms' => [['id' => 'r2', 'area' => '2', 'evidence_ids' => ['r2']], ['id' => 'r1', 'area' => '1', 'evidence_ids' => ['r1']]],
+            'walls' => [['id' => 'w', 'length' => '4', 'height' => '3', 'opening_ids' => ['o2', 'o1'], 'evidence_ids' => ['w']]],
+            'openings' => [
+                ['id' => 'o1', 'wall_id' => 'w', 'width' => '1', 'height' => '1', 'evidence_ids' => ['o1']],
+                ['id' => 'o2', 'wall_id' => 'w', 'width' => '1', 'height' => '1', 'evidence_ids' => ['o2']],
+            ],
+            'foundations' => [['id' => 'f', 'length' => '2', 'width' => '1', 'depth' => '1', 'evidence_ids' => ['f']]],
+            'roofs' => [['id' => 'roof', 'area' => '5', 'evidence_ids' => ['roof']]],
+            'engineering' => [['id' => 'e', 'system' => 'water', 'measurement' => 'length', 'amount' => '2', 'unit' => 'm', 'evidence_ids' => ['e']]],
+        ]);
+        $permuted = $model;
+        foreach (['rooms', 'walls', 'openings', 'foundations', 'roofs', 'engineering'] as $key) {
+            $permuted[$key] = array_reverse($permuted[$key]);
+        }
+        $permuted['walls'][0]['opening_ids'] = array_reverse($permuted['walls'][0]['opening_ids']);
+
+        self::assertSame(
+            (new BuildingQuantityCalculator)->calculate($model)->toArray(),
+            (new BuildingQuantityCalculator)->calculate($permuted)->toArray(),
+        );
+    }
+
+    public function test_polygon_broad_phase_bounds_candidate_comparisons(): void
+    {
+        $rooms = [];
+        for ($i = 0; $i < 2000; $i++) {
+            $x = (string) ($i * 3);
+            $x2 = (string) ($i * 3 + 1);
+            $rooms[] = ['id' => "r-$i", 'polygon' => [[$x, '0'], [$x2, '0'], [$x2, '1'], [$x, '1']], 'evidence_ids' => ["e-$i"]];
+        }
+        $before = memory_get_usage(true);
+        $result = (new BuildingQuantityCalculator)->calculate($this->model(['rooms' => $rooms]));
+        $delta = memory_get_usage(true) - $before;
+
+        self::assertSame('2000.000000', $result->get('floor_area')?->amount);
+        self::assertLessThanOrEqual(2000, $result->metrics['polygon_candidate_comparisons']);
+        self::assertLessThan(128 * 1024 * 1024, $delta);
+    }
+
     /** @param array<string, mixed> $override */
     private function model(array $override): array
     {

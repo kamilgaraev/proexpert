@@ -14,10 +14,13 @@ final class BuildingQuantityCalculator
 
     private bool $scaleConfirmed = false;
 
+    private int $polygonCandidateComparisons = 0;
+
     /** @param array<string, mixed> $model */
     public function calculate(array $model): QuantityCalculationResult
     {
         $this->diagnostics = [];
+        $this->polygonCandidateComparisons = 0;
         $modelVersion = (string) ($model['model_version'] ?? 'unknown');
         $items = [];
         $recordCount = 0;
@@ -109,13 +112,7 @@ final class BuildingQuantityCalculator
             }
             if (isset($room['polygon'])) {
                 if (is_array($room['polygon'])) {
-                    foreach ($roomPolygons as $previous) {
-                        if ($this->polygonsProperlyIntersect($room['polygon'], $previous)) {
-                            $this->diagnostic('ambiguous_polygon_overlap', "rooms.$index.polygon");
-                            $ambiguousOverlap = true;
-                        }
-                    }
-                    $roomPolygons[] = $room['polygon'];
+                    $roomPolygons[] = ['polygon' => $room['polygon'], 'path' => "rooms.$index.polygon", 'bounds' => $this->polygonExactBounds($room['polygon'])];
                 }
             }
             $roomRecord = $areaOperand === null
@@ -125,6 +122,26 @@ final class BuildingQuantityCalculator
                 'area' => $this->derivedFormulaOperand('area', $area, 'm2', $roomRecord),
             ];
             $roomItems[] = $this->item($area, $roomRecord);
+        }
+        usort($roomPolygons, static function (array $a, array $b): int {
+            $comparison = $a['bounds'][0]->compareTo($b['bounds'][0]);
+
+            return $comparison !== 0 ? $comparison : $a['path'] <=> $b['path'];
+        });
+        $active = [];
+        foreach ($roomPolygons as $candidate) {
+            $active = array_values(array_filter($active, static fn (array $entry): bool => $entry['bounds'][2]->isGreaterThanOrEqualTo($candidate['bounds'][0])));
+            foreach ($active as $previous) {
+                if (! $candidate['bounds'][1]->isLessThan($previous['bounds'][3]) || ! $candidate['bounds'][3]->isGreaterThan($previous['bounds'][1])) {
+                    continue;
+                }
+                $this->polygonCandidateComparisons++;
+                if ($this->polygonsProperlyIntersect($candidate['polygon'], $previous['polygon'])) {
+                    $this->diagnostic('ambiguous_polygon_overlap', $candidate['path']);
+                    $ambiguousOverlap = true;
+                }
+            }
+            $active[] = $candidate;
         }
         if ($ambiguousOverlap) {
             $roomItems = [];
@@ -158,8 +175,10 @@ final class BuildingQuantityCalculator
                 continue;
             }
             $openingRecord = $this->recordFromOperands($opening, [$width, $height]);
-            $openings[$id] = $openingRecord + ['_area' => $width->value->multipliedBy($height->value)];
-            $openingItems[] = $this->item($width->value->multipliedBy($height->value), $openingRecord);
+            $openingArea = $width->value->multipliedBy($height->value);
+            $openingRecord['_derived_area_operand'] = $this->derivedFormulaOperand('opening_area', $openingArea, 'm2', $openingRecord);
+            $openings[$id] = $openingRecord + ['_area' => $openingArea];
+            $openingItems[] = $this->item($openingArea, $openingRecord);
         }
         if ($openingItems !== []) {
             $items['opening_area'] = $this->aggregate('opening_area', $openingItems, $modelVersion);
@@ -207,10 +226,12 @@ final class BuildingQuantityCalculator
             $netVersions = $this->strings($wallRecord['_operand_provenance_versions'] ?? []);
             $openingOperands = [];
             $refs = $this->strings($wall['opening_ids'] ?? []);
-            if (count($refs) !== count(array_unique($refs))) {
+            $duplicateRefs = count($refs) !== count(array_unique($refs));
+            if ($duplicateRefs) {
                 $this->diagnostic('duplicate_opening_reference', "walls.$index.opening_ids");
             }
-            $valid = true;
+            $refs = $this->uniqueSorted($refs);
+            $valid = ! $duplicateRefs;
             foreach ($refs as $ref) {
                 $opening = $openings[$ref] ?? null;
                 if ($opening === null || (string) ($opening['wall_id'] ?? '') !== (string) ($wall['id'] ?? '')) {
@@ -227,7 +248,7 @@ final class BuildingQuantityCalculator
                     continue;
                 }
                 $net = $net->minus($opening['_area']);
-                $openingOperands[$ref] = (string) $opening['_area'];
+                $openingOperands[$ref] = $opening['_derived_area_operand'];
                 $netEvidence = [...$netEvidence, ...$this->strings($opening['evidence_ids'] ?? [])];
                 $netAssumptions = [...$netAssumptions, ...$this->strings($opening['assumptions'] ?? [])];
                 if ($this->source($opening) === QuantitySource::Estimated) {
@@ -236,14 +257,15 @@ final class BuildingQuantityCalculator
                 $netContexts = [...$netContexts, ...$openingContexts];
                 $netVersions = [...$netVersions, ...$this->strings($opening['_operand_provenance_versions'] ?? [])];
             }
-            if (! $valid) {
-                continue;
-            }
             if ($net->isNegative()) {
                 $this->diagnostic('opening_area_exceeds_wall_area', "walls.$index.opening_ids");
 
                 continue;
             }
+            if (! $valid) {
+                continue;
+            }
+            ksort($openingOperands, SORT_STRING);
             $netItems[] = [
                 'amount' => $net, 'source' => $netSource, 'evidence' => $netEvidence,
                 'assumptions' => $netAssumptions, 'identity' => (string) ($wall['id'] ?? "wall-$index"),
@@ -251,7 +273,7 @@ final class BuildingQuantityCalculator
                 'provenance_versions' => $this->uniqueSorted($netVersions),
                 'named_operands' => [
                     'gross_wall_area' => $this->derivedFormulaOperand('gross_wall_area', $gross, 'm2', $wallRecord),
-                    'openings' => array_map(fn (string $value, string $role): array => $this->derivedFormulaOperand('opening:'.$role, BigDecimal::of($value), 'm2', $wallRecord), $openingOperands, array_keys($openingOperands)),
+                    'openings' => array_values($openingOperands),
                 ],
             ];
         }
@@ -339,7 +361,7 @@ final class BuildingQuantityCalculator
         ksort($items);
         usort($this->diagnostics, static fn (array $a, array $b): int => [$a['path'], $a['code']] <=> [$b['path'], $b['code']]);
 
-        return new QuantityCalculationResult($items, $this->diagnostics);
+        return new QuantityCalculationResult($items, $this->diagnostics, ['polygon_candidate_comparisons' => $this->polygonCandidateComparisons]);
     }
 
     /** @param array<int, array{amount: BigDecimal, source: QuantitySource, evidence: array<int, string>, assumptions: array<int, string>}> $items */
@@ -803,8 +825,6 @@ final class BuildingQuantityCalculator
             return false;
         }
         if (! $ax->isEqualTo($bx)) {
-            $left = ($ax->isGreaterThan($cx) ? $ax : $cx);
-            $right = ($bx->isLessThan($dx) ? $bx : $dx);
             if ($ax->isGreaterThan($bx)) {
                 [$ax, $bx] = [$bx, $ax];
             }
@@ -826,6 +846,17 @@ final class BuildingQuantityCalculator
         $top = $by->isLessThan($dy) ? $by : $dy;
 
         return $bottom->isLessThan($top);
+    }
+
+    /** @return array{BigDecimal, BigDecimal, BigDecimal, BigDecimal} */
+    private function polygonExactBounds(array $polygon): array
+    {
+        $xs = array_map(fn (array $point): BigDecimal => $this->coordinate($point[0]) ?? BigDecimal::zero(), $polygon);
+        $ys = array_map(fn (array $point): BigDecimal => $this->coordinate($point[1]) ?? BigDecimal::zero(), $polygon);
+        usort($xs, static fn (BigDecimal $a, BigDecimal $b): int => $a->compareTo($b));
+        usort($ys, static fn (BigDecimal $a, BigDecimal $b): int => $a->compareTo($b));
+
+        return [$xs[0], $ys[0], $xs[array_key_last($xs)], $ys[array_key_last($ys)]];
     }
 
     private function boundingBoxesHavePositiveAreaOverlap(array $first, array $second): bool
