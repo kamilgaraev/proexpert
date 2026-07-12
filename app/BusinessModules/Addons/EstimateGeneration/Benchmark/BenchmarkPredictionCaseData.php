@@ -24,6 +24,9 @@ final readonly class BenchmarkPredictionCaseData
         public array $allowedCapabilities,
         public array $recordedEnvelopeReferences,
         public array $recordedEnvelopeSha256,
+        public ?string $recordingManifestSha256 = null,
+        public ?string $benchmarkCatalogReference = null,
+        public ?string $benchmarkCatalogSha256 = null,
     ) {
         self::assertToken($id);
         self::assertLocator($inputLocator);
@@ -37,6 +40,16 @@ final readonly class BenchmarkPredictionCaseData
             self::assertToken($port);
             self::assertLocator($locator);
             self::assertHash($recordedEnvelopeSha256[$port]);
+        }
+        if ($recordingManifestSha256 !== null) {
+            self::assertHash($recordingManifestSha256);
+        }
+        if (($benchmarkCatalogReference === null) !== ($benchmarkCatalogSha256 === null)) {
+            throw new InvalidArgumentException('benchmark_catalog_pair_invalid');
+        }
+        if ($benchmarkCatalogReference !== null) {
+            self::assertLocator($benchmarkCatalogReference);
+            self::assertHash($benchmarkCatalogSha256);
         }
     }
 

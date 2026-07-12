@@ -16,6 +16,27 @@ final readonly class RecordedPortEnvelopeLoader
 
     public function load(BenchmarkCaseData $case, string $benchmarkManifestSha256): RecordedPortEnvelopeSet
     {
+        return $this->loadFor($case->id, $case->inputSha256, $benchmarkManifestSha256, null, null);
+    }
+
+    public function loadProjection(BenchmarkPredictionCaseData $case): RecordedPortEnvelopeSet
+    {
+        if ($case->recordingManifestSha256 === null || $case->recordedEnvelopeReferences === []) {
+            throw new RecordedPortEnvelopeException('recorded_projection_incomplete');
+        }
+
+        return $this->loadFor(
+            $case->id,
+            $case->inputSha256,
+            $case->recordingManifestSha256,
+            $case->recordedEnvelopeReferences,
+            $case->recordedEnvelopeSha256,
+        );
+    }
+
+    /** @param array<string, string>|null $references @param array<string, string>|null $hashes */
+    private function loadFor(string $caseId, string $inputSha256, string $recordingManifestSha256, ?array $references, ?array $hashes): RecordedPortEnvelopeSet
+    {
         $root = realpath($this->fixtureRoot);
         $manifest = realpath($this->manifestPath);
         if ($root === false || $manifest === false || ! $this->within($manifest, $root) || is_link($this->manifestPath)) {
@@ -35,7 +56,7 @@ final readonly class RecordedPortEnvelopeLoader
             if (! is_array($descriptor) || array_keys($descriptor) !== ['case_id', 'port', 'locator', 'sha256']) {
                 throw new RecordedPortEnvelopeException('recorded_descriptor_contract_invalid');
             }
-            if ($descriptor['case_id'] !== $case->id) {
+            if ($descriptor['case_id'] !== $caseId) {
                 continue;
             }
             if (! is_string($descriptor['locator']) || ! preg_match('#^[a-zA-Z0-9._/-]+\.json$#D', $descriptor['locator'])
@@ -49,8 +70,12 @@ final readonly class RecordedPortEnvelopeLoader
                 throw new RecordedPortEnvelopeException('recorded_fixture_integrity_failed');
             }
             $envelope = RecordedPortEnvelope::fromFile($path);
-            if ($envelope->port->value !== $descriptor['port'] || ! hash_equals($case->inputSha256, $envelope->sourceSha256)
-                || ! hash_equals($benchmarkManifestSha256, $envelope->manifestSha256)) {
+            if ($references !== null && (($references[$descriptor['port']] ?? null) !== $descriptor['locator']
+                || ($hashes[$descriptor['port']] ?? null) !== $descriptor['sha256'])) {
+                throw new RecordedPortEnvelopeException('recorded_projection_descriptor_mismatch');
+            }
+            if ($envelope->port->value !== $descriptor['port'] || ! hash_equals($inputSha256, $envelope->sourceSha256)
+                || ! hash_equals($recordingManifestSha256, $envelope->manifestSha256)) {
                 throw new RecordedPortEnvelopeException('recorded_dependency_mismatch');
             }
             if (isset($envelopes[$envelope->port->value])) {
@@ -60,7 +85,10 @@ final readonly class RecordedPortEnvelopeLoader
             $envelopes[$envelope->port->value] = $envelope;
         }
         ksort($envelopes, SORT_STRING);
-        $allowedDependencies = [$case->inputSha256 => true];
+        if ($references !== null && count($envelopes) !== count($references)) {
+            throw new RecordedPortEnvelopeException('recorded_projection_descriptor_missing');
+        }
+        $allowedDependencies = [$inputSha256 => true];
         foreach ($envelopes as $envelope) {
             $allowedDependencies[$envelope->payloadSha256] = true;
         }

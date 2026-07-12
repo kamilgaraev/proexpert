@@ -47,6 +47,19 @@
 
 Task 11 нельзя отмечать `DONE`, пока все открытые gates не закрыты без снижения порогов и oracle-подстановок.
 
+## Продолжение: projection-safe replay dependencies и нормативный каталог
+
+- `BenchmarkPredictionCaseData` расширен только входными replay-зависимостями: SHA-256 отдельного recording manifest и парой locator/SHA-256 нормативного каталога. Expected-данные в projection не передаются.
+- `RecordedPortEnvelopeLoader::loadProjection()` разрешает только явно объявленные projection locator/hash, проверяет SHA-256 исходного файла, recording manifest и замкнутую цепочку зависимостей. Полный `BenchmarkCaseData` адаптеру не требуется.
+- Добавлен закрытый `RecordedBenchmarkCatalogData` версии `recorded-benchmark-catalog:v1`: dataset/version/status, region/period/currency, кандидаты норм, ресурсы и цены, approval/privacy metadata. Рекурсивно запрещены expected/label/prediction/readiness/final price/cost поля.
+- RED→GREEN проверки закрывают projection-only загрузку, descriptor mismatch и oracle-поля каталога.
+
+## Открытый блокер production replay adapter
+
+- В production отсутствует преобразователь `VisionAnalysisData` или `VectorGeometryData` в `FusedGeometryElementData`, `ScaleCandidateData` и `VisionBuildingModelInputData`; `BuildingModelAssembler::assembleVision()` сейчас вызывается только тестами.
+- `BuildingQuantityCalculator` принимает плоский calculator schema (`rooms`, `walls`, `openings`, scale/evidence operands), который не совпадает с `NormalizedBuildingModelData::toArray()`. Нужен отдельный lossless production mapper с проверяемыми evidence refs, а не benchmark-only подстановка.
+- Поэтому два E2E и финальный `ProductionReplayBenchmarkAdapter` в этом срезе не заявлены реализованными; значения prediction, norm top-3 и цены не записывались в artifacts.
+
 ## Продолжение: port validators и planner boundary
 
 - `RecordedPortEnvelopeLoader` валидирует payload по объявленному порту через production factories: `VisionAnalysisData::fromProviderArray`, `VectorGeometryData::fromArray` и `NormativeRerankResultData::fromProviderArray`.

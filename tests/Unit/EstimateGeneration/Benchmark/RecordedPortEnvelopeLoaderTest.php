@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Benchmark;
 
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkManifest;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPredictionCaseData;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedPort;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedPortEnvelopeException;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedPortEnvelopeLoader;
@@ -43,6 +44,33 @@ final class RecordedPortEnvelopeLoaderTest extends TestCase
         $this->writeManifest($case->id, hash_file('sha256', $path));
 
         $set = (new RecordedPortEnvelopeLoader($this->root, $this->root.'/manifest.json'))->load($case, $benchmarkHash);
+
+        self::assertSame(RecordedPort::VisionExtraction, $set->require(RecordedPort::VisionExtraction)->port);
+    }
+
+    #[Test]
+    public function projection_loader_resolves_only_declared_recorded_envelopes_without_expected_case_data(): void
+    {
+        [$case, $benchmarkHash] = $this->caseAndHash();
+        $path = $this->root.'/cases/vision.json';
+        file_put_contents($path, $this->envelope($case->inputSha256, $case->inputSha256, $benchmarkHash, true));
+        $sha256 = hash_file('sha256', $path);
+        $this->writeManifest($case->id, $sha256);
+        $projection = new BenchmarkPredictionCaseData(
+            $case->id,
+            $case->dataset,
+            $case->sourceType,
+            $case->inputLocator,
+            $case->inputSha256,
+            $case->tags,
+            $case->allowedCapabilities,
+            ['vision_extraction' => 'cases/vision.json'],
+            ['vision_extraction' => $sha256],
+            $benchmarkHash,
+        );
+
+        $set = (new RecordedPortEnvelopeLoader($this->root, $this->root.'/manifest.json'))
+            ->loadProjection($projection);
 
         self::assertSame(RecordedPort::VisionExtraction, $set->require(RecordedPort::VisionExtraction)->port);
     }

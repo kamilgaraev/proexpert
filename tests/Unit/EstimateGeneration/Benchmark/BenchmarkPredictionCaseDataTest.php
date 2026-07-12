@@ -28,6 +28,7 @@ final class BenchmarkPredictionCaseDataTest extends TestCase
         self::assertSame([
             'id', 'dataset', 'sourceType', 'inputLocator', 'inputSha256', 'tags',
             'allowedCapabilities', 'recordedEnvelopeReferences', 'recordedEnvelopeSha256',
+            'recordingManifestSha256', 'benchmarkCatalogReference', 'benchmarkCatalogSha256',
         ], $properties);
         self::assertStringNotContainsString('expected', strtolower($serialized));
         self::assertStringNotContainsString(strtolower($root), strtolower($serialized));
