@@ -17,7 +17,7 @@ final class DrawingGeometryAnalyzer
      * @return array{
      *     elements: array<int, array<string, mixed>>,
      *     quantities: array<int, array<string, mixed>>,
-     *     metrics: array<string, int>,
+     *     metrics: array{page_count: int, geometry_metrics_status: string, line_count: int, curve_count: int, rect_count: int, vector_element_count: int, contour_candidate_count: int, table_candidate_count: int, title_block_candidate_count: int},
      *     page_metrics: array<int, array<string, mixed>>,
      *     review_reasons: array<int, string>,
      *     review_required_pages: array<int, int>

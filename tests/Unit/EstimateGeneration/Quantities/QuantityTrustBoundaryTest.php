@@ -175,6 +175,75 @@ final class QuantityTrustBoundaryTest extends TestCase
         self::assertSame(['drawing', 'survey'], $result->get('gross_wall_area')?->evidenceIds);
     }
 
+    public function test_unconfirmed_scale_blocks_all_legacy_geometry_families(): void
+    {
+        $result = (new BuildingQuantityCalculator)->calculate($this->model([
+            'scale' => ['status' => 'unconfirmed'],
+            'walls' => [['id' => 'w', 'length' => '4', 'height' => '3', 'opening_ids' => ['o'], 'evidence_ids' => ['w']]],
+            'openings' => [['id' => 'o', 'wall_id' => 'w', 'width' => '1', 'height' => '2', 'evidence_ids' => ['o']]],
+            'foundations' => [['id' => 'f', 'length' => '1', 'width' => '1', 'depth' => '1', 'evidence_ids' => ['f']]],
+            'roofs' => [['id' => 'r', 'area' => '5', 'evidence_ids' => ['r']]],
+            'engineering' => [['id' => 'e', 'system' => 'water', 'measurement' => 'length', 'amount' => '5', 'unit' => 'm', 'evidence_ids' => ['e']]],
+        ]));
+
+        self::assertSame([], $result->all());
+        self::assertGreaterThanOrEqual(9, count(array_filter($result->diagnostics, static fn (array $d): bool => $d['code'] === 'invalid_typed_operand')));
+    }
+
+    public function test_cross_context_opening_blocks_net_wall_item(): void
+    {
+        $operand = static fn (string $value, string $context): array => [
+            'value' => $value, 'unit' => 'm', 'source' => 'evidenced', 'evidence_ids' => [$context],
+            'context' => ['id' => $context], 'provenance_version' => '1', 'metric_independent' => true,
+        ];
+        $result = (new BuildingQuantityCalculator)->calculate($this->model([
+            'walls' => [['id' => 'w', 'length' => $operand('4', 'wall'), 'height' => $operand('3', 'wall'), 'opening_ids' => ['o']]],
+            'openings' => [['id' => 'o', 'wall_id' => 'w', 'width' => $operand('1', 'opening'), 'height' => $operand('2', 'opening')]],
+        ]));
+
+        self::assertNull($result->get('net_wall_area'));
+        self::assertContains('wall_opening_context_conflict', array_column($result->diagnostics, 'code'));
+    }
+
+    public function test_duplicate_wall_ids_exclude_all_variants_and_shared_multiplier_is_exact(): void
+    {
+        $duplicate = (new BuildingQuantityCalculator)->calculate($this->model(['walls' => [
+            ['id' => 'w', 'length' => '2', 'height' => '3', 'opening_ids' => [], 'evidence_ids' => ['a']],
+            ['id' => 'w', 'length' => '4', 'height' => '3', 'opening_ids' => [], 'evidence_ids' => ['b']],
+        ]]));
+        self::assertNull($duplicate->get('gross_wall_area'));
+
+        $shared = (new BuildingQuantityCalculator)->calculate($this->model(['walls' => [
+            ['id' => 'single', 'length' => '2', 'height' => '3', 'shared' => true, 'side_policy' => 'single_face', 'opening_ids' => [], 'evidence_ids' => ['a']],
+            ['id' => 'both', 'length' => '2', 'height' => '3', 'shared' => true, 'side_policy' => 'both_faces', 'opening_ids' => [], 'evidence_ids' => ['b']],
+        ]]));
+        self::assertSame('18.000000', $shared->get('gross_wall_area')?->amount);
+        self::assertStringContainsString('side_multiplier', json_encode($shared->get('gross_wall_area')?->formulaInputs, JSON_THROW_ON_ERROR));
+    }
+
+    public function test_polygon_validation_distinguishes_intersection_from_touch_and_aabb(): void
+    {
+        $invalid = (new BuildingQuantityCalculator)->calculate($this->model(['rooms' => [
+            ['id' => 'bow', 'polygon' => [['0', '0'], ['3', '3'], ['0', '3'], ['3', '0']], 'evidence_ids' => ['b']],
+        ]]));
+        self::assertContains('self_intersecting_polygon', array_column($invalid->diagnostics, 'code'));
+
+        $separate = (new BuildingQuantityCalculator)->calculate($this->model(['rooms' => [
+            ['id' => 'a', 'polygon' => [['0', '0'], ['4', '0'], ['0', '4']], 'evidence_ids' => ['a']],
+            ['id' => 'b', 'polygon' => [['4', '4'], ['4', '1'], ['1', '4']], 'evidence_ids' => ['b']],
+        ]]));
+        self::assertSame('12.500000', $separate->get('floor_area')?->amount);
+    }
+
+    public function test_duplicate_evidence_is_rejected(): void
+    {
+        $result = (new BuildingQuantityCalculator)->calculate($this->model([
+            'rooms' => [['id' => 'r', 'area' => '1', 'evidence_ids' => ['e', 'e']]],
+        ]));
+        self::assertNull($result->get('floor_area'));
+        self::assertContains('invalid_typed_operand', array_column($result->diagnostics, 'code'));
+    }
+
     /** @param array<string, mixed> $override */
     private function model(array $override): array
     {

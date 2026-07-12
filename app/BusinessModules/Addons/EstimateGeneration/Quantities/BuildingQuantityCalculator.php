@@ -12,6 +12,8 @@ final class BuildingQuantityCalculator
     /** @var array<int, array{code: string, severity: string, path: string}> */
     private array $diagnostics = [];
 
+    private bool $scaleConfirmed = false;
+
     /** @param array<string, mixed> $model */
     public function calculate(array $model): QuantityCalculationResult
     {
@@ -33,21 +35,44 @@ final class BuildingQuantityCalculator
             return new QuantityCalculationResult([], $this->diagnostics);
         }
         $scaleConfirmed = ($model['scale']['status'] ?? null) === 'confirmed';
+        $this->scaleConfirmed = $scaleConfirmed;
         $wallRecords = $this->records($model, 'walls');
         $wallIndex = [];
+        $conflictingWallIds = [];
+        $wallGeometryOwners = [];
         foreach ($wallRecords as $index => $wall) {
             $wallId = trim((string) ($wall['id'] ?? ''));
             if ($wallId === '' || isset($wallIndex[$wallId])) {
                 $this->diagnostic('duplicate_or_missing_wall_identity', "walls.$index.id");
+                if ($wallId !== '') {
+                    $conflictingWallIds[$wallId] = true;
+                    unset($wallIndex[$wallId]);
+                }
 
                 continue;
+            }
+            if (isset($conflictingWallIds[$wallId])) {
+                continue;
+            }
+            $geometryIdentity = trim((string) ($wall['geometry_identity'] ?? ''));
+            if ($geometryIdentity !== '' && isset($wallGeometryOwners[$geometryIdentity])) {
+                $previousId = $wallGeometryOwners[$geometryIdentity];
+                $conflictingWallIds[$previousId] = true;
+                $conflictingWallIds[$wallId] = true;
+                unset($wallIndex[$previousId]);
+                $this->diagnostic('duplicate_wall_geometry_identity', "walls.$index.geometry_identity");
+
+                continue;
+            }
+            if ($geometryIdentity !== '') {
+                $wallGeometryOwners[$geometryIdentity] = $wallId;
             }
             $wallIndex[$wallId] = $wall;
         }
 
         $roomItems = [];
         $seenGeometry = [];
-        $roomBounds = [];
+        $roomPolygons = [];
         $ambiguousOverlap = false;
         foreach ($this->records($model, 'rooms') as $index => $room) {
             if (isset($room['holes'])) {
@@ -83,21 +108,20 @@ final class BuildingQuantityCalculator
                 $seenGeometry[$identity] = true;
             }
             if (isset($room['polygon'])) {
-                $bounds = $this->polygonBounds($room['polygon']);
-                if ($bounds !== null) {
-                    foreach ($roomBounds as $previous) {
-                        if ($bounds[0]->isLessThan($previous[2]) && $bounds[2]->isGreaterThan($previous[0])
-                            && $bounds[1]->isLessThan($previous[3]) && $bounds[3]->isGreaterThan($previous[1])) {
+                if (is_array($room['polygon'])) {
+                    foreach ($roomPolygons as $previous) {
+                        if ($this->polygonsProperlyIntersect($room['polygon'], $previous)) {
                             $this->diagnostic('ambiguous_polygon_overlap', "rooms.$index.polygon");
                             $ambiguousOverlap = true;
                         }
                     }
-                    $roomBounds[] = $bounds;
+                    $roomPolygons[] = $room['polygon'];
                 }
             }
             $roomRecord = $areaOperand === null
                 ? $room + ['_operand_contexts' => ['model:'.$modelVersion], '_operand_provenance_versions' => [$modelVersion]]
                 : $this->recordFromOperand($room, $areaOperand);
+            $roomRecord['_formula_operands'] = ['area' => (string) $area];
             $roomItems[] = $this->item($area, $roomRecord);
         }
         if ($ambiguousOverlap) {
@@ -132,6 +156,7 @@ final class BuildingQuantityCalculator
                 continue;
             }
             $openingRecord = $this->recordFromOperands($opening, [$width, $height]);
+            $openingRecord['_formula_operands'] = ['width' => (string) $width->value, 'height' => (string) $height->value];
             $openings[$id] = $openingRecord + ['_area' => $width->value->multipliedBy($height->value)];
             $openingItems[] = $this->item($width->value->multipliedBy($height->value), $openingRecord);
         }
@@ -142,11 +167,16 @@ final class BuildingQuantityCalculator
         $grossItems = [];
         $netItems = [];
         foreach ($wallRecords as $index => $wall) {
-            if (! isset($wallIndex[(string) ($wall['id'] ?? '')])) {
+            if (! isset($wallIndex[(string) ($wall['id'] ?? '')]) || isset($conflictingWallIds[(string) ($wall['id'] ?? '')])) {
                 continue;
             }
             if (($wall['shared'] ?? false) === true && ! in_array($wall['side_policy'] ?? null, ['single_face', 'both_faces'], true)) {
                 $this->diagnostic('shared_wall_side_policy_missing', "walls.$index.side_policy");
+
+                continue;
+            }
+            if (! array_key_exists('height', $wall)) {
+                $this->diagnostic('missing_wall_height', "walls.$index");
 
                 continue;
             }
@@ -163,12 +193,21 @@ final class BuildingQuantityCalculator
                 continue;
             }
             $wallRecord = $this->recordFromOperands($wall, [$length, $height]);
-            $gross = $length->value->multipliedBy($height->value);
+            $sideMultiplier = ($wall['shared'] ?? false) === true && ($wall['side_policy'] ?? null) === 'both_faces'
+                ? BigDecimal::of('2') : BigDecimal::one();
+            $wallRecord['_formula_operands'] = [
+                'length' => (string) $length->value, 'height' => (string) $height->value,
+                'side_multiplier' => (string) $sideMultiplier,
+            ];
+            $gross = $length->value->multipliedBy($height->value)->multipliedBy($sideMultiplier);
             $grossItems[] = $this->item($gross, $wallRecord);
             $net = $gross;
             $netEvidence = $this->strings($wallRecord['evidence_ids'] ?? []);
             $netSource = $this->source($wallRecord);
             $netAssumptions = $this->strings($wallRecord['assumptions'] ?? []);
+            $netContexts = $this->strings($wallRecord['_operand_contexts'] ?? []);
+            $netVersions = $this->strings($wallRecord['_operand_provenance_versions'] ?? []);
+            $openingOperands = [];
             $refs = $this->strings($wall['opening_ids'] ?? []);
             if (count($refs) !== count(array_unique($refs))) {
                 $this->diagnostic('duplicate_opening_reference', "walls.$index.opening_ids");
@@ -182,12 +221,22 @@ final class BuildingQuantityCalculator
 
                     continue;
                 }
+                $openingContexts = $this->strings($opening['_operand_contexts'] ?? []);
+                if (count(array_unique([...$netContexts, ...$openingContexts])) > 1) {
+                    $this->diagnostic('wall_opening_context_conflict', "walls.$index.opening_ids");
+                    $valid = false;
+
+                    continue;
+                }
                 $net = $net->minus($opening['_area']);
+                $openingOperands[$ref] = (string) $opening['_area'];
                 $netEvidence = [...$netEvidence, ...$this->strings($opening['evidence_ids'] ?? [])];
                 $netAssumptions = [...$netAssumptions, ...$this->strings($opening['assumptions'] ?? [])];
                 if ($this->source($opening) === QuantitySource::Estimated) {
                     $netSource = QuantitySource::Estimated;
                 }
+                $netContexts = [...$netContexts, ...$openingContexts];
+                $netVersions = [...$netVersions, ...$this->strings($opening['_operand_provenance_versions'] ?? [])];
             }
             if (! $valid) {
                 continue;
@@ -200,8 +249,9 @@ final class BuildingQuantityCalculator
             $netItems[] = [
                 'amount' => $net, 'source' => $netSource, 'evidence' => $netEvidence,
                 'assumptions' => $netAssumptions, 'identity' => (string) ($wall['id'] ?? "wall-$index"),
-                'contexts' => $this->strings($wallRecord['_operand_contexts'] ?? []),
-                'provenance_versions' => $this->strings($wallRecord['_operand_provenance_versions'] ?? []),
+                'contexts' => $this->uniqueSorted($netContexts),
+                'provenance_versions' => $this->uniqueSorted($netVersions),
+                'named_operands' => ['gross_wall_area' => (string) $gross, 'openings' => $openingOperands],
             ];
         }
         if ($grossItems !== []) {
@@ -220,7 +270,9 @@ final class BuildingQuantityCalculator
 
                 continue;
             }
-            $foundationItems[] = $this->item($values[0]->multipliedBy($values[1])->multipliedBy($values[2]), $this->recordFromOperands($foundation, array_filter($operands)));
+            $foundationRecord = $this->recordFromOperands($foundation, array_filter($operands));
+            $foundationRecord['_formula_operands'] = ['length' => (string) $values[0], 'width' => (string) $values[1], 'depth' => (string) $values[2]];
+            $foundationItems[] = $this->item($values[0]->multipliedBy($values[1])->multipliedBy($values[2]), $foundationRecord);
         }
         if ($foundationItems !== []) {
             $items['foundation_volume'] = $this->aggregate('foundation_volume', $foundationItems, $modelVersion);
@@ -234,7 +286,9 @@ final class BuildingQuantityCalculator
 
                 continue;
             }
-            $roofItems[] = $this->item($area->value, $this->recordFromOperand($roof, $area));
+            $roofRecord = $this->recordFromOperand($roof, $area);
+            $roofRecord['_formula_operands'] = ['area' => (string) $area->value];
+            $roofItems[] = $this->item($area->value, $roofRecord);
         }
         if ($roofItems !== []) {
             $items['roof_area'] = $this->aggregate('roof_area', $roofItems, $modelVersion);
@@ -272,7 +326,9 @@ final class BuildingQuantityCalculator
                 continue;
             }
             $engineeringGroups[$key]['unit'] = $unit;
-            $engineeringGroups[$key]['items'][] = $this->item($amount->value, $this->recordFromOperand($element, $amount));
+            $engineeringRecord = $this->recordFromOperand($element, $amount);
+            $engineeringRecord['_formula_operands'] = ['measurement' => (string) $amount->value];
+            $engineeringGroups[$key]['items'][] = $this->item($amount->value, $engineeringRecord);
         }
         foreach ($engineeringGroups as $key => $group) {
             $items[$key] = $this->aggregate($key, $group['items'], $modelVersion, $group['unit']);
@@ -325,16 +381,16 @@ final class BuildingQuantityCalculator
         $catalog = (new QuantityFormulaCatalog)->definition($key);
         $evidence = $this->uniqueSorted($evidence);
         $assumptions = $this->uniqueSorted($assumptions);
+        $formulaItems = array_map(static fn (array $item): QuantityFormulaItemData => new QuantityFormulaItemData(
+            identity: $item['identity'], amount: (string) $item['amount'], namedOperands: $item['named_operands'],
+            source: $item['source'], evidenceIds: $item['evidence'], assumptions: $item['assumptions'],
+            contexts: $item['contexts'], provenanceVersions: $item['provenance_versions'],
+        ), $items);
 
         return new QuantityData(
             key: $key, unit: $unit ?? $catalog['unit'], amount: (string) $sum->toScale(6, RoundingMode::HalfUp),
             formulaKey: $catalog['formula'], formulaVersion: QuantityFormulaCatalog::VERSION,
-            formulaInputs: ['items' => array_map(static fn (array $item): array => [
-                'identity' => $item['identity'], 'amount' => (string) $item['amount'],
-                'source' => $item['source']->value, 'evidence_ids' => $item['evidence'],
-                'assumptions' => $item['assumptions'], 'contexts' => $item['contexts'],
-                'provenance_versions' => $item['provenance_versions'],
-            ], $items)], source: $source,
+            formulaInputs: ['items' => array_map(static fn (QuantityFormulaItemData $item): array => $item->toArray(), $formulaItems)], source: $source,
             evidenceIds: $evidence, modelVersion: $modelVersion, assumptions: $assumptions,
             reviewBlockers: $source === QuantitySource::Estimated ? ['estimated_quantity_requires_review'] : [],
         );
@@ -350,6 +406,7 @@ final class BuildingQuantityCalculator
             'identity' => (string) ($record['id'] ?? 'operand'),
             'contexts' => $this->strings($record['_operand_contexts'] ?? []),
             'provenance_versions' => $this->strings($record['_operand_provenance_versions'] ?? []),
+            'named_operands' => is_array($record['_formula_operands'] ?? null) ? $record['_formula_operands'] : ['result' => (string) $amount],
         ];
     }
 
@@ -364,7 +421,15 @@ final class BuildingQuantityCalculator
     private function operand(array $record, string $field, string $unit, string $modelVersion, string $path): ?QuantityOperandData
     {
         try {
-            return QuantityOperandData::fromRecord($record, $field, $unit, $modelVersion);
+            return QuantityOperandData::fromRecord(
+                $record,
+                $field,
+                $unit,
+                $modelVersion,
+                $this->scaleConfirmed,
+                $field,
+                (string) ($record['id'] ?? 'model:'.$modelVersion),
+            );
         } catch (\InvalidArgumentException) {
             $this->diagnostic('invalid_typed_operand', $path);
             if ($this->strings($record['evidence_ids'] ?? []) === [] && ! is_array($record[$field] ?? null)) {
@@ -414,20 +479,6 @@ final class BuildingQuantityCalculator
         return $record;
     }
 
-    /** @param array<string, mixed> $operand */
-    private function typedMetric(array $operand, string $unit, string $path): ?BigDecimal
-    {
-        if (($operand['unit'] ?? null) !== $unit || ($operand['source'] ?? null) !== 'evidenced'
-            || ($operand['metric_independent'] ?? false) !== true || $this->strings($operand['evidence_ids'] ?? []) === []
-            || ! is_array($operand['context'] ?? null) || trim((string) ($operand['context']['id'] ?? '')) === '') {
-            $this->diagnostic('invalid_typed_metric_operand', $path);
-
-            return null;
-        }
-
-        return $this->decimal($operand['value'] ?? null);
-    }
-
     private function decimal(mixed $value): ?BigDecimal
     {
         if (! is_string($value) && ! is_int($value)) {
@@ -451,6 +502,25 @@ final class BuildingQuantityCalculator
         }
         $sum = BigDecimal::zero();
         $points = array_values($polygon);
+        $identities = array_map(static fn (array $point): string => (string) $point[0].','.(string) $point[1], $points);
+        if (count($identities) !== count(array_unique($identities))) {
+            $this->diagnostic('duplicate_polygon_vertex', $path);
+
+            return null;
+        }
+        $edgeCount = count($points);
+        for ($i = 0; $i < $edgeCount; $i++) {
+            for ($j = $i + 1; $j < $edgeCount; $j++) {
+                if ($j === $i + 1 || ($i === 0 && $j === $edgeCount - 1)) {
+                    continue;
+                }
+                if ($this->segmentsProperlyIntersect($points[$i], $points[($i + 1) % $edgeCount], $points[$j], $points[($j + 1) % $edgeCount])) {
+                    $this->diagnostic('self_intersecting_polygon', $path);
+
+                    return null;
+                }
+            }
+        }
         foreach ($points as $index => $point) {
             $next = $points[($index + 1) % count($points)];
             if (! is_array($point) || ! is_array($next) || count($point) !== 2 || count($next) !== 2) {
@@ -469,7 +539,7 @@ final class BuildingQuantityCalculator
             }
             $sum = $sum->plus($x->multipliedBy($nextY))->minus($nextX->multipliedBy($y));
         }
-        $area = $sum->abs()->dividedBy('2', $sum->getScale(), RoundingMode::Unnecessary);
+        $area = $sum->abs()->dividedBy('2', $sum->getScale() + 1, RoundingMode::Unnecessary)->strippedOfTrailingZeros();
         if ($area->isZero()) {
             $this->diagnostic('degenerate_polygon', $path);
 
@@ -529,11 +599,6 @@ final class BuildingQuantityCalculator
         $this->diagnostics[] = compact('code', 'severity', 'path');
     }
 
-    private function canonicalJson(mixed $value): string
-    {
-        return json_encode($value, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION);
-    }
-
     private function polygonIdentity(mixed $polygon): ?string
     {
         if (! is_array($polygon) || count($polygon) < 3) {
@@ -557,29 +622,46 @@ final class BuildingQuantityCalculator
         return $variants[0];
     }
 
-    /** @return array{BigDecimal, BigDecimal, BigDecimal, BigDecimal}|null */
-    private function polygonBounds(mixed $polygon): ?array
+    /** @param array<int, mixed> $first @param array<int, mixed> $second */
+    private function polygonsProperlyIntersect(array $first, array $second): bool
     {
-        if (! is_array($polygon) || $polygon === []) {
-            return null;
-        }
-        $xs = [];
-        $ys = [];
-        foreach ($polygon as $point) {
-            if (! is_array($point) || count($point) !== 2) {
-                return null;
+        for ($i = 0; $i < count($first); $i++) {
+            for ($j = 0; $j < count($second); $j++) {
+                if ($this->segmentsProperlyIntersect($first[$i], $first[($i + 1) % count($first)], $second[$j], $second[($j + 1) % count($second)])) {
+                    return true;
+                }
             }
-            $x = $this->decimal($point[0]);
-            $y = $this->decimal($point[1]);
-            if ($x === null || $y === null) {
-                return null;
-            }
-            $xs[] = $x;
-            $ys[] = $y;
         }
-        usort($xs, static fn (BigDecimal $a, BigDecimal $b): int => $a->compareTo($b));
-        usort($ys, static fn (BigDecimal $a, BigDecimal $b): int => $a->compareTo($b));
 
-        return [$xs[0], $ys[0], $xs[array_key_last($xs)], $ys[array_key_last($ys)]];
+        return false;
+    }
+
+    private function segmentsProperlyIntersect(mixed $a, mixed $b, mixed $c, mixed $d): bool
+    {
+        if (! is_array($a) || ! is_array($b) || ! is_array($c) || ! is_array($d)) {
+            return false;
+        }
+        $o1 = $this->orientation($a, $b, $c);
+        $o2 = $this->orientation($a, $b, $d);
+        $o3 = $this->orientation($c, $d, $a);
+        $o4 = $this->orientation($c, $d, $b);
+
+        return $o1 !== 0 && $o2 !== 0 && $o3 !== 0 && $o4 !== 0 && $o1 !== $o2 && $o3 !== $o4;
+    }
+
+    private function orientation(array $a, array $b, array $c): int
+    {
+        $ax = $this->decimal($a[0] ?? null);
+        $ay = $this->decimal($a[1] ?? null);
+        $bx = $this->decimal($b[0] ?? null);
+        $by = $this->decimal($b[1] ?? null);
+        $cx = $this->decimal($c[0] ?? null);
+        $cy = $this->decimal($c[1] ?? null);
+        if ($ax === null || $ay === null || $bx === null || $by === null || $cx === null || $cy === null) {
+            return 0;
+        }
+        $cross = $bx->minus($ax)->multipliedBy($cy->minus($ay))->minus($by->minus($ay)->multipliedBy($cx->minus($ax)));
+
+        return $cross->compareTo(BigDecimal::zero());
     }
 }

@@ -17,16 +17,28 @@ final readonly class QuantityOperandData
         public string $contextId,
         public array $assumptions,
         public string $provenanceVersion,
+        public string $role,
+        public string $compatibilityGroup,
     ) {}
 
     /** @param array<string, mixed> $record */
-    public static function fromRecord(array $record, string $field, string $unit, string $modelVersion): self
-    {
+    public static function fromRecord(
+        array $record,
+        string $field,
+        string $unit,
+        string $modelVersion,
+        bool $scaleConfirmed,
+        string $role,
+        string $compatibilityGroup,
+    ): self {
         if (! in_array($unit, ['m', 'm2', 'm3', 'count'], true)) {
             throw new \InvalidArgumentException('unit');
         }
         $raw = $record[$field] ?? null;
         $typed = is_array($raw);
+        if (! $scaleConfirmed && ! $typed) {
+            throw new \InvalidArgumentException('scale');
+        }
         $payload = $typed ? $raw : $record;
         $value = $typed ? ($raw['value'] ?? null) : $raw;
         if (! is_string($value) && ! is_int($value)) {
@@ -50,6 +62,13 @@ final readonly class QuantityOperandData
         if (! in_array($sourceValue, ['evidenced', 'estimated'], true)) {
             throw new \InvalidArgumentException('source');
         }
+        if (! $scaleConfirmed && $sourceValue === 'evidenced' && ($payload['metric_independent'] ?? false) !== true) {
+            throw new \InvalidArgumentException('metric_independent');
+        }
+        $rawEvidence = is_array($payload['evidence_ids'] ?? null) ? array_map('strval', $payload['evidence_ids']) : [];
+        if (count($rawEvidence) !== count(array_unique($rawEvidence))) {
+            throw new \InvalidArgumentException('duplicate_evidence');
+        }
         $evidence = self::strings($payload['evidence_ids'] ?? []);
         $assumptions = self::strings($payload['assumptions'] ?? []);
         if ($sourceValue === 'evidenced' && $evidence === []) {
@@ -68,7 +87,7 @@ final readonly class QuantityOperandData
             throw new \InvalidArgumentException('provenance_version');
         }
 
-        return new self($decimal, $unit, QuantitySource::from($sourceValue), $evidence, $contextId, $assumptions, $version);
+        return new self($decimal, $unit, QuantitySource::from($sourceValue), $evidence, $contextId, $assumptions, $version, $role, $compatibilityGroup);
     }
 
     /** @return array<int, string> */

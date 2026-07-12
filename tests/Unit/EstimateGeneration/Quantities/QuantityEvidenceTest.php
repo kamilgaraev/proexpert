@@ -15,7 +15,7 @@ final class QuantityEvidenceTest extends TestCase
         $result = (new BuildingQuantityCalculator)->calculate([
             'model_version' => 'building-model.v7',
             'scale' => ['status' => 'confirmed', 'unit' => 'm'],
-            'rooms' => [['id' => 'r', 'area' => '12.50', 'evidence_ids' => ['z', 'a', 'z']]],
+            'rooms' => [['id' => 'r', 'area' => '12.50', 'evidence_ids' => ['z', 'a']]],
         ]);
         $quantity = $result->get('floor_area');
 

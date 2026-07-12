@@ -17,15 +17,18 @@ final class QuantityFormulaCatalog
         'net_wall_area' => ['unit' => 'm2', 'formula' => 'wall.net_area.sum'],
         'foundation_volume' => ['unit' => 'm3', 'formula' => 'foundation.volume.sum'],
         'roof_area' => ['unit' => 'm2', 'formula' => 'roof.area.sum'],
+        'engineering.water.length' => ['unit' => 'm', 'formula' => 'engineering.measurement.sum'],
+        'engineering.sewer.length' => ['unit' => 'm', 'formula' => 'engineering.measurement.sum'],
+        'engineering.heating.length' => ['unit' => 'm', 'formula' => 'engineering.measurement.sum'],
+        'engineering.ventilation.length' => ['unit' => 'm', 'formula' => 'engineering.measurement.sum'],
+        'engineering.electrical.length' => ['unit' => 'm', 'formula' => 'engineering.measurement.sum'],
+        'engineering.electrical.point' => ['unit' => 'count', 'formula' => 'engineering.measurement.sum'],
+        'engineering.water.point' => ['unit' => 'count', 'formula' => 'engineering.measurement.sum'],
     ];
 
     /** @return array{unit: string, formula: string} */
     public function definition(string $key): array
     {
-        if (str_starts_with($key, 'engineering.')) {
-            return ['unit' => '', 'formula' => 'engineering.measurement.sum'];
-        }
-
         if (! isset(self::FORMULAS[$key])) {
             throw new \InvalidArgumentException('Unknown quantity formula: '.$key);
         }
