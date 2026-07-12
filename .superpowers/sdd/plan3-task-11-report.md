@@ -249,3 +249,23 @@ libredwg bootstrap concurrency: PASS
 tests/Runtime/libredwg-bootstrap-rollback.ps1
 libredwg bootstrap rollback: PASS
 ```
+
+### Final publication transaction review
+
+Publication transaction теперь охватывает `staging -> final`, полную post-publish аутентификацию и backup cleanup. При любой ошибке, пока authenticated backup доступен, новый final атомарно переименовывается в `win64.failed.*`, backup возвращается в `win64`, восстановленная установка полностью проверяется и только затем quarantine удаляется bounded cleanup. Backup перед обычным удалением переименовывается в `win64.retired.*`; cleanup failure не делает невалидный final authoritative. Перед каждым cache-hit под canonical mutex выполняется reconciliation `backup/failed/retired`, поэтому stale generation не игнорируется.
+
+```text
+libredwg-bootstrap-rollback.ps1 -Scenario FAIL_SECOND_MOVE
+publish-rollback-FAIL_SECOND_MOVE: PASS
+libredwg bootstrap rollback: PASS
+
+libredwg-bootstrap-rollback.ps1 -Scenario FAIL_POST_VALIDATE
+publish-rollback-FAIL_POST_VALIDATE: PASS
+libredwg bootstrap rollback: PASS
+
+libredwg-bootstrap-rollback.ps1 -Scenario FAIL_BACKUP_CLEANUP
+publish-rollback-FAIL_BACKUP_CLEANUP: PASS
+libredwg bootstrap rollback: PASS
+```
+
+Каждый сценарий проверяет неизменный marker старой установки, отсутствие `win64.backup.*`/`win64.failed.*`/`win64.retired.*`, точный `dwgread 0.13.4` восстановленного runtime и чистый следующий idempotent cache-hit.

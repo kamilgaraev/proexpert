@@ -130,6 +130,26 @@ function Copy-ArchivePrivately([string]$Source, [string]$Destination) {
         try { $input.CopyTo($output) } finally { $output.Dispose() }
     } finally { $input.Dispose() }
 }
+function Remove-TreeBounded([string]$Path) {
+    Assert-NoReparseComponents $Path
+    foreach ($attempt in 1..20) {
+        if (-not (Test-Path -LiteralPath $Path)) { return }
+        try { Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop } catch { Start-Sleep -Milliseconds 50 }
+    }
+    if (Test-Path -LiteralPath $Path) { throw 'libredwg_stale_cleanup_failed' }
+}
+function Reconcile-PublicationState {
+    $backups = @(Get-ChildItem -LiteralPath $cacheRoot -Directory -Force | Where-Object { $_.Name -like 'win64.backup.*' })
+    $failed = @(Get-ChildItem -LiteralPath $cacheRoot -Directory -Force | Where-Object { $_.Name -like 'win64.failed.*' -or $_.Name -like 'win64.retired.*' })
+    if (-not (Test-Path -LiteralPath $final) -and $backups.Count -eq 1) {
+        Assert-NoReparseComponents $backups[0].FullName
+        [IO.Directory]::Move($backups[0].FullName, $final)
+        $backups = @()
+        if (-not (Test-AuthenticatedInstall)) { throw 'libredwg_reconciled_install_invalid' }
+    }
+    if ($backups.Count -gt 1) { throw 'libredwg_backup_state_ambiguous' }
+    foreach ($path in @($backups + $failed)) { Remove-TreeBounded $path.FullName }
+}
 
 if ($InspectArchive) { Assert-AndExtractArchive (Resolve-Path $InspectArchive).Path ([IO.Path]::GetTempPath()) $false; 'archive-safe'; return }
 if ($TestVersionBinary) { if (Test-ExactVersion $TestVersionBinary) { 'version-valid'; return }; throw 'libredwg_runtime_version_invalid' }
@@ -151,6 +171,7 @@ $backup = $null
 try {
     $lockHeld = $mutex.WaitOne([TimeSpan]::FromMinutes(5))
     if (-not $lockHeld) { throw 'libredwg_bootstrap_lock_timeout' }
+    Reconcile-PublicationState
     if ($env:MOST_LIBREDWG_TEST_FORCE_REBUILD -ne '1' -and (Test-AuthenticatedInstall)) { (Resolve-Path (Join-Path $final $binaryRelativePath)).Path; return }
     $work = Join-Path ([IO.Path]::GetTempPath()) ('most-libredwg-' + [guid]::NewGuid().ToString('N'))
     $staging = Join-Path $work 'staging'
@@ -176,15 +197,36 @@ try {
         $backup = Join-Path $cacheRoot ('win64.backup.' + [guid]::NewGuid().ToString('N'))
         [IO.Directory]::Move($final, $backup)
     }
+    $published = $false
+    $quarantine = $null
     try {
         if ($env:MOST_LIBREDWG_TEST_FAIL_SECOND_MOVE -eq '1') { throw 'libredwg_test_publish_failure' }
         [IO.Directory]::Move($staging, $final)
+        $published = $true
+        if ($env:MOST_LIBREDWG_TEST_FAIL_POST_VALIDATE -eq '1') { throw 'libredwg_test_post_validate_failure' }
+        if (-not (Test-AuthenticatedInstall)) { throw 'libredwg_published_install_invalid' }
+        if ($backup -and (Test-Path -LiteralPath $backup)) {
+            if ($env:MOST_LIBREDWG_TEST_FAIL_BACKUP_CLEANUP -eq '1') { throw 'libredwg_test_backup_cleanup_failure' }
+            $retired = Join-Path $cacheRoot ('win64.retired.' + [guid]::NewGuid().ToString('N'))
+            [IO.Directory]::Move($backup, $retired)
+            $backup = $null
+            Remove-TreeBounded $retired
+        }
     } catch {
-        if ($backup -and (Test-Path -LiteralPath $backup) -and -not (Test-Path -LiteralPath $final)) { [IO.Directory]::Move($backup, $final); $backup = $null }
+        if ($backup -and (Test-Path -LiteralPath $backup)) {
+            if ($published -and (Test-Path -LiteralPath $final)) {
+                Assert-NoReparseComponents $final
+                $quarantine = Join-Path $cacheRoot ('win64.failed.' + [guid]::NewGuid().ToString('N'))
+                [IO.Directory]::Move($final, $quarantine)
+            }
+            if (-not (Test-Path -LiteralPath $final)) { [IO.Directory]::Move($backup, $final); $backup = $null }
+            if (-not (Test-AuthenticatedInstall)) { throw 'libredwg_rollback_install_invalid' }
+            if ($quarantine) { Remove-TreeBounded $quarantine; $quarantine = $null }
+        } elseif ($published -and -not (Test-AuthenticatedInstall)) {
+            throw 'libredwg_failed_install_authoritative'
+        }
         throw
     }
-    if (-not (Test-AuthenticatedInstall)) { throw 'libredwg_published_install_invalid' }
-    if ($backup -and (Test-Path -LiteralPath $backup)) { Remove-Item -LiteralPath $backup -Recurse -Force; $backup = $null }
     (Resolve-Path (Join-Path $final $binaryRelativePath)).Path
 } finally {
     if ($backup -and (Test-Path -LiteralPath $backup) -and -not (Test-Path -LiteralPath $final)) { [IO.Directory]::Move($backup, $final) }

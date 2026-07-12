@@ -36,6 +36,11 @@ final class CadProductionRuntimeContractTest extends TestCase
         self::assertStringContainsString('Get-CanonicalFileManifestSha256 $final', $script);
         self::assertStringContainsString('[IO.Directory]::Move($final, $backup)', $script);
         self::assertStringContainsString('[IO.Directory]::Move($backup, $final)', $script);
+        self::assertStringContainsString('Reconcile-PublicationState', $script);
+        self::assertStringContainsString('win64.failed.', $script);
+        self::assertStringContainsString('win64.retired.', $script);
+        self::assertStringContainsString('MOST_LIBREDWG_TEST_FAIL_POST_VALIDATE', $script);
+        self::assertStringContainsString('MOST_LIBREDWG_TEST_FAIL_BACKUP_CLEANUP', $script);
         self::assertStringContainsString('[IO.Directory]::Move($staging, $final)', $script);
         self::assertLessThan(
             strpos($script, 'Assert-AndExtractArchive $privateArchive'),
