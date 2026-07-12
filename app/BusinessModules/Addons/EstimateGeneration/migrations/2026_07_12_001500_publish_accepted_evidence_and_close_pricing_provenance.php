@@ -136,7 +136,49 @@ SQL);
     public function down(): void
     {
         if (DB::getDriverName() === 'pgsql') {
-            DB::unprepared('DROP TRIGGER IF EXISTS eg_evidence_zz_decimal_restore ON public.estimate_generation_evidence; DROP TRIGGER IF EXISTS eg_evidence_j_decimal_prepare ON public.estimate_generation_evidence; DROP TRIGGER IF EXISTS eg_evidence_decimal_00_prepare ON public.estimate_generation_evidence; DROP FUNCTION IF EXISTS public.eg_work_item_decimal_restore(); DROP FUNCTION IF EXISTS public.eg_work_item_decimal_prepare(); DROP TRIGGER IF EXISTS eg_finalized_norm_resource_immutable ON public.estimate_norm_resources; CREATE TRIGGER eg_finalized_norm_resource_immutable BEFORE UPDATE OR DELETE ON public.estimate_norm_resources FOR EACH ROW EXECUTE FUNCTION public.eg_pricing_reference_immutable_guard();');
+            DB::unprepared(<<<'SQL'
+DROP TRIGGER IF EXISTS eg_evidence_zz_decimal_restore ON public.estimate_generation_evidence;
+DROP TRIGGER IF EXISTS eg_evidence_j_decimal_prepare ON public.estimate_generation_evidence;
+DROP TRIGGER IF EXISTS eg_evidence_decimal_00_prepare ON public.estimate_generation_evidence;
+DROP FUNCTION IF EXISTS public.eg_work_item_decimal_restore();
+DROP FUNCTION IF EXISTS public.eg_work_item_decimal_prepare();
+DROP TRIGGER IF EXISTS eg_finalized_norm_resource_immutable ON public.estimate_norm_resources;
+CREATE TRIGGER eg_finalized_norm_resource_immutable BEFORE UPDATE OR DELETE ON public.estimate_norm_resources
+FOR EACH ROW EXECUTE FUNCTION public.eg_pricing_reference_immutable_guard();
+
+CREATE OR REPLACE FUNCTION public.eg_finalize_package_item_price(p_item_id bigint) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+DECLARE expected jsonb;
+BEGIN
+  PERFORM 1 FROM public.estimate_generation_package_items WHERE id=p_item_id AND price_snapshot IS NULL AND pricing_finalized_at IS NULL FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'estimate_generation.price_finalize_state_invalid'; END IF;
+  UPDATE public.estimate_generation_package_items SET pricing_finalized_at=clock_timestamp() WHERE id=p_item_id;
+  expected:=public.eg_expected_package_item_price(p_item_id);
+  UPDATE public.estimate_generation_package_items SET quantity=(expected->>'quantity')::numeric,unit=expected->>'unit',price_source='regional_catalog',
+    unit_price=(expected->>'unit_price')::numeric,direct_cost=(expected->>'money')::numeric,overhead_cost=0,profit_cost=0,
+    total_cost=(expected->>'money')::numeric,price_snapshot=expected->'snapshot' WHERE id=p_item_id;
+END; $$;
+
+CREATE OR REPLACE FUNCTION public.eg_package_item_price_validate() RETURNS trigger LANGUAGE plpgsql
+SET search_path=pg_catalog,public AS $$ DECLARE expected jsonb; current_item record; BEGIN
+  SELECT * INTO current_item FROM public.estimate_generation_package_items WHERE id=NEW.id;
+  IF current_item.price_snapshot IS NULL AND current_item.pricing_finalized_at IS NULL THEN RETURN NEW; END IF;
+  IF current_item.price_snapshot IS NULL OR current_item.pricing_finalized_at IS NULL THEN RAISE EXCEPTION 'estimate_generation.priced_state_incomplete'; END IF;
+  expected:=public.eg_expected_package_item_price(NEW.id);
+  IF current_item.price_snapshot IS DISTINCT FROM expected->'snapshot' OR current_item.quantity IS DISTINCT FROM (expected->>'quantity')::numeric
+    OR current_item.unit IS DISTINCT FROM expected->>'unit' OR current_item.unit_price IS DISTINCT FROM (expected->>'unit_price')::numeric
+    OR current_item.direct_cost IS DISTINCT FROM (expected->>'money')::numeric OR current_item.total_cost IS DISTINCT FROM (expected->>'money')::numeric
+    OR current_item.overhead_cost<>0 OR current_item.profit_cost<>0 OR current_item.price_source IS DISTINCT FROM 'regional_catalog'
+  THEN RAISE EXCEPTION 'estimate_generation.database_built_price_mismatch'; END IF;
+  RETURN NEW;
+END; $$;
+
+DROP FUNCTION IF EXISTS public.eg_expected_package_item_price_closed(bigint);
+DROP FUNCTION IF EXISTS public.eg_pricing_provenance(bigint);
+REVOKE ALL ON FUNCTION public.eg_expected_package_item_price(bigint) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.eg_finalize_package_item_price(bigint) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.eg_finalize_package_item_price(bigint) TO CURRENT_USER;
+SQL);
         }
         Schema::dropIfExists('estimate_generation_accepted_evidence');
     }
