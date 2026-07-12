@@ -76,14 +76,6 @@ final class ConfirmBuildingGeometry
                 'confidence' => 1, 'producer_name' => 'user_input_normalizer',
                 'producer_version' => 'model:v1', 'fingerprint' => $fingerprint, 'created_at' => now(), 'updated_at' => now(),
             ]);
-            DB::table('estimate_generation_geometry_confirmations')->insert([
-                'organization_id' => $command->organizationId, 'project_id' => $command->projectId,
-                'session_id' => $command->sessionId, 'evidence_id' => $evidenceId, 'actor_id' => $command->actorId,
-                'input_version' => $command->expectedInputVersion, 'previous_model_version' => $command->expectedModelVersion,
-                'source_class' => 'user_geometry_confirmation', 'reviewer_ref' => 'user:'.$command->actorId,
-                'confirmed_at' => now(), 'semantic_payload' => json_encode($evidenceValue, JSON_THROW_ON_ERROR),
-                'created_at' => now(), 'updated_at' => now(),
-            ]);
             $new = new EstimateGenerationBuildingModel;
             $new->forceFill([
                 'organization_id' => $command->organizationId, 'project_id' => $command->projectId,
@@ -93,6 +85,20 @@ final class ConfirmBuildingGeometry
                 'model' => $normalized->toArray(), 'assumptions' => $normalized->toArray()['assumptions'],
                 'metrics' => $normalized->metrics,
             ])->save();
+            if ($command->sourceConfirmation !== null) {
+                DB::table('estimate_generation_geometry_confirmations')->insert([
+                    'organization_id' => $command->organizationId, 'project_id' => $command->projectId,
+                    'session_id' => $command->sessionId, 'evidence_id' => $evidenceId,
+                    'previous_building_model_id' => $head->getKey(), 'confirmed_building_model_id' => $new->getKey(),
+                    'actor_id' => $command->actorId,
+                    'previous_input_version' => $head->input_version, 'previous_content_version' => $head->content_version,
+                    'confirmed_input_version' => $new->input_version, 'confirmed_content_version' => $new->content_version,
+                    'source_class' => 'user_geometry_confirmation', 'reviewer_ref' => 'user:'.$command->actorId,
+                    'confirmed_at' => now(),
+                    'semantic_payload' => json_encode($command->sourceConfirmation, JSON_THROW_ON_ERROR),
+                    'created_at' => now(), 'updated_at' => now(),
+                ]);
+            }
             DB::table('estimate_generation_building_model_evidence')->insert(array_map(fn (int $id): array => [
                 'building_model_id' => $new->getKey(), 'evidence_id' => $id, 'organization_id' => $command->organizationId,
                 'project_id' => $command->projectId, 'session_id' => $command->sessionId, 'created_at' => now(),

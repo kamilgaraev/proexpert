@@ -53,6 +53,31 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
     }
 
     #[Test]
+    public function session_payload_rollout_resumes_partial_shadow_and_preserves_data_schema_and_nullability(): void
+    {
+        $this->requirePostgres();
+        $fixture = $this->fixture();
+        try {
+            $before = DB::table('estimate_generation_sessions')->orderBy('id')->pluck('input_payload', 'id')->all();
+            $migration = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_000250_convert_session_payloads_to_jsonb.php';
+            $migration->down();
+            DB::statement('ALTER TABLE estimate_generation_sessions ADD COLUMN input_payload__jsonb_shadow jsonb');
+            DB::statement('UPDATE estimate_generation_sessions SET input_payload__jsonb_shadow=input_payload::jsonb WHERE id=(SELECT MIN(id) FROM estimate_generation_sessions)');
+            $migration->up();
+            self::assertSame($before, DB::table('estimate_generation_sessions')->orderBy('id')->pluck('input_payload', 'id')->all());
+            $columns = DB::select("SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_schema='public' AND table_name='estimate_generation_sessions' AND column_name IN ('input_payload','analysis_payload','draft_payload','problem_flags') ORDER BY column_name");
+            self::assertCount(4, $columns);
+            foreach ($columns as $column) {
+                self::assertSame('jsonb', $column->data_type);
+                self::assertSame($column->column_name === 'input_payload' ? 'NO' : 'YES', $column->is_nullable);
+                self::assertNull($column->column_default);
+            }
+        } finally {
+            $this->cleanup($fixture);
+        }
+    }
+
+    #[Test]
     public function source_confirmation_endpoint_persists_server_audit_model_evidence_invalidation_and_outbox(): void
     {
         $this->requirePostgres();
@@ -84,11 +109,56 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
             self::assertSame('user_geometry_confirmation', $audit->source_class);
             self::assertSame('user:'.$fixture['user']->id, $audit->reviewer_ref);
             self::assertSame((int) $fixture['user']->id, (int) $audit->actor_id);
-            self::assertSame($fixture['inputVersion'], $audit->input_version);
-            self::assertSame($fixture['model_version'], $audit->previous_model_version);
+            self::assertSame((int) $fixture['model_id'], (int) $audit->previous_building_model_id);
+            self::assertSame((int) $newModelId, (int) $audit->confirmed_building_model_id);
+            self::assertSame($fixture['inputVersion'], $audit->previous_input_version);
+            self::assertSame($fixture['model_version'], $audit->previous_content_version);
+            self::assertSame(
+                DB::table('estimate_generation_building_models')->where('id', $newModelId)->value('input_version'),
+                $audit->confirmed_input_version,
+            );
+            self::assertSame(
+                DB::table('estimate_generation_building_models')->where('id', $newModelId)->value('content_version'),
+                $audit->confirmed_content_version,
+            );
             self::assertTrue(DB::table('estimate_generation_evidence')->where('id', $audit->evidence_id)
                 ->where('session_id', $fixture['session']->id)->exists());
             self::assertNotEmpty($audit->confirmed_at);
+            self::assertEquals($this->sourceConfirmation(), json_decode((string) $audit->semantic_payload, true, flags: JSON_THROW_ON_ERROR));
+            foreach ([
+                ['extra' => true],
+                ['privacy' => ['approved' => true]],
+                ['scale_evidence' => [['role' => 'unknown']]],
+                ['elements' => [['key' => 'room-1', 'type' => 'room', 'boundary_handle' => 'R1', 'extra' => true]]],
+                ['elements' => [['key' => 'opening-1', 'type' => 'opening', 'wall_key' => 'missing-wall', 'opening_type' => 'door', 'boundary_handles' => ['W1', 'W2'], 'dimension_handle' => 'D1']]],
+            ] as $mutation) {
+                $invalid = [...$this->sourceConfirmation(), ...$mutation];
+                $valid = DB::selectOne('SELECT eg_geometry_confirmation_semantic_valid_v1(CAST(? AS jsonb)) AS valid', [json_encode($invalid, JSON_THROW_ON_ERROR)]);
+                self::assertFalse((bool) $valid->valid);
+            }
+            foreach ([
+                ['previous_building_model_id' => PHP_INT_MAX],
+                ['organization_id' => $fixture['organization']->id + 1000000],
+                ['previous_content_version' => 'sha256:'.str_repeat('f', 64)],
+            ] as $mutation) {
+                $invalidLineage = [...(array) $audit, ...$mutation];
+                unset($invalidLineage['id']);
+                try {
+                    DB::table('estimate_generation_geometry_confirmations')->insert($invalidLineage);
+                    self::fail('Invalid geometry confirmation lineage was accepted.');
+                } catch (QueryException $exception) {
+                    self::assertStringContainsString('geometry_confirmation_lineage_invalid', $exception->getMessage());
+                }
+            }
+            DB::statement('ALTER TABLE estimate_generation_building_models DISABLE TRIGGER eg_building_model_immutable_trg');
+            try {
+                DB::table('estimate_generation_building_models')->where('id', $fixture['model_id'])->delete();
+                self::fail('Referenced building model was deleted.');
+            } catch (QueryException $exception) {
+                self::assertStringContainsString('eg_geometry_confirmation_previous_model_fk', $exception->getMessage());
+            } finally {
+                DB::statement('ALTER TABLE estimate_generation_building_models ENABLE TRIGGER eg_building_model_immutable_trg');
+            }
             try {
                 DB::table('estimate_generation_geometry_confirmations')->where('id', $audit->id)
                     ->update(['source_class' => 'changed']);
@@ -797,6 +867,11 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
 
     private function cleanup(array $fixture): void
     {
+        if (DB::getSchemaBuilder()->hasTable('estimate_generation_geometry_confirmations')) {
+            DB::statement('ALTER TABLE estimate_generation_geometry_confirmations DISABLE TRIGGER eg_geometry_confirmation_guard_trg');
+            DB::table('estimate_generation_geometry_confirmations')->where('session_id', $fixture['session']->id)->delete();
+            DB::statement('ALTER TABLE estimate_generation_geometry_confirmations ENABLE TRIGGER eg_geometry_confirmation_guard_trg');
+        }
         DB::table('estimates')->where('id', $fixture['estimate_id'])->delete();
         DB::table('estimate_generation_sessions')->where('id', $fixture['session']->id)->delete();
         $fixture['project']->deleteQuietly();
