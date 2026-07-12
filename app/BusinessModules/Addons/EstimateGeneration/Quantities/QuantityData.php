@@ -7,7 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Quantities;
 final readonly class QuantityData
 {
     /**
-     * @param  array<string, string>  $formulaInputs
+     * @param  array<string, mixed>  $formulaInputs
      * @param  array<int, string>  $evidenceIds
      * @param  array<int, string>  $assumptions
      * @param  array<int, string>  $reviewBlockers
@@ -44,7 +44,7 @@ final readonly class QuantityData
         return new self(
             key: (string) $data['key'], unit: (string) $data['unit'], amount: (string) $data['amount'],
             formulaKey: (string) $data['formula_key'], formulaVersion: (string) $data['formula_version'],
-            formulaInputs: array_map('strval', (array) $data['formula_inputs']),
+            formulaInputs: (array) $data['formula_inputs'],
             source: QuantitySource::from((string) $data['source']),
             evidenceIds: array_values(array_map('strval', (array) $data['evidence_ids'])),
             modelVersion: (string) $data['model_version'],

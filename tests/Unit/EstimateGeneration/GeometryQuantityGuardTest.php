@@ -31,13 +31,13 @@ final class GeometryQuantityGuardTest extends TestCase
             ]
         );
 
-        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(10, '11174-PZU_AS_gaz_izm_4.pdf', $recognition);
+        $result = (new RuleBasedDrawingAnalysisProvider)->analyze(10, '11174-PZU_AS_gaz_izm_4.pdf', $recognition);
 
         self::assertEmpty(array_filter(
             $result->takeoffs,
             static fn (array $takeoff): bool => in_array($takeoff['scope_key'] ?? null, ['floor_finish_area', 'rough_floor_area', 'wall_finish_area'], true)
         ));
-        self::assertFalse($result->summary['document_profile']['requires_manual_review']);
-        self::assertSame([], $result->summary['review_reasons']);
+        self::assertTrue($result->summary['document_profile']['requires_manual_review']);
+        self::assertSame(['normalized_building_model_missing'], $result->summary['review_reasons']);
     }
 }

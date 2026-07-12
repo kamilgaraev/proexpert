@@ -54,8 +54,8 @@ final class DrawingGeometryAnalyzerTest extends TestCase
 
         self::assertSame('geometry_only', $result->summary['page_profiles'][0]['page_role']);
         self::assertSame(0, $result->summary['geometry_metrics']['line_count']);
-        self::assertSame([], $result->summary['evidence_graph']['review_reasons']);
-        self::assertFalse($result->summary['document_profile']['requires_manual_review']);
+        self::assertSame(['normalized_building_model_missing'], $result->summary['evidence_graph']['review_reasons']);
+        self::assertTrue($result->summary['document_profile']['requires_manual_review']);
         self::assertNotContains('geometry_metric', array_column($result->elements, 'type'));
         self::assertNotContains('table', array_column($result->elements, 'type'));
         self::assertEmpty($result->takeoffs);

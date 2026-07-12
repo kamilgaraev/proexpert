@@ -48,6 +48,9 @@ final class DrawingGeometryAnalyzer
             )));
         } elseif (count($models) > 1) {
             $reviewReasons = ['multiple_normalized_building_models'];
+        } else {
+            $reviewReasons = ['normalized_building_model_missing'];
+            $modelPages = array_map(static fn ($page): int => $page->pageNumber, $recognition->pages);
         }
 
         sort($reviewReasons, SORT_STRING);
@@ -56,7 +59,8 @@ final class DrawingGeometryAnalyzer
             'elements' => [],
             'quantities' => $quantities,
             'metrics' => [
-                'page_count' => 0, 'line_count' => 0, 'curve_count' => 0, 'rect_count' => 0,
+                'page_count' => count($recognition->pages), 'geometry_metrics_status' => 'unavailable',
+                'line_count' => 0, 'curve_count' => 0, 'rect_count' => 0,
                 'vector_element_count' => 0, 'contour_candidate_count' => 0,
                 'table_candidate_count' => 0, 'title_block_candidate_count' => 0,
             ],

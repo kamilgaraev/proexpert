@@ -19,11 +19,34 @@ final class BuildingQuantityCalculator
         $modelVersion = (string) ($model['model_version'] ?? 'unknown');
         $items = [];
         $scaleConfirmed = ($model['scale']['status'] ?? null) === 'confirmed';
+        $wallRecords = $this->records($model, 'walls');
+        $wallIndex = [];
+        foreach ($wallRecords as $index => $wall) {
+            $wallId = trim((string) ($wall['id'] ?? ''));
+            if ($wallId === '' || isset($wallIndex[$wallId])) {
+                $this->diagnostic('duplicate_or_missing_wall_identity', "walls.$index.id");
+
+                continue;
+            }
+            $wallIndex[$wallId] = $wall;
+        }
 
         $roomItems = [];
         $seenGeometry = [];
+        $roomBounds = [];
+        $ambiguousOverlap = false;
         foreach ($this->records($model, 'rooms') as $index => $room) {
-            $area = $this->decimal($room['area'] ?? null);
+            if (isset($room['holes'])) {
+                $this->diagnostic('polygon_holes_unsupported', "rooms.$index.holes");
+
+                continue;
+            }
+            $areaValue = $room['area'] ?? null;
+            $area = is_array($areaValue) ? $this->typedMetric($areaValue, 'm2', "rooms.$index.area") : $this->decimal($areaValue);
+            if (! $scaleConfirmed && ! is_array($areaValue) && $area !== null) {
+                $this->diagnostic('unconfirmed_scale', "rooms.$index.area");
+                $area = null;
+            }
             if ($area === null && isset($room['polygon'])) {
                 if (($room['coordinate_unit'] ?? 'm') !== 'm' || ! $scaleConfirmed) {
                     $this->diagnostic('unconfirmed_scale', "rooms.$index.polygon");
@@ -35,7 +58,7 @@ final class BuildingQuantityCalculator
             if ($area === null) {
                 continue;
             }
-            $identity = isset($room['polygon']) ? $this->canonicalJson($room['polygon']) : null;
+            $identity = isset($room['polygon']) ? $this->polygonIdentity($room['polygon']) : null;
             if ($identity !== null && isset($seenGeometry[$identity])) {
                 $this->diagnostic('duplicate_room_geometry', "rooms.$index", 'warning');
 
@@ -44,7 +67,23 @@ final class BuildingQuantityCalculator
             if ($identity !== null) {
                 $seenGeometry[$identity] = true;
             }
+            if (isset($room['polygon'])) {
+                $bounds = $this->polygonBounds($room['polygon']);
+                if ($bounds !== null) {
+                    foreach ($roomBounds as $previous) {
+                        if ($bounds[0]->isLessThan($previous[2]) && $bounds[2]->isGreaterThan($previous[0])
+                            && $bounds[1]->isLessThan($previous[3]) && $bounds[3]->isGreaterThan($previous[1])) {
+                            $this->diagnostic('ambiguous_polygon_overlap', "rooms.$index.polygon");
+                            $ambiguousOverlap = true;
+                        }
+                    }
+                    $roomBounds[] = $bounds;
+                }
+            }
             $roomItems[] = $this->item($area, $room);
+        }
+        if ($ambiguousOverlap) {
+            $roomItems = [];
         }
         if ($roomItems !== []) {
             $items['floor_area'] = $this->aggregate('floor_area', $roomItems, $modelVersion);
@@ -57,6 +96,13 @@ final class BuildingQuantityCalculator
             $id = (string) ($opening['id'] ?? '');
             if ($id === '' || isset($openings[$id])) {
                 $this->diagnostic('duplicate_opening_key', "openings.$index");
+
+                continue;
+            }
+            $wallId = trim((string) ($opening['wall_id'] ?? ''));
+            $wall = $wallIndex[$wallId] ?? null;
+            if ($wall === null || ! in_array($id, $this->strings($wall['opening_ids'] ?? []), true)) {
+                $this->diagnostic('orphan_or_unidirectional_opening_reference', "openings.$index.wall_id");
 
                 continue;
             }
@@ -76,7 +122,15 @@ final class BuildingQuantityCalculator
 
         $grossItems = [];
         $netItems = [];
-        foreach ($this->records($model, 'walls') as $index => $wall) {
+        foreach ($wallRecords as $index => $wall) {
+            if (! isset($wallIndex[(string) ($wall['id'] ?? '')])) {
+                continue;
+            }
+            if (($wall['shared'] ?? false) === true && ! in_array($wall['side_policy'] ?? null, ['single_face', 'both_faces'], true)) {
+                $this->diagnostic('shared_wall_side_policy_missing', "walls.$index.side_policy");
+
+                continue;
+            }
             $length = $this->decimal($wall['length'] ?? null);
             $height = $this->decimal($wall['height'] ?? null);
             if ($length === null) {
@@ -123,7 +177,7 @@ final class BuildingQuantityCalculator
 
                 continue;
             }
-            $netItems[] = ['amount' => $net, 'source' => $netSource, 'evidence' => $netEvidence, 'assumptions' => $netAssumptions];
+            $netItems[] = ['amount' => $net, 'source' => $netSource, 'evidence' => $netEvidence, 'assumptions' => $netAssumptions, 'identity' => (string) ($wall['id'] ?? "wall-$index")];
         }
         if ($grossItems !== []) {
             $items['gross_wall_area'] = $this->aggregate('gross_wall_area', $grossItems, $modelVersion);
@@ -161,6 +215,10 @@ final class BuildingQuantityCalculator
         }
 
         $engineeringGroups = [];
+        $allowedEngineering = [
+            'water.length.m', 'sewer.length.m', 'heating.length.m', 'ventilation.length.m',
+            'electrical.length.m', 'electrical.point.count', 'water.point.count',
+        ];
         foreach ($this->records($model, 'engineering') as $index => $element) {
             $system = trim((string) ($element['system'] ?? ''));
             $measurement = trim((string) ($element['measurement'] ?? ''));
@@ -168,6 +226,11 @@ final class BuildingQuantityCalculator
             $amount = $this->decimal($element['amount'] ?? null);
             if ($system === '' || $measurement === '' || $unit === '' || $amount === null) {
                 $this->diagnostic('insufficient_engineering_measurement', "engineering.$index");
+
+                continue;
+            }
+            if (! in_array($system.'.'.$measurement.'.'.$unit, $allowedEngineering, true)) {
+                $this->diagnostic('unknown_engineering_measurement', "engineering.$index");
 
                 continue;
             }
@@ -184,6 +247,10 @@ final class BuildingQuantityCalculator
             $items[$key] = $this->aggregate($key, $group['items'], $modelVersion, $group['unit']);
         }
 
+        $items = array_filter(
+            $items,
+            static fn (QuantityData $quantity): bool => ! in_array('operand_provenance_missing', $quantity->reviewBlockers, true)
+        );
         ksort($items);
         usort($this->diagnostics, static fn (array $a, array $b): int => [$a['path'], $a['code']] <=> [$b['path'], $b['code']]);
 
@@ -193,6 +260,24 @@ final class BuildingQuantityCalculator
     /** @param array<int, array{amount: BigDecimal, source: QuantitySource, evidence: array<int, string>, assumptions: array<int, string>}> $items */
     private function aggregate(string $key, array $items, string $modelVersion, ?string $unit = null): QuantityData
     {
+        $validItems = [];
+        foreach ($items as $item) {
+            if ($item['source'] === QuantitySource::Estimated && $item['assumptions'] === []) {
+                $this->diagnostic('operand_provenance_missing', $item['identity']);
+
+                continue;
+            }
+            $validItems[] = $item;
+        }
+        $items = $validItems;
+        if ($items === []) {
+            return new QuantityData(
+                key: $key, unit: $unit ?? (new QuantityFormulaCatalog)->definition($key)['unit'], amount: '0.000000',
+                formulaKey: (new QuantityFormulaCatalog)->definition($key)['formula'], formulaVersion: QuantityFormulaCatalog::VERSION,
+                formulaInputs: ['items' => []], source: QuantitySource::Estimated, evidenceIds: [], modelVersion: $modelVersion,
+                reviewBlockers: ['operand_provenance_missing'],
+            );
+        }
         usort($items, static fn (array $a, array $b): int => [(string) $a['amount'], implode('|', $a['evidence'])] <=> [(string) $b['amount'], implode('|', $b['evidence'])]);
         $sum = BigDecimal::zero();
         $source = QuantitySource::Evidenced;
@@ -213,7 +298,11 @@ final class BuildingQuantityCalculator
         return new QuantityData(
             key: $key, unit: $unit ?? $catalog['unit'], amount: (string) $sum->toScale(6, RoundingMode::HalfUp),
             formulaKey: $catalog['formula'], formulaVersion: QuantityFormulaCatalog::VERSION,
-            formulaInputs: ['item_count' => (string) count($items)], source: $source,
+            formulaInputs: ['items' => array_map(static fn (array $item): array => [
+                'identity' => $item['identity'], 'amount' => (string) $item['amount'],
+                'source' => $item['source']->value, 'evidence_ids' => $item['evidence'],
+                'assumptions' => $item['assumptions'],
+            ], $items)], source: $source,
             evidenceIds: $evidence, modelVersion: $modelVersion, assumptions: $assumptions,
             reviewBlockers: $source === QuantitySource::Estimated ? ['estimated_quantity_requires_review'] : [],
         );
@@ -222,14 +311,28 @@ final class BuildingQuantityCalculator
     /** @param array<string, mixed> $record @return array{amount: BigDecimal, source: QuantitySource, evidence: array<int, string>, assumptions: array<int, string>} */
     private function item(BigDecimal $amount, array $record): array
     {
-        return ['amount' => $amount, 'source' => $this->source($record), 'evidence' => $this->strings($record['evidence_ids'] ?? []), 'assumptions' => $this->strings($record['assumptions'] ?? [])];
+        return ['amount' => $amount, 'source' => $this->source($record), 'evidence' => $this->strings($record['evidence_ids'] ?? []), 'assumptions' => $this->strings($record['assumptions'] ?? []), 'identity' => (string) ($record['id'] ?? 'operand')];
     }
 
     /** @param array<string, mixed> $record */
     private function source(array $record): QuantitySource
     {
-        return ($record['source'] ?? null) === 'estimated' || $this->strings($record['assumptions'] ?? []) !== []
+        return ($record['source'] ?? null) === 'estimated' || $this->strings($record['assumptions'] ?? []) !== [] || $this->strings($record['evidence_ids'] ?? []) === []
             ? QuantitySource::Estimated : QuantitySource::Evidenced;
+    }
+
+    /** @param array<string, mixed> $operand */
+    private function typedMetric(array $operand, string $unit, string $path): ?BigDecimal
+    {
+        if (($operand['unit'] ?? null) !== $unit || ($operand['source'] ?? null) !== 'evidenced'
+            || ($operand['metric_independent'] ?? false) !== true || $this->strings($operand['evidence_ids'] ?? []) === []
+            || ! is_array($operand['context'] ?? null) || trim((string) ($operand['context']['id'] ?? '')) === '') {
+            $this->diagnostic('invalid_typed_metric_operand', $path);
+
+            return null;
+        }
+
+        return $this->decimal($operand['value'] ?? null);
     }
 
     private function decimal(mixed $value): ?BigDecimal
@@ -286,7 +389,31 @@ final class BuildingQuantityCalculator
     /** @param array<string, mixed> $model @return array<int, array<string, mixed>> */
     private function records(array $model, string $key): array
     {
-        return array_values(array_filter(is_array($model[$key] ?? null) ? $model[$key] : [], 'is_array'));
+        if (! array_key_exists($key, $model)) {
+            return [];
+        }
+        if (! is_array($model[$key])) {
+            $this->diagnostic('collection_must_be_array', $key);
+
+            return [];
+        }
+        if (count($model[$key]) > 10_000) {
+            $this->diagnostic('collection_resource_limit_exceeded', $key);
+
+            return [];
+        }
+
+        $records = [];
+        foreach (array_values($model[$key]) as $index => $record) {
+            if (! is_array($record)) {
+                $this->diagnostic('record_must_be_array', "$key.$index");
+
+                continue;
+            }
+            $records[] = $record;
+        }
+
+        return $records;
     }
 
     /** @return array<int, string> */
@@ -312,5 +439,54 @@ final class BuildingQuantityCalculator
     private function canonicalJson(mixed $value): string
     {
         return json_encode($value, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION);
+    }
+
+    private function polygonIdentity(mixed $polygon): ?string
+    {
+        if (! is_array($polygon) || count($polygon) < 3) {
+            return null;
+        }
+
+        $points = array_map(static fn (mixed $point): string => is_array($point) && count($point) === 2
+            ? (string) $point[0].','.(string) $point[1] : '', array_values($polygon));
+        if (in_array('', $points, true)) {
+            return null;
+        }
+
+        $variants = [];
+        foreach ([$points, array_reverse($points)] as $direction) {
+            foreach (array_keys($direction) as $offset) {
+                $variants[] = implode('|', [...array_slice($direction, $offset), ...array_slice($direction, 0, $offset)]);
+            }
+        }
+        sort($variants, SORT_STRING);
+
+        return $variants[0];
+    }
+
+    /** @return array{BigDecimal, BigDecimal, BigDecimal, BigDecimal}|null */
+    private function polygonBounds(mixed $polygon): ?array
+    {
+        if (! is_array($polygon) || $polygon === []) {
+            return null;
+        }
+        $xs = [];
+        $ys = [];
+        foreach ($polygon as $point) {
+            if (! is_array($point) || count($point) !== 2) {
+                return null;
+            }
+            $x = $this->decimal($point[0]);
+            $y = $this->decimal($point[1]);
+            if ($x === null || $y === null) {
+                return null;
+            }
+            $xs[] = $x;
+            $ys[] = $y;
+        }
+        usort($xs, static fn (BigDecimal $a, BigDecimal $b): int => $a->compareTo($b));
+        usort($ys, static fn (BigDecimal $a, BigDecimal $b): int => $a->compareTo($b));
+
+        return [$xs[0], $ys[0], $xs[array_key_last($xs)], $ys[array_key_last($ys)]];
     }
 }
