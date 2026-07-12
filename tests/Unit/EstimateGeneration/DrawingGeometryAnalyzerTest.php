@@ -6,12 +6,13 @@ namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DrawingGeometryAnalyzer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\RuleBasedDrawingAnalysisProvider;
 use PHPUnit\Framework\TestCase;
 
 final class DrawingGeometryAnalyzerTest extends TestCase
 {
-    public function test_geometry_only_page_produces_ir_elements_without_takeoffs(): void
+    public function test_pixel_geometry_without_normalized_model_produces_no_invented_elements(): void
     {
         $recognition = new OcrRecognitionResult(
             provider: 'pdf_geometry',
@@ -49,14 +50,32 @@ final class DrawingGeometryAnalyzerTest extends TestCase
             ]
         );
 
-        $result = (new RuleBasedDrawingAnalysisProvider())->analyze(10, '11174-PZU_AS_gaz_izm_4.pdf', $recognition);
+        $result = (new RuleBasedDrawingAnalysisProvider)->analyze(10, '11174-PZU_AS_gaz_izm_4.pdf', $recognition);
 
         self::assertSame('geometry_only', $result->summary['page_profiles'][0]['page_role']);
-        self::assertGreaterThan(0, $result->summary['geometry_metrics']['line_count']);
+        self::assertSame(0, $result->summary['geometry_metrics']['line_count']);
         self::assertSame([], $result->summary['evidence_graph']['review_reasons']);
         self::assertFalse($result->summary['document_profile']['requires_manual_review']);
-        self::assertContains('geometry_metric', array_column($result->elements, 'type'));
-        self::assertContains('table', array_column($result->elements, 'type'));
+        self::assertNotContains('geometry_metric', array_column($result->elements, 'type'));
+        self::assertNotContains('table', array_column($result->elements, 'type'));
         self::assertEmpty($result->takeoffs);
+    }
+
+    public function test_analyzer_is_thin_adapter_for_normalized_building_model(): void
+    {
+        $recognition = new OcrRecognitionResult(provider: 'test', model: 'unit', pages: [
+            new OcrPageResult(pageNumber: 1, text: 'ignored filename and text 999x999', rawPayload: [
+                'normalized_building_model' => [
+                    'model_version' => 'building-model.v1',
+                    'scale' => ['status' => 'confirmed', 'unit' => 'm'],
+                    'rooms' => [['id' => 'r', 'area' => '7.25', 'evidence_ids' => ['e']]],
+                ],
+            ]),
+        ]);
+
+        $result = (new DrawingGeometryAnalyzer)->analyze(1, '999x999.pdf', $recognition);
+
+        self::assertSame('7.250000', $result['quantities'][0]['amount']);
+        self::assertSame([], $result['elements']);
     }
 }
