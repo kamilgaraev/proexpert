@@ -4,12 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration\Pricing;
 
-use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
-use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveRegionalPrice;
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
-use App\Models\Organization;
-use App\Models\Project;
-use App\Models\User;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\Group;
@@ -20,96 +14,158 @@ final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
 {
     public function refreshDatabase(): void {}
 
-    public function test_snapshot_is_historical_and_database_rejects_forged_or_missing_evidence(): void
+    public function test_database_builds_deterministic_price_snapshot_and_protects_every_trust_input(): void
     {
-        $database = (string) DB::connection()->getDatabaseName();
-        if (getenv('RUN_POSTGRES_PRICE_SNAPSHOT_CONTRACT') !== '1' || DB::getDriverName() !== 'pgsql' || ! str_ends_with($database, '_contract')) {
-            self::markTestSkipped('Requires explicit disposable PostgreSQL price snapshot contract database.');
-        }
+        $this->requireDisposablePostgres();
 
         DB::beginTransaction();
         try {
-            $organization = Organization::factory()->create();
-            $user = User::factory()->create(['current_organization_id' => $organization->id]);
-            $project = Project::factory()->create(['organization_id' => $organization->id]);
-            $sessionId = DB::table('estimate_generation_sessions')->insertGetId([
-                'organization_id' => $organization->id, 'project_id' => $project->id, 'user_id' => $user->id,
-                'status' => 'generating', 'processing_stage' => 'resolve_prices', 'input_payload' => '{}',
-            ]);
-            $packageId = DB::table('estimate_generation_packages')->insertGetId([
-                'session_id' => $sessionId, 'key' => 'price-contract', 'title' => 'Contract', 'scope_type' => 'custom',
-            ]);
-            $suffix = strtolower((string) str()->ulid());
-            $regionId = DB::table('estimate_regions')->insertGetId(['code' => 'PC-'.$suffix, 'name' => 'Contract', 'fgiscs_subject_id' => random_int(100000, 999999)]);
-            $zoneId = DB::table('estimate_price_zones')->insertGetId(['estimate_region_id' => $regionId, 'name' => 'Contract', 'fgiscs_price_zone_id' => random_int(1000000, 1999999)]);
-            $periodId = DB::table('estimate_price_periods')->insertGetId(['fgiscs_period_id' => random_int(2000000, 2999999), 'name' => $suffix, 'year' => 2099, 'quarter' => 4]);
-            $versionId = DB::table('estimate_regional_price_versions')->insertGetId([
-                'source' => 'fgiscs', 'region_id' => $regionId, 'price_zone_id' => $zoneId, 'period_id' => $periodId,
-                'version_key' => $suffix, 'status' => 'active',
-            ]);
-            $datasetId = DB::table('estimate_dataset_versions')->insertGetId([
-                'source_type' => 'fgis_labor_prices', 'version_key' => $suffix, 'bucket' => 'contract', 'prefix' => $suffix, 'status' => 'parsed',
-            ]);
-            $priceId = DB::table('estimate_resource_prices')->insertGetId([
-                'dataset_version_id' => $datasetId, 'regional_price_version_id' => $versionId, 'region_id' => $regionId,
-                'price_zone_id' => $zoneId, 'period_id' => $periodId, 'resource_code' => $suffix, 'resource_name' => 'Resource',
-                'unit' => 'h', 'base_price' => '100.0000', 'price_type' => 'labor', 'raw_payload' => '{}',
-            ]);
-            $context = ['region_id' => $regionId, 'price_zone_id' => $zoneId, 'period_id' => $periodId, 'estimate_regional_price_version_id' => $versionId];
-            $priced = (new EstimatePricingService(new ResolveRegionalPrice))->price([[
-                'item_type' => 'priced_work', 'materials' => [],
-                'labor' => [['price_id' => $priceId, 'quantity' => '2.500000', 'unit_price' => '999', 'total_price' => '1']],
-                'machinery' => [], 'other_resources' => [], 'validation_flags' => [], 'price_source' => 'regional',
-            ]], $context)[0];
-            $item = EstimateGenerationPackageItem::query()->create([
-                'package_id' => $packageId, 'key' => 'item-1', 'name' => 'Item', 'item_type' => 'priced_work',
-                'total_cost' => $priced['total_cost'], 'direct_cost' => '250.00', 'price_source' => 'regional',
-                'price_snapshot' => $priced['price_snapshot'],
-            ]);
+            $fixture = $this->fixture();
+            DB::select('SELECT eg_finalize_package_item_price(?)', [$fixture['item_id']]);
+            DB::statement('SET CONSTRAINTS ALL IMMEDIATE');
 
-            DB::table('estimate_resource_prices')->where('id', $priceId)->update(['base_price' => '900.0000']);
-            $item->refresh();
-            self::assertSame('500.00', $item->total_cost);
-            self::assertSame('100.0000', $item->price_snapshot['coefficients']['resource_evidence'][0]['base_amount']);
+            $item = DB::table('estimate_generation_package_items')->find($fixture['item_id']);
+            $snapshot = json_decode((string) $item->price_snapshot, true, 512, JSON_THROW_ON_ERROR);
+            $canonical = $fixture['norm_resource_id'].':'.$fixture['price_id'].':'.$fixture['conversion_id'].'|'
+                .$fixture['evidence_id'].':'.$fixture['fingerprint'];
 
-            $this->assertRejected(fn () => DB::table('estimate_generation_package_items')->insert([
-                'package_id' => $packageId, 'key' => 'missing', 'name' => 'Missing', 'item_type' => 'priced_work', 'total_cost' => '1.00',
-            ]));
-            $invalidSnapshots = [
-                'empty-object' => [],
-                'empty-evidence' => $this->withEvidence($priced['price_snapshot'], []),
-                'object-without-evidence' => $this->withEvidence($priced['price_snapshot'], null),
-                'evidence-without-keys' => $this->withEvidence($priced['price_snapshot'], [[]]),
-                'fractional-id' => array_replace($priced['price_snapshot'], ['region_id' => 1.5]),
-                'resource-arithmetic' => $this->mutateEvidence($priced['price_snapshot'], 'final_amount', '249.99'),
-                'aggregate-base' => array_replace($priced['price_snapshot'], ['base_amount' => '249.99']),
-                'aggregate-work' => array_replace_recursive($priced['price_snapshot'], ['coefficients' => ['work_cost' => '249.99']]),
-                'aggregate-final' => array_replace($priced['price_snapshot'], ['final_amount' => '499.99']),
-                'wrong-hash' => array_replace($priced['price_snapshot'], ['source_reference' => 'sha256:'.str_repeat('0', 64)]),
-            ];
-            foreach ($invalidSnapshots as $key => $snapshot) {
-                $this->assertRejected(fn () => DB::table('estimate_generation_package_items')->insert([
-                    'package_id' => $packageId, 'key' => $key, 'name' => 'Forged', 'item_type' => 'priced_work',
-                    'total_cost' => $snapshot['final_amount'] ?? '1.00', 'price_snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR),
-                ]));
+            self::assertSame('75.00', $item->direct_cost);
+            self::assertSame('75.00', $item->total_cost);
+            self::assertSame('30.000000', $item->unit_price);
+            self::assertSame('2.500000', $item->quantity);
+            self::assertSame('sha256:'.hash('sha256', $canonical), $snapshot['source_reference']);
+            self::assertSame('75.00', $snapshot['base_amount']);
+            self::assertSame('75.00', $snapshot['final_amount']);
+            self::assertSame('0.00', $snapshot['coefficients']['work_cost']);
+            self::assertSame($fixture['region_id'], $snapshot['region_id']);
+            self::assertSame($fixture['version_id'], $snapshot['version_id']);
+
+            DB::statement('SET CONSTRAINTS ALL DEFERRED');
+            foreach (['price_snapshot', 'total_cost', 'quantity', 'region_id', 'quantity_evidence_id'] as $column) {
+                $this->assertRejected(fn () => DB::table('estimate_generation_package_items')
+                    ->where('id', $fixture['item_id'])->update([$column => $this->mutatedValue($column, $snapshot)]));
             }
+            $this->assertRejected(fn () => DB::table('estimate_generation_package_items')->where('id', $fixture['item_id'])->delete());
+            $this->assertRejected(fn () => DB::table('estimate_generation_package_item_price_inputs')
+                ->where('package_item_id', $fixture['item_id'])->update(['ordinal' => 2]));
+            $this->assertRejected(fn () => DB::table('estimate_generation_package_item_price_inputs')
+                ->where('package_item_id', $fixture['item_id'])->delete());
+            $this->assertRejected(fn () => DB::table('estimate_resource_prices')->where('id', $fixture['price_id'])->update(['base_price' => 999]));
+            $this->assertRejected(fn () => DB::table('estimate_resource_prices')->where('id', $fixture['price_id'])->delete());
+            $this->assertRejected(fn () => DB::table('estimate_resource_prices')->insert([
+                'dataset_version_id' => $fixture['dataset_id'], 'regional_price_version_id' => $fixture['version_id'],
+                'region_id' => $fixture['region_id'], 'price_zone_id' => $fixture['zone_id'], 'period_id' => $fixture['period_id'],
+                'resource_code' => $fixture['resource_code'].'-late', 'resource_name' => 'Late mutation', 'unit' => 'h',
+                'base_price' => '1.0000', 'price_type' => 'labor', 'raw_payload' => '{}', 'created_at' => now(), 'updated_at' => now(),
+            ]));
+            $this->assertRejected(fn () => DB::table('estimate_generation_unit_conversions')->where('id', $fixture['conversion_id'])->update(['factor' => 2]));
+            $this->assertRejected(fn () => DB::table('estimate_generation_unit_conversions')->where('id', $fixture['conversion_id'])->delete());
+            $this->assertRejected(fn () => DB::table('estimate_generation_evidence')->where('id', $fixture['evidence_id'])
+                ->update(['value' => json_encode(['work_code' => 'work_type:1', 'quantity' => 9, 'unit' => 'h'], JSON_THROW_ON_ERROR)]));
+
+            $this->assertFinalizeRejected($fixture, 'missing-input', [], false);
+            $this->assertFinalizeRejected($fixture, 'missing-conversion', [], true, ['unit_conversion_id' => null]);
+            $this->assertFinalizeRejected($fixture, 'cross-context', ['region_id' => $fixture['region_id'] + 1000000]);
+            $this->assertFinalizeRejected($fixture, 'wrong-fingerprint', ['quantity_evidence_fingerprint' => str_repeat('f', 64)]);
+            $this->assertFinalizeRejected($fixture, 'foreign-evidence', ['quantity_evidence_id' => 999999999]);
+
+            $historical = DB::table('estimate_generation_package_items')->find($fixture['item_id']);
+            self::assertSame('75.00', $historical->total_cost);
+            self::assertSame($item->price_snapshot, $historical->price_snapshot);
+
+            $revisionId = $this->unpricedItem($fixture, 'item-1', 2, $fixture['item_id']);
+            self::assertSame($fixture['item_id'], (int) DB::table('estimate_generation_package_items')->find($revisionId)->supersedes_item_id);
+            $this->assertRejected(fn () => DB::table('estimate_generation_package_items')->insert($this->itemPayload($fixture, 'item-1', 1, null)));
+
+            $newVersion = DB::table('estimate_regional_price_versions')->insertGetId([
+                'source' => 'fgiscs', 'region_id' => $fixture['region_id'], 'price_zone_id' => $fixture['zone_id'],
+                'period_id' => $fixture['period_id'], 'version_key' => 'contract-new', 'status' => 'draft',
+            ]);
+            self::assertNotSame($fixture['version_id'], $newVersion);
+            self::assertSame('75.00', DB::table('estimate_generation_package_items')->find($fixture['item_id'])->total_cost);
         } finally {
             DB::rollBack();
         }
     }
 
-    private function mutateEvidence(array $snapshot, string $key, mixed $value): array
+    private function fixture(): array
     {
-        $snapshot['coefficients']['resource_evidence'][0][$key] = $value;
+        $now = now();
+        $organizationId = DB::table('organizations')->insertGetId(['name' => 'Contract', 'created_at' => $now, 'updated_at' => $now]);
+        $userId = DB::table('users')->insertGetId(['name' => 'Contract', 'email' => uniqid('contract-', true).'@example.test', 'password' => 'x', 'created_at' => $now, 'updated_at' => $now]);
+        $projectId = DB::table('projects')->insertGetId(['organization_id' => $organizationId, 'name' => 'Contract', 'created_at' => $now, 'updated_at' => $now]);
+        $sessionId = DB::table('estimate_generation_sessions')->insertGetId([
+            'organization_id' => $organizationId, 'project_id' => $projectId, 'user_id' => $userId,
+            'status' => 'generating', 'processing_stage' => 'resolve_prices', 'input_payload' => '{}', 'created_at' => $now, 'updated_at' => $now,
+        ]);
+        $packageId = DB::table('estimate_generation_packages')->insertGetId([
+            'session_id' => $sessionId, 'key' => uniqid('contract-', true), 'title' => 'Contract', 'scope_type' => 'custom', 'created_at' => $now, 'updated_at' => $now,
+        ]);
+        $suffix = strtolower((string) str()->ulid());
+        $datasetId = DB::table('estimate_dataset_versions')->insertGetId(['source_type' => 'fgis_labor_prices', 'version_key' => $suffix, 'bucket' => 'contract', 'prefix' => $suffix, 'status' => 'parsed', 'created_at' => $now, 'updated_at' => $now]);
+        $collectionId = DB::table('estimate_norm_collections')->insertGetId(['dataset_version_id' => $datasetId, 'code' => $suffix, 'name' => 'Contract', 'norm_type' => 'gesn', 'source_file' => 'contract', 'created_at' => $now, 'updated_at' => $now]);
+        $normId = DB::table('estimate_norms')->insertGetId(['collection_id' => $collectionId, 'code' => $suffix, 'name' => 'Contract', 'unit' => 'h', 'created_at' => $now, 'updated_at' => $now]);
+        $normResourceId = DB::table('estimate_norm_resources')->insertGetId(['estimate_norm_id' => $normId, 'resource_code' => $suffix, 'resource_name' => 'Resource', 'unit' => 'min', 'quantity' => '3.000000', 'resource_type' => 'labor', 'created_at' => $now, 'updated_at' => $now]);
+        $regionId = DB::table('estimate_regions')->insertGetId(['code' => 'PC-'.$suffix, 'name' => 'Contract', 'fgiscs_subject_id' => random_int(100000, 999999), 'created_at' => $now, 'updated_at' => $now]);
+        $zoneId = DB::table('estimate_price_zones')->insertGetId(['estimate_region_id' => $regionId, 'name' => 'Contract', 'fgiscs_price_zone_id' => random_int(1000000, 1999999), 'created_at' => $now, 'updated_at' => $now]);
+        $periodId = DB::table('estimate_price_periods')->insertGetId(['fgiscs_period_id' => random_int(2000000, 2999999), 'name' => $suffix, 'year' => 2099, 'quarter' => 4, 'created_at' => $now, 'updated_at' => $now]);
+        $versionId = DB::table('estimate_regional_price_versions')->insertGetId(['source' => 'fgiscs', 'region_id' => $regionId, 'price_zone_id' => $zoneId, 'period_id' => $periodId, 'version_key' => $suffix, 'status' => 'draft', 'created_at' => $now, 'updated_at' => $now]);
+        $priceId = DB::table('estimate_resource_prices')->insertGetId(['dataset_version_id' => $datasetId, 'regional_price_version_id' => $versionId, 'region_id' => $regionId, 'price_zone_id' => $zoneId, 'period_id' => $periodId, 'resource_code' => $suffix, 'resource_name' => 'Resource', 'unit' => 'h', 'base_price' => '600.0000', 'price_type' => 'labor', 'raw_payload' => '{}', 'created_at' => $now, 'updated_at' => $now]);
+        DB::table('estimate_regional_price_versions')->where('id', $versionId)->update(['status' => 'active']);
+        $conversionId = DB::table('estimate_generation_unit_conversions')->insertGetId(['from_unit' => 'min', 'to_unit' => 'h', 'factor' => '0.016666666667', 'version' => 1, 'fingerprint' => str_repeat('c', 64), 'created_at' => $now, 'updated_at' => $now]);
+        $fingerprint = hash('sha256', $suffix);
+        $evidenceId = DB::table('estimate_generation_evidence')->insertGetId(['organization_id' => $organizationId, 'project_id' => $projectId, 'session_id' => $sessionId, 'type' => 'work_item', 'source_type' => 'user_input', 'source_ref' => 'input:1', 'source_version' => 'contract:abcdef', 'locator' => json_encode(['item_key' => 'item:1'], JSON_THROW_ON_ERROR), 'value' => json_encode(['work_code' => 'work_type:1', 'quantity' => 2.5, 'unit' => 'h'], JSON_THROW_ON_ERROR), 'confidence' => 1, 'producer_name' => 'contract', 'producer_version' => 'contract:abcdef', 'fingerprint' => $fingerprint, 'created_at' => $now, 'updated_at' => $now]);
+        $resourceCode = $suffix;
+        $fixture = compact('packageId', 'datasetId', 'resourceCode', 'normId', 'normResourceId', 'regionId', 'zoneId', 'periodId', 'versionId', 'priceId', 'conversionId', 'evidenceId', 'fingerprint');
+        $fixture = array_combine(array_map(fn (string $key): string => strtolower((string) preg_replace('/(?<!^)[A-Z]/', '_$0', $key)), array_keys($fixture)), array_values($fixture));
+        $fixture['item_id'] = $this->unpricedItem($fixture, 'item-1', 1, null);
+        DB::table('estimate_generation_package_item_price_inputs')->insert(['package_item_id' => $fixture['item_id'], 'norm_resource_id' => $normResourceId, 'resource_price_id' => $priceId, 'unit_conversion_id' => $conversionId, 'ordinal' => 1, 'created_at' => $now, 'updated_at' => $now]);
 
-        return $snapshot;
+        return $fixture;
     }
 
-    private function withEvidence(array $snapshot, mixed $evidence): array
+    private function unpricedItem(array $fixture, string $logicalKey, int $revision, ?int $supersedes): int
     {
-        $snapshot['coefficients']['resource_evidence'] = $evidence;
+        return DB::table('estimate_generation_package_items')->insertGetId($this->itemPayload($fixture, $logicalKey, $revision, $supersedes));
+    }
 
-        return $snapshot;
+    private function itemPayload(array $f, string $key, int $revision, ?int $supersedes): array
+    {
+        return ['package_id' => $f['package_id'], 'key' => $key.'#r'.$revision, 'logical_key' => $key, 'revision' => $revision, 'supersedes_item_id' => $supersedes, 'name' => 'Item', 'item_type' => 'priced_work', 'quantity_evidence_id' => $f['evidence_id'], 'quantity_evidence_fingerprint' => $f['fingerprint'], 'estimate_norm_id' => $f['norm_id'], 'region_id' => $f['region_id'], 'price_zone_id' => $f['zone_id'], 'period_id' => $f['period_id'], 'regional_price_version_id' => $f['version_id'], 'unit_price' => 999, 'direct_cost' => 999, 'overhead_cost' => 999, 'profit_cost' => 999, 'total_cost' => 999, 'created_at' => now(), 'updated_at' => now()];
+    }
+
+    private function mutatedValue(string $column, array $snapshot): mixed
+    {
+        return match ($column) {
+            'price_snapshot' => json_encode(array_replace($snapshot, ['final_amount' => '1.00']), JSON_THROW_ON_ERROR), 'total_cost' => 1, 'quantity' => 9, 'region_id', 'quantity_evidence_id' => 999999999
+        };
+    }
+
+    private function assertFinalizeRejected(
+        array $fixture,
+        string $logicalKey,
+        array $itemOverrides = [],
+        bool $withInput = true,
+        array $inputOverrides = [],
+    ): void {
+        $this->assertRejected(function () use ($fixture, $logicalKey, $itemOverrides, $withInput, $inputOverrides): void {
+            $itemId = DB::table('estimate_generation_package_items')->insertGetId(array_replace(
+                $this->itemPayload($fixture, $logicalKey, 1, null),
+                $itemOverrides,
+            ));
+            if ($withInput) {
+                DB::table('estimate_generation_package_item_price_inputs')->insert(array_replace([
+                    'package_item_id' => $itemId,
+                    'norm_resource_id' => $fixture['norm_resource_id'],
+                    'resource_price_id' => $fixture['price_id'],
+                    'unit_conversion_id' => $fixture['conversion_id'],
+                    'ordinal' => 1,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ], $inputOverrides));
+            }
+            DB::select('SELECT eg_finalize_package_item_price(?)', [$itemId]);
+        });
     }
 
     private function assertRejected(callable $write): void
@@ -117,12 +173,22 @@ final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
         DB::statement('SAVEPOINT price_snapshot_contract');
         try {
             $write();
-            self::fail('PostgreSQL accepted invalid price evidence.');
+            DB::statement('SET CONSTRAINTS ALL IMMEDIATE');
+            self::fail('PostgreSQL accepted an invalid pricing mutation.');
         } catch (QueryException) {
             self::addToAssertionCount(1);
         } finally {
             DB::statement('ROLLBACK TO SAVEPOINT price_snapshot_contract');
             DB::statement('RELEASE SAVEPOINT price_snapshot_contract');
+            DB::statement('SET CONSTRAINTS ALL DEFERRED');
+        }
+    }
+
+    private function requireDisposablePostgres(): void
+    {
+        $database = (string) DB::connection()->getDatabaseName();
+        if (getenv('RUN_POSTGRES_PRICE_SNAPSHOT_CONTRACT') !== '1' || DB::getDriverName() !== 'pgsql' || ! str_ends_with($database, '_contract')) {
+            self::markTestSkipped('Requires explicit disposable PostgreSQL price snapshot contract database.');
         }
     }
 }
