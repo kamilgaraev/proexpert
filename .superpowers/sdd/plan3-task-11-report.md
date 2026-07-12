@@ -161,3 +161,27 @@ php artisan estimate-generation:benchmark --dataset=regression --adapter=product
 Оба: attempted=2, succeeded=2, failed=0, skipped=0; `case_results` идентичны; fingerprint `ce95a125af47dcc4213e7533e606cff6a52cb972688b12518d5dfd2af537ea4e`.
 
 Task 11 thresholds не заявляются завершёнными.
+
+## Pinned LibreDWG runtime prerequisite
+
+Статус: **GREEN — обязательный runtime smoke выполняется без skip**.
+
+RED: контрактный тест `libredwg_bootstrap_is_repository_owned_pinned_and_user_local` завершился ошибкой из-за отсутствующего repo-owned bootstrap. GREEN: добавлен идемпотентный `tests/Runtime/bootstrap-libredwg-runtime.ps1`, который устанавливает официальный Windows x64 release asset LibreDWG 0.13.4 только в пользовательский cache.
+
+Источник: `https://github.com/LibreDWG/libredwg/releases/download/0.13.4/libredwg-0.13.4-win64.zip`; SHA-256 из официального `dist.sha256`: `cb46bce034296e91cb1a982cd53ec1928b11f4f7f70512dd21513a27959688b5`; runtime: `C:\\Users\\kamilgaraev\\.cache\\most-libredwg\\0.13.4\\win64\\dwgread.exe`.
+
+```text
+vendor/bin/phpunit tests/Unit/EstimateGeneration/Vision/CadProductionRuntimeContractTest.php --filter libredwg_bootstrap
+OK (1 test, 7 assertions)
+
+tests/Runtime/bootstrap-libredwg-runtime.ps1
+C:\Users\kamilgaraev\.cache\most-libredwg\0.13.4\win64\dwgread.exe
+
+$env:LIBREDWG_DWGREAD_BINARY = (& '.\\tests\\Runtime\\bootstrap-libredwg-runtime.ps1')
+vendor/bin/phpunit tests/Unit/EstimateGeneration/Vision/DwgDxfGeometryProviderTest.php --filter real_synthetic_dwg
+OK (1 test, 3 assertions)
+
+Scoped covering run: OK (8 tests, 41 assertions)
+```
+
+Архив проверяется до распаковки, версия проверяется после неё. Docker, административные права и глобальный PATH не использовались. Smoke доказал реальное декодирование committed `simple-house.dwg` через LibreDWG 0.13.4.

@@ -13,6 +13,20 @@ use Symfony\Component\Process\Process;
 final class CadProductionRuntimeContractTest extends TestCase
 {
     #[Test]
+    public function libredwg_bootstrap_is_repository_owned_pinned_and_user_local(): void
+    {
+        $root = dirname(__DIR__, 4);
+        $script = file_get_contents($root.'/tests/Runtime/bootstrap-libredwg-runtime.ps1');
+
+        self::assertIsString($script);
+        self::assertStringContainsString('0.13.4', $script);
+        self::assertStringContainsString('cb46bce034296e91cb1a982cd53ec1928b11f4f7f70512dd21513a27959688b5', $script);
+        self::assertStringContainsString('libredwg-0.13.4-win64.zip', $script);
+        self::assertStringContainsString('.cache\\most-libredwg', $script);
+        self::assertStringNotContainsString('sudo', $script);
+        self::assertStringContainsString('--version', $script);
+    }
+    #[Test]
     public function production_image_pins_geometry_runtimes_and_licenses(): void
     {
         $root = dirname(__DIR__, 4);
