@@ -16,6 +16,62 @@ use Tests\TestCase;
 #[Group('postgres-contract')]
 final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
 {
+    public function test_concurrent_real_persistence_serializes_revision_allocation_without_lost_update(): void
+    {
+        $this->requireDisposablePostgres();
+        $fixture = $this->fixture();
+        $session = EstimateGenerationSession::query()->findOrFail($fixture['session_id']);
+        $service = app(EstimateGenerationPackagePersistenceService::class);
+        $service->syncFromDraft($session, $this->serviceDraft($fixture, '2.5'));
+        $packageId = (int) DB::table('estimate_generation_packages')->where('session_id', $fixture['session_id'])->where('key', 'service-package')->value('id');
+        $catalog = $this->catalogPrice($fixture, $fixture['resource_code'], '700.0000', 'concurrent');
+        $draft = $this->serviceDraft(array_replace($fixture, ['version_id' => $catalog['version_id'], 'price_id' => $catalog['price_id']]), '2.5');
+        $encoded = base64_encode(json_encode($draft, JSON_THROW_ON_ERROR));
+        $command = [PHP_BINARY, dirname(__DIR__, 3).'/Support/EstimatePricingConcurrentWriter.php', (string) $fixture['session_id'], (string) $packageId, $encoded];
+        $environment = array_replace(getenv(), ['DB_CONNECTION' => 'pgsql', 'DB_DATABASE' => 'most_ai_estimator_contract']);
+        $leader = proc_open([...$command, 'leader'], [['pipe', 'r'], ['pipe', 'w'], ['pipe', 'w']], $leaderPipes, dirname(__DIR__, 4), $environment);
+        self::assertIsResource($leader);
+        self::assertStringContainsString('LOCKED', $this->waitForProcessToken($leader, $leaderPipes[1], $leaderPipes[2], 'LOCKED'));
+        $follower = proc_open([...$command, 'follower'], [['pipe', 'r'], ['pipe', 'w'], ['pipe', 'w']], $followerPipes, dirname(__DIR__, 4), $environment);
+        self::assertIsResource($follower);
+        fwrite($leaderPipes[0], "CONTINUE\n");
+        fclose($leaderPipes[0]);
+        $leaderOutput = $this->waitForProcessToken($leader, $leaderPipes[1], $leaderPipes[2], 'DONE');
+        $followerOutput = $this->waitForProcessToken($follower, $followerPipes[1], $followerPipes[2], 'DONE');
+        $leaderError = stream_get_contents($leaderPipes[2]);
+        $followerError = stream_get_contents($followerPipes[2]);
+        self::assertSame(0, proc_close($leader), $leaderError);
+        self::assertSame(0, proc_close($follower), $followerError);
+        self::assertStringContainsString('DONE', $leaderOutput);
+        self::assertStringContainsString('DONE', $followerOutput);
+        $revisions = DB::table('estimate_generation_package_items')->where('package_id', $packageId)->where('logical_key', 'item-1')->orderBy('revision')->get();
+        self::assertCount(2, $revisions);
+        self::assertSame([1, 2], $revisions->pluck('revision')->map(fn ($value): int => (int) $value)->all());
+        self::assertSame((int) $revisions[0]->id, (int) $revisions[1]->supersedes_item_id);
+        self::assertSame('87.50', $revisions[1]->total_cost);
+    }
+
+    private function waitForProcessToken($process, $stdout, $stderr, string $token): string
+    {
+        $output = '';
+        $deadline = hrtime(true) + 15_000_000_000;
+        do {
+            $chunk = fread($stdout, 8192);
+            if ($chunk !== false) {
+                $output .= $chunk;
+            }
+            if (str_contains($output, $token)) {
+                return $output;
+            }
+            $status = proc_get_status($process);
+            if (! $status['running']) {
+                self::fail(trim((string) stream_get_contents($stderr)) ?: 'Concurrent writer stopped before '.$token.'. Output: '.$output.' Exit: '.$status['exitcode']);
+            }
+        } while (hrtime(true) < $deadline);
+
+        self::fail('Concurrent writer timed out before '.$token.'.');
+    }
+
     public function refreshDatabase(): void {}
 
     public function test_database_builds_deterministic_price_snapshot_and_protects_every_trust_input(): void
@@ -75,10 +131,12 @@ final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
             $this->assertRejected(fn () => DB::table('estimate_norm_resources')->where('id', $fixture['norm_resource_id'])->update(['quantity' => 99]));
             $this->assertRejected(fn () => DB::table('estimate_dataset_versions')->where('id', $fixture['dataset_id'])->update(['version_key' => strtolower((string) str()->ulid())]));
 
-            $function = DB::selectOne("SELECT p.prosecdef, p.proconfig, NOT EXISTS (SELECT 1 FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE') AS public_revoked FROM pg_proc p WHERE p.oid='public.eg_finalize_package_item_price(bigint)'::regprocedure");
+            $function = DB::selectOne("SELECT p.prosecdef, p.proconfig, r.rolname AS owner, current_user AS runtime_role, NOT EXISTS (SELECT 1 FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE') AS public_revoked, has_function_privilege(current_user, p.oid, 'EXECUTE') AS runtime_granted FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner WHERE p.oid='public.eg_finalize_package_item_price(bigint)'::regprocedure");
             self::assertTrue($function->prosecdef);
             self::assertStringContainsString('search_path=pg_catalog, public', (string) $function->proconfig);
             self::assertTrue($function->public_revoked);
+            self::assertSame($function->runtime_role, $function->owner);
+            self::assertTrue($function->runtime_granted);
 
             foreach (['null' => null, 'zero' => '0.0000', 'negative' => '-1.0000'] as $case => $basePrice) {
                 $invalidCatalog = $this->catalogPrice($fixture, $fixture['resource_code'], $basePrice, 'invalid-'.$case);
@@ -179,11 +237,13 @@ final class EstimateGenerationPriceSnapshotPostgresTest extends TestCase
         $normResourceId = DB::table('estimate_norm_resources')->insertGetId(['estimate_norm_id' => $normId, 'resource_code' => $suffix, 'resource_name' => 'Resource', 'unit' => 'min', 'quantity' => '3.000000', 'resource_type' => 'labor', 'created_at' => $now, 'updated_at' => $now]);
         $regionId = DB::table('estimate_regions')->insertGetId(['code' => 'PC-'.$suffix, 'name' => 'Contract', 'fgiscs_subject_id' => random_int(100000, 999999), 'created_at' => $now, 'updated_at' => $now]);
         $zoneId = DB::table('estimate_price_zones')->insertGetId(['estimate_region_id' => $regionId, 'name' => 'Contract', 'fgiscs_price_zone_id' => random_int(1000000, 1999999), 'created_at' => $now, 'updated_at' => $now]);
-        $periodId = DB::table('estimate_price_periods')->insertGetId(['fgiscs_period_id' => random_int(2000000, 2999999), 'name' => $suffix, 'year' => 2099, 'quarter' => 4, 'created_at' => $now, 'updated_at' => $now]);
+        $periodId = (int) (DB::table('estimate_price_periods')->where('year', 2099)->where('quarter', 4)->value('id')
+            ?? DB::table('estimate_price_periods')->insertGetId(['fgiscs_period_id' => random_int(2000000, 2999999), 'name' => $suffix, 'year' => 2099, 'quarter' => 4, 'created_at' => $now, 'updated_at' => $now]));
         $versionId = DB::table('estimate_regional_price_versions')->insertGetId(['source' => 'fgiscs', 'region_id' => $regionId, 'price_zone_id' => $zoneId, 'period_id' => $periodId, 'version_key' => $suffix, 'status' => 'draft', 'created_at' => $now, 'updated_at' => $now]);
         $priceId = DB::table('estimate_resource_prices')->insertGetId(['dataset_version_id' => $datasetId, 'regional_price_version_id' => $versionId, 'region_id' => $regionId, 'price_zone_id' => $zoneId, 'period_id' => $periodId, 'resource_code' => $suffix, 'resource_name' => 'Resource', 'unit' => 'h', 'base_price' => '600.0000', 'price_type' => 'labor', 'raw_payload' => '{}', 'created_at' => $now, 'updated_at' => $now]);
         DB::table('estimate_regional_price_versions')->where('id', $versionId)->update(['status' => 'active']);
-        $conversionId = DB::table('estimate_generation_unit_conversions')->insertGetId(['from_unit' => 'min', 'to_unit' => 'h', 'factor' => '0.016666666667', 'version' => 1, 'fingerprint' => str_repeat('c', 64), 'created_at' => $now, 'updated_at' => $now]);
+        $conversionId = (int) (DB::table('estimate_generation_unit_conversions')->where('from_unit', 'min')->where('to_unit', 'h')->where('version', 1)->value('id')
+            ?? DB::table('estimate_generation_unit_conversions')->insertGetId(['from_unit' => 'min', 'to_unit' => 'h', 'factor' => '0.016666666667', 'version' => 1, 'fingerprint' => str_repeat('c', 64), 'created_at' => $now, 'updated_at' => $now]));
         $fingerprint = hash('sha256', $suffix);
         $evidenceId = DB::table('estimate_generation_evidence')->insertGetId(['organization_id' => $organizationId, 'project_id' => $projectId, 'session_id' => $sessionId, 'type' => 'work_item', 'source_type' => 'user_input', 'source_ref' => 'input:1', 'source_version' => 'contract:abcdef', 'locator' => json_encode(['item_key' => 'item:'.hash('sha256', 'item-1')], JSON_THROW_ON_ERROR), 'value' => json_encode(['work_code' => 'work_type:1', 'quantity' => 2.5, 'unit' => 'h'], JSON_THROW_ON_ERROR), 'confidence' => 1, 'producer_name' => 'contract', 'producer_version' => 'contract:abcdef', 'fingerprint' => $fingerprint, 'created_at' => $now, 'updated_at' => $now]);
         $resourceCode = $suffix;
