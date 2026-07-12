@@ -41,7 +41,7 @@ SQL;
     public function find(int $organizationId, int $projectId, string $datasetVersion, string $query, int $limit, ?string $semanticIndexVersion): array
     {
         $ready = $this->connection->table('estimate_normative_retrieval_rollouts')
-            ->where('schema_version', NormativeRetrievalBackfillService::VERSION)->where('status', 'complete')->exists();
+            ->where('schema_version', NormativeRetrievalBackfillService::VERSION)->where('status', 'enabled')->exists();
         if (! $ready) {
             throw new \RuntimeException('Normative retrieval rollout is incomplete.');
         }

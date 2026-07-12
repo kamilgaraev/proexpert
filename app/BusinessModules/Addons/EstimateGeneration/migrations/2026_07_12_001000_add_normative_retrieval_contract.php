@@ -25,6 +25,16 @@ return new class extends Migration
 
         if (DB::connection()->getDriverName() === 'pgsql') {
             DB::statement('ALTER TABLE estimate_norms ADD COLUMN search_vector tsvector NULL');
+            DB::unprepared(<<<'SQL'
+CREATE OR REPLACE FUNCTION estimate_norms_retrieval_fields_v1() RETURNS trigger AS $$
+BEGIN
+ NEW.canonical_unit := COALESCE(NEW.canonical_unit, NEW.unit);
+ NEW.unit_dimension := COALESCE(NEW.unit_dimension, CASE WHEN NEW.unit IN ('м2','м²') THEN 'area' WHEN NEW.unit IN ('м3','м³') THEN 'volume' WHEN NEW.unit IN ('м','м.п.') THEN 'length' WHEN NEW.unit IN ('шт','компл') THEN 'count' END);
+ NEW.search_vector := to_tsvector('russian', coalesce(NEW.code,'') || ' ' || coalesce(NEW.name,'') || ' ' || coalesce(NEW.section_name,''));
+ RETURN NEW;
+END; $$ LANGUAGE plpgsql;
+CREATE TRIGGER estimate_norms_retrieval_fields_v1 BEFORE INSERT OR UPDATE OF code,name,section_name,unit,canonical_unit,unit_dimension ON estimate_norms FOR EACH ROW EXECUTE FUNCTION estimate_norms_retrieval_fields_v1();
+SQL);
         }
 
         Schema::create('estimate_norm_semantic_scores', function (Blueprint $table): void {
@@ -54,6 +64,8 @@ return new class extends Migration
         Schema::dropIfExists('estimate_normative_retrieval_rollouts');
         Schema::dropIfExists('estimate_norm_semantic_scores');
         if (DB::connection()->getDriverName() === 'pgsql') {
+            DB::statement('DROP TRIGGER IF EXISTS estimate_norms_retrieval_fields_v1 ON estimate_norms');
+            DB::statement('DROP FUNCTION IF EXISTS estimate_norms_retrieval_fields_v1()');
             DB::statement('ALTER TABLE estimate_norms DROP COLUMN IF EXISTS search_vector');
         }
         Schema::table('estimate_norms', function (Blueprint $table): void {

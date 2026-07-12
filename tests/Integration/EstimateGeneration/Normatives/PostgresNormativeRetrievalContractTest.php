@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Integration\EstimateGeneration\Normatives;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRetrievalBackfillService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRetrievalRolloutService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\PostgresNormativeCandidateSource;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -49,6 +50,10 @@ final class PostgresNormativeRetrievalContractTest extends TestCase
             self::assertSame(1, $firstBatch['processed']);
             self::assertGreaterThan($firstBatch['next_cursor'], $secondBatch['next_cursor']);
             self::assertNull(DB::table('estimate_norms')->orderBy('id')->value('valid_to'));
+            while (($secondBatch['complete'] ?? false) !== true) {
+                $secondBatch = $backfill->resume(1000);
+            }
+            (new NormativeRetrievalRolloutService(DB::connection()))->deploy();
 
             $source = new PostgresNormativeCandidateSource(DB::connection());
             $first = $source->find(10, 20, 'contract-v1', 'кладка кирпичных стен', 1, null);

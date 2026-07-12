@@ -76,6 +76,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\Qu
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\RollbackRegionalPricePeriodCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\SyncFgiscsBuildingResourcePricesCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\Commands\SyncFgiscsRegionalPricesCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Console\RolloutNormativeRetrievalCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\ApprovedNormativeDatasetLookup;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EloquentApprovedNormativeDatasetLookup;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
@@ -411,6 +412,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 SyncFgiscsBuildingResourcePricesCommand::class,
                 RollbackRegionalPricePeriodCommand::class,
                 BackfillNormativeRetrievalCommand::class,
+                RolloutNormativeRetrievalCommand::class,
             ]);
         }
     }

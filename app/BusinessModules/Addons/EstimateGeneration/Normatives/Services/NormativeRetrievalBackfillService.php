@@ -54,8 +54,15 @@ SQL, ['ids' => '{'.implode(',', $ids).'}']);
                     $this->connection->table('estimate_normative_retrieval_rollouts')->insert(['schema_version' => self::VERSION, 'cursor' => 0, 'target_max_id' => $target, 'status' => 'running', 'started_at' => now(), 'created_at' => now(), 'updated_at' => now()]);
                     $state = (object) ['cursor' => 0, 'target_max_id' => $target];
                 }
+                $currentMax = (int) $this->connection->table('estimate_norms')->max('id');
+                $targetMax = max((int) $state->target_max_id, $currentMax);
+                if ($targetMax !== (int) $state->target_max_id) {
+                    $this->connection->table('estimate_normative_retrieval_rollouts')->where('schema_version', self::VERSION)->update(['target_max_id' => $targetMax, 'status' => 'running', 'completed_at' => null, 'updated_at' => now()]);
+                }
                 $result = $this->backfill((int) $state->cursor, $batchSize);
-                $complete = $result['next_cursor'] >= (int) $state->target_max_id;
+                $remaining = $this->connection->table('estimate_norms')->where('id', '<=', $targetMax)
+                    ->where(static fn ($query) => $query->whereNull('canonical_unit')->orWhereNull('search_vector'))->exists();
+                $complete = $result['next_cursor'] >= $targetMax && ! $remaining;
                 $this->connection->table('estimate_normative_retrieval_rollouts')->where('schema_version', self::VERSION)->update(['cursor' => $result['next_cursor'], 'status' => $complete ? 'complete' : 'running', 'completed_at' => $complete ? now() : null, 'last_error' => null, 'updated_at' => now()]);
 
                 return [...$result, 'complete' => $complete];

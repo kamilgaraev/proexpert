@@ -75,8 +75,7 @@ Corrective verification:
 
 1. Run expand migration `2026_07_12_001000`: nullable columns, nullable `tsvector`, and empty semantic table only.
 2. Repeatedly run `estimate-generation:normative-retrieval-backfill --cursor=<next_cursor> --batch=1000`; persist the returned cursor externally until `complete=true`. Batches are bounded, ordered and idempotent; invalid dates are ignored through PostgreSQL `pg_input_is_valid`.
-3. Run `2026_07_12_001100`: concurrent lookup and GIN indexes outside a transaction.
-4. Run `2026_07_12_001200`: add constraints as `NOT VALID`, then validate after backfill.
+3. Run `estimate-generation:normative-retrieval-rollout deploy`: under an advisory lock it creates concurrent lookup/GIN indexes outside a transaction, adds constraints as `NOT VALID`, validates them, and writes the `enabled` marker. Historical `001100/001200` migrations are intentional no-ops so ordinary migration queues cannot fail mid-rollout.
 5. Enable pinned normative retrieval only after the PostgreSQL opt-in contract passes against the migrated staging schema.
 
 Rollback must run in reverse order. Concurrent index removal cannot be wrapped in a transaction; dropping the expand migration removes retrieval metadata and semantic scores and therefore requires a backup/rebuild plan.
@@ -88,6 +87,10 @@ Third corrective deployment requirement: set `ESTIMATE_GENERATION_NORM_APPROVED_
 Backfill progress is persisted in `estimate_normative_retrieval_rollouts` under schema version `normative-retrieval-v1`. The command resumes the stored cursor/target and marks completion atomically; runtime retrieval and index/validation migrations fail closed until the matching completion marker exists.
 
 The third corrective pass moved pin authority fully server-side through `NormativeDatasetPinPolicy`, split retrieval into independently bounded lexical and semantic CTE branches with canonical deduplication, and made the rollout marker a runtime/deployment readiness fence. Final DB-less verification: **52 tests, 144 assertions, 0 failures**; PHPStan/Larastan: **104 paths, 0 errors**. The expanded PostgreSQL contract remains authored but unrun locally.
+
+The fourth corrective pass installs a future-write trigger in the expand migration, refreshes the durable high-water target on every backfill batch, and moves concurrent indexes/constraint validation to the explicit idempotent rollout command. Runtime retrieval requires the final `enabled` marker.
+
+Fourth corrective verification: **52 tests, 144 assertions, 0 failures**; PHPStan/Larastan: **92 paths, 0 errors**. PostgreSQL rollout/contract remains unrun locally.
 
 Second corrective verification:
 
