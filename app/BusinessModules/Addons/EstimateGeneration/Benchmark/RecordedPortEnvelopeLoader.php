@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Benchmark;
 
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeRerankResultData;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
 use JsonException;
+use Throwable;
 
 final readonly class RecordedPortEnvelopeLoader
 {
@@ -52,6 +56,7 @@ final readonly class RecordedPortEnvelopeLoader
             if (isset($envelopes[$envelope->port->value])) {
                 throw new RecordedPortEnvelopeException('recorded_port_duplicate');
             }
+            $this->validatePayload($envelope);
             $envelopes[$envelope->port->value] = $envelope;
         }
         ksort($envelopes, SORT_STRING);
@@ -67,6 +72,41 @@ final readonly class RecordedPortEnvelopeLoader
         }
 
         return new RecordedPortEnvelopeSet($envelopes);
+    }
+
+    private function validatePayload(RecordedPortEnvelope $envelope): void
+    {
+        try {
+            match ($envelope->port) {
+                RecordedPort::VisionExtraction => VisionAnalysisData::fromProviderArray(
+                    $envelope->payload,
+                    $envelope->provider,
+                    $envelope->modelVersion,
+                    $envelope->modelVersion,
+                    $envelope->payloadSchemaVersion,
+                    'unavailable',
+                    null,
+                    null,
+                    500,
+                ),
+                RecordedPort::DocumentExtraction, RecordedPort::CadExtraction => VectorGeometryData::fromArray($envelope->payload),
+                RecordedPort::NormativeReranker => $this->validateRerankerPayload($envelope->payload),
+                RecordedPort::WorkPlanningModel => null,
+            };
+        } catch (Throwable) {
+            throw new RecordedPortEnvelopeException('recorded_port_payload_invalid');
+        }
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function validateRerankerPayload(array $payload): NormativeRerankResultData
+    {
+        $ordering = $payload['ordering'] ?? null;
+
+        return NormativeRerankResultData::fromProviderArray(
+            $payload,
+            is_array($ordering) && array_is_list($ordering) ? $ordering : [],
+        );
     }
 
     private function within(string $path, string $root): bool

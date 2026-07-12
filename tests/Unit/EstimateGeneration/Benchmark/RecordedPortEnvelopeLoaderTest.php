@@ -39,7 +39,7 @@ final class RecordedPortEnvelopeLoaderTest extends TestCase
     {
         [$case, $benchmarkHash] = $this->caseAndHash();
         $path = $this->root.'/cases/vision.json';
-        file_put_contents($path, $this->envelope($case->inputSha256, $case->inputSha256, $benchmarkHash));
+        file_put_contents($path, $this->envelope($case->inputSha256, $case->inputSha256, $benchmarkHash, true));
         $this->writeManifest($case->id, hash_file('sha256', $path));
 
         $set = (new RecordedPortEnvelopeLoader($this->root, $this->root.'/manifest.json'))->load($case, $benchmarkHash);
@@ -59,6 +59,20 @@ final class RecordedPortEnvelopeLoaderTest extends TestCase
         (new RecordedPortEnvelopeLoader($this->root, $this->root.'/manifest.json'))->load($case, $benchmarkHash);
     }
 
+    #[Test]
+    public function loader_rejects_payload_that_does_not_match_the_declared_port_contract(): void
+    {
+        [$case, $benchmarkHash] = $this->caseAndHash();
+        $path = $this->root.'/cases/vision.json';
+        file_put_contents($path, $this->envelope($case->inputSha256, $case->inputSha256, $benchmarkHash));
+        $this->writeManifest($case->id, hash_file('sha256', $path));
+
+        $this->expectException(RecordedPortEnvelopeException::class);
+        $this->expectExceptionMessage('recorded_port_payload_invalid');
+
+        (new RecordedPortEnvelopeLoader($this->root, $this->root.'/manifest.json'))->load($case, $benchmarkHash);
+    }
+
     private function caseAndHash(): array
     {
         $fixtures = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/benchmarks';
@@ -67,16 +81,32 @@ final class RecordedPortEnvelopeLoaderTest extends TestCase
         return [BenchmarkManifest::fromFile($path, $fixtures)->case('reg-dxf-001'), hash_file('sha256', $path)];
     }
 
-    private function envelope(string $sourceHash, string $dependencyHash, string $manifestHash): string
+    private function envelope(string $sourceHash, string $dependencyHash, string $manifestHash, bool $valid = false): string
     {
-        $payload = ['schema_version' => 1, 'sheet_type' => 'floor_plan', 'elements' => []];
+        $payload = $valid ? [
+            'schema_version' => 1,
+            'sheet_type' => 'floor_plan',
+            'evidence' => [[
+                'key' => 'page-1',
+                'locator' => [
+                    'coordinate_space' => 'normalized_source_v1',
+                    'page_id' => 1,
+                    'page_number' => 1,
+                    'processing_unit_id' => 1,
+                    'source_version' => 'sha256:'.$sourceHash,
+                ],
+            ]],
+            'elements' => [],
+            'scale_candidates' => [],
+            'warnings' => ['scale_missing'],
+        ] : ['schema_version' => 1, 'sheet_type' => 'floor_plan', 'elements' => []];
         ksort($payload, SORT_STRING);
         $canonical = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR);
 
         return json_encode([
             'schema_version' => 1, 'port' => 'vision_extraction', 'source_sha256' => $sourceHash,
             'input_dependency_sha256' => $dependencyHash, 'provider' => 'independent-provider',
-            'model_version' => 'vision:test:v1', 'prompt_version' => 'vision-prompt:v1',
+            'model_version' => 'vision/model-v1', 'prompt_version' => 'vision-prompt:v1',
             'payload_schema_version' => 'vision-analysis:v1', 'payload' => $payload,
             'payload_sha256' => hash('sha256', $canonical), 'privacy_scanner' => 'most-fixture-privacy',
             'privacy_scanner_version' => '1.0.0', 'capture_kind' => 'contract_fixture',
