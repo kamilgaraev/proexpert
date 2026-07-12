@@ -18,6 +18,20 @@ final class BuildingQuantityCalculator
         $this->diagnostics = [];
         $modelVersion = (string) ($model['model_version'] ?? 'unknown');
         $items = [];
+        $recordCount = 0;
+        foreach (['rooms', 'walls', 'openings', 'foundations', 'roofs', 'engineering'] as $collection) {
+            if (is_array($model[$collection] ?? null)) {
+                $recordCount += count($model[$collection]);
+                if (count($model[$collection]) > 10_000) {
+                    $this->diagnostic('collection_resource_limit_exceeded', $collection);
+                }
+            }
+        }
+        if ($recordCount > 5_000) {
+            $this->diagnostic('model_record_resource_limit_exceeded', 'model');
+
+            return new QuantityCalculationResult([], $this->diagnostics);
+        }
         $scaleConfirmed = ($model['scale']['status'] ?? null) === 'confirmed';
         $wallRecords = $this->records($model, 'walls');
         $wallIndex = [];
@@ -42,8 +56,9 @@ final class BuildingQuantityCalculator
                 continue;
             }
             $areaValue = $room['area'] ?? null;
-            $area = is_array($areaValue) ? $this->typedMetric($areaValue, 'm2', "rooms.$index.area") : $this->decimal($areaValue);
-            if (! $scaleConfirmed && ! is_array($areaValue) && $area !== null) {
+            $areaOperand = $areaValue !== null ? $this->operand($room, 'area', 'm2', $modelVersion, "rooms.$index.area") : null;
+            $area = $areaOperand?->value;
+            if (! $scaleConfirmed && $area !== null && (! is_array($areaValue) || ($areaValue['metric_independent'] ?? false) !== true)) {
                 $this->diagnostic('unconfirmed_scale', "rooms.$index.area");
                 $area = null;
             }
@@ -80,7 +95,10 @@ final class BuildingQuantityCalculator
                     $roomBounds[] = $bounds;
                 }
             }
-            $roomItems[] = $this->item($area, $room);
+            $roomRecord = $areaOperand === null
+                ? $room + ['_operand_contexts' => ['model:'.$modelVersion], '_operand_provenance_versions' => [$modelVersion]]
+                : $this->recordFromOperand($room, $areaOperand);
+            $roomItems[] = $this->item($area, $roomRecord);
         }
         if ($ambiguousOverlap) {
             $roomItems = [];
@@ -106,15 +124,16 @@ final class BuildingQuantityCalculator
 
                 continue;
             }
-            $width = $this->decimal($opening['width'] ?? null);
-            $height = $this->decimal($opening['height'] ?? null);
+            $width = $this->operand($opening, 'width', 'm', $modelVersion, "openings.$index.width");
+            $height = $this->operand($opening, 'height', 'm', $modelVersion, "openings.$index.height");
             if ($width === null || $height === null) {
                 $this->diagnostic('insufficient_opening_geometry', "openings.$index");
 
                 continue;
             }
-            $openings[$id] = $opening + ['_area' => $width->multipliedBy($height)];
-            $openingItems[] = $this->item($width->multipliedBy($height), $opening);
+            $openingRecord = $this->recordFromOperands($opening, [$width, $height]);
+            $openings[$id] = $openingRecord + ['_area' => $width->value->multipliedBy($height->value)];
+            $openingItems[] = $this->item($width->value->multipliedBy($height->value), $openingRecord);
         }
         if ($openingItems !== []) {
             $items['opening_area'] = $this->aggregate('opening_area', $openingItems, $modelVersion);
@@ -131,8 +150,8 @@ final class BuildingQuantityCalculator
 
                 continue;
             }
-            $length = $this->decimal($wall['length'] ?? null);
-            $height = $this->decimal($wall['height'] ?? null);
+            $length = $this->operand($wall, 'length', 'm', $modelVersion, "walls.$index.length");
+            $height = $this->operand($wall, 'height', 'm', $modelVersion, "walls.$index.height");
             if ($length === null) {
                 $this->diagnostic('missing_wall_length', "walls.$index");
 
@@ -143,12 +162,13 @@ final class BuildingQuantityCalculator
 
                 continue;
             }
-            $gross = $length->multipliedBy($height);
-            $grossItems[] = $this->item($gross, $wall);
+            $wallRecord = $this->recordFromOperands($wall, [$length, $height]);
+            $gross = $length->value->multipliedBy($height->value);
+            $grossItems[] = $this->item($gross, $wallRecord);
             $net = $gross;
-            $netEvidence = $this->strings($wall['evidence_ids'] ?? []);
-            $netSource = $this->source($wall);
-            $netAssumptions = $this->strings($wall['assumptions'] ?? []);
+            $netEvidence = $this->strings($wallRecord['evidence_ids'] ?? []);
+            $netSource = $this->source($wallRecord);
+            $netAssumptions = $this->strings($wallRecord['assumptions'] ?? []);
             $refs = $this->strings($wall['opening_ids'] ?? []);
             if (count($refs) !== count(array_unique($refs))) {
                 $this->diagnostic('duplicate_opening_reference', "walls.$index.opening_ids");
@@ -177,7 +197,12 @@ final class BuildingQuantityCalculator
 
                 continue;
             }
-            $netItems[] = ['amount' => $net, 'source' => $netSource, 'evidence' => $netEvidence, 'assumptions' => $netAssumptions, 'identity' => (string) ($wall['id'] ?? "wall-$index")];
+            $netItems[] = [
+                'amount' => $net, 'source' => $netSource, 'evidence' => $netEvidence,
+                'assumptions' => $netAssumptions, 'identity' => (string) ($wall['id'] ?? "wall-$index"),
+                'contexts' => $this->strings($wallRecord['_operand_contexts'] ?? []),
+                'provenance_versions' => $this->strings($wallRecord['_operand_provenance_versions'] ?? []),
+            ];
         }
         if ($grossItems !== []) {
             $items['gross_wall_area'] = $this->aggregate('gross_wall_area', $grossItems, $modelVersion);
@@ -188,13 +213,14 @@ final class BuildingQuantityCalculator
 
         $foundationItems = [];
         foreach ($this->records($model, 'foundations') as $index => $foundation) {
-            $values = array_map(fn (string $key): ?BigDecimal => $this->decimal($foundation[$key] ?? null), ['length', 'width', 'depth']);
+            $operands = array_map(fn (string $key): ?QuantityOperandData => $this->operand($foundation, $key, 'm', $modelVersion, "foundations.$index.$key"), ['length', 'width', 'depth']);
+            $values = array_map(static fn (?QuantityOperandData $operand): ?BigDecimal => $operand?->value, $operands);
             if (in_array(null, $values, true)) {
                 $this->diagnostic('insufficient_foundation_geometry', "foundations.$index");
 
                 continue;
             }
-            $foundationItems[] = $this->item($values[0]->multipliedBy($values[1])->multipliedBy($values[2]), $foundation);
+            $foundationItems[] = $this->item($values[0]->multipliedBy($values[1])->multipliedBy($values[2]), $this->recordFromOperands($foundation, array_filter($operands)));
         }
         if ($foundationItems !== []) {
             $items['foundation_volume'] = $this->aggregate('foundation_volume', $foundationItems, $modelVersion);
@@ -202,13 +228,13 @@ final class BuildingQuantityCalculator
 
         $roofItems = [];
         foreach ($this->records($model, 'roofs') as $index => $roof) {
-            $area = $this->decimal($roof['area'] ?? null);
+            $area = $this->operand($roof, 'area', 'm2', $modelVersion, "roofs.$index.area");
             if ($area === null) {
                 $this->diagnostic('insufficient_roof_geometry', "roofs.$index");
 
                 continue;
             }
-            $roofItems[] = $this->item($area, $roof);
+            $roofItems[] = $this->item($area->value, $this->recordFromOperand($roof, $area));
         }
         if ($roofItems !== []) {
             $items['roof_area'] = $this->aggregate('roof_area', $roofItems, $modelVersion);
@@ -223,14 +249,19 @@ final class BuildingQuantityCalculator
             $system = trim((string) ($element['system'] ?? ''));
             $measurement = trim((string) ($element['measurement'] ?? ''));
             $unit = trim((string) ($element['unit'] ?? ''));
-            $amount = $this->decimal($element['amount'] ?? null);
-            if ($system === '' || $measurement === '' || $unit === '' || $amount === null) {
+            if ($system === '' || $measurement === '' || $unit === '' || ! array_key_exists('amount', $element)) {
                 $this->diagnostic('insufficient_engineering_measurement', "engineering.$index");
 
                 continue;
             }
             if (! in_array($system.'.'.$measurement.'.'.$unit, $allowedEngineering, true)) {
                 $this->diagnostic('unknown_engineering_measurement', "engineering.$index");
+
+                continue;
+            }
+            $amount = $this->operand($element, 'amount', $unit, $modelVersion, "engineering.$index.amount");
+            if ($amount === null) {
+                $this->diagnostic('insufficient_engineering_measurement', "engineering.$index");
 
                 continue;
             }
@@ -241,7 +272,7 @@ final class BuildingQuantityCalculator
                 continue;
             }
             $engineeringGroups[$key]['unit'] = $unit;
-            $engineeringGroups[$key]['items'][] = $this->item($amount, $element);
+            $engineeringGroups[$key]['items'][] = $this->item($amount->value, $this->recordFromOperand($element, $amount));
         }
         foreach ($engineeringGroups as $key => $group) {
             $items[$key] = $this->aggregate($key, $group['items'], $modelVersion, $group['unit']);
@@ -301,7 +332,8 @@ final class BuildingQuantityCalculator
             formulaInputs: ['items' => array_map(static fn (array $item): array => [
                 'identity' => $item['identity'], 'amount' => (string) $item['amount'],
                 'source' => $item['source']->value, 'evidence_ids' => $item['evidence'],
-                'assumptions' => $item['assumptions'],
+                'assumptions' => $item['assumptions'], 'contexts' => $item['contexts'],
+                'provenance_versions' => $item['provenance_versions'],
             ], $items)], source: $source,
             evidenceIds: $evidence, modelVersion: $modelVersion, assumptions: $assumptions,
             reviewBlockers: $source === QuantitySource::Estimated ? ['estimated_quantity_requires_review'] : [],
@@ -311,7 +343,14 @@ final class BuildingQuantityCalculator
     /** @param array<string, mixed> $record @return array{amount: BigDecimal, source: QuantitySource, evidence: array<int, string>, assumptions: array<int, string>} */
     private function item(BigDecimal $amount, array $record): array
     {
-        return ['amount' => $amount, 'source' => $this->source($record), 'evidence' => $this->strings($record['evidence_ids'] ?? []), 'assumptions' => $this->strings($record['assumptions'] ?? []), 'identity' => (string) ($record['id'] ?? 'operand')];
+        return [
+            'amount' => $amount, 'source' => $this->source($record),
+            'evidence' => $this->strings($record['evidence_ids'] ?? []),
+            'assumptions' => $this->strings($record['assumptions'] ?? []),
+            'identity' => (string) ($record['id'] ?? 'operand'),
+            'contexts' => $this->strings($record['_operand_contexts'] ?? []),
+            'provenance_versions' => $this->strings($record['_operand_provenance_versions'] ?? []),
+        ];
     }
 
     /** @param array<string, mixed> $record */
@@ -319,6 +358,60 @@ final class BuildingQuantityCalculator
     {
         return ($record['source'] ?? null) === 'estimated' || $this->strings($record['assumptions'] ?? []) !== [] || $this->strings($record['evidence_ids'] ?? []) === []
             ? QuantitySource::Estimated : QuantitySource::Evidenced;
+    }
+
+    /** @param array<string, mixed> $record */
+    private function operand(array $record, string $field, string $unit, string $modelVersion, string $path): ?QuantityOperandData
+    {
+        try {
+            return QuantityOperandData::fromRecord($record, $field, $unit, $modelVersion);
+        } catch (\InvalidArgumentException) {
+            $this->diagnostic('invalid_typed_operand', $path);
+            if ($this->strings($record['evidence_ids'] ?? []) === [] && ! is_array($record[$field] ?? null)) {
+                $this->diagnostic('operand_provenance_missing', $path);
+            }
+
+            return null;
+        }
+    }
+
+    /** @param array<string, mixed> $record @return array<string, mixed> */
+    private function recordFromOperand(array $record, QuantityOperandData $operand): array
+    {
+        return $this->recordFromOperands($record, [$operand]);
+    }
+
+    /** @param array<string, mixed> $record @param array<int, QuantityOperandData> $operands @return array<string, mixed> */
+    private function recordFromOperands(array $record, array $operands): array
+    {
+        $evidence = [];
+        $assumptions = [];
+        $source = QuantitySource::Evidenced;
+        $contexts = [];
+        $versions = [];
+        foreach ($operands as $operand) {
+            $evidence = [...$evidence, ...$operand->evidenceIds];
+            $assumptions = [...$assumptions, ...$operand->assumptions];
+            $contexts[] = $operand->contextId;
+            $versions[] = $operand->provenanceVersion;
+            if ($operand->source === QuantitySource::Estimated) {
+                $source = QuantitySource::Estimated;
+            }
+        }
+        if (count(array_unique($contexts)) > 1) {
+            $this->diagnostic('operand_context_conflict', (string) ($record['id'] ?? 'operand'));
+            $evidence = [];
+            $assumptions = [];
+            $source = QuantitySource::Estimated;
+        }
+
+        $record['evidence_ids'] = $this->uniqueSorted($evidence);
+        $record['assumptions'] = $this->uniqueSorted($assumptions);
+        $record['source'] = $source->value;
+        $record['_operand_contexts'] = $this->uniqueSorted($contexts);
+        $record['_operand_provenance_versions'] = $this->uniqueSorted($versions);
+
+        return $record;
     }
 
     /** @param array<string, mixed> $operand */

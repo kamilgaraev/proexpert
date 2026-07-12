@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\BuildingQuantityCalculator;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DrawingGeometryAnalyzer;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class QuantityTrustBoundaryTest extends TestCase
@@ -44,7 +45,7 @@ final class QuantityTrustBoundaryTest extends TestCase
 
         $model['rooms'][0]['area'] = [
             'value' => '10', 'unit' => 'm2', 'source' => 'evidenced', 'evidence_ids' => ['e'],
-            'context' => ['id' => 'survey-1', 'version' => '1'], 'metric_independent' => true,
+            'context' => ['id' => 'survey-1', 'version' => '1'], 'provenance_version' => '1', 'metric_independent' => true,
         ];
         self::assertSame('10.000000', (new BuildingQuantityCalculator)->calculate($model)->get('floor_area')?->amount);
     }
@@ -99,6 +100,79 @@ final class QuantityTrustBoundaryTest extends TestCase
 
         self::assertNull($result->get('floor_area'));
         self::assertContains('collection_resource_limit_exceeded', array_column($result->diagnostics, 'code'));
+    }
+
+    public function test_oversize_mixed_model_is_rejected_before_operand_expansion(): void
+    {
+        $result = (new BuildingQuantityCalculator)->calculate($this->model([
+            'rooms' => array_fill(0, 2500, ['id' => 'r', 'area' => '1', 'evidence_ids' => ['r']]),
+            'engineering' => array_fill(0, 2501, ['id' => 'e', 'system' => 'water', 'measurement' => 'length', 'amount' => '1', 'unit' => 'm', 'evidence_ids' => ['e']]),
+        ]));
+
+        self::assertSame([], $result->all());
+        self::assertContains('model_record_resource_limit_exceeded', array_column($result->diagnostics, 'code'));
+    }
+
+    #[DataProvider('invalidOperandProvider')]
+    public function test_every_formula_family_rejects_malformed_typed_operands(array $override, string $quantityKey): void
+    {
+        $result = (new BuildingQuantityCalculator)->calculate($this->model($override));
+
+        self::assertNull($result->get($quantityKey));
+        self::assertContains('invalid_typed_operand', array_column($result->diagnostics, 'code'));
+    }
+
+    public static function invalidOperandProvider(): array
+    {
+        $bad = ['value' => '1', 'unit' => 'kg', 'source' => 'unknown', 'evidence_ids' => [], 'context' => []];
+
+        return [
+            'room area' => [['rooms' => [['id' => 'r', 'area' => $bad]]], 'floor_area'],
+            'wall' => [['walls' => [['id' => 'w', 'length' => $bad, 'height' => '2', 'opening_ids' => [], 'evidence_ids' => ['w']]]], 'gross_wall_area'],
+            'opening' => [['walls' => [['id' => 'w', 'length' => '2', 'height' => '2', 'opening_ids' => ['o'], 'evidence_ids' => ['w']]], 'openings' => [['id' => 'o', 'wall_id' => 'w', 'width' => $bad, 'height' => '1', 'evidence_ids' => ['o']]]], 'opening_area'],
+            'foundation' => [['foundations' => [['id' => 'f', 'length' => $bad, 'width' => '1', 'depth' => '1', 'evidence_ids' => ['f']]]], 'foundation_volume'],
+            'roof' => [['roofs' => [['id' => 'r', 'area' => $bad, 'evidence_ids' => ['r']]]], 'roof_area'],
+            'engineering' => [['engineering' => [['id' => 'e', 'system' => 'water', 'measurement' => 'length', 'amount' => $bad, 'unit' => 'm', 'evidence_ids' => ['e']]]], 'engineering.water.length'],
+        ];
+    }
+
+    public function test_mixed_production_model_stays_within_budget_and_preserves_exact_counts(): void
+    {
+        $rooms = $walls = $openings = $engineering = [];
+        for ($i = 0; $i < 1250; $i++) {
+            $rooms[] = ['id' => "r-$i", 'area' => '1.0000001', 'evidence_ids' => ["r-$i"]];
+            $walls[] = ['id' => "w-$i", 'length' => '2', 'height' => '2', 'opening_ids' => ["o-$i"], 'evidence_ids' => ["w-$i"]];
+            $openings[] = ['id' => "o-$i", 'wall_id' => "w-$i", 'width' => '0.5', 'height' => '1', 'evidence_ids' => ["o-$i"]];
+            $engineering[] = ['id' => "e-$i", 'system' => 'water', 'measurement' => 'length', 'amount' => '1.25', 'unit' => 'm', 'evidence_ids' => ["e-$i"]];
+        }
+        $before = memory_get_usage(true);
+        $result = (new BuildingQuantityCalculator)->calculate($this->model(compact('rooms', 'walls', 'openings', 'engineering')));
+        $delta = memory_get_usage(true) - $before;
+
+        self::assertSame('1250.000125', $result->get('floor_area')?->amount);
+        self::assertSame('4375.000000', $result->get('net_wall_area')?->amount);
+        self::assertSame('1562.500000', $result->get('engineering.water.length')?->amount);
+        self::assertCount(1250, $result->get('floor_area')?->evidenceIds ?? []);
+        self::assertLessThan(128 * 1024 * 1024, $delta);
+    }
+
+    public function test_mixed_operand_sources_taint_formula_and_preserve_assumption(): void
+    {
+        $estimated = [
+            'value' => '2', 'unit' => 'm', 'source' => 'estimated', 'evidence_ids' => ['survey'],
+            'context' => ['id' => 'wall-context'], 'assumptions' => ['user_wall_length'], 'provenance_version' => '1',
+        ];
+        $evidenced = [
+            'value' => '3', 'unit' => 'm', 'source' => 'evidenced', 'evidence_ids' => ['drawing'],
+            'context' => ['id' => 'wall-context'], 'assumptions' => [], 'provenance_version' => '1',
+        ];
+        $result = (new BuildingQuantityCalculator)->calculate($this->model([
+            'walls' => [['id' => 'w', 'length' => $estimated, 'height' => $evidenced, 'opening_ids' => []]],
+        ]));
+
+        self::assertSame('estimated', $result->get('gross_wall_area')?->source->value);
+        self::assertSame(['user_wall_length'], $result->get('gross_wall_area')?->assumptions);
+        self::assertSame(['drawing', 'survey'], $result->get('gross_wall_area')?->evidenceIds);
     }
 
     /** @param array<string, mixed> $override */
