@@ -15,6 +15,10 @@ final readonly class NormativeWorkflowResultData
 
     public function selectedCandidateId(): ?string
     {
-        return $this->rerankResult?->selectedCandidateId ?? $this->candidateSet->candidates[0]->id ?? null;
+        if ($this->status === 'reranked') {
+            return $this->rerankResult?->selectedCandidateId;
+        }
+
+        return $this->status === 'retrieval_only' ? ($this->candidateSet->candidates[0]->id ?? null) : null;
     }
 }

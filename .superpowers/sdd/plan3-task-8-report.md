@@ -92,6 +92,10 @@ The fourth corrective pass installs a future-write trigger in the expand migrati
 
 Fourth corrective verification: **52 tests, 144 assertions, 0 failures**; PHPStan/Larastan: **92 paths, 0 errors**. PostgreSQL rollout/contract remains unrun locally.
 
+Verification deliverables add a real bootstrapped Laravel application/provider test (without `RefreshDatabase`) that resolves the production reranker/workflow bindings while replacing only physical wire, usage store, provider and retrieval fixture. It proves one usage record per wire attempt and `unavailable` with no selected retrieval fallback after provider failure. A DB-less pin/hash/non-empty workflow test proves pin changes the canonical stage identity and a compatible candidate reaches `retrieval_only`.
+
+Final verification inventory: **54 DB-less tests, 155 assertions, 0 failures**. The two new deliverable tests pass independently with PHPStan reporting **0 errors**.
+
 Second corrective verification:
 
 - DB-less normative, container model-set, attempt-aware usage and pipeline set: **50 tests, 142 assertions, 0 failures**.
