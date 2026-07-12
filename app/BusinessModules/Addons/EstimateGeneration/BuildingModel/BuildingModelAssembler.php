@@ -17,6 +17,7 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\VisionBuildi
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\VisionClarificationData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\WallData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\FusedGeometryElementData;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\ScaleContextData;
 use InvalidArgumentException;
 
 final class BuildingModelAssembler
@@ -326,9 +327,9 @@ final class BuildingModelAssembler
         return min(array_map(static fn (FusedGeometryElementData $element): float => $element->confidence, $elements));
     }
 
-    private function matchesScaleContext(FusedGeometryElementData $element, mixed $context): bool
+    private function matchesScaleContext(FusedGeometryElementData $element, ?ScaleContextData $context): bool
     {
-        if (! $context instanceof \App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\ScaleContextData) {
+        if ($context === null) {
             return false;
         }
         foreach ($element->provenance as $provenance) {

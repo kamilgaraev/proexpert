@@ -78,6 +78,42 @@ final class GeometryFusionServiceTest extends TestCase
         ]);
     }
 
+    #[Test]
+    #[\PHPUnit\Framework\Attributes\DataProvider('nestedEvidenceIdentityConflicts')]
+    public function nested_provenance_evidence_cannot_be_reused_for_different_identity(string $mode): void
+    {
+        $original = self::element('room-1', 'nested', ['polygon' => [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]]);
+        $carrier = new FusedGeometryElementData(
+            'room-1', 'room', ['polygon' => [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]], 'vision', 'carrier',
+            'sha256:'.str_repeat('b', 64), 1, 'normalized_source_v1', 'runtime:v1', 'model:v1', 0.9,
+            $original->provenance,
+        );
+        $conflict = match ($mode) {
+            'key' => self::element('room-2', 'nested', ['polygon' => [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]]),
+            'geometry' => self::element('room-1', 'nested', ['polygon' => [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0]]]),
+            'context' => new FusedGeometryElementData('room-1', 'room', ['polygon' => [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]], 'vision', 'nested', 'sha256:'.str_repeat('d', 64), 1, 'normalized_source_v1', 'runtime:v1', 'model:v1', 0.9),
+        };
+
+        $this->expectException(\InvalidArgumentException::class);
+        (new GeometryFusionService)->fuse([$carrier, $conflict]);
+    }
+
+    public static function nestedEvidenceIdentityConflicts(): array
+    {
+        return [['key'], ['geometry'], ['context']];
+    }
+
+    #[Test]
+    public function exact_nested_evidence_duplicate_is_allowed_in_every_order(): void
+    {
+        $original = self::element('room-1', 'nested', ['polygon' => [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]]);
+        $carrier = new FusedGeometryElementData('room-1', 'room', $original->geometry, 'vision', 'carrier', 'sha256:'.str_repeat('b', 64), 1, 'normalized_source_v1', 'runtime:v1', 'model:v1', 0.9, $original->provenance);
+        $service = new GeometryFusionService;
+
+        self::assertSame($service->fuse([$original, $carrier])->toArray(), $service->fuse([$carrier, $original])->toArray());
+        self::assertSame(['carrier', 'nested'], $service->fuse([$original, $carrier])->elements[0]->evidenceRefs());
+    }
+
     private static function element(string $key, string $evidence, array $geometry): FusedGeometryElementData
     {
         return new FusedGeometryElementData($key, 'room', $geometry, 'vision', $evidence, 'sha256:'.str_repeat('b', 64), 1, 'normalized_source_v1', 'runtime:v1', 'model:v1', 0.9);

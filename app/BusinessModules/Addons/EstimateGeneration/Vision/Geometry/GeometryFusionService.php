@@ -22,12 +22,27 @@ final class GeometryFusionService
         $identities = [];
         $groups = [];
         foreach ($elements as $element) {
-            $identity = self::signature($element);
-            if (isset($identities[$element->evidenceRef]) && $identities[$element->evidenceRef] !== [$element->key, $identity]) {
-                throw new InvalidArgumentException('Geometry evidence identity is inconsistent.');
+            $signature = self::signature($element);
+            foreach ($element->provenance as $provenance) {
+                $identity = [
+                    $element->key,
+                    $element->type,
+                    $signature,
+                    $provenance['source_type'],
+                    $provenance['source_fingerprint'],
+                    $provenance['page_number'],
+                    $provenance['coordinate_space'],
+                    $provenance['coordinate_transform'],
+                    $provenance['runtime_version'],
+                    $provenance['model_version'],
+                ];
+                $reference = $provenance['evidence_ref'];
+                if (isset($identities[$reference]) && $identities[$reference] !== $identity) {
+                    throw new InvalidArgumentException('Geometry evidence identity is inconsistent.');
+                }
+                $identities[$reference] = $identity;
             }
-            $identities[$element->evidenceRef] = [$element->key, $identity];
-            $groups[$element->key][$identity][] = $element;
+            $groups[$element->key][$signature][] = $element;
         }
         $fused = [];
         $issues = [];

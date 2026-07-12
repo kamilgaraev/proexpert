@@ -127,6 +127,12 @@ final class ScaleResolverTest extends TestCase
             ['conflict', null, [''], 'geometry_scale_conflict', null],
             ['missing', null, [], 'geometry_scale_conflict', null],
             ['conflict', null, ['e1', 'e2'], 'geometry_scale_unconfirmed', null],
+            ['confirmed', 0.01, ['e1'], 'geometry_scale_conflict', $context],
+            ['confirmed', 0.0, ['e1'], null, $context],
+            ['confirmed', INF, ['e1'], null, $context],
+            ['confirmed', 0.01, [''], null, $context],
+            ['missing', null, [], 'geometry_scale_unconfirmed', $context],
+            ['conflict', null, ['e1', 'e2'], 'geometry_scale_conflict', $context],
         ];
     }
 
