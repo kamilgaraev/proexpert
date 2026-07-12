@@ -91,7 +91,7 @@ final readonly class RecordedPortEnvelopeLoader
                 ),
                 RecordedPort::DocumentExtraction, RecordedPort::CadExtraction => VectorGeometryData::fromArray($envelope->payload),
                 RecordedPort::NormativeReranker => $this->validateRerankerPayload($envelope->payload),
-                RecordedPort::WorkPlanningModel => null,
+                RecordedPort::WorkPlanningModel => RecordedWorkPlannerResponseData::fromProviderArray($envelope->payload),
             };
         } catch (Throwable) {
             throw new RecordedPortEnvelopeException('recorded_port_payload_invalid');

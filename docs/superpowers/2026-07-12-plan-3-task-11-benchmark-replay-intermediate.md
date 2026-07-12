@@ -46,3 +46,11 @@
 Этапы payload validators, production replay adapter и первые два end-to-end кейса ещё не реализованы.
 
 Task 11 нельзя отмечать `DONE`, пока все открытые gates не закрыты без снижения порогов и oracle-подстановок.
+
+## Продолжение: port validators и planner boundary
+
+- `RecordedPortEnvelopeLoader` валидирует payload по объявленному порту через production factories: `VisionAnalysisData::fromProviderArray`, `VectorGeometryData::fromArray` и `NormativeRerankResultData::fromProviderArray`.
+- Production LLM reranker и replay используют единый закрытый normative factory; ordering обязан быть полной перестановкой candidate set без придуманных или пропущенных ID.
+- Введён закрытый `RecordedWorkPlannerResponseData`: только sections и семантические work intents с name/category/unit/quantity, обязательными quantity evidence refs и confidence.
+- Planner envelope не может содержать `work_id`, `norm_id`, цены, readiness или expected-поля: exact schema отклоняет их до replay.
+- Следующий обязательный срез: выделить чистый `WorkPlanCompiler` из `PlanWorkItemsStage`, сохранить parity текущего runtime output и подключить recorded/live planner DTO через единый provider interface. Этот срез и два end-to-end replay cases ещё не реализованы.
