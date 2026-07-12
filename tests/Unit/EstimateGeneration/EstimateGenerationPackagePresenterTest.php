@@ -12,6 +12,23 @@ use PHPUnit\Framework\TestCase;
 
 final class EstimateGenerationPackagePresenterTest extends TestCase
 {
+    #[Test]
+    public function test_item_preserves_exact_quantity_as_canonical_string(): void
+    {
+        $item = new EstimateGenerationPackageItem;
+        $item->forceFill([
+            'id' => 1, 'key' => 'exact', 'logical_key' => 'exact', 'revision' => 1,
+            'item_type' => 'priced_work', 'name' => 'Работа', 'unit' => 'м2',
+            'quantity' => '123456789.123456789123456789', 'total_cost' => '1.00',
+            'metadata' => [], 'flags' => [], 'resources' => [],
+        ]);
+
+        self::assertSame(
+            '123456789.123456789123456789',
+            (new EstimateGenerationPackagePresenter)->item($item)['quantity'],
+        );
+    }
+
     public function test_package_detail_item_exposes_normative_candidates_for_inline_selection(): void
     {
         $item = new EstimateGenerationPackageItem([
@@ -57,7 +74,7 @@ final class EstimateGenerationPackagePresenterTest extends TestCase
             'sort_order' => 100,
         ]);
 
-        $payload = (new EstimateGenerationPackagePresenter())->item($item);
+        $payload = (new EstimateGenerationPackagePresenter)->item($item);
 
         self::assertSame('candidate', $payload['normative_match']['status'] ?? null);
         self::assertSame(101, $payload['normative_candidates'][0]['norm_id'] ?? null);
@@ -89,7 +106,7 @@ final class EstimateGenerationPackagePresenterTest extends TestCase
             ],
         ]);
 
-        $payload = (new EstimateGenerationPackagePresenter())->item($item);
+        $payload = (new EstimateGenerationPackagePresenter)->item($item);
 
         self::assertSame('not_calculated', $payload['pricing_status']);
         self::assertSame('pricing_not_calculated', $payload['pricing_blocker']);
@@ -97,7 +114,7 @@ final class EstimateGenerationPackagePresenterTest extends TestCase
 
     public function test_package_collection_counts_review_required_separately_from_ready(): void
     {
-        $payload = (new EstimateGenerationPackagePresenter())->collection(new Collection([
+        $payload = (new EstimateGenerationPackagePresenter)->collection(new Collection([
             new EstimateGenerationPackage(['status' => 'ready_for_review', 'totals' => []]),
             new EstimateGenerationPackage(['status' => 'review_required', 'totals' => []]),
             new EstimateGenerationPackage(['status' => 'blocked', 'totals' => []]),
@@ -148,7 +165,7 @@ final class EstimateGenerationPackagePresenterTest extends TestCase
             ]),
         ]);
 
-        $payload = (new EstimateGenerationPackagePresenter())->detail($package, $items);
+        $payload = (new EstimateGenerationPackagePresenter)->detail($package, $items);
 
         self::assertCount(1, $payload['items']);
         self::assertSame('foundation.concrete', $payload['items'][0]['key']);

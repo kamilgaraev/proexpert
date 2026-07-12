@@ -13,6 +13,21 @@ use PHPUnit\Framework\TestCase;
 final class LatestPackageRevisionQueryTest extends TestCase
 {
     #[Test]
+    public function package_refresh_uses_one_windowed_aggregate_without_model_hydration(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 3).'/app/BusinessModules/Addons/EstimateGeneration/Services/EstimateGenerationPackagePersistenceService.php');
+        $start = strpos($source, 'private function refreshPackagePricingState');
+        $end = strpos($source, 'private function appendItemRevision', $start);
+        $method = substr($source, $start, $end - $start);
+
+        self::assertStringContainsString('ROW_NUMBER() OVER (PARTITION BY', $method);
+        self::assertStringContainsString('SUM(CASE WHEN', $method);
+        self::assertStringContainsString('->first()', $method);
+        self::assertStringNotContainsString('->get()', $method);
+        self::assertStringNotContainsString('EstimateGenerationPackageItem::query()', $method);
+    }
+
+    #[Test]
     public function limit_is_applied_after_latest_physical_revision_is_selected(): void
     {
         $db = new Capsule;

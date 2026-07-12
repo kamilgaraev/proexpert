@@ -55,7 +55,7 @@ class EstimateGenerationPackageItem extends Model
     protected $casts = [
         'level' => 'integer',
         'revision' => 'integer',
-        'quantity' => 'float',
+        'quantity' => 'decimal:18',
         'quantity_basis' => 'array',
         'price_snapshot' => 'array',
         'normative_confidence' => 'float',

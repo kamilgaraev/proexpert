@@ -25,7 +25,10 @@ final class AcceptedQuantityEvidenceContractTest extends TestCase
         self::assertStringContainsString("'quantity_evidence_descriptor'", $stage);
         self::assertStringContainsString("'checkpoint_id' => \$claim->checkpointId", $materializer);
         self::assertStringContainsString("'output_version' => \$result->outputVersion", $materializer);
-        self::assertStringContainsString('$this->completionHook->beforeComplete', $store);
+        self::assertMatchesRegularExpression(
+            '/\$completed\s*=.*?->update\(\[.*?if \(! \$completed\).*?\$this->completionHook->beforeComplete/s',
+            $store,
+        );
         self::assertStringContainsString("->where('checkpoint.status', 'completed')", $persistence);
         self::assertStringContainsString("->whereColumn('checkpoint.output_version', 'accepted.output_version')", $persistence);
     }

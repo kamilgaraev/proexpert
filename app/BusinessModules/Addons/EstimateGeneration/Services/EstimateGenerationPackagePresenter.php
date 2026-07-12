@@ -134,7 +134,7 @@ class EstimateGenerationPackagePresenter
             'name' => $item->name,
             'work_category' => $metadata['work_category'] ?? null,
             'unit' => $item->unit,
-            'quantity' => $item->quantity,
+            'quantity' => $item->quantity === null ? null : (string) $item->quantity,
             'quantity_basis' => $item->quantity_basis ?? [],
             'price_source' => $item->price_source,
             'pricing_status' => $pricingStatus,

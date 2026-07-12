@@ -182,7 +182,6 @@ final class EloquentPipelineCheckpointStore implements PipelineCheckpointStore
                 return false;
             }
 
-            $this->completionHook->beforeComplete($claim, $result, $completedAt);
             $artifactBytes = $result->output->artifact->bytes;
             $aggregateBytes = (int) $this->query()
                 ->where('session_id', $claim->context->sessionId)
@@ -218,6 +217,8 @@ final class EloquentPipelineCheckpointStore implements PipelineCheckpointStore
             if (! $completed) {
                 throw new RuntimeException('estimate_generation.pipeline_checkpoint_completion_lost');
             }
+
+            $this->completionHook->beforeComplete($claim, $result, $completedAt);
 
             return true;
         }, 3);

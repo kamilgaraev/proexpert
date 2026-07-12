@@ -138,15 +138,22 @@ class EstimateGenerationPackagePersistenceService
 
     private function refreshPackagePricingState(EstimateGenerationPackage $package): void
     {
-        $latest = EstimateGenerationPackageItem::query()->where('package_id', $package->id)
-            ->latestLogicalRevisions()
-            ->orderBy('sort_order')->orderBy('id')->get();
-        $priced = $latest->filter(fn (EstimateGenerationPackageItem $item): bool => $item->item_type === 'priced_work' && $item->pricing_finalized_at !== null);
-        $unfinalized = $latest->contains(fn (EstimateGenerationPackageItem $item): bool => $item->item_type === 'priced_work' && $item->pricing_finalized_at === null);
-        $total = $priced->reduce(
-            fn (BigDecimal $sum, EstimateGenerationPackageItem $item): BigDecimal => $sum->plus((string) $item->total_cost),
-            BigDecimal::zero(),
-        )->toScale(2, RoundingMode::HalfUp);
+        $latestIds = DB::table('estimate_generation_package_items as revisions')
+            ->select('revisions.id')
+            ->selectRaw('ROW_NUMBER() OVER (PARTITION BY COALESCE(revisions.logical_key, revisions.key) ORDER BY revisions.revision DESC, revisions.id DESC) AS revision_rank')
+            ->where('revisions.package_id', $package->id);
+        $aggregate = DB::query()->fromSub($latestIds, 'latest')
+            ->join('estimate_generation_package_items as item', 'item.id', '=', 'latest.id')
+            ->where('latest.revision_rank', 1)
+            ->selectRaw('COUNT(*) AS total_items_count')
+            ->selectRaw("SUM(CASE WHEN item.item_type = 'priced_work' AND item.pricing_finalized_at IS NOT NULL THEN 1 ELSE 0 END) AS priced_items_count")
+            ->selectRaw("SUM(CASE WHEN item.item_type = 'priced_work' AND item.pricing_finalized_at IS NULL THEN 1 ELSE 0 END) AS unfinalized_items_count")
+            ->selectRaw("COALESCE(SUM(CASE WHEN item.item_type = 'priced_work' AND item.pricing_finalized_at IS NOT NULL THEN item.total_cost ELSE 0 END), 0) AS total_cost")
+            ->first();
+        $totalItemsCount = (int) ($aggregate->total_items_count ?? 0);
+        $pricedItemsCount = (int) ($aggregate->priced_items_count ?? 0);
+        $unfinalized = (int) ($aggregate->unfinalized_items_count ?? 0) > 0;
+        $total = BigDecimal::of((string) ($aggregate->total_cost ?? '0'))->toScale(2, RoundingMode::HalfUp);
         $quality = is_array($package->quality_summary) ? $package->quality_summary : [];
         $criticalFlags = array_values(array_filter(
             (array) ($quality['critical_flags'] ?? []),
@@ -161,14 +168,14 @@ class EstimateGenerationPackagePersistenceService
             : ($quality['critical_flags'] === [] ? 'passed' : 'review_required');
         $totals = is_array($package->totals) ? $package->totals : [];
         $totals['total_cost'] = (string) $total;
-        $totals['priced_items_count'] = $priced->count();
-        $totals['total_items_count'] = $latest->count();
-        $totals['items_count'] = $latest->count();
+        $totals['priced_items_count'] = $pricedItemsCount;
+        $totals['total_items_count'] = $totalItemsCount;
+        $totals['items_count'] = $totalItemsCount;
         $package->forceFill([
             'status' => $this->packageStatus($quality),
             'generation_progress' => $unfinalized ? 99 : 100,
             'finished_at' => $unfinalized ? null : now(),
-            'actual_items_count' => $latest->count(),
+            'actual_items_count' => $totalItemsCount,
             'quality_summary' => $quality,
             'totals' => $totals,
         ])->save();
