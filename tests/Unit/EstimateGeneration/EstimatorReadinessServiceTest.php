@@ -277,8 +277,20 @@ class EstimatorReadinessServiceTest extends TestCase
             'local_estimates' => [
                 [
                     'key' => 'local-1',
-                    'sections' => [],
+                    'sections' => [['work_items' => [[
+                        'item_type' => 'priced_work',
+                        'quantity' => ['source' => 'evidenced', 'evidence_ids' => [1]],
+                        'normative_match' => ['status' => 'matched', 'decision' => ['status' => 'accepted']],
+                        'price_snapshot' => ['version_id' => 1],
+                        'pricing_finalized_at' => '2026-07-12T00:00:00Z',
+                    ]]]],
                 ],
+            ],
+            'building_model' => [
+                'scale_status' => 'confirmed',
+                'evidence_ids' => [1],
+                'metrics' => ['complete' => true],
+                'cad_status' => 'completed',
             ],
             'problem_flags' => [],
             'quality_summary' => $quality,

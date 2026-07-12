@@ -57,6 +57,12 @@ final readonly class EstimatorReadinessInput
             }
             $normalized[$metric] = (int) $value;
         }
+        foreach ($metrics as $metric => $value) {
+            if ((! str_starts_with($metric, 'gate_') && ! str_starts_with($metric, 'warning_')) || ! is_numeric($value) || (int) $value < 0) {
+                continue;
+            }
+            $normalized[$metric] = (int) $value;
+        }
         $this->metrics = $normalized;
     }
 }

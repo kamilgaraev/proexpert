@@ -57,7 +57,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\BootstrapEsti
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\InspectEstimateGenerationProductionCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\RunEstimateGenerationBenchmarkCaseCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\RunEstimateGenerationBenchmarkCommand;
-use App\BusinessModules\Addons\EstimateGeneration\Contracts\DrawingAnalysisProviderInterface;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EloquentSessionStateStore;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\SessionStateStore;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\EloquentEvidenceRepository;
@@ -147,8 +146,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\ConstructionSemanticP
 use App\BusinessModules\Addons\EstimateGeneration\Services\DocumentParsingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\ConstructionDocumentClassifierService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentUnderstandingSummaryBuilder;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DrawingUnderstandingService;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\RuleBasedDrawingAnalysisProvider;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DrawingGeometryAnalyzer;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\CadGeometryProvider;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\DwgDxfGeometryProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDraftPersistenceService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationAuditService;
@@ -216,6 +216,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(VisionResponseBodyReader::class, BoundedVisionResponseBodyReader::class);
         $this->app->singleton(TimewebVisionProvider::class);
         $this->app->singleton(VisionProvider::class, TimewebVisionProvider::class);
+        $this->app->singleton(CadGeometryProvider::class, DwgDxfGeometryProvider::class);
         $this->app->singleton(BenchmarkAdapterRegistry::class, static fn ($app): BenchmarkAdapterRegistry => new BenchmarkAdapterRegistry([
             $app->make(CurrentBaselineBenchmarkAdapter::class),
         ]));
@@ -225,7 +226,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             base_path('tests/Fixtures/EstimateGeneration/benchmarks'),
             $app->make(AcceptanceBenchmarkCorpusLoader::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\PdfTextLayerExtractor::class),
-            $app->make(RuleBasedDrawingAnalysisProvider::class),
+            $app->make(DrawingGeometryAnalyzer::class),
             (($organizationId = (int) config('estimate-generation.benchmark.acceptance_organization_id', 0)) > 0)
                 ? $organizationId
                 : null,
@@ -321,9 +322,6 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(DocumentFactMerger::class);
         $this->app->singleton(ConstructionDocumentClassifierService::class);
         $this->app->singleton(DocumentUnderstandingSummaryBuilder::class);
-        $this->app->singleton(RuleBasedDrawingAnalysisProvider::class);
-        $this->app->singleton(DrawingAnalysisProviderInterface::class, RuleBasedDrawingAnalysisProvider::class);
-        $this->app->singleton(DrawingUnderstandingService::class);
         $this->app->singleton(EstimatorScopeInferenceService::class);
         $this->app->singleton(ConstructionSemanticParser::class);
         $this->app->singleton(EstimateDecompositionService::class);

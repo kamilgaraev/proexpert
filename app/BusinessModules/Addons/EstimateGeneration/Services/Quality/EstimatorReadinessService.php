@@ -18,10 +18,10 @@ class EstimatorReadinessService
         private readonly ?EstimateGenerationReviewItemService $reviewItemService = null,
         private readonly ?EstimatorReadinessEvaluator $evaluator = null,
         private readonly ?DocumentReadinessClassifier $documentClassifier = null,
+        private readonly ?DraftReadinessInspector $draftInspector = null,
     ) {}
 
-    /** @return array<string, mixed> */
-    public function evaluate(EstimateGenerationSession $session): array
+    public function evaluate(EstimateGenerationSession $session)
     {
         $documents = $this->documents($session);
         $draft = is_array($session->draft_payload) ? $session->draft_payload : [];
@@ -35,7 +35,10 @@ class EstimatorReadinessService
             hasDraft: is_array($session->draft_payload) && ($session->draft_payload['local_estimates'] ?? []) !== [],
             qualityStatus: (string) ($quality['status'] ?? ''),
             qualityLevel: (string) ($quality['level'] ?? ''),
-            metrics: $this->metrics($session, $documents, $draft, $quality),
+            metrics: array_merge(
+                $this->metrics($session, $documents, $draft, $quality),
+                ($this->draftInspector ?? new DraftReadinessInspector)->inspect($draft)->metrics,
+            ),
         ));
     }
 

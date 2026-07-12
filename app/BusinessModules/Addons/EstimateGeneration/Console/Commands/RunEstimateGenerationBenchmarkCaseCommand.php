@@ -10,7 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCorpus;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkManifest;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\CurrentBaselineBenchmarkAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkObjectReader;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\RuleBasedDrawingAnalysisProvider;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DrawingGeometryAnalyzer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\PdfTextLayerExtractor;
 use Illuminate\Console\Command;
 use Throwable;
@@ -30,7 +30,7 @@ final class RunEstimateGenerationBenchmarkCaseCommand extends Command
         private readonly string $fixtureRoot,
         private readonly AcceptanceBenchmarkCorpusLoader $acceptanceLoader,
         private readonly PdfTextLayerExtractor $pdfText,
-        private readonly RuleBasedDrawingAnalysisProvider $drawing,
+        private readonly DrawingGeometryAnalyzer $drawing,
         private readonly ?int $acceptanceOrganizationId = null,
         private readonly ?string $acceptanceManifestLocator = null,
     ) {

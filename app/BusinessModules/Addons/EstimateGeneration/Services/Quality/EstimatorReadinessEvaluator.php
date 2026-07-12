@@ -12,25 +12,24 @@ use function trans_message;
 
 final class EstimatorReadinessEvaluator
 {
-    /** @return array<string, mixed> */
-    public function evaluate(EstimatorReadinessInput $input): array
+    public function evaluate(EstimatorReadinessInput $input): ReadinessResult
     {
         $metrics = $input->metrics;
         $blockers = $this->blockers($input);
         $warnings = $this->warnings($metrics);
         $status = $this->status($input, $blockers);
 
-        return [
-            'status' => $status,
-            'can_generate' => $metrics['documents_ready'] > 0
+        return new ReadinessResult(
+            status: $status,
+            canGenerate: $metrics['documents_ready'] > 0
                 && $metrics['documents_pending'] === 0
                 && $metrics['documents_action_required'] === 0,
-            'can_apply' => $status === 'ready_to_apply' && $blockers === [],
-            'next_action' => $this->nextAction($status),
-            'blockers' => $blockers,
-            'warnings' => $warnings,
-            'metrics' => $metrics,
-        ];
+            canApply: $status === 'ready_to_apply' && $blockers === [],
+            blockingIssues: $blockers,
+            warnings: $warnings,
+            metrics: $metrics,
+            nextAction: $this->nextAction($status),
+        );
     }
 
     /** @return list<array{code: string, message_key: string, message: string}> */
@@ -71,8 +70,14 @@ final class EstimatorReadinessEvaluator
         if ($input->hasDraft && ($input->qualityStatus === 'critical' || $input->qualityLevel === 'blocked')) {
             $blockers[] = $this->issue('quality_blocked', 'estimate_generation.readiness_blocker_quality_blocked');
         }
+        foreach ($metrics as $metric => $count) {
+            if (str_starts_with($metric, 'gate_') && $count > 0) {
+                $code = substr($metric, 5);
+                $blockers[] = $this->issue($code, 'estimate_generation.readiness_'.$code);
+            }
+        }
 
-        return $blockers;
+        return $this->uniqueIssues($blockers);
     }
 
     /** @param array<string, int> $metrics @return list<array{code: string, message_key: string, message: string}> */
@@ -85,8 +90,14 @@ final class EstimatorReadinessEvaluator
         if ($metrics['documents_ready'] > 0 && $metrics['facts'] === 0 && $metrics['drawing_elements'] === 0) {
             $warnings[] = $this->issue('low_document_understanding', 'estimate_generation.readiness_warning_low_document_understanding');
         }
+        foreach ($metrics as $metric => $count) {
+            if (str_starts_with($metric, 'warning_') && $count > 0) {
+                $code = substr($metric, 8);
+                $warnings[] = $this->issue($code, 'estimate_generation.readiness_'.$code);
+            }
+        }
 
-        return $warnings;
+        return $this->uniqueIssues($warnings);
     }
 
     /** @param list<array{code: string, message_key: string, message: string}> $blockers */
@@ -112,7 +123,7 @@ final class EstimatorReadinessEvaluator
         if (array_intersect($codes, ['quality_blocked', 'no_priced_positions']) !== []) {
             return 'draft_blocked';
         }
-        if (array_intersect($codes, ['norms_require_review', 'quantities_require_review', 'prices_require_review', 'quality_requires_review', 'review_items_require_action', 'review_summary_stale']) !== []) {
+        if ($blockers !== []) {
             return 'draft_needs_review';
         }
 
@@ -146,5 +157,12 @@ final class EstimatorReadinessEvaluator
         }
 
         return ['code' => $code, 'message_key' => $messageKey, 'message' => $message];
+    }
+
+    private function uniqueIssues(array $issues): array
+    {
+        $unique = [];
+        foreach ($issues as $issue) { $unique[$issue['code']] = $issue; }
+        return array_values($unique);
     }
 }

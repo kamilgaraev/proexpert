@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Sessions;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationAction;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReadinessResult;
 
 use function trans_message;
 
@@ -42,10 +43,13 @@ final class BuildSessionSnapshot
     public function handle(
         EstimateGenerationSession $session,
         array $permissions,
-        array $readinessSummary = [],
+        array|ReadinessResult $readinessSummary = [],
         array $documentsSummary = [],
         bool $readinessEvaluated = true,
     ): SessionSnapshotData {
+        if ($readinessSummary instanceof ReadinessResult) {
+            $readinessSummary = $readinessSummary->toArray();
+        }
         $status = $session->status instanceof EstimateGenerationStatus
             ? $session->status
             : EstimateGenerationStatus::from((string) $session->status);

@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Benchmark;
 
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Documents\DrawingAnalysisResultData;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\RuleBasedDrawingAnalysisProvider;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DrawingGeometryAnalyzer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\PdfTextLayerExtractor;
 
 final readonly class CurrentBaselineBenchmarkAdapter implements BenchmarkPipelineAdapter
@@ -13,7 +13,7 @@ final readonly class CurrentBaselineBenchmarkAdapter implements BenchmarkPipelin
     public function __construct(
         private BenchmarkObjectReader $objects,
         private PdfTextLayerExtractor $pdfText,
-        private RuleBasedDrawingAnalysisProvider $drawing,
+        private DrawingGeometryAnalyzer $drawing,
     ) {}
 
     public function id(): string
@@ -33,11 +33,18 @@ final readonly class CurrentBaselineBenchmarkAdapter implements BenchmarkPipelin
         if ($recognition === null) {
             return BenchmarkPipelineResultData::technicalFailure('baseline_pdf_unreadable');
         }
-        $analysis = $this->drawing->analyze(0, $case->id.'.pdf', $recognition);
+        $geometry = $this->drawing->analyze(0, $case->id.'.pdf', $recognition);
+        if ($geometry['review_reasons'] !== []) {
+            return BenchmarkPipelineResultData::technicalFailure('normalized_building_model_required');
+        }
+        $analysis = new DrawingAnalysisResultData([], array_map(static fn (array $quantity): array => [
+            'scope_key' => $quantity['key'], 'name' => $quantity['key'],
+            'quantity' => $quantity['amount'], 'source_refs' => $quantity['evidence_ids'],
+        ], $geometry['quantities']), ['document_profile' => ['document_role' => 'normalized_building_model']]);
 
         return BenchmarkPipelineResultData::success(
             $this->prediction($analysis),
-            ['drawing' => 'current-rule-based:v1', 'pdf_text' => 'smalot-pdfparser:2.11'],
+            ['drawing' => 'normalized-building-model:v1', 'pdf_text' => 'smalot-pdfparser:2.11'],
             null,
             null,
         );
