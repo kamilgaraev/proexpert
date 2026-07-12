@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\BuildingModel;
 
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\VisionBuildingModelInputData;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\GeometryConfirmationData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\FusedGeometryElementData;
@@ -27,6 +28,7 @@ final readonly class GeometryBuildingModelInputMapper
         ?VectorGeometryData $vector,
         array $evidenceIdsByRef,
         string $floorKey = 'floor-1',
+        ?GeometryConfirmationData $confirmation = null,
     ): VisionBuildingModelInputData {
         if ($vision === null && $vector === null) {
             throw new InvalidArgumentException('Geometry source is required.');
@@ -38,10 +40,14 @@ final readonly class GeometryBuildingModelInputMapper
         $visionScales = [];
 
         if ($vector !== null) {
-            [$vectorElements, $vectorIssues] = $this->vectorElements($vector);
+            [$vectorElements, $vectorIssues] = $confirmation === null
+                ? $this->vectorElements($vector)
+                : $this->confirmedVectorElements($vector, $confirmation);
             $elements = [...$elements, ...$vectorElements];
             $issues = [...$issues, ...$vectorIssues];
-            $vectorScales = $this->vectorScaleCandidates($vector, $vectorElements);
+            $vectorScales = $confirmation === null
+                ? $this->vectorScaleCandidates($vector, $vectorElements)
+                : $this->confirmationScaleCandidates($vector, $confirmation, $vectorElements);
         }
         if ($vision !== null) {
             [$visionElements, $visionIssues] = $this->visionElements($vision);
@@ -62,6 +68,93 @@ final readonly class GeometryBuildingModelInputMapper
             'geometry-input-mapper:v1',
             $floorKey,
         );
+    }
+
+    /** @return array{list<FusedGeometryElementData>, list<array{code: string, severity: string, element_key: string, evidence_refs: list<string>}>} */
+    private function confirmedVectorElements(VectorGeometryData $vector, GeometryConfirmationData $confirmation): array
+    {
+        if (! hash_equals($vector->sourceFingerprint, $confirmation->sourceFingerprint)
+            || ! hash_equals($vector->payloadSha256(), $confirmation->geometryPayloadSha256)) {
+            throw new InvalidArgumentException('geometry_confirmation_source_mismatch');
+        }
+        $unitScale = match ($vector->sourceUnit) {
+            'mm' => 0.001, 'cm' => 0.01, 'm' => 1.0, 'in' => 0.0254, 'ft' => 0.3048, default => null,
+        };
+        if ($vector->unitStatus === 'confirmed' && ($unitScale === null || abs($unitScale - $confirmation->metersPerUnit) > 1.0E-12)) {
+            throw new InvalidArgumentException('geometry_confirmation_scale_conflict');
+        }
+        $entities = array_column($vector->entities, null, 'handle');
+        $knownHandles = array_fill_keys(array_column([...$vector->entities, ...$vector->texts, ...$vector->dimensions], 'handle'), true);
+        foreach ($confirmation->scaleEvidenceHandles as $handle) {
+            if (! isset($knownHandles[$handle])) {
+                throw new InvalidArgumentException('geometry_confirmation_evidence_unknown');
+            }
+        }
+        $elements = [];
+        foreach ($confirmation->elements as $mapping) {
+            $entity = $entities[$mapping['entity_handle']] ?? throw new InvalidArgumentException('geometry_confirmation_entity_unknown');
+            $geometry = match ($mapping['type']) {
+                'room' => $this->confirmedRoomGeometry($entity),
+                'wall' => $this->confirmedWallGeometry($entity, $mapping['point_indexes']),
+                'opening' => $this->confirmedOpeningGeometry($mapping, $knownHandles),
+            };
+            $reference = $mapping['type'] === 'opening'
+                ? 'confirmation:'.$mapping['evidence_handles'][0]
+                : 'vector:'.$mapping['entity_handle'];
+            $elements[] = new FusedGeometryElementData(
+                $mapping['key'], $mapping['type'], $geometry, 'vector', $reference,
+                $vector->sourceFingerprint, $this->vectorPageNumber($entity), 'source_units_v1',
+                $vector->runtimeVersion, 'geometry-confirmation:v1', 1.0, [], 'source-units:v1',
+            );
+        }
+
+        return [$elements, []];
+    }
+
+    private function confirmedRoomGeometry(array $entity): array
+    {
+        $points = $entity['points'] ?? null;
+        if (! is_array($points) || count($points) < 3) {
+            throw new InvalidArgumentException('geometry_confirmation_room_invalid');
+        }
+
+        return ['polygon' => $points];
+    }
+
+    /** @param list<int> $indexes */
+    private function confirmedWallGeometry(array $entity, array $indexes): array
+    {
+        $points = $entity['points'] ?? null;
+        if (! is_array($points) || ! isset($points[$indexes[0]], $points[$indexes[1]]) || $indexes[0] === $indexes[1]) {
+            throw new InvalidArgumentException('geometry_confirmation_wall_invalid');
+        }
+
+        return ['start' => $points[$indexes[0]], 'end' => $points[$indexes[1]], 'thickness' => null, 'height' => null];
+    }
+
+    private function confirmedOpeningGeometry(array $mapping, array $knownHandles): array
+    {
+        foreach ($mapping['evidence_handles'] as $handle) {
+            if (! isset($knownHandles[$handle])) {
+                throw new InvalidArgumentException('geometry_confirmation_evidence_unknown');
+            }
+        }
+
+        return ['wall_key' => $mapping['wall_key'], 'opening_type' => $mapping['opening_type'],
+            'offset' => $mapping['offset'], 'width' => $mapping['width'], 'height' => $mapping['height']];
+    }
+
+    /** @param list<FusedGeometryElementData> $elements @return list<ScaleCandidateData> */
+    private function confirmationScaleCandidates(VectorGeometryData $vector, GeometryConfirmationData $confirmation, array $elements): array
+    {
+        if ($elements === []) {
+            return [];
+        }
+
+        return array_map(static fn (string $handle): ScaleCandidateData => new ScaleCandidateData(
+            'vector', $confirmation->metersPerUnit, 'confirmation:'.$handle, $vector->sourceFingerprint,
+            $elements[0]->pageNumber, 'source-units:v1', $vector->runtimeVersion, 'geometry-confirmation:v1', 1.0,
+        ), $confirmation->scaleEvidenceHandles);
     }
 
     /** @return array{list<FusedGeometryElementData>, list<array{code: string, severity: string, element_key: string, evidence_refs: list<string>}>} */

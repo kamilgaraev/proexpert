@@ -134,6 +134,48 @@ final readonly class VectorGeometryData
         );
     }
 
+    /** @return array<string, mixed> */
+    public function toArray(): array
+    {
+        return [
+            'schema_version' => $this->schemaVersion,
+            'runtime_version' => $this->runtimeVersion,
+            'source_fingerprint' => $this->sourceFingerprint,
+            'source_unit' => $this->sourceUnit,
+            'unit_status' => $this->unitStatus,
+            'bounds' => $this->bounds,
+            'layers' => $this->layers,
+            'blocks' => $this->blocks,
+            'entities' => $this->entities,
+            'texts' => $this->texts,
+            'dimensions' => $this->dimensions,
+            'pages' => $this->pages,
+            'scale_candidates' => $this->scaleCandidates,
+            'warnings' => $this->warnings,
+        ];
+    }
+
+    public function payloadSha256(): string
+    {
+        $payload = $this->toArray();
+        self::sortRecursive($payload);
+
+        return hash('sha256', (string) json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+            | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR));
+    }
+
+    private static function sortRecursive(array &$value): void
+    {
+        if (! array_is_list($value)) {
+            ksort($value, SORT_STRING);
+        }
+        foreach ($value as &$item) {
+            if (is_array($item)) {
+                self::sortRecursive($item);
+            }
+        }
+    }
+
     /** @param array<int, mixed> $items @param array<int, string> $required @param array<int, string> $allowed */
     private static function assertCollection(array $items, array $required, array $allowed, string $type): void
     {

@@ -20,6 +20,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationSer
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessInspector;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\GeometryConfirmationData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
 use Throwable;
 
@@ -65,6 +66,16 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
                         RecordedPortRequestHasher::geometry($case, $geometryPort), 'recorded_geometry_request_dependency_invalid');
                 }
             }
+            if (in_array(RecordedPort::GeometryConfirmation, $ports->ports(), true)) {
+                $rawPort = in_array(RecordedPort::CadExtraction, $ports->ports(), true)
+                    ? RecordedPort::CadExtraction : RecordedPort::DocumentExtraction;
+                $raw = $ports->require($rawPort);
+                RecordedPortRequestHasher::verify(
+                    $ports->require(RecordedPort::GeometryConfirmation)->inputDependencySha256,
+                    RecordedPortRequestHasher::geometryConfirmation($case, $raw->payloadSha256),
+                    'recorded_geometry_confirmation_dependency_invalid',
+                );
+            }
             $catalog = $this->catalogLoader->load($case);
             if ($this->expired($deadline)) {
                 return BenchmarkPipelineResultData::technicalFailure('case_timeout');
@@ -72,7 +83,7 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
             $geometry = $this->geometry($ports);
             $evidence = $this->evidenceMap($geometry);
             $assemblyResult = $this->buildingAssembler->assembleVision($this->geometryMapper->map(
-                $geometry['vision'], $geometry['vector'], $evidence,
+                $geometry['vision'], $geometry['vector'], $evidence, 'floor-1', $geometry['confirmation'],
             ));
             $model = $assemblyResult->model;
             if ($assemblyResult->clarifications !== [] || ($model->metrics['complete'] ?? false) !== true) {
@@ -212,6 +223,7 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
     {
         $vision = null;
         $vector = null;
+        $confirmation = null;
         foreach ($ports->ports() as $port) {
             $envelope = $ports->require($port);
             if ($port === RecordedPort::VisionExtraction) {
@@ -219,10 +231,12 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
                     $envelope->modelVersion, $envelope->payloadSchemaVersion, 'unavailable', null, null, 500);
             } elseif (in_array($port, [RecordedPort::DocumentExtraction, RecordedPort::CadExtraction], true)) {
                 $vector = VectorGeometryData::fromArray($envelope->payload);
+            } elseif ($port === RecordedPort::GeometryConfirmation) {
+                $confirmation = GeometryConfirmationData::fromArray($envelope->payload);
             }
         }
 
-        return ['vision' => $vision, 'vector' => $vector];
+        return ['vision' => $vision, 'vector' => $vector, 'confirmation' => $confirmation];
     }
 
     private function evidenceMap(array $geometry): array
@@ -236,6 +250,16 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
         if ($geometry['vector'] instanceof VectorGeometryData) {
             foreach ($geometry['vector']->entities as $e) {
                 $refs[] = 'vector:'.$e['handle'];
+            }
+        }
+        if ($geometry['confirmation'] instanceof GeometryConfirmationData) {
+            foreach ($geometry['confirmation']->scaleEvidenceHandles as $handle) {
+                $refs[] = 'confirmation:'.$handle;
+            }
+            foreach ($geometry['confirmation']->elements as $element) {
+                foreach ($element['evidence_handles'] ?? [] as $handle) {
+                    $refs[] = 'confirmation:'.$handle;
+                }
             }
         }
         $refs = array_values(array_unique($refs));

@@ -12,6 +12,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedBenchmarkCat
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedCatalogNormativeCandidateSource;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelAssembler;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\GeometryBuildingModelInputMapper;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\GeometryConfirmationData;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedPortRequestHasher;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateDecisionContextData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateSetData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeRerankResultData;
@@ -128,13 +130,26 @@ foreach ($specs as [$slug, $type, $filename, $source, $port, $intent]) {
  if ($port === RecordedPort::VisionExtraction) writeJson("$root/recordings/$slug-source-trace.json", visionTrace($intent, $sha));
  if ($type === BenchmarkSourceType::Dwg) writeJson("$root/recordings/$slug-parser-proof.json", parserProof($source, $payload));
  $recordingDescriptors[] = ['case_id'=>$id,'port'=>$port->value,'locator'=>$recording,'sha256'=>hash_file('sha256',"$root/$recording")];
+ $confirmationPayload = in_array($type, [BenchmarkSourceType::VectorPdf, BenchmarkSourceType::Dwg], true)
+  ? geometryConfirmation($slug, $payload) : null;
+ if (is_array($confirmationPayload)) {
+  $confirmationMeta = [...$metadata, 'port'=>RecordedPort::GeometryConfirmation->value,
+   'provider'=>'maintainer-confirmation-capture', 'model_version'=>'geometry-confirmation-2026-07',
+   'prompt_version'=>'not-applicable:user-review', 'payload_schema_version'=>'geometry-confirmation:v1'];
+  $confirmationEnvelope = $builder->envelope($confirmationMeta, $confirmationPayload,
+   RecordedPortRequestHasher::geometryConfirmation($case, $envelope['payload_sha256']), $sha);
+  $confirmationRecording = "recordings/$slug-geometry-confirmation.json";
+  writeJson("$root/$confirmationRecording", $confirmationEnvelope);
+  $recordingDescriptors[] = ['case_id'=>$id,'port'=>RecordedPort::GeometryConfirmation->value,
+   'locator'=>$confirmationRecording,'sha256'=>hash_file('sha256',"$root/$confirmationRecording")];
+ }
  $caseSpec = authoredCaseSpec($slug);
  $catalog = authoredCatalog($caseSpec);
  $candidateIds = array_column($catalog['candidates'],'candidate_id');
  $catalogRef = "catalogs/$slug.json";
  writeJson("$root/$catalogRef", $catalog);
  if (getenv('BUILD_PRODUCTION_REPLAY_DOWNSTREAM') === '1' && $intent !== 'freehand') {
-  [$model, $quantities, $evidence] = productionGeometry($payload, $port);
+  [$model, $quantities, $evidence] = productionGeometry($payload, $port, $confirmationPayload);
   $quantity = $quantities->get($caseSpec['quantity_key']) ?? throw new RuntimeException($caseSpec['quantity_key'].' missing');
   $quantityRefs = array_map('strval', $quantity->evidenceIds);
   $workKey = $caseSpec['work_key'];
@@ -177,6 +192,7 @@ foreach ($specs as [$slug, $type, $filename, $source, $port, $intent]) {
   'schema_version' => 'recorded-replay-projection:v1', 'case_id' => $id, 'input_sha256' => $sha,
   'envelopes' => array_filter([
    $port->value => ['locator' => $recording, 'sha256' => hash_file('sha256', "$root/$recording")],
+   RecordedPort::GeometryConfirmation->value => isset($confirmationRecording) ? ['locator'=>$confirmationRecording,'sha256'=>hash_file('sha256',"$root/$confirmationRecording")] : null,
    RecordedPort::WorkPlanningModel->value => isset($plannerRecording) ? ['locator'=>$plannerRecording,'sha256'=>hash_file('sha256',"$root/$plannerRecording")] : null,
    RecordedPort::NormativeReranker->value => isset($rerankerRecording) ? ['locator'=>$rerankerRecording,'sha256'=>hash_file('sha256',"$root/$rerankerRecording")] : null,
   ]),
@@ -187,7 +203,7 @@ foreach ($specs as [$slug, $type, $filename, $source, $port, $intent]) {
  writeJson("$root/$projectionRef", $projection);
  $inventory[] = ['id'=>$id,'slug'=>$slug,'source_type'=>$type->value,'input_locator'=>"regression/replay-$slug/$filename",
   'input_sha256'=>$sha,'projection'=>$projectionRef,'projection_sha256'=>hash_file('sha256',"$root/$projectionRef")];
- unset($plannerRecording, $rerankerRecording);
+ unset($plannerRecording, $rerankerRecording, $confirmationRecording);
 }
 writeJson("$root/production-replay-corpus-inventory.json", ['schema_version'=>1,'cases'=>$inventory]);
 $recordingManifest=json_decode((string)file_get_contents("$root/recordings/manifest.json"),true,32,JSON_THROW_ON_ERROR);
@@ -219,7 +235,7 @@ function visionTrace(string $intent,string $sha): array {
  return ['source_sha256'=>$sha,'source_ids'=>['uncertain-outline','uncertain-divider','freehand-opening','review-question'],'text'=>['review-question'=>'? размер'],'attributes'=>['uncertain-outline'=>['d'=>'M70 90 L510 77 L525 330 L82 345 Z'],'uncertain-divider'=>['d'=>'M80 210 Q260 180 520 220'],'freehand-opening'=>['d'=>'M265 82 L330 80']],'evidence_ids'=>['freehand-evidence','uncertain-divider','freehand-opening'],'element_points'=>['freehand-wall'=>[[0.116667,0.225],[0.85,0.1925],[0.875,0.825],[0.136667,0.8625]]]];
 }
 
-function productionGeometry(array $payload, RecordedPort $port): array
+function productionGeometry(array $payload, RecordedPort $port, ?array $confirmationPayload = null): array
 {
  $vision=$port===RecordedPort::VisionExtraction
   ? VisionAnalysisData::fromProviderArray($payload,'fixture-independent-capture','corpus-capture-2026-07','corpus-capture-2026-07','vision-analysis:v1','unavailable',null,null,500)
@@ -228,12 +244,36 @@ function productionGeometry(array $payload, RecordedPort $port): array
  $refs=[];
  if($vision!==null){foreach($vision->evidence as $row)$refs[]=$row->key;}
  if($vector!==null){foreach($vector->entities as $row)$refs[]='vector:'.$row['handle'];}
+ $confirmation=$confirmationPayload!==null?GeometryConfirmationData::fromArray($confirmationPayload):null;
+ if($confirmation!==null){foreach($confirmation->scaleEvidenceHandles as $handle)$refs[]='confirmation:'.$handle;foreach($confirmation->elements as $element)foreach($element['evidence_handles']??[] as $handle)$refs[]='confirmation:'.$handle;}
  $refs=array_values(array_unique($refs));sort($refs,SORT_STRING);$evidence=[];
  foreach($refs as $index=>$ref)$evidence[$ref]=$index+1;
- $assembled=(new BuildingModelAssembler)->assembleVision((new GeometryBuildingModelInputMapper)->map($vision,$vector,$evidence));
+ $assembled=(new BuildingModelAssembler)->assembleVision((new GeometryBuildingModelInputMapper)->map($vision,$vector,$evidence,'floor-1',$confirmation));
  if($assembled->clarifications!==[]||($assembled->model->metrics['complete']??false)!==true)throw new RuntimeException('generated geometry incomplete');
  $quantities=(new BuildingQuantityCalculator)->calculate((new NormalizedBuildingModelQuantityInputMapper)->map($assembled->model));
  return [$assembled->model,$quantities,$evidence];
+}
+
+function geometryConfirmation(string $slug, array $payload): array
+{
+ $vector=VectorGeometryData::fromArray($payload);
+ $base=['schema_version'=>1,'source_fingerprint'=>$vector->sourceFingerprint,
+  'geometry_payload_sha256'=>$vector->payloadSha256(),'reviewer_ref'=>'maintainer:plan3-task11',
+  'confirmed_at'=>'2026-07-12T00:00:00Z'];
+ return match($slug){
+  'vector-pdf-001'=>[...$base,'confirmation_source'=>'dimension_evidence','meters_per_unit'=>0.01,
+   'scale_evidence_handles'=>['page:1:object:7','page:1:object:11'],'elements'=>[
+    ['key'=>'vector-room-a','type'=>'room','entity_handle'=>'page:1:object:2'],
+    ['key'=>'vector-wall-top','type'=>'wall','entity_handle'=>'page:1:object:1','point_indexes'=>[4,1]],
+    ['key'=>'vector-opening-600','type'=>'opening','entity_handle'=>'page:1:object:1','wall_key'=>'vector-wall-top','opening_type'=>'door','offset'=>200,'width'=>60,'height'=>210,'evidence_handles'=>['page:1:object:12']],
+   ]],
+  'dwg-layout-001'=>[...$base,'confirmation_source'=>'cad_unit_review','meters_per_unit'=>0.001,
+   'scale_evidence_handles'=>['A2'],'elements'=>[
+    ['key'=>'dwg-room-a2','type'=>'room','entity_handle'=>'A2'],
+    ['key'=>'dwg-wall-a1','type'=>'wall','entity_handle'=>'A1','point_indexes'=>[0,1]],
+   ]],
+  default=>throw new RuntimeException('geometry confirmation case unsupported'),
+ };
 }
 
 function productionAnalysis(array $model,array $quantities,array $catalog): array

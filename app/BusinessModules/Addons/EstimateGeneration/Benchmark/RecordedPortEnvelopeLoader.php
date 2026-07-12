@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Benchmark;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeRerankResultData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\GeometryConfirmationData;
 use JsonException;
 use Throwable;
 
@@ -107,6 +108,7 @@ final readonly class RecordedPortEnvelopeLoader
                     500,
                 ),
                 RecordedPort::DocumentExtraction, RecordedPort::CadExtraction => VectorGeometryData::fromArray($envelope->payload),
+                RecordedPort::GeometryConfirmation => GeometryConfirmationData::fromArray($envelope->payload),
                 RecordedPort::NormativeReranker => $this->validateRerankerPayload($envelope->payload),
                 RecordedPort::WorkPlanningModel => RecordedWorkPlannerResponseData::fromProviderArray($envelope->payload),
             };

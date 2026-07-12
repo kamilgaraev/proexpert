@@ -9,6 +9,7 @@ enum RecordedPort: string
     case VisionExtraction = 'vision_extraction';
     case DocumentExtraction = 'document_extraction';
     case CadExtraction = 'cad_extraction';
+    case GeometryConfirmation = 'geometry_confirmation';
     case WorkPlanningModel = 'work_planning_model';
     case NormativeReranker = 'normative_reranker';
 }
