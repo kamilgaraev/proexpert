@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration\Benchmark;
 
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkDatasetType;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkManifest;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkObjectReader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPipelineAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPipelineResultData;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunner;
@@ -17,6 +18,51 @@ use PHPUnit\Framework\TestCase;
 
 final class BenchmarkRunnerTest extends TestCase
 {
+    #[Test]
+    public function prediction_is_completed_before_expected_labels_are_loaded(): void
+    {
+        $root = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/benchmarks';
+        $manifest = BenchmarkManifest::fromFile($root.'/manifest.json', $root);
+        $events = [];
+        $reader = new class($events) implements BenchmarkObjectReader
+        {
+            public function __construct(private array &$events) {}
+
+            public function read(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseData $case, string $role, int $maxBytes): string
+            {
+                $this->events[] = $role;
+
+                return (string) file_get_contents($role === 'expected' ? $case->expectedPath() : $case->inputPath());
+            }
+        };
+        $adapter = new class($events) implements BenchmarkPipelineAdapter
+        {
+            public function __construct(private array &$events) {}
+
+            public function id(): string
+            {
+                return 'separate-ports';
+            }
+
+            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
+            {
+                $this->events[] = 'prediction';
+
+                return BenchmarkPipelineResultData::technicalFailure('fixture_unavailable');
+            }
+        };
+
+        (new BenchmarkRunner(MetricRegistry::standard(), new InProcessBenchmarkCaseExecutor))->run(
+            $manifest,
+            BenchmarkDatasetType::Regression,
+            $adapter,
+            new BenchmarkRunOptions('pipeline:test:v1', 'prompt:test:v1', 1000, 1),
+            $reader,
+        );
+
+        self::assertSame(['prediction', 'expected'], array_slice($events, 0, 2));
+    }
+
     #[Test]
     public function runner_is_deterministic_safe_and_reports_macro_micro_breakdowns_and_unknown_cost(): void
     {

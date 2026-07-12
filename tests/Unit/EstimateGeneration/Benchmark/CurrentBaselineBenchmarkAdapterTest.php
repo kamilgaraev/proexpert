@@ -7,7 +7,7 @@ namespace Tests\Unit\EstimateGeneration\Benchmark;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkManifest;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\CurrentBaselineBenchmarkAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkObjectReader;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\RuleBasedDrawingAnalysisProvider;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DrawingGeometryAnalyzer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\PdfParserRuntime;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\PdfTextLayerExtractor;
 use Illuminate\Config\Repository;
@@ -46,16 +46,14 @@ final class CurrentBaselineBenchmarkAdapterTest extends TestCase
         $adapter = new CurrentBaselineBenchmarkAdapter(
             new LocalBenchmarkObjectReader,
             new PdfTextLayerExtractor(new PdfParserRuntime),
-            new RuleBasedDrawingAnalysisProvider,
+            new DrawingGeometryAnalyzer,
         );
 
         $result = $adapter->run($case, 10_000);
 
-        self::assertSame('success', $result->status);
+        self::assertSame('technical_failure', $result->status);
         self::assertSame('current-baseline', $adapter->id());
-        self::assertSame('current-baseline-prediction:v1', $result->prediction['model_schema_version']);
-        self::assertNotSame([], $result->prediction['room_cells']);
-        self::assertArrayNotHasKey('expected', $result->prediction);
+        self::assertSame('normalized_building_model_required', $result->failureCode);
     }
 
     #[Test]
@@ -66,7 +64,7 @@ final class CurrentBaselineBenchmarkAdapterTest extends TestCase
         $adapter = new CurrentBaselineBenchmarkAdapter(
             new LocalBenchmarkObjectReader,
             new PdfTextLayerExtractor(new PdfParserRuntime),
-            new RuleBasedDrawingAnalysisProvider,
+            new DrawingGeometryAnalyzer,
         );
 
         $result = $adapter->run($case, 10_000);

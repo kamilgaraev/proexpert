@@ -158,15 +158,15 @@ final readonly class BenchmarkRunner
         string $manifestReference,
     ): array {
         try {
+            $started = ($this->clock)();
+            $result = $this->executor->execute(new BenchmarkCaseExecutionRequest(
+                $manifestReference, $case->id, $adapter->id(), $options->caseTimeoutMs,
+            ), $case, $adapter);
             $expectedPayload = json_decode($objects->read($case, 'expected', 4_000_000), true, 64, JSON_THROW_ON_ERROR);
             if (! is_array($expectedPayload)) {
                 throw new BenchmarkContractException('expected_contract_invalid');
             }
             $expected = BenchmarkExpectedContract::expected($expectedPayload, $case->expectedModelSchemaVersion);
-            $started = ($this->clock)();
-            $result = $this->executor->execute(new BenchmarkCaseExecutionRequest(
-                $manifestReference, $case->id, $adapter->id(), $options->caseTimeoutMs,
-            ), $case, $adapter);
             if ($result->status === 'unsupported' && (! $options->allowUnsupported
                 || ! in_array('unsupported_conversion', $case->tags, true)
                 || ! in_array('descriptor_validation', $case->allowedCapabilities, true))) {
