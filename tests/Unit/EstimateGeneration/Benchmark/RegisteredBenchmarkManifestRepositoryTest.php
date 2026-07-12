@@ -7,11 +7,13 @@ namespace Tests\Unit\EstimateGeneration\Benchmark;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkManifestException;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RegisteredBenchmarkManifestRepository;
 use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\Attributes\WithoutErrorHandler;
 use PHPUnit\Framework\TestCase;
 
 final class RegisteredBenchmarkManifestRepositoryTest extends TestCase
 {
     #[Test]
+    #[WithoutErrorHandler]
     public function registered_locator_and_reference_are_bound_to_the_exact_revision(): void
     {
         $root = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/benchmarks';

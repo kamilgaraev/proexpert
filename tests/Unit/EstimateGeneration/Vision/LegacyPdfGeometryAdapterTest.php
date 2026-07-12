@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Vision;
 
 use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\Attributes\WithoutErrorHandler;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Process\Process;
 
@@ -37,6 +38,7 @@ final class LegacyPdfGeometryAdapterTest extends TestCase
     }
 
     #[Test]
+    #[WithoutErrorHandler]
     public function legacy_preview_stays_in_workspace_and_keeps_filename_convention(): void
     {
         $root = sys_get_temp_dir().DIRECTORY_SEPARATOR.'legacy-preview-'.bin2hex(random_bytes(6));

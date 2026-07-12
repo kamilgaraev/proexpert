@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration\Vision;
 
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\CadConversionRuntime;
 use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\Attributes\WithoutErrorHandler;
 use PHPUnit\Framework\TestCase;
 
 final class CadRuntimeContractTest extends TestCase
@@ -211,6 +212,7 @@ final class CadRuntimeContractTest extends TestCase
     }
 
     #[Test]
+    #[WithoutErrorHandler]
     public function symlink_source_is_rejected(): void
     {
         $link = tempnam(sys_get_temp_dir(), 'cad-link-');

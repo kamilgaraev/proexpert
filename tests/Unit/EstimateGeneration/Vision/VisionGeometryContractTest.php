@@ -14,12 +14,17 @@ final class VisionGeometryContractTest extends TestCase
     #[Test]
     public function two_point_geometry_is_only_a_distinct_nonzero_polyline_for_non_area_types(): void
     {
-        foreach (['dimension', 'axis', 'engineering_element', 'text'] as $type) {
+        foreach (['wall', 'dimension', 'axis', 'engineering_element', 'text'] as $type) {
             self::assertSame($type, (new VisionElementData('item-'.$type, $type, null, [[0.1, 0.1], [0.9, 0.9]], 0.8, 'page-1'))->type);
         }
-        foreach (['room', 'wall', 'opening'] as $type) {
-            $this->assertInvalid($type, [[0.1, 0.1], [0.9, 0.9]]);
-        }
+        self::assertSame('opening', (new VisionElementData('item-opening', 'opening', null, [[0.1, 0.1], [0.9, 0.1]], 0.8, 'page-1', [
+            'wall_key' => 'item-wall',
+            'opening_type' => 'door',
+            'offset' => 0.1,
+            'width' => 0.8,
+            'height' => 2.1,
+        ]))->type);
+        $this->assertInvalid('room', [[0.1, 0.1], [0.9, 0.9]]);
         $this->assertInvalid('axis', [[0.1, 0.1], [0.1, 0.1]]);
     }
 

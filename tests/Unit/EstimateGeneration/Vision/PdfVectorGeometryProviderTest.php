@@ -11,6 +11,7 @@ use App\Services\Storage\FileService;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Mockery;
 use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\Attributes\WithoutErrorHandler;
 use PHPUnit\Framework\TestCase;
 
 final class PdfVectorGeometryProviderTest extends TestCase
@@ -143,6 +144,7 @@ final class PdfVectorGeometryProviderTest extends TestCase
     }
 
     #[Test]
+    #[WithoutErrorHandler]
     public function workspace_creation_failure_is_typed(): void
     {
         $pdf = tempnam(sys_get_temp_dir(), 'safe-pdf-').'.pdf';

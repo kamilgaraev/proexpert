@@ -1,5 +1,26 @@
 # Plan 3 — Task 11: промежуточный отчёт
 
+## Full Plan 3 gate — 2026-07-13
+
+Первый полный запуск выявил две несогласованности тестов: устаревшую неполную фикстуру закрытого ценового каталога и ожидание, что двухточечные стены/проёмы недопустимы, хотя production replay контракт хранит их как типизированные отрезки. Production-валидаторы и benchmark-пороги не ослаблялись. Тест каталога переведён на committed immutable catalog и проверяет кандидатов без зависимости от их порядка; vision-тест синхронизирован с фактическим wall/opening контрактом. RED: `2 failed, 7 warnings, 29 skipped, 483 passed (5076 assertions)`. Focused GREEN: `7 passed (26 assertions)`, PHPStan — `No errors`.
+
+Windows warnings от ожидаемых отрицательных `symlink`/`mkdir`/`filesize` сценариев изолированы атрибутом PHPUnit `WithoutErrorHandler`; сами проверки и typed failures сохранены. Focused gate: `32 passed (99 assertions)`, без warnings.
+
+Свежий точный полный запуск из Task 11 brief со scoped `LIBREDWG_DWGREAD_BINARY`: `492 passed (5082 assertions)`, `29 skipped`, `0 failures`, duration `145.81s`. Реальный `simple-house.dwg` декодирован LibreDWG 0.13.4 без required DWG skip. Все 29 skips относятся к отдельным opt-in PostgreSQL suites: geometry — 20, training/adoption — 4, pricing — 5.
+
+Точный PHPStan gate по восьми namespace из brief с `--memory-limit=1G`: `[OK] No errors` (234 files).
+
+Два свежих запуска зарегистрированного regression manifest:
+
+```text
+php artisan estimate-generation:benchmark --dataset=regression --adapter=production-replay --pipeline-version=production-replay-cases:v1 --prompt-version=recorded-ports:v1 --manifest=production-replay-manifest.json --format=json --output=task11/full-gate-run-1.json
+php artisan estimate-generation:benchmark --dataset=regression --adapter=production-replay --pipeline-version=production-replay-cases:v1 --prompt-version=recorded-ports:v1 --manifest=production-replay-manifest.json --format=json --output=task11/full-gate-run-2.json
+```
+
+Оба запуска: `attempted=8`, `succeeded=8`, `failed=0`, `skipped=0`; `work_recall=1`, `normative_top3=1`, `evidenced_applicable_items=1`, `technical_success_rate=1`. Fingerprint обоих запусков: `626cddcec28410f8621c1cb4c556db7e1ca0b06b8288cfa357b32daf2b99a89d`; `case_results` идентичны; acceptance references отсутствуют.
+
+PostgreSQL full gate пока не закрыт. После восстановления доступа combined запуск доказал, что suites нельзя выполнять на общей уже мутировавшей схеме: `15 passed (101 assertions)`, `13 failed`, `2 Windows PCNTL/POSIX skips`. Причины — schema baseline/interference (`eg_evidence_immutable_trg`, `mdm_quality_policies`, `estimate_dataset_versions`, package revision contract, training duplicate function/constraint). Требуется repo-owned guarded provisioner с отдельным reset/provision перед geometry, training/benchmark и pricing suites. Production и обычные сметы не затрагивались.
+
 ## Task A — INTERMEDIATE: реальные источники и geometry captures
 
 ### Повторная проверка Task A: независимая source traceability

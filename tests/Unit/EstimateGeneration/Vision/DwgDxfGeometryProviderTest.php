@@ -12,6 +12,7 @@ use App\Services\Storage\FileService;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Mockery;
 use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\Attributes\WithoutErrorHandler;
 use PHPUnit\Framework\TestCase;
 
 final class DwgDxfGeometryProviderTest extends TestCase
@@ -62,6 +63,7 @@ final class DwgDxfGeometryProviderTest extends TestCase
     }
 
     #[Test]
+    #[WithoutErrorHandler]
     public function provider_reports_workspace_creation_failure(): void
     {
         $root = dirname(__DIR__, 4);

@@ -10,11 +10,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkDatasetType
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkSourceType;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkObjectReader;
 use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\Attributes\WithoutErrorHandler;
 use PHPUnit\Framework\TestCase;
 
 final class LocalBenchmarkObjectReaderSafetyTest extends TestCase
 {
     #[Test]
+    #[WithoutErrorHandler]
     public function expected_reader_rejects_symlinked_parent_and_terminal_file(): void
     {
         $root = sys_get_temp_dir().'/most-expected-path-'.bin2hex(random_bytes(5));
@@ -59,6 +61,7 @@ final class LocalBenchmarkObjectReaderSafetyTest extends TestCase
     }
 
     #[Test]
+    #[WithoutErrorHandler]
     public function expected_reader_rejects_traversal_before_realpath(): void
     {
         $root = sys_get_temp_dir().'/most-expected-traversal-'.bin2hex(random_bytes(5));
