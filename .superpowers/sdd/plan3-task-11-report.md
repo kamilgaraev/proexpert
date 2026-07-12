@@ -1,5 +1,15 @@
 # Plan 3 — Task 11: промежуточный отчёт
 
+## Task A — INTERMEDIATE: реальные источники и geometry captures
+
+Шесть новых fixtures заменены на содержательные трассируемые входы. Vector PDF содержит замкнутый многолинейный план, внутреннюю стену, проём и видимые размеры `4400 mm`/`2900 mm`; recording создаётся production worker на pinned `pypdfium2 5.8.0`. Валидный maintainer-authored DWG декодируется тем же production CAD worker через scoped LibreDWG `0.13.4`; parser proof связывает source SHA-256, runtime version, canonical output SHA-256 и фактические entity/text/dimension counts.
+
+Scanned PDF содержит встроенный raster 400×300 с видимыми стенами, дверным разрывом, размерными линиями и bitmap-глифами. Dimensioned raster — отдельный 400×300 PPM с реальными пикселями, без размеров в комментариях. Engineering SVG имеет стабильные IDs помещения, проёма, стояка, узла и двух размеров; recording связывает `riser-110` с `engineering-riser-110`. Freehand SVG содержит неуверенный пунктирный контур, кривую перегородку и видимый вопрос; recording использует согласованный `freehand-evidence` и typed `scale_missing`.
+
+Builder больше не использует fabricated `vectorPayload` для PDF/DWG: оба capture получают точный JSON production worker. Focused gate свежо декодирует PDF и DWG и сравнивает полный payload/proof, проверяет конкретные пиксели, image dimensions, SVG IDs и уникальность всех шести payload hashes.
+
+Проверка: `vendor/bin/phpunit tests/Feature/EstimateGeneration/Benchmark/ProductionReplaySourceCaptureTest.php` — `OK (5 tests, 57 assertions)`. Общий production-replay gate намеренно не считается зелёным: downstream projection/planner/reranker/catalog hashes после замены источников относятся к следующему bounded task. Статус Task 11 остаётся `INTERMEDIATE`.
+
 ## Corpus gate: восемь production replay случаев
 
 Статус: **DONE_WITH_CONCERNS — corpus/threshold/LibreDWG gates закрыты; полный Plan 3 suite/review остаётся отдельным воротом**.
