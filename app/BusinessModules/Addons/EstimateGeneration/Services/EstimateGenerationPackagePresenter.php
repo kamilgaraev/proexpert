@@ -11,7 +11,7 @@ use Illuminate\Support\Collection;
 class EstimateGenerationPackagePresenter
 {
     /**
-     * @param Collection<int, EstimateGenerationPackage> $packages
+     * @param  Collection<int, EstimateGenerationPackage>  $packages
      * @return array<string, mixed>
      */
     public function collection(Collection $packages): array
@@ -79,10 +79,13 @@ class EstimateGenerationPackagePresenter
      */
     public function detail(EstimateGenerationPackage $package, Collection $items): array
     {
-        $visibleItems = $items->filter(fn (EstimateGenerationPackageItem $item): bool => $this->isVisibleItem($item))->values();
+        $currentItems = $items
+            ->sortByDesc(fn (EstimateGenerationPackageItem $item): string => sprintf('%020d:%020d', (int) ($item->revision ?? 0), (int) $item->id))
+            ->unique(fn (EstimateGenerationPackageItem $item): string => (string) ($item->logical_key ?? $item->key));
+        $visibleItems = $currentItems->filter(fn (EstimateGenerationPackageItem $item): bool => $this->isVisibleItem($item))->values();
         $pricedItemsCount = $visibleItems->filter(fn (EstimateGenerationPackageItem $item): bool => $this->isPricedItem($item))->count();
         $quantityReviewItemsCount = $visibleItems->filter(fn (EstimateGenerationPackageItem $item): bool => $this->isQuantityReviewItem($item))->count();
-        $hiddenServiceItemsCount = $items->count() - $visibleItems->count();
+        $hiddenServiceItemsCount = $currentItems->count() - $visibleItems->count();
 
         return [
             'package' => $this->summary($package),
@@ -121,7 +124,10 @@ class EstimateGenerationPackagePresenter
 
         return [
             'id' => $item->id,
-            'key' => $item->key,
+            'key' => $item->logical_key ?? $item->key,
+            'physical_key' => $item->key,
+            'revision' => (int) ($item->revision ?? 1),
+            'supersedes_item_id' => $item->supersedes_item_id,
             'parent_key' => $item->parent_key,
             'level' => $item->level,
             'item_type' => $item->item_type,
@@ -158,7 +164,7 @@ class EstimateGenerationPackagePresenter
     }
 
     /**
-     * @param Collection<int, EstimateGenerationPackage> $packages
+     * @param  Collection<int, EstimateGenerationPackage>  $packages
      * @return array<string, int>
      */
     private function summaryCounters(Collection $packages): array
@@ -195,12 +201,12 @@ class EstimateGenerationPackagePresenter
 
     private function isVisibleItem(EstimateGenerationPackageItem $item): bool
     {
-        return !in_array($item->item_type, EstimateGenerationPackageItem::SERVICE_ITEM_TYPES, true);
+        return ! in_array($item->item_type, EstimateGenerationPackageItem::SERVICE_ITEM_TYPES, true);
     }
 
     private function isPricedItem(EstimateGenerationPackageItem $item): bool
     {
-        return $this->isVisibleItem($item) && !$this->isQuantityReviewItem($item);
+        return $this->isVisibleItem($item) && ! $this->isQuantityReviewItem($item);
     }
 
     private function isQuantityReviewItem(EstimateGenerationPackageItem $item): bool
@@ -209,7 +215,7 @@ class EstimateGenerationPackagePresenter
     }
 
     /**
-     * @param array<string, mixed> $totals
+     * @param  array<string, mixed>  $totals
      */
     private function hiddenServiceItemsCount(array $totals): int
     {
@@ -217,7 +223,7 @@ class EstimateGenerationPackagePresenter
     }
 
     /**
-     * @param array<string, mixed> $totals
+     * @param  array<string, mixed>  $totals
      */
     private function quantityReviewItemsCount(array $totals): int
     {
@@ -225,7 +231,7 @@ class EstimateGenerationPackagePresenter
     }
 
     /**
-     * @param array<string, mixed> $totals
+     * @param  array<string, mixed>  $totals
      */
     private function visibleItemsCount(EstimateGenerationPackage $package, array $totals, int $hiddenServiceItemsCount): int
     {
@@ -235,7 +241,7 @@ class EstimateGenerationPackagePresenter
     }
 
     /**
-     * @param array<string, mixed> $totals
+     * @param  array<string, mixed>  $totals
      */
     private function pricedItemsCount(
         array $totals,
@@ -251,7 +257,7 @@ class EstimateGenerationPackagePresenter
 
     private function pricingStatus(EstimateGenerationPackageItem $item): string
     {
-        if (!$this->isPricedItem($item)) {
+        if (! $this->isPricedItem($item)) {
             return 'not_applicable';
         }
 

@@ -166,4 +166,22 @@ final class EstimateGenerationPackagePresenterTest extends TestCase
         self::assertSame(0, $payload['meta']['operation_items_count']);
         self::assertSame(2, $payload['meta']['hidden_service_items_count']);
     }
+
+    public function test_package_detail_exposes_only_latest_revision_per_logical_key(): void
+    {
+        $package = new EstimateGenerationPackage(['id' => 7, 'key' => 'foundation', 'status' => 'ready_for_review', 'totals' => []]);
+        $items = new Collection([
+            new EstimateGenerationPackageItem(['id' => 10, 'key' => 'work#r1', 'logical_key' => 'work', 'revision' => 1, 'item_type' => 'priced_work', 'name' => 'Old', 'total_cost' => 10]),
+            new EstimateGenerationPackageItem(['id' => 11, 'key' => 'work#r2', 'logical_key' => 'work', 'revision' => 2, 'supersedes_item_id' => 10, 'item_type' => 'priced_work', 'name' => 'Current', 'total_cost' => 20]),
+        ]);
+
+        $payload = (new EstimateGenerationPackagePresenter)->detail($package, $items);
+
+        self::assertSame(1, $payload['meta']['items_count']);
+        self::assertSame('work', $payload['items'][0]['key']);
+        self::assertSame('work#r2', $payload['items'][0]['physical_key']);
+        self::assertSame(2, $payload['items'][0]['revision']);
+        self::assertSame(10, $payload['items'][0]['supersedes_item_id']);
+        self::assertSame('Current', $payload['items'][0]['name']);
+    }
 }

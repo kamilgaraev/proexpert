@@ -264,9 +264,9 @@ class EstimateGenerationPackagePersistenceService
         if ($normId === null || in_array(null, $context, true) || $inputs === []) {
             return null;
         }
-        $quantity = filter_var($workItem['quantity'] ?? null, FILTER_VALIDATE_FLOAT);
+        $quantity = $this->positiveDecimal($workItem['quantity'] ?? null);
         $unit = $workItem['unit'] ?? null;
-        if ($quantity === false || $quantity <= 0 || ! is_string($unit) || $unit === '') {
+        if ($quantity === null || ! is_string($unit) || $unit === '') {
             return null;
         }
         $session = $package->session()->firstOrFail();
@@ -277,7 +277,7 @@ class EstimateGenerationPackagePersistenceService
         }
         $evidence = app(EvidenceRepository::class)->node((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $evidenceId);
         if ($evidence === null || $evidence->fingerprint !== $evidenceFingerprint || $evidence->invalidatedAt !== null
-            || (float) ($evidence->value['quantity'] ?? -1) !== (float) $quantity
+            || $this->positiveDecimal($evidence->value['quantity'] ?? null)?->compareTo($quantity) !== 0
             || ($evidence->value['unit'] ?? null) !== $unit) {
             return null;
         }
@@ -308,6 +308,21 @@ class EstimateGenerationPackagePersistenceService
         }
 
         return (int) $value;
+    }
+
+    private function positiveDecimal(mixed $value): ?BigDecimal
+    {
+        if (! is_int($value) && ! is_string($value)) {
+            return null;
+        }
+
+        try {
+            $decimal = BigDecimal::of((string) $value);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return $decimal->isGreaterThan(0) ? $decimal : null;
     }
 
     private function revisionFingerprint(array $payload): string
@@ -536,7 +551,7 @@ class EstimateGenerationPackagePersistenceService
             'item_type' => (string) ($workItem['item_type'] ?? 'work'),
             'name' => (string) ($workItem['name'] ?? 'Работа'),
             'unit' => $workItem['unit'] ?? null,
-            'quantity' => isset($workItem['quantity']) ? (float) $workItem['quantity'] : null,
+            'quantity' => isset($workItem['quantity']) ? (string) BigDecimal::of((string) $workItem['quantity']) : null,
             'quantity_basis' => [
                 'description' => $workItem['quantity_basis'] ?? null,
                 'formula' => $workItem['quantity_formula'] ?? null,
