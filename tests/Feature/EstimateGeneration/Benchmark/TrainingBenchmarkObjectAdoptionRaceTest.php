@@ -13,6 +13,8 @@ use Tests\Support\SharedVersionedBenchmarkObjectStore;
 #[Group('postgres-contract')]
 final class TrainingBenchmarkObjectAdoptionRaceTest extends TestCase
 {
+    private static bool $unsafeWorkerGuardVerified = false;
+
     /** @var list<int> */
     private array $organizationIds = [];
 
@@ -28,12 +30,7 @@ final class TrainingBenchmarkObjectAdoptionRaceTest extends TestCase
         if (getenv('RUN_POSTGRES_TRAINING_BENCHMARK_CONTRACT') !== '1' || DB::getDriverName() !== 'pgsql' || ! str_ends_with($database, '_contract')) {
             self::markTestSkipped('Requires disposable PostgreSQL contract database.');
         }
-        $workerSource = (string) file_get_contents(dirname(__DIR__, 3).'/Support/TrainingBenchmarkAdoptionWriter.php');
-        $workerGuard = strpos($workerSource, "str_ends_with(\$database, '_contract')");
-        $workerRoleAction = strpos($workerSource, "if (\$role === 'A')");
-        if (! is_int($workerGuard) || ! is_int($workerRoleAction) || $workerGuard >= $workerRoleAction) {
-            throw new \LogicException('Benchmark adoption worker contract database guard is missing or late.');
-        }
+        $this->verifyUnsafeWorkerGuard();
         (require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_002200_close_training_benchmark_races.php')->up();
     }
 
@@ -41,8 +38,8 @@ final class TrainingBenchmarkObjectAdoptionRaceTest extends TestCase
     {
         $database = DB::getFacadeRoot() === null ? '' : (string) DB::connection()->getDatabaseName();
         if (getenv('RUN_POSTGRES_TRAINING_BENCHMARK_CONTRACT') === '1' && DB::getFacadeRoot() !== null && DB::getDriverName() === 'pgsql' && str_ends_with($database, '_contract')) {
-            DB::unprepared('DROP TRIGGER IF EXISTS eg_benchmark_run_immutable ON estimate_generation_benchmark_runs; DROP TRIGGER IF EXISTS eg_approved_dataset_example_guard ON estimate_generation_training_examples; DROP TRIGGER IF EXISTS eg_training_example_immutable ON estimate_generation_training_examples; DROP TRIGGER IF EXISTS eg_training_dataset_immutable ON estimate_generation_training_datasets;');
             try {
+                DB::unprepared('DROP TRIGGER IF EXISTS eg_benchmark_run_immutable ON estimate_generation_benchmark_runs; DROP TRIGGER IF EXISTS eg_approved_dataset_example_guard ON estimate_generation_training_examples; DROP TRIGGER IF EXISTS eg_training_example_immutable ON estimate_generation_training_examples; DROP TRIGGER IF EXISTS eg_training_dataset_immutable ON estimate_generation_training_datasets;');
                 DB::table('estimate_generation_benchmark_runs')->whereIn('organization_id', $this->organizationIds)->delete();
                 DB::table('estimate_generation_training_examples')->whereIn('organization_id', $this->organizationIds)->delete();
                 DB::table('estimate_generation_training_datasets')->whereIn('organization_id', $this->organizationIds)->delete();
@@ -59,6 +56,39 @@ final class TrainingBenchmarkObjectAdoptionRaceTest extends TestCase
         \Illuminate\Foundation\Bootstrap\HandleExceptions::flushState($this);
         \Illuminate\Support\Facades\Facade::clearResolvedInstances();
         parent::tearDown();
+    }
+
+    private function verifyUnsafeWorkerGuard(): void
+    {
+        if (self::$unsafeWorkerGuardVerified) {
+            return;
+        }
+        $directory = sys_get_temp_dir().'/most-benchmark-unsafe-'.bin2hex(random_bytes(6));
+        mkdir($directory);
+        $benchmarkCount = DB::table('estimate_generation_benchmark_runs')->count();
+        $env = array_replace(getenv(), [
+            'RUN_POSTGRES_TRAINING_BENCHMARK_CONTRACT' => '0',
+            'DB_CONNECTION' => 'pgsql',
+            'DB_DATABASE' => (string) DB::connection()->getDatabaseName(),
+        ]);
+        $process = proc_open([
+            PHP_BINARY, dirname(__DIR__, 3).'/Support/TrainingBenchmarkAdoptionWriter.php', 'A', '0', fake()->uuid(),
+            'org-0/estimate-generation/benchmarks/unsafe/'.str_repeat('0', 64).'.json', $directory,
+        ], [['pipe', 'r'], ['pipe', 'w'], ['pipe', 'w']], $pipes, dirname(__DIR__, 4), $env);
+        if (! is_resource($process)) {
+            throw new \RuntimeException('Unsafe worker guard process failed to start.');
+        }
+        fclose($pipes[0]);
+        $stdout = stream_get_contents($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $exitCode = proc_close($process);
+        if ($exitCode !== 2 || $stdout !== '' || ! str_contains((string) $stderr, 'UNSAFE_CONTRACT_DATABASE')
+            || is_file($directory.'/events.log') || DB::table('estimate_generation_benchmark_runs')->count() !== $benchmarkCount) {
+            throw new \RuntimeException('Unsafe benchmark adoption worker was not rejected before side effects.');
+        }
+        self::$unsafeWorkerGuardVerified = true;
     }
 
     public function test_failed_creator_deletes_exact_version_created_after_external_deletion_and_releases_lock(): void
