@@ -30,6 +30,7 @@ use DateTimeImmutable;
 use Illuminate\Support\Facades\DB;
 use Mockery;
 use Tests\TestCase;
+use Tymon\JWTAuth\Facades\JWTAuth;
 
 final class NormativeOldClientPinPostgresTest extends TestCase
 {
@@ -45,7 +46,25 @@ final class NormativeOldClientPinPostgresTest extends TestCase
 
         $organization = Organization::factory()->create();
         $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        DB::table('organization_user')->insert([
+            'organization_id' => $organization->id,
+            'user_id' => $user->id,
+            'is_owner' => true,
+            'is_active' => true,
+            'project_access_mode' => 'all',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
         $project = Project::factory()->create(['organization_id' => $organization->id]);
+        DB::table('project_user')->insert([
+            'project_id' => $project->id,
+            'user_id' => $user->id,
+            'role' => 'owner',
+            'is_active' => true,
+            'assigned_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
         $version = 'old-client-'.strtolower((string) str()->ulid());
         $dataset = EstimateDatasetVersion::query()->create([
             'source_type' => EstimateSourceType::FSNB_2022,
@@ -54,6 +73,7 @@ final class NormativeOldClientPinPostgresTest extends TestCase
         ]);
         $authorization = Mockery::mock(AuthorizationService::class);
         $authorization->shouldReceive('can')->andReturnTrue();
+        $authorization->shouldReceive('canAccessInterface')->andReturnTrue();
         $this->app->instance(AuthorizationService::class, $authorization);
         $this->app->instance(NormativePinClock::class, new class implements NormativePinClock
         {
@@ -64,6 +84,7 @@ final class NormativeOldClientPinPostgresTest extends TestCase
         });
         config()->set('estimate-generation.normative_matching.approved_dataset_version', $version);
         $this->actingAs($user, 'api_admin');
+        $this->withHeader('Authorization', 'Bearer '.JWTAuth::fromUser($user));
         $url = "/api/v1/admin/projects/{$project->id}/estimate-generation/sessions";
         $fixtureDatasetIds = [];
 
@@ -95,9 +116,11 @@ final class NormativeOldClientPinPostgresTest extends TestCase
             self::assertNotSame($planContext->inputVersion, $changedPlanContext->inputVersion);
             self::assertNotSame($planResult->outputVersion, $changedPlan->outputVersion);
 
+            $plannedWall = collect($this->workItems($plan['local_estimates']))->firstWhere('normative_rate_code', '08-01-001-01');
+            self::assertIsArray($plannedWall);
             $priceDatasetId = $this->dataset('fsbc', 'prices-'.$version);
             $fixtureDatasetIds[] = $priceDatasetId;
-            $normId = $this->seedCompatibleNorm((int) $dataset->id, $priceDatasetId, $version);
+            $normId = $this->seedCompatibleNorm((int) $dataset->id, $priceDatasetId, $version, $plannedWall);
             $competingDatasetId = $this->dataset('fsnb_2022', 'latest-'.$version);
             $fixtureDatasetIds[] = $competingDatasetId;
             $competingNormId = $this->seedNorm($competingDatasetId, 'latest-'.$version, 'Кладка наружных кирпичных стен');
@@ -163,7 +186,27 @@ final class NormativeOldClientPinPostgresTest extends TestCase
                 'floors' => 1,
                 'region_code' => 'RU-MOS',
             ],
-            'document_context' => ['context_text' => 'Кладка кирпичных стен площадью 100 м2'],
+            'document_context' => [
+                'context_text' => 'Кладка кирпичных стен площадью 100 м2',
+                'facts_summary' => ['total_area_m2' => 100],
+                'quantity_takeoffs' => [[
+                    'quantity_key' => 'walls.external_volume',
+                    'name' => 'Объём кладки наружных стен',
+                    'quantity' => 38,
+                    'unit' => 'м3',
+                    'confidence' => 0.98,
+                    'source_refs' => [],
+                    'normalized_payload' => ['review_required' => false],
+                ]],
+            ],
+            'source_documents' => [[
+                'id' => 1,
+                'filename' => 'ведомость.txt',
+                'status' => 'ready',
+                'quality' => ['level' => 'good'],
+                'document_understanding' => ['role_for_estimation' => 'project_documentation'],
+                'text' => 'ГЭСН 08-01-001-01 Кладка наружных кирпичных стен 38 м3',
+            ]],
             'regional_context' => $regionalContext,
         ];
     }
@@ -250,9 +293,21 @@ final class NormativeOldClientPinPostgresTest extends TestCase
         );
     }
 
-    private function seedCompatibleNorm(int $datasetId, int $priceDatasetId, string $version): int
+    private function seedCompatibleNorm(int $datasetId, int $priceDatasetId, string $version, array $workItem): int
     {
         $normId = $this->seedNorm($datasetId, $version, 'Кладка наружных кирпичных стен');
+        $intent = app(\App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier::class)
+            ->classify($workItem, ['scope_type' => 'walls']);
+        DB::table('estimate_norms')->where('id', $normId)->update([
+            'canonical_unit' => $workItem['unit'],
+            'unit_dimension' => $intent->expectedDimensions[0],
+            'material' => $intent->material,
+            'technology' => $intent->action,
+            'structure' => $intent->scope,
+            'section_code' => $intent->preferredSectionPrefixes[0],
+            'object_type' => $intent->object,
+            'updated_at' => now(),
+        ]);
         DB::table('estimate_norm_resources')->insert([
             'estimate_norm_id' => $normId,
             'construction_resource_id' => null,
@@ -297,13 +352,14 @@ final class NormativeOldClientPinPostgresTest extends TestCase
             'collection_id' => $collection,
             'code' => '08-01-001-01',
             'name' => $name,
-            'unit' => 'м2',
-            'canonical_unit' => 'м2',
-            'unit_dimension' => 'area',
+            'unit' => 'м3',
+            'canonical_unit' => 'м3',
+            'unit_dimension' => 'volume',
             'material' => 'кирпич',
             'technology' => 'кладка',
             'structure' => 'стена',
             'object_type' => 'house',
+            'region_code' => 'RU-MOS',
             'section_code' => '08',
             'section_name' => 'Каменные конструкции',
             'work_composition' => json_encode(['Подготовка основания', 'Кладка стены'], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),

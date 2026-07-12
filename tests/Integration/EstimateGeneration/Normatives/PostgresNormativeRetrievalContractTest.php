@@ -16,6 +16,8 @@ use Tests\TestCase;
 
 final class PostgresNormativeRetrievalContractTest extends TestCase
 {
+    public function refreshDatabase(): void {}
+
     public function test_moving_high_water_future_writes_branch_plans_and_resumable_deploy(): void
     {
         $this->requireDisposableContractDatabase();
@@ -64,8 +66,15 @@ final class PostgresNormativeRetrievalContractTest extends TestCase
                 $this->queryBindings($version),
             );
             $encoded = json_encode($plan, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
-            self::assertStringContainsString('estimate_norms_search_vector_gin', $encoded);
             self::assertStringContainsString('estimate_norm_semantic_lookup_idx', $encoded);
+            $lexicalPlan = DB::select(
+                "EXPLAIN (FORMAT JSON) SELECT id FROM estimate_norms WHERE search_vector @@ websearch_to_tsquery('russian', ?)",
+                ['кладка'],
+            );
+            self::assertStringContainsString(
+                'estimate_norms_search_vector_gin',
+                json_encode($lexicalPlan, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+            );
         } finally {
             DB::statement('RESET enable_seqscan');
             DB::table('estimate_dataset_versions')->whereIn('id', $datasetIds)->delete();

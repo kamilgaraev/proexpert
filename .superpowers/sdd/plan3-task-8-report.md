@@ -114,3 +114,30 @@ The PostgreSQL contract now exercises a moving backfill high-water mark, trigger
 Sixth corrective DB-less verification: **28 tests, 63 assertions, 0 failures** for the normative unit suite; targeted PHPStan/Larastan and Pint checks pass. PostgreSQL opt-in contracts remain authored but intentionally unrun locally.
 
 The old-client PostgreSQL feature now continues from the persisted POST session through the actual container-resolved `PlanWorkItemsStage` and `MatchNormativesStage`. Production `PipelineContext`, typed prior outputs, stage payload validation, dependency manifests and in-memory artifact storage are used. Planning consumes the persisted regional context, emits the exact resolver-produced pin, and proves both stage input and output versions change when only the pin date changes. Matching uses the real PostgreSQL source, retrieval service, hard gates, scoring, workflow, `EstimateNormativeMatcher` and `ResourceAssemblyService`. Its fixture includes the pinned dataset/collection/norm, composition, normative material and an FSBC material price, plus a newer competing FSNB norm in a different dataset. Assertions prove `retrieval_only`, exact pinned dataset/scoring metadata and DB norm ID/code, rejection of the newer competing norm, and real applied composition/material quantities and prices. No pin is manually constructed between stages, no latest-version fallback is accepted, and no matching/resource boundary is faked.
+
+## Disposable PostgreSQL execution (seventh gate)
+
+The disposable database `most_ai_estimator_contract` in container `most-ai-estimator-pg-contract` was reset with:
+
+`docker exec most-ai-estimator-pg-contract psql -U most_contract -d most_ai_estimator_contract -v ON_ERROR_STOP=1 -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION most_contract;"`
+
+The curated bootstrap used only existing migrations through repeated commands of this exact form:
+
+`php artisan migrate --force --path=<migration> --no-interaction`
+
+with `DB_CONNECTION=pgsql`, `DB_HOST=127.0.0.1`, `DB_PORT=55432`, `DB_DATABASE=most_ai_estimator_contract`, `DB_USERNAME=most_contract`. The ordered migration set was:
+
+- core identity/tenant/project: `0001_01_01_000000_create_users_table`, `2025_01_01_000010_create_organizations_table`, `2025_01_01_000015_create_measurement_units_table`, `2025_01_01_000020_create_projects_table`, `2025_01_01_000025_create_work_types_table`, `2025_01_01_000030_create_contractors_table`, `2025_01_01_000070_create_project_organization_table`, `2025_05_03_161545_create_organization_user_table`, `2025_05_03_161553_add_fields_to_users_table`, `2025_05_03_173813_create_project_user_table`, `2025_05_08_221011_add_accounting_fields_to_projects_table`, `2025_05_15_000002_create_contracts_table`, `2025_05_16_000001_add_customer_and_designer_to_projects_table`, `2025_06_22_164437_add_verification_fields_to_organizations_table`, `2025_09_12_200001_create_authorization_contexts_table`, `2025_09_16_000000_add_extra_fields_to_projects_table`, `2025_10_10_120230_add_coordinates_to_projects_table`, `2025_10_17_163745_extend_project_organization_table`, `2025_10_21_120000_create_estimates_table`, `2025_10_21_120100_create_estimate_sections_table`, `2025_10_21_120200_create_estimate_items_table`, `2026_05_14_120000_add_project_access_mode_to_organization_user_table`, `2026_05_14_120100_extend_project_user_assignments`;
+- middleware/project observer dependency: `app/BusinessModules/Core/Mdm/migrations/2026_05_16_000000_create_mdm_core_tables`, `2026_05_16_010000_extend_mdm_product_tables`;
+- estimate generation: module migrations `2026_03_24_100000` through `2026_05_30_000001`, plus `database/migrations/2026_06_28_000002_create_estimate_generation_understanding_tables`, `2026_07_11_000001_rebuild_estimate_generation_session_workflow`, and `2026_07_12_001000_add_normative_retrieval_contract`.
+
+The first run exposed two Task 8 test defects rather than production defects: the integration contract inherited global `RefreshDatabase` and triggered the known unrelated ordinary-estimate migration ordering failure; and its combined-query plan assertion assumed a tiny fixture would always choose GIN despite a cheaper collection index. The contract now explicitly consumes the pre-migrated disposable schema and verifies the lexical GIN branch with a focused lexical `EXPLAIN`, while retaining the full-query semantic index assertion. The old-client test was completed with real JWT, organization/project membership fixtures, a trusted project-document normative reference, and a confirmed wall-volume takeoff so the production hard gate receives a materially complete intent.
+
+Final command, executed twice consecutively without resetting the database:
+
+`RUN_POSTGRES_NORMATIVE_CONTRACT=1 php artisan test tests/Integration/EstimateGeneration/Normatives/PostgresNormativeRetrievalContractTest.php tests/Feature/EstimateGeneration/NormativeOldClientPinPostgresTest.php`
+
+- first combined run: **2 passed, 61 assertions, 6.48s**;
+- second combined run on the same database: **2 passed, 61 assertions, 5.44s**;
+- final post-format verification on the same database: **2 passed, 61 assertions, 5.49s**;
+- isolation/idempotency gate: **PASS**.
