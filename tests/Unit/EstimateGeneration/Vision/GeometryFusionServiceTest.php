@@ -114,6 +114,24 @@ final class GeometryFusionServiceTest extends TestCase
         self::assertSame(['carrier', 'nested'], $service->fuse([$original, $carrier])->elements[0]->evidenceRefs());
     }
 
+    #[Test]
+    public function canonical_order_includes_full_nested_provenance_for_all_permutations(): void
+    {
+        $base = self::element('room-1', 'e1', ['polygon' => [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]]);
+        $p2 = self::element('room-1', 'e2', $base->geometry)->provenance[0];
+        $p3 = self::element('room-1', 'e3', $base->geometry)->provenance[0];
+        $a = new FusedGeometryElementData('room-1', 'room', $base->geometry, 'vision', 'e1', 'sha256:'.str_repeat('b', 64), 1, 'normalized_source_v1', 'runtime:v1', 'model:v1', 0.9, [$p2]);
+        $b = new FusedGeometryElementData('room-1', 'room', $base->geometry, 'vision', 'e1', 'sha256:'.str_repeat('b', 64), 1, 'normalized_source_v1', 'runtime:v1', 'model:v1', 0.9, [$p3]);
+        $c = new FusedGeometryElementData('room-1', 'room', $base->geometry, 'vision', 'e1', 'sha256:'.str_repeat('b', 64), 1, 'normalized_source_v1', 'runtime:v1', 'model:v1', 0.9, [$p2, $p3]);
+        $service = new GeometryFusionService;
+        $expected = null;
+        foreach ([[$a, $b, $c], [$a, $c, $b], [$b, $a, $c], [$b, $c, $a], [$c, $a, $b], [$c, $b, $a]] as $permutation) {
+            $actual = $service->fuse($permutation)->toArray();
+            $expected ??= $actual;
+            self::assertSame($expected, $actual);
+        }
+    }
+
     private static function element(string $key, string $evidence, array $geometry): FusedGeometryElementData
     {
         return new FusedGeometryElementData($key, 'room', $geometry, 'vision', $evidence, 'sha256:'.str_repeat('b', 64), 1, 'normalized_source_v1', 'runtime:v1', 'model:v1', 0.9);

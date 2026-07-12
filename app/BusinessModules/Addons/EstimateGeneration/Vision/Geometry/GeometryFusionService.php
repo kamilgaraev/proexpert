@@ -18,7 +18,7 @@ final class GeometryFusionService
                 throw new InvalidArgumentException('Geometry element is invalid.');
             }
         }
-        usort($elements, static fn (FusedGeometryElementData $a, FusedGeometryElementData $b): int => [$a->key, $a->evidenceRef, self::signature($a)] <=> [$b->key, $b->evidenceRef, self::signature($b)]);
+        usort($elements, static fn (FusedGeometryElementData $a, FusedGeometryElementData $b): int => strcmp(self::canonicalElement($a), self::canonicalElement($b)));
         $identities = [];
         $groups = [];
         foreach ($elements as $element) {
@@ -72,5 +72,13 @@ final class GeometryFusionService
     private static function signature(FusedGeometryElementData $element): string
     {
         return json_encode([$element->type, $element->geometry], JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION);
+    }
+
+    private static function canonicalElement(FusedGeometryElementData $element): string
+    {
+        return json_encode(
+            $element->toArray(),
+            JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
+        );
     }
 }
