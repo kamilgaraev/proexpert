@@ -15,7 +15,17 @@ $app->make(Kernel::class)->bootstrap();
 $app->instance(BenchmarkPrivateObjectStore::class, new SharedVersionedBenchmarkObjectStore($directory));
 if ($role === 'A') {
     DB::statement("SET application_name = 'benchmark_adoption_fail'");
-    putenv('BENCHMARK_FAKE_PAUSE_AFTER_CREATE=1');
+    putenv('BENCHMARK_FAKE_DELETE_AFTER_DESCRIBE=1');
+    putenv('BENCHMARK_FAKE_PAUSE_AFTER_PUT=1');
+} elseif ($role === 'HOLD') {
+    putenv('BENCHMARK_FAKE_PAUSE_AFTER_PUT=1');
+} elseif ($role === 'LOCK_CHECK') {
+    $locked = (bool) (DB::selectOne('SELECT pg_try_advisory_lock(hashtextextended(?, 0)) AS locked', [$organizationId.'|'.$uuid.'|'.basename($path, '.json')])->locked ?? false);
+    if ($locked) {
+        DB::select('SELECT pg_advisory_unlock(hashtextextended(?, 0))', [$organizationId.'|'.$uuid.'|'.basename($path, '.json')]);
+    }
+    fwrite(STDOUT, 'LOCK_ACQUIRED:'.($locked ? 'yes' : 'no')."\n");
+    exit(0);
 }
 try {
     $run = $app->make(BenchmarkRunRepository::class)->complete((int) $organizationId, $uuid,
@@ -24,8 +34,3 @@ try {
 } catch (Throwable $exception) {
     fwrite(STDOUT, 'FAILED:'.$exception->getMessage()."\n");
 }
-$locked = (bool) (DB::selectOne('SELECT pg_try_advisory_lock(hashtextextended(?, 0)) AS locked', [$organizationId.'|'.$uuid.'|'.basename($path, '.json')])->locked ?? false);
-if ($locked) {
-    DB::select('SELECT pg_advisory_unlock(hashtextextended(?, 0))', [$organizationId.'|'.$uuid.'|'.basename($path, '.json')]);
-}
-fwrite(STDOUT, 'LOCK_RELEASED:'.($locked ? 'yes' : 'no')."\n");
