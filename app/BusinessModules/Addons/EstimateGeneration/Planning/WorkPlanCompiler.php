@@ -50,8 +50,8 @@ final readonly class WorkPlanCompiler
     }
 
     /** @param array<string, mixed> $intent
-     * @param array<string, mixed> $localEstimate
-     * @param array<string, mixed> $section
+     * @param  array<string, mixed>  $localEstimate
+     * @param  array<string, mixed>  $section
      * @return array<string, mixed>
      */
     private function intentToWorkItem(array $intent, array $localEstimate, array $section): array
@@ -72,6 +72,7 @@ final readonly class WorkPlanCompiler
             'validation_flags' => ['normative_required'], 'price_source' => null, 'pricing_status' => 'not_calculated',
             'pricing_blocker' => 'normative_required', 'pricing_blocker_message' => null,
             'metadata' => ['generation_source' => 'work_planner_provider', 'quantity_source' => 'recorded_provider_evidence',
+                'quantity_key' => (string) $intent['quantity_key'],
                 'package_key' => (string) $localEstimate['key'], 'section_key' => (string) $section['key'],
                 'quantity_source_refs' => $intent['quantity_source_refs'], 'normative_grounding_policy' => 'fsnb_required',
                 'display_role' => 'priced_work', 'work_composition' => [], 'composition_source' => 'planner_intent'],

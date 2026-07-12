@@ -66,7 +66,7 @@ final class WorkPlanCompilerTest extends TestCase
                     'category' => 'foundation',
                     'unit' => 'm3',
                     'quantity' => '12.5',
-                    'quantity_source_refs' => ['quantity:q1'],
+                    'quantity_key' => 'concrete_volume', 'quantity_source_refs' => ['quantity:q1'],
                     'confidence' => 0.91,
                 ]],
             ]],

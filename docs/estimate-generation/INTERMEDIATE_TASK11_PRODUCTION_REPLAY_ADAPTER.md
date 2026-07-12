@@ -90,3 +90,24 @@ GREEN evidence:
 
 Anti-oracle constraints не ослаблялись: adapter не читает expected и не принимает final prediction через ports
 или catalog. Committed two-case replay corpus и двойной CLI replay по-прежнему остаются открытым gate.
+
+## Exact quantity evidence review fix
+
+Recorded planner intent теперь обязан содержать закрытый `quantity_key`. `RecordedWorkPlannerResponseData`
+проверяет token и запрещает повторное сопоставление одного quantity нескольким intents. `WorkPlanCompiler`
+переносит ключ в metadata позиции без изменения. Adapter ищет `QuantityData` только по exact key и требует
+полного равенства отсортированных evidence sets. Выбор по позиции в массиве, названию или unit отсутствует.
+
+RED:
+
+`php artisan test tests/Unit/EstimateGeneration/Benchmark/ProductionReplayBenchmarkAdapterTest.php --filter=planner_evidence`
+
+- cross-quantity substitution (`floor_area` intent с evidence `opening_count`) ошибочно принималась.
+
+GREEN:
+
+`php artisan test tests/Unit/EstimateGeneration/Benchmark tests/Unit/EstimateGeneration/Planning/WorkPlanCompilerTest.php`
+
+- `105 passed`, `335 assertions`;
+- happy exact mapping, cross-quantity substitution и duplicate quantity mapping покрыты отдельно;
+- PHPStan трёх изменённых production boundaries: `[OK] No errors`.

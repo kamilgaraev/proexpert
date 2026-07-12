@@ -30,6 +30,7 @@ final readonly class RecordedWorkPlannerResponseData
         $sections = [];
         $sectionKeys = [];
         $intentKeys = [];
+        $quantityKeys = [];
         foreach ($payload['sections'] as $section) {
             if (! is_array($section)
                 || ! self::exactKeys($section, ['section_key', 'title', 'scope_type', 'source_refs', 'work_intents'])
@@ -46,9 +47,11 @@ final readonly class RecordedWorkPlannerResponseData
             $intents = [];
             foreach ($section['work_intents'] as $intent) {
                 if (! is_array($intent)
-                    || ! self::exactKeys($intent, ['intent_key', 'name', 'category', 'unit', 'quantity', 'quantity_source_refs', 'confidence'])
+                    || ! self::exactKeys($intent, ['intent_key', 'quantity_key', 'name', 'category', 'unit', 'quantity', 'quantity_source_refs', 'confidence'])
                     || ! self::token($intent['intent_key'] ?? null)
                     || isset($intentKeys[$intent['intent_key']])
+                    || ! self::token($intent['quantity_key'] ?? null)
+                    || isset($quantityKeys[$intent['quantity_key']])
                     || ! self::text($intent['name'] ?? null, 500)
                     || ! self::token($intent['category'] ?? null)
                     || ! is_string($intent['unit']) || ! in_array($intent['unit'], self::UNITS, true)
@@ -62,6 +65,7 @@ final readonly class RecordedWorkPlannerResponseData
                     throw self::invalid();
                 }
                 $intentKeys[$intent['intent_key']] = true;
+                $quantityKeys[$intent['quantity_key']] = true;
                 $intents[] = $intent;
             }
             $sections[] = [...$section, 'work_intents' => $intents];

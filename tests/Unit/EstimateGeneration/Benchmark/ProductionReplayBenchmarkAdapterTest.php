@@ -83,12 +83,16 @@ final class ProductionReplayBenchmarkAdapterTest extends TestCase
         $adapter = (new ReflectionClass(ProductionReplayBenchmarkAdapter::class))->newInstanceWithoutConstructor();
         $method = new ReflectionMethod(ProductionReplayBenchmarkAdapter::class, 'quantityEvidence');
 
+        $quantities = [
+            'floor_area' => (object) ['key' => 'floor_area', 'evidenceIds' => ['11']],
+            'opening_count' => (object) ['key' => 'opening_count', 'evidenceIds' => ['12']],
+        ];
         self::assertSame(['11'], $method->invoke($adapter,
-            ['metadata' => ['quantity_source_refs' => ['11']]], [(object) ['evidenceIds' => ['11']]]));
+            ['metadata' => ['quantity_key' => 'floor_area', 'quantity_source_refs' => ['11']]], $quantities));
 
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('recorded_planner_quantity_evidence_invalid');
         $method->invoke($adapter,
-            ['metadata' => ['quantity_source_refs' => ['12']]], [(object) ['evidenceIds' => ['11']]]);
+            ['metadata' => ['quantity_key' => 'floor_area', 'quantity_source_refs' => ['12']]], $quantities);
     }
 }

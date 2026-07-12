@@ -236,14 +236,15 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
 
     private function quantityEvidence(array $item, array $quantities): array
     {
-        $allowed = [];
-        foreach ($quantities as $quantity) {
-            foreach ($quantity->evidenceIds as $id) {
-                $allowed[(string) $id] = true;
-            }
+        $quantityKey = $item['metadata']['quantity_key'] ?? null;
+        if (! is_string($quantityKey) || $quantityKey === '' || ! isset($quantities[$quantityKey])) {
+            throw new \InvalidArgumentException('recorded_planner_quantity_evidence_invalid');
         }
+        $expected = array_values(array_unique(array_map('strval', $quantities[$quantityKey]->evidenceIds)));
         $refs = array_values(array_unique(array_map('strval', $item['metadata']['quantity_source_refs'] ?? [])));
-        if ($refs === [] || array_filter($refs, static fn (string $ref): bool => ! isset($allowed[$ref])) !== []) {
+        sort($expected, SORT_STRING);
+        sort($refs, SORT_STRING);
+        if ($refs === [] || $refs !== $expected) {
             throw new \InvalidArgumentException('recorded_planner_quantity_evidence_invalid');
         }
 

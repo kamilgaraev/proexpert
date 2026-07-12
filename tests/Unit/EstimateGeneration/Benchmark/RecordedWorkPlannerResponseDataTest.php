@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Benchmark;
 
-use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedPortEnvelopeException;
-use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedPortEnvelope;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedPort;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedPortEnvelope;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedPortEnvelopeException;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedWorkPlannerProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedWorkPlannerResponseData;
 use PHPUnit\Framework\Attributes\Test;
@@ -58,6 +58,19 @@ final class RecordedWorkPlannerResponseDataTest extends TestCase
         new RecordedWorkPlannerProvider($this->envelope(RecordedPort::VisionExtraction));
     }
 
+    #[Test]
+    public function rejects_duplicate_quantity_mapping_across_intents(): void
+    {
+        $payload = $this->payload();
+        $duplicate = $payload['sections'][0]['work_intents'][0];
+        $duplicate['intent_key'] = 'second-intent';
+        $payload['sections'][0]['work_intents'][] = $duplicate;
+
+        $this->expectException(RecordedPortEnvelopeException::class);
+        $this->expectExceptionMessage('recorded_work_planner_contract_invalid');
+        RecordedWorkPlannerResponseData::fromProviderArray($payload);
+    }
+
     private function envelope(RecordedPort $port): RecordedPortEnvelope
     {
         return new RecordedPortEnvelope(
@@ -83,7 +96,7 @@ final class RecordedWorkPlannerResponseDataTest extends TestCase
                     'category' => 'foundation',
                     'unit' => 'm3',
                     'quantity' => '12.5',
-                    'quantity_source_refs' => ['evidence:quantity:foundation-volume'],
+                    'quantity_key' => 'foundation_volume', 'quantity_source_refs' => ['evidence:quantity:foundation-volume'],
                     'confidence' => 0.92,
                 ]],
             ]],
