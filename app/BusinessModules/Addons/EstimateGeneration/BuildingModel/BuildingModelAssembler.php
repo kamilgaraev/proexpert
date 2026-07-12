@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\OpeningData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\RoomData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\VisionBuildingModelAssemblyResult;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\VisionBuildingModelInputData;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\VisionClarificationData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\WallData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\FusedGeometryElementData;
 use InvalidArgumentException;
@@ -24,21 +25,60 @@ final class BuildingModelAssembler
     {
         $confirmed = $input->scale->status === 'confirmed';
         $rooms = [];
+        $walls = [];
+        $openings = [];
+        $engineering = [];
+        $roomKeys = [];
+        $wallKeys = [];
+        $clarifications = [];
         $floorEvidence = [];
         foreach ($input->geometry->elements as $element) {
-            $evidenceId = $input->evidenceIdsByRef[$element->evidenceRef];
-            $floorEvidence[] = $evidenceId;
-            if ($element->type !== 'room') {
-                continue;
+            if ($element->type === 'room') {
+                $roomKeys[$element->key] = true;
             }
-            $rooms[] = new RoomData(
-                $element->key,
-                null,
-                $confirmed ? $this->metricPolygon($element, $input->scale->metersPerUnit) : null,
-                [$evidenceId],
-                $element->confidence,
-                $confirmed ? 'confirmed' : 'unknown',
-            );
+            if ($element->type === 'wall') {
+                $wallKeys[$element->key] = true;
+            }
+        }
+        foreach ($input->geometry->elements as $element) {
+            $evidenceIds = array_map(static fn (string $reference): int => $input->evidenceIdsByRef[$reference], $element->evidenceRefs());
+            $floorEvidence = [...$floorEvidence, ...$evidenceIds];
+            if ($element->type === 'room') {
+                $rooms[] = new RoomData($element->key, null, $confirmed ? $this->metricPolygon($element, $input->scale->metersPerUnit) : null, $evidenceIds, $element->confidence, $confirmed ? 'confirmed' : 'unknown');
+            } elseif ($element->type === 'wall') {
+                $walls[] = new WallData(
+                    $element->key,
+                    $confirmed ? $this->metricPoint($element->geometry['start'], $input->scale->metersPerUnit) : null,
+                    $confirmed ? $this->metricPoint($element->geometry['end'], $input->scale->metersPerUnit) : null,
+                    $confirmed ? $this->metricValue($element->geometry['thickness'], $input->scale->metersPerUnit) : null,
+                    $confirmed ? $this->metricValue($element->geometry['height'], $input->scale->metersPerUnit) : null,
+                    $evidenceIds, $element->confidence, $confirmed ? 'confirmed' : 'unknown',
+                );
+            } elseif ($element->type === 'opening') {
+                if (! isset($wallKeys[$element->geometry['wall_key']])) {
+                    $clarifications[] = new VisionClarificationData('geometry_reference_unresolved', $element->key, $element->evidenceRefs());
+
+                    continue;
+                }
+                $openings[] = new OpeningData(
+                    $element->key, $element->geometry['wall_key'], $element->geometry['opening_type'],
+                    $confirmed ? $this->metricValue($element->geometry['offset'], $input->scale->metersPerUnit) : null,
+                    $confirmed ? $this->metricValue($element->geometry['width'], $input->scale->metersPerUnit) : null,
+                    $confirmed ? $this->metricValue($element->geometry['height'], $input->scale->metersPerUnit) : null,
+                    $evidenceIds, $element->confidence, $confirmed ? 'confirmed' : 'unknown',
+                );
+            } else {
+                if ($element->geometry['room_key'] !== null && ! isset($roomKeys[$element->geometry['room_key']])) {
+                    $clarifications[] = new VisionClarificationData('geometry_reference_unresolved', $element->key, $element->evidenceRefs());
+
+                    continue;
+                }
+                $engineering[] = new EngineeringElementData(
+                    $element->key, $element->geometry['engineering_type'],
+                    $confirmed ? $this->metricPoint($element->geometry['location'], $input->scale->metersPerUnit) : null,
+                    $element->geometry['room_key'], $evidenceIds, $element->confidence, $confirmed ? 'confirmed' : 'unknown',
+                );
+            }
         }
         foreach ($input->scale->evidenceRefs as $reference) {
             $floorEvidence[] = $input->evidenceIdsByRef[$reference];
@@ -55,9 +95,9 @@ final class BuildingModelAssembler
             null,
             null,
             $rooms,
-            [],
-            [],
-            [],
+            $walls,
+            $openings,
+            $engineering,
             $floorEvidence,
             $this->minimumElementConfidence($input->geometry->elements),
             $confirmed ? 'confirmed' : 'unknown',
@@ -70,28 +110,19 @@ final class BuildingModelAssembler
             $floorEvidence,
         )]);
 
-        $clarifications = $input->questions;
         if ($input->scale->blockingIssue !== null) {
-            $scaleIssue = ['key' => $input->scale->blockingIssue];
-            if ($input->scale->evidenceRefs !== []) {
-                $scaleIssue['evidence_refs'] = $input->scale->evidenceRefs;
-                sort($scaleIssue['evidence_refs'], SORT_STRING);
-            }
-            $clarifications[] = $scaleIssue;
+            $clarifications[] = new VisionClarificationData($input->scale->blockingIssue, null, $input->scale->evidenceRefs);
         }
         foreach ($input->geometry->issues as $issue) {
-            $clarifications[] = [
-                'key' => $issue['code'],
-                'element_key' => $issue['element_key'],
-                'evidence_refs' => $issue['evidence_refs'],
-            ];
+            $clarifications[] = new VisionClarificationData($issue['code'], $issue['element_key'], $issue['evidence_refs']);
         }
-        usort($clarifications, static fn (array $left, array $right): int => json_encode($left, JSON_THROW_ON_ERROR) <=> json_encode($right, JSON_THROW_ON_ERROR));
+        usort($clarifications, static fn (VisionClarificationData $left, VisionClarificationData $right): int => [$left->code, $left->elementKey, $left->evidenceRefs] <=> [$right->code, $right->elementKey, $right->evidenceRefs]);
 
         return new VisionBuildingModelAssemblyResult(
             $model,
-            array_map(static fn (FusedGeometryElementData $element): array => $element->toArray(), $input->geometry->elements),
+            array_map(static fn (FusedGeometryElementData $element): array => $element->toArray(), $input->geometry->sourceElements),
             $input->sketchAssumptions,
+            $input->questions,
             $clarifications,
         );
     }
@@ -252,7 +283,28 @@ final class BuildingModelAssembler
             throw new InvalidArgumentException('Confirmed vision scale is missing.');
         }
 
-        return array_map(static fn (array $point): array => [(float) $point[0] * $scale, (float) $point[1] * $scale], $element->geometry);
+        return array_map(fn (array $point): array => $this->metricPoint($point, $scale), $element->geometry['polygon']);
+    }
+
+    private function metricPoint(array $point, ?float $scale): array
+    {
+        if ($scale === null) {
+            throw new InvalidArgumentException('Confirmed vision scale is missing.');
+        }
+
+        return [(float) $point[0] * $scale, (float) $point[1] * $scale];
+    }
+
+    private function metricValue(int|float|null $value, ?float $scale): ?float
+    {
+        if ($value === null) {
+            return null;
+        }
+        if ($scale === null) {
+            throw new InvalidArgumentException('Confirmed vision scale is missing.');
+        }
+
+        return (float) $value * $scale;
     }
 
     private function minimumElementConfidence(array $elements): float

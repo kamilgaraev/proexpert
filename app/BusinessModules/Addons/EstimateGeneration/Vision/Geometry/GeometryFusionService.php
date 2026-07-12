@@ -14,6 +14,7 @@ final class GeometryFusionService
             throw new InvalidArgumentException('Geometry elements must be a list.');
         }
         usort($elements, static fn (FusedGeometryElementData $a, FusedGeometryElementData $b): int => [$a->key, $a->evidenceRef] <=> [$b->key, $b->evidenceRef]);
+        $sourceElements = $elements;
         $fused = [];
         $issues = [];
         foreach ($elements as $element) {
@@ -28,6 +29,7 @@ final class GeometryFusionService
             }
             if ($fused[$element->key]['signature'] === $signature) {
                 $fused[$element->key]['evidence'][] = $element->evidenceRef;
+                $fused[$element->key]['element'] = $fused[$element->key]['element']->withProvenanceFrom($element);
 
                 continue;
             }
@@ -35,9 +37,12 @@ final class GeometryFusionService
             sort($evidence, SORT_STRING);
             $issues[$element->key] = ['code' => 'geometry_element_conflict', 'severity' => 'blocking', 'element_key' => $element->key, 'evidence_refs' => $evidence];
         }
+        foreach (array_keys($issues) as $conflictedKey) {
+            unset($fused[$conflictedKey]);
+        }
         ksort($fused, SORT_STRING);
         ksort($issues, SORT_STRING);
 
-        return new GeometryFusionResult(array_values(array_column($fused, 'element')), array_values($issues));
+        return new GeometryFusionResult(array_values(array_column($fused, 'element')), $sourceElements, array_values($issues));
     }
 }

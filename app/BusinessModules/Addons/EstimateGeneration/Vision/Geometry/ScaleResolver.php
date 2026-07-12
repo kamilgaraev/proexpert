@@ -12,34 +12,34 @@ final class ScaleResolver
     {
         $this->assertCandidates($vectorDimensions, 'vector');
         $this->assertCandidates($visionDimensions, 'vision');
-        $all = [...$vectorDimensions, ...$visionDimensions];
-        if ($userControlDimension !== null) {
-            foreach ($all as $candidate) {
-                if ($candidate->contextKey() !== $userControlDimension->contextKey()) {
-                    return $this->conflict($all, $userControlDimension);
-                }
-            }
+        $vectors = $this->deduplicate($vectorDimensions);
+        $visions = $this->deduplicate($visionDimensions);
+        if (! $this->validGroup($vectors)) {
+            return $this->conflict($vectors, null);
         }
-        $values = array_map(static fn (ScaleCandidateData $item): float => $item->metersPerUnit, $all);
+        $confirmedVision = count($visions) >= 2 ? $visions : [];
+        if ($confirmedVision !== [] && ! $this->validGroup($confirmedVision)) {
+            return $this->conflict($confirmedVision, null);
+        }
+        $participating = [...$vectors, ...$confirmedVision];
+        $contexts = array_map(static fn (ScaleCandidateData $item): string => $item->contextKey(), $participating);
+        $values = array_map(static fn (ScaleCandidateData $item): float => $item->metersPerUnit, $participating);
         if ($userControlDimension !== null) {
+            $contexts[] = $userControlDimension->contextKey();
             $values[] = $userControlDimension->metersPerUnit;
         }
-        if (! $this->consistent($values)) {
-            return $this->conflict($all, $userControlDimension);
+        if (count(array_unique($contexts)) > 1 || ! $this->consistent($values)) {
+            return $this->conflict($participating, $userControlDimension);
         }
 
-        if ($vectorDimensions !== []) {
-            return $this->confirmed($vectorDimensions);
+        if ($vectors !== []) {
+            return $this->confirmed($vectors);
         }
         if ($userControlDimension !== null) {
             return new ScaleResolutionData('confirmed', $userControlDimension->metersPerUnit, [$userControlDimension->evidenceRef], null);
         }
-        $uniqueVision = [];
-        foreach ($visionDimensions as $candidate) {
-            $uniqueVision[$candidate->evidenceRef] = $candidate;
-        }
-        if (count($uniqueVision) >= 2) {
-            return $this->confirmed(array_values($uniqueVision));
+        if ($confirmedVision !== []) {
+            return $this->confirmed($confirmedVision);
         }
 
         return new ScaleResolutionData('missing', null, [], 'geometry_scale_unconfirmed');
@@ -62,13 +62,40 @@ final class ScaleResolver
         for ($left = 0; $left < count($values); $left++) {
             for ($right = $left + 1; $right < count($values); $right++) {
                 $minimum = min($values[$left], $values[$right]);
-                if (abs($values[$left] - $values[$right]) > $minimum * 0.02 + 1.0e-12) {
+                $maximum = max($values[$left], $values[$right]);
+                if ($maximum / $minimum > 1.02) {
                     return false;
                 }
             }
         }
 
         return true;
+    }
+
+    private function deduplicate(array $candidates): array
+    {
+        $unique = [];
+        foreach ($candidates as $candidate) {
+            if (isset($unique[$candidate->evidenceRef])) {
+                if ($unique[$candidate->evidenceRef] != $candidate) {
+                    throw new InvalidArgumentException('Duplicate scale evidence is inconsistent.');
+                }
+
+                continue;
+            }
+            $unique[$candidate->evidenceRef] = $candidate;
+        }
+        ksort($unique, SORT_STRING);
+
+        return array_values($unique);
+    }
+
+    private function validGroup(array $candidates): bool
+    {
+        return $candidates === [] || (
+            count(array_unique(array_map(static fn (ScaleCandidateData $item): string => $item->contextKey(), $candidates))) === 1
+            && $this->consistent(array_map(static fn (ScaleCandidateData $item): float => $item->metersPerUnit, $candidates))
+        );
     }
 
     private function confirmed(array $candidates): ScaleResolutionData

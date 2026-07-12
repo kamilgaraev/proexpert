@@ -7,6 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\GeometryFusionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\ScaleResolutionData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Sketch\SketchAssumption;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Sketch\SketchQuestionData;
 use InvalidArgumentException;
 
 final readonly class VisionBuildingModelInputData
@@ -26,7 +27,7 @@ final readonly class VisionBuildingModelInputData
             }
         }
         foreach ($questions as $question) {
-            if (! is_array($question) || array_keys($question) !== ['key'] || ! is_string($question['key']) || $question['key'] === '') {
+            if (! $question instanceof SketchQuestionData) {
                 throw new InvalidArgumentException('Sketch clarification question is invalid.');
             }
         }
@@ -35,8 +36,8 @@ final readonly class VisionBuildingModelInputData
         }
         BuildingModelSchema::key($floorKey, 'Vision floor');
         $refs = $scale->evidenceRefs;
-        foreach ($geometry->elements as $element) {
-            $refs[] = $element->evidenceRef;
+        foreach ($geometry->sourceElements as $element) {
+            $refs = [...$refs, ...$element->evidenceRefs()];
         }
         foreach ($geometry->issues as $issue) {
             $refs = [...$refs, ...($issue['evidence_refs'] ?? [])];

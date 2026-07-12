@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO;
 
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Sketch\SketchAssumption;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Sketch\SketchQuestionData;
 
 final readonly class VisionBuildingModelAssemblyResult
 {
@@ -12,6 +13,7 @@ final readonly class VisionBuildingModelAssemblyResult
         public NormalizedBuildingModelData $model,
         public array $sourceGeometry,
         public array $sketchAssumptions,
+        public array $questions,
         public array $clarifications,
     ) {}
 
@@ -29,7 +31,8 @@ final readonly class VisionBuildingModelAssemblyResult
                 'requires_confirmation' => $item->requiresConfirmation,
                 'evidenced' => $item->evidenced,
             ], $this->sketchAssumptions),
-            'clarifications' => $this->clarifications,
+            'questions' => array_map(static fn (SketchQuestionData $item): array => $item->toArray(), $this->questions),
+            'clarifications' => array_map(static fn (VisionClarificationData $item): array => $item->toArray(), $this->clarifications),
         ];
     }
 }

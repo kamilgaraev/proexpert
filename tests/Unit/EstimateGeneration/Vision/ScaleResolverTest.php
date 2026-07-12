@@ -52,6 +52,57 @@ final class ScaleResolverTest extends TestCase
     }
 
     #[Test]
+    public function next_float_above_boundary_conflicts_even_for_tiny_scales(): void
+    {
+        $base = 1.0e-12;
+        $boundary = $base * 1.02;
+        $below = $boundary * (1.0 - PHP_FLOAT_EPSILON);
+        $above = $boundary * (1.0 + PHP_FLOAT_EPSILON);
+
+        self::assertSame('confirmed', (new ScaleResolver)->resolve([self::candidate('vector', $base, 'v1'), self::candidate('vector', $below, 'v2')], [], null)->status);
+        self::assertSame('confirmed', (new ScaleResolver)->resolve([self::candidate('vector', $base, 'v1'), self::candidate('vector', $boundary, 'v2')], [], null)->status);
+        self::assertSame('conflict', (new ScaleResolver)->resolve([self::candidate('vector', $base, 'v1'), self::candidate('vector', $above, 'v2')], [], null)->status);
+    }
+
+    #[Test]
+    public function unconfirmed_single_vision_does_not_block_valid_vector_or_control(): void
+    {
+        $resolver = new ScaleResolver;
+
+        self::assertSame('confirmed', $resolver->resolve([self::candidate('vector', 0.01, 'v1')], [self::candidate('vision', 0.2, 'ai1')], null)->status);
+        self::assertSame('confirmed', $resolver->resolve([], [self::candidate('vision', 0.2, 'ai1')], self::control(10.0))->status);
+        self::assertSame('confirmed', $resolver->resolve([self::candidate('vector', 0.01, 'v1')], [self::candidate('vision', 0.2, 'ai1'), self::candidate('vision', 0.2, 'ai1')], null)->status);
+        self::assertSame('confirmed', $resolver->resolve([], [self::candidate('vision', 0.2, 'ai1'), self::candidate('vision', 0.2, 'ai1')], self::control(10.0))->status);
+    }
+
+    #[Test]
+    public function contexts_must_match_within_and_across_confirmed_groups(): void
+    {
+        $resolver = new ScaleResolver;
+
+        self::assertSame('conflict', $resolver->resolve([self::candidate('vector', 0.01, 'v1'), self::candidate('vector', 0.01, 'v2', 2)], [], null)->status);
+        self::assertSame('conflict', $resolver->resolve([], [self::candidate('vision', 0.01, 'ai1'), self::candidate('vision', 0.01, 'ai2', 2)], null)->status);
+        self::assertSame('conflict', $resolver->resolve([self::candidate('vector', 0.01, 'v1')], [self::candidate('vision', 0.01, 'ai1', 2), self::candidate('vision', 0.01, 'ai2', 2)], null)->status);
+    }
+
+    #[Test]
+    public function duplicate_vector_evidence_is_exactly_deduplicated_and_conflicting_duplicate_rejected(): void
+    {
+        $same = self::candidate('vector', 0.01, 'v1');
+        self::assertSame(0.01, (new ScaleResolver)->resolve([$same, $same], [], null)->metersPerUnit);
+
+        $this->expectException(InvalidArgumentException::class);
+        (new ScaleResolver)->resolve([$same, self::candidate('vector', 0.02, 'v1')], [], null);
+    }
+
+    #[Test]
+    public function scale_resolution_rejects_invalid_state_combinations(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        new \App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\ScaleResolutionData('confirmed', null, [], null);
+    }
+
+    #[Test]
     public function higher_priority_source_does_not_hide_confirmed_conflict(): void
     {
         $result = (new ScaleResolver)->resolve(

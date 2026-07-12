@@ -14,23 +14,42 @@ final class GeometryFusionServiceTest extends TestCase
     #[Test]
     public function fusion_is_order_independent_and_deduplicates_identical_evidence(): void
     {
-        $a = self::element('room-1', 'e1', [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]);
+        $a = self::element('room-1', 'e1', ['polygon' => [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]]);
+        $b = self::element('room-2', 'e2', ['polygon' => [[2.0, 0.0], [3.0, 0.0], [3.0, 1.0]]]);
         $service = new GeometryFusionService;
 
-        self::assertSame($service->fuse([$a, $a])->toArray(), $service->fuse([$a, $a])->toArray());
-        self::assertCount(1, $service->fuse([$a, $a])->elements);
+        self::assertSame($service->fuse([$a, $b])->toArray(), $service->fuse([$b, $a])->toArray());
+        self::assertCount(2, $service->fuse([$a, $b])->elements);
+    }
+
+    #[Test]
+    public function identical_geometry_retains_all_independent_provenance(): void
+    {
+        $first = self::element('room-1', 'e1', ['polygon' => [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]]);
+        $second = self::element('room-1', 'e2', ['polygon' => [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]]);
+
+        self::assertSame(['e1', 'e2'], (new GeometryFusionService)->fuse([$second, $first])->elements[0]->evidenceRefs());
     }
 
     #[Test]
     public function same_key_with_different_geometry_becomes_blocking_conflict(): void
     {
         $result = (new GeometryFusionService)->fuse([
-            self::element('room-1', 'e1', [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]),
-            self::element('room-1', 'e2', [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0]]),
+            self::element('room-1', 'e1', ['polygon' => [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]]),
+            self::element('room-1', 'e2', ['polygon' => [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0]]]),
         ]);
 
         self::assertSame('geometry_element_conflict', $result->issues[0]['code']);
         self::assertSame(['e1', 'e2'], $result->issues[0]['evidence_refs']);
+        self::assertSame([], $result->elements);
+        self::assertCount(2, $result->sourceElements);
+    }
+
+    #[Test]
+    public function geometry_shape_is_type_specific_and_finite(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        self::element('room-1', 'e1', ['polygon' => [[0.0, 0.0], [INF, 0.0], [1.0, 1.0]]]);
     }
 
     private static function element(string $key, string $evidence, array $geometry): FusedGeometryElementData
