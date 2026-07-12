@@ -255,7 +255,7 @@ class EstimateGenerationTrainingDatasetResource extends Resource
                     ->color('success')
                     ->visible(fn (): bool => SystemAdminAccess::can(FilamentPermission::AI_ESTIMATOR_TRAINING_PROCESS))
                     ->disabled(fn (EstimateGenerationTrainingDataset $record): bool => in_array($record->status, [
-                        EstimateGenerationTrainingDataset::STATUS_QUEUED,
+                        EstimateGenerationTrainingDataset::STATUS_PROCESSING,
                         EstimateGenerationTrainingDataset::STATUS_PROCESSING,
                     ], true))
                     ->action(function (EstimateGenerationTrainingDataset $record): void {
@@ -328,11 +328,12 @@ class EstimateGenerationTrainingDatasetResource extends Resource
     private static function statusOptions(): array
     {
         return [
-            EstimateGenerationTrainingDataset::STATUS_UPLOADED => trans_message('estimate_generation.training_status_uploaded'),
-            EstimateGenerationTrainingDataset::STATUS_QUEUED => trans_message('estimate_generation.training_status_queued'),
+            EstimateGenerationTrainingDataset::STATUS_DRAFT => trans_message('estimate_generation.training_status_uploaded'),
             EstimateGenerationTrainingDataset::STATUS_PROCESSING => trans_message('estimate_generation.training_status_processing'),
-            EstimateGenerationTrainingDataset::STATUS_PROCESSED => trans_message('estimate_generation.training_status_processed'),
-            EstimateGenerationTrainingDataset::STATUS_FAILED => trans_message('estimate_generation.training_status_failed'),
+            EstimateGenerationTrainingDataset::STATUS_REVIEW_REQUIRED => trans_message('estimate_generation.training_status_processed'),
+            EstimateGenerationTrainingDataset::STATUS_APPROVED => trans_message('estimate_generation.training_status_processed'),
+            EstimateGenerationTrainingDataset::STATUS_REJECTED => trans_message('estimate_generation.training_status_failed'),
+            EstimateGenerationTrainingDataset::STATUS_ARCHIVED => trans_message('estimate_generation.training_status_processed'),
         ];
     }
 

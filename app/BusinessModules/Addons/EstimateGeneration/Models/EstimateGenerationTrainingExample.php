@@ -10,9 +10,13 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class EstimateGenerationTrainingExample extends Model
 {
     public const STATUS_PENDING = 'pending';
+
     public const STATUS_ACCEPTED = 'accepted';
+
     public const STATUS_SKIPPED = 'skipped';
+
     public const STATUS_INDEXED = 'indexed';
+
     public const STATUS_FAILED = 'failed';
 
     protected $fillable = [
@@ -38,6 +42,8 @@ class EstimateGenerationTrainingExample extends Model
         'error_message',
         'accepted_at',
         'indexed_at',
+        'reviewed_by',
+        'reviewed_at',
     ];
 
     protected $casts = [
@@ -53,6 +59,8 @@ class EstimateGenerationTrainingExample extends Model
         'raw_payload' => 'array',
         'accepted_at' => 'datetime',
         'indexed_at' => 'datetime',
+        'reviewed_by' => 'integer',
+        'reviewed_at' => 'immutable_datetime',
     ];
 
     public function trainingDataset(): BelongsTo

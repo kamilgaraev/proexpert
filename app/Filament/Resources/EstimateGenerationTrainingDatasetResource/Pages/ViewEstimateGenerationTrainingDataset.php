@@ -32,7 +32,7 @@ class ViewEstimateGenerationTrainingDataset extends ViewRecord
                 ->visible(fn (): bool => SystemAdminAccess::can(FilamentPermission::AI_ESTIMATOR_TRAINING_PROCESS))
                 ->disabled(fn (): bool => $this->record instanceof EstimateGenerationTrainingDataset
                     && in_array($this->record->status, [
-                        EstimateGenerationTrainingDataset::STATUS_QUEUED,
+                        EstimateGenerationTrainingDataset::STATUS_PROCESSING,
                         EstimateGenerationTrainingDataset::STATUS_PROCESSING,
                     ], true))
                 ->action(function (): void {

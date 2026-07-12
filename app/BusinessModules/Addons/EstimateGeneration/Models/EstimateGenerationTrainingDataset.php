@@ -13,14 +13,34 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class EstimateGenerationTrainingDataset extends Model
 {
-    public const STATUS_UPLOADED = 'uploaded';
-    public const STATUS_QUEUED = 'queued';
+    public const TYPE_DEVELOPMENT = 'development';
+
+    public const TYPE_REGRESSION = 'regression';
+
+    public const TYPE_ACCEPTANCE = 'acceptance';
+
+    public const TYPES = [self::TYPE_DEVELOPMENT, self::TYPE_REGRESSION, self::TYPE_ACCEPTANCE];
+
+    public const STATUS_DRAFT = 'draft';
+
     public const STATUS_PROCESSING = 'processing';
-    public const STATUS_PROCESSED = 'processed';
-    public const STATUS_FAILED = 'failed';
+
+    public const STATUS_REVIEW_REQUIRED = 'review_required';
+
+    public const STATUS_APPROVED = 'approved';
+
+    public const STATUS_REJECTED = 'rejected';
+
+    public const STATUS_ARCHIVED = 'archived';
+
+    public const STATUSES = [self::STATUS_DRAFT, self::STATUS_PROCESSING, self::STATUS_REVIEW_REQUIRED, self::STATUS_APPROVED, self::STATUS_REJECTED, self::STATUS_ARCHIVED];
 
     protected $fillable = [
         'uuid',
+        'dataset_key',
+        'version',
+        'dataset_type',
+        'scope',
         'organization_id',
         'project_id',
         'created_by_system_admin_id',
@@ -38,10 +58,13 @@ class EstimateGenerationTrainingDataset extends Model
         'queued_at',
         'processed_at',
         'accepted_at',
+        'approved_by',
+        'approved_at',
     ];
 
     protected $casts = [
         'organization_id' => 'integer',
+        'version' => 'integer',
         'project_id' => 'integer',
         'created_by_system_admin_id' => 'integer',
         'source_quality_score' => 'decimal:4',
@@ -50,6 +73,7 @@ class EstimateGenerationTrainingDataset extends Model
         'queued_at' => 'datetime',
         'processed_at' => 'datetime',
         'accepted_at' => 'datetime',
+        'approved_at' => 'immutable_datetime',
     ];
 
     public function organization(): BelongsTo

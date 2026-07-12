@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Training;
 
-use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationLearningExample;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationTrainingDataset;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationTrainingExample;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationTrainingFile;
@@ -18,6 +17,7 @@ use App\Models\Project;
 use App\Models\SystemAdmin;
 use App\Services\Storage\FileService;
 use App\Services\Storage\OrganizationStoragePath;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -32,6 +32,7 @@ final class EstimateGenerationTrainingDatasetService
         private readonly TrainingEstimateRowNormalizer $rowNormalizer,
         private readonly WorkIntentClassifier $workIntentClassifier,
         private readonly EstimateGenerationLearningRecorder $learningRecorder,
+        private readonly TrainingDatasetTrustPolicy $trustPolicy,
     ) {}
 
     /**
@@ -71,12 +72,16 @@ final class EstimateGenerationTrainingDatasetService
 
         $dataset = EstimateGenerationTrainingDataset::query()->create([
             'uuid' => (string) Str::uuid(),
+            'dataset_key' => (string) Str::uuid(),
+            'version' => 1,
+            'dataset_type' => EstimateGenerationTrainingDataset::TYPE_DEVELOPMENT,
+            'scope' => 'organization',
             'organization_id' => (int) $organization->id,
             'project_id' => $projectId,
             'created_by_system_admin_id' => $actor?->id,
             'title' => trim((string) ($data['title'] ?? '')),
             'source_system' => (string) ($data['source_system'] ?? 'grandsmeta'),
-            'status' => EstimateGenerationTrainingDataset::STATUS_UPLOADED,
+            'status' => EstimateGenerationTrainingDataset::STATUS_DRAFT,
             'quality_status' => 'pending',
             'source_quality_score' => $this->boundedQuality($data['source_quality_score'] ?? 0.85),
             'region_name' => $this->nullableString($data['region_name'] ?? null),
@@ -108,8 +113,10 @@ final class EstimateGenerationTrainingDatasetService
 
     public function queueProcessing(EstimateGenerationTrainingDataset $dataset): void
     {
+        $this->trustPolicy->assertCanProcess($dataset);
+
         $dataset->forceFill([
-            'status' => EstimateGenerationTrainingDataset::STATUS_QUEUED,
+            'status' => EstimateGenerationTrainingDataset::STATUS_PROCESSING,
             'queued_at' => now(),
             'error_message' => null,
         ])->save();
@@ -117,11 +124,51 @@ final class EstimateGenerationTrainingDatasetService
         \App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationTrainingDatasetJob::dispatch((int) $dataset->id);
     }
 
+    public function appendVersion(EstimateGenerationTrainingDataset $source, ?SystemAdmin $actor): EstimateGenerationTrainingDataset
+    {
+        if (! in_array($source->status, [
+            EstimateGenerationTrainingDataset::STATUS_APPROVED,
+            EstimateGenerationTrainingDataset::STATUS_ARCHIVED,
+        ], true)) {
+            throw new \DomainException('dataset_version_source_not_final');
+        }
+
+        return DB::transaction(function () use ($source, $actor): EstimateGenerationTrainingDataset {
+            $latestVersion = (int) EstimateGenerationTrainingDataset::query()
+                ->where('organization_id', $source->organization_id)
+                ->where('dataset_key', $source->dataset_key)
+                ->orderByDesc('version')
+                ->lockForUpdate()
+                ->value('version');
+
+            return EstimateGenerationTrainingDataset::query()->create([
+                'uuid' => (string) Str::uuid(),
+                'dataset_key' => $source->dataset_key,
+                'version' => $latestVersion + 1,
+                'dataset_type' => $source->dataset_type,
+                'scope' => 'organization',
+                'organization_id' => $source->organization_id,
+                'project_id' => $source->project_id,
+                'created_by_system_admin_id' => $actor?->id,
+                'title' => $source->title,
+                'source_system' => $source->source_system,
+                'status' => EstimateGenerationTrainingDataset::STATUS_DRAFT,
+                'quality_status' => 'pending',
+                'source_quality_score' => $source->source_quality_score,
+                'region_name' => $source->region_name,
+                'period_name' => $source->period_name,
+                'notes' => $source->notes,
+                'stats' => [],
+            ]);
+        });
+    }
+
     /**
      * @return array<string, int>
      */
     public function process(EstimateGenerationTrainingDataset $dataset): array
     {
+        $this->trustPolicy->assertCanProcess($dataset);
         $dataset->loadMissing('files');
         $referenceFile = $dataset->files()
             ->where('file_role', EstimateGenerationTrainingFile::ROLE_REFERENCE_ESTIMATE)
@@ -142,17 +189,17 @@ final class EstimateGenerationTrainingDatasetService
             $stats = $this->parseAndRecord($dataset, $referenceFile, $tempPath);
 
             $dataset->forceFill([
-                'status' => EstimateGenerationTrainingDataset::STATUS_PROCESSED,
-                'quality_status' => $stats['accepted_rows'] > 0 ? 'accepted' : 'needs_review',
+                'status' => EstimateGenerationTrainingDataset::STATUS_REVIEW_REQUIRED,
+                'quality_status' => 'needs_review',
                 'stats' => $stats,
                 'processed_at' => now(),
-                'accepted_at' => $stats['accepted_rows'] > 0 ? now() : null,
+                'accepted_at' => null,
             ])->save();
 
             return $stats;
         } catch (Throwable $e) {
             $dataset->forceFill([
-                'status' => EstimateGenerationTrainingDataset::STATUS_FAILED,
+                'status' => EstimateGenerationTrainingDataset::STATUS_REVIEW_REQUIRED,
                 'quality_status' => 'failed',
                 'error_message' => 'training_dataset_processing_failed',
                 'processed_at' => now(),
@@ -203,25 +250,7 @@ final class EstimateGenerationTrainingDatasetService
                 continue;
             }
 
-            $recorded = $this->recordLearningExample($dataset, $trainingExample);
-
-            if ($recorded['status'] === 'norm_not_found') {
-                $stats['norm_not_found_rows']++;
-                $stats['skipped_rows']++;
-
-                continue;
-            }
-
-            if ($recorded['status'] === 'unit_mismatch') {
-                $stats['unit_mismatch_rows']++;
-                $stats['skipped_rows']++;
-
-                continue;
-            }
-
             $stats['accepted_rows']++;
-            $stats['learning_examples_created'] += $recorded['created'];
-            $stats['learning_examples_total']++;
         }
 
         return $stats;
@@ -268,10 +297,15 @@ final class EstimateGenerationTrainingDatasetService
     /**
      * @return array{status: string, created: int}
      */
-    private function recordLearningExample(
+    public function recordApprovedExample(
         EstimateGenerationTrainingDataset $dataset,
         EstimateGenerationTrainingExample $trainingExample
     ): array {
+        if (! $this->trustPolicy->canTrain($dataset)
+            || $trainingExample->reviewed_by === null
+            || $trainingExample->reviewed_at === null) {
+            throw new \DomainException('training_example_not_reviewed_or_dataset_not_approved');
+        }
         $normCode = (string) $trainingExample->norm_code;
         $norm = EstimateNorm::query()
             ->with('collection')
@@ -350,23 +384,6 @@ final class EstimateGenerationTrainingDatasetService
         ];
 
         $created = $this->learningRecorder->record($attributes);
-        $learningExample = EstimateGenerationLearningExample::query()
-            ->where('source_type', 'superadmin_training_dataset')
-            ->where('source_entity_type', 'estimate_generation_training_example')
-            ->where('source_entity_id', (int) $trainingExample->id)
-            ->where('norm_code', $normCode)
-            ->first();
-
-        $trainingExample->forceFill([
-            'learning_example_id' => $learningExample?->id,
-            'normative_name' => (string) $norm->name,
-            'normative_unit' => (string) $norm->unit,
-            'status' => EstimateGenerationTrainingExample::STATUS_INDEXED,
-            'quality_flags' => array_values(array_unique([...$flags, 'unit_compatible', 'superadmin_reference'])),
-            'work_intent' => $intentPayload,
-            'accepted_at' => now(),
-            'indexed_at' => now(),
-        ])->save();
 
         return ['status' => 'indexed', 'created' => $created];
     }
