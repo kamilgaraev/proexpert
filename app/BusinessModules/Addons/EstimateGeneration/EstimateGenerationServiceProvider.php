@@ -34,6 +34,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\BuildSess
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EloquentRetryableEstimateGenerationSessionRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationRetryDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\LaravelEstimateGenerationRetryDispatcher;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\EloquentGeometryRegenerationIntentStore;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryRegenerationIntentStore;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryableEstimateGenerationSessionRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkCorpusLoader;
@@ -314,6 +316,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(GeneratedEstimateNumberAllocator::class, LaravelGeneratedEstimateNumberAllocator::class);
         $this->app->singleton(RetryableEstimateGenerationSessionRepository::class, EloquentRetryableEstimateGenerationSessionRepository::class);
         $this->app->singleton(EstimateGenerationRetryDispatcher::class, LaravelEstimateGenerationRetryDispatcher::class);
+        $this->app->singleton(GeometryRegenerationIntentStore::class, EloquentGeometryRegenerationIntentStore::class);
         $this->app->singleton(GeneratedEstimateWriter::class, LaravelGeneratedEstimateWriter::class);
         $this->app->singleton(EstimateGenerationAuditService::class);
         $this->app->singleton(NormativeScopeRuleCatalog::class);
