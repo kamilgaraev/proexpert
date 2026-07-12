@@ -5,11 +5,17 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\NormalizedBuildingModelData;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\BuildingModelQuantityInputMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Quantities\BuildingQuantityCalculator;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\NormalizedBuildingModelQuantityInputMapper;
 
 final class DrawingGeometryAnalyzer
 {
-    public function __construct(private readonly BuildingQuantityCalculator $calculator = new BuildingQuantityCalculator) {}
+    public function __construct(
+        private readonly BuildingQuantityCalculator $calculator = new BuildingQuantityCalculator,
+        private readonly BuildingModelQuantityInputMapper $inputMapper = new NormalizedBuildingModelQuantityInputMapper,
+    ) {}
 
     /**
      * Compatibility boundary: document metadata is intentionally ignored. Only a normalized metric model may produce quantities.
@@ -40,7 +46,8 @@ final class DrawingGeometryAnalyzer
         $quantities = [];
         $reviewReasons = [];
         if (count($models) === 1) {
-            $calculation = $this->calculator->calculate($models[0]);
+            $model = NormalizedBuildingModelData::fromArray($models[0]);
+            $calculation = $this->calculator->calculate($this->inputMapper->map($model));
             $quantities = $calculation->toArray()['quantities'];
             $reviewReasons = array_values(array_unique(array_map(
                 static fn (array $diagnostic): string => $diagnostic['code'],

@@ -11,7 +11,7 @@ final readonly class PipelineStagePayload
     private const KEYS = [
         'understand_documents' => ['base_input_version', 'documents', 'documents_count', 'rebuild_section_key'],
         'understand_object' => ['analysis'],
-        'extract_quantities' => ['quantity_learning_hints'],
+        'extract_quantities' => ['quantity_learning_hints', 'building_quantities'],
         'plan_work_items' => ['object_profile', 'package_plan', 'document_requirements', 'generation_mode', 'regional_context', 'normative_context_pin', 'local_estimates'],
         'match_normatives' => ['local_estimates'],
         'assemble_resources' => ['local_estimates'],
@@ -30,7 +30,7 @@ final readonly class PipelineStagePayload
         match ($stage) {
             ProcessingStage::UnderstandDocuments => self::assertDocumentManifest($data),
             ProcessingStage::UnderstandObject => self::assertArray($data['analysis']),
-            ProcessingStage::ExtractQuantities => self::assertArray($data['quantity_learning_hints']),
+            ProcessingStage::ExtractQuantities => self::assertExtractedQuantities($data),
             ProcessingStage::PlanWorkItems => self::assertPlanning($data),
             ProcessingStage::MatchNormatives,
             ProcessingStage::AssembleResources,
@@ -69,6 +69,12 @@ final readonly class PipelineStagePayload
         }
         self::assertList($data['local_estimates']);
         self::assertQuantityEvidenceDescriptors($data['local_estimates']);
+    }
+
+    private static function assertExtractedQuantities(array $data): void
+    {
+        self::assertArray($data['quantity_learning_hints']);
+        self::assertArray($data['building_quantities']);
     }
 
     private static function assertQuantityEvidenceDescriptors(array $localEstimates): void

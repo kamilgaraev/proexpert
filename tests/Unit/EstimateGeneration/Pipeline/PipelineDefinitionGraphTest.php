@@ -21,6 +21,7 @@ final class PipelineDefinitionGraphTest extends TestCase
         self::assertSame([], $graph->get(ProcessingStage::UnderstandDocuments)->dependencies);
         self::assertSame([ProcessingStage::UnderstandDocuments], $graph->get(ProcessingStage::UnderstandObject)->dependencies);
         self::assertSame([ProcessingStage::UnderstandObject], $graph->get(ProcessingStage::ExtractQuantities)->dependencies);
+        self::assertSame(2, $graph->get(ProcessingStage::ExtractQuantities)->schemaVersion);
         self::assertSame([ProcessingStage::UnderstandObject, ProcessingStage::ExtractQuantities], $graph->get(ProcessingStage::PlanWorkItems)->dependencies);
         self::assertSame([ProcessingStage::PlanWorkItems], $graph->get(ProcessingStage::MatchNormatives)->dependencies);
         self::assertSame([ProcessingStage::MatchNormatives], $graph->get(ProcessingStage::AssembleResources)->dependencies);
