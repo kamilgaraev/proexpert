@@ -14,13 +14,16 @@ final class BuildingQuantityCalculator
 
     private bool $scaleConfirmed = false;
 
-    private int $polygonCandidateComparisons = 0;
+    private int $broadPhasePairInspections = 0;
+
+    private int $topologyCandidateComparisons = 0;
 
     /** @param array<string, mixed> $model */
     public function calculate(array $model): QuantityCalculationResult
     {
         $this->diagnostics = [];
-        $this->polygonCandidateComparisons = 0;
+        $this->broadPhasePairInspections = 0;
+        $this->topologyCandidateComparisons = 0;
         $modelVersion = (string) ($model['model_version'] ?? 'unknown');
         $items = [];
         $recordCount = 0;
@@ -123,25 +126,51 @@ final class BuildingQuantityCalculator
             ];
             $roomItems[] = $this->item($area, $roomRecord);
         }
-        usort($roomPolygons, static function (array $a, array $b): int {
-            $comparison = $a['bounds'][0]->compareTo($b['bounds'][0]);
+        $buckets = [];
+        $extents = array_map(static function (array $entry): BigDecimal {
+            $width = $entry['bounds'][2]->minus($entry['bounds'][0]);
+            $height = $entry['bounds'][3]->minus($entry['bounds'][1]);
 
-            return $comparison !== 0 ? $comparison : $a['path'] <=> $b['path'];
-        });
-        $active = [];
-        foreach ($roomPolygons as $candidate) {
-            $active = array_values(array_filter($active, static fn (array $entry): bool => $entry['bounds'][2]->isGreaterThanOrEqualTo($candidate['bounds'][0])));
-            foreach ($active as $previous) {
-                if (! $candidate['bounds'][1]->isLessThan($previous['bounds'][3]) || ! $candidate['bounds'][3]->isGreaterThan($previous['bounds'][1])) {
-                    continue;
-                }
-                $this->polygonCandidateComparisons++;
-                if ($this->polygonsProperlyIntersect($candidate['polygon'], $previous['polygon'])) {
-                    $this->diagnostic('ambiguous_polygon_overlap', $candidate['path']);
-                    $ambiguousOverlap = true;
+            return $width->isGreaterThan($height) ? $width : $height;
+        }, $roomPolygons);
+        usort($extents, static fn (BigDecimal $a, BigDecimal $b): int => $a->compareTo($b));
+        $cellSize = $extents === [] ? BigDecimal::one() : $extents[intdiv(count($extents), 2)]->multipliedBy('2');
+        foreach ($roomPolygons as $index => $entry) {
+            $cells = $this->spatialCells($entry['bounds'], $cellSize);
+            if (count($cells) > 4096) {
+                $this->diagnostic('polygon_spatial_budget_exceeded', $entry['path']);
+                $ambiguousOverlap = true;
+
+                continue;
+            }
+            foreach ($cells as $cell) {
+                $buckets[$cell][] = $index;
+            }
+        }
+        ksort($buckets, SORT_STRING);
+        $inspectedPairs = [];
+        foreach ($buckets as $indices) {
+            sort($indices, SORT_NUMERIC);
+            for ($i = 0; $i < count($indices); $i++) {
+                for ($j = $i + 1; $j < count($indices); $j++) {
+                    $this->broadPhasePairInspections++;
+                    $pairKey = $indices[$i].':'.$indices[$j];
+                    if (isset($inspectedPairs[$pairKey])) {
+                        continue;
+                    }
+                    $inspectedPairs[$pairKey] = true;
+                    $first = $roomPolygons[$indices[$i]];
+                    $second = $roomPolygons[$indices[$j]];
+                    if (! $this->boundsHavePositiveAreaOverlap($first['bounds'], $second['bounds'])) {
+                        continue;
+                    }
+                    $this->topologyCandidateComparisons++;
+                    if ($this->polygonsProperlyIntersect($first['polygon'], $second['polygon'])) {
+                        $this->diagnostic('ambiguous_polygon_overlap', $second['path']);
+                        $ambiguousOverlap = true;
+                    }
                 }
             }
-            $active[] = $candidate;
         }
         if ($ambiguousOverlap) {
             $roomItems = [];
@@ -273,7 +302,7 @@ final class BuildingQuantityCalculator
                 'provenance_versions' => $this->uniqueSorted($netVersions),
                 'named_operands' => [
                     'gross_wall_area' => $this->derivedFormulaOperand('gross_wall_area', $gross, 'm2', $wallRecord),
-                    'openings' => array_values($openingOperands),
+                    'openings' => $openingOperands,
                 ],
             ];
         }
@@ -361,7 +390,10 @@ final class BuildingQuantityCalculator
         ksort($items);
         usort($this->diagnostics, static fn (array $a, array $b): int => [$a['path'], $a['code']] <=> [$b['path'], $b['code']]);
 
-        return new QuantityCalculationResult($items, $this->diagnostics, ['polygon_candidate_comparisons' => $this->polygonCandidateComparisons]);
+        return new QuantityCalculationResult($items, $this->diagnostics, [
+            'broad_phase_pair_inspections' => $this->broadPhasePairInspections,
+            'topology_candidate_comparisons' => $this->topologyCandidateComparisons,
+        ]);
     }
 
     /** @param array<int, array{amount: BigDecimal, source: QuantitySource, evidence: array<int, string>, assumptions: array<int, string>}> $items */
@@ -857,6 +889,33 @@ final class BuildingQuantityCalculator
         usort($ys, static fn (BigDecimal $a, BigDecimal $b): int => $a->compareTo($b));
 
         return [$xs[0], $ys[0], $xs[array_key_last($xs)], $ys[array_key_last($ys)]];
+    }
+
+    /** @param array{BigDecimal, BigDecimal, BigDecimal, BigDecimal} $bounds @return array<int, string> */
+    private function spatialCells(array $bounds, BigDecimal $cellSize): array
+    {
+        $minX = (int) (string) $bounds[0]->dividedBy($cellSize, 0, RoundingMode::Floor);
+        $minY = (int) (string) $bounds[1]->dividedBy($cellSize, 0, RoundingMode::Floor);
+        $maxX = (int) (string) $bounds[2]->dividedBy($cellSize, 0, RoundingMode::Floor);
+        $maxY = (int) (string) $bounds[3]->dividedBy($cellSize, 0, RoundingMode::Floor);
+        if (($maxX - $minX + 1) * ($maxY - $minY + 1) > 4096) {
+            return array_fill(0, 4097, 'overflow');
+        }
+        $cells = [];
+        for ($x = $minX; $x <= $maxX; $x++) {
+            for ($y = $minY; $y <= $maxY; $y++) {
+                $cells[] = $x.':'.$y;
+            }
+        }
+
+        return $cells;
+    }
+
+    /** @param array{BigDecimal, BigDecimal, BigDecimal, BigDecimal} $first @param array{BigDecimal, BigDecimal, BigDecimal, BigDecimal} $second */
+    private function boundsHavePositiveAreaOverlap(array $first, array $second): bool
+    {
+        return $first[0]->isLessThan($second[2]) && $first[2]->isGreaterThan($second[0])
+            && $first[1]->isLessThan($second[3]) && $first[3]->isGreaterThan($second[1]);
     }
 
     private function boundingBoxesHavePositiveAreaOverlap(array $first, array $second): bool

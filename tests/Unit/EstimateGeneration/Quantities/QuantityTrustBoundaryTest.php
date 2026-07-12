@@ -337,7 +337,7 @@ final class QuantityTrustBoundaryTest extends TestCase
         $net = $result->get('net_wall_area');
         self::assertSame('estimated', $net?->source->value);
         self::assertSame(['user_opening_width'], $net?->assumptions);
-        $opening = $net?->formulaInputs['items'][0]['named_operands']['openings'][0] ?? [];
+        $opening = $net?->formulaInputs['items'][0]['named_operands']['openings']['o'] ?? [];
         self::assertSame('estimated', $opening['source']);
         self::assertSame(['opening-height', 'opening-width'], $opening['evidence_ids']);
         self::assertNotContains('wall-length', $opening['evidence_ids']);
@@ -381,8 +381,54 @@ final class QuantityTrustBoundaryTest extends TestCase
         $delta = memory_get_usage(true) - $before;
 
         self::assertSame('2000.000000', $result->get('floor_area')?->amount);
-        self::assertLessThanOrEqual(2000, $result->metrics['polygon_candidate_comparisons']);
+        self::assertLessThanOrEqual(20_000, $result->metrics['broad_phase_pair_inspections']);
+        self::assertLessThanOrEqual(2000, $result->metrics['topology_candidate_comparisons']);
         self::assertLessThan(128 * 1024 * 1024, $delta);
+    }
+
+    public function test_opening_ids_remain_distinct_in_canonical_net_formula_map(): void
+    {
+        $model = $this->model([
+            'walls' => [['id' => 'w', 'length' => '4', 'height' => '3', 'opening_ids' => ['b', 'a'], 'evidence_ids' => ['w']]],
+            'openings' => [
+                ['id' => 'a', 'wall_id' => 'w', 'width' => '1', 'height' => '1', 'evidence_ids' => ['same']],
+                ['id' => 'b', 'wall_id' => 'w', 'width' => '1', 'height' => '1', 'evidence_ids' => ['other']],
+            ],
+        ]);
+        $first = (new BuildingQuantityCalculator)->calculate($model);
+        $model['walls'][0]['opening_ids'] = ['a', 'b'];
+        $model['openings'] = array_reverse($model['openings']);
+        $second = (new BuildingQuantityCalculator)->calculate($model);
+        $map = $first->get('net_wall_area')?->formulaInputs['items'][0]['named_operands']['openings'];
+
+        self::assertSame(['a', 'b'], array_keys($map));
+        self::assertSame($first->toArray(), $second->toArray());
+    }
+
+    public function test_grid_broad_phase_is_bounded_for_vertical_and_clustered_distributions(): void
+    {
+        foreach (['vertical', 'clustered'] as $distribution) {
+            $rooms = [];
+            $decimal = static fn (int $hundredths): string => intdiv($hundredths, 100).'.'.str_pad((string) ($hundredths % 100), 2, '0', STR_PAD_LEFT);
+            for ($i = 0; $i < 2000; $i++) {
+                if ($distribution === 'vertical') {
+                    $x = '0';
+                    $y = (string) ($i * 3);
+                    $x2 = '1';
+                    $y2 = (string) ($i * 3 + 1);
+                } else {
+                    $x = $decimal(($i % 100) * 10);
+                    $y = $decimal(intdiv($i, 100) * 10);
+                    $x2 = $decimal(($i % 100) * 10 + 5);
+                    $y2 = $decimal(intdiv($i, 100) * 10 + 5);
+                }
+                $rooms[] = ['id' => "r-$i", 'polygon' => [[$x, $y], [$x2, $y], [$x2, $y2], [$x, $y2]], 'evidence_ids' => ["e-$i"]];
+            }
+            $result = (new BuildingQuantityCalculator)->calculate($this->model(['rooms' => $rooms]));
+            self::assertNotNull($result->get('floor_area'));
+            self::assertLessThan(300_000, $result->metrics['broad_phase_pair_inspections']);
+            self::assertLessThanOrEqual(2000, $result->metrics['topology_candidate_comparisons']);
+        }
     }
 
     /** @param array<string, mixed> $override */
