@@ -25,24 +25,27 @@ final class RecordedVisionSourceTraceVerifier
     private function raster(array $image, array $payload, array $trace): void
     {
         [$width, $height, $pixels] = $image;
-        foreach ($trace['walls'] ?? [] as $line) {
-            if (! is_array($line) || ! $this->blackLine($pixels, $width, $height, $line)) {
-                throw new InvalidArgumentException('vision_trace_wall_missing');
-            }
-        }
+        $polygon = $this->deriveRoomPolygon($pixels, $width, $height);
+        $dimensions=[];
         foreach ($trace['labels'] ?? [] as $label) {
-            if (! $this->bitmapLabel($pixels, $width, $height, $label)) {
+            $decoded=$this->decodeBitmapLabel($pixels, $width, $height, $label['bbox']);
+            if ($decoded !== $label['text'] || preg_match('/^(\d+\.\d+) m$/',$decoded,$match)!==1) {
                 throw new InvalidArgumentException('vision_trace_dimension_label_missing');
             }
+            $dimensions[]=(float)$match[1];
         }
         $rooms = array_values(array_filter($payload['elements'] ?? [], static fn (array $element): bool => ($element['type'] ?? null) === 'room'));
         $room = $rooms[0]['polygon'] ?? [];
-        if ($room !== $trace['room_polygon'] || (float) ($payload['scale_candidates'][0]['meters_per_unit'] ?? 0) !== (float) $trace['meters_per_pixel']) {
+        $scale = (float) ($payload['scale_candidates'][0]['meters_per_unit'] ?? 0);
+        if ($room !== $polygon || $room !== $trace['room_polygon'] || $scale !== (float) $trace['meters_per_unit']) {
             throw new InvalidArgumentException('vision_trace_geometry_mismatch');
         }
-        if (abs(($trace['width_pixels'] * $trace['meters_per_pixel']) * ($trace['height_pixels'] * $trace['meters_per_pixel']) - 44.0) > 1.0e-9) {
+        if (abs((($polygon[1][0]-$polygon[0][0])*$scale) * (($polygon[2][1]-$polygon[1][1])*$scale) - 44.0) > 1.0e-9) {
             throw new InvalidArgumentException('vision_trace_area_mismatch');
         }
+        $derivedX=$dimensions[0]/($polygon[1][0]-$polygon[0][0]);$derivedY=$dimensions[1]/($polygon[2][1]-$polygon[1][1]);
+        if(abs($derivedX-$derivedY)>1.0e-12||abs($derivedX-$scale)>1.0e-12)throw new InvalidArgumentException('vision_trace_scale_mismatch');
+        foreach($payload['scale_candidates'] as $candidate)if(abs((float)$candidate['meters_per_unit']-$scale)>1.0e-12)throw new InvalidArgumentException('vision_trace_scale_mismatch');
     }
 
     private function svg(string $source, array $payload, array $trace): void
@@ -107,28 +110,26 @@ final class RecordedVisionSourceTraceVerifier
         return [(int) $match[1], (int) $match[2], $match[3]];
     }
 
-    private function blackLine(string $pixels, int $width, int $height, array $line): bool
+    private function deriveRoomPolygon(string $pixels, int $width, int $height): array
     {
-        [$x1, $y1, $x2, $y2] = $line;
-        $steps = max(abs($x2 - $x1), abs($y2 - $y1));
-        for ($step = 0; $step <= $steps; $step++) {
-            $x = $x1 + (int) round(($x2 - $x1) * $step / max(1, $steps));
-            $y = $y1 + (int) round(($y2 - $y1) * $step / max(1, $steps));
-            if ($x < 0 || $y < 0 || $x >= $width || $y >= $height || substr($pixels, ($y * $width + $x) * 3, 3) !== "\0\0\0") {
-                return false;
-            }
-        }
-        return true;
+        $columns=[];$rows=[];
+        for($x=0;$x<$width;$x++){ $count=0;for($y=0;$y<$height;$y++)$count+=substr($pixels,($y*$width+$x)*3,3)==="\0\0\0"?1:0;if($count>=200)$columns[]=$x; }
+        for($y=0;$y<$height;$y++){ $count=0;for($x=0;$x<$width;$x++)$count+=substr($pixels,($y*$width+$x)*3,3)==="\0\0\0"?1:0;if($count>=250)$rows[]=$y; }
+        $columnGroups=$this->groups($columns);$rowGroups=$this->groups($rows);
+        if(count($columnGroups)<2||count($rowGroups)<2)throw new InvalidArgumentException('vision_trace_wall_missing');
+        return [[$columnGroups[0][0],$rowGroups[0][0]],[end($columnGroups[1]),$rowGroups[0][0]],[end($columnGroups[1]),end($rowGroups[1])],[$columnGroups[0][0],end($rowGroups[1])]];
     }
 
-    private function bitmapLabel(string $pixels, int $width, int $height, array $label): bool
+    private function decodeBitmapLabel(string $pixels,int $width,int $height,array $bbox): string
     {
-        foreach ($label['black_pixels'] as [$dx, $dy]) {
-            $offset = (($label['y'] + $dy) * $width + $label['x'] + $dx) * 3;
-            if ($label['y'] + $dy >= $height || substr($pixels, $offset, 3) !== "\0\0\0") {
-                return false;
-            }
-        }
-        return true;
+        [$left,$top,$boxWidth,$boxHeight]=$bbox;if($boxHeight!==10||$left<1||$top<1||$left+$boxWidth>=$width||$top+$boxHeight>=$height)throw new InvalidArgumentException('vision_trace_label_bbox_invalid');
+        $grid=[];for($gy=0;$gy<5;$gy++){for($gx=0;$gx<(int)($boxWidth/2);$gx++){ $values=[];for($sy=0;$sy<2;$sy++)for($sx=0;$sx<2;$sx++)$values[]=substr($pixels,(($top+$gy*2+$sy)*$width+$left+$gx*2+$sx)*3,3);if(count(array_unique($values))!==1)throw new InvalidArgumentException('vision_trace_glyph_stroke_invalid');$grid[$gy][$gx]=$values[0]==="\0\0\0"?'1':'0';}}
+        for($x=$left-1;$x<=$left+$boxWidth;$x++)foreach([$top-1,$top+$boxHeight] as $y)if(substr($pixels,($y*$width+$x)*3,3)!=="\xff\xff\xff")throw new InvalidArgumentException('vision_trace_glyph_background_invalid');
+        $occupied=[];for($x=0;$x<count($grid[0]);$x++){foreach($grid as $row)if($row[$x]==='1'){$occupied[]=$x;break;}}
+        $groups=$this->groups($occupied);$font=['111|101|111|101|111'=>'8','111|100|111|001|111'=>'5','111|101|101|101|111'=>'0','0|0|0|0|1'=>'.','00000|11011|10101|10101|10101'=>'m'];$text='';$previous=null;
+        foreach($groups as $group){if($previous!==null&&$group[0]-$previous>2)$text.=' ';$rows=[];foreach($grid as $row)$rows[]=implode('',array_slice($row,$group[0],end($group)-$group[0]+1));$key=implode('|',$rows);if(!isset($font[$key]))throw new InvalidArgumentException('vision_trace_glyph_unknown');$text.=$font[$key];$previous=end($group);}
+        return $text;
     }
+
+    private function groups(array $values): array {if($values===[])return [];$groups=[[$values[0]]];foreach(array_slice($values,1) as $value){$last=count($groups)-1;if($value===end($groups[$last])+1)$groups[$last][]=$value;else $groups[]=[$value];}return $groups;}
 }

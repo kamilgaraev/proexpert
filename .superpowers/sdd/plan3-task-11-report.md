@@ -4,6 +4,14 @@
 
 ### Повторная проверка Task A: независимая source traceability
 
+### Coordinate-space и независимый raster decode
+
+Закрытый Vision contract расширен пространствами `source_pixels_v1` и `source_units_v1`; normalized пространства по-прежнему отдельно запрещают координаты вне `[0,1]`. Raster/scanned captures хранят raw pixel polygon `[[40,40],[360,40],[360,260],[40,260]]` и scalar `0.025 m/unit`. Engineering capture хранит raw SVG viewBox polygon `[[70,60],[720,60],[720,430],[70,430]]` и scalar `0.01 m/unit`. Focused test выполняет реальную цепочку `GeometryBuildingModelInputMapper → BuildingModelAssembler → NormalizedBuildingModelQuantityInputMapper → BuildingQuantityCalculator`: raster/scanned дают ровно `44 m²`, engineering — `24.05 m²`.
+
+Source trace больше не содержит списков ожидаемых чёрных пикселей. Независимый decoder сам находит длинные horizontal/vertical pixel runs, выводит room span, сегментирует glyph columns, декодирует полный текст собственной закрытой font map, проверяет однородность 2×2 black/white cells и обязательный белый фон. Значения `8.0 m`/`5.5 m` независимо дают одинаковый scalar по X/Y и сверяются со всеми scale candidates. Committed PPM и embedded scanned-PDF image проверяются непосредственно тестом, отдельно от builder. Tamper gate отклоняет удалённый штрих, добавленный штрих, подменённую подпись, polygon point и scale.
+
+Итоговый focused gate: `OK (8 tests, 84 assertions)`; связанные Vision/BuildingModel unit suites также завершились с exit code 0.
+
 После review tests-only capture boundary дополнен `RecordedVisionSourceTraceVerifier`. До создания envelope он независимо читает source bytes: PPM raster, embedded image stream scanned PDF или SVG DOM. Проверяются SHA источника, реальные wall segments, bitmap-глифы размеров, SVG IDs/text, точные координаты заявленных элементов, scalar масштаба и площадь 44 м². Verifier не читает expected labels или prediction. Негативные тесты отклоняют подменённый dimension label, SVG source ID и capture point.
 
 Raster и scanned PDF используют помещение 320×220 px с подписями `8.0 m` и `5.5 m`, arrow/extension lines и единым масштабом `0.025 m/px`; площадь равна 44 м². Engineering SVG использует единый scalar `0.01 m/unit`, размеры 650×370, стабильные IDs, точные door/riser coordinates. Freehand capture воспроизводит точки source path и остаётся typed review из-за отсутствующего масштаба. Vector PDF теперь имеет реальный разрыв верхней стены 260→320, текст `OPENING 600 mm` и не содержит перекрывающего gap segment; fresh pypdfium gate проверяет это по production path primitives.

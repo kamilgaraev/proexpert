@@ -40,6 +40,7 @@ final readonly class VisionAnalysisData
             throw new VisionContractException('invalid_analysis_metadata');
         }
         $evidenceKeys = array_map(static fn (VisionEvidenceData $item): string => $item->key, $evidence);
+        $evidenceByKey = array_combine($evidenceKeys, $evidence);
         $elementKeys = array_map(static fn (VisionElementData $item): string => $item->key, $elements);
         if (count($evidenceKeys) !== count(array_unique($evidenceKeys)) || count($elementKeys) !== count(array_unique($elementKeys))) {
             throw new VisionContractException('duplicate_keys');
@@ -47,6 +48,16 @@ final readonly class VisionAnalysisData
         foreach ([...$elements, ...$scaleCandidates] as $item) {
             if (! in_array($item->evidenceRef, $evidenceKeys, true)) {
                 throw new VisionContractException('dangling_evidence');
+            }
+        }
+        foreach ($elements as $element) {
+            $space = $evidenceByKey[$element->evidenceRef]->locator['coordinate_space'];
+            if (str_starts_with($space, 'normalized_')) {
+                foreach ($element->polygon as $point) {
+                    if ($point[0] > 1.0 || $point[1] > 1.0) {
+                        throw new VisionContractException('invalid_normalized_polygon');
+                    }
+                }
             }
         }
         $hasScaleMissing = in_array('scale_missing', $warnings, true);

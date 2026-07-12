@@ -29,7 +29,7 @@ final readonly class VisionElementData
         }
         foreach ($polygon as $point) {
             if (count($point) !== 2 || ! is_finite($point[0]) || ! is_finite($point[1])
-                || $point[0] < 0.0 || $point[0] > 1.0 || $point[1] < 0.0 || $point[1] > 1.0) {
+                || $point[0] < 0.0 || $point[0] > 1_000_000.0 || $point[1] < 0.0 || $point[1] > 1_000_000.0) {
                 throw new VisionContractException('invalid_polygon');
             }
         }

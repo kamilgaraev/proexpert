@@ -82,16 +82,22 @@ foreach ($specs as [$slug, $type, $filename, $source, $port, $intent]) {
  $payload['elements'][1]['polygon'] = $polygons[$intent];
  }
  if (in_array($intent, ['scanned_pdf', 'dimensioned_raster'], true)) {
-  $payload['elements'][0]['polygon'] = [[0.1,0.133333],[0.9,0.133333]];
-  $payload['elements'][1]['polygon'] = [[0.1,0.133333],[0.9,0.133333],[0.9,0.866667],[0.1,0.866667]];
-  $payload['scale_candidates'] = [['source'=>'dimension_text','meters_per_unit'=>0.025,'confidence'=>1.0,'evidence_ref'=>$payload['evidence'][0]['key'],'detail'=>'visible_dimension']];
+  foreach ($payload['evidence'] as &$evidence) $evidence['locator']['coordinate_space'] = 'source_pixels_v1'; unset($evidence);
+  $payload['elements'][0]['polygon'] = [[40,40],[360,40]];
+  $payload['elements'][1]['polygon'] = [[40,40],[360,40],[360,260],[40,260]];
+  $payload['scale_candidates'] = [['source'=>'dimension_text','meters_per_unit'=>0.025,'confidence'=>1.0,'evidence_ref'=>$payload['evidence'][0]['key'],'detail'=>'visible_dimension'],['source'=>'dimension_text','meters_per_unit'=>0.025,'confidence'=>1.0,'evidence_ref'=>$payload['evidence'][1]['key'],'detail'=>'visible_dimension']];
  }
  if ($intent === 'engineering') {
+  foreach ($payload['evidence'] as &$evidence) $evidence['locator']['coordinate_space'] = 'source_units_v1'; unset($evidence);
+  $payload['elements'][0]['polygon'] = [[70,60],[720,60]];
+  $payload['elements'][1]['polygon'] = [[70,60],[720,60],[720,430],[70,430]];
   $payload['evidence'][] = ['key'=>'riser-110','locator'=>$payload['evidence'][0]['locator']];
-  $payload['elements'][] = ['key'=>'engineering-riser-110','type'=>'engineering_element','label'=>'Стояк 110','polygon'=>[[0.225,0.16],[0.225,0.82]],'confidence'=>1.0,'evidence_ref'=>'riser-110'];
+  $payload['elements'][] = ['key'=>'engineering-riser-110','type'=>'engineering_element','label'=>'route','polygon'=>[[180,80],[180,410]],'confidence'=>1.0,'evidence_ref'=>'riser-110'];
   $payload['evidence'][] = ['key'=>'door-opening','locator'=>$payload['evidence'][0]['locator']];
-  $payload['elements'][] = ['key'=>'engineering-door','type'=>'opening','label'=>'Дверной проём','polygon'=>[[0.4375,0.12],[0.55,0.12]],'confidence'=>1.0,'evidence_ref'=>'door-opening','geometry'=>['wall_key'=>'engineering-wall','opening_type'=>'door','offset'=>0.35,'width'=>0.1125,'height'=>0.21]];
-  $payload['scale_candidates'] = [['source'=>'dimension_text','meters_per_unit'=>0.01,'confidence'=>1.0,'evidence_ref'=>'riser-110','detail'=>'visible_dimension']];
+  $payload['evidence'][] = ['key'=>'dimension-width','locator'=>$payload['evidence'][0]['locator']];
+  $payload['evidence'][] = ['key'=>'dimension-height','locator'=>$payload['evidence'][0]['locator']];
+  $payload['elements'][] = ['key'=>'engineering-door','type'=>'opening','label'=>'Дверной проём','polygon'=>[[350,60],[440,60]],'confidence'=>1.0,'evidence_ref'=>'door-opening','geometry'=>['wall_key'=>'engineering-wall','opening_type'=>'door','offset'=>280,'width'=>90,'height'=>210]];
+  $payload['scale_candidates'] = [['source'=>'dimension_text','meters_per_unit'=>0.01,'confidence'=>1.0,'evidence_ref'=>'dimension-width','detail'=>'visible_dimension'],['source'=>'dimension_text','meters_per_unit'=>0.01,'confidence'=>1.0,'evidence_ref'=>'dimension-height','detail'=>'visible_dimension']];
  }
  if ($intent === 'freehand') {
   $payload['evidence'][0]['key'] = 'freehand-evidence';
@@ -230,8 +236,8 @@ function captureDwg(string $path): array {$binary=getenv('LIBREDWG_DWGREAD_BINAR
 function parserProof(string $source,array $payload): array {$canonical=json_encode($payload,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE|JSON_PRESERVE_ZERO_FRACTION|JSON_THROW_ON_ERROR);return ['schema_version'=>1,'source_sha256'=>hash('sha256',$source),'runtime_version'=>$payload['runtime_version'],'canonical_output_sha256'=>hash('sha256',$canonical),'entity_count'=>count($payload['entities']),'text_count'=>count($payload['texts']),'dimension_count'=>count($payload['dimensions'])];}
 function visionFormat(string $intent): string {return match($intent){'scanned_pdf'=>'raster_pdf','dimensioned_raster'=>'ppm',default=>'svg'};}
 function visionTrace(string $intent,string $sha): array {
- if(in_array($intent,['scanned_pdf','dimensioned_raster'],true))return ['source_sha256'=>$sha,'walls'=>[[40,40,179,40],[221,40,360,40],[40,260,360,260],[40,40,40,260],[360,40,360,260]],'labels'=>[['x'=>$intent==='scanned_pdf'?130:120,'y'=>270,'black_pixels'=>array_map(static fn(array $p):array=>[$p[0]*2,$p[1]*2],bitmapPoints('8.0 m'))],['x'=>300,'y'=>125,'black_pixels'=>array_map(static fn(array $p):array=>[$p[0]*2,$p[1]*2],bitmapPoints('5.5 m'))]],'room_polygon'=>[[0.1,0.133333],[0.9,0.133333],[0.9,0.866667],[0.1,0.866667]],'meters_per_pixel'=>0.025,'width_pixels'=>320,'height_pixels'=>220];
- if($intent==='engineering')return ['source_sha256'=>$sha,'source_ids'=>['room-outline','door-opening','riser-110','riser-node','dimension-width','dimension-height'],'text'=>['dimension-width'=>'6500 mm','dimension-height'=>'3700 mm'],'evidence_ids'=>['riser-110','door-opening'],'element_points'=>['engineering-riser-110'=>[[0.225,0.16],[0.225,0.82]],'engineering-door'=>[[0.4375,0.12],[0.55,0.12]]]];
+ if(in_array($intent,['scanned_pdf','dimensioned_raster'],true))return ['source_sha256'=>$sha,'labels'=>[['bbox'=>[$intent==='scanned_pdf'?130:120,270,36,10],'text'=>'8.0 m'],['bbox'=>[300,125,36,10],'text'=>'5.5 m']],'room_polygon'=>[[40,40],[360,40],[360,260],[40,260]],'meters_per_unit'=>0.025];
+ if($intent==='engineering')return ['source_sha256'=>$sha,'source_ids'=>['room-outline','door-opening','riser-110','riser-node','dimension-width','dimension-height'],'text'=>['dimension-width'=>'6500 mm','dimension-height'=>'3700 mm'],'evidence_ids'=>['riser-110','door-opening','dimension-width','dimension-height'],'element_points'=>['engineering-riser-110'=>[[180,80],[180,410]],'engineering-door'=>[[350,60],[440,60]]]];
  return ['source_sha256'=>$sha,'source_ids'=>['uncertain-outline','uncertain-divider','freehand-opening','review-question'],'text'=>['review-question'=>'? размер'],'attributes'=>['uncertain-outline'=>['d'=>'M70 90 L510 77 L525 330 L82 345 Z'],'uncertain-divider'=>['d'=>'M80 210 Q260 180 520 220'],'freehand-opening'=>['d'=>'M265 82 L330 80']],'evidence_ids'=>['freehand-evidence','uncertain-divider','freehand-opening'],'element_points'=>['freehand-wall'=>[[0.116667,0.225],[0.85,0.1925],[0.875,0.825],[0.136667,0.8625]]]];
 }
 

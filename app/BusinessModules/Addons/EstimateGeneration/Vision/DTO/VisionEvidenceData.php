@@ -17,7 +17,7 @@ final readonly class VisionEvidenceData
             || ! is_int($locator['page_number']) || $locator['page_number'] < 1 || $locator['page_number'] > 10_000
             || ! is_int($locator['processing_unit_id']) || $locator['processing_unit_id'] < 1
             || ! is_string($locator['source_version']) || preg_match('/^sha256:[a-f0-9]{64}$/', $locator['source_version']) !== 1
-            || ! is_string($locator['coordinate_space']) || ! in_array($locator['coordinate_space'], ['normalized_derivative_v1', 'normalized_source_v1'], true)) {
+            || ! is_string($locator['coordinate_space']) || ! in_array($locator['coordinate_space'], ['normalized_derivative_v1', 'normalized_source_v1', 'source_pixels_v1', 'source_units_v1'], true)) {
             throw new VisionContractException('invalid_evidence');
         }
     }

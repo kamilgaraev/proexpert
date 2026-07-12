@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Feature\EstimateGeneration\Benchmark;
 
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelAssembler;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\GeometryBuildingModelInputMapper;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\BuildingQuantityCalculator;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\NormalizedBuildingModelQuantityInputMapper;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use Tests\Support\EstimateGeneration\RecordedVisionSourceTraceVerifier;
@@ -86,6 +91,26 @@ final class ProductionReplaySourceCaptureTest extends TestCase
         self::assertStringContainsString('/Width 400 /Height 300', $pdf);
         self::assertGreaterThan(360_000, strlen($pdf));
         self::assertGreaterThan(5_000, substr_count($pdf, "\0\0\0"));
+
+        $verifier = new RecordedVisionSourceTraceVerifier;
+        foreach ([['dimensioned-raster-001','ppm',$ppm],['scanned-pdf-001','raster_pdf',$pdf]] as [$slug,$format,$source]) {
+            $verifier->verify($format, $source, $this->recording($slug.'-geometry.json')['payload'], $this->recording($slug.'-source-trace.json'));
+        }
+    }
+
+    #[Test]
+    public function raw_source_coordinate_spaces_produce_exact_areas_through_production_pipeline(): void
+    {
+        foreach ([['dimensioned-raster-001',44.0,'source_pixels_v1'],['scanned-pdf-001',44.0,'source_pixels_v1'],['engineering-layout-001',24.05,'source_units_v1']] as [$slug,$expected,$space]) {
+            $payload=$this->recording($slug.'-geometry.json')['payload'];
+            self::assertSame($space,$payload['evidence'][0]['locator']['coordinate_space']);
+            $vision=VisionAnalysisData::fromProviderArray($payload,'fixture-independent-capture','corpus-capture-2026-07','corpus-capture-2026-07','vision-analysis:v1','unavailable',null,null,500);
+            $refs=[];foreach($vision->evidence as $index=>$evidence)$refs[$evidence->key]=$index+1;
+            $assembly=(new BuildingModelAssembler)->assembleVision((new GeometryBuildingModelInputMapper)->map($vision,null,$refs));
+            self::assertSame([], $assembly->clarifications);
+            $quantities=(new BuildingQuantityCalculator)->calculate((new NormalizedBuildingModelQuantityInputMapper)->map($assembly->model));
+            self::assertEqualsWithDelta($expected,$quantities->get('floor_area')?->amount,1.0e-9);
+        }
     }
 
     #[Test]
@@ -148,11 +173,31 @@ final class ProductionReplaySourceCaptureTest extends TestCase
         $verifier->verify('svg', $source, $payload, $this->engineeringTrace(hash('sha256', $source)));
     }
 
+    #[Test]
+    public function independent_raster_decoder_rejects_missing_and_extra_strokes_label_polygon_and_scale_tampering(): void
+    {
+        $source=(string)file_get_contents($this->root.'/regression/replay-dimensioned-raster-001/input.ppm');
+        $payload=$this->recording('dimensioned-raster-001-geometry.json')['payload'];
+        $trace=$this->recording('dimensioned-raster-001-source-trace.json');
+        $verifier=new RecordedVisionSourceTraceVerifier;
+        $header="P6\n400 300\n255\n";
+        $cases=[];
+        $missing=$source;$offset=strlen($header)+(270*400+120)*3;$missing=substr_replace($missing,"\xff\xff\xff",$offset,3);$cases[]=[$missing,$payload,[...$trace,'source_sha256'=>hash('sha256',$missing)]];
+        $extra=$source;$offset=strlen($header)+(270*400+126)*3;$extra=substr_replace($extra,"\0\0\0",$offset,3);$cases[]=[$extra,$payload,[...$trace,'source_sha256'=>hash('sha256',$extra)]];
+        $wrongLabel=$trace;$wrongLabel['labels'][0]['text']='9.0 m';$cases[]=[$source,$payload,$wrongLabel];
+        $wrongPolygon=$payload;$wrongPolygon['elements'][1]['polygon'][1][0]=359;$cases[]=[$source,$wrongPolygon,$trace];
+        $wrongScale=$payload;$wrongScale['scale_candidates'][0]['meters_per_unit']=0.026;$cases[]=[$source,$wrongScale,$trace];
+        foreach($cases as [$caseSource,$casePayload,$caseTrace]){
+            try{$verifier->verify('ppm',$caseSource,$casePayload,$caseTrace);self::fail('Tampered raster trace was accepted.');}
+            catch(\InvalidArgumentException){self::assertTrue(true);}
+        }
+    }
+
     private function engineeringTrace(string $sha): array
     {
         return ['source_sha256'=>$sha,'source_ids'=>['room-outline','door-opening','riser-110','riser-node','dimension-width','dimension-height'],
-            'text'=>['dimension-width'=>'6500 mm','dimension-height'=>'3700 mm'],'evidence_ids'=>['riser-110','door-opening'],
-            'element_points'=>['engineering-riser-110'=>[[0.225,0.16],[0.225,0.82]],'engineering-door'=>[[0.4375,0.12],[0.55,0.12]]]];
+            'text'=>['dimension-width'=>'6500 mm','dimension-height'=>'3700 mm'],'evidence_ids'=>['riser-110','door-opening','dimension-width','dimension-height'],
+            'element_points'=>['engineering-riser-110'=>[[180,80],[180,410]],'engineering-door'=>[[350,60],[440,60]]]];
     }
 
     private function hasLine(array $lines, array $start, array $end): bool
