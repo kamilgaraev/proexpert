@@ -66,3 +66,14 @@
 - PostgreSQL behavioral inventory расширен реальным admin POST, permission deny/allow, ETag/snapshot/history/outbox assertions, same-version winner/typed stale loser, idempotent append, false enqueue recovery и acknowledged delivery. Группа `postgres-contract` не запускалась локально согласно запрету.
 - Auth/error matrix в opt-in endpoint test: foreign project 404; stale state/model/input 409; no-op, unsafe path, oversized body и applied lifecycle 422; ordinary estimate sentinel остаётся неизменным.
 - PostgreSQL inventory: **7 test methods**, включая forked independent-process CAS loser, real post-invalidation fault rollback и recoverable outbox delivery. Статически проверены Pint, PHPStan и `php -l`; запуск PostgreSQL намеренно не выполнялся.
+
+## Third corrective review
+
+- Contention test теперь создаёт два независимых дочерних процесса/соединения. Winner останавливается barrier-инъектором после tenant/session/model locks, loser начинает запрос на исходных версиях и блокируется; после release фиксируются ровно один winner, typed stale loser, один state increment/model/evidence/outbox и отсутствие loser effects.
+- Пустой rollback test заменён попыткой изменения immutable building model под транзакцией с обязательным trigger rejection и проверкой неизменного content version.
+- Fixture содержит source evidence, pipeline root + transitive child edge, completed checkpoint, pending processing unit, exact-input package/item, different-input package и обычную estimate sentinel. Fault после staged invalidation сравнивает counts, state и полный derivative-state snapshot до/после rollback.
+- Реальный endpoint inventory проверяет unauthenticated/denied, foreign organization/project 404, stale state/model/input, cancelled/applied lifecycle, no-op/unsafe/oversize, success ETag + Cache-Control + snapshot/geometry/invalidation payload, полную user-evidence provenance, immutable old history, точную invalidation и неизменную обычную смету.
+- Outbox inventory проверяет duplicate append, false/throw acknowledgement, non-expired delivering lease, expired reclaim и acknowledged exactly-once delivered transition. PostgreSQL/PCNTL guards разделены.
+- Отдельный outbox contention test создаёт один pending intent и два синхронизированных процесса/соединения перед CAS claim; durable audit dispatcher подтверждает ровно один enqueue, результаты claim `[false,true]`, итоговый status `delivered` и отсутствие duplicate job.
+- Локально: **104 passed, 303 assertions** для DB-less geometry/building-model/package/RBAC набора; Pint PASS, PHPStan No errors, `php -l` PASS, diff-check PASS. PostgreSQL/PCNTL inventory не запускался по явному запрету.
+- Итоговый PostgreSQL inventory: **8 реальных test methods**, не запускался локально; причина — требуется явный `RUN_ESTIMATE_GENERATION_POSTGRES_CONTRACT=1`, изолированный PostgreSQL и PCNTL/Unix sockets для двух contention cases.

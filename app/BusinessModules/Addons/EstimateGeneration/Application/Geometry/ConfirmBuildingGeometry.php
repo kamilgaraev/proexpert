@@ -43,6 +43,7 @@ final class ConfirmBuildingGeometry
             if ($head === null || $head->content_version !== $command->expectedModelVersion || $head->input_version !== $command->expectedInputVersion) {
                 throw new StaleEstimateGenerationState($command->sessionId, $command->expectedStateVersion);
             }
+            $this->faultInjector->afterLocksAcquired();
             $provisional = $this->mutator->mutate($head->model, $command);
             if ($provisional->contentVersion() === $head->content_version) {
                 throw new InvalidArgumentException('Geometry confirmation does not change the model.');
