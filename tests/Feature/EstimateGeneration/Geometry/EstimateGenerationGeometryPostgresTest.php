@@ -39,6 +39,7 @@ use Mockery;
 use PHPUnit\Framework\Attributes\DataProviderExternal;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\Support\EstimateGeneration\EstimateGenerationContractDatabaseProvisioner;
 use Tests\Support\EstimateGeneration\GeometryConfirmationParityCases;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
@@ -94,7 +95,7 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
         try {
             $statementTimeout = DB::selectOne('SHOW statement_timeout')->statement_timeout;
             $lockTimeout = DB::selectOne('SHOW lock_timeout')->lock_timeout;
-            $migration = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_000250_convert_session_payloads_to_jsonb.php';
+            $migration = require dirname(__DIR__, 4).'/'.EstimateGenerationContractDatabaseProvisioner::subjectInventory('geometry', dirname(__DIR__, 4))[0];
             $migration->down();
             DB::statement('ALTER TABLE estimate_generation_sessions ADD COLUMN input_payload__jsonb_shadow jsonb');
             try {

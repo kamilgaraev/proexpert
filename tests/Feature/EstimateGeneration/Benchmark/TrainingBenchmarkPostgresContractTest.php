@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationContractDatabaseProvisioner;
 
 #[Group('postgres-contract')]
 final class TrainingBenchmarkPostgresContractTest extends TestCase
@@ -36,12 +37,9 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
     {
         $this->requireDisposablePostgres();
         $this->ensureLegacyTrainingSchema();
-        $migration = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001700_rebuild_estimate_generation_training_and_benchmarks.php';
-        $hardening = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001800_harden_estimate_generation_training_and_benchmarks.php';
-        $edgeHardening = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001900_close_training_benchmark_edge_contracts.php';
-        $storageHardening = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_002000_enforce_training_benchmark_storage_contracts.php';
-        $finalHardening = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_002100_finalize_training_benchmark_architecture.php';
-        $raceHardening = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_002200_close_training_benchmark_races.php';
+        $subjects = array_map(static fn (string $path): object => require dirname(__DIR__, 4).'/'.$path,
+            EstimateGenerationContractDatabaseProvisioner::subjectInventory('training', dirname(__DIR__, 4)));
+        [$migration, $hardening, $edgeHardening, $storageHardening, $finalHardening, $raceHardening] = $subjects;
         if (\Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_training_datasets', 'dataset_key')) {
             if (\Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_training_datasets', 'processing_lease_expires_at')) {
                 if (DB::selectOne("SELECT 1 FROM pg_constraint WHERE conname = 'eg_benchmark_closed_state_chk'") !== null) {

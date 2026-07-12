@@ -15,6 +15,31 @@ final class EstimateGenerationContractDatabaseProvisioner
         'pricing' => 'c95cb2cc331fe5c1b041784f226061fd5f1540c95c38e15d84b63e801d47081f',
     ];
 
+    private const SUBJECT = [
+        'geometry' => [
+            'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_000250_convert_session_payloads_to_jsonb.php',
+            'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000900_guard_review_summary_source_version.php',
+        ],
+        'pricing' => [
+            'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001500_publish_accepted_evidence_and_close_pricing_provenance.php',
+            'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001600_harden_accepted_evidence_mapping.php',
+        ],
+        'training' => [
+            'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001700_rebuild_estimate_generation_training_and_benchmarks.php',
+            'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001800_harden_estimate_generation_training_and_benchmarks.php',
+            'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001900_close_training_benchmark_edge_contracts.php',
+            'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_002000_enforce_training_benchmark_storage_contracts.php',
+            'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_002100_finalize_training_benchmark_architecture.php',
+            'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_002200_close_training_benchmark_races.php',
+        ],
+    ];
+
+    private const SUBJECT_DIGEST = [
+        'geometry' => '674df1f67e8edc5ab28f42efeb93de0f227cea931617dff3c6499a7a71c76be0',
+        'pricing' => '22c28514b665272f7e8cffeb911bf9bda48b098bd25947c04ee22bed41238158',
+        'training' => 'a6a1515725b3a516dfe2f0eb1ccbeaa1971150ca97580dbdf993798cb12003c6',
+    ];
+
     private const CORE = [
         'database/migrations/0001_01_01_000000_create_users_table.php',
         'database/migrations/2025_01_01_000010_create_organizations_table.php',
@@ -87,11 +112,14 @@ final class EstimateGenerationContractDatabaseProvisioner
 
     public static function assertSafe(array $connection, bool $enabled): void
     {
+        $role = getenv('ESTIMATE_GENERATION_CONTRACT_DB_ROLE') ?: '';
         if (! $enabled
             || ($connection['driver'] ?? null) !== 'pgsql'
             || ($connection['host'] ?? null) !== '127.0.0.1'
             || (int) ($connection['port'] ?? 0) !== 55432
             || ($connection['database'] ?? null) !== 'most_ai_estimator_contract'
+            || preg_match('/^[a-z][a-z0-9_]{2,62}$/D', $role) !== 1
+            || ($connection['username'] ?? null) !== $role
             || ! str_ends_with((string) ($connection['database'] ?? ''), '_contract')) {
             throw new InvalidArgumentException('estimate_generation_contract_database_unsafe');
         }
@@ -126,6 +154,43 @@ final class EstimateGenerationContractDatabaseProvisioner
         return $entries;
     }
 
+    public static function validateAttestation(array $facts, array $expected): void
+    {
+        $valid = ($facts['database'] ?? null) === $expected['database']
+            && ($facts['user'] ?? null) === $expected['user']
+            && ($facts['session_user'] ?? null) === $expected['user']
+            && ($facts['address'] ?? null) === $expected['address']
+            && (int) ($facts['port'] ?? 0) === (int) $expected['port']
+            && ($facts['marker'] ?? null) === $expected['marker']
+            && (int) ($facts['marker_count'] ?? 0) === 1
+            && ($facts['marker_owner'] ?? null) === $expected['marker_owner']
+            && ($facts['marker_insert'] ?? null) === false
+            && ($facts['marker_update'] ?? null) === false
+            && ($facts['marker_delete'] ?? null) === false;
+        foreach (['superuser', 'createdb', 'createrole', 'replication', 'bypassrls'] as $flag) {
+            $valid = $valid && ($facts[$flag] ?? null) === false;
+        }
+        if (! $valid) {
+            throw new InvalidArgumentException('estimate_generation_contract_server_attestation_failed');
+        }
+    }
+
+    public static function subjectInventory(string $phase, ?string $root = null): array
+    {
+        if (! isset(self::SUBJECT[$phase])) {
+            throw new InvalidArgumentException('estimate_generation_contract_phase_invalid');
+        }
+
+        return $root === null
+            ? self::SUBJECT[$phase]
+            : self::validateInventory($root, self::SUBJECT[$phase], self::SUBJECT_DIGEST[$phase]);
+    }
+
+    public static function completeInventory(): array
+    {
+        return array_values(array_unique([...self::CORE, ...self::MODULE, ...self::SUBJECT['training']], SORT_STRING));
+    }
+
     public static function inventory(string $phase = 'training'): array
     {
         $module = self::MODULE;
@@ -144,8 +209,11 @@ final class EstimateGenerationContractDatabaseProvisioner
         $configuration = $connection->getConfig();
         self::assertSafe($configuration, getenv('RUN_ESTIMATE_GENERATION_CONTRACT_PROVISIONER') === '1');
         $entries = self::validateInventory($root, self::inventory($phase), self::INVENTORY_DIGEST[$phase] ?? '');
+        self::validateCompleteInventory($root);
+        self::attestServer($connection);
 
-        $connection->unprepared('DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION most_contract');
+        $role = getenv('ESTIMATE_GENERATION_CONTRACT_DB_ROLE') ?: '';
+        $connection->unprepared('DROP SCHEMA public CASCADE; CREATE SCHEMA public AUTHORIZATION "'.$role.'"');
         $connection->statement('CREATE TABLE estimate_generation_contract_migrations (path text PRIMARY KEY, sha256 char(64) NOT NULL, applied_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)');
         foreach ($entries as $entry) {
             $migration = require $root.DIRECTORY_SEPARATOR.$entry;
@@ -154,6 +222,73 @@ final class EstimateGenerationContractDatabaseProvisioner
                 'path' => $entry,
                 'sha256' => hash_file('sha256', $root.DIRECTORY_SEPARATOR.$entry),
             ]);
+        }
+    }
+
+    private static function validateCompleteInventory(string $root): void
+    {
+        $registered = self::completeInventory();
+        foreach ($registered as $entry) {
+            if (! is_file($root.DIRECTORY_SEPARATOR.$entry)) {
+                throw new InvalidArgumentException('estimate_generation_contract_inventory_invalid');
+            }
+        }
+        $actual = glob($root.'/app/BusinessModules/Addons/EstimateGeneration/migrations/*.php');
+        if (! is_array($actual)) {
+            throw new InvalidArgumentException('estimate_generation_contract_inventory_invalid');
+        }
+        $actual = array_map(static fn (string $path): string => str_replace('\\', '/', substr($path, strlen($root) + 1)), $actual);
+        $module = array_values(array_filter($registered, static fn (string $path): bool => str_starts_with($path, 'app/BusinessModules/Addons/EstimateGeneration/migrations/')));
+        sort($actual, SORT_STRING);
+        sort($module, SORT_STRING);
+        if ($actual !== $module) {
+            throw new InvalidArgumentException('estimate_generation_contract_inventory_unregistered');
+        }
+    }
+
+    private static function attestServer(ConnectionInterface $connection): void
+    {
+        $expected = [
+            'database' => 'most_ai_estimator_contract',
+            'user' => getenv('ESTIMATE_GENERATION_CONTRACT_DB_ROLE') ?: '',
+            'marker_owner' => getenv('ESTIMATE_CONTRACT_MARKER_OWNER') ?: '',
+            'address' => getenv('ESTIMATE_CONTRACT_SERVER_ADDR') ?: '',
+            'port' => (int) getenv('ESTIMATE_CONTRACT_SERVER_PORT'),
+            'marker' => getenv('ESTIMATE_CONTRACT_INSTANCE_ID') ?: '',
+        ];
+        if (filter_var($expected['address'], FILTER_VALIDATE_IP) === false
+            || $expected['port'] <= 0
+            || preg_match('/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/D', $expected['marker']) !== 1) {
+            throw new InvalidArgumentException('estimate_generation_contract_server_attestation_failed');
+        }
+
+        $connection->beginTransaction();
+        try {
+            $connection->statement('LOCK TABLE contract_guard.instance_identity IN ACCESS SHARE MODE');
+            $row = (array) $connection->selectOne(<<<'SQL'
+SELECT current_database() AS database, current_user AS "user", session_user AS session_user,
+       host(inet_server_addr()) AS address, inet_server_port() AS port,
+       role.rolsuper AS superuser, role.rolcreatedb AS createdb, role.rolcreaterole AS createrole,
+       role.rolreplication AS replication, role.rolbypassrls AS bypassrls,
+       marker.instance_identity::text AS marker,
+       (SELECT count(*) FROM contract_guard.instance_identity) AS marker_count,
+       pg_get_userbyid(cls.relowner) AS marker_owner,
+       has_table_privilege(current_user, 'contract_guard.instance_identity', 'INSERT') AS marker_insert,
+       has_table_privilege(current_user, 'contract_guard.instance_identity', 'UPDATE') AS marker_update,
+       has_table_privilege(current_user, 'contract_guard.instance_identity', 'DELETE') AS marker_delete
+FROM pg_roles role
+CROSS JOIN contract_guard.instance_identity marker
+JOIN pg_class cls ON cls.oid = 'contract_guard.instance_identity'::regclass
+WHERE role.rolname = current_user
+SQL);
+            self::validateAttestation($row, $expected);
+            $connection->commit();
+        } catch (\Throwable $exception) {
+            $connection->rollBack();
+            if ($exception instanceof InvalidArgumentException) {
+                throw $exception;
+            }
+            throw new InvalidArgumentException('estimate_generation_contract_server_attestation_failed', previous: $exception);
         }
     }
 }

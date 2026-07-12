@@ -40,6 +40,16 @@ pricing run 2: 5 passed, 123 assertions, 0 skipped
 
 WSL PHP отсутствует. Два geometry contention tests сохраняют исходный `pcntl` path на Unix и используют эквивалентный Windows `proc_open` path: отдельные PHP processes и DB connections. CAS test удерживает winner lock bounded 1.5 секунды, loser получает typed stale; outbox workers одновременно claim один intent, результаты `[0,1]`, probe увеличивается ровно один раз. Focused Windows gate: `2 passed, 17 assertions`, затем оба полных geometry runs выше прошли без skips.
 
+### Final review: live server attestation и complete inventory
+
+До destructive reset добавлена server-side attestation на том же live PDO connection. Provisioner внутри транзакции берёт `ACCESS SHARE` lock на immutable marker вне `public`, повторно читает marker и требует точные `current_database/current_user/session_user`, server address/internal port, dedicated marker owner, одну строку marker, отсутствие DML-привилегий и все отрицательные PostgreSQL role flags (`superuser`, `createdb`, `createrole`, `replication`, `bypassrls`). Client endpoint и expected runner/server/marker identity задаются отдельно explicit env. Provisioner не создаёт и не изменяет marker.
+
+В disposable fixture внешним bootstrap admin создан отдельный session-only nonprivileged runner и отдельный NOLOGIN guard owner; bootstrap role не изменялась. Marker UUID и runner credential не выводились и не записывались в репозиторий. Live negative gate с неверным marker был отклонён до `DROP SCHEMA`; существующая `public` схема сохранилась. Runner не имеет INSERT/UPDATE/DELETE на marker, а marker schema/table ему не принадлежат.
+
+Inventory разделён на versioned baseline и SHA-bound per-suite subjects. Complete registry включает все module migrations, включая training/benchmark `001700..002200`, и fail-closed отклоняет missing, duplicate, tampered и unregistered migration. Geometry, pricing и training PostgreSQL tests получают subject paths только через provisioner. Unit RED→GREEN gate: `4 passed, 31 assertions`.
+
+После final review все sequential gates повторены дважды под attested runner с fresh provision перед каждым запуском: geometry `21/167/0 skips`, training+adoption `4/91/0 skips`, pricing `5/123/0 skips` в каждом запуске.
+
 ## Task A — INTERMEDIATE: реальные источники и geometry captures
 
 ### Повторная проверка Task A: независимая source traceability
