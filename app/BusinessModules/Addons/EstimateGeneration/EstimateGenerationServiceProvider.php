@@ -92,12 +92,14 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\Est
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateResourceClassifier;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\EstimateSourceImportService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\FgiscsBuildingResourcePriceSpreadsheetParser;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NoopNormativeRolloutFaultInjector;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeCandidateSource;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeHardGate;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeMatchingWorkflow;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativePinClock;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRerankerModelSet;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRetrievalService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRolloutFaultInjector;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeWorkIntentFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\PostgresNormativeCandidateSource;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
@@ -341,6 +343,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(NormativeHardGate::class);
         $this->app->singleton(ApprovedNormativeDatasetLookup::class, EloquentApprovedNormativeDatasetLookup::class);
         $this->app->singleton(NormativePinClock::class, SystemNormativePinClock::class);
+        $this->app->singleton(NormativeRolloutFaultInjector::class, NoopNormativeRolloutFaultInjector::class);
         $this->app->singleton(NormativeRerankerModelSet::class);
         $this->app->singleton(NormativeMatchingWorkflow::class);
         $this->app->singleton(NormativeWorkIntentFactory::class);

@@ -96,6 +96,8 @@ Verification deliverables add a real bootstrapped Laravel application/provider t
 
 Final verification inventory: **54 DB-less tests, 155 assertions, 0 failures**. The two new deliverable tests pass independently with PHPStan reporting **0 errors**.
 
+Fifth corrective pass: PostgreSQL contract fixtures now use unique version prefixes and no explicit transaction around concurrent DDL; deploy asserts transaction level zero and cleanup is explicit. Durable rollout state separates backfill status from deploy phase/status, retains failed phase, and replays idempotent phase work under an advisory lock until `enabled`. The opt-in contract remains unrun locally.
+
 Second corrective verification:
 
 - DB-less normative, container model-set, attempt-aware usage and pipeline set: **50 tests, 142 assertions, 0 failures**.

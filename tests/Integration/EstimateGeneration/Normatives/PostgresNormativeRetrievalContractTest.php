@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Tests\Integration\EstimateGeneration\Normatives;
 
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NoopNormativeRolloutFaultInjector;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRetrievalBackfillService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRetrievalRolloutService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\PostgresNormativeCandidateSource;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 final class PostgresNormativeRetrievalContractTest extends TestCase
@@ -18,18 +20,22 @@ final class PostgresNormativeRetrievalContractTest extends TestCase
             self::markTestSkipped('Requires opt-in migrated PostgreSQL contract database.');
         }
 
-        DB::beginTransaction();
+        $suffix = Str::lower(Str::random(12));
+        $versionOne = 'contract-'.$suffix.'-v1';
+        $versionTwo = 'contract-'.$suffix.'-v2';
+        $datasetIds = [];
         try {
             $dataset = DB::table('estimate_dataset_versions')->insertGetId([
-                'source_type' => 'fsnb_2022', 'version_key' => 'contract-v1', 'bucket' => 'test', 'prefix' => 'test',
+                'source_type' => 'fsnb_2022', 'version_key' => $versionOne, 'bucket' => 'test', 'prefix' => $suffix,
                 'status' => 'parsed', 'files_count' => 0, 'rows_read' => 0, 'rows_imported' => 0,
                 'errors_count' => 0, 'created_at' => now(), 'updated_at' => now(),
             ]);
             $otherDataset = DB::table('estimate_dataset_versions')->insertGetId([
-                'source_type' => 'fsnb_2022', 'version_key' => 'contract-v2', 'bucket' => 'test', 'prefix' => 'test',
+                'source_type' => 'fsnb_2022', 'version_key' => $versionTwo, 'bucket' => 'test', 'prefix' => $suffix,
                 'status' => 'parsed', 'files_count' => 0, 'rows_read' => 0, 'rows_imported' => 0,
                 'errors_count' => 0, 'created_at' => now(), 'updated_at' => now(),
             ]);
+            $datasetIds = [$dataset, $otherDataset];
             foreach ([$dataset, $otherDataset] as $id) {
                 $collection = DB::table('estimate_norm_collections')->insertGetId([
                     'dataset_version_id' => $id, 'code' => '08', 'name' => 'Каменные конструкции',
@@ -53,20 +59,21 @@ final class PostgresNormativeRetrievalContractTest extends TestCase
             while (($secondBatch['complete'] ?? false) !== true) {
                 $secondBatch = $backfill->resume(1000);
             }
-            (new NormativeRetrievalRolloutService(DB::connection()))->deploy();
+            self::assertSame(0, DB::connection()->transactionLevel());
+            (new NormativeRetrievalRolloutService(DB::connection(), new NoopNormativeRolloutFaultInjector))->deploy();
 
             $source = new PostgresNormativeCandidateSource(DB::connection());
-            $first = $source->find(10, 20, 'contract-v1', 'кладка кирпичных стен', 1, null);
-            $secondTenant = $source->find(11, 21, 'contract-v1', 'кладка кирпичных стен', 1, null);
+            $first = $source->find(10, 20, $versionOne, 'кладка кирпичных стен', 1, null);
+            $secondTenant = $source->find(11, 21, $versionOne, 'кладка кирпичных стен', 1, null);
 
             self::assertCount(1, $first);
-            self::assertSame('contract-v1', $first[0]->datasetVersion);
+            self::assertSame($versionOne, $first[0]->datasetVersion);
             self::assertSame($first[0]->id, $secondTenant[0]->id, 'Global catalog is tenant-neutral; tenant fence belongs to decision context.');
             self::assertLessThanOrEqual(1, count($first));
 
-            DB::statement('SET LOCAL enable_seqscan = off');
+            DB::statement('SET enable_seqscan = off');
             $plan = DB::select('EXPLAIN (FORMAT JSON) '.PostgresNormativeCandidateSource::QUERY_CONTRACT, [
-                'lexical_dataset_version' => 'contract-v1', 'semantic_dataset_version' => 'contract-v1', 'query' => 'кладка',
+                'lexical_dataset_version' => $versionOne, 'semantic_dataset_version' => $versionOne, 'query' => 'кладка',
                 'query_hash' => hash('sha256', 'кладка'), 'semantic_index_version' => null,
                 'lexical_limit' => 16, 'semantic_limit' => 16,
             ]);
@@ -75,7 +82,12 @@ final class PostgresNormativeRetrievalContractTest extends TestCase
             self::assertStringContainsString('estimate_norms_search_vector_gin', $encodedPlan);
             self::assertStringNotContainsString('Seq Scan', $encodedPlan);
         } finally {
-            DB::rollBack();
+            DB::statement('RESET enable_seqscan');
+            DB::statement('DROP INDEX CONCURRENTLY IF EXISTS estimate_norms_search_vector_gin');
+            DB::statement('DROP INDEX CONCURRENTLY IF EXISTS estimate_norms_section_dimension_idx');
+            DB::statement('DROP INDEX CONCURRENTLY IF EXISTS estimate_norms_collection_unit_idx');
+            DB::table('estimate_dataset_versions')->whereIn('id', $datasetIds)->delete();
+            DB::table('estimate_normative_retrieval_rollouts')->where('schema_version', NormativeRetrievalBackfillService::VERSION)->delete();
         }
     }
 }
