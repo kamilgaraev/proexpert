@@ -34,7 +34,15 @@ final readonly class AttemptAwareNormativeLlmClient
         $organizationId = $operation->organizationId;
         $projectId = $operation->projectId;
         $sessionId = $operation->sessionId;
-        $seed = json_encode(get_object_vars($operation), JSON_THROW_ON_ERROR);
+        $seed = json_encode([
+            ...get_object_vars($operation),
+            'candidate_set_hash' => (string) ($domainContext['candidate_set_hash'] ?? ''),
+            'prompt_version' => (string) ($domainContext['prompt_version'] ?? ''),
+            'schema_version' => (string) ($domainContext['schema_version'] ?? ''),
+            'model_version' => (string) ($domainContext['model_version'] ?? ''),
+            'dataset_versions' => is_array($domainContext['dataset_versions'] ?? null)
+                ? array_values(array_map('strval', $domainContext['dataset_versions'])) : [],
+        ], JSON_THROW_ON_ERROR);
         $correlationId = AiOperationContext::deterministicId('rerank|'.$seed);
         $physicalInvocationId = (string) Str::uuid();
         $models = $this->models();

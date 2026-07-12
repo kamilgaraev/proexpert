@@ -204,7 +204,14 @@ class EstimateNormativeMatcher
      */
     public function matchSelectedNorm(int $normId, array $workItem, array $context = []): ?array
     {
-        $version = $this->latestFsnbVersion();
+        $pinnedVersion = $context['normative_dataset_version'] ?? null;
+        $version = is_string($pinnedVersion) && $pinnedVersion !== ''
+            ? EstimateDatasetVersion::query()
+                ->where('source_type', EstimateSourceType::FSNB_2022->value)
+                ->where('status', EstimateImportStatus::PARSED->value)
+                ->where('version_key', $pinnedVersion)
+                ->first()
+            : null;
         $priceVersions = $this->latestPriceVersions($context);
 
         if ($version === null) {

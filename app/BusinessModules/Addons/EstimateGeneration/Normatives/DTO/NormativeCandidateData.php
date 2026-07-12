@@ -32,7 +32,9 @@ final readonly class NormativeCandidateData
         public string $lexicalAlgorithmVersion,
         public ?string $semanticIndexVersion,
         public array $sourceEvidence,
-    ) {}
+    ) {
+        EvidenceBounds::assert($sourceEvidence);
+    }
 
     public function toArray(): array
     {

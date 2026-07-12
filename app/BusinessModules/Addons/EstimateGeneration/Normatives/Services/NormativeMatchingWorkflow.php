@@ -1,0 +1,34 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
+
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateDecisionContextData;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeWorkflowResultData;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\WorkIntentData;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Exceptions\NormativeRerankingUnavailable;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\NormativeCandidateRerankerInterface;
+
+readonly class NormativeMatchingWorkflow
+{
+    public function __construct(private NormativeRetrievalService $retrieval, private NormativeCandidateRerankerInterface $reranker) {}
+
+    public function match(WorkIntentData $intent, NormativeCandidateDecisionContextData $context, bool $rerankRequested): NormativeWorkflowResultData
+    {
+        $set = $this->retrieval->retrieve($intent);
+        if ($set->candidates === []) {
+            return new NormativeWorkflowResultData('review_required', $set, null, ['normative_not_found']);
+        }
+        if (! $rerankRequested) {
+            return new NormativeWorkflowResultData('retrieval_only', $set, null, []);
+        }
+        try {
+            $reranked = $this->reranker->rerank($intent, $context, $set);
+        } catch (NormativeRerankingUnavailable) {
+            return new NormativeWorkflowResultData('unavailable', $set, null, ['normative_reranking_unavailable']);
+        }
+
+        return new NormativeWorkflowResultData('reranked', $set, $reranked, []);
+    }
+}

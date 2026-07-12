@@ -19,5 +19,7 @@ final readonly class NormativeCandidateDecisionContextData
         public string $schemaVersion,
         public string $modelVersion,
         public array $sourceEvidence,
-    ) {}
+    ) {
+        EvidenceBounds::assert($sourceEvidence);
+    }
 }

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Pipeline;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Generation\AssembleMatchedResources;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeMatchingWorkflow;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeWorkIntentFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
@@ -71,7 +73,7 @@ final class PipelineStageFunctionalTest extends TestCase
             new UnderstandObjectStage(new ConstructionSemanticParser, $gateway, $results),
             new ExtractQuantitiesStage(new EstimateGenerationQuantityLearningEvidenceService, $results),
             new PlanWorkItemsStage(new PackagePlannerService, new EstimateDecompositionService, new NormativeWorkItemPlannerService(new ProjectDocumentNormativeReferenceExtractor, new EstimatorScopeInferenceService), $results),
-            new MatchNormativesStage($matcher, $results),
+            new MatchNormativesStage($matcher, $this->createMock(NormativeMatchingWorkflow::class), new NormativeWorkIntentFactory, $results),
             new AssembleResourcesStage(new AssembleMatchedResources, $results),
             new ResolvePricesStage(new EstimatePricingService, $results),
             new BuildDraftStage($results),

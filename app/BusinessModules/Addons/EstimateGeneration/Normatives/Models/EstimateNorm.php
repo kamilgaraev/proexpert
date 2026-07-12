@@ -18,6 +18,15 @@ class EstimateNorm extends Model
         'code',
         'name',
         'unit',
+        'canonical_unit',
+        'unit_dimension',
+        'material',
+        'technology',
+        'structure',
+        'object_type',
+        'region_code',
+        'valid_from',
+        'valid_to',
         'section_code',
         'section_name',
         'work_composition',
@@ -29,6 +38,8 @@ class EstimateNorm extends Model
         'section_id' => 'integer',
         'work_composition' => 'array',
         'raw_payload' => 'array',
+        'valid_from' => 'date',
+        'valid_to' => 'date',
     ];
 
     public function collection(): BelongsTo

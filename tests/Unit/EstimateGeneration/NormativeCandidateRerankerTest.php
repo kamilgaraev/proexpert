@@ -49,6 +49,12 @@ final class NormativeCandidateRerankerTest extends TestCase
             'unknown code' => [[...$valid, 'explanation_codes' => ['invented']]],
             'unknown field' => [[...$valid, 'reason' => 'free text']],
             'nan confidence' => [[...$valid, 'confidence' => 'NaN']],
+            'selected not first' => [[...$valid, 'selected_candidate_id' => 'b']],
+            'duplicate explanation' => [[...$valid, 'explanation_codes' => ['unit_match', 'unit_match']]],
+            'associative explanation' => [[...$valid, 'explanation_codes' => ['x' => 'unit_match']]],
+            'unknown evidence' => [[...$valid, 'evidence_refs' => ['invented:1']]],
+            'duplicate evidence' => [[...$valid, 'evidence_refs' => ['norm:1', 'norm:1']]],
+            'associative evidence' => [[...$valid, 'evidence_refs' => ['x' => 'norm:1']]],
         ];
     }
 
@@ -90,6 +96,22 @@ final class NormativeCandidateRerankerTest extends TestCase
 
         self::assertLessThan(20000, strlen((string) $messages[1]['content']));
         self::assertStringContainsString('untrusted_candidates', (string) $messages[1]['content']);
+    }
+
+    public function test_oversized_serialized_prompt_fails_before_network(): void
+    {
+        $calls = 0;
+        $messages = [];
+        $reranker = $this->reranker($this->validResponse(), null, true, $messages, $calls);
+        $candidate = $this->set(str_repeat('Ж', 4000))->candidates[0];
+        $set = new NormativeCandidateSetData(1, 2, 3, 'work-1', 'v1', 'normative-combined-v1', 'sem-v1', array_fill(0, 32, $candidate));
+
+        $this->expectException(NormativeRerankingInvalidResponse::class);
+        try {
+            $reranker->rerank($this->intent(), $this->context(), $set);
+        } finally {
+            self::assertSame(0, $calls);
+        }
     }
 
     public static function validResponse(): array

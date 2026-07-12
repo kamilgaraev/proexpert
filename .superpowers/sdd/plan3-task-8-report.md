@@ -41,12 +41,32 @@ Covered contracts include independent and combined hard gates, unknown required 
 ## PostgreSQL opt-in inventory
 
 - `tests/Integration/EstimateGeneration/Normatives/PostgresNormativeRetrievalContractTest.php`
-- `PostgresNormativeCandidateSource::INDEX_CONTRACT`
 - `PostgresNormativeCandidateSource::QUERY_CONTRACT`
+- `2026_07_12_001000_add_normative_retrieval_contract.php`
 
 The contract is guarded by `RUN_POSTGRES_NORMATIVE_CONTRACT=1` and was intentionally not run. It requires validation against the production-sized PostgreSQL schema/index rollout before enabling the new retrieval source.
 
 ## Concerns
 
-- The PostgreSQL index is authored as a deployment contract only; no migration was added and no database command was run for it.
-- Ordinary estimate ranking remains unchanged and is explicitly labelled `retrieval_only`; invoking strict LLM reranking requires the typed workflow stage and complete decision context.
+- The PostgreSQL migration and opt-in contract were not run locally; they require the dedicated migrated PostgreSQL contract environment.
+- Ordinary estimates remain on their existing explicitly labelled `retrieval_only` path; the AI generation stage uses the strict pinned workflow.
+
+## Corrective review pass
+
+The review's two Critical, three Important and one Minor findings were addressed:
+
+- The production `MatchNormativesStage` now executes the typed retrieval workflow and handles `retrieval_only`, `reranked`, `review_required` and `unavailable`. It requires a pinned `regional_context.normative_dataset_version`; a missing pin blocks review and never calls legacy latest-dataset selection. Exact selected norm IDs are applied through the pinned dataset version.
+- The global normative catalog query now follows the real `estimate_norms.collection_id → estimate_norm_collections.dataset_version_id → estimate_dataset_versions.id` chain. Tenant identity remains in the pipeline decision/usage fence instead of fictional catalog columns.
+- A rollout migration adds typed compatibility/applicability fields, safe backfill, validity constraint, generated Russian `tsvector`/GIN index, and a version/query-hash scoped semantic score table with bounded score constraint and lookup index. The migration was authored but not run.
+- The PostgreSQL opt-in test now inserts real FK fixtures, executes the source query for a pinned version, verifies global-catalog tenant neutrality, enforces the limit, and runs `EXPLAIN (FORMAT JSON)`. It was not run locally.
+- Evidence references and explanation codes must be unique lists; evidence must belong to the canonical work/context/candidate allow-list; selection must equal the first ordered candidate.
+- Source evidence DTO values are bounded to 32 unique references of at most 128 bytes. Serialized prompts are capped at 16 KiB before the wire call.
+- Combined scoring is versioned as `normative-combined-v1`, normalizes lexical/semantic scales, treats absent semantic score explicitly as zero contribution, and uses candidate ID as canonical tie-break. Retrieval requests a bounded pool up to 128 and owns final top-N.
+- Attempt identity now includes candidate-set hash, prompt/schema/model versions and dataset versions while retaining one usage record per physical wire attempt.
+
+Corrective verification:
+
+- DB-less normative/workflow/usage/pipeline set: **42 tests, 96 assertions, 0 failures**.
+- PHPStan/Larastan corrective scope: **29 paths, 0 errors**.
+- Pint: **25 changed/new PHP files passed**.
+- `php -l` and `git diff --check`: **passed**.

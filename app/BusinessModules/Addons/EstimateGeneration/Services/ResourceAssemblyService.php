@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNormativeMatcher;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeMatchDecisionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeCandidatePresenter;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeMatchDecisionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\NormativeUnitNormalizer;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\WorkIntentClassifier;
 
@@ -15,6 +15,7 @@ use function trans_message;
 class ResourceAssemblyService
 {
     private const LOW_CONFIDENCE_THRESHOLD = 0.55;
+
     private const PROGRESS_STEP = 10;
 
     public function __construct(
@@ -22,7 +23,7 @@ class ResourceAssemblyService
         protected NormativeMatchDecisionService $matchDecisionService,
         protected NormativeCandidatePresenter $candidatePresenter,
         protected ?WorkIntentClassifier $workIntentClassifier = null,
-        protected EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy(),
+        protected EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy,
     ) {}
 
     public function enrich(array $workItems, array $context = []): array
@@ -65,7 +66,7 @@ class ResourceAssemblyService
                 continue;
             }
 
-            if (($workItem['skip_normative_matching'] ?? false) === true || !$this->isPricedItem($workItem)) {
+            if (($workItem['skip_normative_matching'] ?? false) === true || ! $this->isPricedItem($workItem)) {
                 $processed = $index + 1;
 
                 if ($progressCallback !== null && ($processed % self::PROGRESS_STEP === 0 || $processed === $total)) {
@@ -78,9 +79,12 @@ class ResourceAssemblyService
             $workItemForMatching = $this->withWorkIntent($this->workItemForMatching($workItem), $context);
             $workItem['work_intent'] = $workItemForMatching['work_intent'];
             $cacheKey = $this->matchCacheKey($workItem, $context);
-            $match = array_key_exists($cacheKey, $matchCache)
-                ? $matchCache[$cacheKey]
-                : $matchCache[$cacheKey] = $this->normativeMatcher->matchWorkItem($workItemForMatching, $context);
+            $selectedNormId = $context['selected_norm_id'] ?? null;
+            $match = is_int($selectedNormId) || (is_string($selectedNormId) && ctype_digit($selectedNormId))
+                ? $this->normativeMatcher->matchSelectedNorm((int) $selectedNormId, $workItemForMatching, $context)
+                : (array_key_exists($cacheKey, $matchCache)
+                    ? $matchCache[$cacheKey]
+                    : $matchCache[$cacheKey] = $this->normativeMatcher->matchWorkItem($workItemForMatching, $context));
 
             if ($match === null) {
                 $workItem = $this->markUnmatched($workItem);
@@ -100,9 +104,9 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<string, mixed> $match
-     * @param array<string, mixed> $context
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $match
+     * @param  array<string, mixed>  $context
      * @return array<string, mixed>
      */
     public function applySelectedNormativeMatch(array $workItem, array $match, array $context = []): array
@@ -116,15 +120,15 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function isPricedItem(array $workItem): bool
     {
-        return !in_array((string) ($workItem['item_type'] ?? 'priced_work'), ['operation', 'resource_note', 'review_note', 'quantity_review'], true);
+        return ! in_array((string) ($workItem['item_type'] ?? 'priced_work'), ['operation', 'resource_note', 'review_note', 'quantity_review'], true);
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function isQuantityReviewItem(array $workItem): bool
     {
@@ -139,7 +143,7 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      * @return array<string, mixed>
      */
     private function clearQuantityReviewPricing(array $workItem): array
@@ -163,7 +167,7 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      * @return array<string, mixed>
      */
     private function markNoAirWorkItem(array $workItem): array
@@ -175,7 +179,7 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function requiresDocumentTakeoff(array $workItem): bool
     {
@@ -189,7 +193,7 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      * @return array<string, mixed>
      */
     private function markDocumentTakeoffRequired(array $workItem): array
@@ -211,8 +215,8 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<string, mixed> $context
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $context
      */
     private function matchCacheKey(array $workItem, array $context): string
     {
@@ -226,7 +230,7 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      * @return array<string, mixed>
      */
     private function workItemForMatching(array $workItem): array
@@ -243,8 +247,8 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<string, mixed> $context
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $context
      * @return array<string, mixed>
      */
     private function withWorkIntent(array $workItem, array $context): array
@@ -276,7 +280,7 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      */
     private function fallbackSearchKey(array $workItem): string
     {
@@ -291,8 +295,8 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<string, mixed> $match
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $match
      * @return array<string, mixed>
      */
     private function applyNormativeMatch(array $workItem, array $match): array
@@ -301,8 +305,8 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<string, mixed> $match
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $match
      * @return array<string, mixed>
      */
     private function applyDecidedNormativeMatch(array $workItem, array $match, bool $selectedByUser): array
@@ -310,7 +314,7 @@ class ResourceAssemblyService
         $selected = $match['selected'];
         $decision = $this->matchDecisionService->decide($selected, $workItem);
 
-        if (!$decision->canUseForPricing) {
+        if (! $decision->canUseForPricing) {
             return $this->applyCandidateOnlyMatch($workItem, $match, $decision->toArray(), $selectedByUser);
         }
 
@@ -345,8 +349,8 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<string, mixed> $match
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $match
      * @return array<string, mixed>
      */
     private function applyNormativeResources(array $workItem, array $match, bool $selectedByUser = false, ?array $decision = null): array
@@ -428,9 +432,9 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<string, mixed> $match
-     * @param array<string, mixed> $decision
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $match
+     * @param  array<string, mixed>  $decision
      * @return array<string, mixed>
      */
     private function applyCandidateOnlyMatch(array $workItem, array $match, array $decision, bool $selectedByUser = false): array
@@ -499,9 +503,9 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<int, array<string, mixed>> $resources
-     * @param array<string, mixed> $selected
-     * @param array<string, mixed> $version
+     * @param  array<int, array<string, mixed>>  $resources
+     * @param  array<string, mixed>  $selected
+     * @param  array<string, mixed>  $version
      * @return array<int, array<string, mixed>>
      */
     private function mapResources(array $resources, string $targetType, float $normQuantity, array $selected, array $version, array $workItem): array
@@ -513,7 +517,7 @@ class ResourceAssemblyService
                 $unitPrice = (float) ($resource['unit_price'] ?? 0);
 
                 return [
-                    'key' => ($workItem['key'] ?? 'work') . '-norm-' . $selected['norm_id'] . '-' . $targetType . '-' . ($index + 1),
+                    'key' => ($workItem['key'] ?? 'work').'-norm-'.$selected['norm_id'].'-'.$targetType.'-'.($index + 1),
                     'name' => $resource['name'] ?? $resource['code'] ?? 'resource',
                     'resource_type' => $targetType,
                     'unit' => $resource['unit'],
@@ -522,7 +526,7 @@ class ResourceAssemblyService
                     'quantity_basis' => 'normative_resource',
                     'unit_price' => $unitPrice,
                     'total_price' => round($quantity * $unitPrice, 2),
-                    'source' => 'fsnb_2022:' . $version['version_key'],
+                    'source' => 'fsnb_2022:'.$version['version_key'],
                     'confidence' => $selected['confidence'],
                     'normative_ref' => [
                         'norm_id' => $selected['norm_id'],
@@ -540,7 +544,7 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      * @return array<string, mixed>
      */
     private function markUnmatched(array $workItem): array
@@ -565,7 +569,7 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $candidate
+     * @param  array<string, mixed>  $candidate
      * @return array<string, mixed>
      */
     private function candidateSummary(array $candidate, array $workItem): array
@@ -574,8 +578,8 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<int, array<string, mixed>> $freshCandidates
-     * @param array<int, mixed> $existingCandidates
+     * @param  array<int, array<string, mixed>>  $freshCandidates
+     * @param  array<int, mixed>  $existingCandidates
      * @return array<int, array<string, mixed>>
      */
     private function mergeNormativeCandidates(array $freshCandidates, array $existingCandidates): array
@@ -584,7 +588,7 @@ class ResourceAssemblyService
         $seen = [];
 
         foreach ([...$freshCandidates, ...$existingCandidates] as $candidate) {
-            if (!is_array($candidate)) {
+            if (! is_array($candidate)) {
                 continue;
             }
 
@@ -602,27 +606,27 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $candidate
+     * @param  array<string, mixed>  $candidate
      */
     private function candidateIdentity(array $candidate): string
     {
         $normId = $candidate['norm_id'] ?? $candidate['id'] ?? null;
 
         if ($normId !== null && $normId !== '') {
-            return 'id:' . (int) $normId;
+            return 'id:'.(int) $normId;
         }
 
         $code = trim((string) ($candidate['code'] ?? $candidate['normative_code'] ?? ''));
 
         if ($code !== '') {
-            return 'code:' . mb_strtolower($code);
+            return 'code:'.mb_strtolower($code);
         }
 
-        return 'raw:' . hash('sha256', json_encode($candidate, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: serialize($candidate));
+        return 'raw:'.hash('sha256', json_encode($candidate, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: serialize($candidate));
     }
 
     /**
-     * @param array<string, mixed> $workItem
+     * @param  array<string, mixed>  $workItem
      * @return array<string, mixed>
      */
     private function clearNonNormativeResources(array $workItem): array
@@ -642,7 +646,7 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<int, string> $flags
+     * @param  array<int, string>  $flags
      * @return array<int, string>
      */
     private function acceptedFlags(array $flags): array
@@ -663,7 +667,7 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<int, string> $warnings
+     * @param  array<int, string>  $warnings
      * @return array<int, string>
      */
     private function hardWarningFlags(array $warnings): array
@@ -679,7 +683,7 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<int, string> $warnings
+     * @param  array<int, string>  $warnings
      */
     private function pricingBlocker(array $warnings): string
     {
@@ -705,7 +709,7 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<int, string> $warnings
+     * @param  array<int, string>  $warnings
      */
     private function requiresNormativePriceSelection(array $warnings): bool
     {
@@ -726,8 +730,8 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<string, mixed> $selected
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $selected
      * @return array<string, mixed>
      */
     private function applyNormativeComposition(array $workItem, array $selected): array
@@ -749,12 +753,11 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param mixed $composition
      * @return array<int, string>
      */
     private function normalizeComposition(mixed $composition): array
     {
-        if (!is_array($composition)) {
+        if (! is_array($composition)) {
             return [];
         }
 
@@ -765,7 +768,7 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $resources
+     * @param  array<string, mixed>  $resources
      */
     private function resourcesCount(array $resources): int
     {
@@ -776,7 +779,7 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $resources
+     * @param  array<string, mixed>  $resources
      */
     private function pricedResourcesCount(array $resources): int
     {
@@ -794,7 +797,7 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $resource
+     * @param  array<string, mixed>  $resource
      */
     private function resourceHasPositivePrice(array $resource): bool
     {
@@ -802,7 +805,7 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $resource
+     * @param  array<string, mixed>  $resource
      */
     private function resourceTotalPrice(array $resource): float
     {

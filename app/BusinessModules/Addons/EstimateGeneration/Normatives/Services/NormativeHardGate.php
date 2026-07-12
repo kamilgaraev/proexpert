@@ -31,7 +31,7 @@ final class NormativeHardGate
 
         return new NormativeCandidateSetData(
             $workItem->organizationId, $workItem->projectId, $workItem->sessionId, $workItem->workItemId,
-            $workItem->datasetVersion, $accepted[0]->lexicalAlgorithmVersion ?? 'unknown',
+            $workItem->datasetVersion, NormativeScoring::VERSION,
             $accepted[0]->semanticIndexVersion ?? null, $accepted, $rejected,
             $accepted === [] ? 'review_required' : 'retrieval_only',
             $accepted === [] ? ['normative_not_found'] : [],

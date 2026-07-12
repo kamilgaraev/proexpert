@@ -217,6 +217,15 @@ class EstimateSourceImportService
                             'section_id' => $section?->id,
                             'name' => $norm->name,
                             'unit' => $norm->unit,
+                            'canonical_unit' => $norm->unit,
+                            'unit_dimension' => $this->unitDimension($norm->unit),
+                            'material' => $norm->rawData['material'] ?? null,
+                            'technology' => $norm->rawData['technology'] ?? null,
+                            'structure' => $norm->rawData['structure'] ?? null,
+                            'object_type' => $norm->rawData['object_type'] ?? null,
+                            'region_code' => $norm->rawData['region_code'] ?? null,
+                            'valid_from' => $this->dateValue($norm->rawData['valid_from'] ?? null),
+                            'valid_to' => $this->dateValue($norm->rawData['valid_to'] ?? null),
                             'section_code' => $norm->rawData['section_code'] ?? null,
                             'section_name' => $norm->section,
                             'work_composition' => $norm->rawData['content'] ?? [],
@@ -248,6 +257,22 @@ class EstimateSourceImportService
             'rows_imported' => $rowsImported,
             'errors_count' => $errorsCount,
         ];
+    }
+
+    private function unitDimension(?string $unit): ?string
+    {
+        return match (mb_strtolower(trim((string) $unit))) {
+            'м2', 'м²' => 'area',
+            'м3', 'м³' => 'volume',
+            'м', 'м.п.' => 'length',
+            'шт', 'компл' => 'count',
+            default => null,
+        };
+    }
+
+    private function dateValue(mixed $value): ?string
+    {
+        return is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2}$/D', $value) === 1 ? $value : null;
     }
 
     /**

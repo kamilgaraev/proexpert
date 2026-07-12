@@ -22,6 +22,8 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
 
     private const RESPONSE_FIELDS = ['selected_candidate_id', 'ordering', 'explanation_codes', 'evidence_refs', 'confidence', 'schema_version'];
 
+    private const PROMPT_BYTE_LIMIT = 16384;
+
     public function __construct(private readonly LLMProviderInterface $llmProvider, private readonly AttemptAwareNormativeLlmClient $attemptAwareClient) {}
 
     public function rerank(WorkIntentData $workItem, NormativeCandidateDecisionContextData $context, NormativeCandidateSetData $candidateSet): NormativeRerankResultData
@@ -33,7 +35,11 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
             throw new NormativeRerankingUnavailable('Provider is unavailable.');
         }
         try {
-            $response = $this->attemptAwareClient->chat($this->messages($workItem, $candidateSet), [
+            $messages = $this->messages($workItem, $candidateSet);
+            if (strlen((string) $messages[1]['content']) > self::PROMPT_BYTE_LIMIT) {
+                throw new NormativeRerankingInvalidResponse('Prompt is oversized.');
+            }
+            $response = $this->attemptAwareClient->chat($messages, [
                 'profile' => 'json', 'temperature' => 0, 'max_tokens' => 800,
             ], [
                 'organization_id' => $context->organizationId, 'project_id' => $context->projectId,
@@ -65,10 +71,10 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
             throw new NormativeRerankingInvalidResponse('Response is not an object.');
         }
 
-        return $this->validate($decoded, $candidateSet);
+        return $this->validate($decoded, $workItem, $context, $candidateSet);
     }
 
-    private function validate(array $response, NormativeCandidateSetData $set): NormativeRerankResultData
+    private function validate(array $response, WorkIntentData $workItem, NormativeCandidateDecisionContextData $context, NormativeCandidateSetData $set): NormativeRerankResultData
     {
         $fields = array_keys($response);
         sort($fields);
@@ -86,14 +92,25 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
         if (! is_string($selected) || ! in_array($selected, $ids, true)) {
             throw new NormativeRerankingInvalidResponse('Selected candidate is invalid.');
         }
+        if ($selected !== $ordering[0]) {
+            throw new NormativeRerankingInvalidResponse('Selected candidate must be first.');
+        }
         $codes = $response['explanation_codes'];
         $evidence = $response['evidence_refs'];
         $confidence = $response['confidence'];
-        if (! is_array($codes) || array_diff($codes, self::EXPLANATION_CODES) !== [] || ! is_array($evidence) || count($evidence) > 12 || ! is_numeric($confidence) || ! is_finite((float) $confidence) || (float) $confidence < 0 || (float) $confidence > 1) {
+        if (! is_array($codes) || ! array_is_list($codes) || count(array_unique($codes)) !== count($codes)
+            || array_diff($codes, self::EXPLANATION_CODES) !== [] || ! is_array($evidence) || ! array_is_list($evidence)
+            || count(array_unique($evidence)) !== count($evidence) || count($evidence) > 12 || ! is_numeric($confidence)
+            || ! is_finite((float) $confidence) || (float) $confidence < 0 || (float) $confidence > 1) {
             throw new NormativeRerankingInvalidResponse('Decision fields are invalid.');
         }
+        $allowedEvidence = array_values(array_unique([
+            ...$workItem->sourceEvidence,
+            ...$context->sourceEvidence,
+            ...array_merge(...array_map(static fn ($candidate): array => $candidate->sourceEvidence, $set->candidates)),
+        ]));
         foreach ($evidence as $reference) {
-            if (! is_string($reference) || strlen($reference) > 128) {
+            if (! is_string($reference) || strlen($reference) > 128 || ! in_array($reference, $allowedEvidence, true)) {
                 throw new NormativeRerankingInvalidResponse('Evidence reference is invalid.');
             }
         }

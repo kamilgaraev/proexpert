@@ -90,7 +90,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\Est
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Import\FgiscsBuildingResourcePriceSpreadsheetParser;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeCandidateSource;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeHardGate;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeMatchingWorkflow;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRetrievalService;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeWorkIntentFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\PostgresNormativeCandidateSource;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
@@ -330,6 +332,8 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(NormativeCandidateSearchService::class);
         $this->app->singleton(NormativeCandidateSource::class, PostgresNormativeCandidateSource::class);
         $this->app->singleton(NormativeHardGate::class);
+        $this->app->singleton(NormativeMatchingWorkflow::class);
+        $this->app->singleton(NormativeWorkIntentFactory::class);
         $this->app->singleton(NormativeRetrievalService::class, fn ($app) => new NormativeRetrievalService(
             $app->make(NormativeCandidateSource::class),
             $app->make(NormativeHardGate::class),

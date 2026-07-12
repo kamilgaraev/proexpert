@@ -27,5 +27,7 @@ final readonly class WorkIntentData
         public ?string $regionCode,
         public DateTimeImmutable $applicabilityDate,
         public array $sourceEvidence,
-    ) {}
+    ) {
+        EvidenceBounds::assert($sourceEvidence);
+    }
 }

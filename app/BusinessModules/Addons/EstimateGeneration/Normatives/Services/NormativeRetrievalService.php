@@ -15,6 +15,7 @@ final readonly class NormativeRetrievalService
         private NormativeHardGate $hardGate,
         private int $limit,
         private ?string $semanticIndexVersion,
+        private NormativeScoring $scoring = new NormativeScoring,
     ) {
         if ($limit < 1 || $limit > 32) {
             throw new InvalidArgumentException('Candidate limit must be between 1 and 32.');
@@ -25,14 +26,13 @@ final readonly class NormativeRetrievalService
     {
         $candidates = $this->source->find(
             $intent->organizationId, $intent->projectId, $intent->datasetVersion,
-            $intent->intent, $this->limit, $this->semanticIndexVersion,
+            $intent->intent, min(128, max(64, $this->limit * 4)), $this->semanticIndexVersion,
         );
-        usort($candidates, static function ($left, $right): int {
-            $leftCombined = $left->lexicalScore + ($left->semanticScore ?? 0.0);
-            $rightCombined = $right->lexicalScore + ($right->semanticScore ?? 0.0);
-
-            return $rightCombined <=> $leftCombined ?: strcmp($left->id, $right->id);
-        });
+        $ranked = $this->scoring->rank(array_map(static fn ($candidate): array => [
+            'id' => $candidate->id, 'lexical' => $candidate->lexicalScore, 'semantic' => $candidate->semanticScore,
+        ], $candidates));
+        $byId = array_column($candidates, null, 'id');
+        $candidates = array_map(static fn (array $score) => $byId[$score['id']], $ranked);
 
         return $this->hardGate->filter($intent, array_slice($candidates, 0, $this->limit));
     }
