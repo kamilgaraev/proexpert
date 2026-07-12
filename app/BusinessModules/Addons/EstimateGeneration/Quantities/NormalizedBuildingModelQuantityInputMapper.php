@@ -47,7 +47,9 @@ final class NormalizedBuildingModelQuantityInputMapper implements BuildingModelQ
             foreach ($floor->engineeringElements as $element) {
                 $engineering[] = [
                     'id' => $element->key, 'system' => $this->engineeringSystem($element->type),
-                    'measurement' => 'count', 'amount' => '1', 'unit' => 'pcs',
+                    'measurement' => $element->lengthM === null ? 'count' : 'length',
+                    'amount' => $element->lengthM === null ? '1' : $this->decimal($element->lengthM),
+                    'unit' => $element->lengthM === null ? 'pcs' : 'm',
                     ...$this->provenance($element->evidenceIds, $element->confidence, $element->geometryCertainty),
                 ];
             }
@@ -84,7 +86,7 @@ final class NormalizedBuildingModelQuantityInputMapper implements BuildingModelQ
     private function engineeringSystem(string $type): string
     {
         return match ($type) {
-            'water_point' => 'water', 'sewer_point' => 'sewer', 'heating_point' => 'heating',
+            'water_point' => 'water', 'sewer_point', 'sewer_route' => 'sewer', 'heating_point' => 'heating',
             'ventilation_point' => 'ventilation', default => 'electrical',
         };
     }

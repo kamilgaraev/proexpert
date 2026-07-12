@@ -76,7 +76,7 @@ final class RecordedWorkPlannerResponseDataTest extends TestCase
         return new RecordedPortEnvelope(
             1, $port, str_repeat('a', 64), str_repeat('b', 64), 'fixture-provider', 'model-v1',
             'prompt-v1', 'work-planner-v1', $this->payload(), str_repeat('c', 64),
-            'most-fixture-privacy', 'scanner-v1', 'review:task11', '2026-07-12T00:00:00Z', str_repeat('d', 64),
+            'most-fixture-privacy', 'scanner-v1', 'passed', 'review:task11', '2026-07-12T00:00:00Z', str_repeat('d', 64),
         );
     }
 

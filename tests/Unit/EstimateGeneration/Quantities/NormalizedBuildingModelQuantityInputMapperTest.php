@@ -41,4 +41,20 @@ final class NormalizedBuildingModelQuantityInputMapperTest extends TestCase
         $quantities = (new BuildingQuantityCalculator)->calculate($mapped);
         self::assertSame('0.020000', $quantities->get('floor_area')?->amount);
     }
+
+    public function test_confirmed_sewer_route_produces_evidenced_length_quantity(): void
+    {
+        $model = new NormalizedBuildingModelData('m', 'confirmed', 1.0, [
+            new FloorData('floor-1', 0.0, null, [], [], [], [
+                new EngineeringElementData('riser-110', 'sewer_route', [1.8, 0.8], null, [17], 1.0, 'confirmed', 3.3),
+            ], [17], 1.0, 'confirmed'),
+        ], [], 'building-model:v1');
+
+        $quantities = (new BuildingQuantityCalculator)->calculate(
+            (new NormalizedBuildingModelQuantityInputMapper)->map($model),
+        );
+
+        self::assertSame('3.300000', $quantities->get('engineering.sewer.length')?->amount);
+        self::assertSame(['17'], $quantities->get('engineering.sewer.length')?->evidenceIds);
+    }
 }

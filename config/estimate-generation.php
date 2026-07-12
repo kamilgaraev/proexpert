@@ -121,23 +121,23 @@ return [
         'production_replay_projections' => [
             'reg-replay-vector-wall-opening-001' => [
                 'reference' => 'projections/vector-wall-opening-v1.json',
-                'sha256' => 'fed4e1802c6424d3fbc9df3a39dd3121d0ae103039368b7fbbdf69fcf8261a89',
+                'sha256' => '43d1faaa47e6d3caa564d5eb61153e76db580a88fd2f1954c0e701566ce83b0f',
             ],
             'reg-replay-vision-sketch-001' => [
                 'reference' => 'projections/vision-sketch-v1.json',
-                'sha256' => '9973e5041fd49e5613b024cbd176a7793cc352ea8e5c82ef38e91a04e74a1aaa',
+                'sha256' => '9dcc2d4ced5ea4b04b1323421255cabf5728273649336cfbc3aabc2cf04e4167',
             ],
-            'reg-replay-vector-pdf-001' => ['reference' => 'projections/vector-pdf-001.json', 'sha256' => '8fd17d4f84e7870f1c7525aecd7497cc0af414bb10d2ddc48ff52b7c5cd0aa37'],
-            'reg-replay-scanned-pdf-001' => ['reference' => 'projections/scanned-pdf-001.json', 'sha256' => '72798e991ee34bca390104331397fbddae2c50070ae9ef4841a94e73ba586fe4'],
-            'reg-replay-dwg-layout-001' => ['reference' => 'projections/dwg-layout-001.json', 'sha256' => '003fd6f6377efa2095bdc11ab886f6a67e66ac718689c25e866233000dcb1b9b'],
-            'reg-replay-dimensioned-raster-001' => ['reference' => 'projections/dimensioned-raster-001.json', 'sha256' => '85f74ac2eb3a0d5e5b6cb49a8f12dd7069e97a9eaf9beff844cada12c7fe3eb5'],
-            'reg-replay-freehand-review-001' => ['reference' => 'projections/freehand-review-001.json', 'sha256' => 'f6b61c0080597d54bd1b0f01b41f5b6a81388a782da5f7f02611ab2c18867124'],
-            'reg-replay-engineering-layout-001' => ['reference' => 'projections/engineering-layout-001.json', 'sha256' => '35a7f6038a88fc032d771ec9a3e912dd066673065af459a6f9b9ce111af68358'],
+            'reg-replay-vector-pdf-001' => ['reference' => 'projections/vector-pdf-001.json', 'sha256' => '707e6fe43e591ed7c59e67cc172d3bcdc0d2f0f6fab15287874779072a0ca36d'],
+            'reg-replay-scanned-pdf-001' => ['reference' => 'projections/scanned-pdf-001.json', 'sha256' => '40f3d99325f7319f7ae8bae3ac460f95d4f1cd15eef98a1fc3f039319a2e373b'],
+            'reg-replay-dwg-layout-001' => ['reference' => 'projections/dwg-layout-001.json', 'sha256' => '4aa3d89c19ef43366c90343c413bdb1a0eb52cd413c0cba63c8d84df4849404b'],
+            'reg-replay-dimensioned-raster-001' => ['reference' => 'projections/dimensioned-raster-001.json', 'sha256' => '7d1fe52d6f07a32b0a7350577ec755fbca043dc2f563915b9732424a69b6d676'],
+            'reg-replay-freehand-review-001' => ['reference' => 'projections/freehand-review-001.json', 'sha256' => 'b46151eab9a0b23c97a9474c5aa565d351debb310d338f36e860ae33b13a495e'],
+            'reg-replay-engineering-layout-001' => ['reference' => 'projections/engineering-layout-001.json', 'sha256' => '2710e68bbba38ba97d39757de88827c7cc746d3df358e2a78f900258bad1a4ef'],
         ],
         'registered_manifests' => [
             'repository-production-replay:v1' => [
                 'locator' => 'production-replay-manifest.json',
-                'sha256' => '896812ae8459efd72aa913779e96707f391fb9fc0ab808fd545092314b0ba87f',
+                'sha256' => 'd93aa33eac98b8b7931ed09bdbf0ad97d9d5540b636338d91c4fa88ff53bc6ff',
             ],
         ],
     ],

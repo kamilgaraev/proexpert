@@ -68,6 +68,8 @@ final class WorkPlanCompilerTest extends TestCase
                     'quantity' => '12.5',
                     'quantity_key' => 'concrete_volume', 'quantity_source_refs' => ['quantity:q1'],
                     'confidence' => 0.91,
+                    'work_intent' => ['material' => 'concrete', 'action' => 'concreting', 'scope' => 'foundation',
+                        'object' => 'foundation', 'dimensions' => ['volume'], 'preferred_section_prefixes' => ['06']],
                 ]],
             ]],
         ])->toWorkPlannerResponse();
@@ -80,6 +82,7 @@ final class WorkPlanCompilerTest extends TestCase
         self::assertSame('12.5', $item['quantity']);
         self::assertSame('not_calculated', $item['pricing_status']);
         self::assertNull($item['normative_rate_code']);
+        self::assertSame('concreting', $item['work_intent']['action']);
         self::assertArrayNotHasKey('norm_id', $item);
     }
 

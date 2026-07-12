@@ -62,6 +62,10 @@ final readonly class WorkPlanCompiler
         return [
             'key' => (string) $intent['intent_key'], 'parent_key' => null, 'level' => 0, 'item_type' => 'priced_work',
             'name' => $name, 'description' => $name, 'normative_search_text' => $name,
+            'work_intent' => isset($intent['work_intent']) ? [
+                ...$intent['work_intent'],
+                'expected_dimensions' => $intent['work_intent']['dimensions'],
+            ] : null,
             'normative_search_key' => implode('|', [(string) $localEstimate['key'], (string) $localEstimate['scope_type'], $category, mb_strtolower($name), (string) $intent['unit'], (string) $intent['intent_key']]),
             'normative_rate_code' => null, 'work_category' => $category, 'unit' => (string) $intent['unit'],
             'quantity' => (string) $intent['quantity'], 'quantity_formula' => (string) $intent['intent_key'],

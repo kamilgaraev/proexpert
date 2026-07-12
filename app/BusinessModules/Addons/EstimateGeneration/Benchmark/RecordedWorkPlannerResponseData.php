@@ -47,7 +47,9 @@ final readonly class RecordedWorkPlannerResponseData
             $intents = [];
             foreach ($section['work_intents'] as $intent) {
                 if (! is_array($intent)
-                    || ! self::exactKeys($intent, ['intent_key', 'quantity_key', 'name', 'category', 'unit', 'quantity', 'quantity_source_refs', 'confidence'])
+                    || ! self::exactKeys($intent, array_key_exists('work_intent', $intent)
+                        ? ['intent_key', 'quantity_key', 'name', 'category', 'unit', 'quantity', 'quantity_source_refs', 'confidence', 'work_intent']
+                        : ['intent_key', 'quantity_key', 'name', 'category', 'unit', 'quantity', 'quantity_source_refs', 'confidence'])
                     || ! self::token($intent['intent_key'] ?? null)
                     || isset($intentKeys[$intent['intent_key']])
                     || ! self::token($intent['quantity_key'] ?? null)
@@ -61,7 +63,8 @@ final readonly class RecordedWorkPlannerResponseData
                     || $intent['quantity_source_refs'] === []
                     || ! is_int($intent['confidence']) && ! is_float($intent['confidence'])
                     || ! is_finite((float) $intent['confidence'])
-                    || (float) $intent['confidence'] < 0 || (float) $intent['confidence'] > 1) {
+                    || (float) $intent['confidence'] < 0 || (float) $intent['confidence'] > 1
+                    || array_key_exists('work_intent', $intent) && ! self::workIntent($intent['work_intent'])) {
                     throw self::invalid();
                 }
                 $intentKeys[$intent['intent_key']] = true;
@@ -78,6 +81,23 @@ final readonly class RecordedWorkPlannerResponseData
     private static function exactKeys(array $value, array $keys): bool
     {
         return count($value) === count($keys) && array_diff(array_keys($value), $keys) === [];
+    }
+
+    private static function workIntent(mixed $value): bool
+    {
+        if (! is_array($value) || ! self::exactKeys($value,
+            ['material', 'action', 'scope', 'object', 'dimensions', 'preferred_section_prefixes'])) {
+            return false;
+        }
+        foreach (['material', 'action', 'scope', 'object'] as $key) {
+            if (! is_string($value[$key]) || strlen($value[$key]) > 128) {
+                return false;
+            }
+        }
+
+        return self::references($value['dimensions'], 8)
+            && $value['dimensions'] !== []
+            && self::references($value['preferred_section_prefixes'], 16);
     }
 
     private static function token(mixed $value): bool

@@ -36,7 +36,7 @@ final class ProductionReplaySourceCaptureTest extends TestCase
         self::assertGreaterThanOrEqual(7, count($actual['entities']));
         self::assertContains('4400 mm', array_column($actual['texts'], 'text'));
         self::assertContains('2900 mm', array_column($actual['texts'], 'text'));
-        self::assertContains('OPENING 600 mm', array_column($actual['texts'], 'text'));
+        self::assertContains('OPENING 600x2100 mm', array_column($actual['texts'], 'text'));
         $segments = array_merge(...array_map(static fn (array $entity): array => $entity['segments'], $actual['entities']));
         $lines = array_values(array_filter($segments, static fn (array $segment): bool => $segment['operator'] === 'line'));
         self::assertTrue($this->hasLine($lines, [60.0, 650.0], [260.0, 650.0]));

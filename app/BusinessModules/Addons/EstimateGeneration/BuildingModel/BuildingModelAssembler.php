@@ -88,6 +88,12 @@ final class BuildingModelAssembler
                     $element->key, $element->geometry['engineering_type'],
                     $confirmed ? $this->metricPoint($element->geometry['location'], $input->scale->metersPerUnit) : null,
                     $element->geometry['room_key'], $evidenceIds, $element->confidence, $confirmed ? 'confirmed' : 'unknown',
+                    $confirmed && is_array($element->geometry['path'] ?? null)
+                        ? $this->metricValue(hypot(
+                            (float) $element->geometry['path'][1][0] - (float) $element->geometry['path'][0][0],
+                            (float) $element->geometry['path'][1][1] - (float) $element->geometry['path'][0][1],
+                        ), $input->scale->metersPerUnit)
+                        : null,
                 );
             }
         }

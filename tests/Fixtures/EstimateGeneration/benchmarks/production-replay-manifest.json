@@ -1,1 +1,179 @@
-{"schema_version":1,"manifest_version":"estimate-generation-benchmark:v1","acceptance_manifest_locator":"s3://org-{organization_id}/estimate-generation/benchmarks/acceptance/manifest.json","cases":[{"id":"reg-replay-vector-wall-opening-001","dataset":"regression","source_type":"dxf","input_locator":"regression/replay-vector-wall-opening-001/input.dxf","expected_locator":"regression/replay-vector-wall-opening-001/expected.json","input_sha256":"61d65487849491092546b1b87f1280b54b09878726b635e3d2a7fe25aca1c846","expected_sha256":"49b249fadaa95015818cb7d1d92388b69f128998d5c433e2541fbd615d2acbf9","license":"CC0-1.0","provenance":"synthetic:most-plan3-task11-recorded-fixtures-v1","tags":["opening","production-replay","vector","wall"],"schema_version":1,"expected_model_schema_version":"benchmark-expected:v1","allowed_capabilities":["document_understanding","geometry"]},{"id":"reg-replay-vision-sketch-001","dataset":"regression","source_type":"photo_plan","input_locator":"regression/replay-vision-sketch-001/input.ppm","expected_locator":"regression/replay-vision-sketch-001/expected.json","input_sha256":"cdb6fb1a83c1ab3f73f05fc01337f4db76f08dd74c17ae039474e620de5cf8e3","expected_sha256":"076ab97d330e5230bfa86ad56ae5efc9aa109913c5c2ae17768493ee9f075176","license":"CC0-1.0","provenance":"synthetic:most-plan3-task11-recorded-fixtures-v1","tags":["production-replay","raster","sketch","vision"],"schema_version":1,"expected_model_schema_version":"benchmark-expected:v1","allowed_capabilities":["document_understanding","vision"]},{"id":"reg-replay-vector-pdf-001","dataset":"regression","source_type":"vector_pdf","input_locator":"regression/replay-vector-pdf-001/input.pdf","expected_locator":"regression/replay-vector-pdf-001/expected.json","input_sha256":"aae4e39a354e80d8766425b880e09914acf6c9aaecafba5c70467995f2fbe5cf","expected_sha256":"0cd7512a43b2b0dabc9ef4434cac1a8ebae82929a77d493902f78185fe99d9e7","license":"CC0-1.0","provenance":"synthetic:most-plan3-task11-corpus-v1","tags":["production-replay","vector-pdf"],"schema_version":1,"expected_model_schema_version":"benchmark-expected:v1","allowed_capabilities":["document_understanding","geometry"]},{"id":"reg-replay-scanned-pdf-001","dataset":"regression","source_type":"scanned_pdf","input_locator":"regression/replay-scanned-pdf-001/input.pdf","expected_locator":"regression/replay-scanned-pdf-001/expected.json","input_sha256":"6fe2d8b472d979bab60da8892b34e37760c16e98428ccd10bbaef215db15436b","expected_sha256":"beb5b79df502a4b5798cd2a2525edcd4c904d29a857bdf8e0fb3712b70c3d915","license":"CC0-1.0","provenance":"synthetic:most-plan3-task11-corpus-v1","tags":["production-replay","scanned-pdf"],"schema_version":1,"expected_model_schema_version":"benchmark-expected:v1","allowed_capabilities":["document_understanding","vision"]},{"id":"reg-replay-dwg-layout-001","dataset":"regression","source_type":"dwg","input_locator":"regression/replay-dwg-layout-001/input.dwg","expected_locator":"regression/replay-dwg-layout-001/expected.json","input_sha256":"948f40e9370bc92f4a382002cb8f8e28dd34e846d2aec026d3a9477a38a5313c","expected_sha256":"dc37e75c9d53bb466cb68012b2cdaeffd68692959123f7f327e6e3d03902daa3","license":"CC0-1.0","provenance":"synthetic:most-plan3-task11-corpus-v1","tags":["production-replay","dwg-layout"],"schema_version":1,"expected_model_schema_version":"benchmark-expected:v1","allowed_capabilities":["document_understanding","geometry"]},{"id":"reg-replay-dimensioned-raster-001","dataset":"regression","source_type":"photo_plan","input_locator":"regression/replay-dimensioned-raster-001/input.ppm","expected_locator":"regression/replay-dimensioned-raster-001/expected.json","input_sha256":"f4714b0ce155595576bd404aa001cc8b7fe843f40cce3e580c52419c74b7738a","expected_sha256":"0dc154627e9acbbb75245d609acc49b2fac6dc2069b2bb7bed33b35ebcb7d668","license":"CC0-1.0","provenance":"synthetic:most-plan3-task11-corpus-v1","tags":["production-replay","dimensioned-raster"],"schema_version":1,"expected_model_schema_version":"benchmark-expected:v1","allowed_capabilities":["document_understanding","vision"]},{"id":"reg-replay-freehand-review-001","dataset":"regression","source_type":"undimensioned_sketch","input_locator":"regression/replay-freehand-review-001/input.svg","expected_locator":"regression/replay-freehand-review-001/expected.json","input_sha256":"96a16daa8662754db0f168b0f27208220909d2c250921c1cedb3a1595c17294c","expected_sha256":"f0746e3ef8a2753a80c8f9797aa301f4b5ea1a1bc0ec4c2a1372095a30c5dacd","license":"CC0-1.0","provenance":"synthetic:most-plan3-task11-corpus-v1","tags":["production-replay","freehand-review"],"schema_version":1,"expected_model_schema_version":"benchmark-expected:v1","allowed_capabilities":["document_understanding","vision"]},{"id":"reg-replay-engineering-layout-001","dataset":"regression","source_type":"dimensioned_sketch","input_locator":"regression/replay-engineering-layout-001/input.svg","expected_locator":"regression/replay-engineering-layout-001/expected.json","input_sha256":"2cb1f38c1641be70a3199004cc8dd492c00a6bce11af3d67d9f4119ac783e05c","expected_sha256":"f3dc370a92adb459e607a17f1cd6e2f4c7791bbafaaee2bb40f20f2bf617754d","license":"CC0-1.0","provenance":"synthetic:most-plan3-task11-corpus-v1","tags":["production-replay","engineering-layout"],"schema_version":1,"expected_model_schema_version":"benchmark-expected:v1","allowed_capabilities":["document_understanding","vision"]}]}
+{
+    "schema_version": 1,
+    "manifest_version": "estimate-generation-benchmark:v1",
+    "acceptance_manifest_locator": "s3://org-{organization_id}/estimate-generation/benchmarks/acceptance/manifest.json",
+    "cases": [
+        {
+            "id": "reg-replay-vector-wall-opening-001",
+            "dataset": "regression",
+            "source_type": "dxf",
+            "input_locator": "regression/replay-vector-wall-opening-001/input.dxf",
+            "expected_locator": "regression/replay-vector-wall-opening-001/expected.json",
+            "input_sha256": "61d65487849491092546b1b87f1280b54b09878726b635e3d2a7fe25aca1c846",
+            "expected_sha256": "d1233b0b05314d6235c4265a38021c58fc493888cc6552ea429cc8f85935c267",
+            "license": "CC0-1.0",
+            "provenance": "synthetic:most-plan3-task11-recorded-fixtures-v1",
+            "tags": [
+                "opening",
+                "production-replay",
+                "vector",
+                "wall"
+            ],
+            "schema_version": 1,
+            "expected_model_schema_version": "benchmark-expected:v1",
+            "allowed_capabilities": [
+                "document_understanding",
+                "geometry"
+            ]
+        },
+        {
+            "id": "reg-replay-vision-sketch-001",
+            "dataset": "regression",
+            "source_type": "photo_plan",
+            "input_locator": "regression/replay-vision-sketch-001/input.ppm",
+            "expected_locator": "regression/replay-vision-sketch-001/expected.json",
+            "input_sha256": "cdb6fb1a83c1ab3f73f05fc01337f4db76f08dd74c17ae039474e620de5cf8e3",
+            "expected_sha256": "2932a24ace713e1138d6af46ad36343a20a55ca6faa5a22049308f1046fa0636",
+            "license": "CC0-1.0",
+            "provenance": "synthetic:most-plan3-task11-recorded-fixtures-v1",
+            "tags": [
+                "production-replay",
+                "raster",
+                "sketch",
+                "vision"
+            ],
+            "schema_version": 1,
+            "expected_model_schema_version": "benchmark-expected:v1",
+            "allowed_capabilities": [
+                "document_understanding",
+                "vision"
+            ]
+        },
+        {
+            "id": "reg-replay-vector-pdf-001",
+            "dataset": "regression",
+            "source_type": "vector_pdf",
+            "input_locator": "regression/replay-vector-pdf-001/input.pdf",
+            "expected_locator": "regression/replay-vector-pdf-001/expected.json",
+            "input_sha256": "636dab59684a9a2877abfc665559917a02dbcead3ca4e7e2ebf4fd94856c20c6",
+            "expected_sha256": "8ee09e4ac566757195a5cd108812721b248d687218077fce9142ed252c407f53",
+            "license": "CC0-1.0",
+            "provenance": "synthetic:most-plan3-task11-corpus-v1",
+            "tags": [
+                "production-replay",
+                "vector-pdf"
+            ],
+            "schema_version": 1,
+            "expected_model_schema_version": "benchmark-expected:v1",
+            "allowed_capabilities": [
+                "document_understanding",
+                "geometry"
+            ]
+        },
+        {
+            "id": "reg-replay-scanned-pdf-001",
+            "dataset": "regression",
+            "source_type": "scanned_pdf",
+            "input_locator": "regression/replay-scanned-pdf-001/input.pdf",
+            "expected_locator": "regression/replay-scanned-pdf-001/expected.json",
+            "input_sha256": "0aab758061ce4466b704a78221752eb2a90e2d8bf656633ddbf49c3676290200",
+            "expected_sha256": "352fa7e4ac7c7862f163e270a95817e7e5313b01d5aafd7eb8b550d1f946971b",
+            "license": "CC0-1.0",
+            "provenance": "synthetic:most-plan3-task11-corpus-v1",
+            "tags": [
+                "production-replay",
+                "scanned-pdf"
+            ],
+            "schema_version": 1,
+            "expected_model_schema_version": "benchmark-expected:v1",
+            "allowed_capabilities": [
+                "document_understanding",
+                "vision"
+            ]
+        },
+        {
+            "id": "reg-replay-dwg-layout-001",
+            "dataset": "regression",
+            "source_type": "dwg",
+            "input_locator": "regression/replay-dwg-layout-001/input.dwg",
+            "expected_locator": "regression/replay-dwg-layout-001/expected.json",
+            "input_sha256": "948f40e9370bc92f4a382002cb8f8e28dd34e846d2aec026d3a9477a38a5313c",
+            "expected_sha256": "7312db9a5c3a8e6461617854d09e8bf52c787a6634787a6726adb4d181177a81",
+            "license": "CC0-1.0",
+            "provenance": "synthetic:most-plan3-task11-corpus-v1",
+            "tags": [
+                "production-replay",
+                "dwg-layout"
+            ],
+            "schema_version": 1,
+            "expected_model_schema_version": "benchmark-expected:v1",
+            "allowed_capabilities": [
+                "document_understanding",
+                "geometry"
+            ]
+        },
+        {
+            "id": "reg-replay-dimensioned-raster-001",
+            "dataset": "regression",
+            "source_type": "photo_plan",
+            "input_locator": "regression/replay-dimensioned-raster-001/input.ppm",
+            "expected_locator": "regression/replay-dimensioned-raster-001/expected.json",
+            "input_sha256": "9c3c8c4b3d4e323cf85f11abfcb499dda6957827ae04b63e9d0e9f574510ff25",
+            "expected_sha256": "947af7f994548ba79e3985bf06c770931741a2430a3b21ac3cb3fea442c01bed",
+            "license": "CC0-1.0",
+            "provenance": "synthetic:most-plan3-task11-corpus-v1",
+            "tags": [
+                "production-replay",
+                "dimensioned-raster"
+            ],
+            "schema_version": 1,
+            "expected_model_schema_version": "benchmark-expected:v1",
+            "allowed_capabilities": [
+                "document_understanding",
+                "vision"
+            ]
+        },
+        {
+            "id": "reg-replay-freehand-review-001",
+            "dataset": "regression",
+            "source_type": "undimensioned_sketch",
+            "input_locator": "regression/replay-freehand-review-001/input.svg",
+            "expected_locator": "regression/replay-freehand-review-001/expected.json",
+            "input_sha256": "995d826feb1c9298ba6cf414abb8e94a7774d525c8af26050051dc4ac54caf24",
+            "expected_sha256": "f0746e3ef8a2753a80c8f9797aa301f4b5ea1a1bc0ec4c2a1372095a30c5dacd",
+            "license": "CC0-1.0",
+            "provenance": "synthetic:most-plan3-task11-corpus-v1",
+            "tags": [
+                "production-replay",
+                "freehand-review"
+            ],
+            "schema_version": 1,
+            "expected_model_schema_version": "benchmark-expected:v1",
+            "allowed_capabilities": [
+                "document_understanding",
+                "vision"
+            ]
+        },
+        {
+            "id": "reg-replay-engineering-layout-001",
+            "dataset": "regression",
+            "source_type": "dimensioned_sketch",
+            "input_locator": "regression/replay-engineering-layout-001/input.svg",
+            "expected_locator": "regression/replay-engineering-layout-001/expected.json",
+            "input_sha256": "f8a67260d0aecac037ba4969d2b74b6ccaa3a92c47cf42dd277b9f9c58e0cff3",
+            "expected_sha256": "6df96cefe66d5ba26ccf5a7a3753cfaa4ef5393f4844a10596c457af38b7cd01",
+            "license": "CC0-1.0",
+            "provenance": "synthetic:most-plan3-task11-corpus-v1",
+            "tags": [
+                "production-replay",
+                "engineering-layout"
+            ],
+            "schema_version": 1,
+            "expected_model_schema_version": "benchmark-expected:v1",
+            "allowed_capabilities": [
+                "document_understanding",
+                "vision"
+            ]
+        }
+    ]
+}

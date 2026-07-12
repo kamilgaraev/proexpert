@@ -74,7 +74,9 @@ final readonly class FusedGeometryElementData
         $keys = match ($type) {
             'room' => ['polygon'], 'wall' => ['start', 'end', 'thickness', 'height'],
             'opening' => ['wall_key', 'opening_type', 'offset', 'width', 'height'],
-            'engineering_element' => ['engineering_type', 'location', 'room_key'],
+            'engineering_element' => array_key_exists('path', $geometry)
+                ? ['engineering_type', 'location', 'path', 'room_key']
+                : ['engineering_type', 'location', 'room_key'],
         };
         if (array_keys($geometry) !== $keys) {
             throw new InvalidArgumentException('Geometry shape is invalid.');
@@ -110,11 +112,21 @@ final readonly class FusedGeometryElementData
 
             return;
         }
-        if (! in_array($geometry['engineering_type'], ['outlet', 'switch', 'light', 'water_point', 'sewer_point', 'heating_point', 'ventilation_point', 'route'], true)
+        if (! in_array($geometry['engineering_type'], ['outlet', 'switch', 'light', 'water_point', 'sewer_point', 'heating_point', 'ventilation_point', 'route', 'sewer_route'], true)
             || ($geometry['room_key'] !== null && (! is_string($geometry['room_key']) || $geometry['room_key'] === ''))) {
             throw new InvalidArgumentException('Engineering geometry is invalid.');
         }
         $this->assertPoint($geometry['location']);
+        if (array_key_exists('path', $geometry) && $geometry['path'] !== null) {
+            if (! is_array($geometry['path']) || count($geometry['path']) !== 2) {
+                throw new InvalidArgumentException('Engineering geometry is invalid.');
+            }
+            $this->assertPoint($geometry['path'][0]);
+            $this->assertPoint($geometry['path'][1]);
+            if ($geometry['path'][0] === $geometry['path'][1]) {
+                throw new InvalidArgumentException('Engineering geometry is invalid.');
+            }
+        }
     }
 
     private function assertPoint(mixed $point): void

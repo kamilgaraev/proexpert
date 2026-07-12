@@ -297,11 +297,12 @@ final readonly class GeometryBuildingModelInputMapper
 
     private function visionEngineeringGeometry(?string $label, array $polygon): ?array
     {
-        if ($label === null || ! in_array($label, ['outlet', 'switch', 'light', 'water_point', 'sewer_point', 'heating_point', 'ventilation_point', 'route'], true)) {
+        if ($label === null || ! in_array($label, ['outlet', 'switch', 'light', 'water_point', 'sewer_point', 'heating_point', 'ventilation_point', 'route', 'sewer_route'], true)) {
             return null;
         }
 
-        return ['engineering_type' => $label, 'location' => $polygon[0], 'room_key' => null];
+        return ['engineering_type' => $label, 'location' => $polygon[0],
+            'path' => count($polygon) === 2 ? $polygon : null, 'room_key' => null];
     }
 
     /** @return array{list<FusedGeometryElementData>, list<array{code: string, severity: string, element_key: string, evidence_refs: list<string>}>} */

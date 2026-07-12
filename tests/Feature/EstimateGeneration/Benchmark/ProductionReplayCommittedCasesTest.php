@@ -62,14 +62,55 @@ final class ProductionReplayCommittedCasesTest extends TestCase
 
         foreach (glob($root.'/catalogs/*.json') ?: [] as $catalogPath) {
             $catalog = json_decode((string) file_get_contents($catalogPath), true, 32, JSON_THROW_ON_ERROR);
-            self::assertCount(2, $catalog['candidates']);
-            self::assertStringEndsWith('-alt', $catalog['candidates'][0]['candidate_id']);
-            self::assertStringEndsWith('-primary', $catalog['candidates'][1]['candidate_id']);
-            self::assertNotSame($catalog['prices'][0]['base_price'], $catalog['prices'][1]['base_price']);
+            self::assertContains(count($catalog['candidates']), [2, 3]);
+            self::assertCount(count($catalog['candidates']), $catalog['resources']);
+            self::assertCount(count($catalog['candidates']), $catalog['prices']);
+            self::assertCount(count($catalog['candidates']), array_unique(array_column($catalog['resources'], 'candidate_id')));
+            self::assertCount(count($catalog['prices']), array_unique(array_column($catalog['prices'], 'base_price')));
+            foreach ($catalog['candidates'] as $candidate) {
+                self::assertDoesNotMatchRegularExpression('/(?:^|[-_])(alt|primary)(?:$|[-_])/i', $candidate['candidate_id']);
+                self::assertDoesNotMatchRegularExpression('/альтернатив|основн/i', $candidate['name']);
+            }
+            if ($catalog['approval_ref'] === 'plan3-task11-corpus-v2') {
+                foreach ($catalog['prices'] as $price) {
+                    self::assertSame('approved:fgiscs-regional-capture-2026-07', $price['snapshot_provenance']);
+                    self::assertSame('plan3-task11-price-review', $price['snapshot_approval_ref']);
+                }
+            }
         }
+
+        $selectedPositions = [];
+        foreach (glob($root.'/recordings/*-reranker.json') ?: [] as $rerankerPath) {
+            $reranker = json_decode((string) file_get_contents($rerankerPath), true, 32, JSON_THROW_ON_ERROR)['payload'];
+            if (! str_contains(basename($rerankerPath), '-001-')) {
+                continue;
+            }
+            $slug = substr(basename($rerankerPath), 0, -strlen('-reranker.json'));
+            $catalog = json_decode((string) file_get_contents($root.'/catalogs/'.$slug.'.json'), true, 32, JSON_THROW_ON_ERROR);
+            $candidateIds = array_column($catalog['candidates'], 'candidate_id');
+            self::assertEqualsCanonicalizing($candidateIds, $reranker['ordering']);
+            $selectedPositions[] = array_search($reranker['selected_candidate_id'], $candidateIds, true);
+            $renamedAndReordered = array_reverse(array_map(
+                static fn (string $id): string => $id === $reranker['selected_candidate_id'] ? $id : 'opaque-'.hash('sha256', $id),
+                $candidateIds,
+            ));
+            self::assertContains($reranker['selected_candidate_id'], $renamedAndReordered);
+        }
+        sort($selectedPositions);
+        self::assertSame([0, 0, 1, 2, 2], $selectedPositions);
+
+        $builderSource = (string) file_get_contents($root.'/build-production-replay-corpus.php');
+        self::assertStringNotContainsString('expected-authoring-plan3-task11.json', $builderSource);
+        self::assertDoesNotMatchRegularExpression('/\$spec\s*\[\s*0\s*\]/', $builderSource);
+        self::assertDoesNotMatchRegularExpression('/(?:^|[-_])(alt|primary)(?:$|[-_])/i', $builderSource);
 
         foreach (['recordings', 'catalogs', 'projections'] as $directory) {
             foreach (glob($root.'/'.$directory.'/*.json') ?: [] as $artifact) {
+                if ($directory === 'recordings' && (str_ends_with($artifact, '-source-trace.json')
+                    || str_ends_with($artifact, '-parser-proof.json') || str_ends_with($artifact, '/manifest.json')
+                    || str_ends_with($artifact, '\\manifest.json'))) {
+                    continue;
+                }
                 $payload = json_decode((string) file_get_contents($artifact), true, 64, JSON_THROW_ON_ERROR);
                 $this->assertNoForbiddenKeys($payload, $artifact);
             }
@@ -87,6 +128,9 @@ final class ProductionReplayCommittedCasesTest extends TestCase
         $manifestCases = array_column(json_decode((string) file_get_contents($root.'/production-replay-manifest.json'), true, 64, JSON_THROW_ON_ERROR)['cases'], null, 'id');
         foreach (glob($root.'/recordings/*-*.json') ?: [] as $recordingPath) {
             $recording = json_decode((string) file_get_contents($recordingPath), true, 64, JSON_THROW_ON_ERROR);
+            if (! isset($recording['capture_kind'])) {
+                continue;
+            }
             $caseId = array_search($recording['source_sha256'], array_column($manifestCases, 'input_sha256', 'id'), true);
             self::assertIsString($caseId);
             self::assertSame($manifestCases[$caseId]['input_sha256'], $recording['source_sha256']);
