@@ -185,3 +185,27 @@ Scoped covering run: OK (8 tests, 41 assertions)
 ```
 
 Архив проверяется до распаковки, версия проверяется после неё. Docker, административные права и глобальный PATH не использовались. Smoke доказал реальное декодирование committed `simple-house.dwg` через LibreDWG 0.13.4.
+
+### Security re-review LibreDWG bootstrap
+
+Первоначальная формулировка выше была неполной: первая версия bootstrap рекурсивно искала executable в writable cache и не аутентифицировала опубликованную установку. После независимого review этот вариант заменён.
+
+Текущий контракт закрепляет точный `dwgread.exe` в корне официального архива, SHA-256 binary `88f3c398bc1ff5a83c365fe8180018ef26947a63fff21fad8a032dd056a47c94` и SHA-256 отсортированного списка всех 75 путей архива `f9e13dea1b8f4ac19d4c91bd76c9b7c56c60f6c68f411b40981964d4d6a69c6b`. Cache считается валидным только при совпадении marker, archive SHA, версии, exact relative path и binary SHA. До этих проверок cached executable не запускается.
+
+Установка сериализована named mutex. Архив скачивается только по HTTPS/TLS 1.2 с HTTPS-only redirect, ограниченными timeout/retry, проверяется по SHA до открытия и ручной распаковки. Проверяются absolute/UNC/drive/traversal paths, case-insensitive duplicates, link/reparse attributes, число записей, individual/total sizes и полный список путей. Распаковка идёт в новый staging; публикация — `Directory.Move` под lock без `-Force` в final.
+
+```text
+tests/Runtime/libredwg-bootstrap-runtime.ps1
+libredwg bootstrap runtime: PASS
+
+Покрыто: clean install; corrupt archive SHA; idempotent authenticated marker; fake cached binary/marker mismatch без исполнения; interrupted partial cache; traversal ZIP; 0.13.40/prefix/suffix false positives; exact output с non-zero exit.
+
+vendor/bin/phpunit tests/Unit/EstimateGeneration/Vision/CadProductionRuntimeContractTest.php --filter libredwg_bootstrap
+OK (1 test, 15 assertions)
+
+Clean cache bootstrap:
+dwgread 0.13.4
+
+Scoped real DWG decode:
+OK (1 test, 3 assertions)
+```
