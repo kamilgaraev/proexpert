@@ -58,13 +58,31 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
         $this->requirePostgres();
         $fixture = $this->fixture();
         try {
-            $before = DB::table('estimate_generation_sessions')->orderBy('id')->pluck('input_payload', 'id')->all();
+            $statementTimeout = DB::selectOne('SHOW statement_timeout')->statement_timeout;
+            $lockTimeout = DB::selectOne('SHOW lock_timeout')->lock_timeout;
             $migration = require dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_000250_convert_session_payloads_to_jsonb.php';
             $migration->down();
             DB::statement('ALTER TABLE estimate_generation_sessions ADD COLUMN input_payload__jsonb_shadow jsonb');
-            DB::statement('UPDATE estimate_generation_sessions SET input_payload__jsonb_shadow=input_payload::jsonb WHERE id=(SELECT MIN(id) FROM estimate_generation_sessions)');
+            try {
+                $migration->up();
+                self::fail('Ambiguous rollout phase was accepted.');
+            } catch (\RuntimeException $exception) {
+                self::assertSame('estimate_generation.payload_rollout_ambiguous', $exception->getMessage());
+            }
+            DB::statement('ALTER TABLE estimate_generation_sessions DROP COLUMN input_payload__jsonb_shadow');
+            DB::statement('ALTER TABLE estimate_generation_sessions ADD COLUMN input_payload__jsonb_shadow jsonb, ADD COLUMN analysis_payload__jsonb_shadow jsonb, ADD COLUMN draft_payload__jsonb_shadow jsonb, ADD COLUMN problem_flags__jsonb_shadow jsonb');
+            DB::unprepared('CREATE FUNCTION eg_session_payload_dual_write_v1() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.input_payload__jsonb_shadow:=NEW.input_payload::jsonb; NEW.analysis_payload__jsonb_shadow:=NEW.analysis_payload::jsonb; NEW.draft_payload__jsonb_shadow:=NEW.draft_payload::jsonb; NEW.problem_flags__jsonb_shadow:=NEW.problem_flags::jsonb; RETURN NEW; END; $$; CREATE TRIGGER eg_session_payload_dual_write_v1 BEFORE INSERT OR UPDATE ON estimate_generation_sessions FOR EACH ROW EXECUTE FUNCTION eg_session_payload_dual_write_v1();');
+            DB::statement('UPDATE estimate_generation_sessions SET input_payload__jsonb_shadow=input_payload::jsonb, analysis_payload__jsonb_shadow=analysis_payload::jsonb, draft_payload__jsonb_shadow=draft_payload::jsonb, problem_flags__jsonb_shadow=problem_flags::jsonb WHERE id=?', [$fixture['session']->id]);
+            $writer = new \PDO(
+                sprintf('pgsql:host=%s;port=%s;dbname=%s', config('database.connections.pgsql.host'), config('database.connections.pgsql.port'), config('database.connections.pgsql.database')),
+                (string) config('database.connections.pgsql.username'),
+                (string) config('database.connections.pgsql.password'),
+                [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION],
+            );
+            $update = $writer->prepare('UPDATE estimate_generation_sessions SET input_payload=CAST(:payload AS json) WHERE id=:id');
+            $update->execute(['payload' => '{"concurrent":"latest"}', 'id' => $fixture['session']->id]);
             $migration->up();
-            self::assertSame($before, DB::table('estimate_generation_sessions')->orderBy('id')->pluck('input_payload', 'id')->all());
+            self::assertSame(['concurrent' => 'latest'], json_decode((string) DB::table('estimate_generation_sessions')->where('id', $fixture['session']->id)->value('input_payload'), true, flags: JSON_THROW_ON_ERROR));
             $columns = DB::select("SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_schema='public' AND table_name='estimate_generation_sessions' AND column_name IN ('input_payload','analysis_payload','draft_payload','problem_flags') ORDER BY column_name");
             self::assertCount(4, $columns);
             foreach ($columns as $column) {
@@ -72,6 +90,21 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
                 self::assertSame($column->column_name === 'input_payload' ? 'NO' : 'YES', $column->is_nullable);
                 self::assertNull($column->column_default);
             }
+            DB::statement('ALTER TABLE estimate_generation_sessions ADD COLUMN input_payload__rollout_old json, ADD COLUMN analysis_payload__rollout_old json, ADD COLUMN draft_payload__rollout_old json, ADD COLUMN problem_flags__rollout_old json');
+            $writer->beginTransaction();
+            $writer->query('SELECT id FROM estimate_generation_sessions LIMIT 1')->fetch();
+            try {
+                $migration->up();
+                self::fail('Cleanup lock timeout was not enforced.');
+            } catch (QueryException $exception) {
+                self::assertStringContainsString('lock timeout', strtolower($exception->getMessage()));
+            } finally {
+                $writer->rollBack();
+            }
+            $migration->up();
+            self::assertFalse(DB::getSchemaBuilder()->hasColumn('estimate_generation_sessions', 'input_payload__rollout_old'));
+            self::assertSame($statementTimeout, DB::selectOne('SHOW statement_timeout')->statement_timeout);
+            self::assertSame($lockTimeout, DB::selectOne('SHOW lock_timeout')->lock_timeout);
         } finally {
             $this->cleanup($fixture);
         }
@@ -131,6 +164,10 @@ final class EstimateGenerationGeometryPostgresTest extends TestCase
                 ['scale_evidence' => [['role' => 'unknown']]],
                 ['elements' => [['key' => 'room-1', 'type' => 'room', 'boundary_handle' => 'R1', 'extra' => true]]],
                 ['elements' => [['key' => 'opening-1', 'type' => 'opening', 'wall_key' => 'missing-wall', 'opening_type' => 'door', 'boundary_handles' => ['W1', 'W2'], 'dimension_handle' => 'D1']]],
+                ['elements' => [['key' => 'room-1', 'type' => 'room', 'boundary_handle' => 'H1'], ['key' => 'wall-1', 'type' => 'wall', 'segment_handles' => ['H1']]]],
+                ['elements' => [['key' => 'wall-1', 'type' => 'wall', 'segment_handles' => ['H1', 'H1']]]],
+                ['elements' => [['key' => 'room-1', 'type' => 'room', 'boundary_handle' => str_repeat('x', 513)]]],
+                ['elements' => [['key' => 'wall-1', 'type' => 'wall', 'segment_handles' => ['H1']], ['key' => 'opening-1', 'type' => 'opening', 'wall_key' => 'wall-1', 'opening_type' => 'door', 'boundary_handles' => ['H1', 'H1'], 'dimension_handle' => 'D1']]],
             ] as $mutation) {
                 $invalid = [...$this->sourceConfirmation(), ...$mutation];
                 $valid = DB::selectOne('SELECT eg_geometry_confirmation_semantic_valid_v1(CAST(? AS jsonb)) AS valid', [json_encode($invalid, JSON_THROW_ON_ERROR)]);

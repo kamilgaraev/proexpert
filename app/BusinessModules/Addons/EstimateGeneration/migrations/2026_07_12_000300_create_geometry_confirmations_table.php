@@ -64,7 +64,7 @@ BEGIN
         OR (item->>'real_world_value')::numeric <= 0 OR item->>'unit' NOT IN ('mm','cm','m','in','ft') THEN RETURN false; END IF;
     ELSIF role = 'dimension' THEN
       IF (item - ARRAY['role','value_handle','entity_handle','point_indexes']) <> '{}'::jsonb OR NOT item ?& ARRAY['role','value_handle','entity_handle','point_indexes']
-        OR jsonb_typeof(item->'value_handle') <> 'string' OR jsonb_typeof(item->'entity_handle') <> 'string'
+        OR jsonb_typeof(item->'value_handle') <> 'string' OR length(item->>'value_handle') NOT BETWEEN 1 AND 512 OR jsonb_typeof(item->'entity_handle') <> 'string' OR length(item->>'entity_handle') NOT BETWEEN 1 AND 512
         OR jsonb_typeof(item->'point_indexes') <> 'array' OR jsonb_array_length(item->'point_indexes') <> 2
         OR jsonb_typeof(item->'point_indexes'->0) <> 'number' OR jsonb_typeof(item->'point_indexes'->1) <> 'number'
         OR (item->'point_indexes'->>0)::integer < 0 OR (item->'point_indexes'->>1)::integer < 0 OR item->'point_indexes'->0 = item->'point_indexes'->1 THEN RETURN false; END IF;
@@ -76,10 +76,17 @@ BEGIN
     kind := item->>'type';
     IF jsonb_typeof(item) <> 'object' OR jsonb_typeof(item->'key') <> 'string' OR length(item->>'key') NOT BETWEEN 1 AND 512 OR kind NOT IN ('room','wall','opening') THEN RETURN false; END IF;
     IF kind='room' AND ((item - ARRAY['key','type','boundary_handle']) <> '{}'::jsonb OR NOT item ?& ARRAY['key','type','boundary_handle'] OR jsonb_typeof(item->'boundary_handle') <> 'string' OR length(item->>'boundary_handle') NOT BETWEEN 1 AND 512) THEN RETURN false;
-    ELSIF kind='wall' AND ((item - ARRAY['key','type','segment_handles']) <> '{}'::jsonb OR NOT item ?& ARRAY['key','type','segment_handles'] OR jsonb_typeof(item->'segment_handles') <> 'array' OR jsonb_array_length(item->'segment_handles') < 1 OR jsonb_path_exists(item, '$.segment_handles[*] ? (@.type() != "string")')) THEN RETURN false;
-    ELSIF kind='opening' AND ((item - ARRAY['key','type','wall_key','opening_type','boundary_handles','dimension_handle']) <> '{}'::jsonb OR NOT item ?& ARRAY['key','type','wall_key','opening_type','boundary_handles','dimension_handle'] OR item->>'opening_type' NOT IN ('door','window','gate','other') OR jsonb_typeof(item->'wall_key') <> 'string' OR jsonb_typeof(item->'dimension_handle') <> 'string' OR jsonb_typeof(item->'boundary_handles') <> 'array' OR jsonb_array_length(item->'boundary_handles') <> 2 OR jsonb_path_exists(item, '$.boundary_handles[*] ? (@.type() != "string")')) THEN RETURN false; END IF;
+    ELSIF kind='wall' AND ((item - ARRAY['key','type','segment_handles']) <> '{}'::jsonb OR NOT item ?& ARRAY['key','type','segment_handles'] OR jsonb_typeof(item->'segment_handles') <> 'array' OR jsonb_array_length(item->'segment_handles') < 1 OR jsonb_path_exists(item, '$.segment_handles[*] ? (@.type() != "string")') OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(item->'segment_handles') handle WHERE length(handle) NOT BETWEEN 1 AND 512) OR (SELECT count(*) FROM jsonb_array_elements_text(item->'segment_handles')) <> (SELECT count(DISTINCT handle) FROM jsonb_array_elements_text(item->'segment_handles') handle)) THEN RETURN false;
+    ELSIF kind='opening' AND ((item - ARRAY['key','type','wall_key','opening_type','boundary_handles','dimension_handle']) <> '{}'::jsonb OR NOT item ?& ARRAY['key','type','wall_key','opening_type','boundary_handles','dimension_handle'] OR item->>'opening_type' NOT IN ('door','window','gate','other') OR jsonb_typeof(item->'wall_key') <> 'string' OR length(item->>'wall_key') NOT BETWEEN 1 AND 512 OR jsonb_typeof(item->'dimension_handle') <> 'string' OR length(item->>'dimension_handle') NOT BETWEEN 1 AND 512 OR jsonb_typeof(item->'boundary_handles') <> 'array' OR jsonb_array_length(item->'boundary_handles') <> 2 OR jsonb_path_exists(item, '$.boundary_handles[*] ? (@.type() != "string")') OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(item->'boundary_handles') handle WHERE length(handle) NOT BETWEEN 1 AND 512) OR (item->'boundary_handles'->>0)=(item->'boundary_handles'->>1)) THEN RETURN false; END IF;
   END LOOP;
   IF (SELECT count(*) FROM jsonb_array_elements(payload->'elements')) <> (SELECT count(DISTINCT value->>'key') FROM jsonb_array_elements(payload->'elements')) THEN RETURN false; END IF;
+  IF EXISTS (
+    SELECT 1 FROM (
+      SELECT element->>'boundary_handle' handle FROM jsonb_array_elements(payload->'elements') element WHERE element->>'type'='room'
+      UNION ALL
+      SELECT handle FROM jsonb_array_elements(payload->'elements') element CROSS JOIN LATERAL jsonb_array_elements_text(element->'segment_handles') handle WHERE element->>'type'='wall'
+    ) ownership GROUP BY handle HAVING count(*) > 1
+  ) THEN RETURN false; END IF;
   IF EXISTS (
     SELECT 1 FROM jsonb_array_elements(payload->'elements') opening
     WHERE opening->>'type'='opening' AND NOT EXISTS (

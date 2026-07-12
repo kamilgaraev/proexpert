@@ -22,5 +22,13 @@ final class GeometryMigrationContractTest extends TestCase
         self::assertStringContainsString('lock_timeout', $source);
         self::assertSame(1, substr_count($source, 'LOCK TABLE estimate_generation_sessions IN ACCESS EXCLUSIVE MODE'));
         self::assertStringNotContainsString('ALTER COLUMN {$column} TYPE', $source);
+        self::assertStringContainsString('BEFORE INSERT OR UPDATE', $source);
+        self::assertStringContainsString('IS DISTINCT FROM', $source);
+        self::assertStringContainsString('payload_rollout_ambiguous', $source);
+        self::assertStringContainsString('cleanupOldColumns', $source);
+        self::assertStringNotContainsString('SET statement_timeout', $source);
+        self::assertStringNotContainsString('SET lock_timeout', $source);
+        self::assertStringContainsString('SET LOCAL statement_timeout', $source);
+        self::assertStringContainsString('SET LOCAL lock_timeout', $source);
     }
 }
