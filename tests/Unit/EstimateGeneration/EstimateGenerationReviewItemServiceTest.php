@@ -177,6 +177,43 @@ final class EstimateGenerationReviewItemServiceTest extends TestCase
         self::assertSame(0, $result['summary']['optional']);
     }
 
+    public function test_filters_review_items_and_recalculates_summary(): void
+    {
+        $session = new EstimateGenerationSession([
+            'draft_payload' => $this->draft([
+                $this->workItem([
+                    'key' => 'wall-quantity',
+                    'name' => 'Кладка стены',
+                    'item_type' => 'quantity_review',
+                    'pricing_status' => 'not_applicable',
+                    'pricing_blocker' => 'quantity_review_required',
+                    'validation_flags' => ['quantity_review_required'],
+                ]),
+                $this->workItem([
+                    'key' => 'floor-norm',
+                    'name' => 'Устройство пола',
+                    'pricing_status' => 'calculated',
+                    'total_cost' => 2000,
+                    'normative_match' => ['norm_id' => 401, 'status' => 'matched', 'decision' => ['status' => 'accepted']],
+                    'normative_candidates' => [['norm_id' => 401], ['norm_id' => 402]],
+                ]),
+            ]),
+        ]);
+
+        $result = $this->service()->forSession($session, [
+            'severity' => 'blocking',
+            'required_action' => 'confirm_quantity',
+            'search' => 'стен',
+        ]);
+
+        self::assertSame(['wall-quantity'], array_column($result['items'], 'work_item_key'));
+        self::assertSame(1, $result['summary']['total']);
+        self::assertSame(1, $result['summary']['blocking']);
+        self::assertSame(1, $result['summary']['confirm_quantity']);
+        self::assertSame(0, $result['summary']['optional']);
+        self::assertSame(0, $result['summary']['review_norm']);
+    }
+
     public function test_generic_calculated_work_item_is_blocking_review_item(): void
     {
         $result = $this->service()->forSession(new EstimateGenerationSession([

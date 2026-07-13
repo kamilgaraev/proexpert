@@ -86,7 +86,7 @@ final class EstimateGenerationReviewItemService
     /**
      * @return array{summary: array<string, int>, items: array<int, array<string, mixed>>}
      */
-    public function forSession(EstimateGenerationSession $session): array
+    public function forSession(EstimateGenerationSession $session, array $filters = []): array
     {
         $draft = is_array($session->draft_payload) ? $session->draft_payload : [];
         $items = $this->draftReviewItems($draft);
@@ -101,10 +101,45 @@ final class EstimateGenerationReviewItemService
                 ?: strnatcasecmp((string) data_get($left, 'work_item.name', ''), (string) data_get($right, 'work_item.name', ''));
         });
 
+        $items = $this->filterItems($items, $filters);
+
         return [
             'summary' => $this->summary($items),
             'items' => $items,
         ];
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $items
+     * @param  array<string, mixed>  $filters
+     * @return array<int, array<string, mixed>>
+     */
+    private function filterItems(array $items, array $filters): array
+    {
+        $severity = is_string($filters['severity'] ?? null) ? $filters['severity'] : null;
+        $requiredAction = is_string($filters['required_action'] ?? null) ? $filters['required_action'] : null;
+        $search = is_string($filters['search'] ?? null) ? trim(mb_strtolower($filters['search'])) : '';
+
+        return array_values(array_filter($items, static function (array $item) use ($severity, $requiredAction, $search): bool {
+            if ($severity !== null && ($item['severity'] ?? null) !== $severity) {
+                return false;
+            }
+            if ($requiredAction !== null && ($item['required_action'] ?? null) !== $requiredAction) {
+                return false;
+            }
+            if ($search === '') {
+                return true;
+            }
+
+            $haystack = mb_strtolower(implode(' ', [
+                (string) ($item['local_estimate_title'] ?? ''),
+                (string) ($item['section_title'] ?? ''),
+                (string) ($item['work_item_key'] ?? ''),
+                (string) data_get($item, 'work_item.name', ''),
+            ]));
+
+            return str_contains($haystack, $search);
+        }));
     }
 
     /**

@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimat
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\InvalidEstimateGenerationTransition;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\EstimateGenerationFeedbackRequest;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ListEstimateGenerationReviewItemsRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\SearchEstimateGenerationNormativeCandidatesRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\SelectEstimateGenerationNormativeCandidateRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionResource;
@@ -38,12 +39,12 @@ final class EstimateGenerationReviewController extends Controller
         private readonly EstimateGenerationPackagePresenter $packagePresenter,
     ) {}
 
-    public function index(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
+    public function index(ListEstimateGenerationReviewItemsRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse
     {
         return $this->safeRead(function () use ($request, $project, $session): JsonResponse {
             $this->guard($request, $project, $session);
 
-            return AdminResponse::success($this->reviewItems->forSession($session));
+            return AdminResponse::success($this->reviewItems->forSession($session, $request->validated()));
         }, 'review items', $project, $session);
     }
 

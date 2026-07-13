@@ -12,8 +12,8 @@ return [
     */
 
     'paths' => [
-        'api/*', 
-        'sanctum/csrf-cookie', 
+        'api/*',
+        'sanctum/csrf-cookie',
         'api/v1/landing/*',
         'api/v1/mobile/*',
         'api/v1/admin/*',
@@ -73,11 +73,13 @@ return [
         'X-Requested-With',
         'X-CSRF-TOKEN',
         'Accept',
+        'If-None-Match',
     ],
 
     'exposed_headers' => [
         'Content-Length',
         'X-JSON',
+        'ETag',
     ],
 
     'max_age' => 86400, // 24 часа
@@ -89,7 +91,7 @@ return [
     | Дополнительные настройки
     |--------------------------------------------------------------------------
     */
-    
+
     // Разрешить любой origin в режиме разработки (env=local)
     // ВРЕМЕННО ОТКЛЮЧЕНО для продакшена
     'allow_any_origin_in_dev' => false,

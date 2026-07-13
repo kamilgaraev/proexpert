@@ -12,7 +12,7 @@ class CorsConfigTest extends TestCase
     #[DataProvider('localDevOriginsProvider')]
     public function test_local_dev_origins_are_allowed(string $origin): void
     {
-        $config = require dirname(__DIR__, 3) . '/config/cors.php';
+        $config = require dirname(__DIR__, 3).'/config/cors.php';
 
         $this->assertContains($origin, $config['allowed_origins']);
     }
@@ -25,5 +25,13 @@ class CorsConfigTest extends TestCase
             'lk localhost' => ['http://localhost:3001'],
             'lk loopback' => ['http://127.0.0.1:3001'],
         ];
+    }
+
+    public function test_estimate_generation_snapshot_headers_are_cors_accessible(): void
+    {
+        $config = require dirname(__DIR__, 3).'/config/cors.php';
+
+        self::assertContains('If-None-Match', $config['allowed_headers']);
+        self::assertContains('ETag', $config['exposed_headers']);
     }
 }
