@@ -12,20 +12,39 @@ return new class extends Migration
 
     public function up(): void
     {
-        DB::statement("SET lock_timeout = '5s'");
-        DB::statement("SET statement_timeout = '15min'");
-        DB::statement('ALTER TABLE estimate_generation_training_datasets ADD COLUMN processing_lease_expires_at timestamptz');
-        DB::statement('ALTER TABLE estimate_generation_training_datasets ADD COLUMN processing_attempt integer NOT NULL DEFAULT 0');
         $runtime = new TrainingBenchmarkOnlineMigrationRuntime;
-        $runtime->ensureConcurrentIndex('eg_training_processing_lease_idx', 'CREATE INDEX CONCURRENTLY eg_training_processing_lease_idx ON estimate_generation_training_datasets (status, processing_lease_expires_at)');
-        DB::statement('ALTER TABLE estimate_generation_training_datasets DROP CONSTRAINT eg_training_processing_token_chk');
-        $runtime->backfillProcessingLeases();
-        DB::statement("ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT eg_training_processing_lease_chk CHECK ((status = 'processing' AND processing_token IS NOT NULL AND processing_lease_expires_at IS NOT NULL AND processing_attempt > 0) OR (status <> 'processing' AND processing_token IS NULL AND processing_lease_expires_at IS NULL)) NOT VALID");
-        DB::statement('ALTER TABLE estimate_generation_training_datasets VALIDATE CONSTRAINT eg_training_processing_lease_chk');
-        DB::statement("ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT eg_training_approval_pair_chk CHECK ((status = 'approved' AND approved_by IS NOT NULL AND approved_at IS NOT NULL) OR status <> 'approved') NOT VALID");
-        DB::statement('ALTER TABLE estimate_generation_training_datasets VALIDATE CONSTRAINT eg_training_approval_pair_chk');
+        $timeouts = $runtime->configureSessionTimeouts();
+        try {
+            DB::statement('ALTER TABLE estimate_generation_training_datasets ADD COLUMN IF NOT EXISTS processing_lease_expires_at timestamptz');
+            DB::statement('ALTER TABLE estimate_generation_training_datasets ADD COLUMN IF NOT EXISTS processing_attempt integer NOT NULL DEFAULT 0');
+            DB::unprepared(<<<'SQL'
+CREATE OR REPLACE FUNCTION eg_training_lease_write_fence() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.status = 'processing' THEN
+    NEW.processing_token := COALESCE(NEW.processing_token, gen_random_uuid());
+    NEW.processing_lease_expires_at := COALESCE(NEW.processing_lease_expires_at, CURRENT_TIMESTAMP + INTERVAL '15 minutes');
+    NEW.processing_attempt := GREATEST(NEW.processing_attempt, 1);
+  ELSE
+    NEW.processing_token := NULL;
+    NEW.processing_lease_expires_at := NULL;
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS eg_training_lease_write_fence ON estimate_generation_training_datasets;
+CREATE TRIGGER eg_training_lease_write_fence BEFORE INSERT OR UPDATE OF status, processing_token, processing_lease_expires_at, processing_attempt ON estimate_generation_training_datasets FOR EACH ROW EXECUTE FUNCTION eg_training_lease_write_fence();
+SQL);
+            $runtime->checkpoint('002100_structure');
+            $runtime->ensureConcurrentIndex('eg_training_processing_lease_idx', 'CREATE INDEX CONCURRENTLY eg_training_processing_lease_idx ON estimate_generation_training_datasets (status, processing_lease_expires_at)');
+            $runtime->backfillProcessingLeases();
+            $runtime->checkpoint('002100_backfill');
+            $runtime->ensureConstraint('estimate_generation_training_datasets', 'eg_training_processing_lease_chk', "CHECK ((status = 'processing' AND processing_token IS NOT NULL AND processing_lease_expires_at IS NOT NULL AND processing_attempt > 0) OR (status <> 'processing' AND processing_token IS NULL AND processing_lease_expires_at IS NULL))");
+            $runtime->validateConstraint('estimate_generation_training_datasets', 'eg_training_processing_lease_chk');
+            DB::statement('ALTER TABLE estimate_generation_training_datasets DROP CONSTRAINT IF EXISTS eg_training_processing_token_chk');
+            $runtime->ensureConstraint('estimate_generation_training_datasets', 'eg_training_approval_pair_chk', "CHECK ((status = 'approved' AND approved_by IS NOT NULL AND approved_at IS NOT NULL) OR status <> 'approved')");
+            $runtime->validateConstraint('estimate_generation_training_datasets', 'eg_training_approval_pair_chk');
+            $runtime->checkpoint('002100_constraints');
 
-        DB::unprepared(<<<'SQL'
+            DB::unprepared(<<<'SQL'
 CREATE OR REPLACE FUNCTION eg_guard_training_dataset_approval() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF NEW.status = 'approved' AND (
@@ -51,6 +70,9 @@ END $$;
 DROP TRIGGER IF EXISTS eg_approved_dataset_example_guard ON estimate_generation_training_examples;
 CREATE TRIGGER eg_approved_dataset_example_guard BEFORE INSERT OR UPDATE OR DELETE ON estimate_generation_training_examples FOR EACH ROW EXECUTE FUNCTION eg_guard_example_for_approved_dataset();
 SQL);
+        } finally {
+            $runtime->restoreSessionTimeouts($timeouts);
+        }
     }
 
     public function down(): void

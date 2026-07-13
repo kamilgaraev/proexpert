@@ -12,21 +12,23 @@ return new class extends Migration
 
     public function up(): void
     {
-        DB::statement("SET lock_timeout = '5s'");
-        DB::statement("SET statement_timeout = '15min'");
-        DB::statement('ALTER TABLE estimate_generation_training_datasets ADD COLUMN processing_token uuid');
-        DB::statement('ALTER TABLE estimate_generation_benchmark_runs ADD COLUMN case_results_version_scheme text');
-        (new TrainingBenchmarkOnlineMigrationRuntime)->ensureConcurrentIndex('projects_id_organization_uq', 'CREATE UNIQUE INDEX CONCURRENTLY projects_id_organization_uq ON projects (id, organization_id)');
-        DB::statement('ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT eg_training_dataset_project_tenant_fk FOREIGN KEY (project_id, organization_id) REFERENCES projects(id, organization_id) ON DELETE RESTRICT NOT VALID');
-        DB::statement('ALTER TABLE estimate_generation_training_datasets VALIDATE CONSTRAINT eg_training_dataset_project_tenant_fk');
-        DB::statement('ALTER TABLE estimate_generation_training_datasets DROP CONSTRAINT IF EXISTS estimate_generation_training_datasets_project_id_foreign');
-        DB::statement('ALTER TABLE estimate_generation_training_examples ADD CONSTRAINT eg_training_example_review_pair_chk CHECK ((reviewed_by IS NULL AND reviewed_at IS NULL) OR (reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL)) NOT VALID');
-        DB::statement('ALTER TABLE estimate_generation_training_examples VALIDATE CONSTRAINT eg_training_example_review_pair_chk');
-        DB::statement("ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT eg_training_processing_token_chk CHECK ((status = 'processing' AND processing_token IS NULL OR processing_token IS NOT NULL) OR (status <> 'processing' AND processing_token IS NULL)) NOT VALID");
-        DB::statement('ALTER TABLE estimate_generation_training_datasets VALIDATE CONSTRAINT eg_training_processing_token_chk');
-        DB::statement('ALTER TABLE estimate_generation_benchmark_runs DROP CONSTRAINT eg_benchmark_closed_state_chk');
-        DB::statement(<<<'SQL'
-ALTER TABLE estimate_generation_benchmark_runs ADD CONSTRAINT eg_benchmark_closed_state_chk CHECK (
+        $runtime = new TrainingBenchmarkOnlineMigrationRuntime;
+        $timeouts = $runtime->configureSessionTimeouts();
+        try {
+            DB::statement('ALTER TABLE estimate_generation_training_datasets ADD COLUMN IF NOT EXISTS processing_token uuid');
+            DB::statement('ALTER TABLE estimate_generation_benchmark_runs ADD COLUMN IF NOT EXISTS case_results_version_scheme text');
+            $runtime->checkpoint('002000_structure');
+            $runtime->ensureConcurrentIndex('projects_id_organization_uq', 'CREATE UNIQUE INDEX CONCURRENTLY projects_id_organization_uq ON projects (id, organization_id)');
+            $runtime->checkpoint('002000_indexes');
+            $runtime->ensureConstraint('estimate_generation_training_datasets', 'eg_training_dataset_project_tenant_fk', 'FOREIGN KEY (project_id, organization_id) REFERENCES projects(id, organization_id) ON DELETE RESTRICT');
+            $runtime->validateConstraint('estimate_generation_training_datasets', 'eg_training_dataset_project_tenant_fk');
+            DB::statement('ALTER TABLE estimate_generation_training_datasets DROP CONSTRAINT IF EXISTS estimate_generation_training_datasets_project_id_foreign');
+            $runtime->ensureConstraint('estimate_generation_training_examples', 'eg_training_example_review_pair_chk', 'CHECK ((reviewed_by IS NULL AND reviewed_at IS NULL) OR (reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL))');
+            $runtime->validateConstraint('estimate_generation_training_examples', 'eg_training_example_review_pair_chk');
+            $runtime->ensureConstraint('estimate_generation_training_datasets', 'eg_training_processing_token_chk', "CHECK ((status = 'processing' AND processing_token IS NULL OR processing_token IS NOT NULL) OR (status <> 'processing' AND processing_token IS NULL))");
+            $runtime->validateConstraint('estimate_generation_training_datasets', 'eg_training_processing_token_chk');
+            $runtime->swapValidatedConstraint('estimate_generation_benchmark_runs', 'eg_benchmark_closed_state_chk', 'eg_benchmark_closed_state_002000_chk', <<<'SQL'
+CHECK (
  (status = 'running' AND completed_at IS NULL AND metrics IS NULL AND case_results IS NULL AND case_results_storage_disk IS NULL AND case_results_storage_path IS NULL AND case_results_size IS NULL AND case_results_sha256 IS NULL AND case_results_etag IS NULL AND case_results_version IS NULL AND case_results_version_scheme IS NULL AND case_results_content_type IS NULL AND duration_ms IS NULL AND failure_code IS NULL AND error_summary IS NULL AND cost_amount = 0)
  OR (status = 'completed' AND completed_at IS NOT NULL AND completed_at >= started_at AND metrics IS NOT NULL AND jsonb_typeof(metrics) = 'object' AND metrics <> '{}'::jsonb AND duration_ms IS NOT NULL AND duration_ms >= 0 AND failure_code IS NULL AND error_summary IS NULL AND cost_amount >= 0 AND currency ~ '^[A-Z]{3}$' AND (
    (case_results IS NOT NULL AND jsonb_typeof(case_results) = 'array' AND case_results <> '[]'::jsonb AND case_results_storage_disk IS NULL AND case_results_storage_path IS NULL AND case_results_size IS NULL AND case_results_sha256 IS NULL AND case_results_etag IS NULL AND case_results_version IS NULL AND case_results_version_scheme IS NULL AND case_results_content_type IS NULL)
@@ -35,8 +37,9 @@ ALTER TABLE estimate_generation_benchmark_runs ADD CONSTRAINT eg_benchmark_close
  OR (status = 'failed' AND completed_at IS NOT NULL AND completed_at >= started_at AND failure_code IS NOT NULL AND length(btrim(failure_code)) BETWEEN 1 AND 100 AND error_summary IS NOT NULL AND length(btrim(error_summary)) BETWEEN 1 AND 500 AND metrics IS NULL AND case_results IS NULL AND case_results_storage_disk IS NULL AND case_results_storage_path IS NULL AND case_results_size IS NULL AND case_results_sha256 IS NULL AND case_results_etag IS NULL AND case_results_version IS NULL AND case_results_version_scheme IS NULL AND case_results_content_type IS NULL AND duration_ms IS NULL AND cost_amount = 0)
 )
 SQL);
+            $runtime->checkpoint('002000_constraints');
 
-        DB::unprepared(<<<'SQL'
+            DB::unprepared(<<<'SQL'
 CREATE OR REPLACE FUNCTION eg_guard_reviewed_example_content() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF (OLD.reviewed_by IS NOT NULL OR OLD.reviewed_at IS NOT NULL) AND
@@ -46,6 +49,9 @@ BEGIN
   RETURN NEW;
 END $$;
 SQL);
+        } finally {
+            $runtime->restoreSessionTimeouts($timeouts);
+        }
     }
 
     public function down(): void

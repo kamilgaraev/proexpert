@@ -70,12 +70,12 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
             $migration->down();
         }
         self::assertFalse(\Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_training_datasets', 'dataset_key'));
-        $migration->up();
-        $hardening->up();
-        $edgeHardening->up();
-        $storageHardening->up();
-        $finalHardening->up();
-        $raceHardening->up();
+        $this->runMigrationWithInterruptions($migration, ['001700_structure', '001700_backfill', '001700_indexes', '001700_constraints']);
+        $this->runMigrationWithInterruptions($hardening, ['001800_structure', '001800_backfill', '001800_indexes', '001800_constraints']);
+        $this->runMigrationWithInterruptions($edgeHardening, ['001900_structure', '001900_constraints']);
+        $this->runMigrationWithInterruptions($storageHardening, ['002000_structure', '002000_indexes', '002000_constraints']);
+        $this->runMigrationWithInterruptions($finalHardening, ['002100_structure', '002100_backfill', '002100_constraints']);
+        $this->runMigrationWithInterruptions($raceHardening, ['002200_structure', '002200_constraints']);
 
         $organizationId = (int) DB::table('organizations')->insertGetId(['name' => 'Contract organization A']);
         $otherOrganizationId = (int) DB::table('organizations')->insertGetId(['name' => 'Contract organization B']);
@@ -345,6 +345,58 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
         if (getenv('RUN_POSTGRES_TRAINING_BENCHMARK_CONTRACT') !== '1' || DB::getDriverName() !== 'pgsql' || ! str_ends_with($database, '_contract')) {
             self::markTestSkipped('Requires explicit disposable PostgreSQL training/benchmark contract database.');
         }
+    }
+
+    /** @param list<string> $boundaries */
+    private function runMigrationWithInterruptions(object $migration, array $boundaries): void
+    {
+        foreach ($boundaries as $boundary) {
+            putenv('ESTIMATE_CONTRACT_INTERRUPT_AFTER='.$boundary);
+            try {
+                $migration->up();
+                self::fail($boundary.' did not interrupt the real migration.');
+            } catch (\RuntimeException $exception) {
+                self::assertSame('estimate_generation_online_migration_interrupted:'.$boundary, $exception->getMessage());
+                $this->assertBoundaryWriteFence($boundary);
+            } finally {
+                putenv('ESTIMATE_CONTRACT_INTERRUPT_AFTER');
+            }
+        }
+        $migration->up();
+        $migration->up();
+    }
+
+    private function assertBoundaryWriteFence(string $boundary): void
+    {
+        if (! in_array($boundary, ['001700_structure', '001800_structure', '002100_structure'], true)) {
+            return;
+        }
+        $organizationId = (int) DB::table('organizations')->insertGetId(['name' => 'Boundary writer']);
+        $datasetId = (int) DB::table('estimate_generation_training_datasets')->insertGetId([
+            'uuid' => fake()->uuid(), 'organization_id' => $organizationId, 'title' => 'Boundary writer',
+            'status' => 'draft', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        if ($boundary === '001700_structure') {
+            self::assertNotNull(DB::table('estimate_generation_training_datasets')->where('id', $datasetId)->value('dataset_key'));
+            $exampleId = (int) DB::table('estimate_generation_training_examples')->insertGetId([
+                'training_dataset_id' => $datasetId, 'source_row_hash' => hash('sha256', 'review-boundary-'.$datasetId),
+                'work_name' => 'Review boundary', 'status' => 'accepted', 'created_at' => now(), 'updated_at' => now(),
+            ]);
+            self::assertSame('pending', DB::table('estimate_generation_training_examples')->where('id', $exampleId)->value('status'));
+            DB::table('estimate_generation_training_examples')->where('id', $exampleId)->delete();
+        } elseif ($boundary === '001800_structure') {
+            $exampleId = (int) DB::table('estimate_generation_training_examples')->insertGetId([
+                'training_dataset_id' => $datasetId, 'source_row_hash' => hash('sha256', 'boundary-'.$datasetId),
+                'work_name' => 'Boundary writer', 'status' => 'pending', 'created_at' => now(), 'updated_at' => now(),
+            ]);
+            self::assertSame($organizationId, (int) DB::table('estimate_generation_training_examples')->where('id', $exampleId)->value('organization_id'));
+            DB::table('estimate_generation_training_examples')->where('id', $exampleId)->delete();
+        } else {
+            DB::table('estimate_generation_training_datasets')->where('id', $datasetId)->update(['status' => 'processing']);
+            self::assertNotNull(DB::table('estimate_generation_training_datasets')->where('id', $datasetId)->value('processing_lease_expires_at'));
+        }
+        DB::table('estimate_generation_training_datasets')->where('id', $datasetId)->delete();
+        DB::table('organizations')->where('id', $organizationId)->delete();
     }
 
     private function ensureLegacyTrainingSchema(): void

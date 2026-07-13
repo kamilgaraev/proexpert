@@ -19,15 +19,19 @@ final class TrainingBenchmarkOnlineMigrationTest extends TestCase
 
         $source = implode("\n", array_map(static fn (string $path): string => (string) file_get_contents($path), $paths));
         foreach ($paths as $path) {
-            self::assertStringContainsString('public $withinTransaction = false;', (string) file_get_contents($path), basename($path));
+            $phase = (string) file_get_contents($path);
+            self::assertStringContainsString('public $withinTransaction = false;', $phase, basename($path));
+            self::assertStringContainsString('try {', $phase, basename($path));
+            self::assertStringContainsString('finally {', $phase, basename($path));
+            self::assertStringContainsString('restoreSessionTimeouts', $phase, basename($path));
         }
 
         self::assertStringNotContainsString('DB::statement("UPDATE ', $source);
         self::assertStringNotContainsString("DB::statement('UPDATE ", $source);
         self::assertDoesNotMatchRegularExpression('/CREATE (?:UNIQUE )?INDEX (?!CONCURRENTLY)/', $source);
-        self::assertStringContainsString('NOT VALID', $source);
-        self::assertStringContainsString('VALIDATE CONSTRAINT', $source);
-        self::assertStringContainsString("SET lock_timeout = '5s'", $source);
-        self::assertStringContainsString("SET statement_timeout = '15min'", $source);
+        self::assertStringContainsString('validateConstraint', $source);
+        self::assertStringContainsString('configureSessionTimeouts', $source);
+        self::assertStringContainsString('ensureConstraint', $source);
+        self::assertStringContainsString('swapValidatedConstraint', $source);
     }
 }

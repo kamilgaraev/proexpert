@@ -96,5 +96,62 @@ final class TrainingBenchmarkOnlineMigrationRuntimePostgresTest extends TestCase
         $catalog = DB::selectOne("SELECT indisvalid, indisready FROM pg_index WHERE indexrelid = 'eg_online_index_probe_uq'::regclass");
         self::assertTrue((bool) $catalog->indisvalid);
         self::assertTrue((bool) $catalog->indisready);
+
+        try {
+            (new TrainingBenchmarkOnlineMigrationRuntime)->ensureConcurrentIndex(
+                'eg_online_index_probe_uq',
+                'CREATE UNIQUE INDEX CONCURRENTLY eg_online_index_probe_uq ON eg_online_index_probe (id)',
+            );
+            self::fail('A valid index with the wrong definition was adopted.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('estimate_generation_online_migration_index_definition_mismatch', $exception->getMessage());
+        }
+
+        foreach ([
+            'CREATE INDEX CONCURRENTLY eg_online_index_probe_uq ON eg_online_index_probe (value)',
+            'CREATE UNIQUE INDEX CONCURRENTLY eg_online_index_probe_uq ON eg_online_index_other (value)',
+        ] as $wrongDefinition) {
+            if (! Schema::hasTable('eg_online_index_other')) {
+                DB::statement('CREATE TABLE eg_online_index_other (id bigint PRIMARY KEY, value integer NOT NULL)');
+            }
+            try {
+                (new TrainingBenchmarkOnlineMigrationRuntime)->ensureConcurrentIndex('eg_online_index_probe_uq', $wrongDefinition);
+                self::fail('A valid index with wrong uniqueness or table was adopted.');
+            } catch (\RuntimeException $exception) {
+                self::assertSame('estimate_generation_online_migration_index_definition_mismatch', $exception->getMessage());
+            }
+        }
+
+        DB::statement('CREATE SCHEMA eg_online_probe');
+        DB::statement('CREATE TABLE eg_online_probe.eg_online_index_probe (id bigint PRIMARY KEY, value integer NOT NULL)');
+        (new TrainingBenchmarkOnlineMigrationRuntime)->ensureConcurrentIndex(
+            'eg_online_index_probe_uq',
+            'CREATE UNIQUE INDEX CONCURRENTLY eg_online_index_probe_uq ON eg_online_probe.eg_online_index_probe (value)',
+        );
+        self::assertTrue((bool) DB::selectOne("SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'eg_online_index_probe_uq' AND n.nspname = 'eg_online_probe'")->indisvalid);
+        DB::statement('DROP SCHEMA eg_online_probe CASCADE');
+    }
+
+    public function test_session_timeouts_are_restored_after_success_and_failure(): void
+    {
+        DB::statement("SET lock_timeout = '1700ms'");
+        DB::statement("SET statement_timeout = '23s'");
+        $runtime = new TrainingBenchmarkOnlineMigrationRuntime;
+
+        foreach ([false, true] as $fail) {
+            $previous = $runtime->configureSessionTimeouts();
+            try {
+                self::assertSame('5s', DB::selectOne("SELECT current_setting('lock_timeout') AS value")->value);
+                if ($fail) {
+                    throw new \RuntimeException('injected');
+                }
+            } catch (\RuntimeException $exception) {
+                self::assertSame('injected', $exception->getMessage());
+            } finally {
+                $runtime->restoreSessionTimeouts($previous);
+            }
+            self::assertSame('1700ms', DB::selectOne("SELECT current_setting('lock_timeout') AS value")->value);
+            self::assertSame('23s', DB::selectOne("SELECT current_setting('statement_timeout') AS value")->value);
+        }
     }
 }
