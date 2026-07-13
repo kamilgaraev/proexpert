@@ -24,6 +24,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 use function trans_message;
@@ -42,11 +43,15 @@ final class EstimateGenerationSessionController extends Controller
     public function index(Request $request, Project $project): JsonResponse
     {
         return $this->safeReadResponse(function () use ($request, $project): JsonResponse {
+            $validated = $request->validate([
+                'page' => ['nullable', 'integer', 'min:1'],
+                'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
+            ]);
             $sessions = EstimateGenerationSession::query()
                 ->where('organization_id', $request->user()->current_organization_id)
                 ->where('project_id', $project->id)
                 ->orderByDesc('id')
-                ->paginate((int) $request->input('per_page', 10));
+                ->paginate((int) ($validated['per_page'] ?? 10), ['*'], 'page', (int) ($validated['page'] ?? 1));
 
             return AdminResponse::paginated(
                 EstimateGenerationSessionListResource::collection($sessions),
@@ -148,6 +153,8 @@ final class EstimateGenerationSessionController extends Controller
             return AdminResponse::error(trans_message('errors.resource_not_found'), 404);
         } catch (HttpExceptionInterface $exception) {
             throw $exception;
+        } catch (ValidationException $exception) {
+            return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $exception->errors());
         } catch (\Throwable) {
             Log::error('[EstimateGeneration] Snapshot failed', [
                 'failure_code' => 'snapshot_failed',
@@ -176,6 +183,8 @@ final class EstimateGenerationSessionController extends Controller
             return $response();
         } catch (HttpExceptionInterface $exception) {
             throw $exception;
+        } catch (ValidationException $exception) {
+            return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $exception->errors());
         } catch (\Throwable) {
             Log::error('[EstimateGeneration] Read endpoint failed', [
                 ...$context,

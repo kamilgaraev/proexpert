@@ -40,11 +40,8 @@ final class EstimateGenerationSessionControllerTest extends LaravelTestCase
             }
         };
         $stateStore = $this->createMock(SessionStateStore::class);
-        $controller = new EstimateGenerationSessionController(
-            new CreateEstimateGenerationSession($stateStore),
-            new EstimateGenerationRegionalContextResolver,
-            $builder,
-        );
+        $normativePins = $this->app->make(\App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeDatasetPinPolicy::class);
+        $controller = new EstimateGenerationSessionController(new CreateEstimateGenerationSession($stateStore), new EstimateGenerationRegionalContextResolver, $builder, $normativePins);
         $request = Request::create('/snapshot');
         $user = new User;
         $user->forceFill(['id' => 11, 'current_organization_id' => 7]);
@@ -58,5 +55,23 @@ final class EstimateGenerationSessionControllerTest extends LaravelTestCase
 
         self::assertSame(404, $response->getStatusCode());
         self::assertSame(trans_message('errors.resource_not_found'), $response->getData(true)['message']);
+    }
+
+    #[Test]
+    public function index_rejects_unbounded_pagination_before_querying_the_database(): void
+    {
+        $controller = $this->app->make(EstimateGenerationSessionController::class);
+        $request = Request::create('/sessions?per_page=51&page=0');
+        $user = new User;
+        $user->forceFill(['id' => 11, 'current_organization_id' => 7]);
+        $request->setUserResolver(static fn (): User => $user);
+        $project = new Project;
+        $project->forceFill(['id' => 5]);
+
+        $response = $controller->index($request, $project);
+
+        self::assertSame(422, $response->getStatusCode());
+        self::assertArrayHasKey('per_page', $response->getData(true)['errors']);
+        self::assertArrayHasKey('page', $response->getData(true)['errors']);
     }
 }

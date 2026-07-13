@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Export\EstimateGenerationExporter;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -121,6 +122,12 @@ final class EstimateGenerationPackageController extends Controller
     {
         try {
             $this->guard($request, $project, $session);
+            $status = $session->status instanceof EstimateGenerationStatus
+                ? $session->status
+                : EstimateGenerationStatus::from((string) $session->status);
+            if (! $status->allowsExport()) {
+                abort(422, trans_message('estimate_generation.export_not_ready'));
+            }
             $draft = $session->draft_payload ?? [];
             $format = (string) $request->query('format', 'excel');
             if ($format === 'csv') {
@@ -151,6 +158,8 @@ final class EstimateGenerationPackageController extends Controller
             return response($result['content'])
                 ->header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
                 ->header('Content-Disposition', "attachment; filename=\"{$filename}\"; filename*=UTF-8''".rawurlencode($filename));
+        } catch (HttpExceptionInterface $exception) {
+            throw $exception;
         } catch (\Throwable) {
             Log::error('[EstimateGeneration] Export failed', ['failure_code' => 'export_failed', 'session_id' => $session->id]);
 

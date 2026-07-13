@@ -107,6 +107,9 @@ final class BuildSessionSnapshot
 
         $available = [];
         foreach (self::STATUS_ACTIONS[$status->value] ?? [] as $action) {
+            if ($action === EstimateGenerationAction::Export && ! $status->allowsExport()) {
+                continue;
+            }
             $permission = self::ACTION_PERMISSIONS[$action->value] ?? null;
             if ($permission === null || ! in_array($permission, $permissions, true)) {
                 continue;

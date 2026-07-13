@@ -23,4 +23,9 @@ enum EstimateGenerationStatus: string
     {
         return in_array($this, [self::Applied, self::Cancelled, self::Archived], true);
     }
+
+    public function allowsExport(): bool
+    {
+        return in_array($this, [self::EstimateReviewRequired, self::ReadyToApply, self::Applied], true);
+    }
 }
