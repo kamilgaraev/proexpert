@@ -46,6 +46,24 @@ final readonly class GeometryProcessRunner
         return $this->runBounded($command, $workspace, $errorPrefix, $timeoutSeconds, $maxOutputBytes, $maxErrorBytes);
     }
 
+    /** @return array{exit_code: int|null, stdout: string, stderr: string} */
+    public function runVerified(
+        VerifiedCadExecution $execution,
+        string $workspace,
+        int $timeoutSeconds,
+        int $maxOutputBytes,
+        ?GeometryResourceLimits $resourceLimits = null,
+    ): array {
+        foreach ($execution->artifactHashes as $path => $expected) {
+            $actual = hash_file('sha256', $path);
+            if (! is_string($actual) || ! hash_equals($expected, $actual)) {
+                throw new GeometryExtractionException('cad_runtime_artifact_integrity_mismatch');
+            }
+        }
+
+        return $this->run($execution->command, $workspace, 'cad', $timeoutSeconds, $maxOutputBytes, resourceLimits: $resourceLimits);
+    }
+
     private function isExecutableSandbox(string $sandbox): bool
     {
         return is_executable($sandbox)

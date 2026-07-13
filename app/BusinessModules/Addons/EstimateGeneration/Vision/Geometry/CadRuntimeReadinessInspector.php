@@ -16,6 +16,23 @@ final class CadRuntimeReadinessInspector
         }
     }
 
+    /** @param list<string> $command */
+    public function verifiedExecution(CadRuntimeConfiguration $configuration, array $command): VerifiedCadExecution
+    {
+        $this->assertReady($configuration);
+        $hashes = [];
+        foreach ([$configuration->pythonBinary, $configuration->scriptPath, $configuration->dwgreadBinary,
+            $configuration->sandboxBinary, $configuration->requirementsLockPath] as $path) {
+            $hash = hash_file('sha256', $path);
+            if (! is_string($hash)) {
+                throw new \App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtractionException('cad_runtime_artifact_integrity_mismatch');
+            }
+            $hashes[$path] = $hash;
+        }
+
+        return new VerifiedCadExecution($command, $hashes);
+    }
+
     /** @return array<int, string> */
     public function inspect(CadRuntimeConfiguration $configuration): array
     {

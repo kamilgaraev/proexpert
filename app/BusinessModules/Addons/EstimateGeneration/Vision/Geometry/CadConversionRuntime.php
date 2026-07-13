@@ -51,19 +51,16 @@ final readonly class CadConversionRuntime
             if (! copy($real, $copy)) {
                 throw new GeometryExtractionException('cad_source_copy_failed');
             }
-            if ($this->readiness !== null && $this->configuration !== null) {
-                $this->readiness->assertReady($this->configuration);
-            }
-            $result = ($this->processRunner ?? new GeometryProcessRunner)->run(
-                [$this->pythonBinary, $script, '--input', $copy, '--workspace', $workDir,
-                    '--dwgread', $this->dwgreadBinary, '--max-output-bytes', (string) $this->maxOutputBytes,
-                    '--max-entities', (string) $this->maxEntities],
-                $workDir,
-                'cad',
-                $this->timeoutSeconds,
-                $this->maxOutputBytes,
-                resourceLimits: $this->resourceLimits,
-            );
+            $command = [$this->pythonBinary, $script, '--input', $copy, '--workspace', $workDir,
+                '--dwgread', $this->dwgreadBinary, '--max-output-bytes', (string) $this->maxOutputBytes,
+                '--max-entities', (string) $this->maxEntities];
+            $runner = $this->processRunner ?? new GeometryProcessRunner;
+            $result = $this->readiness !== null && $this->configuration !== null
+                ? $runner->runVerified(
+                    $this->readiness->verifiedExecution($this->configuration, $command),
+                    $workDir, $this->timeoutSeconds, $this->maxOutputBytes, $this->resourceLimits,
+                )
+                : $runner->run($command, $workDir, 'cad', $this->timeoutSeconds, $this->maxOutputBytes, resourceLimits: $this->resourceLimits);
             $stdout = $result['stdout'];
             $stderr = $result['stderr'];
             if ($result['exit_code'] !== 0) {
