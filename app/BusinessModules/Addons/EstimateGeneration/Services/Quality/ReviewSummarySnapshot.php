@@ -23,7 +23,7 @@ final class ReviewSummarySnapshot
     {
         return (int) ($snapshot['classifier_version'] ?? 0) === self::VERSION
             && is_string($snapshot['source_version'] ?? null)
-            && hash_equals((string) data_get($draft, 'quality_summary.content_version', ''), $snapshot['source_version']);
+            && hash_equals(self::contentVersion($draft), $snapshot['source_version']);
     }
 
     /** @param array<string, mixed> $draft */

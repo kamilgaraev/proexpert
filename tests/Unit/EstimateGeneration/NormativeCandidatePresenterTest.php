@@ -20,6 +20,7 @@ final class NormativeCandidatePresenterTest extends TestCase
             'section' => ['id' => 9, 'code' => '06', 'name' => 'Бетонные работы', 'type' => 'section', 'path' => '06/01'],
             'confidence' => 0.91,
             'score' => 78.25,
+            'rerank' => ['status' => 'reranked', 'position' => 1, 'confidence' => 0.99, 'explanation_codes' => ['synthetic']],
             'match_reasons' => ['name_tokens_match'],
             'warnings' => ['unit_mismatch'],
             'learning_sources' => [[

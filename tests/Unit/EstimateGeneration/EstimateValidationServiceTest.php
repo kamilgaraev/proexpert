@@ -33,6 +33,15 @@ final class EstimateValidationServiceTest extends TestCase
 
         $draft['local_estimates'][0]['sections'][0]['work_items'][0]['name'] = 'Актуальное название';
         self::assertNotSame($firstVersion, ReviewSummarySnapshot::contentVersion($draft));
+        $staleSession = new EstimateGenerationSession(['draft_payload' => $draft]);
+        self::assertFalse($query->hasFreshProjection($staleSession));
+
+        try {
+            $query->paginate($staleSession, []);
+            self::fail('Stale projection must be rejected before querying the database.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('estimate_generation.review_projection_stale', $exception->getMessage());
+        }
 
         $refreshed = $this->service()->validate($draft);
         self::assertTrue($query->hasFreshProjection(new EstimateGenerationSession(['draft_payload' => $refreshed])));

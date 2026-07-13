@@ -26,7 +26,7 @@ class NormativeCandidatePresenter
             'confidence' => round((float) ($candidate['confidence'] ?? 0), 4),
             'score' => round((float) ($candidate['score'] ?? 0), 4),
             'score_kind' => 'retrieval_score',
-            'rerank' => $this->rerank($candidate['rerank'] ?? null),
+            'rerank' => null,
             'resources_count' => $this->resourcesCount($resources),
             'priced_resources_count' => $this->pricedResourcesCount($resources),
             'unpriced_resources_count' => $pricePreview['unpriced_resources_count'],
@@ -42,25 +42,6 @@ class NormativeCandidatePresenter
             'learning_negative_count' => (int) ($candidate['learning_negative_count'] ?? 0),
             'learning_score' => round((float) ($candidate['learning_score'] ?? 0), 2),
             'learning_sources' => $this->learningSources($candidate['learning_sources'] ?? []),
-        ];
-    }
-
-    /**
-     * @return array{status: string, position: int|null, confidence: float|null, explanation_codes: array<int, string>}|null
-     */
-    private function rerank(mixed $value): ?array
-    {
-        if (! is_array($value) || ! is_string($value['status'] ?? null)) {
-            return null;
-        }
-
-        return [
-            'status' => $value['status'],
-            'position' => isset($value['position']) && is_numeric($value['position']) ? (int) $value['position'] : null,
-            'confidence' => isset($value['confidence']) && is_numeric($value['confidence'])
-                ? round((float) $value['confidence'], 4)
-                : null,
-            'explanation_codes' => $this->strings($value['explanation_codes'] ?? []),
         ];
     }
 
@@ -89,14 +70,6 @@ class NormativeCandidatePresenter
         }
 
         return $sources;
-    }
-
-    /** @return array<int, string> */
-    private function strings(mixed $value): array
-    {
-        return is_array($value)
-            ? array_values(array_filter($value, static fn (mixed $item): bool => is_string($item) && $item !== ''))
-            : [];
     }
 
     private function nullableString(mixed $value): ?string
