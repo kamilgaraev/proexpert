@@ -93,8 +93,19 @@ class EstimateGenerationPackagePersistenceService
      */
     private function syncLocalEstimate(EstimateGenerationSession $session, array $localEstimate, int $localIndex, ?string $inputVersion): void
     {
-        $workItems = $this->estimateWorkItems($this->workItems($localEstimate));
+        $draftInputVersion = $localEstimate['input_version'] ?? null;
+        $staleInput = is_string($draftInputVersion) && is_string($inputVersion)
+            && preg_match('/^sha256:[a-f0-9]{64}$/D', $draftInputVersion) === 1
+            && ! hash_equals($inputVersion, $draftInputVersion);
+        $workItems = $staleInput ? [] : $this->estimateWorkItems($this->workItems($localEstimate));
         $quality = $this->packageQuality($localEstimate, $workItems);
+        if ($staleInput) {
+            $quality = [
+                'level' => 'blocked',
+                'critical_flags' => ['stale_input_version'],
+                'warning_flags' => [],
+            ];
+        }
         $itemCounters = $this->itemCounters($workItems);
         $totalCost = $this->workItemsTotal($workItems);
         $packageKey = $this->packageKey($localEstimate, $localIndex);
@@ -131,6 +142,10 @@ class EstimateGenerationPackagePersistenceService
                 'last_error_code' => null,
             ]
         );
+
+        if ($staleInput) {
+            return;
+        }
 
         foreach ($workItems as $workIndex => $workItem) {
             $this->appendItemRevision($package, $workItem, $workIndex);

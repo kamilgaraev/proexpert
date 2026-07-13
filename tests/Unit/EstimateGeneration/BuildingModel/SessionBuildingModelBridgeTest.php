@@ -12,6 +12,9 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\InMemoryBuilding
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\SessionBuildingModelBridge;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\SessionBuildingModelUnitData;
 use App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\BuildingQuantityCalculator;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\NormalizedBuildingModelQuantityInputMapper;
+use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -57,6 +60,29 @@ final class SessionBuildingModelBridgeTest extends TestCase
         self::assertSame(['floor-cad', 'floor-pdf-3', 'floor-vision'], array_column($forward->toArray()['floors'], 'key'));
         self::assertSame(1, $forward->metrics['wall_count']);
         self::assertSame(2, $forward->metrics['room_count']);
+        $quantities = (new BuildingQuantityCalculator)->calculate(
+            (new NormalizedBuildingModelQuantityInputMapper)->map($forward),
+        );
+        self::assertSame([], $quantities->all());
+        self::assertNotEmpty(array_intersect(
+            ['missing_wall_length', 'missing_wall_height', 'unconfirmed_scale'],
+            array_column($quantities->diagnostics, 'code'),
+        ));
+    }
+
+    #[Test]
+    public function malformed_production_pdf_geometry_wrapper_is_rejected_without_synthetic_bounds(): void
+    {
+        [$bridge] = $this->bridge();
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('pdf_page_geometry_contract_invalid');
+        $bridge->store(
+            new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('e', 64)),
+            [new SessionBuildingModelUnitData(103, 503, 603, 'pdf_page', 3, 'sha256:'.str_repeat('c', 64), 1.0, [
+                'pdf_geometry' => ['geometry' => ['page_number' => 3, 'width' => 0, 'height' => 700, 'rotation' => 0, 'vector_elements' => []]],
+            ])],
+        );
     }
 
     /** @return array{SessionBuildingModelBridge, BuildingModelRepository} */
@@ -131,19 +157,22 @@ final class SessionBuildingModelBridgeTest extends TestCase
             'source_kind' => 'pdf_page',
             'floor_key' => 'floor-pdf-3',
             'pdf_geometry' => [
-                'page_number' => 3,
-                'width' => 1000,
-                'height' => 700,
-                'rotation' => 0,
-                'vector_elements' => [[
-                    'kind' => 'line',
-                    'geometry' => ['points' => [[0, 0], [500, 0]]],
-                    'style' => ['source_operator' => 'page:3:object:7'],
-                ]],
-                'text_blocks' => [],
-                'visual_metrics' => [],
-                'page_role' => 'geometry_only',
-                'signals' => ['vector_geometry'],
+                'schema_version' => 1,
+                'geometry' => [
+                    'page_number' => 3,
+                    'width' => 1000,
+                    'height' => 700,
+                    'rotation' => 0,
+                    'vector_elements' => [[
+                        'kind' => 'line',
+                        'geometry' => ['points' => [[0, 0], [500, 0]]],
+                        'style' => ['source_operator' => 'page:3:object:7'],
+                    ]],
+                    'text_blocks' => [],
+                    'visual_metrics' => [],
+                    'page_role' => 'geometry_only',
+                    'signals' => ['vector_geometry'],
+                ],
             ],
         ]);
     }

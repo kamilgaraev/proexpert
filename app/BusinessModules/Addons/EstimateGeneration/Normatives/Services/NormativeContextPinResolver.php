@@ -41,6 +41,9 @@ class NormativeContextPinResolver
             return ['status' => 'review_required', 'blocking_issues' => ['normative_resource_context_not_pinned']];
         }
         $intents = $this->intents($workIntents);
+        if ($intents === null) {
+            return ['status' => 'review_required', 'blocking_issues' => ['normative_work_intents_limit_exceeded']];
+        }
         if ($intents === []) {
             return ['status' => 'review_required', 'blocking_issues' => ['normative_work_intents_not_pinned']];
         }
@@ -83,11 +86,11 @@ class NormativeContextPinResolver
         return null;
     }
 
-    /** @return list<array{search_text: string, unit: string, code?: string|null}> */
-    private function intents(array $workIntents): array
+    /** @return list<array{search_text: string, unit: string, code?: string|null}>|null */
+    private function intents(array $workIntents): ?array
     {
         $resolved = [];
-        foreach (array_slice($workIntents, 0, 64) as $intent) {
+        foreach ($workIntents as $intent) {
             if (! is_array($intent)) {
                 continue;
             }
@@ -100,6 +103,9 @@ class NormativeContextPinResolver
             }
             $key = mb_strtolower($search).'|'.mb_strtolower($unit).'|'.mb_strtolower((string) $code);
             $resolved[$key] = ['search_text' => $search, 'unit' => $unit, 'code' => $code];
+            if (count($resolved) > 64) {
+                return null;
+            }
         }
 
         return array_values($resolved);

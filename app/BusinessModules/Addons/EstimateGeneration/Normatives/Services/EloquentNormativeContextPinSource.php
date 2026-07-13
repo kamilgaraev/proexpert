@@ -96,26 +96,19 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->get([
                 'resources.id as norm_resource_id', 'resources.estimate_norm_id', 'resources.construction_resource_id', 'resources.resource_code',
                 'resources.resource_name', 'resources.unit', 'resources.quantity', 'resources.resource_type',
-                'prices.id as price_id', 'prices.price_type',
+                'prices.id as price_id', 'prices.construction_resource_id as price_construction_resource_id', 'prices.price_type',
             ]);
         if ($resourceRows->count() > 10_000) {
             return null;
         }
         $resources = [];
         foreach ($resourceRows as $row) {
-            $group = match ((string) $row->resource_type) {
-                'material' => 'materials', 'labor' => 'labor', 'machine', 'machinery' => 'machinery', default => 'other',
-            };
-            $resources[(int) $row->estimate_norm_id][$group][] = [
-                'code' => (string) $row->resource_code,
-                'name' => (string) $row->resource_name,
-                'unit' => (string) $row->unit,
-                'quantity' => (float) $row->quantity,
-                'price_id' => (int) $row->price_id,
-                'price_source' => 'regional_catalog',
-                'linked_resource_id' => (int) $row->construction_resource_id,
-                'norm_resource_id' => (int) $row->norm_resource_id,
-            ];
+            try {
+                $mapped = NormativeResourceRowData::fromDatabaseRow($row);
+            } catch (\InvalidArgumentException) {
+                return null;
+            }
+            $resources[$mapped->estimateNormId][$mapped->group][] = $mapped->resource;
         }
         $candidates = [];
         foreach ($norms as $norm) {

@@ -354,11 +354,37 @@ final class EstimateGenerationBenchmarkCommandTest extends TestCase
             $objects['org-42/estimate-generation/benchmarks/acceptance/case/unsupported.dwg'] = "AC1032 SYNTHETIC-LICENSED-DESCRIPTOR DWG conversion intentionally unsupported in Task 1\n";
             $objects['org-42/estimate-generation/benchmarks/acceptance/case/unsupported.json'] = $invalidExpected;
         }
-        $manifest = json_encode([
+        $manifestPayload = [
             'schema_version' => 1, 'manifest_version' => 'acceptance-command:v1',
             'cases' => $cases,
+        ];
+        $canonical = $manifestPayload;
+        $sort = function (array &$value) use (&$sort): void {
+            if (! array_is_list($value)) {
+                ksort($value, SORT_STRING);
+            }
+            foreach ($value as &$item) {
+                if (is_array($item)) {
+                    $sort($item);
+                }
+            }
+        };
+        $sort($canonical);
+        $corpusDigest = hash('sha256', json_encode($canonical, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+        $approval = json_encode([
+            'schema_version' => 1, 'status' => 'approved', 'approved' => true,
+            'gate_execution_allowed' => true, 'corpus_digest' => $corpusDigest,
+            'provenance' => 'owner:command-fixture:v1',
         ], JSON_THROW_ON_ERROR);
+        $manifestPayload['owner_approval'] = [
+            'status' => 'approved', 'gate_execution_allowed' => true,
+            'approval_locator' => 's3://org-{organization_id}/estimate-generation/benchmarks/acceptance/owner-approval.json',
+            'approval_sha256' => hash('sha256', $approval), 'corpus_digest' => $corpusDigest,
+            'provenance' => 'owner:command-fixture:v1',
+        ];
+        $manifest = json_encode($manifestPayload, JSON_THROW_ON_ERROR);
         $objects['org-42/estimate-generation/benchmarks/acceptance/manifest.json'] = $manifest;
+        $objects['org-42/estimate-generation/benchmarks/acceptance/owner-approval.json'] = $approval;
         $store = new class($objects) implements BenchmarkPrivateObjectStore
         {
             /** @param array<string, string> $objects */

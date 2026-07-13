@@ -133,16 +133,25 @@ final readonly class SessionBuildingModelBridge
     /** @param array<string, mixed> $payload @return array<string, mixed> */
     private function pdfVector(SessionBuildingModelUnitData $unit, array $payload): array
     {
-        $pageNumber = is_int($payload['page_number'] ?? null) && $payload['page_number'] > 0
-            ? $payload['page_number']
-            : $unit->index;
-        $width = is_int($payload['width'] ?? null) || is_float($payload['width'] ?? null) ? (float) $payload['width'] : 1.0;
-        $height = is_int($payload['height'] ?? null) || is_float($payload['height'] ?? null) ? (float) $payload['height'] : 1.0;
-        $rotation = is_int($payload['rotation'] ?? null) && in_array($payload['rotation'], [0, 90, 180, 270], true)
-            ? $payload['rotation']
-            : 0;
+        $geometry = $payload['geometry'] ?? null;
+        if (! is_array($geometry)) {
+            throw new InvalidArgumentException('pdf_page_geometry_contract_invalid');
+        }
+        $pageNumber = $geometry['page_number'] ?? null;
+        $width = $geometry['width'] ?? null;
+        $height = $geometry['height'] ?? null;
+        $rotation = $geometry['rotation'] ?? null;
+        if (! is_int($pageNumber) || $pageNumber < 1
+            || (! is_int($width) && ! is_float($width)) || (float) $width <= 0
+            || (! is_int($height) && ! is_float($height)) || (float) $height <= 0
+            || ! is_int($rotation) || ! in_array($rotation, [0, 90, 180, 270], true)
+            || ! is_array($geometry['vector_elements'] ?? null)) {
+            throw new InvalidArgumentException('pdf_page_geometry_contract_invalid');
+        }
+        $width = (float) $width;
+        $height = (float) $height;
         $entities = [];
-        foreach (is_array($payload['vector_elements'] ?? null) ? $payload['vector_elements'] : [] as $index => $element) {
+        foreach ($geometry['vector_elements'] as $index => $element) {
             $points = is_array($element) && is_array($element['geometry']['points'] ?? null)
                 ? $element['geometry']['points']
                 : null;
@@ -164,7 +173,7 @@ final readonly class SessionBuildingModelBridge
             'source_fingerprint' => $unit->sourceVersion,
             'source_unit' => null,
             'unit_status' => 'unknown',
-            'bounds' => [0.0, 0.0, max(1.0, $width), max(1.0, $height)],
+            'bounds' => [0.0, 0.0, $width, $height],
             'layers' => [['name' => 'page', 'visible' => true]],
             'blocks' => [],
             'entities' => $entities,
@@ -172,11 +181,11 @@ final readonly class SessionBuildingModelBridge
             'dimensions' => [],
             'pages' => [[
                 'page_number' => $pageNumber,
-                'width' => max(1.0, $width),
-                'height' => max(1.0, $height),
+                'width' => $width,
+                'height' => $height,
                 'rotation' => $rotation,
-                'media_box' => [0.0, 0.0, max(1.0, $width), max(1.0, $height)],
-                'crop_box' => [0.0, 0.0, max(1.0, $width), max(1.0, $height)],
+                'media_box' => [0.0, 0.0, $width, $height],
+                'crop_box' => [0.0, 0.0, $width, $height],
                 'transform' => [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
                 'classification' => $entities === [] ? 'empty' : 'vector',
             ]],

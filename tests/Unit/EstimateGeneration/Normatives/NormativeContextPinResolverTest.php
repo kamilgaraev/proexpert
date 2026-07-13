@@ -8,6 +8,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeC
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinSource;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeIntentCandidateRanker;
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeResourceRowData;
+use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -88,6 +90,47 @@ final class NormativeContextPinResolverTest extends TestCase
     }
 
     #[Test]
+    public function unique_intent_limit_is_checked_before_source_query_while_exact_limit_is_bounded(): void
+    {
+        $source = new class implements NormativeContextPinSource
+        {
+            public int $calls = 0;
+
+            public int $received = 0;
+
+            public function resolveForIntents(NormativeContextPinData $requested, array $intents): ?NormativeContextPinData
+            {
+                $this->calls++;
+                $this->received = count($intents);
+
+                return new NormativeContextPinData(
+                    $requested->datasetId, $requested->datasetVersion, $requested->applicabilityDate,
+                    $requested->regionId, $requested->priceZoneId, $requested->periodId,
+                    $requested->regionalPriceVersionId, $requested->priceVersion,
+                    [['candidate_id' => '101']], str_repeat('a', 64),
+                );
+            }
+        };
+        $resolver = new NormativeContextPinResolver($source);
+        $context = [
+            'normative_dataset_id' => 77, 'normative_dataset_version' => 'fsnb-2026.1',
+            'region_id' => 16, 'price_zone_id' => 3, 'period_id' => 8,
+            'estimate_regional_price_version_id' => 11, 'price_version' => 'prices-2026.07',
+            'business_date' => '2026-07-01',
+        ];
+        $intents = array_map(
+            static fn (int $index): array => ['search_text' => 'intent-'.$index, 'unit' => 'm2'],
+            range(1, 65),
+        );
+
+        self::assertSame('normative_work_intents_limit_exceeded', $resolver->resolve($context, $intents)['blocking_issues'][0]);
+        self::assertSame(0, $source->calls);
+        self::assertSame('pinned', $resolver->resolve($context, array_slice($intents, 0, 64))['status']);
+        self::assertSame(1, $source->calls);
+        self::assertSame(64, $source->received);
+    }
+
+    #[Test]
     public function production_source_has_no_latest_first_or_cross_dataset_fallback(): void
     {
         $source = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Normatives/Services/EloquentNormativeContextPinSource.php');
@@ -126,5 +169,27 @@ final class NormativeContextPinResolverTest extends TestCase
         self::assertNull((new NormativeIntentCandidateRanker)->select($candidates, [[
             'search_text' => 'roof waterproofing', 'unit' => 'm2', 'code' => null,
         ]]));
+    }
+
+    #[Test]
+    public function exact_database_resource_row_preserves_positive_identities_and_rejects_relation_mismatch(): void
+    {
+        $row = (object) [
+            'estimate_norm_id' => 101, 'norm_resource_id' => 7001,
+            'construction_resource_id' => 501, 'price_construction_resource_id' => 501,
+            'price_id' => 9001, 'resource_type' => 'material', 'resource_code' => '01.7.01',
+            'resource_name' => 'Кирпич', 'unit' => 'pcs', 'quantity' => 50,
+        ];
+        $mapped = NormativeResourceRowData::fromDatabaseRow($row);
+
+        self::assertSame(101, $mapped->estimateNormId);
+        self::assertSame('materials', $mapped->group);
+        self::assertSame(7001, $mapped->resource['norm_resource_id']);
+        self::assertSame(9001, $mapped->resource['price_id']);
+        self::assertSame(501, $mapped->resource['linked_resource_id']);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('normative_resource_price_relation_invalid');
+        NormativeResourceRowData::fromDatabaseRow((object) [...(array) $row, 'price_construction_resource_id' => 502]);
     }
 }

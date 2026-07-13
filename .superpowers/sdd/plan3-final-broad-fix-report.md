@@ -129,3 +129,13 @@ Real renderer smoke на committed scanned PDF: 1 страница, preview со
 - Acceptance loader требует content-addressed owner approval до чтения corpus objects. Pending, missing и tampered approval завершаются до adapter/output. Кандидатный корпус оставлен `pending_owner_approval`; gate не запускался.
 
 Финальная верификация третьей волны: PHPUnit — 144 теста и 576 проверок; PHPStan — без ошибок; PHP syntax — 22 файла; Pint — 22 файла; Python AST compile и `git diff --check` — успешно. Acceptance gate не запускался, поскольку owner approval остаётся pending.
+
+## Четвёртая узкая волна исправлений (2026-07-13)
+
+- Building model bridge читает фактический контракт `ProductionDocumentUnitProcessor`: типизированная страница извлекается только из `pdf_geometry.geometry`. Отсутствующая обёртка, нулевая или отсутствующая ширина/высота и неверный rotation завершаются `pdf_page_geometry_contract_invalid`; синтетические границы 1×1 больше не создаются. Проверка использует production-shaped payload, подтверждает PDF wall/entity и отсутствие выдуманной quantity при недостаточной высоте/масштабе.
+- `NormativeContextPinResolver` считает нормализованные уникальные work intents до обращения к источнику. 65-й уникальный intent даёт `normative_work_intents_limit_exceeded` при нуле вызовов источника; ровно 64 передаются источнику без усечения.
+- Persistence получил stale-input fence: draft версии A при authoritative current версии B сохраняется как blocked под B и завершает транзакцию до создания package item, accepted pricing и SQL-финализатора. Поведенческий тест использует изолированную SQLite `:memory:` схему, реальный `syncFromDraft`, Eloquent repository/transaction и fake authoritative resolver.
+- Eloquent normative source теперь выбирает обе стороны связи construction resource и преобразует строку через `NormativeResourceRowData`. Неположительные `estimate_norm_resources.id`/`price_id` и несовпавшая связь resource↔price отклоняются; точные `norm_resource_id`, `price_id` и `linked_resource_id` продолжают downstream assembly/pricing contract.
+- Command acceptance fixtures приведены к актуальной owner-approval схеме. Это только изолированные тестовые объекты: production candidate corpus остаётся `pending_owner_approval`, gate не включался и approval не изменялся.
+
+Свежая focused-верификация после форматирования: PHPUnit — 29/29 тестов, 111 assertions; в составе полный `EstimateGenerationBenchmarkCommandTest` 9/9 и `AcceptanceBenchmarkCorpusLoaderTest`. PHPStan затронутых production-файлов — без ошибок при `memory_limit=512M`; Pint — 9 файлов; `git diff --check` — успешно. Первый PHPStan-запуск с лимитом 128 МБ был неполным из-за исчерпания памяти и повторён с достаточным лимитом.
