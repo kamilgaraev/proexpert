@@ -14,28 +14,33 @@ final readonly class GeometryReviewSourcePresenter
     public function __construct(private FileService $files) {}
 
     /** @param array<string, mixed> $row @return array<string, mixed>|null */
-    public function present(array $row, int $organizationId, int $sessionId): ?array
-    {
+    public function present(
+        array $row,
+        int $organizationId,
+        int $sessionId,
+        string $sourceKind,
+        string $expectedPath,
+    ): ?array {
         $documentId = filter_var($row['document_id'] ?? null, FILTER_VALIDATE_INT);
         $pageId = filter_var($row['page_id'] ?? null, FILTER_VALIDATE_INT);
         $pageNumber = filter_var($row['page_number'] ?? null, FILTER_VALIDATE_INT);
         $width = filter_var($row['width'] ?? null, FILTER_VALIDATE_INT);
         $height = filter_var($row['height'] ?? null, FILTER_VALIDATE_INT);
-        $path = is_string($row['artifact_path'] ?? null) ? trim($row['artifact_path'], '/') : '';
+        $path = is_string($row['artifact_path'] ?? null) ? $row['artifact_path'] : '';
         $contentType = $row['content_type'] ?? null;
-        $manifestPrefix = sprintf(
-            'org-%d/estimate-generation/sessions/%d/documents/%d/manifests/',
-            $organizationId,
-            $sessionId,
-            $documentId,
-        );
-        $documentPrefix = sprintf('org-%d/estimate-generation/sessions/%d/documents/', $organizationId, $sessionId);
+        $documentRoot = sprintf('org-%d/estimate-generation/sessions/%d/documents/', $organizationId, $sessionId);
+        $expectedManifestPrefix = sprintf('%s%d/manifests/', $documentRoot, $documentId);
         $safeContentType = in_array($contentType, ['image/png', 'image/jpeg'], true);
+        $safeExpectedPath = match ($sourceKind) {
+            'direct' => $expectedPath === $path && str_starts_with($expectedPath, $documentRoot),
+            'generated' => $expectedPath === $expectedManifestPrefix && str_starts_with($path, $expectedPath),
+            default => false,
+        };
         if ($documentId === false || $documentId < 1 || $pageId === false || $pageId < 1
             || $pageNumber === false || $pageNumber < 1 || $width === false || $width < 1
             || $height === false || $height < 1 || ! $safeContentType
-            || (! str_starts_with($path, $manifestPrefix) && ! str_starts_with($path, $documentPrefix))
-            || str_contains($path, '../')) {
+            || ! $safeExpectedPath || $this->hasUnsafePathSegment($path)
+            || $this->hasUnsafePathSegment($expectedPath, $sourceKind === 'generated')) {
             return null;
         }
 
@@ -55,6 +60,16 @@ final readonly class GeometryReviewSourcePresenter
             'image_url' => $url,
             'elements' => $this->elements($row['normalized_payload'] ?? []),
         ];
+    }
+
+    private function hasUnsafePathSegment(string $path, bool $allowTrailingSlash = false): bool
+    {
+        if ($path === '' || str_starts_with($path, '/') || (! $allowTrailingSlash && str_ends_with($path, '/'))
+            || str_contains($path, '\\') || str_contains($path, "\0")) {
+            return true;
+        }
+
+        return array_filter(explode('/', $path), static fn (string $segment): bool => $segment === '.' || $segment === '..') !== [];
     }
 
     /** @return list<array<string, mixed>> */

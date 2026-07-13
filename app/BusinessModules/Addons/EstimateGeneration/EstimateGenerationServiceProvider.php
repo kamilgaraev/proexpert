@@ -335,6 +335,14 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(DocumentUnitProcessor::class, ProductionDocumentUnitProcessor::class);
         $this->app->singleton(DocumentUnitAggregateReconciler::class, EloquentDocumentUnitAggregateReconciler::class);
         $this->app->singleton(DocumentSourceReplacementTransaction::class, LaravelDocumentSourceReplacementTransaction::class);
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\GeometryReviewDataSource::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EloquentGeometryReviewDataSource::class,
+        );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\GeometryReviewPayloadReader::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\GeometryReviewPayloadService::class,
+        );
         $this->app->singleton(EvidenceRepository::class, EloquentEvidenceRepository::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinSource::class, \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EloquentNormativeContextPinSource::class);
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\SessionBaseInputVersionResolver::class, \App\BusinessModules\Addons\EstimateGeneration\Pipeline\EloquentSessionBaseInputVersionResolver::class);

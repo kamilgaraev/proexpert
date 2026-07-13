@@ -9,14 +9,14 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryC
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionSnapshotEtag;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
-use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\GeometryReviewPayloadService;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\GeometryReviewPayloadReader;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ConfirmEstimateGenerationGeometryRequest;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ShowEstimateGenerationGeometryRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
@@ -28,10 +28,10 @@ final class EstimateGenerationGeometryController extends Controller
     public function __construct(
         private ConfirmBuildingGeometry $confirmGeometry,
         private SessionOperationalSnapshotBuilder $snapshotBuilder,
-        private GeometryReviewPayloadService $reviewPayload,
+        private GeometryReviewPayloadReader $reviewPayload,
     ) {}
 
-    public function show(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
+    public function show(ShowEstimateGenerationGeometryRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse
     {
         try {
             $organizationId = (int) $request->user()->current_organization_id;
@@ -39,7 +39,13 @@ final class EstimateGenerationGeometryController extends Controller
                 throw new NotFoundHttpException;
             }
 
-            return AdminResponse::success($this->reviewPayload->handle($session));
+            $validated = $request->validated();
+
+            return AdminResponse::success($this->reviewPayload->handle(
+                $session,
+                (int) ($validated['sources_page'] ?? 1),
+                (int) ($validated['sources_per_page'] ?? 20),
+            ));
         } catch (NotFoundHttpException) {
             return AdminResponse::error(trans_message('estimate_generation.geometry_not_found'), 404);
         } catch (\Throwable $exception) {

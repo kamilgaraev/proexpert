@@ -30,7 +30,13 @@ final class GeometryReviewSourcePresenterTest extends TestCase
             ['ResponseContentType' => 'image/png'],
         )->andReturn('https://storage.example/signed-page');
 
-        $payload = (new GeometryReviewSourcePresenter($files))->present($this->sourceRow(), 7, 11);
+        $payload = (new GeometryReviewSourcePresenter($files))->present(
+            $this->sourceRow(),
+            7,
+            11,
+            'generated',
+            'org-7/estimate-generation/sessions/11/documents/13/manifests/',
+        );
 
         self::assertSame('https://storage.example/signed-page', $payload['image_url']);
         self::assertSame([2000, 1000], $payload['source_size']);
@@ -52,7 +58,13 @@ final class GeometryReviewSourcePresenterTest extends TestCase
         $row = $this->sourceRow();
         $row['artifact_path'] = 'org-8/estimate-generation/sessions/11/documents/13/manifests/source/page.png';
 
-        self::assertNull((new GeometryReviewSourcePresenter($files))->present($row, 7, 11));
+        self::assertNull((new GeometryReviewSourcePresenter($files))->present(
+            $row,
+            7,
+            11,
+            'generated',
+            'org-7/estimate-generation/sessions/11/documents/13/manifests/',
+        ));
     }
 
     #[Test]
@@ -69,9 +81,72 @@ final class GeometryReviewSourcePresenterTest extends TestCase
         $row['artifact_path'] = 'org-7/estimate-generation/sessions/11/documents/source-image.jpg';
         $row['content_type'] = 'image/jpeg';
 
-        $payload = (new GeometryReviewSourcePresenter($files))->present($row, 7, 11);
+        $payload = (new GeometryReviewSourcePresenter($files))->present(
+            $row,
+            7,
+            11,
+            'direct',
+            'org-7/estimate-generation/sessions/11/documents/source-image.jpg',
+        );
 
         self::assertSame('https://storage.example/signed-jpeg', $payload['image_url']);
+    }
+
+    #[Test]
+    public function it_rejects_an_original_from_another_document_in_the_same_session(): void
+    {
+        $files = Mockery::mock(FileService::class);
+        $files->shouldNotReceive('temporaryUrl');
+        $row = $this->sourceRow();
+        $row['artifact_path'] = 'org-7/estimate-generation/sessions/11/documents/other-image.jpg';
+        $row['content_type'] = 'image/jpeg';
+
+        self::assertNull((new GeometryReviewSourcePresenter($files))->present(
+            $row,
+            7,
+            11,
+            'direct',
+            'org-7/estimate-generation/sessions/11/documents/source-image.jpg',
+        ));
+    }
+
+    #[Test]
+    public function it_rejects_an_artifact_from_another_document_in_the_same_session(): void
+    {
+        $files = Mockery::mock(FileService::class);
+        $files->shouldNotReceive('temporaryUrl');
+        $row = $this->sourceRow();
+        $row['artifact_path'] = 'org-7/estimate-generation/sessions/11/documents/14/manifests/source/page.png';
+
+        self::assertNull((new GeometryReviewSourcePresenter($files))->present(
+            $row,
+            7,
+            11,
+            'generated',
+            'org-7/estimate-generation/sessions/11/documents/13/manifests/',
+        ));
+    }
+
+    #[Test]
+    public function it_rejects_traversal_and_manifest_prefix_collisions(): void
+    {
+        foreach ([
+            'org-7/estimate-generation/sessions/11/documents/13/manifests/../14/page.png',
+            'org-7/estimate-generation/sessions/11/documents/13/manifests-collision/page.png',
+        ] as $unsafePath) {
+            $files = Mockery::mock(FileService::class);
+            $files->shouldNotReceive('temporaryUrl');
+            $row = $this->sourceRow();
+            $row['artifact_path'] = $unsafePath;
+
+            self::assertNull((new GeometryReviewSourcePresenter($files))->present(
+                $row,
+                7,
+                11,
+                'generated',
+                'org-7/estimate-generation/sessions/11/documents/13/manifests/',
+            ));
+        }
     }
 
     private function sourceRow(): array
