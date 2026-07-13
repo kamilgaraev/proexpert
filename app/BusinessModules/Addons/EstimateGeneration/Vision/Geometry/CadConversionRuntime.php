@@ -17,6 +17,8 @@ final readonly class CadConversionRuntime
         private int $maxInputBytes = 52_428_800,
         private int $maxOutputBytes = 16_777_216,
         private ?GeometryResourceLimits $resourceLimits = null,
+        private ?GeometryProcessRunner $processRunner = null,
+        private int $maxEntities = 250_000,
     ) {}
 
     public function extract(string $inputPath): VectorGeometryData
@@ -44,9 +46,10 @@ final readonly class CadConversionRuntime
             if (! copy($real, $copy)) {
                 throw new GeometryExtractionException('cad_source_copy_failed');
             }
-            $result = (new GeometryProcessRunner)->run(
+            $result = ($this->processRunner ?? new GeometryProcessRunner)->run(
                 [$this->pythonBinary, $script, '--input', $copy, '--workspace', $workDir,
-                    '--dwgread', $this->dwgreadBinary, '--max-output-bytes', (string) $this->maxOutputBytes],
+                    '--dwgread', $this->dwgreadBinary, '--max-output-bytes', (string) $this->maxOutputBytes,
+                    '--max-entities', (string) $this->maxEntities],
                 $workDir,
                 'cad',
                 $this->timeoutSeconds,

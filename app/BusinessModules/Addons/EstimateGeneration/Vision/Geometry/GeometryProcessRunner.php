@@ -14,6 +14,7 @@ final readonly class GeometryProcessRunner
     public function __construct(
         private ?string $platformFamily = null,
         private array $sandboxCommandPrefix = [],
+        private ?string $sandboxBinary = null,
     ) {}
 
     /** @param array<int, string> $command @return array{exit_code: int|null, stdout: string, stderr: string} */
@@ -26,7 +27,7 @@ final readonly class GeometryProcessRunner
         int $maxErrorBytes = 8192,
         ?GeometryResourceLimits $resourceLimits = null,
     ): array {
-        $sandbox = getenv('GEOMETRY_SANDBOX_BINARY');
+        $sandbox = $this->sandboxBinary ?? getenv('GEOMETRY_SANDBOX_BINARY');
         $limits = $resourceLimits ?? new GeometryResourceLimits;
         if (($this->platformFamily ?? PHP_OS_FAMILY) === 'Linux') {
             if (! is_string($sandbox) || ! $this->isExecutableSandbox($sandbox)) {

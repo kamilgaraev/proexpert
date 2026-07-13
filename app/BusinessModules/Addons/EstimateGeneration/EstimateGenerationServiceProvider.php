@@ -56,9 +56,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\ProcessBenchmarkCase
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\ProductionReplayBenchmarkAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedBenchmarkCatalogLoader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedPortEnvelopeLoader;
-use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RegisteredBenchmarkManifestRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedReplayProjectionLoader;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RegisteredBenchmarkManifestRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\BootstrapEstimateGenerationLearningCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\InspectCadRuntimeReadinessCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\InspectEstimateGenerationProductionCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\RunEstimateGenerationBenchmarkCaseCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\RunEstimateGenerationBenchmarkCommand;
@@ -180,7 +181,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyServi
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\CadGeometryProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionResponseBodyReader;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\CadConversionRuntime;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\CadRuntimeConfiguration;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\CadRuntimeReadinessInspector;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\DwgDxfGeometryProvider;
+use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\GeometryProcessRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\GeometryResourceLimits;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPreprocessor;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Providers\BoundedVisionResponseBodyReader;
@@ -199,6 +204,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
     {
         $this->app->singleton(SessionOperationalSnapshotBuilder::class, BuildSessionOperationalSnapshot::class);
         $this->mergeConfigFrom(config_path('estimate-generation.php'), 'estimate-generation');
+        if ($this->app->environment('production')
+            && config('estimate-generation.benchmark.production_output_store') !== 's3') {
+            throw new \InvalidArgumentException('benchmark_production_output_store_invalid');
+        }
         $this->app->singleton(MetricRegistry::class, static fn (): MetricRegistry => MetricRegistry::standard());
         $this->app->singleton(BenchmarkCaseExecutor::class, static fn (): BenchmarkCaseExecutor => new ProcessBenchmarkCaseExecutor(
             PHP_BINARY,
@@ -211,9 +220,9 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             ->give(FileServiceAcceptanceBenchmarkObjectStore::class);
         $this->app->singleton(AcceptanceBenchmarkCorpusLoader::class);
         $this->app->singleton(BenchmarkRunner::class);
-        $this->app->singleton(RegisteredBenchmarkManifestRepository::class, static fn (): RegisteredBenchmarkManifestRepository => new RegisteredBenchmarkManifestRepository(
+        $this->app->singleton(RegisteredBenchmarkManifestRepository::class, fn (): RegisteredBenchmarkManifestRepository => new RegisteredBenchmarkManifestRepository(
             base_path('tests/Fixtures/EstimateGeneration/benchmarks'),
-            (array) config('estimate-generation.benchmark.registered_manifests', []),
+            $this->repositoryReplayEnabled() ? (array) config('estimate-generation.benchmark.registered_manifests', []) : [],
         ));
         $this->app->singleton(RasterPreprocessor::class);
         $this->app->singleton(GeometryResourceLimits::class, static fn (): GeometryResourceLimits => new GeometryResourceLimits(
@@ -225,23 +234,47 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(VisionResponseBodyReader::class, BoundedVisionResponseBodyReader::class);
         $this->app->singleton(TimewebVisionProvider::class);
         $this->app->singleton(VisionProvider::class, TimewebVisionProvider::class);
-        $this->app->singleton(CadGeometryProvider::class, DwgDxfGeometryProvider::class);
-        $this->app->singleton(BenchmarkAdapterRegistry::class, static fn ($app): BenchmarkAdapterRegistry => new BenchmarkAdapterRegistry([
-            $app->make(CurrentBaselineBenchmarkAdapter::class),
-            new ProductionReplayBenchmarkAdapter(
-                new RecordedReplayProjectionLoader(base_path('tests/Fixtures/EstimateGeneration/benchmarks')),
-                new RecordedPortEnvelopeLoader(
-                    base_path('tests/Fixtures/EstimateGeneration/benchmarks'),
-                    base_path('tests/Fixtures/EstimateGeneration/benchmarks/recordings/manifest.json'),
-                ),
-                new RecordedBenchmarkCatalogLoader(base_path('tests/Fixtures/EstimateGeneration/benchmarks')),
-                $app->make(\App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler::class),
-                $app->make(ResourceAssemblyService::class),
-                $app->make(NormativeWorkIntentFactory::class),
-                $app->make(EstimateValidationService::class),
-                (array) config('estimate-generation.benchmark.production_replay_projections', []),
-            ),
-        ]));
+        $this->app->singleton(CadRuntimeConfiguration::class, fn (): CadRuntimeConfiguration => CadRuntimeConfiguration::fromArray(
+            (array) config('estimate-generation.vision.cad_runtime', []),
+            $this->app->environment('production'),
+        ));
+        $this->app->singleton(CadRuntimeReadinessInspector::class);
+        $this->app->singleton(CadConversionRuntime::class, static fn ($app): CadConversionRuntime => (static function (CadRuntimeConfiguration $cad): CadConversionRuntime {
+            $limits = new GeometryResourceLimits($cad->memoryLimitKiB, $cad->cpuLimitSeconds, $cad->fileSizeLimitBytes, $cad->openFileLimit);
+
+            return new CadConversionRuntime(
+                $cad->pythonBinary, $cad->scriptPath, $cad->dwgreadBinary, $cad->timeoutSeconds,
+                $cad->maxInputBytes, $cad->maxOutputBytes, $limits,
+                new GeometryProcessRunner(sandboxBinary: $cad->sandboxBinary), $cad->maxEntities,
+            );
+        })($app->make(CadRuntimeConfiguration::class)));
+        $this->app->singleton(DwgDxfGeometryProvider::class, static fn ($app): DwgDxfGeometryProvider => new DwgDxfGeometryProvider(
+            $app->make(\App\Services\Storage\FileService::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\BoundedStorageReader::class),
+            $app->make(CadConversionRuntime::class),
+            $app->make(CadRuntimeConfiguration::class)->maxInputBytes,
+        ));
+        $this->app->singleton(CadGeometryProvider::class, static fn ($app): DwgDxfGeometryProvider => $app->make(DwgDxfGeometryProvider::class));
+        $this->app->singleton(BenchmarkAdapterRegistry::class, function ($app): BenchmarkAdapterRegistry {
+            $adapters = [$app->make(CurrentBaselineBenchmarkAdapter::class)];
+            if ($this->repositoryReplayEnabled()) {
+                $adapters[] = new ProductionReplayBenchmarkAdapter(
+                    new RecordedReplayProjectionLoader(base_path('tests/Fixtures/EstimateGeneration/benchmarks')),
+                    new RecordedPortEnvelopeLoader(
+                        base_path('tests/Fixtures/EstimateGeneration/benchmarks'),
+                        base_path('tests/Fixtures/EstimateGeneration/benchmarks/recordings/manifest.json'),
+                    ),
+                    new RecordedBenchmarkCatalogLoader(base_path('tests/Fixtures/EstimateGeneration/benchmarks')),
+                    $app->make(\App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler::class),
+                    $app->make(ResourceAssemblyService::class),
+                    $app->make(NormativeWorkIntentFactory::class),
+                    $app->make(EstimateValidationService::class),
+                    (array) config('estimate-generation.benchmark.production_replay_projections', []),
+                );
+            }
+
+            return new BenchmarkAdapterRegistry($adapters);
+        });
         $this->app->singleton(RunEstimateGenerationBenchmarkCaseCommand::class, fn ($app): RunEstimateGenerationBenchmarkCaseCommand => new RunEstimateGenerationBenchmarkCaseCommand(
             $app->make(BenchmarkAdapterRegistry::class),
             base_path('tests/Fixtures/EstimateGeneration/benchmarks/manifest.json'),
@@ -432,6 +465,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $this->commands([
                 BootstrapEstimateGenerationLearningCommand::class,
                 InspectEstimateGenerationProductionCommand::class,
+                InspectCadRuntimeReadinessCommand::class,
                 RunEstimateGenerationBenchmarkCommand::class,
                 RunEstimateGenerationBenchmarkCaseCommand::class,
                 ClassifyEstimateNormativesCommand::class,
@@ -476,5 +510,12 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             return Limit::perMinute(max(1, (int) config('estimate-generation.training.max_dataset_jobs_per_minute', 2)))
                 ->by($key);
         });
+    }
+
+    private function repositoryReplayEnabled(): bool
+    {
+        return (bool) config('estimate-generation.benchmark.repository_replay_enabled', false)
+            && $this->app->environment(['local', 'testing'])
+            && is_dir(base_path('tests/Fixtures/EstimateGeneration/benchmarks'));
     }
 }

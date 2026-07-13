@@ -55,7 +55,15 @@ RUN python3 -m venv /opt/geometry-venv \
     && chmod 0555 /usr/local/bin/geometry-sandbox
 ENV PATH="/opt/geometry-venv/bin:/opt/libredwg/bin:${PATH}" \
     LD_LIBRARY_PATH="/opt/libredwg/lib" \
-    GEOMETRY_SANDBOX_BINARY="/usr/local/bin/geometry-sandbox"
+    GEOMETRY_SANDBOX_BINARY="/usr/local/bin/geometry-sandbox" \
+    ESTIMATE_GENERATION_CAD_PYTHON="/opt/geometry-venv/bin/python" \
+    ESTIMATE_GENERATION_CAD_DWGREAD="/opt/libredwg/bin/dwgread" \
+    ESTIMATE_GENERATION_CAD_LIBREDWG_VERSION="0.13.4" \
+    ESTIMATE_GENERATION_CAD_SANDBOX="/usr/local/bin/geometry-sandbox" \
+    ESTIMATE_GENERATION_CAD_SCRIPT="/var/www/html/app/BusinessModules/Addons/EstimateGeneration/bin/cad_geometry_extract.py" \
+    ESTIMATE_GENERATION_CAD_REQUIREMENTS_LOCK="/var/www/html/docker/geometry/requirements.lock" \
+    ESTIMATE_GENERATION_CAD_SCRIPT_SHA256="dee9a3aa554e9aff7170c6c18f177ee9635c00f6fe3ef07f83664c2d905dc913" \
+    ESTIMATE_GENERATION_CAD_REQUIREMENTS_SHA256="d69903bfe72c066d2560e62879030b764645cd08019e22423da34ce26dcc1c9d"
 
 # Конфигурация расширений GD
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg
@@ -91,7 +99,9 @@ RUN npm ci --omit=dev --ignore-scripts
 # Копируем исходный код приложения после установки зависимостей.
 COPY . ${APP_DIR}
 
-RUN rm -f bootstrap/cache/*.php \
+RUN echo "${ESTIMATE_GENERATION_CAD_SCRIPT_SHA256}  ${ESTIMATE_GENERATION_CAD_SCRIPT}" | sha256sum -c - \
+    && echo "${ESTIMATE_GENERATION_CAD_REQUIREMENTS_SHA256}  ${ESTIMATE_GENERATION_CAD_REQUIREMENTS_LOCK}" | sha256sum -c - \
+    && rm -f bootstrap/cache/*.php \
     && composer dump-autoload --optimize --no-dev \
     && php artisan package:discover --ansi \
     && php artisan filament:upgrade

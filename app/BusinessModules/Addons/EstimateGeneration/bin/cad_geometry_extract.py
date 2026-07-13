@@ -531,6 +531,7 @@ def parser() -> argparse.ArgumentParser:
     argument_parser.add_argument("--workspace", required=True)
     argument_parser.add_argument("--dwgread", default="dwgread")
     argument_parser.add_argument("--max-output-bytes", type=int, default=16_777_216)
+    argument_parser.add_argument("--max-entities", type=int, default=250_000)
     argument_parser.add_argument("--max-block-depth", type=int, default=8)
     return argument_parser
 
@@ -552,6 +553,8 @@ def main() -> int:
     unit, status, layers, blocks, entities, texts, dimensions, warnings, runtime = (
         parsed
     )
+    if args.max_entities < 1 or len(entities) + len(texts) + len(dimensions) > args.max_entities:
+        raise SafeFailure("cad_entity_limit_exceeded")
     result = {
         "schema_version": 1,
         "runtime_version": "cad-geometry:v1;" + runtime,

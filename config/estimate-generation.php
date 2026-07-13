@@ -35,6 +35,24 @@ return [
             'file_size_limit_bytes' => (int) env('ESTIMATE_GENERATION_GEOMETRY_FILE_SIZE_LIMIT_BYTES', 16_777_216),
             'open_file_limit' => (int) env('ESTIMATE_GENERATION_GEOMETRY_OPEN_FILE_LIMIT', 64),
         ],
+        'cad_runtime' => [
+            'python_binary' => env('ESTIMATE_GENERATION_CAD_PYTHON', PHP_OS_FAMILY === 'Windows' ? 'python' : '/opt/geometry-venv/bin/python'),
+            'script_path' => env('ESTIMATE_GENERATION_CAD_SCRIPT', base_path('app/BusinessModules/Addons/EstimateGeneration/bin/cad_geometry_extract.py')),
+            'script_sha256' => env('ESTIMATE_GENERATION_CAD_SCRIPT_SHA256', ''),
+            'dwgread_binary' => env('ESTIMATE_GENERATION_CAD_DWGREAD', PHP_OS_FAMILY === 'Windows' ? 'dwgread.exe' : '/opt/libredwg/bin/dwgread'),
+            'libredwg_version' => env('ESTIMATE_GENERATION_CAD_LIBREDWG_VERSION', '0.13.4'),
+            'sandbox_binary' => env('ESTIMATE_GENERATION_CAD_SANDBOX', PHP_OS_FAMILY === 'Linux' ? '/usr/local/bin/geometry-sandbox' : ''),
+            'requirements_lock_path' => env('ESTIMATE_GENERATION_CAD_REQUIREMENTS_LOCK', base_path('docker/geometry/requirements.lock')),
+            'requirements_sha256' => env('ESTIMATE_GENERATION_CAD_REQUIREMENTS_SHA256', ''),
+            'timeout_seconds' => (int) env('ESTIMATE_GENERATION_CAD_TIMEOUT', 45),
+            'max_input_bytes' => (int) env('ESTIMATE_GENERATION_CAD_MAX_INPUT_BYTES', 52_428_800),
+            'max_output_bytes' => (int) env('ESTIMATE_GENERATION_CAD_MAX_OUTPUT_BYTES', 16_777_216),
+            'max_entities' => (int) env('ESTIMATE_GENERATION_CAD_MAX_ENTITIES', 250_000),
+            'memory_limit_kib' => (int) env('ESTIMATE_GENERATION_CAD_MEMORY_LIMIT_KIB', 524_288),
+            'cpu_limit_seconds' => (int) env('ESTIMATE_GENERATION_CAD_CPU_LIMIT_SECONDS', 45),
+            'file_size_limit_bytes' => (int) env('ESTIMATE_GENERATION_CAD_FILE_SIZE_LIMIT_BYTES', 16_777_216),
+            'open_file_limit' => (int) env('ESTIMATE_GENERATION_CAD_OPEN_FILE_LIMIT', 64),
+        ],
         'pricing' => [
             'input_per_million' => $envValue('ESTIMATE_GENERATION_VISION_PRICE_INPUT_PER_MILLION'),
             'cached_input_per_million' => $envValue('ESTIMATE_GENERATION_VISION_PRICE_CACHED_INPUT_PER_MILLION'),
@@ -116,6 +134,8 @@ return [
         'max_dataset_jobs_per_minute' => (int) env('ESTIMATE_GENERATION_TRAINING_MAX_DATASET_JOBS_PER_MINUTE', 2),
     ],
     'benchmark' => [
+        'repository_replay_enabled' => (bool) env('ESTIMATE_GENERATION_REPOSITORY_REPLAY_ENABLED', true),
+        'production_output_store' => env('ESTIMATE_GENERATION_BENCHMARK_PRODUCTION_OUTPUT_STORE', 's3'),
         'acceptance_manifest' => $envValue('ESTIMATE_GENERATION_ACCEPTANCE_BENCHMARK_MANIFEST'),
         'acceptance_organization_id' => (int) env('ESTIMATE_GENERATION_ACCEPTANCE_BENCHMARK_ORGANIZATION_ID', 0),
         'production_replay_projections' => [

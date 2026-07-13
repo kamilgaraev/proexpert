@@ -28,4 +28,9 @@ final readonly class BenchmarkAdapterRegistry
     {
         return $this->adapters[$id] ?? throw new InvalidArgumentException('benchmark_adapter_unknown');
     }
+
+    public function has(string $id): bool
+    {
+        return isset($this->adapters[$id]);
+    }
 }
