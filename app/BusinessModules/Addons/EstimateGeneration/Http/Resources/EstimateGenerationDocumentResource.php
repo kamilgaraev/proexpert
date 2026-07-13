@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Resources;
 
 use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EstimateGenerationDocumentActionBuilder;
-use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EstimateGenerationDocumentPreviewService;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -55,9 +54,6 @@ class EstimateGenerationDocumentResource extends JsonResource
             'available_actions' => $user instanceof User
                 ? app(EstimateGenerationDocumentActionBuilder::class)->forDocument($document, $user)
                 : [],
-            'preview_url' => $user instanceof User
-                ? app(EstimateGenerationDocumentPreviewService::class)->forDocument($document, $user)
-                : null,
         ];
     }
 

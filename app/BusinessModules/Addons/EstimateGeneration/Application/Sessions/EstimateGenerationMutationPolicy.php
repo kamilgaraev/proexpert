@@ -11,6 +11,20 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 
 final class EstimateGenerationMutationPolicy
 {
+    /** @return list<EstimateGenerationStatus> */
+    public static function documentStatuses(): array
+    {
+        return [
+            EstimateGenerationStatus::Draft,
+            EstimateGenerationStatus::ProcessingDocuments,
+            EstimateGenerationStatus::InputReviewRequired,
+            EstimateGenerationStatus::ReadyToGenerate,
+            EstimateGenerationStatus::Generating,
+            EstimateGenerationStatus::EstimateReviewRequired,
+            EstimateGenerationStatus::ReadyToApply,
+        ];
+    }
+
     public function analyze(EstimateGenerationSession $session, int $expectedVersion): void
     {
         $this->assert($session, $expectedVersion, [
@@ -41,15 +55,7 @@ final class EstimateGenerationMutationPolicy
 
     public function documents(EstimateGenerationSession $session, int $expectedVersion): void
     {
-        $this->assert($session, $expectedVersion, [
-            EstimateGenerationStatus::Draft,
-            EstimateGenerationStatus::ProcessingDocuments,
-            EstimateGenerationStatus::InputReviewRequired,
-            EstimateGenerationStatus::ReadyToGenerate,
-            EstimateGenerationStatus::Generating,
-            EstimateGenerationStatus::EstimateReviewRequired,
-            EstimateGenerationStatus::ReadyToApply,
-        ], 'documents_changed');
+        $this->assert($session, $expectedVersion, self::documentStatuses(), 'documents_changed');
     }
 
     /** @param list<EstimateGenerationStatus> $allowedStatuses */

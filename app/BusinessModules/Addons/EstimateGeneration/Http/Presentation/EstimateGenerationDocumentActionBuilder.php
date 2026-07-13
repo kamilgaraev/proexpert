@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Presentation;
 
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationMutationPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -24,6 +25,10 @@ final readonly class EstimateGenerationDocumentActionBuilder
     {
         $session = $document->relationLoaded('session') ? $document->session : null;
         if (! $session instanceof EstimateGenerationSession || ! $this->belongsToContext($document, $session, $user)) {
+            return [];
+        }
+
+        if (! in_array($session->status, EstimateGenerationMutationPolicy::documentStatuses(), true)) {
             return [];
         }
 

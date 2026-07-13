@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Resources;
 
+use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EstimateGenerationDocumentPreviewService;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\Models\User;
 use Illuminate\Http\Request;
 
 /**
@@ -17,6 +19,10 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
         /** @var EstimateGenerationDocument $document */
         $document = $this->resource;
         $payload = parent::toArray($request);
+        $user = $request->user();
+        $payload['preview_url'] = $user instanceof User
+            ? app(EstimateGenerationDocumentPreviewService::class)->forDocument($document, $user)
+            : null;
 
         $payload['pages'] = $this->whenLoaded('pages', function () use ($document): array {
             return $document->pages->map(static fn ($page): array => [

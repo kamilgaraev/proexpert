@@ -6,9 +6,11 @@ namespace Tests\Unit\EstimateGeneration\Http;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentUnitType;
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EstimateGenerationDocumentActionBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\EstimateGenerationDocumentPreviewService;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentDetailResource;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationDocumentResource;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocumentPage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
@@ -24,6 +26,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 
 final class EstimateGenerationDocumentPresentationTest extends TestCase
@@ -77,6 +80,57 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
 
         $authorization->allows('can')->andReturnTrue();
         self::assertSame([], $builder->forDocument($this->document('processing'), $this->user(7)));
+    }
+
+    /** @return iterable<string, array{EstimateGenerationStatus}> */
+    public static function disallowedSessionStatuses(): iterable
+    {
+        yield 'applying' => [EstimateGenerationStatus::Applying];
+        yield 'applied' => [EstimateGenerationStatus::Applied];
+        yield 'failed' => [EstimateGenerationStatus::Failed];
+        yield 'cancelled' => [EstimateGenerationStatus::Cancelled];
+        yield 'archived' => [EstimateGenerationStatus::Archived];
+    }
+
+    #[Test]
+    #[DataProvider('disallowedSessionStatuses')]
+    public function document_actions_are_absent_outside_document_mutation_policy(
+        EstimateGenerationStatus $sessionStatus,
+    ): void {
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->shouldNotReceive('can');
+        $document = $this->document('failed', $sessionStatus);
+
+        $actions = (new EstimateGenerationDocumentActionBuilder($authorization))->forDocument(
+            $document,
+            $this->user(7),
+        );
+
+        self::assertSame([], $actions);
+    }
+
+    #[Test]
+    public function list_resource_does_not_sign_document_preview(): void
+    {
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->allows('can')->andReturnTrue();
+        $files = Mockery::mock(FileService::class);
+        $files->shouldNotReceive('temporaryUrl');
+        $this->app->instance(
+            EstimateGenerationDocumentActionBuilder::class,
+            new EstimateGenerationDocumentActionBuilder($authorization),
+        );
+        $this->app->instance(
+            EstimateGenerationDocumentPreviewService::class,
+            new EstimateGenerationDocumentPreviewService($authorization, $files),
+        );
+        $request = Request::create('/documents');
+        $user = $this->user(7);
+        $request->setUserResolver(static fn (): User => $user);
+
+        $payload = (new EstimateGenerationDocumentResource($this->document('ready')))->toArray($request);
+
+        self::assertArrayNotHasKey('preview_url', $payload);
     }
 
     #[Test]
@@ -255,14 +309,17 @@ final class EstimateGenerationDocumentPresentationTest extends TestCase
         return $user;
     }
 
-    private function document(string $status): EstimateGenerationDocument
-    {
+    private function document(
+        string $status,
+        EstimateGenerationStatus $sessionStatus = EstimateGenerationStatus::Draft,
+    ): EstimateGenerationDocument {
         $session = new EstimateGenerationSession;
         $session->forceFill([
             'id' => 41,
             'organization_id' => 7,
             'project_id' => 17,
             'state_version' => 9,
+            'status' => $sessionStatus,
         ]);
         $document = new EstimateGenerationDocument;
         $document->forceFill([
