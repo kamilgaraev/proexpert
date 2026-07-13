@@ -147,3 +147,31 @@ Package persistence использует только top-level `draft.source_in
 Отсутствующий, malformed или stale top-level version сохраняет пакет blocked под authoritative current version и не создаёт items. Совпадающий top-level version продолжает обычный путь, даже если вложенное устаревшее поле присутствует. Поведенческий тест использует production-shaped draft и проверяет полный и точечный sync без source-string assertions.
 
 Проверка C3: PHPUnit persistence/pricing — 10/10 тестов, 32 assertions; связанные точечные normative flows — 14/14 тестов, 81 assertion. PHPStan production-сервиса — без ошибок; PHP syntax, Pint и `git diff --check` — успешно. Acceptance approval и gate не изменялись.
+
+## Усиление test evidence C3 (2026-07-13)
+
+Production-код после `328c9b15` не изменялся. Основные stale, missing, malformed, current и work-item-only фикстуры теперь соответствуют production shape и содержат только top-level `source_input_version`. Проверка игнорирования вложенного `local_estimates[*].input_version` вынесена в отдельный тест.
+
+Положительные full-sync и work-item-only сценарии используют принимаемый `priced_work`, реальный `AuthoritativePackagePricingGuard`, accepted quantity evidence и реальную Eloquent persistence на SQLite `:memory:`. Тестовая SQLite connection подменяет только недоступную PostgreSQL-функцию на нижней DB-границе, фиксирует её вызов и сохраняет observable `pricing_finalized_at`; дополнительно проверены persisted `norm_resource_id=7001` и `resource_price_id=9001`. Stale-сценарии подтверждают ноль items и ноль вызовов finalizer. Resolver записывает фактический `transactionLevel=1`, поэтому порядок resolve внутри транзакции проверяется поведением, без source-string assertions.
+
+RED mutation:
+
+```text
+vendor\bin\phpunit --colors=never --filter stale_draft_a_is_blocked tests/Unit/EstimateGeneration/Pricing/PackagePersistenceStaleFenceTest.php
+FAIL: expected package status blocked, actual review_required
+Tests: 1, Assertions: 4, Failures: 1
+```
+
+Mutation временно заменяла `sourceInputCurrent()` на безусловный `true` и была полностью восстановлена до GREEN.
+
+GREEN:
+
+```text
+vendor\bin\phpunit --colors=never tests/Unit/EstimateGeneration/Pricing/PackagePersistenceStaleFenceTest.php
+OK (5 tests, 40 assertions)
+
+vendor\bin\phpunit --colors=never tests/Unit/EstimateGeneration/Pricing/PackagePersistenceStaleFenceTest.php tests/Unit/EstimateGeneration/Pricing/AcceptedQuantityPricingTest.php tests/Unit/EstimateGeneration/EstimateGenerationPackagePersistenceServiceTest.php
+OK (11 tests, 52 assertions)
+```
+
+После форматирования: Pint — PASS, PHP syntax — без ошибок, `git diff --check` — успешно. C5 approval/gate не изменялись.
