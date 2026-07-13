@@ -83,6 +83,8 @@ GREEN evidence on the final frozen files:
 - `git diff --check`: clean.
 
 The launcher also retains the review-wave hardening for read-only pre-attestation before mutation, environment restoration, full fresh-chain provisioning, exact index definition comparison (ordering, NULLS, operator class, collation, INCLUDE, predicate), schema-qualified constraint catalog operations, partial second-timeout-SET restoration, and per-migration architecture policy.
+
+Final ordinal review-wave implementation commit: `33e5961e fix[lk]: завершён ordinal-контроль online-миграций`.
 - `.cbmignore` and `.codebase-memory/` were never staged or modified.
 
 ## Review fix wave
