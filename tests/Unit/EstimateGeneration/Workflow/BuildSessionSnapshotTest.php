@@ -46,6 +46,21 @@ final class BuildSessionSnapshotTest extends TestCase
     }
 
     #[Test]
+    public function ready_session_exposes_export_only_from_the_server_permission_contract(): void
+    {
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $this->makeSession(EstimateGenerationStatus::ReadyToApply),
+            permissions: ['estimate_generation.view', 'estimate_generation.apply', 'estimate_generation.export'],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+        );
+
+        self::assertSame(['apply', 'review', 'export'], array_column($snapshot->availableActions, 'action'));
+        self::assertSame('GET', $snapshot->availableActions[2]['method']);
+        self::assertSame('/api/v1/admin/projects/17/estimate-generation/sessions/41/export', $snapshot->availableActions[2]['endpoint']);
+        self::assertFalse($snapshot->availableActions[2]['requires_confirmation']);
+    }
+
+    #[Test]
     public function next_action_is_null_when_permission_is_missing(): void
     {
         $snapshot = app(BuildSessionSnapshot::class)->handle(

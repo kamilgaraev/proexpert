@@ -20,10 +20,10 @@ final class BuildSessionSnapshot
         'input_review_required' => [EstimateGenerationAction::ConfirmInput, EstimateGenerationAction::Retry, EstimateGenerationAction::Cancel],
         'ready_to_generate' => [EstimateGenerationAction::Generate, EstimateGenerationAction::Cancel],
         'generating' => [EstimateGenerationAction::Cancel],
-        'estimate_review_required' => [EstimateGenerationAction::Review, EstimateGenerationAction::Generate, EstimateGenerationAction::Cancel],
-        'ready_to_apply' => [EstimateGenerationAction::Apply, EstimateGenerationAction::Review, EstimateGenerationAction::Generate, EstimateGenerationAction::Cancel],
+        'estimate_review_required' => [EstimateGenerationAction::Review, EstimateGenerationAction::Generate, EstimateGenerationAction::Export, EstimateGenerationAction::Cancel],
+        'ready_to_apply' => [EstimateGenerationAction::Apply, EstimateGenerationAction::Review, EstimateGenerationAction::Generate, EstimateGenerationAction::Export, EstimateGenerationAction::Cancel],
         'failed' => [EstimateGenerationAction::Retry, EstimateGenerationAction::Cancel, EstimateGenerationAction::Archive],
-        'applied' => [EstimateGenerationAction::Archive],
+        'applied' => [EstimateGenerationAction::Export, EstimateGenerationAction::Archive],
         'cancelled' => [EstimateGenerationAction::Archive],
     ];
 
@@ -34,6 +34,7 @@ final class BuildSessionSnapshot
         'generate' => 'estimate_generation.generate',
         'review' => 'estimate_generation.view',
         'apply' => 'estimate_generation.apply',
+        'export' => 'estimate_generation.export',
         'retry' => 'estimate_generation.generate',
         'confirm_input' => 'estimate_generation.review',
         'cancel' => 'estimate_generation.generate',
@@ -138,6 +139,7 @@ final class BuildSessionSnapshot
             EstimateGenerationAction::Archive => ['POST', '/archive'],
             EstimateGenerationAction::Review => ['GET', '/review-items'],
             EstimateGenerationAction::Apply => ['POST', '/apply'],
+            EstimateGenerationAction::Export => ['GET', '/export'],
             default => ['GET', ''],
         };
 

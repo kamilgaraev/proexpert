@@ -184,6 +184,7 @@ return [
     'action_generate' => 'Сформировать смету',
     'action_review' => 'Проверить смету',
     'action_apply' => 'Создать смету проекта',
+    'action_export' => 'Скачать AI-смету',
     'action_retry' => 'Повторить обработку',
     'action_confirm_input' => 'Подтвердить исходные данные',
     'action_cancel' => 'Отменить обработку',

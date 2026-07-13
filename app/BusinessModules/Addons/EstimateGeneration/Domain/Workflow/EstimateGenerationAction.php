@@ -12,6 +12,7 @@ enum EstimateGenerationAction: string
     case Generate = 'generate';
     case Review = 'review';
     case Apply = 'apply';
+    case Export = 'export';
     case Retry = 'retry';
     case Cancel = 'cancel';
     case Archive = 'archive';

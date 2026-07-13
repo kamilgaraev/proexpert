@@ -45,6 +45,7 @@ final class EstimateGenerationSessionListResource extends JsonResource
             'estimate_generation.generate',
             'estimate_generation.view',
             'estimate_generation.apply',
+            'estimate_generation.export',
         ] as $permission) {
             try {
                 if ($user->hasPermission($permission, ['project_id' => (int) $session->project_id])) {
