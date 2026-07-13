@@ -42,6 +42,18 @@ final class EstimateGenerationProductionReadinessTest extends TestCase
     }
 
     #[Test]
+    public function production_image_keeps_runtime_code_root_owned_and_only_runtime_state_writable(): void
+    {
+        $dockerfile = $this->source(dirname(__DIR__, 2).'/Dockerfile.prod');
+        self::assertDoesNotMatchRegularExpression('/chown -R www-data:www-data \$\{APP_DIR\}\s+\\\\/', $dockerfile);
+        self::assertStringContainsString('chown -R root:root ${APP_DIR}', $dockerfile);
+        self::assertStringContainsString('chmod -R go-w ${APP_DIR}', $dockerfile);
+        self::assertStringContainsString('chown -R www-data:www-data ${APP_DIR}/storage ${APP_DIR}/bootstrap/cache', $dockerfile);
+        self::assertStringContainsString('chmod 0555 "${ESTIMATE_GENERATION_CAD_SCRIPT}"', $dockerfile);
+        self::assertStringContainsString('chmod 0444 "${ESTIMATE_GENERATION_CAD_REQUIREMENTS_LOCK}"', $dockerfile);
+    }
+
+    #[Test]
     public function plan_migrations_are_uniquely_ordered_and_reversible_in_reverse_dependency_order(): void
     {
         $directory = dirname(__DIR__, 2).'/app/BusinessModules/Addons/EstimateGeneration/migrations';

@@ -6,6 +6,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry;
 
 final readonly class CadRuntimeConfiguration
 {
+    public const REQUIRED_LIBREDWG_VERSION = '0.13.4';
+
     public function __construct(
         public string $pythonBinary,
         public string $scriptPath,
@@ -23,7 +25,12 @@ final readonly class CadRuntimeConfiguration
         public int $cpuLimitSeconds,
         public int $fileSizeLimitBytes,
         public int $openFileLimit,
-    ) {}
+        public bool $enforceImmutability = false,
+    ) {
+        if ($this->libredwgVersion !== self::REQUIRED_LIBREDWG_VERSION) {
+            throw new \InvalidArgumentException('cad_libredwg_version_invalid');
+        }
+    }
 
     /** @param array<string, mixed> $values */
     public static function fromArray(array $values, bool $production): self
@@ -32,7 +39,7 @@ final readonly class CadRuntimeConfiguration
             'python_binary' => PHP_OS_FAMILY === 'Windows' ? 'python' : '/usr/bin/python3',
             'script_path' => dirname(__DIR__, 2).'/bin/cad_geometry_extract.py',
             'dwgread_binary' => PHP_OS_FAMILY === 'Windows' ? 'dwgread.exe' : '/opt/libredwg/bin/dwgread',
-            'libredwg_version' => '0.13.4',
+            'libredwg_version' => self::REQUIRED_LIBREDWG_VERSION,
             'sandbox_binary' => PHP_OS_FAMILY === 'Linux' ? '/usr/local/bin/geometry-sandbox' : '',
             'requirements_lock_path' => dirname(__DIR__, 7).'/docker/geometry/requirements.lock',
             'script_sha256' => '',
@@ -47,6 +54,9 @@ final readonly class CadRuntimeConfiguration
             'open_file_limit' => 64,
         ];
         $config = array_replace($defaults, $values);
+        if ($config['libredwg_version'] !== self::REQUIRED_LIBREDWG_VERSION) {
+            throw new \InvalidArgumentException('cad_libredwg_version_invalid');
+        }
         if ($production) {
             foreach (['python_binary', 'script_path', 'dwgread_binary', 'sandbox_binary', 'requirements_lock_path'] as $key) {
                 if (! self::absolute((string) $config[$key])) {
@@ -72,6 +82,7 @@ final readonly class CadRuntimeConfiguration
             (int) $config['max_input_bytes'], (int) $config['max_output_bytes'], (int) $config['max_entities'],
             (int) $config['memory_limit_kib'], (int) $config['cpu_limit_seconds'], (int) $config['file_size_limit_bytes'],
             (int) $config['open_file_limit'],
+            $production,
         );
     }
 

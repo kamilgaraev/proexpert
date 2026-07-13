@@ -10,7 +10,7 @@ final readonly class AcceptanceBenchmarkCorpusLoader
 {
     public function __construct(private BenchmarkPrivateObjectStore $store) {}
 
-    public function load(int $organizationId, string $manifestLocator, BenchmarkManifest $publicManifest): BenchmarkCorpus
+    public function load(int $organizationId, string $manifestLocator, ?BenchmarkManifest $publicManifest = null): BenchmarkCorpus
     {
         if ($organizationId < 1) {
             throw new BenchmarkContractException('acceptance_organization_invalid');
@@ -34,7 +34,9 @@ final readonly class AcceptanceBenchmarkCorpusLoader
         if ($cases === [] || count($cases) !== $manifest->caseCount()) {
             throw new BenchmarkContractException('acceptance_dataset_invalid');
         }
-        $this->assertGloballyDisjoint($publicManifest, $manifest);
+        if ($publicManifest !== null) {
+            $this->assertGloballyDisjoint($publicManifest, $manifest);
+        }
         $objects = new PrivateBenchmarkObjectReader($this->store, $organizationId);
         $this->preflight($cases, $objects);
 

@@ -19,10 +19,15 @@ final readonly class CadConversionRuntime
         private ?GeometryResourceLimits $resourceLimits = null,
         private ?GeometryProcessRunner $processRunner = null,
         private int $maxEntities = 250_000,
+        private ?CadRuntimeReadinessInspector $readiness = null,
+        private ?CadRuntimeConfiguration $configuration = null,
     ) {}
 
     public function extract(string $inputPath): VectorGeometryData
     {
+        if ($this->readiness !== null && $this->configuration !== null) {
+            $this->readiness->assertReady($this->configuration);
+        }
         $real = realpath($inputPath);
         if ($real === false || ! is_file($real) || is_link($inputPath) || $this->resolvesThroughIndirectPath($inputPath, $real)) {
             throw new GeometryExtractionException('cad_source_invalid');

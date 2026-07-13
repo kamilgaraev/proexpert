@@ -43,13 +43,17 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOp
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkCorpusLoader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkAdapterRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseExecutor;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkImmutableObjectStore;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkObjectReader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPrivateObjectStore;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkReportOutputStore;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\CurrentBaselineBenchmarkAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\FileServiceAcceptanceBenchmarkObjectStore;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\FileServiceBenchmarkPrivateObjectStore;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\ImmutableBenchmarkReportOutputStore;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkObjectReader;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkReportOutputStore;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\Metrics\MetricRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\PrivateBenchmarkObjectReader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\ProcessBenchmarkCaseExecutor;
@@ -215,6 +219,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         ));
         $this->app->singleton(BenchmarkObjectReader::class, LocalBenchmarkObjectReader::class);
         $this->app->singleton(BenchmarkPrivateObjectStore::class, FileServiceBenchmarkPrivateObjectStore::class);
+        $this->app->singleton(BenchmarkImmutableObjectStore::class, FileServiceBenchmarkPrivateObjectStore::class);
+        $this->app->singleton(BenchmarkReportOutputStore::class, fn ($app): BenchmarkReportOutputStore => $this->app->environment('production')
+            ? new ImmutableBenchmarkReportOutputStore($app->make(BenchmarkImmutableObjectStore::class))
+            : new LocalBenchmarkReportOutputStore(storage_path('app/benchmarks')));
         $this->app->when([AcceptanceBenchmarkCorpusLoader::class, PrivateBenchmarkObjectReader::class])
             ->needs(BenchmarkPrivateObjectStore::class)
             ->give(FileServiceAcceptanceBenchmarkObjectStore::class);
@@ -239,15 +247,17 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $this->app->environment('production'),
         ));
         $this->app->singleton(CadRuntimeReadinessInspector::class);
-        $this->app->singleton(CadConversionRuntime::class, static fn ($app): CadConversionRuntime => (static function (CadRuntimeConfiguration $cad): CadConversionRuntime {
+        $this->app->singleton(CadConversionRuntime::class, static function ($app): CadConversionRuntime {
+            $cad = $app->make(CadRuntimeConfiguration::class);
             $limits = new GeometryResourceLimits($cad->memoryLimitKiB, $cad->cpuLimitSeconds, $cad->fileSizeLimitBytes, $cad->openFileLimit);
 
             return new CadConversionRuntime(
                 $cad->pythonBinary, $cad->scriptPath, $cad->dwgreadBinary, $cad->timeoutSeconds,
                 $cad->maxInputBytes, $cad->maxOutputBytes, $limits,
                 new GeometryProcessRunner(sandboxBinary: $cad->sandboxBinary), $cad->maxEntities,
+                $app->make(CadRuntimeReadinessInspector::class), $cad,
             );
-        })($app->make(CadRuntimeConfiguration::class)));
+        });
         $this->app->singleton(DwgDxfGeometryProvider::class, static fn ($app): DwgDxfGeometryProvider => new DwgDxfGeometryProvider(
             $app->make(\App\Services\Storage\FileService::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\BoundedStorageReader::class),
@@ -308,6 +318,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
                 : null,
             acceptanceLoader: $app->make(AcceptanceBenchmarkCorpusLoader::class),
             registeredManifests: $app->make(RegisteredBenchmarkManifestRepository::class),
+            reportOutput: $app->make(BenchmarkReportOutputStore::class),
         ));
 
         $this->app->singleton(DocumentParsingService::class);

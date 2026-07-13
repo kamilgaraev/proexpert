@@ -6,11 +6,11 @@ namespace Tests\Feature\EstimateGeneration\Benchmark;
 
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkCorpusLoader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkAdapterRegistry;
-use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseData;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkContractException;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPipelineAdapter;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPipelineResultData;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPrivateObjectStore;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkReportOutputStore;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\InProcessBenchmarkCaseExecutor;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\Metrics\MetricRegistry;
@@ -67,7 +67,7 @@ final class EstimateGenerationBenchmarkCommandTest extends TestCase
     }
 
     #[Test]
-    public function acceptance_requires_all_gates_and_is_refused_in_production(): void
+    public function production_rejects_local_output_before_loading_acceptance(): void
     {
         $tester = $this->tester([$this->passingAdapter()], 'production', '1', 's3://org-1/estimate-generation/benchmarks/acceptance/manifest.json');
         self::assertSame(1, $tester->execute([
@@ -75,7 +75,58 @@ final class EstimateGenerationBenchmarkCommandTest extends TestCase
             '--adapter' => 'fixture-pipeline',
             '--pipeline-version' => 'fixture-pipeline:v1',
         ]));
-        self::assertStringContainsString('acceptance_forbidden_in_production', $tester->getDisplay());
+        self::assertStringContainsString('production_output_locator_invalid', $tester->getDisplay());
+    }
+
+    #[Test]
+    public function production_rejects_repository_dataset_before_adapter_or_fixture_access(): void
+    {
+        $adapter = new class implements BenchmarkPipelineAdapter
+        {
+            public int $calls = 0;
+
+            public function id(): string
+            {
+                return 'production-spy';
+            }
+
+            public function run(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPredictionCaseData $case, int $timeoutMs): BenchmarkPipelineResultData
+            {
+                $this->calls++;
+
+                return BenchmarkPipelineResultData::technicalFailure('unexpected');
+            }
+        };
+        $tester = $this->tester([$adapter], 'production');
+        self::assertSame(1, $tester->execute([
+            '--dataset' => 'regression', '--adapter' => 'production-spy', '--pipeline-version' => 'production-spy:v1',
+        ]));
+        self::assertSame(0, $adapter->calls);
+        self::assertStringContainsString('repository_benchmark_forbidden_in_production', $tester->getDisplay());
+    }
+
+    #[Test]
+    public function production_writes_report_through_injected_immutable_store(): void
+    {
+        [$loader, $manifest] = $this->acceptanceLoader();
+        $store = new class implements BenchmarkReportOutputStore
+        {
+            public ?string $locator = null;
+
+            public function write(string $locator, string $contents): string
+            {
+                $this->locator = $locator;
+                \PHPUnit\Framework\Assert::assertStringContainsString('"dataset":"acceptance"', $contents);
+
+                return $locator.'?versionId=v1';
+            }
+        };
+        $output = 's3://org-42/estimate-generation/benchmarks/123e4567-e89b-12d3-a456-426614174000/'.str_repeat('a', 64).'.json';
+        $tester = $this->tester([$this->passingAdapter()], 'production', null, $manifest, 42, $loader, $store);
+        self::assertSame(0, $tester->execute([
+            '--dataset' => 'acceptance', '--adapter' => 'fixture-pipeline', '--pipeline-version' => 'fixture-pipeline:v1', '--output' => $output,
+        ]));
+        self::assertSame($output, $store->locator);
     }
 
     #[Test]
@@ -197,6 +248,7 @@ final class EstimateGenerationBenchmarkCommandTest extends TestCase
         ?string $acceptanceLocator = null,
         ?int $acceptanceOrganizationId = null,
         ?AcceptanceBenchmarkCorpusLoader $acceptanceLoader = null,
+        ?BenchmarkReportOutputStore $reportOutput = null,
     ): CommandTester {
         $command = new RunEstimateGenerationBenchmarkCommand(
             new BenchmarkRunner(MetricRegistry::standard(), new InProcessBenchmarkCaseExecutor, static fn (): float => 1000.0),
@@ -209,6 +261,8 @@ final class EstimateGenerationBenchmarkCommandTest extends TestCase
             $acceptanceLocator,
             $acceptanceOrganizationId,
             $acceptanceLoader,
+            null,
+            $reportOutput,
         );
         $container = new class extends Container
         {

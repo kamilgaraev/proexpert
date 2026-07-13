@@ -12,8 +12,10 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCorpus;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkDatasetType;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkManifest;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkReportData;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkReportOutputStore;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunOptions;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkReportOutputStore;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RegisteredBenchmarkManifestRepository;
 use Illuminate\Console\Command;
 use Throwable;
@@ -53,6 +55,7 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
         private readonly ?int $acceptanceOrganizationId = null,
         private readonly ?AcceptanceBenchmarkCorpusLoader $acceptanceLoader = null,
         private readonly ?RegisteredBenchmarkManifestRepository $registeredManifests = null,
+        private readonly ?BenchmarkReportOutputStore $reportOutput = null,
     ) {
         parent::__construct();
         $this->environment = $environment ?? static fn (): string => (string) app()->environment();
@@ -64,6 +67,7 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
         try {
             $dataset = BenchmarkDatasetType::tryFrom((string) $this->option('dataset'))
                 ?? throw new BenchmarkCommandException('dataset_invalid');
+            $this->assertProductionPolicy($dataset);
             $format = (string) $this->option('format');
             if (! in_array($format, ['json', 'table'], true)) {
                 throw new BenchmarkCommandException('format_invalid');
@@ -81,7 +85,7 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
             $rendered = $format === 'json' ? $report->canonicalJson() : $this->tablePayload($report);
             $output = $this->option('output');
             if (is_string($output) && $output !== '') {
-                $this->writeOutput($output, $rendered);
+                ($this->reportOutput ?? new LocalBenchmarkReportOutputStore($this->outputRoot))->write($output, $rendered);
             } else {
                 $this->line($rendered);
             }
@@ -115,10 +119,7 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
                 $requireAllSourceTypes ? 'repository:v1' : 'repository-production-replay:v1',
             );
         }
-        if (($this->environment)() === 'production') {
-            throw new BenchmarkCommandException('acceptance_forbidden_in_production');
-        }
-        if (($this->env)('RUN_ESTIMATE_GENERATION_ACCEPTANCE_BENCHMARK') !== '1') {
+        if (($this->environment)() !== 'production' && ($this->env)('RUN_ESTIMATE_GENERATION_ACCEPTANCE_BENCHMARK') !== '1') {
             throw new BenchmarkCommandException('acceptance_gate_disabled');
         }
         if ($this->acceptanceOrganizationId === null || $this->acceptanceOrganizationId < 1
@@ -131,8 +132,24 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
         return $this->acceptanceLoader->load(
             $this->acceptanceOrganizationId,
             $this->acceptanceManifestLocator,
-            BenchmarkManifest::fromFile($this->repositoryManifestPath, $this->fixtureRoot),
+            ($this->environment)() === 'production'
+                ? null
+                : BenchmarkManifest::fromFile($this->repositoryManifestPath, $this->fixtureRoot),
         );
+    }
+
+    private function assertProductionPolicy(BenchmarkDatasetType $dataset): void
+    {
+        if (($this->environment)() !== 'production') {
+            return;
+        }
+        if ($dataset !== BenchmarkDatasetType::Acceptance) {
+            throw new BenchmarkCommandException('repository_benchmark_forbidden_in_production');
+        }
+        $output = $this->option('output');
+        if (! is_string($output) || ! preg_match('#^s3://org-[1-9][0-9]*/estimate-generation/benchmarks/[0-9a-f-]{36}/[a-f0-9]{64}\.json$#', $output)) {
+            throw new BenchmarkCommandException('production_output_locator_invalid');
+        }
     }
 
     private function failureRate(): float
@@ -151,46 +168,6 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
         }
 
         return $rate;
-    }
-
-    private function writeOutput(string $relative, string $contents): void
-    {
-        $normalized = str_replace('\\', '/', $relative);
-        if (str_starts_with($normalized, 'storage/app/benchmarks/')) {
-            $normalized = substr($normalized, strlen('storage/app/benchmarks/'));
-        }
-        if ($normalized === '' || str_starts_with($normalized, '/') || preg_match('/^[A-Za-z]:/', $normalized)
-            || str_contains($normalized, '../') || ! preg_match('#^[a-zA-Z0-9._/-]+\.(json|txt)$#', $normalized)) {
-            throw new BenchmarkCommandException('output_path_invalid');
-        }
-        if (! file_exists($this->outputRoot) && ! mkdir($this->outputRoot, 0750, true) && ! is_dir($this->outputRoot)) {
-            throw new BenchmarkCommandException('output_root_unavailable');
-        }
-        $root = realpath($this->outputRoot);
-        if ($root === false || ! is_dir($root) || is_link($this->outputRoot)) {
-            throw new BenchmarkCommandException('output_root_invalid');
-        }
-        $path = $root.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $normalized);
-        $parent = dirname($path);
-        if (! is_dir($parent) && ! mkdir($parent, 0750, true) && ! is_dir($parent)) {
-            throw new BenchmarkCommandException('output_directory_unavailable');
-        }
-        $realParent = realpath($parent);
-        $prefix = rtrim(str_replace('\\', '/', $root), '/').'/';
-        if ($realParent === false || ! str_starts_with(str_replace('\\', '/', $realParent).'/', $prefix) || file_exists($path)) {
-            throw new BenchmarkCommandException('output_path_unsafe');
-        }
-        $handle = @fopen($path, 'x');
-        if ($handle === false) {
-            throw new BenchmarkCommandException('output_create_failed');
-        }
-        try {
-            if (fwrite($handle, $contents) !== strlen($contents)) {
-                throw new BenchmarkCommandException('output_write_failed');
-            }
-        } finally {
-            fclose($handle);
-        }
     }
 
     private function tablePayload(BenchmarkReportData $report): string

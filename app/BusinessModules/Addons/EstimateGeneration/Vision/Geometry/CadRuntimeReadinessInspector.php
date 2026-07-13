@@ -8,6 +8,14 @@ use Symfony\Component\Process\Process;
 
 final class CadRuntimeReadinessInspector
 {
+    public function assertReady(CadRuntimeConfiguration $configuration): void
+    {
+        $errors = $this->inspect($configuration);
+        if ($errors !== []) {
+            throw new \App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtractionException($errors[0]);
+        }
+    }
+
     /** @return array<int, string> */
     public function inspect(CadRuntimeConfiguration $configuration): array
     {
@@ -21,6 +29,8 @@ final class CadRuntimeReadinessInspector
         ] as $name => [$path, $executable]) {
             if (! $this->trustedFile($path, $executable)) {
                 $errors[] = 'cad_'.$name.'_path_untrusted';
+            } elseif ($configuration->enforceImmutability && $this->writableByRuntime($path)) {
+                $errors[] = 'cad_'.$name.'_path_writable';
             }
         }
         if ($errors !== []) {
@@ -45,6 +55,22 @@ final class CadRuntimeReadinessInspector
         }
 
         return $errors;
+    }
+
+    private function writableByRuntime(string $path): bool
+    {
+        if (is_writable($path)) {
+            return true;
+        }
+        $current = dirname($path);
+        while ($current !== dirname($current)) {
+            if (is_writable($current)) {
+                return true;
+            }
+            $current = dirname($current);
+        }
+
+        return false;
     }
 
     private function trustedFile(string $path, bool $executable): bool

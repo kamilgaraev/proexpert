@@ -58,7 +58,6 @@ ENV PATH="/opt/geometry-venv/bin:/opt/libredwg/bin:${PATH}" \
     GEOMETRY_SANDBOX_BINARY="/usr/local/bin/geometry-sandbox" \
     ESTIMATE_GENERATION_CAD_PYTHON="/opt/geometry-venv/bin/python" \
     ESTIMATE_GENERATION_CAD_DWGREAD="/opt/libredwg/bin/dwgread" \
-    ESTIMATE_GENERATION_CAD_LIBREDWG_VERSION="0.13.4" \
     ESTIMATE_GENERATION_CAD_SANDBOX="/usr/local/bin/geometry-sandbox" \
     ESTIMATE_GENERATION_CAD_SCRIPT="/var/www/html/app/BusinessModules/Addons/EstimateGeneration/bin/cad_geometry_extract.py" \
     ESTIMATE_GENERATION_CAD_REQUIREMENTS_LOCK="/var/www/html/docker/geometry/requirements.lock" \
@@ -101,6 +100,9 @@ COPY . ${APP_DIR}
 
 RUN echo "${ESTIMATE_GENERATION_CAD_SCRIPT_SHA256}  ${ESTIMATE_GENERATION_CAD_SCRIPT}" | sha256sum -c - \
     && echo "${ESTIMATE_GENERATION_CAD_REQUIREMENTS_SHA256}  ${ESTIMATE_GENERATION_CAD_REQUIREMENTS_LOCK}" | sha256sum -c - \
+    && chown root:root "${ESTIMATE_GENERATION_CAD_SCRIPT}" "${ESTIMATE_GENERATION_CAD_REQUIREMENTS_LOCK}" /opt/libredwg/bin/dwgread /usr/local/bin/geometry-sandbox /opt/geometry-venv/bin/python \
+    && chmod 0555 "${ESTIMATE_GENERATION_CAD_SCRIPT}" /opt/libredwg/bin/dwgread /usr/local/bin/geometry-sandbox /opt/geometry-venv/bin/python \
+    && chmod 0444 "${ESTIMATE_GENERATION_CAD_REQUIREMENTS_LOCK}" \
     && rm -f bootstrap/cache/*.php \
     && composer dump-autoload --optimize --no-dev \
     && php artisan package:discover --ansi \
@@ -115,9 +117,10 @@ RUN mkdir -p storage/framework/cache/data \
     bootstrap/cache
 
 # Меняем владельца файлов на пользователя www-data
-RUN chown -R www-data:www-data ${APP_DIR} \
-    && chmod -R 775 ${APP_DIR}/storage \
-    && chmod -R 775 ${APP_DIR}/bootstrap/cache
+RUN chown -R root:root ${APP_DIR} \
+    && chmod -R go-w ${APP_DIR} \
+    && chown -R www-data:www-data ${APP_DIR}/storage ${APP_DIR}/bootstrap/cache \
+    && chmod -R 775 ${APP_DIR}/storage ${APP_DIR}/bootstrap/cache
 
 # Выставляем права для RoadRunner
 RUN chmod +x /usr/bin/rr
