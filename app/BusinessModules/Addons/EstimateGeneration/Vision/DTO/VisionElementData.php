@@ -56,7 +56,9 @@ final readonly class VisionElementData
     public static function fromArray(array $data): self
     {
         $keys = ['key', 'type', 'label', 'polygon', 'confidence', 'evidence_ref'];
-        if (($data['type'] ?? null) === 'opening') { $keys[] = 'geometry'; }
+        if (($data['type'] ?? null) === 'opening') {
+            $keys[] = 'geometry';
+        }
         if (! self::hasExactKeys($data, $keys)
             || ! is_string($data['key']) || ! is_string($data['type']) || ! is_array($data['polygon'])
             || $data['label'] !== null && ! is_string($data['label'])
@@ -82,7 +84,11 @@ final readonly class VisionElementData
 
     private static function validOpeningGeometry(array $geometry): bool
     {
-        $keys = array_keys($geometry); sort($keys); $expected = ['height', 'offset', 'opening_type', 'wall_key', 'width']; sort($expected);
+        $keys = array_keys($geometry);
+        sort($keys);
+        $expected = ['height', 'offset', 'opening_type', 'wall_key', 'width'];
+        sort($expected);
+
         return $keys === $expected
             && is_string($geometry['wall_key']) && preg_match('/^[a-z0-9][a-z0-9._:-]{0,79}$/D', $geometry['wall_key']) === 1
             && in_array($geometry['opening_type'], ['door', 'window', 'gate', 'other'], true)

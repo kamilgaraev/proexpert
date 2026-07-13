@@ -1,15 +1,15 @@
 <?php
 
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverExpiredTrainingDatasetLeasesJob;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
-use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverExpiredTrainingDatasetLeasesJob;
 
-Schedule::job(new RecoverExpiredTrainingDatasetLeasesJob())
+Schedule::job(new RecoverExpiredTrainingDatasetLeasesJob)
     ->everyFiveMinutes()
     ->withoutOverlapping();
-use Illuminate\Support\Facades\File;
 use App\Console\Commands\ReverifyOrganizationsCommand;
+use Illuminate\Support\Facades\File;
 
 // ... existing commands ...
 
@@ -20,10 +20,10 @@ Schedule::command('estimate-generation:deliver-geometry-regeneration --limit=100
     ->everyMinute()
     ->withoutOverlapping(5);
 
-use Illuminate\Support\Facades\Log;
 use App\BusinessModules\Core\Payments\Jobs\ProcessOverduePaymentsJob;
 use App\BusinessModules\Core\Payments\Jobs\SendPaymentRemindersJob;
 use App\BusinessModules\Core\Payments\Jobs\SendUpcomingPaymentNotificationsJob;
+use Illuminate\Support\Facades\Log;
 
 /*
 |--------------------------------------------------------------------------
@@ -179,7 +179,7 @@ Schedule::command('restrictions:lift-expired')
 // ============================================
 
 // Обработка просроченных платежей (каждый день в 09:00)
-Schedule::job(new ProcessOverduePaymentsJob())
+Schedule::job(new ProcessOverduePaymentsJob)
     ->dailyAt('09:00')
     ->withoutOverlapping(60)
     ->onFailure(function () {
@@ -188,7 +188,7 @@ Schedule::job(new ProcessOverduePaymentsJob())
     ->appendOutputTo(storage_path('logs/schedule-payments-overdue.log'));
 
 // Отправка напоминаний об утверждении платежей (каждый день в 10:00)
-Schedule::job(new SendPaymentRemindersJob())
+Schedule::job(new SendPaymentRemindersJob)
     ->dailyAt('10:00')
     ->withoutOverlapping(60)
     ->onFailure(function () {
@@ -197,7 +197,7 @@ Schedule::job(new SendPaymentRemindersJob())
     ->appendOutputTo(storage_path('logs/schedule-payments-reminders.log'));
 
 // Уведомления о предстоящих платежах (каждый день в 09:30)
-Schedule::job(new SendUpcomingPaymentNotificationsJob())
+Schedule::job(new SendUpcomingPaymentNotificationsJob)
     ->dailyAt('09:30')
     ->withoutOverlapping(60)
     ->onFailure(function () {
@@ -283,7 +283,7 @@ Artisan::command('projects:geocode-help', function () {
 
 Artisan::command('system:clean-logs', function () {
     $logPath = storage_path('logs');
-    $files = File::glob($logPath . '/*.log');
+    $files = File::glob($logPath.'/*.log');
     $count = 0;
 
     foreach ($files as $file) {
@@ -292,11 +292,11 @@ Artisan::command('system:clean-logs', function () {
             if (basename($file) === '.gitignore') {
                 continue;
             }
-            
+
             File::delete($file);
             $count++;
         } catch (\Exception $e) {
-            $this->warn("Could not delete {$file}: " . $e->getMessage());
+            $this->warn("Could not delete {$file}: ".$e->getMessage());
         }
     }
 

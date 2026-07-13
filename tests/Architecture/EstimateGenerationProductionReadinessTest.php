@@ -6,6 +6,7 @@ namespace Tests\Architecture;
 
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\EstimateGeneration\EstimateGenerationContractDatabaseProvisioner;
 
 final class EstimateGenerationProductionReadinessTest extends TestCase
 {
@@ -64,16 +65,17 @@ final class EstimateGenerationProductionReadinessTest extends TestCase
         sort($paths, SORT_STRING);
 
         $names = array_map('basename', $paths);
-        self::assertSame([
-            '2026_07_11_000001_rebuild_estimate_generation_session_workflow.php',
-            '2026_07_11_000100_create_estimate_generation_pipeline_checkpoints_table.php',
-            '2026_07_11_000200_create_estimate_generation_processing_units_table.php',
-            '2026_07_11_000300_create_estimate_generation_evidence_table.php',
-            '2026_07_11_000400_create_estimate_generation_ai_usage_table.php',
-            '2026_07_11_000500_create_estimate_generation_failures_table.php',
-            '2026_07_11_000600_create_estimate_generation_finalization_outbox_table.php',
-            '2026_07_11_000900_guard_review_summary_source_version.php',
-        ], $names);
+        $registeredNames = array_values(array_map(
+            'basename',
+            array_filter(
+                EstimateGenerationContractDatabaseProvisioner::completeInventory(),
+                static fn (string $path): bool => str_starts_with(
+                    $path,
+                    'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_',
+                ),
+            ),
+        ));
+        self::assertSame($registeredNames, $names);
 
         $combined = implode("\n", array_map(fn (string $path): string => $this->source($path), $paths));
         foreach (['pipeline_checkpoints', 'processing_units', 'estimate_generation_evidence', 'ai_usage', 'failure_events', 'finalization_outbox'] as $contract) {

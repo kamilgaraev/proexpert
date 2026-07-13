@@ -162,7 +162,10 @@ final class EstimatorReadinessEvaluator
     private function uniqueIssues(array $issues): array
     {
         $unique = [];
-        foreach ($issues as $issue) { $unique[$issue['code']] = $issue; }
+        foreach ($issues as $issue) {
+            $unique[$issue['code']] = $issue;
+        }
+
         return array_values($unique);
     }
 }

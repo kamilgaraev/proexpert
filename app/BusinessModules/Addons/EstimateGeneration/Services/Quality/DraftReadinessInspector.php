@@ -94,10 +94,13 @@ final class DraftReadinessInspector
         foreach ((array) ($draft['local_estimates'] ?? []) as $estimate) {
             foreach ((array) ($estimate['sections'] ?? []) as $section) {
                 foreach ((array) ($section['work_items'] ?? []) as $item) {
-                    if (is_array($item) && ($item['item_type'] ?? 'priced_work') === 'priced_work') { $items[] = $item; }
+                    if (is_array($item) && ($item['item_type'] ?? 'priced_work') === 'priced_work') {
+                        $items[] = $item;
+                    }
                 }
             }
         }
+
         return $items;
     }
 

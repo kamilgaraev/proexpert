@@ -5,11 +5,14 @@ declare(strict_types=1);
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
 
-return new class extends Migration {
+return new class extends Migration
+{
     public $withinTransaction = false;
 
     private const COLUMNS = ['input_payload', 'analysis_payload', 'draft_payload', 'problem_flags'];
+
     private const TRIGGER = 'eg_session_payload_dual_write_v1';
+
     private const FUNCTION = 'eg_session_payload_dual_write_v1';
 
     public function up(): void
@@ -100,7 +103,7 @@ SQL);
     private function installDualWriteTrigger(string $targetType): void
     {
         $assignments = implode("\n", array_map(static fn (string $column): string => "NEW.{$column}__{$targetType}_shadow := NEW.{$column}::{$targetType};", self::COLUMNS));
-        DB::unprepared('DROP TRIGGER IF EXISTS '.self::TRIGGER.' ON estimate_generation_sessions; DROP FUNCTION IF EXISTS '.self::FUNCTION."(); CREATE FUNCTION ".self::FUNCTION."() RETURNS trigger LANGUAGE plpgsql AS \$\$ BEGIN {$assignments} RETURN NEW; END; \$\$; CREATE TRIGGER ".self::TRIGGER.' BEFORE INSERT OR UPDATE ON estimate_generation_sessions FOR EACH ROW EXECUTE FUNCTION '.self::FUNCTION.'();');
+        DB::unprepared('DROP TRIGGER IF EXISTS '.self::TRIGGER.' ON estimate_generation_sessions; DROP FUNCTION IF EXISTS '.self::FUNCTION.'(); CREATE FUNCTION '.self::FUNCTION."() RETURNS trigger LANGUAGE plpgsql AS \$\$ BEGIN {$assignments} RETURN NEW; END; \$\$; CREATE TRIGGER ".self::TRIGGER.' BEFORE INSERT OR UPDATE ON estimate_generation_sessions FOR EACH ROW EXECUTE FUNCTION '.self::FUNCTION.'();');
     }
 
     private function cleanupOldColumns(): void

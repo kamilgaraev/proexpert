@@ -11,6 +11,7 @@ use Symfony\Component\Process\Process;
 final class ProductionReplayBuilderIsolationTest extends TestCase
 {
     private string $root;
+
     private string $output;
 
     protected function setUp(): void

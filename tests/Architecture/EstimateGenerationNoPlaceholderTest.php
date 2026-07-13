@@ -6,9 +6,9 @@ namespace Tests\Architecture;
 
 use FilesystemIterator;
 use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\TestCase;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
-use PHPUnit\Framework\TestCase;
 
 final class EstimateGenerationNoPlaceholderTest extends TestCase
 {

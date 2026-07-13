@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Benchmark;
 
-use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedPortRequestHasher;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedPortEnvelopeException;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RecordedPortRequestHasher;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateDecisionContextData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateSetData;

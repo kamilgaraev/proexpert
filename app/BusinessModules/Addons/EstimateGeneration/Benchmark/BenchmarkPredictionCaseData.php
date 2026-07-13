@@ -9,10 +9,10 @@ use InvalidArgumentException;
 final readonly class BenchmarkPredictionCaseData
 {
     /**
-     * @param list<string> $tags
-     * @param list<string> $allowedCapabilities
-     * @param array<string, string> $recordedEnvelopeReferences
-     * @param array<string, string> $recordedEnvelopeSha256
+     * @param  list<string>  $tags
+     * @param  list<string>  $allowedCapabilities
+     * @param  array<string, string>  $recordedEnvelopeReferences
+     * @param  array<string, string>  $recordedEnvelopeSha256
      */
     public function __construct(
         public string $id,

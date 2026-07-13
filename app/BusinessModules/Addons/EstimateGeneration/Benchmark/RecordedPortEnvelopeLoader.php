@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Benchmark;
 
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\GeometryConfirmationData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeRerankResultData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\GeometryConfirmationData;
 use JsonException;
 use Throwable;
 
@@ -89,6 +89,7 @@ final readonly class RecordedPortEnvelopeLoader
         if ($references !== null && count($envelopes) !== count($references)) {
             throw new RecordedPortEnvelopeException('recorded_projection_descriptor_missing');
         }
+
         return new RecordedPortEnvelopeSet($envelopes);
     }
 

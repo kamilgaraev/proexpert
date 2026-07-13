@@ -47,6 +47,7 @@ final class CadProductionRuntimeContractTest extends TestCase
             strpos($script, 'Get-LowerSha256 $privateArchive'),
         );
     }
+
     #[Test]
     public function production_image_pins_geometry_runtimes_and_licenses(): void
     {

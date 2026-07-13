@@ -15,6 +15,13 @@ final class TrainingBenchmarkFreshInstallPostgresTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        if (getenv('RUN_POSTGRES_TRAINING_BENCHMARK_CONTRACT') !== '1'
+            || getenv('DB_CONNECTION') !== 'pgsql'
+            || ! str_ends_with((string) getenv('DB_DATABASE'), '_contract')) {
+            self::markTestSkipped('Requires explicit disposable PostgreSQL training/benchmark contract database.');
+        }
+
         $app = require dirname(__DIR__, 4).'/bootstrap/app.php';
         $app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap();
     }

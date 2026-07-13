@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Benchmark;
 
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelAssembler;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\GeometryConfirmationData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\GeometryBuildingModelInputMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\AcceptedNormativeDecisionData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeHardGate;
@@ -20,7 +21,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationSer
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessInspector;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\GeometryConfirmationData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
 use Throwable;
 

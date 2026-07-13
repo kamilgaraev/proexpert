@@ -28,8 +28,8 @@ class ResourceAssemblyService
     ) {}
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<string, mixed> $regionalContext
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $regionalContext
      * @return array<string, mixed>
      */
     public function assembleFromDecision(array $workItem, AcceptedNormativeDecisionData $decision, array $regionalContext): array
@@ -379,9 +379,9 @@ class ResourceAssemblyService
     }
 
     /**
-     * @param array<string, mixed> $workItem
-     * @param array<string, mixed> $match
-     * @param array<string, mixed> $decision
+     * @param  array<string, mixed>  $workItem
+     * @param  array<string, mixed>  $match
+     * @param  array<string, mixed>  $decision
      * @return array<string, mixed>
      */
     private function assembleAcceptedDecision(

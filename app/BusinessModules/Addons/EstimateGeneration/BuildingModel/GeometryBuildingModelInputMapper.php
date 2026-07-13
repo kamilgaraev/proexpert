@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\BuildingModel;
 
-use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\VisionBuildingModelInputData;
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\GeometryConfirmationData;
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\VisionBuildingModelInputData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionAnalysisData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\FusedGeometryElementData;
@@ -168,11 +168,11 @@ final readonly class GeometryBuildingModelInputMapper
         $axis = [(float) $wall['end'][0] - (float) $wall['start'][0], (float) $wall['end'][1] - (float) $wall['start'][1]];
         $wallLength = hypot($axis[0], $axis[1]);
         $axis = [$axis[0] / $wallLength, $axis[1] / $wallLength];
-        $positions = static fn (array $segment): array => array_map(static fn (array $point): float =>
-            ((float) $point[0] - (float) $wall['start'][0]) * $axis[0] + ((float) $point[1] - (float) $wall['start'][1]) * $axis[1], $segment);
+        $positions = static fn (array $segment): array => array_map(static fn (array $point): float => ((float) $point[0] - (float) $wall['start'][0]) * $axis[0] + ((float) $point[1] - (float) $wall['start'][1]) * $axis[1], $segment);
         $a = $positions($left);
         $b = $positions($right);
-        sort($a); sort($b);
+        sort($a);
+        sort($b);
         $gapStart = min(max($a), max($b));
         $gapEnd = max(min($a), min($b));
         if ($gapEnd <= $gapStart) {
@@ -283,6 +283,7 @@ final readonly class GeometryBuildingModelInputMapper
             };
             if ($geometry === null) {
                 $issues[] = ['code' => 'geometry_element_unsupported', 'severity' => 'blocking', 'element_key' => $item->key, 'evidence_refs' => [$item->evidenceRef]];
+
                 continue;
             }
             $elements[] = new FusedGeometryElementData(
@@ -330,6 +331,7 @@ final readonly class GeometryBuildingModelInputMapper
             }
             if ($geometry === null) {
                 $issues[] = ['code' => 'geometry_element_unsupported', 'severity' => 'blocking', 'element_key' => 'vector-'.$entity['handle'], 'evidence_refs' => [$reference]];
+
                 continue;
             }
             $page = $this->vectorPageNumber($entity);

@@ -37,9 +37,9 @@ final readonly class NormativeRerankResultData
     }
 
     /**
-     * @param array<string, mixed> $payload
-     * @param list<string> $exactCandidateIds
-     * @param list<string> $allowedEvidenceRefs
+     * @param  array<string, mixed>  $payload
+     * @param  list<string>  $exactCandidateIds
+     * @param  list<string>  $allowedEvidenceRefs
      */
     public static function fromProviderArray(
         array $payload,

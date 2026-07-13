@@ -25,7 +25,9 @@ final readonly class RecordedNormativeContentDecision
     {
         $keys = ['dataset_id', 'dataset_version', 'code', 'selected_content_sha256', 'ordering_content_sha256',
             'explanation_codes', 'evidence_refs', 'confidence'];
-        $actual = array_keys($data); sort($actual); sort($keys);
+        $actual = array_keys($data);
+        sort($actual);
+        sort($keys);
         if ($actual !== $keys || ! is_int($data['dataset_id']) || ! is_string($data['dataset_version'])
             || ! is_string($data['code']) || ! self::hash($data['selected_content_sha256'])
             || ! is_array($data['ordering_content_sha256']) || $data['ordering_content_sha256'] === []

@@ -52,6 +52,7 @@ final class GeometryConfirmationCommandTest extends TestCase
         new GeometryConfirmationCommand(1, 2, 3, 4, 5, 'sha256:'.str_repeat('c', 64),
             'sha256:'.str_repeat('d', 64), ['pixel_start' => [0, 0], 'pixel_end' => [1, 0], 'meters' => 1], [], $semantic);
     }
+
     #[Test]
     public function it_rejects_arbitrary_json_pointer_paths(): void
     {

@@ -76,6 +76,7 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
             ...$context->sourceEvidence,
             ...array_merge(...array_map(static fn ($candidate): array => $candidate->sourceEvidence, $set->candidates)),
         ]));
+
         return NormativeRerankResultData::fromProviderArray($response, $ids, $allowedEvidence, 'llm');
     }
 

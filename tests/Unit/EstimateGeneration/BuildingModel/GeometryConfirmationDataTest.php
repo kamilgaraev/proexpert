@@ -8,8 +8,8 @@ use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\DTO\GeometryConf
 use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\GeometryBuildingModelInputMapper;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
 use InvalidArgumentException;
-use PHPUnit\Framework\TestCase;
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\TestCase;
 
 final class GeometryConfirmationDataTest extends TestCase
 {
@@ -55,12 +55,36 @@ final class GeometryConfirmationDataTest extends TestCase
         return [
             'source hash' => [static fn (array $p): array => [...$p, 'source_fingerprint' => 'sha256:'.str_repeat('f', 64)]],
             'payload hash' => [static fn (array $p): array => [...$p, 'geometry_payload_sha256' => str_repeat('f', 64)]],
-            'unknown entity' => [static function (array $p): array { $p['elements'][0]['boundary_handle'] = 'UNKNOWN'; return $p; }],
-            'conflicting scale' => [static function (array $p): array { $p['scale_evidence'][] = ['role' => 'measured_segment', 'entity_handle' => 'W2', 'point_indexes' => [0, 1], 'real_world_value' => 2100, 'unit' => 'm']; return $p; }],
-            'duplicate element key' => [static function (array $p): array { $p['elements'][1]['key'] = 'room-1'; return $p; }],
-            'same entity has room and wall ownership' => [static function (array $p): array { $p['elements'][1]['segment_handles'] = ['R1', 'W2']; return $p; }],
-            'opening references missing wall' => [static function (array $p): array { $p['elements'][2]['wall_key'] = 'missing'; return $p; }],
-            'unrelated text is not unit declaration' => [static function (array $p): array { $p['scale_evidence'] = [['role' => 'unit_declaration', 'value_handle' => 'T1']]; return $p; }],
+            'unknown entity' => [static function (array $p): array {
+                $p['elements'][0]['boundary_handle'] = 'UNKNOWN';
+
+                return $p;
+            }],
+            'conflicting scale' => [static function (array $p): array {
+                $p['scale_evidence'][] = ['role' => 'measured_segment', 'entity_handle' => 'W2', 'point_indexes' => [0, 1], 'real_world_value' => 2100, 'unit' => 'm'];
+
+                return $p;
+            }],
+            'duplicate element key' => [static function (array $p): array {
+                $p['elements'][1]['key'] = 'room-1';
+
+                return $p;
+            }],
+            'same entity has room and wall ownership' => [static function (array $p): array {
+                $p['elements'][1]['segment_handles'] = ['R1', 'W2'];
+
+                return $p;
+            }],
+            'opening references missing wall' => [static function (array $p): array {
+                $p['elements'][2]['wall_key'] = 'missing';
+
+                return $p;
+            }],
+            'unrelated text is not unit declaration' => [static function (array $p): array {
+                $p['scale_evidence'] = [['role' => 'unit_declaration', 'value_handle' => 'T1']];
+
+                return $p;
+            }],
         ];
     }
 

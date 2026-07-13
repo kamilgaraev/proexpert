@@ -100,7 +100,9 @@ final readonly class RecordedBenchmarkCatalogData
                 || DateTimeImmutable::createFromFormat('!Y-m-d\TH:i:s\Z', $price['approved_at']) === false) {
                 throw new InvalidArgumentException('recorded_catalog_price_invalid');
             }
-            $ids[$price['id']] = true; $hashes[$price['snapshot_sha256']] = true; $refs[$price['snapshot_ref']] = true;
+            $ids[$price['id']] = true;
+            $hashes[$price['snapshot_sha256']] = true;
+            $refs[$price['snapshot_ref']] = true;
         }
         $resourcePriceIds = [];
         foreach ($resources as $resource) {
@@ -108,7 +110,9 @@ final readonly class RecordedBenchmarkCatalogData
                 $resourcePriceIds[] = $material['price_id'] ?? null;
             }
         }
-        sort($resourcePriceIds); $priceIds = array_keys($ids); sort($priceIds);
+        sort($resourcePriceIds);
+        $priceIds = array_keys($ids);
+        sort($priceIds);
         if ($resourcePriceIds !== $priceIds) {
             throw new InvalidArgumentException('recorded_catalog_price_invalid');
         }

@@ -35,9 +35,28 @@ final readonly class ReadinessResult implements ArrayAccess, JsonSerializable
         ];
     }
 
-    public function jsonSerialize(): array { return $this->toArray(); }
-    public function offsetExists(mixed $offset): bool { return array_key_exists((string) $offset, $this->toArray()); }
-    public function offsetGet(mixed $offset): mixed { return $this->toArray()[(string) $offset] ?? null; }
-    public function offsetSet(mixed $offset, mixed $value): void { throw new LogicException('estimate_generation.readiness_result_immutable'); }
-    public function offsetUnset(mixed $offset): void { throw new LogicException('estimate_generation.readiness_result_immutable'); }
+    public function jsonSerialize(): array
+    {
+        return $this->toArray();
+    }
+
+    public function offsetExists(mixed $offset): bool
+    {
+        return array_key_exists((string) $offset, $this->toArray());
+    }
+
+    public function offsetGet(mixed $offset): mixed
+    {
+        return $this->toArray()[(string) $offset] ?? null;
+    }
+
+    public function offsetSet(mixed $offset, mixed $value): void
+    {
+        throw new LogicException('estimate_generation.readiness_result_immutable');
+    }
+
+    public function offsetUnset(mixed $offset): void
+    {
+        throw new LogicException('estimate_generation.readiness_result_immutable');
+    }
 }
