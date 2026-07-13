@@ -257,6 +257,16 @@ class PaymentDocumentService
             DB::commit();
             return $document->fresh();
 
+        } catch (\DomainException $e) {
+            DB::rollBack();
+
+            Log::warning('payment_document.submit_rejected', [
+                'document_id' => $document->id,
+                'status' => $document->status?->value,
+                'error' => $e->getMessage(),
+            ]);
+
+            throw $e;
         } catch (\Exception $e) {
             DB::rollBack();
             
@@ -1264,4 +1274,3 @@ class PaymentDocumentService
         return 'ordered';
     }
 }
-
