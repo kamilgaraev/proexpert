@@ -57,6 +57,12 @@ final class EstimateGenerationTrainingDatasetService
         }
 
         $projectId = $this->nullableInt($data['project_id'] ?? null);
+        $datasetType = (string) ($data['dataset_type'] ?? EstimateGenerationTrainingDataset::TYPE_DEVELOPMENT);
+        if (! in_array($datasetType, EstimateGenerationTrainingDataset::TYPES, true)) {
+            throw ValidationException::withMessages([
+                'dataset_type' => [trans_message('estimate_generation.training_dataset_type_invalid')],
+            ]);
+        }
 
         if ($projectId !== null) {
             $project = Project::query()
@@ -74,7 +80,7 @@ final class EstimateGenerationTrainingDatasetService
             'uuid' => (string) Str::uuid(),
             'dataset_key' => (string) Str::uuid(),
             'version' => 1,
-            'dataset_type' => EstimateGenerationTrainingDataset::TYPE_DEVELOPMENT,
+            'dataset_type' => $datasetType,
             'scope' => 'organization',
             'organization_id' => (int) $organization->id,
             'project_id' => $projectId,
@@ -83,6 +89,8 @@ final class EstimateGenerationTrainingDatasetService
             'source_system' => (string) ($data['source_system'] ?? 'grandsmeta'),
             'status' => EstimateGenerationTrainingDataset::STATUS_DRAFT,
             'quality_status' => 'pending',
+            'trusted_review_status' => EstimateGenerationTrainingDataset::TRUSTED_REVIEW_DRAFT,
+            'control_version' => 0,
             'source_quality_score' => $this->boundedQuality($data['source_quality_score'] ?? 0.85),
             'region_name' => $this->nullableString($data['region_name'] ?? null),
             'period_name' => $this->nullableString($data['period_name'] ?? null),
@@ -270,6 +278,10 @@ final class EstimateGenerationTrainingDatasetService
                 ->where('organization_id', $dataset->organization_id)->lockForUpdate()->firstOrFail();
             if ($dataset->status !== EstimateGenerationTrainingDataset::STATUS_REVIEW_REQUIRED) {
                 throw new \DomainException('dataset_approval_transition_not_allowed');
+            }
+            if ($dataset->dataset_type === EstimateGenerationTrainingDataset::TYPE_DEVELOPMENT
+                && $dataset->trusted_review_status !== EstimateGenerationTrainingDataset::TRUSTED_REVIEW_APPROVED) {
+                throw new \DomainException('dataset_approval_requires_trusted_review');
             }
             $examples = $dataset->examples();
             if (! $examples->exists() || (clone $examples)->where(function ($query): void {

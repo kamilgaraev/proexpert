@@ -2,15 +2,15 @@
 
 declare(strict_types=1);
 
-namespace App\Filament\Resources\EstimateGenerationTrainingDatasetResource\Pages;
+namespace App\Filament\Resources\EstimateGeneration\TrainingDatasetResource\Pages;
 
-use App\Filament\Resources\EstimateGenerationTrainingDatasetResource;
+use App\Filament\Resources\EstimateGeneration\TrainingDatasetResource;
 use Filament\Actions\CreateAction;
 use Filament\Resources\Pages\ListRecords;
 
 class ListEstimateGenerationTrainingDatasets extends ListRecords
 {
-    protected static string $resource = EstimateGenerationTrainingDatasetResource::class;
+    protected static string $resource = TrainingDatasetResource::class;
 
     public function getTitle(): string
     {

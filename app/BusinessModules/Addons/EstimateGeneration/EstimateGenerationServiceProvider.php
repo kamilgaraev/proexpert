@@ -326,6 +326,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             reportOutput: $app->make(BenchmarkReportOutputStore::class),
             acceptanceGate: $app->make(AcceptanceBenchmarkGate::class),
         ));
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Operations\StoredBenchmarkRunExecutor::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Operations\ConsoleStoredBenchmarkRunExecutor::class,
+        );
 
         $this->app->singleton(DocumentParsingService::class);
         $this->app->singleton(MetadataDocumentUnitDetector::class);

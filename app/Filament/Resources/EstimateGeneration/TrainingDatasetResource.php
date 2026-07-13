@@ -2,11 +2,12 @@
 
 declare(strict_types=1);
 
-namespace App\Filament\Resources;
+namespace App\Filament\Resources\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationTrainingDataset;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Training\EstimateGenerationTrainingDatasetService;
-use App\Filament\Resources\EstimateGenerationTrainingDatasetResource\Pages;
+use App\BusinessModules\Addons\EstimateGeneration\Operations\AdminTrainingDatasetActionCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Operations\AdminTrainingDatasetActionService;
+use App\Filament\Resources\EstimateGeneration\TrainingDatasetResource\Pages;
 use App\Filament\Support\FilamentPermission;
 use App\Filament\Support\NavigationGroups;
 use App\Filament\Support\SystemAdminAccess;
@@ -28,7 +29,7 @@ use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 
-class EstimateGenerationTrainingDatasetResource extends Resource
+class TrainingDatasetResource extends Resource
 {
     protected static ?string $model = EstimateGenerationTrainingDataset::class;
 
@@ -85,6 +86,11 @@ class EstimateGenerationTrainingDatasetResource extends Resource
                         ->label(trans_message('estimate_generation.training_title'))
                         ->required()
                         ->maxLength(255),
+                    Forms\Components\Select::make('dataset_type')
+                        ->label(trans_message('estimate_generation.training_dataset_type'))
+                        ->options(self::datasetTypeOptions())
+                        ->default(EstimateGenerationTrainingDataset::TYPE_DEVELOPMENT)
+                        ->required(),
                     Forms\Components\Select::make('source_system')
                         ->label(trans_message('estimate_generation.training_source_system'))
                         ->options(self::sourceSystemOptions())
@@ -147,7 +153,8 @@ class EstimateGenerationTrainingDatasetResource extends Resource
                         ->columnSpanFull(),
                     Forms\Components\Toggle::make('auto_process')
                         ->label(trans_message('estimate_generation.training_auto_process'))
-                        ->visible(fn (): bool => self::canProcess())
+                        ->visible(fn (Get $get): bool => self::canProcess()
+                            && $get('dataset_type') === EstimateGenerationTrainingDataset::TYPE_DEVELOPMENT)
                         ->default(true),
                 ]),
         ]);
@@ -172,9 +179,19 @@ class EstimateGenerationTrainingDatasetResource extends Resource
                         ->label(trans_message('estimate_generation.training_status'))
                         ->formatStateUsing(fn (?string $state): string => self::statusLabel($state))
                         ->badge(),
+                    \Filament\Infolists\Components\TextEntry::make('dataset_type')
+                        ->label(trans_message('estimate_generation.training_dataset_type'))
+                        ->formatStateUsing(fn (?string $state): string => self::datasetTypeOptions()[$state ?? ''] ?? (string) $state)
+                        ->badge(),
+                    \Filament\Infolists\Components\TextEntry::make('version')
+                        ->label(trans_message('estimate_generation.training_version')),
                     \Filament\Infolists\Components\TextEntry::make('quality_status')
                         ->label(trans_message('estimate_generation.training_quality_status'))
                         ->formatStateUsing(fn (?string $state): string => self::qualityStatusLabel($state))
+                        ->badge(),
+                    \Filament\Infolists\Components\TextEntry::make('trusted_review_status')
+                        ->label(trans_message('estimate_generation.training_trusted_review_status'))
+                        ->formatStateUsing(fn (?string $state): string => self::trustedReviewStatusOptions()[$state ?? ''] ?? (string) $state)
                         ->badge(),
                 ])
                 ->columns(2),
@@ -221,9 +238,22 @@ class EstimateGenerationTrainingDatasetResource extends Resource
                     ->label(trans_message('estimate_generation.training_source_system'))
                     ->formatStateUsing(fn (?string $state): string => self::sourceSystemOptions()[$state ?? ''] ?? (string) $state)
                     ->badge(),
+                Tables\Columns\TextColumn::make('dataset_type')
+                    ->label(trans_message('estimate_generation.training_dataset_type'))
+                    ->formatStateUsing(fn (?string $state): string => self::datasetTypeOptions()[$state ?? ''] ?? (string) $state)
+                    ->badge()
+                    ->sortable(),
+                Tables\Columns\TextColumn::make('version')
+                    ->label(trans_message('estimate_generation.training_version'))
+                    ->sortable(),
                 Tables\Columns\TextColumn::make('status')
                     ->label(trans_message('estimate_generation.training_status'))
                     ->formatStateUsing(fn (?string $state): string => self::statusLabel($state))
+                    ->badge()
+                    ->sortable(),
+                Tables\Columns\TextColumn::make('trusted_review_status')
+                    ->label(trans_message('estimate_generation.training_trusted_review_status'))
+                    ->formatStateUsing(fn (?string $state): string => self::trustedReviewStatusOptions()[$state ?? ''] ?? (string) $state)
                     ->badge()
                     ->sortable(),
                 Tables\Columns\TextColumn::make('files_count')
@@ -247,6 +277,12 @@ class EstimateGenerationTrainingDatasetResource extends Resource
                 Tables\Filters\SelectFilter::make('source_system')
                     ->label(trans_message('estimate_generation.training_source_system'))
                     ->options(self::sourceSystemOptions()),
+                Tables\Filters\SelectFilter::make('dataset_type')
+                    ->label(trans_message('estimate_generation.training_dataset_type'))
+                    ->options(self::datasetTypeOptions()),
+                Tables\Filters\SelectFilter::make('trusted_review_status')
+                    ->label(trans_message('estimate_generation.training_trusted_review_status'))
+                    ->options(self::trustedReviewStatusOptions()),
             ])
             ->recordActions([
                 ViewAction::make(),
@@ -256,14 +292,26 @@ class EstimateGenerationTrainingDatasetResource extends Resource
                     ->color('success')
                     ->visible(fn (): bool => self::canProcess())
                     ->disabled(fn (EstimateGenerationTrainingDataset $record): bool => $record->status !== EstimateGenerationTrainingDataset::STATUS_DRAFT)
-                    ->action(function (EstimateGenerationTrainingDataset $record): void {
-                        app(EstimateGenerationTrainingDatasetService::class)->queueProcessing($record);
-
-                        Notification::make()
-                            ->success()
-                            ->title(trans_message('estimate_generation.training_process_queued'))
-                            ->send();
-                    }),
+                    ->action(fn (EstimateGenerationTrainingDataset $record): mixed => self::runAction($record, 'process')),
+                Action::make('submit_review')
+                    ->label(trans_message('estimate_generation.training_submit_review_action'))
+                    ->visible(fn (EstimateGenerationTrainingDataset $record): bool => $record->dataset_type === EstimateGenerationTrainingDataset::TYPE_DEVELOPMENT
+                        && ($record->trusted_review_status ?? EstimateGenerationTrainingDataset::TRUSTED_REVIEW_DRAFT) === EstimateGenerationTrainingDataset::TRUSTED_REVIEW_DRAFT)
+                    ->requiresConfirmation()
+                    ->action(fn (EstimateGenerationTrainingDataset $record): mixed => self::runAction($record, 'submit_review')),
+                Action::make('approve_review')
+                    ->label(trans_message('estimate_generation.training_approve_review_action'))
+                    ->visible(fn (EstimateGenerationTrainingDataset $record): bool => $record->dataset_type === EstimateGenerationTrainingDataset::TYPE_DEVELOPMENT
+                        && $record->trusted_review_status === EstimateGenerationTrainingDataset::TRUSTED_REVIEW_PENDING)
+                    ->requiresConfirmation()
+                    ->action(fn (EstimateGenerationTrainingDataset $record): mixed => self::runAction($record, 'approve_review')),
+                Action::make('reject_review')
+                    ->label(trans_message('estimate_generation.training_reject_review_action'))
+                    ->color('danger')
+                    ->visible(fn (EstimateGenerationTrainingDataset $record): bool => $record->dataset_type === EstimateGenerationTrainingDataset::TYPE_DEVELOPMENT
+                        && $record->trusted_review_status === EstimateGenerationTrainingDataset::TRUSTED_REVIEW_PENDING)
+                    ->requiresConfirmation()
+                    ->action(fn (EstimateGenerationTrainingDataset $record): mixed => self::runAction($record, 'reject_review')),
                 DeleteAction::make()
                     ->visible(fn (EstimateGenerationTrainingDataset $record): bool => SystemAdminAccess::can(FilamentPermission::ESTIMATE_GENERATION_DATASETS)
                         && ! in_array($record->status, [EstimateGenerationTrainingDataset::STATUS_APPROVED, EstimateGenerationTrainingDataset::STATUS_ARCHIVED], true)),
@@ -328,6 +376,27 @@ class EstimateGenerationTrainingDatasetResource extends Resource
         ];
     }
 
+    /** @return array<string, string> */
+    public static function datasetTypeOptions(): array
+    {
+        return [
+            EstimateGenerationTrainingDataset::TYPE_DEVELOPMENT => trans_message('estimate_generation.training_type_development'),
+            EstimateGenerationTrainingDataset::TYPE_REGRESSION => trans_message('estimate_generation.training_type_regression'),
+            EstimateGenerationTrainingDataset::TYPE_ACCEPTANCE => trans_message('estimate_generation.training_type_acceptance'),
+        ];
+    }
+
+    /** @return array<string, string> */
+    public static function trustedReviewStatusOptions(): array
+    {
+        return [
+            EstimateGenerationTrainingDataset::TRUSTED_REVIEW_DRAFT => trans_message('estimate_generation.training_review_draft'),
+            EstimateGenerationTrainingDataset::TRUSTED_REVIEW_PENDING => trans_message('estimate_generation.training_review_pending'),
+            EstimateGenerationTrainingDataset::TRUSTED_REVIEW_APPROVED => trans_message('estimate_generation.training_review_approved'),
+            EstimateGenerationTrainingDataset::TRUSTED_REVIEW_REJECTED => trans_message('estimate_generation.training_review_rejected'),
+        ];
+    }
+
     /**
      * @return array<string, string>
      */
@@ -374,5 +443,31 @@ class EstimateGenerationTrainingDatasetResource extends Resource
             ->limit(500)
             ->pluck('name', 'id')
             ->all();
+    }
+
+    public static function runAction(EstimateGenerationTrainingDataset $record, string $action): mixed
+    {
+        $actor = SystemAdminAccess::user();
+        if ($actor === null || $record->organization_id === null) {
+            return null;
+        }
+
+        $result = app(AdminTrainingDatasetActionService::class)->handle(new AdminTrainingDatasetActionCommand(
+            actorId: (int) $actor->id,
+            datasetId: (int) $record->id,
+            organizationId: (int) $record->organization_id,
+            expectedVersion: (int) ($record->control_version ?? 0),
+            action: $action,
+            idempotencyKey: sprintf('filament:dataset:%d:%s:v%d', (int) $record->id, $action, (int) ($record->control_version ?? 0)),
+        ));
+
+        Notification::make()
+            ->success()
+            ->title(trans_message($action === 'process'
+                ? 'estimate_generation.training_process_queued'
+                : 'estimate_generation.training_review_changed'))
+            ->send();
+
+        return $result;
     }
 }

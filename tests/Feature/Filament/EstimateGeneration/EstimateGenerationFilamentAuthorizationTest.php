@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Filament\EstimateGeneration;
 
-use App\Filament\Resources\EstimateGenerationTrainingDatasetResource;
-use App\Filament\Resources\EstimateGenerationTrainingDatasetResource\Pages\CreateEstimateGenerationTrainingDataset;
+use App\Filament\Resources\EstimateGeneration\TrainingDatasetResource;
+use App\Filament\Resources\EstimateGeneration\TrainingDatasetResource\Pages\CreateEstimateGenerationTrainingDataset;
 use App\Filament\Support\FilamentPermission;
 use App\Filament\Support\NavigationGroups;
 use App\Helpers\PermissionTranslator;
@@ -117,12 +117,12 @@ final class EstimateGenerationFilamentAuthorizationTest extends TestCase
 
     public function test_training_dataset_resource_uses_ai_estimator_navigation_contract(): void
     {
-        self::assertSame(10, EstimateGenerationTrainingDatasetResource::getNavigationSort());
+        self::assertSame(10, TrainingDatasetResource::getNavigationSort());
 
-        $icon = new ReflectionProperty(EstimateGenerationTrainingDatasetResource::class, 'navigationIcon');
+        $icon = new ReflectionProperty(TrainingDatasetResource::class, 'navigationIcon');
         self::assertSame('heroicon-o-academic-cap', $icon->getValue());
 
-        $resourceSource = file_get_contents((new ReflectionClass(EstimateGenerationTrainingDatasetResource::class))->getFileName());
+        $resourceSource = file_get_contents((new ReflectionClass(TrainingDatasetResource::class))->getFileName());
         $navigationSource = file_get_contents((new ReflectionClass(NavigationGroups::class))->getFileName());
 
         self::assertIsString($resourceSource);
@@ -134,7 +134,7 @@ final class EstimateGenerationFilamentAuthorizationTest extends TestCase
 
     public function test_training_dataset_resource_uses_datasets_and_operate_permissions(): void
     {
-        $source = file_get_contents((new ReflectionClass(EstimateGenerationTrainingDatasetResource::class))->getFileName());
+        $source = file_get_contents((new ReflectionClass(TrainingDatasetResource::class))->getFileName());
 
         self::assertIsString($source);
         self::assertStringContainsString('FilamentPermission::ESTIMATE_GENERATION_DATASETS', $source);
@@ -144,13 +144,13 @@ final class EstimateGenerationFilamentAuthorizationTest extends TestCase
 
     public function test_auto_processing_requires_operate_permission(): void
     {
-        $resourceSource = file_get_contents((new ReflectionClass(EstimateGenerationTrainingDatasetResource::class))->getFileName());
+        $resourceSource = file_get_contents((new ReflectionClass(TrainingDatasetResource::class))->getFileName());
         $createPageSource = file_get_contents((new ReflectionClass(CreateEstimateGenerationTrainingDataset::class))->getFileName());
 
         self::assertIsString($resourceSource);
         self::assertIsString($createPageSource);
         self::assertStringContainsString('->visible(fn (): bool => self::canProcess())', $resourceSource);
-        self::assertStringContainsString('EstimateGenerationTrainingDatasetResource::canProcess()', $createPageSource);
+        self::assertStringContainsString('TrainingDatasetResource::canProcess()', $createPageSource);
     }
 
     public function test_legacy_training_permissions_are_removed(): void

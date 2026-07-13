@@ -35,6 +35,21 @@ class EstimateGenerationTrainingDataset extends Model
 
     public const STATUSES = [self::STATUS_DRAFT, self::STATUS_PROCESSING, self::STATUS_REVIEW_REQUIRED, self::STATUS_APPROVED, self::STATUS_REJECTED, self::STATUS_ARCHIVED];
 
+    public const TRUSTED_REVIEW_DRAFT = 'draft';
+
+    public const TRUSTED_REVIEW_PENDING = 'pending';
+
+    public const TRUSTED_REVIEW_APPROVED = 'approved';
+
+    public const TRUSTED_REVIEW_REJECTED = 'rejected';
+
+    public const TRUSTED_REVIEW_STATUSES = [
+        self::TRUSTED_REVIEW_DRAFT,
+        self::TRUSTED_REVIEW_PENDING,
+        self::TRUSTED_REVIEW_APPROVED,
+        self::TRUSTED_REVIEW_REJECTED,
+    ];
+
     protected $fillable = [
         'uuid',
         'dataset_key',
@@ -63,6 +78,12 @@ class EstimateGenerationTrainingDataset extends Model
         'accepted_at',
         'approved_by',
         'approved_at',
+        'trusted_review_status',
+        'trusted_review_submitted_by',
+        'trusted_review_submitted_at',
+        'trusted_reviewed_by',
+        'trusted_reviewed_at',
+        'control_version',
     ];
 
     protected $casts = [
@@ -79,6 +100,11 @@ class EstimateGenerationTrainingDataset extends Model
         'processed_at' => 'datetime',
         'accepted_at' => 'datetime',
         'approved_at' => 'immutable_datetime',
+        'trusted_review_submitted_by' => 'integer',
+        'trusted_review_submitted_at' => 'immutable_datetime',
+        'trusted_reviewed_by' => 'integer',
+        'trusted_reviewed_at' => 'immutable_datetime',
+        'control_version' => 'integer',
     ];
 
     public function organization(): BelongsTo

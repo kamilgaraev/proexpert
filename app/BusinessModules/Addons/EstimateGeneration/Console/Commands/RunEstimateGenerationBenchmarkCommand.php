@@ -28,6 +28,7 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
         {--dataset=regression : development|regression|acceptance}
         {--format=json : json|table}
         {--output= : Relative path under the benchmark output root}
+        {--emit-json : Emit JSON even when an immutable output is written}
         {--manifest= : Relative two-case replay manifest under the fixture root}
         {--adapter= : Explicit registered adapter}
         {--pipeline-version= : Version of the evaluated pipeline}
@@ -91,8 +92,10 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
             $rendered = $format === 'json' ? $report->canonicalJson() : $this->tablePayload($report);
             $output = $this->option('output');
             if (is_string($output) && $output !== '') {
+                $output = str_replace('{sha256}', hash('sha256', $rendered), $output);
                 ($this->reportOutput ?? new LocalBenchmarkReportOutputStore($this->outputRoot))->write($output, $rendered);
-            } else {
+            }
+            if (! is_string($output) || $output === '' || (bool) $this->option('emit-json')) {
                 $this->line($rendered);
             }
 
@@ -156,7 +159,7 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
             throw new BenchmarkCommandException('production_output_store_invalid');
         }
         $output = $this->option('output');
-        if (! is_string($output) || ! preg_match('#^s3://org-[1-9][0-9]*/estimate-generation/benchmarks/[0-9a-f-]{36}/[a-f0-9]{64}\.json$#', $output)) {
+        if (! is_string($output) || ! preg_match('#^s3://org-[1-9][0-9]*/estimate-generation/benchmarks/[0-9a-f-]{36}/(?:[a-f0-9]{64}|\{sha256\})\.json$#', $output)) {
             throw new BenchmarkCommandException('production_output_locator_invalid');
         }
     }

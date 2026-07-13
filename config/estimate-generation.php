@@ -134,6 +134,8 @@ return [
         'max_dataset_jobs_per_minute' => (int) env('ESTIMATE_GENERATION_TRAINING_MAX_DATASET_JOBS_PER_MINUTE', 2),
     ],
     'benchmark' => [
+        'production_pipeline_version' => $envValue('ESTIMATE_GENERATION_PRODUCTION_PIPELINE_VERSION'),
+        'admin_case_timeout_ms' => (int) env('ESTIMATE_GENERATION_ADMIN_BENCHMARK_CASE_TIMEOUT_MS', 300000),
         'repository_replay_enabled' => (bool) env('ESTIMATE_GENERATION_REPOSITORY_REPLAY_ENABLED', true),
         'production_output_store' => env('ESTIMATE_GENERATION_BENCHMARK_PRODUCTION_OUTPUT_STORE', 's3'),
         'acceptance_manifest' => $envValue('ESTIMATE_GENERATION_ACCEPTANCE_BENCHMARK_MANIFEST'),

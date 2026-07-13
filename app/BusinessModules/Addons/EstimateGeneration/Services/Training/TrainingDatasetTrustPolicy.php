@@ -42,6 +42,7 @@ final class TrainingDatasetTrustPolicy
     private function isApprovedDevelopment(EstimateGenerationTrainingDataset $dataset): bool
     {
         return $dataset->dataset_type === EstimateGenerationTrainingDataset::TYPE_DEVELOPMENT
-            && $dataset->status === EstimateGenerationTrainingDataset::STATUS_APPROVED;
+            && $dataset->status === EstimateGenerationTrainingDataset::STATUS_APPROVED
+            && $dataset->trusted_review_status === EstimateGenerationTrainingDataset::TRUSTED_REVIEW_APPROVED;
     }
 }
