@@ -128,13 +128,17 @@ final class FilamentPermission
 
     public const KNOWLEDGE_HUB_CATEGORIES_MANAGE = 'system_admin.knowledge_hub.categories.manage';
 
-    public const AI_ESTIMATOR_TRAINING_VIEW = 'system_admin.ai_estimator_training.view';
+    public const ESTIMATE_GENERATION_MONITOR = 'estimate_generation.monitor';
 
-    public const AI_ESTIMATOR_TRAINING_CREATE = 'system_admin.ai_estimator_training.create';
+    public const ESTIMATE_GENERATION_OPERATE = 'estimate_generation.operate';
 
-    public const AI_ESTIMATOR_TRAINING_PROCESS = 'system_admin.ai_estimator_training.process';
+    public const ESTIMATE_GENERATION_DATASETS = 'estimate_generation.datasets';
 
-    public const AI_ESTIMATOR_TRAINING_DELETE = 'system_admin.ai_estimator_training.delete';
+    public const ESTIMATE_GENERATION_BENCHMARKS = 'estimate_generation.benchmarks';
+
+    public const ESTIMATE_GENERATION_SETTINGS = 'estimate_generation.settings';
+
+    public const ESTIMATE_GENERATION_BUDGETS = 'estimate_generation.budgets';
 
     public const NOTIFICATIONS_TEMPLATES_VIEW = 'system_admin.notifications.templates.view';
 

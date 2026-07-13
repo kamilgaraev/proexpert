@@ -18,7 +18,6 @@
     "system_admin.subscriptions.view",
     "system_admin.payments.view",
     "system_admin.modules.view",
-    "system_admin.ai_estimator_training.view",
     "system_admin.monitoring.view",
     "system_admin.audit_logs.view",
     "system_admin.blog.articles.view",
@@ -26,7 +25,8 @@
     "system_admin.blog.preview.view",
     "system_admin.notifications.templates.view",
     "system_admin.notifications.delivery_log.view",
-    "system_admin.notifications.analytics.view"
+    "system_admin.notifications.analytics.view",
+    "estimate_generation.monitor"
   ],
   "module_permissions": {
     "profile": [
@@ -51,9 +51,6 @@
     ],
     "modules": [
       "system_admin.modules.view"
-    ],
-    "ai_estimator_training": [
-      "system_admin.ai_estimator_training.view"
     ],
     "monitoring": [
       "system_admin.monitoring.view"
@@ -82,6 +79,9 @@
       "system_admin.notifications.templates.view",
       "system_admin.notifications.delivery_log.view",
       "system_admin.notifications.analytics.view"
+    ],
+    "estimate_generation": [
+      "estimate_generation.monitor"
     ]
   },
   "interface_access": [

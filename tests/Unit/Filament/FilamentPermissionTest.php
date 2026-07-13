@@ -29,7 +29,7 @@ class FilamentPermissionTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_permission_registry_values_are_unique_system_admin_permissions(): void
+    public function test_permission_registry_values_are_unique_admin_permissions(): void
     {
         $permissions = FilamentPermission::all();
 
@@ -37,7 +37,10 @@ class FilamentPermissionTest extends TestCase
         $this->assertCount(count(array_unique($permissions)), $permissions);
 
         foreach ($permissions as $permission) {
-            $this->assertStringStartsWith('system_admin.', $permission);
+            $this->assertTrue(
+                str_starts_with($permission, 'system_admin.')
+                    || str_starts_with($permission, 'estimate_generation.'),
+            );
         }
     }
 
@@ -116,4 +119,3 @@ class FilamentPermissionTest extends TestCase
         $this->assertFalse(SystemAdminAccess::canAll([]));
     }
 }
-

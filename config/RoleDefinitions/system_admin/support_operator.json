@@ -13,7 +13,9 @@
     "system_admin.organizations.view",
     "system_admin.users.view",
     "system_admin.support.view",
-    "system_admin.support.manage"
+    "system_admin.support.manage",
+    "estimate_generation.monitor",
+    "estimate_generation.operate"
   ],
   "module_permissions": {
     "profile": [
@@ -29,6 +31,10 @@
     "support": [
       "system_admin.support.view",
       "system_admin.support.manage"
+    ],
+    "estimate_generation": [
+      "estimate_generation.monitor",
+      "estimate_generation.operate"
     ]
   },
   "interface_access": [

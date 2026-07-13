@@ -27,7 +27,8 @@ class CreateEstimateGenerationTrainingDataset extends CreateRecord
         $dataset = app(EstimateGenerationTrainingDatasetService::class)
             ->createFromFilament($data, $actor instanceof SystemAdmin ? $actor : null);
 
-        if ((bool) ($data['auto_process'] ?? true)) {
+        if ((bool) ($data['auto_process'] ?? true)
+            && EstimateGenerationTrainingDatasetResource::canProcess()) {
             app(EstimateGenerationTrainingDatasetService::class)->queueProcessing($dataset);
         }
 

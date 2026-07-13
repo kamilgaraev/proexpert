@@ -11,6 +11,14 @@
   "module_permissions": {
     "*": [
       "*"
+    ],
+    "estimate_generation": [
+      "estimate_generation.monitor",
+      "estimate_generation.operate",
+      "estimate_generation.datasets",
+      "estimate_generation.benchmarks",
+      "estimate_generation.settings",
+      "estimate_generation.budgets"
     ]
   },
   "interface_access": [

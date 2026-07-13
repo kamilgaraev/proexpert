@@ -147,6 +147,7 @@ class EstimateGenerationTrainingDatasetResource extends Resource
                         ->columnSpanFull(),
                     Forms\Components\Toggle::make('auto_process')
                         ->label(trans_message('estimate_generation.training_auto_process'))
+                        ->visible(fn (): bool => self::canProcess())
                         ->default(true),
                 ]),
         ]);
@@ -253,7 +254,7 @@ class EstimateGenerationTrainingDatasetResource extends Resource
                     ->label(trans_message('estimate_generation.training_process_action'))
                     ->icon('heroicon-o-play-circle')
                     ->color('success')
-                    ->visible(fn (): bool => SystemAdminAccess::can(FilamentPermission::AI_ESTIMATOR_TRAINING_PROCESS))
+                    ->visible(fn (): bool => self::canProcess())
                     ->disabled(fn (EstimateGenerationTrainingDataset $record): bool => $record->status !== EstimateGenerationTrainingDataset::STATUS_DRAFT)
                     ->action(function (EstimateGenerationTrainingDataset $record): void {
                         app(EstimateGenerationTrainingDatasetService::class)->queueProcessing($record);
@@ -264,7 +265,7 @@ class EstimateGenerationTrainingDatasetResource extends Resource
                             ->send();
                     }),
                 DeleteAction::make()
-                    ->visible(fn (EstimateGenerationTrainingDataset $record): bool => SystemAdminAccess::can(FilamentPermission::AI_ESTIMATOR_TRAINING_DELETE)
+                    ->visible(fn (EstimateGenerationTrainingDataset $record): bool => SystemAdminAccess::can(FilamentPermission::ESTIMATE_GENERATION_DATASETS)
                         && ! in_array($record->status, [EstimateGenerationTrainingDataset::STATUS_APPROVED, EstimateGenerationTrainingDataset::STATUS_ARCHIVED], true)),
             ]);
     }
@@ -280,7 +281,7 @@ class EstimateGenerationTrainingDatasetResource extends Resource
 
     public static function canViewAny(): bool
     {
-        return SystemAdminAccess::can(FilamentPermission::AI_ESTIMATOR_TRAINING_VIEW);
+        return SystemAdminAccess::can(FilamentPermission::ESTIMATE_GENERATION_DATASETS);
     }
 
     public static function shouldRegisterNavigation(): bool
@@ -295,19 +296,24 @@ class EstimateGenerationTrainingDatasetResource extends Resource
 
     public static function canCreate(): bool
     {
-        return SystemAdminAccess::can(FilamentPermission::AI_ESTIMATOR_TRAINING_CREATE);
+        return SystemAdminAccess::can(FilamentPermission::ESTIMATE_GENERATION_DATASETS);
     }
 
     public static function canDelete(Model $record): bool
     {
         return $record instanceof EstimateGenerationTrainingDataset
             && ! in_array($record->status, [EstimateGenerationTrainingDataset::STATUS_APPROVED, EstimateGenerationTrainingDataset::STATUS_ARCHIVED], true)
-            && SystemAdminAccess::can(FilamentPermission::AI_ESTIMATOR_TRAINING_DELETE);
+            && SystemAdminAccess::can(FilamentPermission::ESTIMATE_GENERATION_DATASETS);
     }
 
     public static function canDeleteAny(): bool
     {
-        return SystemAdminAccess::can(FilamentPermission::AI_ESTIMATOR_TRAINING_DELETE);
+        return SystemAdminAccess::can(FilamentPermission::ESTIMATE_GENERATION_DATASETS);
+    }
+
+    public static function canProcess(): bool
+    {
+        return SystemAdminAccess::can(FilamentPermission::ESTIMATE_GENERATION_OPERATE);
     }
 
     /**
