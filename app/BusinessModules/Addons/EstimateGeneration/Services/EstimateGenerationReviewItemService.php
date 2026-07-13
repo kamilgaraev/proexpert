@@ -84,7 +84,7 @@ final class EstimateGenerationReviewItemService
     ) {}
 
     /**
-     * @return array{summary: array<string, int>, items: array<int, array<string, mixed>>}
+     * @return array{summary: array<string, int>, items: array<int, array<string, mixed>>, meta: array<string, int>}
      */
     public function forSession(EstimateGenerationSession $session, array $filters = []): array
     {
@@ -103,9 +103,20 @@ final class EstimateGenerationReviewItemService
 
         $items = $this->filterItems($items, $filters);
 
+        $summary = $this->summary($items);
+        $perPage = max(min((int) ($filters['per_page'] ?? 20), 100), 1);
+        $lastPage = max((int) ceil(count($items) / $perPage), 1);
+        $page = max(min((int) ($filters['page'] ?? 1), $lastPage), 1);
+
         return [
-            'summary' => $this->summary($items),
-            'items' => $items,
+            'summary' => $summary,
+            'items' => array_slice($items, ($page - 1) * $perPage, $perPage),
+            'meta' => [
+                'total' => count($items),
+                'current_page' => $page,
+                'per_page' => $perPage,
+                'last_page' => $lastPage,
+            ],
         ];
     }
 

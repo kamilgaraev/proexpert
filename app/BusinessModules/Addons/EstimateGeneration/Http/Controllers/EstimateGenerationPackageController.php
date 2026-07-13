@@ -17,6 +17,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
@@ -35,7 +36,35 @@ final class EstimateGenerationPackageController extends Controller
         return $this->safeRead(function () use ($request, $project, $session): JsonResponse {
             $this->guard($request, $project, $session);
 
-            return AdminResponse::success($this->presenter->collection($session->packages()->get()));
+            $validated = $request->validate([
+                'page' => ['nullable', 'integer', 'min:1'],
+                'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+                'search' => ['nullable', 'string', 'max:255'],
+                'status' => ['nullable', 'string', 'max:50'],
+            ]);
+            $query = $session->packages()->orderBy('sort_order')->orderBy('id');
+            if (isset($validated['search'])) {
+                $query->where('title', 'ilike', '%'.addcslashes((string) $validated['search'], '%_\\').'%');
+            }
+            if (isset($validated['status'])) {
+                $query->where('status', $validated['status']);
+            }
+            $perPage = (int) ($validated['per_page'] ?? 20);
+            $summaryPackages = (clone $query)->get();
+            $packages = $query->paginate($perPage);
+            $payload = $this->presenter->collection($summaryPackages);
+            $payload['packages'] = collect($packages->items())
+                ->map(fn (EstimateGenerationPackage $package): array => $this->presenter->summary($package))
+                ->values()
+                ->all();
+            $payload['meta'] = [
+                'total' => $packages->total(),
+                'current_page' => $packages->currentPage(),
+                'per_page' => $packages->perPage(),
+                'last_page' => max($packages->lastPage(), 1),
+            ];
+
+            return AdminResponse::success($payload);
         }, 'list packages', $project, $session);
     }
 
@@ -46,15 +75,34 @@ final class EstimateGenerationPackageController extends Controller
             if ((int) $package->session_id !== (int) $session->id) {
                 abort(404);
             }
-            $perPage = min(max((int) $request->query('per_page', 100), 1), 500);
-            $items = $package->items()->whereNotIn('item_type', EstimateGenerationPackageItem::SERVICE_ITEM_TYPES)
+            $validated = $request->validate([
+                'page' => ['nullable', 'integer', 'min:1'],
+                'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+                'search' => ['nullable', 'string', 'max:255'],
+                'pricing_status' => ['nullable', 'string', 'max:50'],
+            ]);
+            $query = $package->items()->whereNotIn('item_type', EstimateGenerationPackageItem::SERVICE_ITEM_TYPES)
                 ->latestLogicalRevisions()
                 ->orderBy('sort_order')
-                ->orderBy('id')
-                ->limit($perPage)
-                ->get();
+                ->orderBy('id');
+            if (isset($validated['search'])) {
+                $query->where('name', 'ilike', '%'.addcslashes((string) $validated['search'], '%_\\').'%');
+            }
+            if (isset($validated['pricing_status'])) {
+                $query->where('metadata->pricing_status', $validated['pricing_status']);
+            }
+            $items = $query->paginate((int) ($validated['per_page'] ?? 25));
 
-            return AdminResponse::success($this->presenter->detail($package, $items));
+            $payload = $this->presenter->detail($package, collect($items->items()));
+            $payload['meta'] = [
+                ...$payload['meta'],
+                'total' => $items->total(),
+                'current_page' => $items->currentPage(),
+                'per_page' => $items->perPage(),
+                'last_page' => max($items->lastPage(), 1),
+            ];
+
+            return AdminResponse::success($payload);
         }, 'show package', $project, $session);
     }
 
@@ -122,6 +170,8 @@ final class EstimateGenerationPackageController extends Controller
             return $callback();
         } catch (HttpExceptionInterface $exception) {
             throw $exception;
+        } catch (ValidationException $exception) {
+            return AdminResponse::error(trans_message('estimate_generation.validation_error'), 422, $exception->errors());
         } catch (\Throwable) {
             Log::error('[EstimateGeneration] Package read failed', ['operation' => $operation, 'project_id' => $project->id, 'session_id' => $session->id, 'failure_code' => 'package_read_failed']);
 

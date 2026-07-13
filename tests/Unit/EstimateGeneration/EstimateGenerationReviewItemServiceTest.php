@@ -338,6 +338,34 @@ final class EstimateGenerationReviewItemServiceTest extends TestCase
         self::assertSame('select_norm', $itemsByKey['package-only']['required_action']);
     }
 
+    public function test_returns_a_bounded_review_page_with_summary_for_the_full_filtered_queue(): void
+    {
+        $workItems = [];
+        foreach (range(1, 5) as $index) {
+            $workItems[] = $this->workItem([
+                'key' => 'review-'.$index,
+                'name' => 'Review '.$index,
+                'pricing_status' => 'not_calculated',
+                'pricing_blocker' => 'normative_required',
+                'validation_flags' => ['safe_norm_required', 'pricing_not_calculated'],
+                'normative_match' => ['status' => 'candidate'],
+            ]);
+        }
+
+        $result = $this->service()->forSession(new EstimateGenerationSession([
+            'draft_payload' => $this->draft($workItems),
+        ]), ['page' => 2, 'per_page' => 2]);
+
+        self::assertSame(5, $result['summary']['total']);
+        self::assertSame(['review-3', 'review-4'], array_column($result['items'], 'work_item_key'));
+        self::assertSame([
+            'total' => 5,
+            'current_page' => 2,
+            'per_page' => 2,
+            'last_page' => 3,
+        ], $result['meta']);
+    }
+
     private function service(): EstimateGenerationReviewItemService
     {
         return new EstimateGenerationReviewItemService(new EstimateGenerationPackagePresenter);
