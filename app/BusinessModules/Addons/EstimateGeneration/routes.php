@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationActionController;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationBuildingModelController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationDocumentController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationGeometryController;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Controllers\EstimateGenerationPackageController;
@@ -34,6 +35,8 @@ Route::middleware([
         Route::post('/{session}/confirm-input', [EstimateGenerationActionController::class, 'confirmInput'])->middleware('authorize:estimate_generation.review,project,project')->name('confirm-input');
         Route::get('/{session}/geometry', [EstimateGenerationGeometryController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('geometry.show');
         Route::post('/{session}/geometry/confirm', [EstimateGenerationGeometryController::class, 'confirm'])->middleware('authorize:estimate_generation.review,project,project')->name('geometry.confirm');
+        Route::get('/{session}/building-model', [EstimateGenerationBuildingModelController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('building-model.show');
+        Route::get('/{session}/evidence/{evidence}', [EstimateGenerationBuildingModelController::class, 'evidence'])->whereNumber('evidence')->middleware('authorize:estimate_generation.view,project,project')->name('evidence.show');
         Route::post('/{session}/retry', [EstimateGenerationActionController::class, 'retry'])->middleware('authorize:estimate_generation.generate,project,project')->name('retry');
         Route::post('/{session}/cancel', [EstimateGenerationActionController::class, 'cancel'])->middleware('authorize:estimate_generation.generate,project,project')->name('cancel');
         Route::post('/{session}/archive', [EstimateGenerationActionController::class, 'archive'])->middleware('authorize:estimate_generation.generate,project,project')->name('archive');
