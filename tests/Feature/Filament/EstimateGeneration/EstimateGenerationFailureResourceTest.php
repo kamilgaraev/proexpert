@@ -40,6 +40,45 @@ final class EstimateGenerationFailureResourceTest extends TestCase
         self::assertSame('conflict', AdminFailureResolutionRegistryClaim::decide($fingerprint, 'sha256:'.str_repeat('a', 64), 'completed', $result, false)->decision);
     }
 
+    /** @return iterable<string, array{array<string, mixed>}> */
+    public static function maliciousReplayPayloads(): iterable
+    {
+        yield 'huge message' => [['successful' => false, 'message_key' => str_repeat('x', 5000)]];
+        yield 'authorization key' => [['successful' => true, 'message_key' => 'estimate_generation.failure_resolved', 'Authorization' => 'Bearer secret']];
+        yield 'unknown translation' => [['successful' => false, 'message_key' => 'estimate_generation.unknown_internal_state']];
+        yield 'extra nested key' => [['successful' => true, 'message_key' => 'estimate_generation.failure_resolved', 'context' => ['api_key' => 'secret']]];
+        yield 'wrong bool type' => [['successful' => 'true', 'message_key' => 'estimate_generation.failure_resolved']];
+    }
+
+    /** @param array<string, mixed> $payload */
+    #[DataProvider('maliciousReplayPayloads')]
+    public function test_registry_replay_result_rejects_malicious_or_noncanonical_payload(array $payload): void
+    {
+        $result = AdminFailureResolutionResult::fromArray($payload);
+
+        self::assertFalse($result->successful);
+        self::assertFalse($result->idempotentReplay);
+        self::assertSame('estimate_generation.failure_resolution_failed', $result->messageKey);
+    }
+
+    public function test_registry_replay_result_accepts_only_exact_valid_success_and_failure(): void
+    {
+        $success = AdminFailureResolutionResult::fromArray([
+            'successful' => true,
+            'message_key' => 'estimate_generation.failure_resolved',
+        ]);
+        $failure = AdminFailureResolutionResult::fromArray([
+            'successful' => false,
+            'message_key' => 'estimate_generation.failure_resolution_state_conflict',
+        ]);
+
+        self::assertTrue($success->successful);
+        self::assertTrue($success->idempotentReplay);
+        self::assertSame('estimate_generation.failure_resolved', $success->messageKey);
+        self::assertFalse($failure->successful);
+        self::assertSame('estimate_generation.failure_resolution_state_conflict', $failure->messageKey);
+    }
+
     public function test_idempotency_registry_migration_has_exact_db_enforced_contract(): void
     {
         $source = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_000200_create_estimate_generation_admin_operations.php');
@@ -53,6 +92,10 @@ final class EstimateGenerationFailureResourceTest extends TestCase
         self::assertStringContainsString('command_fingerprint ~', $source);
         self::assertStringContainsString("status = 'pending' AND result IS NULL AND completed_at IS NULL", $source);
         self::assertStringContainsString("status = 'completed' AND result IS NOT NULL AND completed_at IS NOT NULL", $source);
+        self::assertStringContainsString('octet_length(result::text) <= 512', $source);
+        self::assertStringContainsString("result->>'message_key' IN ('estimate_generation.failure_resolved','estimate_generation.admin_operation_not_found','estimate_generation.failure_resolution_state_conflict')", $source);
+        self::assertStringContainsString("char_length(result->>'message_key') BETWEEN 1 AND 80", $source);
+        self::assertStringContainsString("idempotency_key ~ '^[A-Za-z0-9._:-]{16,80}$'", $source);
     }
 
     public function test_resolution_transaction_claims_registry_before_mutation_and_never_replays_from_audit_json(): void

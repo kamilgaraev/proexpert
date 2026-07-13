@@ -6,6 +6,12 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Operations;
 
 final readonly class AdminFailureResolutionResult
 {
+    private const REPLAY_MESSAGES = [
+        'estimate_generation.failure_resolved' => true,
+        'estimate_generation.admin_operation_not_found' => false,
+        'estimate_generation.failure_resolution_state_conflict' => false,
+    ];
+
     private function __construct(
         public bool $successful,
         public string $messageKey,
@@ -31,10 +37,18 @@ final readonly class AdminFailureResolutionResult
     /** @param array<string, mixed> $payload */
     public static function fromArray(array $payload): self
     {
-        if (($payload['successful'] ?? false) !== true) {
-            return self::failure((string) ($payload['message_key'] ?? 'estimate_generation.failure_resolution_failed'));
+        $keys = array_keys($payload);
+        sort($keys);
+
+        if ($keys !== ['message_key', 'successful']
+            || ! is_bool($payload['successful'])
+            || ! is_string($payload['message_key'])
+            || strlen($payload['message_key']) > 80
+            || ! array_key_exists($payload['message_key'], self::REPLAY_MESSAGES)
+            || self::REPLAY_MESSAGES[$payload['message_key']] !== $payload['successful']) {
+            return self::failure('estimate_generation.failure_resolution_failed');
         }
 
-        return self::success(true);
+        return new self($payload['successful'], $payload['message_key'], true);
     }
 }

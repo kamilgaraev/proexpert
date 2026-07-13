@@ -43,3 +43,10 @@
 - Review-fix RED: отсутствовали registry migration, online-index migration, fingerprint/claim decision и transaction registry claim. GREEN: focused `19 tests / 179 assertions`.
 - Финальная combined DB-less regression после review fixes: `71 tests / 610 assertions`; PHPStan/Larastan 1G, Pint, `php -l`, class-load и `git diff --check` прошли.
 - Обе миграции только написаны и не запускались. После штатного deployment остаются обязательными проверка валидности concurrent indexes, production-sized `EXPLAIN (ANALYZE, BUFFERS)` для каждого resource filter/default order и конкурентный PostgreSQL idempotency/CAS сценарий.
+
+## Финальное усиление review fixes
+
+- Online-миграция больше не использует `CREATE INDEX CONCURRENTLY IF NOT EXISTS`. Статический inventory проверяется через `pg_class`, `pg_namespace`, `pg_index` и `pg_get_indexdef`: валидное каноническое определение пропускается, валидное несовпадающее определение останавливает миграцию, а невалидный одноимённый индекс удаляется точной статической командой и создаётся заново. После создания обязательно повторно проверяются валидность, готовность и каноническое определение.
+- Replay результата административной операции теперь fail-closed: допускаются только точные ключи `successful/message_key`, строгий boolean и согласованный allowlist из трёх переводимых состояний. Неизвестные, вложенные, чувствительные, избыточные и чрезмерно длинные данные не попадают в Filament и заменяются общей безопасной ошибкой.
+- Fresh-install контракт registry ограничивает result JSON до 512 байт, message key до 80 символов, фиксирует allowlist и согласованность boolean/message, а также проверяет формат idempotency key. Миграция registry имеет порядок `000200`, online indexes — `000300`.
+- Финальный DB-less regression: `77 tests / 653 assertions`; PHPStan/Larastan 1G, Pint, `php -l`, class-load и `git diff --check` прошли. Миграции и любые команды с подключением к БД не запускались.

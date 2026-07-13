@@ -13,9 +13,12 @@ final class EstimateGenerationUsageResourceTest extends TestCase
 {
     public function test_resource_index_migration_is_online_idempotent_and_covers_each_standalone_filter_and_order(): void
     {
-        $source = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_000300_add_estimate_generation_resource_indexes.php');
-        self::assertIsString($source);
-        self::assertStringContainsString('public $withinTransaction = false;', $source);
+        $migration = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_000300_add_estimate_generation_resource_indexes.php');
+        $runtime = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Monitoring/EstimateGenerationResourceIndexRuntime.php');
+        self::assertIsString($migration);
+        self::assertIsString($runtime);
+        self::assertStringContainsString('public $withinTransaction = false;', $migration);
+        self::assertStringContainsString('EstimateGenerationResourceIndexRuntime', $migration);
 
         $indexes = [
             'eg_usage_created_desc_idx' => 'estimate_generation_ai_usage (created_at DESC)',
@@ -27,9 +30,20 @@ final class EstimateGenerationUsageResourceTest extends TestCase
             'eg_failure_resolution_lookup_idx' => "estimate_generation_failure_events (failure_id, resolves_through_sequence DESC) WHERE event_type = 'resolved'",
         ];
         foreach ($indexes as $name => $definition) {
-            self::assertStringContainsString("CREATE INDEX CONCURRENTLY IF NOT EXISTS {$name} ON {$definition}", $source);
-            self::assertStringContainsString("DROP INDEX CONCURRENTLY IF EXISTS {$name}", $source);
+            self::assertStringContainsString("'name' => '{$name}'", $runtime);
+            self::assertStringContainsString("CREATE INDEX CONCURRENTLY {$name} ON {$definition}", $runtime);
+            self::assertStringContainsString("DROP INDEX CONCURRENTLY public.\"{$name}\"", $runtime);
         }
+        self::assertStringContainsString('private function ensureConcurrentIndex(array $index): void', $runtime);
+        self::assertStringContainsString('pg_get_indexdef(c.oid)', $runtime);
+        self::assertStringContainsString('i.indisvalid', $runtime);
+        self::assertStringContainsString('i.indisready', $runtime);
+        self::assertStringContainsString('! $this->catalogBoolean($existing->indisvalid) || ! $this->catalogBoolean($existing->indisready)', $runtime);
+        self::assertStringContainsString("throw new RuntimeException('estimate_generation_resource_index_definition_mismatch')", $runtime);
+        self::assertStringContainsString("throw new RuntimeException('estimate_generation_resource_index_postcondition_failed')", $runtime);
+        self::assertStringNotContainsString('CREATE INDEX CONCURRENTLY IF NOT EXISTS', $runtime);
+        self::assertStringContainsString("WHERE ((event_type)::text = 'occurred'::text)", $runtime);
+        self::assertStringContainsString("WHERE ((event_type)::text = 'resolved'::text)", $runtime);
 
         $existing = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000400_create_estimate_generation_ai_usage_table.php');
         $failures = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000500_create_estimate_generation_failures_table.php');
