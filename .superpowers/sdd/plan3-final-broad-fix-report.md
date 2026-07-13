@@ -175,3 +175,27 @@ OK (11 tests, 52 assertions)
 ```
 
 После форматирования: Pint — PASS, PHP syntax — без ошибок, `git diff --check` — успешно. C5 approval/gate не изменялись.
+
+## Изоляция SQLite test connection C3 (2026-07-13)
+
+Глобальный `Connection::resolverFor('sqlite', ...)` удалён из теста. Finalizer tracking регистрируется как extension только на connection name текущего `DatabaseManager`, а `tearDown` гарантированно выполняет `purge` и `forgetExtension`. Static Laravel resolver не меняется; reflection и production-изменения не использовались.
+
+RED order-isolation:
+
+```text
+vendor\bin\phpunit --colors=never tests/Unit/EstimateGeneration/Pricing/PackagePersistenceStaleFenceTest.php tests/Unit/EstimateGeneration/Pricing/PackagePersistenceStaleFenceZIsolationTest.php
+FAIL: later SQLite consumer received FinalizerTrackingSqliteConnection
+Tests: 6, Assertions: 41, Failures: 1
+```
+
+GREEN order-sensitive suite после локализации connection:
+
+```text
+vendor\bin\phpunit --colors=never tests/Unit/EstimateGeneration/Pricing/PackagePersistenceStaleFenceTest.php tests/Unit/EstimateGeneration/Pricing/PackagePersistenceStaleFenceZIsolationTest.php tests/Unit/EstimateGeneration/LatestPackageRevisionQueryTest.php
+OK (8 tests, 51 assertions)
+
+vendor\bin\phpunit --colors=never tests/Unit/EstimateGeneration/Pricing/PackagePersistenceStaleFenceTest.php tests/Unit/EstimateGeneration/Pricing/AcceptedQuantityPricingTest.php tests/Unit/EstimateGeneration/EstimateGenerationPackagePersistenceServiceTest.php
+OK (11 tests, 52 assertions)
+```
+
+Pint двух test-файлов — PASS; PHP syntax двух файлов — без ошибок; `git diff --check` — успешно. Production-код, C5 approval и gate не изменялись.

@@ -15,7 +15,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
 use App\BusinessModules\Addons\EstimateGeneration\Services\AuthoritativePackagePricingGuard;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
 use Illuminate\Contracts\Console\Kernel;
-use Illuminate\Database\Connection;
+use Illuminate\Database\Connectors\SQLiteConnector;
+use Illuminate\Database\DatabaseManager;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Database\SQLiteConnection;
 use Illuminate\Foundation\Testing\TestCase;
@@ -27,14 +28,10 @@ final class PackagePersistenceStaleFenceTest extends TestCase
 {
     private InMemoryEvidenceRepository $evidence;
 
+    private string $connectionName;
+
     public function createApplication()
     {
-        Connection::resolverFor('sqlite', static fn (mixed $connection, string $database = '', string $prefix = '', array $config = []): SQLiteConnection => new FinalizerTrackingSqliteConnection(
-            $connection,
-            $database,
-            $prefix,
-            $config,
-        ));
         $app = require dirname(__DIR__, 4).'/bootstrap/app.php';
         $app->make(Kernel::class)->bootstrap();
 
@@ -44,6 +41,20 @@ final class PackagePersistenceStaleFenceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $database = $this->app->make('db');
+        $this->connectionName = $database->getDefaultConnection();
+        $database->purge($this->connectionName);
+        $database->extend($this->connectionName, static function (array $config): SQLiteConnection {
+            $connection = (new SQLiteConnector)->connect($config);
+
+            return new FinalizerTrackingSqliteConnection(
+                $connection,
+                (string) ($config['database'] ?? ''),
+                (string) ($config['prefix'] ?? ''),
+                $config,
+            );
+        });
+        $database->connection($this->connectionName);
         FinalizerTrackingSqliteConnection::$finalizerCalls = 0;
         Schema::create('estimate_generation_sessions', function (Blueprint $table): void {
             $table->id();
@@ -131,6 +142,11 @@ final class PackagePersistenceStaleFenceTest extends TestCase
         Schema::dropIfExists('estimate_generation_package_items');
         Schema::dropIfExists('estimate_generation_packages');
         Schema::dropIfExists('estimate_generation_sessions');
+        $database = $this->app->make('db');
+        if ($database instanceof DatabaseManager) {
+            $database->purge($this->connectionName);
+            $database->forgetExtension($this->connectionName);
+        }
         parent::tearDown();
     }
 
