@@ -102,6 +102,8 @@ Narrow TDD evidence:
 - PHPStan on the three narrow PHP files: `[OK] No errors`.
 - `php -l` on the three narrow PHP files and `git diff --check`: clean.
 - No additional full 295 replay was run; the project owner waived another repeat, and these changes are limited to removal of unreachable APIs, schema qualification in the helper, and source/behavior tests.
+
+Narrow review-fix commit: `d9080f09 fix[lk]: уточнены helper-ы online-миграций`.
 - `.cbmignore` and `.codebase-memory/` were never staged or modified.
 
 ## Review fix wave
