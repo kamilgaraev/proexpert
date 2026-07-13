@@ -24,6 +24,11 @@ class PaymentOverdueNotification extends Notification implements ShouldQueue
         return ['database'];
     }
 
+    public function shouldSend(object $notifiable, string $channel): bool
+    {
+        return $channel !== 'mail';
+    }
+
     public function toMail($notifiable): MailMessage
     {
         $urgency = $this->overdueDays > 30 ? 'срочно' : ($this->overdueDays > 7 ? 'важно' : '');
@@ -58,4 +63,3 @@ class PaymentOverdueNotification extends Notification implements ShouldQueue
         ];
     }
 }
-

@@ -16,4 +16,12 @@ final class PaymentOverdueNotificationTest extends TestCase
 
         self::assertSame(['database'], $notification->via(null));
     }
+
+    public function test_overdue_notification_blocks_legacy_mail_channel(): void
+    {
+        $notification = new PaymentOverdueNotification(new PaymentDocument(), 10);
+
+        self::assertFalse($notification->shouldSend(new \stdClass(), 'mail'));
+        self::assertTrue($notification->shouldSend(new \stdClass(), 'database'));
+    }
 }
