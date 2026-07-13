@@ -207,6 +207,10 @@ class EstimateGenerationServiceProvider extends ServiceProvider
 
     public function register(): void
     {
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Monitoring\EstimateGenerationDashboardRepository::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Monitoring\SqlEstimateGenerationDashboardRepository::class,
+        );
         $this->app->singleton(SessionOperationalSnapshotBuilder::class, BuildSessionOperationalSnapshot::class);
         $this->mergeConfigFrom(config_path('estimate-generation.php'), 'estimate-generation');
         if ($this->app->environment('production')

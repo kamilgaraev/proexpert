@@ -8,7 +8,9 @@ use Carbon\CarbonImmutable;
 
 final readonly class DashboardFilters
 {
-    private const MAX_PERIOD_DAYS = 93;
+    public const MAX_DAYS = 93;
+
+    public const MAX_CURRENCY_SERIES = 4;
 
     public function __construct(
         public CarbonImmutable $from,
@@ -33,8 +35,8 @@ final readonly class DashboardFilters
         if ($from >= $until) {
             $from = $until->subDays(30);
         }
-        if ($from->diffInDays($until) > self::MAX_PERIOD_DAYS) {
-            $from = $until->subDays(self::MAX_PERIOD_DAYS);
+        if ($from->diffInDays($until) > self::MAX_DAYS) {
+            $from = $until->subDays(self::MAX_DAYS);
         }
 
         return new self(

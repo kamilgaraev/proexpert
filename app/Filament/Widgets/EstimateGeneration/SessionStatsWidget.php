@@ -34,7 +34,7 @@ class SessionStatsWidget extends StatsOverviewWidget
             Stat::make(trans_message('estimate_generation.dashboard.average_duration'), $this->duration($metrics['average_duration_ms'])),
             Stat::make(trans_message('estimate_generation.dashboard.p95_duration'), $this->duration($metrics['p95_duration_ms'])),
             Stat::make(trans_message('estimate_generation.dashboard.documents'), $metrics['documents_total']),
-            Stat::make(trans_message('estimate_generation.dashboard.review_rate'), $this->percent($metrics['review_rate'])),
+            Stat::make(trans_message('estimate_generation.dashboard.current_review_backlog_share'), $this->percent($metrics['current_review_backlog_share'])),
             Stat::make(trans_message('estimate_generation.dashboard.total_cost'), $this->money($metrics['total_cost'], $currency)),
             Stat::make(trans_message('estimate_generation.dashboard.cost_per_successful'), $this->money($metrics['cost_per_successful_session'], $currency)),
             Stat::make(trans_message('estimate_generation.dashboard.cost_per_applied'), $this->money($metrics['cost_per_applied_session'], $currency)),

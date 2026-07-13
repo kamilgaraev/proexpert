@@ -29,9 +29,18 @@ class CostTrendWidget extends ChartWidget
         return trans_message('estimate_generation.dashboard.cost_trend');
     }
 
+    public function getDescription(): ?string
+    {
+        $result = app(EstimateGenerationDashboardService::class)->costTrend(DashboardFilters::fromArray($this->pageFilters));
+
+        return $result->truncated
+            ? trans_message('estimate_generation.dashboard.currency_series_limited', ['count' => $result->omittedCurrencies])
+            : null;
+    }
+
     protected function getData(): array
     {
-        $rows = app(EstimateGenerationDashboardService::class)->costTrend(DashboardFilters::fromArray($this->pageFilters));
+        $rows = app(EstimateGenerationDashboardService::class)->costTrend(DashboardFilters::fromArray($this->pageFilters))->rows;
         $labels = array_values(array_unique(array_map(static fn (array $row): string => substr($row['bucket'], 0, 10), $rows)));
         $byCurrency = [];
         foreach ($rows as $row) {

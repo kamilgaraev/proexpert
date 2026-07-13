@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Monitoring;
 
+use UnexpectedValueException;
+
 final class EstimateGenerationDashboardMetrics
 {
     /**
@@ -17,16 +19,20 @@ final class EstimateGenerationDashboardMetrics
         $total = self::integer($sessions['sessions_total'] ?? 0);
         $successful = self::integer($sessions['successful_sessions'] ?? 0);
         $applied = self::integer($sessions['applied_sessions'] ?? 0);
-        $review = self::integer($sessions['review_sessions'] ?? 0);
+        $currentReviewBacklog = self::integer($sessions['current_review_backlog_sessions'] ?? 0);
+        if ($currentReviewBacklog > $total) {
+            throw new UnexpectedValueException('Current review backlog exceeds the filtered session cohort.');
+        }
         $cost = is_numeric($usage['total_cost'] ?? null) ? round((float) $usage['total_cost'], 8) : null;
 
         return [
             'sessions_total' => $total,
             'successful_sessions' => $successful,
             'applied_sessions' => $applied,
+            'current_review_backlog_sessions' => $currentReviewBacklog,
             'documents_total' => self::integer($sessions['documents_total'] ?? 0),
             'apply_rate' => self::ratio($applied, $successful),
-            'review_rate' => self::ratio($review, $successful),
+            'current_review_backlog_share' => self::ratio($currentReviewBacklog, $total),
             'average_duration_ms' => self::integer($sessions['average_duration_ms'] ?? 0),
             'p95_duration_ms' => self::integer($sessions['p95_duration_ms'] ?? 0),
             'total_cost' => $cost,
