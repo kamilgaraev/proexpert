@@ -26,8 +26,26 @@ final readonly class LocalBenchmarkReportOutputStore implements BenchmarkReportO
         if (! is_dir(dirname($path)) && ! mkdir(dirname($path), 0750, true) && ! is_dir(dirname($path))) {
             throw new BenchmarkCommandException('output_directory_unavailable');
         }
-        if (file_exists($path) || file_put_contents($path, $contents, LOCK_EX) !== strlen($contents)) {
+        $parent = realpath(dirname($path));
+        $prefix = rtrim(str_replace('\\', '/', $root), '/').'/';
+        if ($parent === false || ! str_starts_with(str_replace('\\', '/', $parent).'/', $prefix)) {
+            throw new BenchmarkCommandException('output_path_unsafe');
+        }
+        set_error_handler(static fn (): bool => true);
+        try {
+            $handle = fopen($path, 'x');
+        } finally {
+            restore_error_handler();
+        }
+        if ($handle === false) {
             throw new BenchmarkCommandException('output_create_failed');
+        }
+        try {
+            if (fwrite($handle, $contents) !== strlen($contents)) {
+                throw new BenchmarkCommandException('output_write_failed');
+            }
+        } finally {
+            fclose($handle);
         }
 
         return $path;

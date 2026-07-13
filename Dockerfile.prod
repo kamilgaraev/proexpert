@@ -103,6 +103,10 @@ RUN echo "${ESTIMATE_GENERATION_CAD_SCRIPT_SHA256}  ${ESTIMATE_GENERATION_CAD_SC
     && chown root:root "${ESTIMATE_GENERATION_CAD_SCRIPT}" "${ESTIMATE_GENERATION_CAD_REQUIREMENTS_LOCK}" /opt/libredwg/bin/dwgread /usr/local/bin/geometry-sandbox /opt/geometry-venv/bin/python \
     && chmod 0555 "${ESTIMATE_GENERATION_CAD_SCRIPT}" /opt/libredwg/bin/dwgread /usr/local/bin/geometry-sandbox /opt/geometry-venv/bin/python \
     && chmod 0444 "${ESTIMATE_GENERATION_CAD_REQUIREMENTS_LOCK}" \
+    && mkdir -p /etc/most \
+    && sha256sum /opt/geometry-venv/bin/python /opt/libredwg/bin/dwgread /usr/local/bin/geometry-sandbox "${ESTIMATE_GENERATION_CAD_SCRIPT}" "${ESTIMATE_GENERATION_CAD_REQUIREMENTS_LOCK}" > /etc/most/cad-runtime.sha256 \
+    && chown root:root /etc/most/cad-runtime.sha256 \
+    && chmod 0444 /etc/most/cad-runtime.sha256 \
     && rm -f bootstrap/cache/*.php \
     && composer dump-autoload --optimize --no-dev \
     && php artisan package:discover --ansi \

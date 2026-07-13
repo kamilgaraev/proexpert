@@ -14,6 +14,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkReportOutpu
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\InProcessBenchmarkCaseExecutor;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\Metrics\MetricRegistry;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\ProductionImmutableBenchmarkReportOutputStore;
 use App\BusinessModules\Addons\EstimateGeneration\Console\Commands\RunEstimateGenerationBenchmarkCommand;
 use Illuminate\Console\OutputStyle;
 use Illuminate\Console\View\Components\Factory;
@@ -75,7 +76,7 @@ final class EstimateGenerationBenchmarkCommandTest extends TestCase
             '--adapter' => 'fixture-pipeline',
             '--pipeline-version' => 'fixture-pipeline:v1',
         ]));
-        self::assertStringContainsString('production_output_locator_invalid', $tester->getDisplay());
+        self::assertStringContainsString('production_output_store_invalid', $tester->getDisplay());
     }
 
     #[Test]
@@ -109,7 +110,7 @@ final class EstimateGenerationBenchmarkCommandTest extends TestCase
     public function production_writes_report_through_injected_immutable_store(): void
     {
         [$loader, $manifest] = $this->acceptanceLoader();
-        $store = new class implements BenchmarkReportOutputStore
+        $store = new class implements ProductionImmutableBenchmarkReportOutputStore
         {
             public ?string $locator = null;
 

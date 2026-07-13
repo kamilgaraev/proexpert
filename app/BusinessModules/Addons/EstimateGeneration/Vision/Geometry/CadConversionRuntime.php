@@ -51,6 +51,9 @@ final readonly class CadConversionRuntime
             if (! copy($real, $copy)) {
                 throw new GeometryExtractionException('cad_source_copy_failed');
             }
+            if ($this->readiness !== null && $this->configuration !== null) {
+                $this->readiness->assertReady($this->configuration);
+            }
             $result = ($this->processRunner ?? new GeometryProcessRunner)->run(
                 [$this->pythonBinary, $script, '--input', $copy, '--workspace', $workDir,
                     '--dwgread', $this->dwgreadBinary, '--max-output-bytes', (string) $this->maxOutputBytes,

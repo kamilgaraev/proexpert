@@ -26,6 +26,7 @@ final readonly class CadRuntimeConfiguration
         public int $fileSizeLimitBytes,
         public int $openFileLimit,
         public bool $enforceImmutability = false,
+        public string $runtimeHashManifest = '/etc/most/cad-runtime.sha256',
     ) {
         if ($this->libredwgVersion !== self::REQUIRED_LIBREDWG_VERSION) {
             throw new \InvalidArgumentException('cad_libredwg_version_invalid');

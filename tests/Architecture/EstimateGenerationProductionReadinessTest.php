@@ -51,6 +51,8 @@ final class EstimateGenerationProductionReadinessTest extends TestCase
         self::assertStringContainsString('chown -R www-data:www-data ${APP_DIR}/storage ${APP_DIR}/bootstrap/cache', $dockerfile);
         self::assertStringContainsString('chmod 0555 "${ESTIMATE_GENERATION_CAD_SCRIPT}"', $dockerfile);
         self::assertStringContainsString('chmod 0444 "${ESTIMATE_GENERATION_CAD_REQUIREMENTS_LOCK}"', $dockerfile);
+        self::assertStringContainsString('sha256sum /opt/geometry-venv/bin/python /opt/libredwg/bin/dwgread /usr/local/bin/geometry-sandbox', $dockerfile);
+        self::assertStringContainsString('chmod 0444 /etc/most/cad-runtime.sha256', $dockerfile);
     }
 
     #[Test]

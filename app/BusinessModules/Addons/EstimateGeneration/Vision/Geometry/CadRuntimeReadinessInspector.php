@@ -40,6 +40,12 @@ final class CadRuntimeReadinessInspector
         if ($errors !== []) {
             return $errors;
         }
+        if ($configuration->enforceImmutability) {
+            $manifestErrors = $this->validateRuntimeManifest($configuration);
+            if ($manifestErrors !== []) {
+                return $manifestErrors;
+            }
+        }
         if (! hash_equals($configuration->scriptSha256, (string) hash_file('sha256', $configuration->scriptPath))) {
             $errors[] = 'cad_worker_integrity_mismatch';
         }
@@ -50,15 +56,47 @@ final class CadRuntimeReadinessInspector
         if (! str_contains($lock, '==') || ! str_contains($lock, '--hash=sha256:')) {
             $errors[] = 'cad_dependencies_not_pinned';
         }
-        $process = new Process([$configuration->dwgreadBinary, '--version']);
-        $process->setTimeout(5);
-        $process->run();
-        preg_match('/\bdwgread\s+(?<version>\d+\.\d+\.\d+)\b/', $process->getOutput().$process->getErrorOutput(), $version);
-        if (! $process->isSuccessful() || ($version['version'] ?? null) !== $configuration->libredwgVersion) {
+        try {
+            $process = new Process([$configuration->dwgreadBinary, '--version']);
+            $process->setTimeout(5);
+            $process->run();
+        } catch (\Throwable) {
+            return [...$errors, 'cad_libredwg_version_unavailable'];
+        }
+        $output = trim($process->getOutput().$process->getErrorOutput());
+        if (! $process->isSuccessful() || $output !== 'dwgread '.$configuration->libredwgVersion) {
             $errors[] = 'cad_libredwg_version_mismatch';
         }
 
         return $errors;
+    }
+
+    /** @return list<string> */
+    private function validateRuntimeManifest(CadRuntimeConfiguration $configuration): array
+    {
+        if (! $this->trustedFile($configuration->runtimeHashManifest, false) || is_writable($configuration->runtimeHashManifest)) {
+            return ['cad_runtime_manifest_untrusted'];
+        }
+        $lines = file($configuration->runtimeHashManifest, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if (! is_array($lines)) {
+            return ['cad_runtime_manifest_untrusted'];
+        }
+        $expected = [];
+        foreach ($lines as $line) {
+            if (preg_match('/^(?<hash>[a-f0-9]{64})  (?<path>\/.+)$/D', $line, $match) !== 1) {
+                return ['cad_runtime_manifest_invalid'];
+            }
+            $expected[$match['path']] = $match['hash'];
+        }
+        foreach ([$configuration->pythonBinary, $configuration->scriptPath, $configuration->dwgreadBinary,
+            $configuration->sandboxBinary, $configuration->requirementsLockPath] as $path) {
+            $actual = hash_file('sha256', $path);
+            if (! is_string($actual) || ! isset($expected[$path]) || ! hash_equals($expected[$path], $actual)) {
+                return ['cad_runtime_artifact_integrity_mismatch'];
+            }
+        }
+
+        return [];
     }
 
     private function writableByRuntime(string $path): bool

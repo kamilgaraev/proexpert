@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Benchmark;
 
-final readonly class ImmutableBenchmarkReportOutputStore implements BenchmarkReportOutputStore
+final readonly class ImmutableBenchmarkReportOutputStore implements ProductionImmutableBenchmarkReportOutputStore
 {
     public function __construct(private BenchmarkImmutableObjectStore $objects) {}
 

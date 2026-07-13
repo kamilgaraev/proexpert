@@ -16,6 +16,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkReportOutpu
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunOptions;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkReportOutputStore;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\ProductionImmutableBenchmarkReportOutputStore;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RegisteredBenchmarkManifestRepository;
 use Illuminate\Console\Command;
 use Throwable;
@@ -145,6 +146,9 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
         }
         if ($dataset !== BenchmarkDatasetType::Acceptance) {
             throw new BenchmarkCommandException('repository_benchmark_forbidden_in_production');
+        }
+        if (! $this->reportOutput instanceof ProductionImmutableBenchmarkReportOutputStore) {
+            throw new BenchmarkCommandException('production_output_store_invalid');
         }
         $output = $this->option('output');
         if (! is_string($output) || ! preg_match('#^s3://org-[1-9][0-9]*/estimate-generation/benchmarks/[0-9a-f-]{36}/[a-f0-9]{64}\.json$#', $output)) {
