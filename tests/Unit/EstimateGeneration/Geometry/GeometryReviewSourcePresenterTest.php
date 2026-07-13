@@ -55,6 +55,25 @@ final class GeometryReviewSourcePresenterTest extends TestCase
         self::assertNull((new GeometryReviewSourcePresenter($files))->present($row, 7, 11));
     }
 
+    #[Test]
+    public function it_signs_a_direct_uploaded_raster_source_from_the_same_session(): void
+    {
+        $files = Mockery::mock(FileService::class);
+        $files->expects('temporaryUrl')->once()->with(
+            'org-7/estimate-generation/sessions/11/documents/source-image.jpg',
+            5,
+            Mockery::type(Organization::class),
+            ['ResponseContentType' => 'image/jpeg'],
+        )->andReturn('https://storage.example/signed-jpeg');
+        $row = $this->sourceRow();
+        $row['artifact_path'] = 'org-7/estimate-generation/sessions/11/documents/source-image.jpg';
+        $row['content_type'] = 'image/jpeg';
+
+        $payload = (new GeometryReviewSourcePresenter($files))->present($row, 7, 11);
+
+        self::assertSame('https://storage.example/signed-jpeg', $payload['image_url']);
+    }
+
     private function sourceRow(): array
     {
         return [

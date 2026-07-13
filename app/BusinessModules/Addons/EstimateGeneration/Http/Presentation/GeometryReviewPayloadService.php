@@ -51,14 +51,16 @@ final readonly class GeometryReviewPayloadService
             ->orderBy('units.document_id')
             ->orderBy('units.unit_index')
             ->get([
-                'units.document_id', 'pages.id as page_id', 'pages.page_number', 'documents.filename',
-                'pages.width', 'pages.height', 'units.locator', 'pages.normalized_payload',
+                'units.document_id', 'units.unit_type', 'pages.id as page_id', 'pages.page_number', 'documents.filename',
+                'documents.storage_path', 'documents.mime_type', 'pages.width', 'pages.height', 'units.locator', 'pages.normalized_payload',
             ]);
         $presentedSources = [];
         foreach ($rows as $row) {
             $locator = is_array($row->locator)
                 ? $row->locator
                 : json_decode((string) $row->locator, true);
+            $directRaster = in_array((string) $row->unit_type, ['raster_image', 'sketch'], true)
+                && in_array((string) $row->mime_type, ['image/png', 'image/jpeg'], true);
             $source = $this->sources->present([
                 'document_id' => $row->document_id,
                 'page_id' => $row->page_id,
@@ -66,8 +68,12 @@ final readonly class GeometryReviewPayloadService
                 'filename' => $row->filename,
                 'width' => $row->width,
                 'height' => $row->height,
-                'artifact_path' => is_array($locator) ? ($locator['artifact_path'] ?? null) : null,
-                'content_type' => is_array($locator) ? ($locator['content_type'] ?? null) : null,
+                'artifact_path' => is_array($locator) && is_string($locator['artifact_path'] ?? null)
+                    ? $locator['artifact_path']
+                    : ($directRaster ? $row->storage_path : null),
+                'content_type' => is_array($locator) && is_string($locator['content_type'] ?? null)
+                    ? $locator['content_type']
+                    : ($directRaster ? $row->mime_type : null),
                 'normalized_payload' => $row->normalized_payload,
             ], $organizationId, $sessionId);
             if ($source !== null) {

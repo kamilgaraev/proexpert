@@ -23,22 +23,25 @@ final readonly class GeometryReviewSourcePresenter
         $height = filter_var($row['height'] ?? null, FILTER_VALIDATE_INT);
         $path = is_string($row['artifact_path'] ?? null) ? trim($row['artifact_path'], '/') : '';
         $contentType = $row['content_type'] ?? null;
-        $prefix = sprintf(
+        $manifestPrefix = sprintf(
             'org-%d/estimate-generation/sessions/%d/documents/%d/manifests/',
             $organizationId,
             $sessionId,
             $documentId,
         );
+        $documentPrefix = sprintf('org-%d/estimate-generation/sessions/%d/documents/', $organizationId, $sessionId);
+        $safeContentType = in_array($contentType, ['image/png', 'image/jpeg'], true);
         if ($documentId === false || $documentId < 1 || $pageId === false || $pageId < 1
             || $pageNumber === false || $pageNumber < 1 || $width === false || $width < 1
-            || $height === false || $height < 1 || $contentType !== 'image/png'
-            || ! str_starts_with($path, $prefix) || str_contains($path, '../')) {
+            || $height === false || $height < 1 || ! $safeContentType
+            || (! str_starts_with($path, $manifestPrefix) && ! str_starts_with($path, $documentPrefix))
+            || str_contains($path, '../')) {
             return null;
         }
 
         $organization = new Organization;
         $organization->forceFill(['id' => $organizationId]);
-        $url = $this->files->temporaryUrl($path, 5, $organization, ['ResponseContentType' => 'image/png']);
+        $url = $this->files->temporaryUrl($path, 5, $organization, ['ResponseContentType' => $contentType]);
         if (! is_string($url) || trim($url) === '') {
             return null;
         }
