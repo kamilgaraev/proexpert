@@ -32,6 +32,7 @@ Route::middleware([
         Route::post('/{session}/analyze', [EstimateGenerationActionController::class, 'analyze'])->middleware('authorize:estimate_generation.generate,project,project')->name('analyze');
         Route::post('/{session}/generate', [EstimateGenerationActionController::class, 'generate'])->middleware('authorize:estimate_generation.generate,project,project')->name('generate');
         Route::post('/{session}/confirm-input', [EstimateGenerationActionController::class, 'confirmInput'])->middleware('authorize:estimate_generation.review,project,project')->name('confirm-input');
+        Route::get('/{session}/geometry', [EstimateGenerationGeometryController::class, 'show'])->middleware('authorize:estimate_generation.view,project,project')->name('geometry.show');
         Route::post('/{session}/geometry/confirm', [EstimateGenerationGeometryController::class, 'confirm'])->middleware('authorize:estimate_generation.review,project,project')->name('geometry.confirm');
         Route::post('/{session}/retry', [EstimateGenerationActionController::class, 'retry'])->middleware('authorize:estimate_generation.generate,project,project')->name('retry');
         Route::post('/{session}/cancel', [EstimateGenerationActionController::class, 'cancel'])->middleware('authorize:estimate_generation.generate,project,project')->name('cancel');

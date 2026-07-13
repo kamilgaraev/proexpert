@@ -24,6 +24,16 @@ final class EstimateGenerationGeometryApiTest extends TestCase
     }
 
     #[Test]
+    public function geometry_review_route_is_read_only_and_separate_from_confirmation(): void
+    {
+        $routes = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/routes.php');
+
+        self::assertIsString($routes);
+        self::assertStringContainsString("Route::get('/{session}/geometry'", $routes);
+        self::assertStringContainsString("Route::post('/{session}/geometry/confirm'", $routes);
+    }
+
+    #[Test]
     public function snapshot_etag_is_tenant_scoped_and_supports_conditional_semantics(): void
     {
         $etag = SessionSnapshotEtag::forRevision(10, 20, 'revision-1');

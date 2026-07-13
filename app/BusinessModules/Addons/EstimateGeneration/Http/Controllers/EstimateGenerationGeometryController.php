@@ -9,12 +9,14 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\GeometryC
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionSnapshotEtag;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
+use App\BusinessModules\Addons\EstimateGeneration\Http\Presentation\GeometryReviewPayloadService;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\ConfirmEstimateGenerationGeometryRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
@@ -26,7 +28,31 @@ final class EstimateGenerationGeometryController extends Controller
     public function __construct(
         private ConfirmBuildingGeometry $confirmGeometry,
         private SessionOperationalSnapshotBuilder $snapshotBuilder,
+        private GeometryReviewPayloadService $reviewPayload,
     ) {}
+
+    public function show(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
+    {
+        try {
+            $organizationId = (int) $request->user()->current_organization_id;
+            if ((int) $session->organization_id !== $organizationId || (int) $session->project_id !== (int) $project->getKey()) {
+                throw new NotFoundHttpException;
+            }
+
+            return AdminResponse::success($this->reviewPayload->handle($session));
+        } catch (NotFoundHttpException) {
+            return AdminResponse::error(trans_message('estimate_generation.geometry_not_found'), 404);
+        } catch (\Throwable $exception) {
+            Log::error('[EstimateGeneration] Geometry review read failed', [
+                'exception' => $exception,
+                'organization_id' => (int) ($request->user()?->current_organization_id ?? 0),
+                'project_id' => (int) $project->getKey(),
+                'session_id' => (int) $session->getKey(),
+            ]);
+
+            return AdminResponse::error(trans_message('estimate_generation.geometry_error'), 500);
+        }
+    }
 
     public function confirm(ConfirmEstimateGenerationGeometryRequest $request, Project $project, EstimateGenerationSession $session): JsonResponse
     {
