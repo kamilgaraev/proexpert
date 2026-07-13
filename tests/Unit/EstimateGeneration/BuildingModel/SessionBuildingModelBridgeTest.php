@@ -39,6 +39,26 @@ final class SessionBuildingModelBridgeTest extends TestCase
         self::assertSame($forward->toArray(), $firstRepository->currentModel($context)?->toArray());
     }
 
+    #[Test]
+    public function vision_cad_and_pdf_vector_pages_preserve_distinct_floor_identity_and_pdf_segments(): void
+    {
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('e', 64));
+        $vision = $this->visionUnit();
+        $cad = $this->vectorUnit();
+        $pdf = $this->pdfVectorUnit();
+
+        [$forwardBridge] = $this->bridge();
+        [$reverseBridge] = $this->bridge();
+        $forward = $forwardBridge->store($context, [$vision, $cad, $pdf]);
+        $reverse = $reverseBridge->store($context, [$pdf, $cad, $vision]);
+
+        self::assertNotNull($forward);
+        self::assertSame($forward->toArray(), $reverse?->toArray());
+        self::assertSame(['floor-cad', 'floor-pdf-3', 'floor-vision'], array_column($forward->toArray()['floors'], 'key'));
+        self::assertSame(1, $forward->metrics['wall_count']);
+        self::assertSame(2, $forward->metrics['room_count']);
+    }
+
     /** @return array{SessionBuildingModelBridge, BuildingModelRepository} */
     private function bridge(): array
     {
@@ -59,6 +79,7 @@ final class SessionBuildingModelBridgeTest extends TestCase
 
         return new SessionBuildingModelUnitData(101, 501, 601, 'sketch', 1, $source, 0.95, [
             'source_kind' => 'sketch',
+            'floor_key' => 'floor-vision',
             'vision_analysis' => [
                 'schema_version' => 1,
                 'sheet_type' => 'floor_plan',
@@ -88,6 +109,7 @@ final class SessionBuildingModelBridgeTest extends TestCase
 
         return new SessionBuildingModelUnitData(102, 502, 602, 'cad_drawing', 1, $source, 1.0, [
             'source_kind' => 'cad',
+            'floor_key' => 'floor-cad',
             'vector_geometry' => [
                 'schema_version' => 1, 'runtime_version' => 'cad-geometry:v1;ezdxf:1.4.4',
                 'source_fingerprint' => $source, 'source_unit' => 'mm', 'unit_status' => 'confirmed',
@@ -97,6 +119,31 @@ final class SessionBuildingModelBridgeTest extends TestCase
                     'points' => [[0, 0], [4000, 0], [4000, 3000], [0, 3000]], 'closed' => true,
                 ]],
                 'texts' => [], 'dimensions' => [], 'pages' => [], 'scale_candidates' => [], 'warnings' => [],
+            ],
+        ]);
+    }
+
+    private function pdfVectorUnit(): SessionBuildingModelUnitData
+    {
+        $source = 'sha256:'.str_repeat('c', 64);
+
+        return new SessionBuildingModelUnitData(103, 503, 603, 'pdf_page', 3, $source, 1.0, [
+            'source_kind' => 'pdf_page',
+            'floor_key' => 'floor-pdf-3',
+            'pdf_geometry' => [
+                'page_number' => 3,
+                'width' => 1000,
+                'height' => 700,
+                'rotation' => 0,
+                'vector_elements' => [[
+                    'kind' => 'line',
+                    'geometry' => ['points' => [[0, 0], [500, 0]]],
+                    'style' => ['source_operator' => 'page:3:object:7'],
+                ]],
+                'text_blocks' => [],
+                'visual_metrics' => [],
+                'page_role' => 'geometry_only',
+                'signals' => ['vector_geometry'],
             ],
         ]);
     }

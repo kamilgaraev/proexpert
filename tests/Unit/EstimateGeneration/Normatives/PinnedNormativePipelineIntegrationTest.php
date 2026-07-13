@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Normatives;
 
+use App\BusinessModules\Addons\EstimateGeneration\Evidence\InMemoryEvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\AcceptedNormativeDecisionData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\NormativeCandidateSetData;
@@ -12,8 +13,13 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EstimateNo
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinSource;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceMaterializer;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceVerifier;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Planning\WorkPlanCompiler;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveRegionalPrice;
+use App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData;
+use App\BusinessModules\Addons\EstimateGeneration\Services\AuthoritativePackagePricingGuard;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateDecompositionService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatePricingService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimatorScopeInferenceService;
@@ -37,7 +43,7 @@ final class PinnedNormativePipelineIntegrationTest extends TestCase
         {
             public function __construct(private array $catalog) {}
 
-            public function resolve(NormativeContextPinData $requested): ?NormativeContextPinData
+            public function resolveForIntents(NormativeContextPinData $requested, array $intents): ?NormativeContextPinData
             {
                 return new NormativeContextPinData(
                     $requested->datasetId, $requested->datasetVersion, $requested->applicabilityDate,
@@ -89,12 +95,29 @@ final class PinnedNormativePipelineIntegrationTest extends TestCase
             'id' => $id, 'region_id' => 16, 'price_zone_id' => 3, 'period_id' => 8,
             'regional_price_version_id' => 11, 'base_price' => '3.50', 'source_type' => 'regional_catalog',
         ])))->price([$item], $pin['regional_context'])[0];
+        $evidence = new InMemoryEvidenceRepository;
+        $pipeline = new PipelineContext(30, 10, 20, 1, 'sha256:'.str_repeat('a', 64), 'generating', baseInputVersion: 'sha256:'.str_repeat('b', 64));
+        $quantity = QuantityData::fromArray([
+            'key' => 'wall_area', 'unit' => 'm2', 'amount' => '2.000000', 'formula_key' => 'wall.area',
+            'formula_version' => 'v1', 'formula_inputs' => [], 'source' => 'evidenced', 'evidence_ids' => ['1'],
+            'model_version' => 'building-model:v1', 'assumptions' => [], 'review_blockers' => [],
+        ]);
+        $node = (new AcceptedQuantityEvidenceMaterializer($evidence))->materialize($pipeline, $quantity, $priced);
+        $priced['quantity_evidence_id'] = $node->id;
+        $priced['quantity_evidence_fingerprint'] = $node->fingerprint;
+        $guard = new AuthoritativePackagePricingGuard(new AcceptedQuantityEvidenceVerifier($evidence));
+        $inputs = $guard->inputs(10, 20, 30, (string) $pipeline->baseInputVersion, $priced);
 
         self::assertSame('pinned', $pin['status']);
         self::assertSame(101, $item['normative_match']['norm_id']);
         self::assertSame(9001, $item['materials'][0]['normative_ref']['price_id']);
+        self::assertSame(7001, $item['materials'][0]['normative_ref']['norm_resource_id']);
         self::assertSame('350.00', $priced['total_cost']);
         self::assertSame(11, $priced['price_snapshot']['version_id']);
+        self::assertSame([['norm_resource_id' => 7001, 'resource_price_id' => 9001, 'unit_conversion_id' => null]], $inputs);
+        self::assertNull($guard->inputs(10, 20, 30, (string) $pipeline->baseInputVersion, array_replace_recursive($priced, [
+            'materials' => [0 => ['normative_ref' => ['norm_resource_id' => 0]]],
+        ])));
     }
 
     private function catalogCandidate(): array
@@ -108,6 +131,7 @@ final class PinnedNormativePipelineIntegrationTest extends TestCase
             'resources' => ['materials' => [[
                 'code' => '01.7.01', 'name' => 'Кирпич', 'unit' => 'pcs', 'quantity' => 50,
                 'price_id' => 9001, 'price_source' => 'regional_catalog', 'linked_resource_id' => 501,
+                'norm_resource_id' => 7001,
             ]], 'labor' => [], 'machinery' => [], 'other' => []],
         ];
     }

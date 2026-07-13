@@ -60,6 +60,10 @@ final readonly class SessionBuildingModelBridge
         foreach ($units as $unit) {
             $visionPayload = $unit->payload['vision_analysis'] ?? null;
             $vectorPayload = $unit->payload['vector_geometry'] ?? null;
+            $pdfGeometryPayload = $unit->payload['pdf_geometry'] ?? null;
+            if (! is_array($vectorPayload) && is_array($pdfGeometryPayload)) {
+                $vectorPayload = $this->pdfVector($unit, $pdfGeometryPayload);
+            }
             if (! is_array($visionPayload) && ! is_array($vectorPayload)) {
                 continue;
             }
@@ -99,7 +103,7 @@ final readonly class SessionBuildingModelBridge
                     }
                 }
             }
-            $inputs[] = $this->mapper->map($vision, $vector, $refs, 'floor-1');
+            $inputs[] = $this->mapper->map($vision, $vector, $refs, $this->floorKey($unit));
         }
 
         return $inputs;
@@ -124,5 +128,73 @@ final readonly class SessionBuildingModelBridge
             is_int($usage['output_tokens'] ?? null) ? $usage['output_tokens'] : null,
             500,
         );
+    }
+
+    /** @param array<string, mixed> $payload @return array<string, mixed> */
+    private function pdfVector(SessionBuildingModelUnitData $unit, array $payload): array
+    {
+        $pageNumber = is_int($payload['page_number'] ?? null) && $payload['page_number'] > 0
+            ? $payload['page_number']
+            : $unit->index;
+        $width = is_int($payload['width'] ?? null) || is_float($payload['width'] ?? null) ? (float) $payload['width'] : 1.0;
+        $height = is_int($payload['height'] ?? null) || is_float($payload['height'] ?? null) ? (float) $payload['height'] : 1.0;
+        $rotation = is_int($payload['rotation'] ?? null) && in_array($payload['rotation'], [0, 90, 180, 270], true)
+            ? $payload['rotation']
+            : 0;
+        $entities = [];
+        foreach (is_array($payload['vector_elements'] ?? null) ? $payload['vector_elements'] : [] as $index => $element) {
+            $points = is_array($element) && is_array($element['geometry']['points'] ?? null)
+                ? $element['geometry']['points']
+                : null;
+            if (($element['kind'] ?? null) !== 'line' || ! is_array($points) || count($points) !== 2) {
+                continue;
+            }
+            $entities[] = [
+                'handle' => 'pdf-p'.$pageNumber.'-s'.$index,
+                'type' => 'line',
+                'layer' => 'page',
+                'points' => $points,
+                'layout' => 'page:'.$pageNumber,
+            ];
+        }
+
+        return [
+            'schema_version' => 1,
+            'runtime_version' => 'pdf-geometry:v1;pypdfium2:5.8.0',
+            'source_fingerprint' => $unit->sourceVersion,
+            'source_unit' => null,
+            'unit_status' => 'unknown',
+            'bounds' => [0.0, 0.0, max(1.0, $width), max(1.0, $height)],
+            'layers' => [['name' => 'page', 'visible' => true]],
+            'blocks' => [],
+            'entities' => $entities,
+            'texts' => [],
+            'dimensions' => [],
+            'pages' => [[
+                'page_number' => $pageNumber,
+                'width' => max(1.0, $width),
+                'height' => max(1.0, $height),
+                'rotation' => $rotation,
+                'media_box' => [0.0, 0.0, max(1.0, $width), max(1.0, $height)],
+                'crop_box' => [0.0, 0.0, max(1.0, $width), max(1.0, $height)],
+                'transform' => [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+                'classification' => $entities === [] ? 'empty' : 'vector',
+            ]],
+            'scale_candidates' => [],
+            'warnings' => [],
+        ];
+    }
+
+    private function floorKey(SessionBuildingModelUnitData $unit): string
+    {
+        $explicit = $unit->payload['floor_key'] ?? null;
+        if (is_string($explicit) && preg_match('/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,79}$/D', $explicit) === 1) {
+            return $explicit;
+        }
+        if (($unit->payload['single_floor'] ?? false) === true || ($unit->payload['floor_count'] ?? null) === 1) {
+            return 'floor-1';
+        }
+
+        return 'floor-page-'.$unit->index;
     }
 }

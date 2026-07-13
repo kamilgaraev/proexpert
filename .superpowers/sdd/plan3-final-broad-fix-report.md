@@ -119,3 +119,13 @@ Real renderer smoke на committed scanned PDF: 1 страница, preview со
 ## Ограничения
 
 Полный PostgreSQL ordinal suite не запускался согласно явному waiver. Production acceptance corpus и production S3 credentials локально не открывались; проверен тот же CLI-контракт на изолированном private S3-compatible store, включая неизменяемую запись отчёта.
+
+## Третья узкая волна исправлений (2026-07-13)
+
+- Нормативный pin строится по фактическим work intents до bounded-ограничения. Точное совпадение имеет приоритет, лимит составляет 16 кандидатов на intent и 128 глобально; отсутствующий intent блокирует pin. `estimate_norm_resources.id` сохраняется как authoritative `norm_resource_id` вместе с exact resource/price identity.
+- Package persistence использует единый `AuthoritativePackagePricingGuard`. Положительные `norm_resource_id`/`resource_price_id` и accepted quantity evidence проверяются относительно текущего `package.input_version`, вычисленного из заблокированной session и фактически потреблённых документов. Draft-поле source version больше не является источником истины.
+- Building model bridge принимает `pdf_geometry`, преобразует в строгий vector contract и сохраняет явную floor/page identity. Неявный `floor-1` больше не создаётся для многостраничных источников.
+- PDF budgets передаются Python-процессу. Pixel budget проверяется до render страницы, byte budget — сразу после PNG. PHP публикует previews только после полной проверки manifest, поэтому поздний aggregate breach не оставляет опубликованных артефактов.
+- Acceptance loader требует content-addressed owner approval до чтения corpus objects. Pending, missing и tampered approval завершаются до adapter/output. Кандидатный корпус оставлен `pending_owner_approval`; gate не запускался.
+
+Финальная верификация третьей волны: PHPUnit — 144 теста и 576 проверок; PHPStan — без ошибок; PHP syntax — 22 файла; Pint — 22 файла; Python AST compile и `git diff --check` — успешно. Acceptance gate не запускался, поскольку owner approval остаётся pending.

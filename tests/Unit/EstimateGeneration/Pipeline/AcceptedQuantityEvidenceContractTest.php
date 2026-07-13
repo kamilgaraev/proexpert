@@ -74,8 +74,8 @@ final class AcceptedQuantityEvidenceContractTest extends TestCase
     {
         $persistence = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Services/EstimateGenerationPackagePersistenceService.php');
 
-        self::assertStringContainsString('AcceptedQuantityEvidenceVerifier', $persistence);
-        self::assertStringContainsString('verifyScope(', $persistence);
+        self::assertStringContainsString('AuthoritativePackagePricingGuard', $persistence);
+        self::assertStringContainsString('pricingGuard->inputs(', $persistence);
         self::assertStringNotContainsString('estimate_generation_accepted_evidence', $persistence);
         self::assertStringNotContainsString('quantity_evidence_descriptor', $persistence);
     }

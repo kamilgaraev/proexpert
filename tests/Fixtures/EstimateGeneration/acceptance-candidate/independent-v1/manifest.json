@@ -8,5 +8,13 @@
     {"id":"candidate-dxf-plan-731","dataset":"acceptance","source_type":"dxf","input_locator":"s3://org-{organization_id}/estimate-generation/benchmarks/acceptance/independent-v1/cases/dxf-plan/input.dxf","expected_locator":"s3://org-{organization_id}/estimate-generation/benchmarks/acceptance/independent-v1/cases/dxf-plan/expected.json","input_sha256":"b3dfb136031300afde7b8390c1a9fc3231131b21824505f5e7cf117c44c96528","expected_sha256":"3e9fafe637e31f6eca167179caf011d6443bd82622c50177e473ad61c571a8b7","license":"most-private-pending-review","provenance":"candidate-capture:most-qa:dxf-plan:2026-07-13","tags":["independent-candidate","pending_owner_approval","cad"],"schema_version":1,"expected_model_schema_version":"benchmark-expected:v1","allowed_capabilities":["geometry"]},
     {"id":"candidate-real-dwg-731","dataset":"acceptance","source_type":"dwg","input_locator":"s3://org-{organization_id}/estimate-generation/benchmarks/acceptance/independent-v1/cases/real-dwg/input.dwg","expected_locator":"s3://org-{organization_id}/estimate-generation/benchmarks/acceptance/independent-v1/cases/real-dwg/expected.json","input_sha256":"2719f1df49fd39ebec81db62394503af3848ddc43d231b986b6f9b7404283c5c","expected_sha256":"b9317d4697e56c3ca21e08dada016b9842d2c0968a682f1c6037e7eafbb190ac","license":"most-private-pending-review","provenance":"candidate-capture:most-qa:libredwg-r2000:2026-07-13","tags":["independent-candidate","pending_owner_approval","real-dwg","ac1015"],"schema_version":1,"expected_model_schema_version":"benchmark-expected:v1","allowed_capabilities":["geometry"]},
     {"id":"candidate-scale-ambiguity-731","dataset":"acceptance","source_type":"dimensioned_sketch","input_locator":"s3://org-{organization_id}/estimate-generation/benchmarks/acceptance/independent-v1/cases/engineering-scale-ambiguity/input.svg","expected_locator":"s3://org-{organization_id}/estimate-generation/benchmarks/acceptance/independent-v1/cases/engineering-scale-ambiguity/expected.json","input_sha256":"61f5927d13da8f123b3a7d922d773ed445276e5de36ddfb9552af9dd8925a44d","expected_sha256":"c4101f88376e0b3d49f8489d18e6f7989bc59a9024377ab71d3ee425fa512d37","license":"most-private-pending-review","provenance":"candidate-capture:most-qa:scale-ambiguity:2026-07-13","tags":["independent-candidate","pending_owner_approval","scale-conflict"],"schema_version":1,"expected_model_schema_version":"benchmark-expected:v1","allowed_capabilities":["document_understanding","vision"]}
-  ]
+  ],
+  "owner_approval": {
+    "status": "pending_owner_approval",
+    "gate_execution_allowed": false,
+    "approval_locator": "s3://org-{organization_id}/estimate-generation/benchmarks/acceptance/independent-v1/owner-approval.json",
+    "approval_sha256": "710c7023b48f779e625629c01fee21bc2bbb676a48a4a8a2e2b2a121a7d9d67e",
+    "corpus_digest": "ae7fc814dd6245e10017275aa9551930a83945f2a6e409c4ea6bd6f3a432f232",
+    "provenance": "owner:pending-review:v1"
+  }
 }

@@ -52,4 +52,31 @@ final class AcceptedQuantityPricingTest extends TestCase
         self::assertNull($rejected['pricing_finalized_at']);
         self::assertNull($rejected['price_snapshot']);
     }
+
+    #[Test]
+    public function stale_self_consistent_draft_evidence_is_rejected_against_current_persistence_version(): void
+    {
+        $evidence = new InMemoryEvidenceRepository;
+        $stale = new PipelineContext(
+            30, 10, 20, 1, 'sha256:'.str_repeat('a', 64), 'generating',
+            baseInputVersion: 'sha256:'.str_repeat('b', 64),
+        );
+        $quantity = QuantityData::fromArray([
+            'key' => 'floor_area', 'unit' => 'm2', 'amount' => '12.000000',
+            'formula_key' => 'floor.net_area', 'formula_version' => 'v1', 'formula_inputs' => [],
+            'source' => 'evidenced', 'evidence_ids' => ['1'], 'model_version' => 'building-model:v1',
+            'assumptions' => [], 'review_blockers' => [],
+        ]);
+        $item = ['key' => 'floor-finish', 'quantity' => '12.000000', 'unit' => 'm2'];
+        $node = (new AcceptedQuantityEvidenceMaterializer($evidence))->materialize($stale, $quantity, $item);
+        $item['quantity_evidence_id'] = $node->id;
+        $item['quantity_evidence_fingerprint'] = $node->fingerprint;
+        $item['quantity_evidence_source_version'] = (string) $stale->baseInputVersion;
+        $currentVersion = 'sha256:'.str_repeat('c', 64);
+
+        self::assertFalse((new AcceptedQuantityEvidenceVerifier($evidence))->verifyScope(10, 20, 30, $currentVersion, $item));
+        $persistence = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Services/EstimateGenerationPackagePersistenceService.php');
+        self::assertStringNotContainsString("['quantity_evidence_source_version']", $persistence);
+        self::assertStringContainsString('$package->input_version', $persistence);
+    }
 }

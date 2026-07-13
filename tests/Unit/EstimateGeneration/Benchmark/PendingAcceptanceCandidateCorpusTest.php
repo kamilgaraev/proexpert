@@ -16,13 +16,18 @@ final class PendingAcceptanceCandidateCorpusTest extends TestCase
         $root = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/acceptance-candidate/independent-v1';
         $manifestJson = file_get_contents($root.'/manifest.json');
         $payload = json_decode($manifestJson, true, 64, JSON_THROW_ON_ERROR);
-        $manifest = BenchmarkManifest::fromArray($payload, $root, hash('sha256', $manifestJson), false);
+        $manifestPayload = $payload;
+        unset($manifestPayload['owner_approval']);
+        $manifest = BenchmarkManifest::fromArray($manifestPayload, $root, hash('sha256', $manifestJson), false);
         $approval = json_decode(file_get_contents($root.'/owner-approval.json'), true, 32, JSON_THROW_ON_ERROR);
         $envelopes = json_decode(file_get_contents($root.'/recorded-envelopes.json'), true, 32, JSON_THROW_ON_ERROR);
 
         self::assertSame(6, $manifest->caseCount());
         self::assertSame('pending_owner_approval', $approval['status']);
         self::assertFalse($approval['gate_execution_allowed']);
+        self::assertSame('pending_owner_approval', $payload['owner_approval']['status']);
+        self::assertFalse($payload['owner_approval']['gate_execution_allowed']);
+        self::assertSame(hash_file('sha256', $root.'/owner-approval.json'), $payload['owner_approval']['approval_sha256']);
         self::assertNull($approval['approval_ref']);
         self::assertSame('pending_owner_approval', $envelopes['status']);
         self::assertCount(6, $envelopes['envelopes']);

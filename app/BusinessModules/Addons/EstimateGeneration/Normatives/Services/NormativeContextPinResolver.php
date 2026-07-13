@@ -10,7 +10,7 @@ class NormativeContextPinResolver
 {
     public function __construct(private readonly ?NormativeContextPinSource $source = null) {}
 
-    public function resolve(array $regionalContext): array
+    public function resolve(array $regionalContext, array $workIntents = []): array
     {
         $date = $this->date($regionalContext);
         $values = [
@@ -40,7 +40,11 @@ class NormativeContextPinResolver
         } catch (InvalidArgumentException) {
             return ['status' => 'review_required', 'blocking_issues' => ['normative_resource_context_not_pinned']];
         }
-        $approved = $this->source?->resolve($requested);
+        $intents = $this->intents($workIntents);
+        if ($intents === []) {
+            return ['status' => 'review_required', 'blocking_issues' => ['normative_work_intents_not_pinned']];
+        }
+        $approved = $this->source?->resolveForIntents($requested, $intents);
         if ($approved === null || $approved->catalogCandidates === [] || $approved->catalogContentHash === null) {
             return ['status' => 'review_required', 'blocking_issues' => ['normative_resource_context_not_approved']];
         }
@@ -77,5 +81,27 @@ class NormativeContextPinResolver
         }
 
         return null;
+    }
+
+    /** @return list<array{search_text: string, unit: string, code?: string|null}> */
+    private function intents(array $workIntents): array
+    {
+        $resolved = [];
+        foreach (array_slice($workIntents, 0, 64) as $intent) {
+            if (! is_array($intent)) {
+                continue;
+            }
+            $search = trim((string) ($intent['search_text'] ?? ''));
+            $unit = trim((string) ($intent['unit'] ?? ''));
+            $code = isset($intent['code']) ? trim((string) $intent['code']) : null;
+            if ($search === '' || mb_strlen($search) > 500 || $unit === '' || mb_strlen($unit) > 32
+                || ($code !== null && mb_strlen($code) > 80)) {
+                continue;
+            }
+            $key = mb_strtolower($search).'|'.mb_strtolower($unit).'|'.mb_strtolower((string) $code);
+            $resolved[$key] = ['search_text' => $search, 'unit' => $unit, 'code' => $code];
+        }
+
+        return array_values($resolved);
     }
 }

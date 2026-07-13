@@ -69,7 +69,7 @@ class PdfGeometryWorker
                 $stdout = trim($process->getOutput());
 
                 throw new PdfGeometryExtractionException(
-                    str_contains($stderr.$stdout, 'pymupdf_unavailable') ? 'pymupdf_unavailable' : 'pdf_geometry_process_failed',
+                    $this->processFailureCode($stderr.$stdout),
                     [
                         'exit_code' => $process->getExitCode(),
                         'stderr' => mb_substr($stderr, 0, 1000),
@@ -115,6 +115,14 @@ class PdfGeometryWorker
             $workspace,
             '--preview-dir',
             $workspace.DIRECTORY_SEPARATOR.'previews',
+            '--max-preview-page-bytes',
+            (string) self::MAX_PREVIEW_PAGE_BYTES,
+            '--max-preview-page-pixels',
+            (string) self::MAX_PREVIEW_PAGE_PIXELS,
+            '--max-preview-total-bytes',
+            (string) $this->maxPreviewTotalBytes(),
+            '--max-preview-total-pixels',
+            (string) $this->maxPreviewTotalPixels(),
             '--render-preview',
         ];
 
@@ -135,14 +143,9 @@ class PdfGeometryWorker
     {
         $totalBytes = 0;
         $totalPixels = 0;
-        $maxTotalBytes = min(
-            self::MAX_PREVIEW_TOTAL_BYTES,
-            max(1, $this->maxPreviewTotalBytes ?? $this->configInt('estimate-generation.ocr.geometry.max_preview_total_bytes', self::MAX_PREVIEW_TOTAL_BYTES)),
-        );
-        $maxTotalPixels = min(
-            self::MAX_PREVIEW_TOTAL_PIXELS,
-            max(1, $this->maxPreviewTotalPixels ?? $this->configInt('estimate-generation.ocr.geometry.max_preview_total_pixels', self::MAX_PREVIEW_TOTAL_PIXELS)),
-        );
+        $maxTotalBytes = $this->maxPreviewTotalBytes();
+        $maxTotalPixels = $this->maxPreviewTotalPixels();
+        $validated = [];
         foreach ($payload['pages'] ?? [] as $index => $page) {
             $path = is_array($page) && is_array($page['preview'] ?? null) ? ($page['preview']['path'] ?? null) : null;
             if (! is_string($path) || ! is_file($path)) {
@@ -168,6 +171,9 @@ class PdfGeometryWorker
             if ($totalPixels > $maxTotalPixels) {
                 throw new PdfGeometryExtractionException('pdf_preview_aggregate_pixels_limit');
             }
+            $validated[] = [$index, $pageNumber, $real, $size, $width, $height];
+        }
+        foreach ($validated as [$index, $pageNumber, $real, $size, $width, $height]) {
             $published = $previewPublisher($pageNumber, $real, ['width' => $width, 'height' => $height]);
             $payload['pages'][$index]['preview'] = $this->publishedPreview($published, $size, $width, $height);
         }
@@ -189,6 +195,22 @@ class PdfGeometryWorker
         return $published;
     }
 
+    private function processFailureCode(string $output): string
+    {
+        foreach ([
+            'pymupdf_unavailable',
+            'pdf_preview_invalid',
+            'pdf_preview_aggregate_bytes_limit',
+            'pdf_preview_aggregate_pixels_limit',
+        ] as $code) {
+            if (str_contains($output, $code)) {
+                return $code;
+            }
+        }
+
+        return 'pdf_geometry_process_failed';
+    }
+
     private function positiveInt(mixed $value): ?int
     {
         return is_int($value) && $value > 0 ? $value : null;
@@ -201,6 +223,22 @@ class PdfGeometryWorker
         } catch (Throwable) {
             return $default;
         }
+    }
+
+    private function maxPreviewTotalBytes(): int
+    {
+        return min(
+            self::MAX_PREVIEW_TOTAL_BYTES,
+            max(1, $this->maxPreviewTotalBytes ?? $this->configInt('estimate-generation.ocr.geometry.max_preview_total_bytes', self::MAX_PREVIEW_TOTAL_BYTES)),
+        );
+    }
+
+    private function maxPreviewTotalPixels(): int
+    {
+        return min(
+            self::MAX_PREVIEW_TOTAL_PIXELS,
+            max(1, $this->maxPreviewTotalPixels ?? $this->configInt('estimate-generation.ocr.geometry.max_preview_total_pixels', self::MAX_PREVIEW_TOTAL_PIXELS)),
+        );
     }
 
     private function removeWorkspace(string $workspace): void

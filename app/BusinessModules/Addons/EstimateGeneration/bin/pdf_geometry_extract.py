@@ -380,6 +380,8 @@ def extract(args: argparse.Namespace) -> dict[str, Any]:
 
 def legacy(contract: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     pages: list[dict[str, Any]] = []
+    preview_total_bytes = 0
+    preview_total_pixels = 0
     for page in contract["pages"]:
         page_number = page["page_number"]
         page_entities = [
@@ -432,10 +434,26 @@ def legacy(contract: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]
             )[:80]
             output = Path(preview_directory) / f"{safe_filename}_page_{page_number}.png"
             output.parent.mkdir(parents=True, exist_ok=True)
+            expected_width = max(1, math.ceil(float(page["width"])))
+            expected_height = max(1, math.ceil(float(page["height"])))
+            expected_pixels = expected_width * expected_height
+            if expected_pixels > args.max_preview_page_pixels:
+                raise SafeFailure("pdf_preview_invalid")
+            if preview_total_pixels + expected_pixels > args.max_preview_total_pixels:
+                raise SafeFailure("pdf_preview_aggregate_pixels_limit")
             document = pdfium.PdfDocument(args.input)
             bitmap = document[page_number - 1].render(scale=1)
             image = bitmap.to_pil()
             image.save(output)
+            output_bytes = output.stat().st_size
+            if output_bytes < 1 or output_bytes > args.max_preview_page_bytes:
+                output.unlink(missing_ok=True)
+                raise SafeFailure("pdf_preview_invalid")
+            if preview_total_bytes + output_bytes > args.max_preview_total_bytes:
+                output.unlink(missing_ok=True)
+                raise SafeFailure("pdf_preview_aggregate_bytes_limit")
+            preview_total_pixels += image.width * image.height
+            preview_total_bytes += output_bytes
             preview = {
                 "path": str(output),
                 "width": image.width,
@@ -512,6 +530,10 @@ def parser() -> argparse.ArgumentParser:
     argument_parser.add_argument("--max-text-chars", type=int, default=1000000)
     argument_parser.add_argument("--max-form-depth", type=int, default=8)
     argument_parser.add_argument("--render-preview", action="store_true")
+    argument_parser.add_argument("--max-preview-page-bytes", type=int, default=20000000)
+    argument_parser.add_argument("--max-preview-page-pixels", type=int, default=25000000)
+    argument_parser.add_argument("--max-preview-total-bytes", type=int, default=100000000)
+    argument_parser.add_argument("--max-preview-total-pixels", type=int, default=100000000)
     return argument_parser
 
 

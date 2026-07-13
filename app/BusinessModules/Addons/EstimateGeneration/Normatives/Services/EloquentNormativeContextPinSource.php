@@ -8,9 +8,12 @@ use Illuminate\Database\Connection;
 
 final readonly class EloquentNormativeContextPinSource implements NormativeContextPinSource
 {
-    public function __construct(private Connection $database) {}
+    public function __construct(
+        private Connection $database,
+        private NormativeIntentCandidateRanker $ranker = new NormativeIntentCandidateRanker,
+    ) {}
 
-    public function resolve(NormativeContextPinData $requested): ?NormativeContextPinData
+    public function resolveForIntents(NormativeContextPinData $requested, array $intents): ?NormativeContextPinData
     {
         $dataset = $this->database->table('estimate_dataset_versions')
             ->where('id', $requested->datasetId)
@@ -30,18 +33,54 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
         if (! $dataset || ! $prices) {
             return null;
         }
-        $norms = $this->database->table('estimate_norms as norms')
-            ->join('estimate_norm_collections as collections', 'collections.id', '=', 'norms.collection_id')
-            ->where('collections.dataset_version_id', $requested->datasetId)
-            ->orderBy('norms.id')->limit(129)
-            ->get([
-                'norms.id', 'norms.code', 'norms.name', 'norms.canonical_unit', 'norms.unit',
-                'norms.section_code', 'norms.section_name', 'norms.work_composition',
-                'collections.code as collection_code', 'collections.name as collection_name', 'collections.norm_type',
-            ]);
-        if ($norms->isEmpty() || $norms->count() > 128) {
+        if ($intents === [] || count($intents) > 64) {
             return null;
         }
+        $norms = collect();
+        foreach ($intents as $intent) {
+            $search = mb_strtolower(trim((string) ($intent['search_text'] ?? '')));
+            $unit = trim((string) ($intent['unit'] ?? ''));
+            $code = mb_strtolower(trim((string) ($intent['code'] ?? '')));
+            if ($search === '' || $unit === '') {
+                return null;
+            }
+            $tokens = array_values(array_filter(
+                preg_split('/[^\pL\pN.-]+/u', $search) ?: [],
+                static fn (string $token): bool => mb_strlen($token) >= 3,
+            ));
+            $query = $this->database->table('estimate_norms as norms')
+                ->join('estimate_norm_collections as collections', 'collections.id', '=', 'norms.collection_id')
+                ->where('collections.dataset_version_id', $requested->datasetId)
+                ->where(function ($query) use ($search, $code, $tokens): void {
+                    if ($code !== '') {
+                        $query->orWhereRaw('LOWER(norms.code) = ?', [$code]);
+                    }
+                    $query->orWhereRaw('LOWER(norms.name) = ?', [$search]);
+                    foreach (array_slice($tokens, 0, 8) as $token) {
+                        $query->orWhereRaw('LOWER(norms.name) LIKE ?', ['%'.$token.'%']);
+                    }
+                })
+                ->where(function ($query) use ($unit): void {
+                    $query->where('norms.canonical_unit', $unit)->orWhere('norms.unit', $unit);
+                })
+                ->orderByRaw('CASE WHEN LOWER(norms.code) = ? THEN 0 WHEN LOWER(norms.name) = ? THEN 1 ELSE 2 END', [$code, $search])
+                ->orderBy('norms.id')
+                ->limit(16)
+                ->get([
+                    'norms.id', 'norms.code', 'norms.name', 'norms.canonical_unit', 'norms.unit',
+                    'norms.section_code', 'norms.section_name', 'norms.work_composition',
+                    'collections.code as collection_code', 'collections.name as collection_name', 'collections.norm_type',
+                ]);
+            if ($query->isEmpty()) {
+                return null;
+            }
+            $norms = $norms->concat($query);
+        }
+        $selected = $this->ranker->select($norms->unique('id')->values()->all(), $intents);
+        if ($selected === null || $selected === []) {
+            return null;
+        }
+        $norms = collect($selected);
         $ids = $norms->pluck('id')->map(static fn (mixed $id): int => (int) $id)->all();
         $resourceRows = $this->database->table('estimate_norm_resources as resources')
             ->join('estimate_resource_prices as prices', function ($join) use ($requested): void {
@@ -55,7 +94,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
             ->orderBy('resources.estimate_norm_id')->orderBy('resources.id')
             ->limit(10_001)
             ->get([
-                'resources.estimate_norm_id', 'resources.construction_resource_id', 'resources.resource_code',
+                'resources.id as norm_resource_id', 'resources.estimate_norm_id', 'resources.construction_resource_id', 'resources.resource_code',
                 'resources.resource_name', 'resources.unit', 'resources.quantity', 'resources.resource_type',
                 'prices.id as price_id', 'prices.price_type',
             ]);
@@ -75,6 +114,7 @@ final readonly class EloquentNormativeContextPinSource implements NormativeConte
                 'price_id' => (int) $row->price_id,
                 'price_source' => 'regional_catalog',
                 'linked_resource_id' => (int) $row->construction_resource_id,
+                'norm_resource_id' => (int) $row->norm_resource_id,
             ];
         }
         $candidates = [];

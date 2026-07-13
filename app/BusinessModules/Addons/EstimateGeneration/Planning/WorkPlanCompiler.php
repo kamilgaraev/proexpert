@@ -44,7 +44,7 @@ final readonly class WorkPlanCompiler
             'document_requirements' => $this->packagePlanner->documentRequirements($profile),
             'generation_mode' => EstimateGenerationMode::fromInput($profile->planningSignals['generation_mode'] ?? null)->value,
             'regional_context' => $analysis['regional_context'] ?? [],
-            'normative_context_pin' => $this->normativePins->resolve($regionalContext),
+            'normative_context_pin' => $this->normativePins->resolve($regionalContext, $this->normativeIntents($localEstimates)),
             'local_estimates' => $localEstimates,
         ];
     }
@@ -81,5 +81,27 @@ final readonly class WorkPlanCompiler
                 'quantity_source_refs' => $intent['quantity_source_refs'], 'normative_grounding_policy' => 'fsnb_required',
                 'display_role' => 'priced_work', 'work_composition' => [], 'composition_source' => 'planner_intent'],
         ];
+    }
+
+    /** @return list<array{search_text: string, unit: string, code: string|null}> */
+    private function normativeIntents(array $localEstimates): array
+    {
+        $intents = [];
+        foreach ($localEstimates as $localEstimate) {
+            foreach ($localEstimate['sections'] ?? [] as $section) {
+                foreach ($section['work_items'] ?? [] as $item) {
+                    if (! is_array($item) || in_array((string) ($item['item_type'] ?? 'priced_work'), ['operation', 'resource_note', 'review_note', 'quantity_review'], true)) {
+                        continue;
+                    }
+                    $intents[] = [
+                        'search_text' => (string) ($item['normative_search_text'] ?? $item['name'] ?? ''),
+                        'unit' => (string) ($item['unit'] ?? ''),
+                        'code' => is_string($item['normative_rate_code'] ?? null) ? $item['normative_rate_code'] : null,
+                    ];
+                }
+            }
+        }
+
+        return $intents;
     }
 }

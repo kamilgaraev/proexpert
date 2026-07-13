@@ -29,6 +29,7 @@ final readonly class AcceptanceBenchmarkCorpusLoader
         if (! is_array($payload)) {
             throw new BenchmarkContractException('acceptance_manifest_invalid');
         }
+        $payload = (new AcceptanceOwnerApprovalGuard($this->store))->approvedManifest($organizationId, $payload);
         $manifest = BenchmarkManifest::fromArray($payload, __DIR__, hash('sha256', $json), false);
         $cases = $manifest->casesFor(BenchmarkDatasetType::Acceptance);
         if ($cases === [] || count($cases) !== $manifest->caseCount()) {

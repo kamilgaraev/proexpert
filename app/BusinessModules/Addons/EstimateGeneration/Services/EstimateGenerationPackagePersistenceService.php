@@ -7,7 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
-use App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceVerifier;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\SessionBaseInputVersionResolver;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Illuminate\Support\Facades\DB;
@@ -15,8 +15,9 @@ use Illuminate\Support\Facades\DB;
 class EstimateGenerationPackagePersistenceService
 {
     public function __construct(
-        private readonly ?AcceptedQuantityEvidenceVerifier $acceptedEvidence = null,
+        private readonly ?AuthoritativePackagePricingGuard $pricingGuard = null,
         private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy,
+        private readonly ?SessionBaseInputVersionResolver $baseInputVersions = null,
     ) {}
 
     /**
@@ -25,6 +26,7 @@ class EstimateGenerationPackagePersistenceService
     public function syncFromDraft(EstimateGenerationSession $session, array $draft): void
     {
         DB::transaction(function () use ($session, $draft): void {
+            $inputVersion = $this->baseInputVersions?->resolve($session);
             $activePackageKeys = $this->draftPackageKeys($draft);
 
             foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
@@ -32,7 +34,7 @@ class EstimateGenerationPackagePersistenceService
                     continue;
                 }
 
-                $this->syncLocalEstimate($session, $localEstimate, (int) $localIndex);
+                $this->syncLocalEstimate($session, $localEstimate, (int) $localIndex, $inputVersion);
             }
 
             $this->retainHistoricalPackages($session, $activePackageKeys);
@@ -50,7 +52,7 @@ class EstimateGenerationPackagePersistenceService
             }
 
             DB::transaction(function () use ($session, $localEstimate, $localIndex): void {
-                $this->syncLocalEstimate($session, $localEstimate, (int) $localIndex);
+                $this->syncLocalEstimate($session, $localEstimate, (int) $localIndex, $this->baseInputVersions?->resolve($session));
             });
 
             return true;
@@ -89,7 +91,7 @@ class EstimateGenerationPackagePersistenceService
     /**
      * @param  array<string, mixed>  $localEstimate
      */
-    private function syncLocalEstimate(EstimateGenerationSession $session, array $localEstimate, int $localIndex): void
+    private function syncLocalEstimate(EstimateGenerationSession $session, array $localEstimate, int $localIndex, ?string $inputVersion): void
     {
         $workItems = $this->estimateWorkItems($this->workItems($localEstimate));
         $quality = $this->packageQuality($localEstimate, $workItems);
@@ -102,7 +104,7 @@ class EstimateGenerationPackagePersistenceService
                 'key' => $packageKey,
             ],
             [
-                'input_version' => $this->packageInputVersion($session, $localEstimate),
+                'input_version' => $inputVersion,
                 'title' => (string) ($localEstimate['title'] ?? 'Локальная смета'),
                 'scope_type' => (string) ($localEstimate['scope_type'] ?? 'custom'),
                 'status' => $this->packageStatus($quality),
@@ -120,7 +122,7 @@ class EstimateGenerationPackagePersistenceService
                 'source_refs' => $localEstimate['source_refs'] ?? [],
                 'metadata' => [
                     'generated_from' => 'estimate_generation_v2',
-                    'input_version' => $this->packageInputVersion($session, $localEstimate),
+                    'input_version' => $inputVersion,
                 ],
                 'sort_order' => ($localIndex + 1) * 100,
                 'finished_at' => now(),
@@ -263,23 +265,7 @@ class EstimateGenerationPackagePersistenceService
             'period_id' => $this->positiveInt($snapshot['period_id'] ?? null),
             'regional_price_version_id' => $this->positiveInt($snapshot['version_id'] ?? null),
         ];
-        $inputs = [];
-        foreach (['materials', 'labor', 'machinery', 'other_resources'] as $group) {
-            foreach ($workItem[$group] ?? [] as $resource) {
-                $reference = is_array($resource['normative_ref'] ?? null) ? $resource['normative_ref'] : [];
-                $normResourceId = $this->positiveInt($reference['norm_resource_id'] ?? null);
-                $priceId = $this->positiveInt($reference['price_id'] ?? null);
-                if ($normResourceId === null || $priceId === null) {
-                    return null;
-                }
-                $inputs[] = [
-                    'norm_resource_id' => $normResourceId,
-                    'resource_price_id' => $priceId,
-                    'unit_conversion_id' => $this->positiveInt($reference['unit_conversion_id'] ?? null),
-                ];
-            }
-        }
-        if ($normId === null || in_array(null, $context, true) || $inputs === []) {
+        if ($normId === null || in_array(null, $context, true)) {
             return null;
         }
         $quantity = $this->positiveDecimal($workItem['quantity'] ?? null);
@@ -290,16 +276,20 @@ class EstimateGenerationPackagePersistenceService
         $session = $package->session()->firstOrFail();
         $evidenceId = $this->positiveInt($workItem['quantity_evidence_id'] ?? null);
         $evidenceFingerprint = $workItem['quantity_evidence_fingerprint'] ?? null;
-        $evidenceSourceVersion = $workItem['quantity_evidence_source_version'] ?? null;
-        if ($evidenceId === null || ! is_string($evidenceFingerprint) || ! is_string($evidenceSourceVersion)
-            || $this->acceptedEvidence === null
-            || ! $this->acceptedEvidence->verifyScope(
-                (int) $session->organization_id,
-                (int) $session->project_id,
-                (int) $session->id,
-                $evidenceSourceVersion,
-                $workItem,
-            )) {
+        $evidenceSourceVersion = $package->input_version;
+        if ($evidenceId === null || ! is_string($evidenceFingerprint)
+            || ! is_string($evidenceSourceVersion) || preg_match('/^sha256:[a-f0-9]{64}$/D', $evidenceSourceVersion) !== 1
+            || $this->pricingGuard === null) {
+            return null;
+        }
+        $inputs = $this->pricingGuard->inputs(
+            (int) $session->organization_id,
+            (int) $session->project_id,
+            (int) $session->id,
+            $evidenceSourceVersion,
+            $workItem,
+        );
+        if ($inputs === null) {
             return null;
         }
 
@@ -351,13 +341,6 @@ class EstimateGenerationPackagePersistenceService
         unset($payload['id'], $payload['key'], $payload['revision'], $payload['supersedes_item_id'], $payload['created_at'], $payload['updated_at']);
 
         return hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION));
-    }
-
-    private function packageInputVersion(EstimateGenerationSession $session, array $localEstimate): ?string
-    {
-        $version = $localEstimate['input_version'] ?? $session->input_payload['input_version'] ?? null;
-
-        return is_string($version) && preg_match('/^sha256:[a-f0-9]{64}$/', $version) === 1 ? $version : null;
     }
 
     /**

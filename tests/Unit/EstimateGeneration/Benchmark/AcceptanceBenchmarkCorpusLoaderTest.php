@@ -15,6 +15,33 @@ use PHPUnit\Framework\TestCase;
 final class AcceptanceBenchmarkCorpusLoaderTest extends TestCase
 {
     #[Test]
+    public function pending_missing_and_tampered_approval_fail_before_any_corpus_object_read(): void
+    {
+        foreach (['pending', 'missing', 'tampered'] as $scenario) {
+            [$store, $locator] = $this->store();
+            $manifestPath = 'org-42/estimate-generation/benchmarks/acceptance/manifest.json';
+            $manifest = json_decode($store->objects[$manifestPath], true, 64, JSON_THROW_ON_ERROR);
+            if ($scenario === 'pending') {
+                $manifest['owner_approval']['status'] = 'pending_owner_approval';
+                $manifest['owner_approval']['gate_execution_allowed'] = false;
+                $store->objects[$manifestPath] = json_encode($manifest, JSON_THROW_ON_ERROR);
+            } elseif ($scenario === 'missing') {
+                unset($store->objects['org-42/estimate-generation/benchmarks/acceptance/owner-approval.json']);
+            } else {
+                $store->objects['org-42/estimate-generation/benchmarks/acceptance/owner-approval.json'] .= 'tampered';
+            }
+
+            try {
+                (new AcceptanceBenchmarkCorpusLoader($store))->load(42, $locator, $this->publicManifest());
+                self::fail('Unapproved acceptance corpus was loaded.');
+            } catch (BenchmarkContractException) {
+                self::assertNotContains('org-42/estimate-generation/benchmarks/acceptance/case/input.ppm', $store->reads);
+                self::assertNotContains('org-42/estimate-generation/benchmarks/acceptance/case/expected.json', $store->reads);
+            }
+        }
+    }
+
+    #[Test]
     public function private_org_scoped_manifest_and_objects_are_bounded_and_digest_verified(): void
     {
         [$store, $locator] = $this->store();
@@ -91,6 +118,7 @@ final class AcceptanceBenchmarkCorpusLoaderTest extends TestCase
         $manifest = json_decode($store->objects[$manifestPath], true, 64, JSON_THROW_ON_ERROR);
         $manifest['cases'][0]['id'] = 'public-boundary-001';
         $store->objects[$manifestPath] = json_encode($manifest, JSON_THROW_ON_ERROR);
+        $this->approveStore($store, $manifestPath);
 
         $this->expectExceptionMessage('cross_manifest_case_id_collision');
         (new AcceptanceBenchmarkCorpusLoader($store))->load(42, $locator, $this->publicManifest());
@@ -126,6 +154,7 @@ final class AcceptanceBenchmarkCorpusLoaderTest extends TestCase
         $store->objects[$manifestPath] = json_encode($manifest, JSON_THROW_ON_ERROR);
         $store->objects['org-42/estimate-generation/benchmarks/acceptance/case/unsupported.dwg'] = "AC1027 SYNTHETIC-LICENSED-DESCRIPTOR DWG conversion intentionally unsupported in Task 1\n";
         $store->objects['org-42/estimate-generation/benchmarks/acceptance/case/unsupported.json'] = $invalidExpected;
+        $this->approveStore($store, $manifestPath);
 
         $this->expectExceptionMessage('expected_contract_invalid');
         (new AcceptanceBenchmarkCorpusLoader($store))->load(42, $locator, $this->publicManifest());
@@ -143,7 +172,7 @@ final class AcceptanceBenchmarkCorpusLoaderTest extends TestCase
                 'applicable_item_ids' => [], 'evidence_ids_by_item' => [],
             ],
         ], JSON_THROW_ON_ERROR);
-        $manifest = json_encode([
+        $manifestPayload = [
             'schema_version' => 1,
             'manifest_version' => 'acceptance-private:v1',
             'cases' => [[
@@ -155,14 +184,47 @@ final class AcceptanceBenchmarkCorpusLoaderTest extends TestCase
                 'schema_version' => 1, 'expected_model_schema_version' => 'benchmark-expected:v1',
                 'allowed_capabilities' => ['document_understanding'],
             ]],
+        ];
+        $canonical = $manifestPayload;
+        $sort = function (array &$value) use (&$sort): void {
+            if (! array_is_list($value)) {
+                ksort($value, SORT_STRING);
+            }
+            foreach ($value as &$item) {
+                if (is_array($item)) {
+                    $sort($item);
+                }
+            }
+        };
+        $sort($canonical);
+        $corpusDigest = hash('sha256', json_encode($canonical, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+        $approval = json_encode([
+            'schema_version' => 1,
+            'status' => 'approved',
+            'approved' => true,
+            'gate_execution_allowed' => true,
+            'corpus_digest' => $corpusDigest,
+            'provenance' => 'owner:fixture-approval:v1',
         ], JSON_THROW_ON_ERROR);
-        $store = new class(['org-42/estimate-generation/benchmarks/acceptance/manifest.json' => $manifest, 'org-42/estimate-generation/benchmarks/acceptance/case/input.ppm' => $input, 'org-42/estimate-generation/benchmarks/acceptance/case/expected.json' => $expected]) implements BenchmarkPrivateObjectStore
+        $manifestPayload['owner_approval'] = [
+            'status' => 'approved',
+            'gate_execution_allowed' => true,
+            'approval_locator' => 's3://org-{organization_id}/estimate-generation/benchmarks/acceptance/owner-approval.json',
+            'approval_sha256' => hash('sha256', $approval),
+            'corpus_digest' => $corpusDigest,
+            'provenance' => 'owner:fixture-approval:v1',
+        ];
+        $manifest = json_encode($manifestPayload, JSON_THROW_ON_ERROR);
+        $store = new class(['org-42/estimate-generation/benchmarks/acceptance/manifest.json' => $manifest, 'org-42/estimate-generation/benchmarks/acceptance/owner-approval.json' => $approval, 'org-42/estimate-generation/benchmarks/acceptance/case/input.ppm' => $input, 'org-42/estimate-generation/benchmarks/acceptance/case/expected.json' => $expected]) implements BenchmarkPrivateObjectStore
         {
+            public array $reads = [];
+
             /** @param array<string, string> $objects */
             public function __construct(public array $objects) {}
 
             public function read(string $path, int $maxBytes): string
             {
+                $this->reads[] = $path;
                 $value = $this->objects[$path] ?? throw new BenchmarkContractException('private_object_unavailable');
                 if (strlen($value) > $maxBytes) {
                     throw new BenchmarkContractException('private_object_too_large');
@@ -194,5 +256,37 @@ final class AcceptanceBenchmarkCorpusLoaderTest extends TestCase
                 'allowed_capabilities' => ['document_understanding'],
             ]],
         ], __DIR__, null, false);
+    }
+
+    private function approveStore(object $store, string $manifestPath): void
+    {
+        $manifest = json_decode($store->objects[$manifestPath], true, 64, JSON_THROW_ON_ERROR);
+        unset($manifest['owner_approval']);
+        $canonical = $manifest;
+        $sort = function (array &$value) use (&$sort): void {
+            if (! array_is_list($value)) {
+                ksort($value, SORT_STRING);
+            }
+            foreach ($value as &$item) {
+                if (is_array($item)) {
+                    $sort($item);
+                }
+            }
+        };
+        $sort($canonical);
+        $corpusDigest = hash('sha256', json_encode($canonical, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+        $approval = json_encode([
+            'schema_version' => 1, 'status' => 'approved', 'approved' => true,
+            'gate_execution_allowed' => true, 'corpus_digest' => $corpusDigest,
+            'provenance' => 'owner:fixture-approval:v1',
+        ], JSON_THROW_ON_ERROR);
+        $manifest['owner_approval'] = [
+            'status' => 'approved', 'gate_execution_allowed' => true,
+            'approval_locator' => 's3://org-{organization_id}/estimate-generation/benchmarks/acceptance/owner-approval.json',
+            'approval_sha256' => hash('sha256', $approval), 'corpus_digest' => $corpusDigest,
+            'provenance' => 'owner:fixture-approval:v1',
+        ];
+        $store->objects[$manifestPath] = json_encode($manifest, JSON_THROW_ON_ERROR);
+        $store->objects['org-42/estimate-generation/benchmarks/acceptance/owner-approval.json'] = $approval;
     }
 }

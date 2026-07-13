@@ -6,5 +6,6 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Normatives\Services;
 
 interface NormativeContextPinSource
 {
-    public function resolve(NormativeContextPinData $requested): ?NormativeContextPinData;
+    /** @param non-empty-list<array{search_text: string, unit: string, code?: string|null}> $intents */
+    public function resolveForIntents(NormativeContextPinData $requested, array $intents): ?NormativeContextPinData;
 }

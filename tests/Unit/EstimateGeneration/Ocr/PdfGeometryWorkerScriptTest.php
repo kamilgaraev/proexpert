@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\PdfGeo
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryWorker;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\Process\Process;
 
 final class PdfGeometryWorkerScriptTest extends TestCase
 {
@@ -90,9 +91,65 @@ final class PdfGeometryWorkerScriptTest extends TestCase
         self::assertFalse($published);
     }
 
+    public function test_many_page_budget_breach_is_atomic_and_cleans_private_workspace(): void
+    {
+        $before = glob(sys_get_temp_dir().DIRECTORY_SEPARATOR.'prohelper_pdf_preview_*') ?: [];
+        $published = 0;
+
+        try {
+            (new PdfGeometryWorker(
+                scriptPath: dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/bin/pdf_geometry_extract.py',
+                pythonBinary: 'python',
+                timeoutSeconds: 45,
+                maxPages: 20,
+                maxVectorElements: 5000,
+                maxPreviewTotalBytes: 100_000_000,
+                maxPreviewTotalPixels: 595 * 842 * 2,
+            ))->extract(
+                $this->multiPagePdf(8),
+                'many-pages.pdf',
+                function (int $pageNumber, string $path, array $metadata) use (&$published): array {
+                    $published++;
+                    $bytes = (string) file_get_contents($path);
+
+                    return [
+                        'artifact_path' => 's3://org-1/pdf/page-'.$pageNumber.'.png',
+                        'content_type' => 'image/png',
+                        'sha256' => hash('sha256', $bytes),
+                        'bytes' => strlen($bytes),
+                        'width' => $metadata['width'],
+                        'height' => $metadata['height'],
+                    ];
+                },
+            );
+            self::fail('Aggregate pixel budget was not enforced.');
+        } catch (PdfGeometryExtractionException $exception) {
+            self::assertStringContainsString('pdf_preview_aggregate_pixels_limit', $exception->getMessage());
+        }
+
+        $after = glob(sys_get_temp_dir().DIRECTORY_SEPARATOR.'prohelper_pdf_preview_*') ?: [];
+        self::assertSame(0, $published);
+        self::assertSame($before, $after);
+    }
+
     public static function committedPdfProvider(): iterable
     {
         yield 'scanned' => ['regression/replay-scanned-pdf-001/input.pdf'];
         yield 'vector' => ['regression/replay-vector-pdf-001/input.pdf'];
+    }
+
+    private function multiPagePdf(int $pages): string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'most_pdf_budget_');
+        self::assertIsString($path);
+        $script = 'import pypdfium2 as p,sys; d=p.PdfDocument.new(); '
+            .'[d.new_page(595,842) for _ in range(int(sys.argv[2]))]; d.save(sys.argv[1], version=17)';
+        $process = new Process(['python', '-c', $script, $path, (string) $pages]);
+        $process->mustRun();
+        $content = file_get_contents($path);
+        @unlink($path);
+        self::assertIsString($content);
+
+        return $content;
     }
 }
