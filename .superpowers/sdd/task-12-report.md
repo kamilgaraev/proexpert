@@ -50,3 +50,9 @@
 - Replay результата административной операции теперь fail-closed: допускаются только точные ключи `successful/message_key`, строгий boolean и согласованный allowlist из трёх переводимых состояний. Неизвестные, вложенные, чувствительные, избыточные и чрезмерно длинные данные не попадают в Filament и заменяются общей безопасной ошибкой.
 - Fresh-install контракт registry ограничивает result JSON до 512 байт, message key до 80 символов, фиксирует allowlist и согласованность boolean/message, а также проверяет формат idempotency key. Миграция registry имеет порядок `000200`, online indexes — `000300`.
 - Финальный DB-less regression: `77 tests / 653 assertions`; PHPStan/Larastan 1G, Pint, `php -l`, class-load и `git diff --check` прошли. Миграции и любые команды с подключением к БД не запускались.
+
+## Финальная quality-проверка порядка online index runtime
+
+- Source regression изолирует тело `ensureConcurrentIndex` уникальными маркерами и проверяет позиции всех обязательных операций: первичный catalog lookup, fail-closed mismatch, invalid/unready branch, точный `DROP`, `CREATE`, повторный catalog lookup и postcondition failure.
+- TDD RED подтверждён намеренной локальной инверсией `CREATE` перед `DROP`: тест упал на строгом условии `DROP < CREATE`. После возврата корректного production-порядка тот же focused test прошёл; production-код в итоговый diff не входит.
+- Финальный combined DB-less regression: `77 tests / 669 assertions`; targeted PHPStan/Larastan 1G, Pint, `php -l` и `git diff --check` прошли. Миграции и DB-команды не запускались.

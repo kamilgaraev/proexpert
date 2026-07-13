@@ -45,6 +45,32 @@ final class EstimateGenerationUsageResourceTest extends TestCase
         self::assertStringContainsString("WHERE ((event_type)::text = 'occurred'::text)", $runtime);
         self::assertStringContainsString("WHERE ((event_type)::text = 'resolved'::text)", $runtime);
 
+        $ensureStart = strpos($runtime, 'private function ensureConcurrentIndex(array $index): void');
+        $ensureEnd = strpos($runtime, 'private function findIndex(string $name): ?stdClass');
+        self::assertNotFalse($ensureStart);
+        self::assertNotFalse($ensureEnd);
+        self::assertGreaterThan($ensureStart, $ensureEnd);
+
+        $ensureSource = substr($runtime, $ensureStart, $ensureEnd - $ensureStart);
+        $catalogLookup = strpos($ensureSource, '$existing = $this->findIndex($index[\'name\']);');
+        $definitionMismatch = strpos($ensureSource, "throw new RuntimeException('estimate_generation_resource_index_definition_mismatch')");
+        $invalidBranch = strpos($ensureSource, 'if ($existing !== null && (! $this->catalogBoolean($existing->indisvalid) || ! $this->catalogBoolean($existing->indisready)))');
+        $invalidDrop = strpos($ensureSource, "DB::statement(\$index['drop']);");
+        $create = strpos($ensureSource, "DB::statement(\$index['create']);");
+        $postconditionLookup = strpos($ensureSource, '$created = $this->findIndex($index[\'name\']);');
+        $postconditionFailure = strpos($ensureSource, "throw new RuntimeException('estimate_generation_resource_index_postcondition_failed')");
+
+        foreach ([$catalogLookup, $definitionMismatch, $invalidBranch, $invalidDrop, $create, $postconditionLookup, $postconditionFailure] as $position) {
+            self::assertNotFalse($position);
+        }
+
+        self::assertTrue($catalogLookup < $definitionMismatch, 'Catalog lookup must precede the valid-definition branch.');
+        self::assertTrue($definitionMismatch < $invalidBranch, 'A valid definition mismatch must fail closed before any recreate path.');
+        self::assertTrue($invalidBranch < $invalidDrop, 'The invalid/unready guard must precede its DROP.');
+        self::assertTrue($invalidDrop < $create, 'An invalid/unready index must be dropped before CREATE.');
+        self::assertTrue($create < $postconditionLookup, 'CREATE must precede the postcondition catalog lookup.');
+        self::assertTrue($postconditionLookup < $postconditionFailure, 'The postcondition lookup must precede its fail-closed assertion.');
+
         $existing = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000400_create_estimate_generation_ai_usage_table.php');
         $failures = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000500_create_estimate_generation_failures_table.php');
         self::assertIsString($existing);
