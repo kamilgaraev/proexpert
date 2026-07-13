@@ -80,6 +80,9 @@ final class BuildSessionSnapshot
             appliedEstimateId: $session->applied_estimate_id === null ? null : (int) $session->applied_estimate_id,
             updatedAt: $session->updated_at?->toISOString() ?? '',
             projectId: (int) $session->project_id,
+            objectInput: EstimateGenerationSessionInputData::fromValidated(
+                is_array($session->input_payload) ? $session->input_payload : [],
+            )->toArray(),
             canGenerate: (bool) ($readinessSummary['can_generate'] ?? false),
             canApply: (bool) ($readinessSummary['can_apply'] ?? false),
         );

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Requests;
 
+use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationConstructionType;
 use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\Http\Responses\AdminResponse;
 use Illuminate\Foundation\Http\FormRequest;
@@ -45,6 +46,9 @@ class CreateEstimateGenerationSessionRequest extends FormRequest
             'normative_dataset_version' => ['nullable', 'string', 'max:100'],
             'normative_rerank_requested' => ['nullable', 'boolean'],
             'area' => ['nullable', 'numeric', 'min:0'],
+            'floors' => ['nullable', 'integer', 'min:1', 'max:250'],
+            'height' => ['nullable', 'numeric', 'min:0.1', 'max:1000'],
+            'construction_type' => ['nullable', Rule::enum(EstimateGenerationConstructionType::class)],
             'parameters' => ['nullable', 'array'],
         ];
     }

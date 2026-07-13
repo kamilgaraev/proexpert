@@ -78,6 +78,7 @@ class ConstructionSemanticParser
                 'object_type' => $objectType,
                 'building_type' => $buildingType,
                 'generation_mode' => $generationMode,
+                'construction_type' => $input['construction_type'] ?? null,
                 'region' => $input['region'] ?? $regionalContext['region_name'] ?? $this->detectRegion($combinedText),
                 'area' => $input['area'] ?? $documentContext['facts_summary']['total_area_m2'] ?? null,
                 'floors' => $input['floors'] ?? $documentContext['facts_summary']['floor_count'] ?? null,

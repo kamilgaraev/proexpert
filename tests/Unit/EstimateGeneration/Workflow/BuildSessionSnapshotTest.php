@@ -164,6 +164,7 @@ final class BuildSessionSnapshotTest extends TestCase
 
         self::assertSame([
             'id', 'status', 'processing_stage', 'processing_progress', 'state_version',
+            'object_input',
             'available_actions', 'blocking_issues', 'warnings', 'next_action',
             'readiness_evaluated',
             'documents_summary', 'estimate_summary', 'review_summary',
@@ -172,6 +173,7 @@ final class BuildSessionSnapshotTest extends TestCase
         self::assertSame(['total_count' => 2, 'ready_count' => 2], $snapshot->documentsSummary);
         self::assertSame(['review_items_total' => 3, 'review_items_blocking' => 1], $snapshot->reviewSummary);
         self::assertSame('review', $snapshot->nextAction);
+        self::assertSame('capital_repair', $snapshot->objectInput['construction_type']);
     }
 
     private function makeSession(EstimateGenerationStatus $status): EstimateGenerationSession
@@ -184,6 +186,12 @@ final class BuildSessionSnapshotTest extends TestCase
             'processing_stage' => 'ready',
             'processing_progress' => 100,
             'state_version' => 9,
+            'input_payload' => [
+                'schema_version' => 1,
+                'construction_type' => 'capital_repair',
+                'floors' => 2,
+                'height' => 3.1,
+            ],
             'draft_payload' => ['quality_summary' => ['total_work_items' => 12]],
             'problem_flags' => [],
             'updated_at' => CarbonImmutable::parse('2026-07-11 12:00:00'),

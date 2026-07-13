@@ -101,6 +101,7 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
             ->select([
                 'id', 'organization_id', 'project_id', 'status', 'processing_stage', 'processing_progress',
                 'state_version', 'applied_estimate_id', 'updated_at',
+                'input_payload',
             ]);
 
         if ($connection->getDriverName() === 'pgsql') {
@@ -315,6 +316,7 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
             ...$session,
             'updated_at' => isset($session['updated_at']) ? CarbonImmutable::parse((string) $session['updated_at']) : null,
             'draft_payload' => ['quality_summary' => []],
+            'input_payload' => $this->json($session['input_payload'] ?? []),
         ]);
         $model->exists = true;
 
@@ -391,6 +393,7 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
                     'terminal' => $this->number($failures, 'terminal'),
                 ],
             ],
+            objectInput: $base->objectInput,
         );
     }
 
@@ -411,6 +414,22 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
     private function row(stdClass $row): array
     {
         return get_object_vars($row);
+    }
+
+    /** @return array<string, mixed> */
+    private function json(mixed $value): array
+    {
+        if (is_array($value)) {
+            return $value;
+        }
+
+        if (! is_string($value) || trim($value) === '') {
+            return [];
+        }
+
+        $decoded = json_decode($value, true);
+
+        return is_array($decoded) ? $decoded : [];
     }
 
     /** @param array<string, mixed> $value */

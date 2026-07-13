@@ -48,6 +48,7 @@ class EstimateGenerationDocumentController extends Controller
                 $request->file('files', []),
                 $request->user(),
             );
+            $result->documents->each(static fn (EstimateGenerationDocument $document) => $document->setRelation('session', $session));
 
             return AdminResponse::success([
                 'documents' => EstimateGenerationDocumentResource::collection($result->documents)->resolve(),
@@ -70,6 +71,7 @@ class EstimateGenerationDocumentController extends Controller
         return $this->safeReadResponse(function () use ($request, $project, $session): JsonResponse {
             $this->guardSession($request, $project, $session);
             $documents = $session->documents()
+                ->with('session')
                 ->withCount(['pages', 'facts', 'drawingElements', 'quantityTakeoffs', 'scopeInferences'])
                 ->orderBy('id')
                 ->get();
@@ -92,6 +94,8 @@ class EstimateGenerationDocumentController extends Controller
 
             return AdminResponse::success(
                 (new EstimateGenerationDocumentDetailResource($document->load([
+                    'session',
+                    'processingUnits',
                     'pages',
                     'facts',
                     'drawingElements',
@@ -123,7 +127,7 @@ class EstimateGenerationDocumentController extends Controller
             );
 
             return AdminResponse::success([
-                'document' => (new EstimateGenerationDocumentResource($result->document))->resolve(),
+                'document' => (new EstimateGenerationDocumentResource($result->document->setRelation('session', $session)))->resolve(),
                 'documents_summary' => $result->summary,
             ], trans_message($result->messageKey));
         } catch (ValidationException $e) {
@@ -160,7 +164,7 @@ class EstimateGenerationDocumentController extends Controller
             );
 
             return AdminResponse::success([
-                'document' => (new EstimateGenerationDocumentResource($result->document))->resolve(),
+                'document' => (new EstimateGenerationDocumentResource($result->document->setRelation('session', $session)))->resolve(),
                 'documents_summary' => $result->summary,
             ], trans_message($result->messageKey));
         } catch (ValidationException $e) {

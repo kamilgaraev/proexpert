@@ -21,6 +21,7 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
         $payload['pages'] = $this->whenLoaded('pages', function () use ($document): array {
             return $document->pages->map(static fn ($page): array => [
                 'id' => $page->id,
+                'processing_unit_id' => $page->processing_unit_id,
                 'page_number' => $page->page_number,
                 'width' => $page->width,
                 'height' => $page->height,
@@ -37,6 +38,18 @@ class EstimateGenerationDocumentDetailResource extends EstimateGenerationDocumen
                 'visual_metrics' => self::visualMetrics($page),
                 'overlay' => self::overlayPayload($page),
                 'quality_flags' => $page->quality_flags ?? [],
+            ])->all();
+        }, []);
+
+        $payload['processing_units'] = $this->whenLoaded('processingUnits', function () use ($document): array {
+            return $document->processingUnits->map(static fn ($unit): array => [
+                'id' => $unit->id,
+                'unit_type' => $unit->unit_type->value,
+                'unit_index' => $unit->unit_index,
+                'status' => $unit->status->value,
+                'attempt_count' => $unit->attempt_count,
+                'output_count' => $unit->output_count,
+                'failure_code' => $unit->failure_code,
             ])->all();
         }, []);
 

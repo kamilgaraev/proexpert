@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Http\Controllers;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\CreateEstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\EstimateGenerationSessionInputData;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionSnapshotEtag;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus;
-use App\BusinessModules\Addons\EstimateGeneration\Enums\EstimateGenerationMode;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Requests\CreateEstimateGenerationSessionRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionListResource;
 use App\BusinessModules\Addons\EstimateGeneration\Http\Resources\EstimateGenerationSessionResource;
@@ -64,7 +64,8 @@ final class EstimateGenerationSessionController extends Controller
     {
         try {
             $validated = $request->validated();
-            $generationMode = EstimateGenerationMode::fromInput($validated['generation_mode'] ?? null)->value;
+            $input = EstimateGenerationSessionInputData::fromValidated($validated);
+            $generationMode = $input->generationMode->value;
             $normativePin = $this->normativePins->resolve(is_string($validated['normative_dataset_version'] ?? null) ? $validated['normative_dataset_version'] : null);
             $session = $this->createSession->handle([
                 'organization_id' => $request->user()->current_organization_id,
@@ -73,7 +74,7 @@ final class EstimateGenerationSessionController extends Controller
                 'status' => EstimateGenerationStatus::Draft->value,
                 'processing_stage' => 'draft',
                 'processing_progress' => 0,
-                'input_payload' => array_merge($validated, [
+                'input_payload' => array_merge($input->toArray(), [
                     'generation_mode' => $generationMode,
                     'parameters' => $validated['parameters'] ?? [],
                     'regional_context' => [

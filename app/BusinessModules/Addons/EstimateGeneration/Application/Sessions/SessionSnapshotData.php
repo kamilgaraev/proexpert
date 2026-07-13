@@ -35,6 +35,7 @@ final readonly class SessionSnapshotData
         public array $qualitySummary = [],
         public array $usageSummary = [],
         public array $failureSummary = [],
+        public array $objectInput = [],
     ) {}
 
     /** @return array<string, mixed> */
@@ -46,6 +47,7 @@ final readonly class SessionSnapshotData
             'processing_stage' => $this->processingStage,
             'processing_progress' => $this->processingProgress,
             'state_version' => $this->stateVersion,
+            'object_input' => $this->objectInput,
             'available_actions' => $this->availableActions,
             'blocking_issues' => $this->blockingIssues,
             'warnings' => $this->warnings,
@@ -69,6 +71,7 @@ final readonly class SessionSnapshotData
             'processing_stage' => $this->processingStage,
             'processing_progress' => $this->processingProgress,
             'state_version' => $this->stateVersion,
+            'object_input' => $this->objectInput,
             'operational_version' => $this->operationalVersion,
             'available_actions' => $this->availableActions,
             'blocking_issues' => $this->blockingIssues,

@@ -9,6 +9,20 @@ use PHPUnit\Framework\TestCase;
 
 class ConstructionSemanticParserTest extends TestCase
 {
+    public function test_parser_preserves_confirmed_object_dimensions_and_construction_type(): void
+    {
+        $analysis = (new ConstructionSemanticParser())->parse([
+            'description' => 'Дом по эскизу',
+            'construction_type' => 'new_construction',
+            'floors' => 2,
+            'height' => 3.2,
+        ], []);
+
+        $this->assertSame('new_construction', $analysis['object']['construction_type']);
+        $this->assertSame(2, $analysis['object']['floors']);
+        $this->assertSame(3.2, $analysis['object']['height']);
+    }
+
     public function test_parser_detects_house_prompt_without_fake_sheet(): void
     {
         $parser = new ConstructionSemanticParser();

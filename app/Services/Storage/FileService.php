@@ -586,14 +586,19 @@ class FileService
         return $this->url($path, $organization);
     }
 
-    public function temporaryUrl(?string $path, int $minutes = 5, ?Organization $organization = null): ?string
-    {
+    /** @param array<string, string> $responseParameters */
+    public function temporaryUrl(
+        ?string $path,
+        int $minutes = 5,
+        ?Organization $organization = null,
+        array $responseParameters = [],
+    ): ?string {
         if (! $path) {
             return null;
         }
         $disk = $this->disk($organization);
         try {
-            $url = $disk->temporaryUrl($path, now()->addMinutes($minutes));
+            $url = $disk->temporaryUrl($path, now()->addMinutes($minutes), $responseParameters);
         } catch (\Throwable $e) {
             Log::warning('[FileService] temporaryUrl() failed', [
                 'path' => $path,
@@ -602,11 +607,6 @@ class FileService
 
             return null;
         }
-        Log::debug('[FileService] temporaryUrl(): generated', [
-            'path' => $path,
-            'url' => $url,
-            'expires_in_minutes' => $minutes,
-        ]);
 
         return $url;
     }
