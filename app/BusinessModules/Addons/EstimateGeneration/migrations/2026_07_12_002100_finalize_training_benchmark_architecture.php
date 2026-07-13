@@ -16,7 +16,9 @@ return new class extends Migration
         $timeouts = $runtime->configureSessionTimeouts();
         try {
             DB::statement('ALTER TABLE estimate_generation_training_datasets ADD COLUMN IF NOT EXISTS processing_lease_expires_at timestamptz');
+            $runtime->checkpoint('002100.column.processing_lease_expires_at.adopted');
             DB::statement('ALTER TABLE estimate_generation_training_datasets ADD COLUMN IF NOT EXISTS processing_attempt integer NOT NULL DEFAULT 0');
+            $runtime->checkpoint('002100.column.processing_attempt.adopted');
             DB::unprepared(<<<'SQL'
 CREATE OR REPLACE FUNCTION eg_training_lease_write_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN

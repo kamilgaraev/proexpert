@@ -17,6 +17,8 @@ final class EstimateGenerationContractDatabaseProvisioner
         'pricing' => 'c95cb2cc331fe5c1b041784f226061fd5f1540c95c38e15d84b63e801d47081f',
     ];
 
+    private const FRESH_INVENTORY_DIGEST = 'e98b40f412c018fcbb78990210cccd3770cf5487af2f28e8c30b9aa3c2e3f7ff';
+
     private const SUBJECT = [
         'geometry' => [
             'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_000250_convert_session_payloads_to_jsonb.php',
@@ -39,7 +41,7 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const SUBJECT_DIGEST = [
         'geometry' => '674df1f67e8edc5ab28f42efeb93de0f227cea931617dff3c6499a7a71c76be0',
         'pricing' => '22c28514b665272f7e8cffeb911bf9bda48b098bd25947c04ee22bed41238158',
-        'training' => '7e016261fb2d6bad80ce6779567a456921dfc812e7543f34124d455971b7f5e2',
+        'training' => 'ff394b33d8717a20622b4895a627e8784d987f0d11611601b5446fd59ee23026',
     ];
 
     private const CORE = [
@@ -233,6 +235,21 @@ final class EstimateGenerationContractDatabaseProvisioner
         return array_values(array_unique([...self::CORE, ...self::MODULE, ...self::SUBJECT['training']], SORT_STRING));
     }
 
+    public static function freshInventory(): array
+    {
+        $entries = self::inventory('training');
+        $insertAt = array_search('app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000001_rebuild_estimate_generation_session_workflow.php', $entries, true);
+        if ($insertAt === false) {
+            throw new InvalidArgumentException('estimate_generation_contract_inventory_invalid');
+        }
+        array_splice($entries, $insertAt, 0, [
+            'database/migrations/2026_02_16_074305_create_system_admins_table.php',
+            'database/migrations/2026_06_28_000004_create_estimate_generation_training_dataset_tables.php',
+        ]);
+
+        return [...$entries, ...self::SUBJECT['training']];
+    }
+
     public static function inventory(string $phase = 'training'): array
     {
         $module = self::MODULE;
@@ -250,7 +267,9 @@ final class EstimateGenerationContractDatabaseProvisioner
     {
         $configuration = $connection->getConfig();
         self::assertSafe($configuration, getenv('RUN_ESTIMATE_GENERATION_CONTRACT_PROVISIONER') === '1');
-        $entries = self::validateInventory($root, self::inventory($phase), self::INVENTORY_DIGEST[$phase] ?? '');
+        $entries = $phase === 'fresh'
+            ? self::validateInventory($root, self::freshInventory(), self::FRESH_INVENTORY_DIGEST)
+            : self::validateInventory($root, self::inventory($phase), self::INVENTORY_DIGEST[$phase] ?? '');
         self::validateCompleteInventory($root);
         self::resetPublicSchema($connection);
         $connection->statement('CREATE TABLE estimate_generation_contract_migrations (path text PRIMARY KEY, sha256 char(64) NOT NULL, applied_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)');

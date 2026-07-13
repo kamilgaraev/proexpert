@@ -36,7 +36,9 @@ SQL);
                 $runtime->ensureConstraint('estimate_generation_training_examples', $constraint, "CHECK ({$column} IS NOT NULL)");
                 $runtime->validateConstraint('estimate_generation_training_examples', $constraint);
                 DB::statement("ALTER TABLE estimate_generation_training_examples ALTER COLUMN {$column} SET NOT NULL");
-                DB::statement("ALTER TABLE estimate_generation_training_examples DROP CONSTRAINT {$constraint}");
+                $runtime->checkpoint('001800.column.example.'.$column.'.set_not_null');
+                DB::statement("ALTER TABLE estimate_generation_training_examples DROP CONSTRAINT IF EXISTS {$constraint}");
+                $runtime->checkpoint('001800.column.example.'.$column.'.helper_drop');
             }
             $runtime->ensureConcurrentIndex('eg_training_dataset_membership_uq', 'CREATE UNIQUE INDEX CONCURRENTLY eg_training_dataset_membership_uq ON estimate_generation_training_datasets (id, organization_id, version)');
             $runtime->checkpoint('001800_indexes');

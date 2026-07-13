@@ -28,6 +28,7 @@ return new class extends Migration
                 if (! Schema::hasColumn('estimate_generation_training_datasets', $column)) {
                     Schema::table('estimate_generation_training_datasets', $add);
                 }
+                $runtime->checkpoint('001700.column.dataset.'.$column.'.adopted');
             }
             foreach ([
                 'reviewed_by' => static fn (Blueprint $table) => $table->unsignedBigInteger('reviewed_by')->nullable(),
@@ -36,6 +37,7 @@ return new class extends Migration
                 if (! Schema::hasColumn('estimate_generation_training_examples', $column)) {
                     Schema::table('estimate_generation_training_examples', $add);
                 }
+                $runtime->checkpoint('001700.column.example.'.$column.'.adopted');
             }
 
             DB::unprepared(<<<'SQL'
@@ -72,7 +74,9 @@ SQL);
                 $runtime->ensureConstraint('estimate_generation_training_datasets', $constraint, "CHECK ({$column} IS NOT NULL)");
                 $runtime->validateConstraint('estimate_generation_training_datasets', $constraint);
                 DB::statement("ALTER TABLE estimate_generation_training_datasets ALTER COLUMN {$column} SET NOT NULL");
-                DB::statement("ALTER TABLE estimate_generation_training_datasets DROP CONSTRAINT {$constraint}");
+                $runtime->checkpoint('001700.column.dataset.'.$column.'.set_not_null');
+                DB::statement("ALTER TABLE estimate_generation_training_datasets DROP CONSTRAINT IF EXISTS {$constraint}");
+                $runtime->checkpoint('001700.column.dataset.'.$column.'.helper_drop');
             }
             foreach ([
                 'eg_training_dataset_type_chk' => "CHECK (dataset_type IN ('development','regression','acceptance'))",

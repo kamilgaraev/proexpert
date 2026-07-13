@@ -24,6 +24,10 @@ final class TrainingBenchmarkOnlineMigrationTest extends TestCase
             self::assertStringContainsString('try {', $phase, basename($path));
             self::assertStringContainsString('finally {', $phase, basename($path));
             self::assertStringContainsString('restoreSessionTimeouts', $phase, basename($path));
+            $up = explode('public function down(): void', $phase, 2)[0];
+            self::assertDoesNotMatchRegularExpression('/DROP CONSTRAINT (?!IF EXISTS )/', $up, basename($path));
+            self::assertStringNotContainsString('DROP CONSTRAINT eg_benchmark_closed_state_chk', $up, basename($path));
+            self::assertStringContainsString('checkpoint(', $up, basename($path));
         }
 
         self::assertStringNotContainsString('DB::statement("UPDATE ', $source);
@@ -33,5 +37,14 @@ final class TrainingBenchmarkOnlineMigrationTest extends TestCase
         self::assertStringContainsString('configureSessionTimeouts', $source);
         self::assertStringContainsString('ensureConstraint', $source);
         self::assertStringContainsString('swapValidatedConstraint', $source);
+
+        $runtime = (string) file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Support/TrainingBenchmarkOnlineMigrationRuntime.php');
+        self::assertStringContainsString('ESTIMATE_CONTRACT_INTERRUPT_ORDINAL', $runtime);
+        self::assertStringNotContainsString('ESTIMATE_CONTRACT_INTERRUPT_AFTER', $runtime);
+        self::assertStringContainsString('observedCheckpointCount', $runtime);
+
+        $runner = (string) file_get_contents($root.'/tests/Runtime/run-training-benchmark-contract.ps1');
+        self::assertStringContainsString('ESTIMATE_CONTRACT_INTERRUPT_ORDINAL', $runner);
+        self::assertStringContainsString('ESTIMATE_CONTRACT_CHECKPOINT_COUNT:', $runner);
     }
 }

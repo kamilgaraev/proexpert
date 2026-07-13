@@ -110,6 +110,7 @@ final class TrainingBenchmarkOnlineMigrationRuntimePostgresTest extends TestCase
         foreach ([
             'CREATE INDEX CONCURRENTLY eg_online_index_probe_uq ON eg_online_index_probe (value)',
             'CREATE UNIQUE INDEX CONCURRENTLY eg_online_index_probe_uq ON eg_online_index_other (value)',
+            'CREATE UNIQUE INDEX CONCURRENTLY eg_online_index_probe_uq ON eg_online_index_probe (value DESC NULLS LAST)',
         ] as $wrongDefinition) {
             if (! Schema::hasTable('eg_online_index_other')) {
                 DB::statement('CREATE TABLE eg_online_index_other (id bigint PRIMARY KEY, value integer NOT NULL)');
@@ -120,6 +121,21 @@ final class TrainingBenchmarkOnlineMigrationRuntimePostgresTest extends TestCase
             } catch (\RuntimeException $exception) {
                 self::assertSame('estimate_generation_online_migration_index_definition_mismatch', $exception->getMessage());
             }
+        }
+
+        DB::statement('ALTER TABLE eg_online_index_probe ADD COLUMN label text');
+        (new TrainingBenchmarkOnlineMigrationRuntime)->ensureConcurrentIndex('eg_online_index_label_idx', 'CREATE INDEX CONCURRENTLY eg_online_index_label_idx ON eg_online_index_probe (label)');
+        try {
+            (new TrainingBenchmarkOnlineMigrationRuntime)->ensureConcurrentIndex('eg_online_index_label_idx', 'CREATE INDEX CONCURRENTLY eg_online_index_label_idx ON eg_online_index_probe (label COLLATE "C")');
+            self::fail('A valid index with the wrong collation was adopted.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('estimate_generation_online_migration_index_definition_mismatch', $exception->getMessage());
+        }
+        try {
+            (new TrainingBenchmarkOnlineMigrationRuntime)->ensureConcurrentIndex('eg_online_index_label_idx', 'CREATE INDEX CONCURRENTLY eg_online_index_label_idx ON eg_online_index_probe (label text_pattern_ops)');
+            self::fail('A valid index with the wrong operator class was adopted.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('estimate_generation_online_migration_index_definition_mismatch', $exception->getMessage());
         }
 
         DB::statement('CREATE SCHEMA eg_online_probe');
@@ -153,5 +169,35 @@ final class TrainingBenchmarkOnlineMigrationRuntimePostgresTest extends TestCase
             self::assertSame('1700ms', DB::selectOne("SELECT current_setting('lock_timeout') AS value")->value);
             self::assertSame('23s', DB::selectOne("SELECT current_setting('statement_timeout') AS value")->value);
         }
+
+        putenv('ESTIMATE_CONTRACT_FAIL_SECOND_TIMEOUT_SET=1');
+        try {
+            $runtime->configureSessionTimeouts();
+            self::fail('The injected second SET failure was not propagated.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('estimate_generation_online_migration_second_timeout_set_failed', $exception->getMessage());
+        } finally {
+            putenv('ESTIMATE_CONTRACT_FAIL_SECOND_TIMEOUT_SET');
+        }
+        self::assertSame('1700ms', DB::selectOne("SELECT current_setting('lock_timeout') AS value")->value);
+        self::assertSame('23s', DB::selectOne("SELECT current_setting('statement_timeout') AS value")->value);
+    }
+
+    public function test_constraint_catalog_operations_are_schema_isolated(): void
+    {
+        DB::statement('CREATE SCHEMA eg_constraint_a');
+        DB::statement('CREATE SCHEMA eg_constraint_b');
+        DB::statement('CREATE TABLE eg_constraint_a.probe (id integer)');
+        DB::statement('CREATE TABLE eg_constraint_b.probe (id integer)');
+        $runtime = new TrainingBenchmarkOnlineMigrationRuntime;
+        $runtime->ensureConstraint('probe', 'probe_positive_chk', 'CHECK (id > 0)', 'eg_constraint_a');
+        $runtime->ensureConstraint('probe', 'probe_positive_chk', 'CHECK (id >= 0)', 'eg_constraint_b');
+        $runtime->validateConstraint('probe', 'probe_positive_chk', 'eg_constraint_a');
+        $runtime->validateConstraint('probe', 'probe_positive_chk', 'eg_constraint_b');
+
+        self::assertSame(2, (int) DB::selectOne("SELECT count(*) AS count FROM pg_constraint WHERE conname = 'probe_positive_chk'")->count);
+        self::assertSame(1, (int) DB::selectOne("SELECT count(*) AS count FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace WHERE c.conname = 'probe_positive_chk' AND n.nspname = 'eg_constraint_a' AND c.convalidated")->count);
+        DB::statement('DROP SCHEMA eg_constraint_a CASCADE');
+        DB::statement('DROP SCHEMA eg_constraint_b CASCADE');
     }
 }

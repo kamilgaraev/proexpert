@@ -16,7 +16,9 @@ return new class extends Migration
         $timeouts = $runtime->configureSessionTimeouts();
         try {
             DB::statement('ALTER TABLE estimate_generation_training_datasets ADD COLUMN IF NOT EXISTS processing_token uuid');
+            $runtime->checkpoint('002000.column.processing_token.adopted');
             DB::statement('ALTER TABLE estimate_generation_benchmark_runs ADD COLUMN IF NOT EXISTS case_results_version_scheme text');
+            $runtime->checkpoint('002000.column.case_results_version_scheme.adopted');
             $runtime->checkpoint('002000_structure');
             $runtime->ensureConcurrentIndex('projects_id_organization_uq', 'CREATE UNIQUE INDEX CONCURRENTLY projects_id_organization_uq ON projects (id, organization_id)');
             $runtime->checkpoint('002000_indexes');
