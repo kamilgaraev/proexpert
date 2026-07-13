@@ -29,8 +29,12 @@ final class CadRuntimeReadinessInspector
         ] as $name => [$path, $executable]) {
             if (! $this->trustedFile($path, $executable)) {
                 $errors[] = 'cad_'.$name.'_path_untrusted';
-            } elseif ($configuration->enforceImmutability && $this->writableByRuntime($path)) {
-                $errors[] = 'cad_'.$name.'_path_writable';
+            } elseif ($configuration->enforceImmutability) {
+                if (! $this->insideTrustedRoot($name, $path)) {
+                    $errors[] = 'cad_'.$name.'_root_untrusted';
+                } elseif ($this->writableByRuntime($path)) {
+                    $errors[] = 'cad_'.$name.'_path_writable';
+                }
             }
         }
         if ($errors !== []) {
@@ -71,6 +75,21 @@ final class CadRuntimeReadinessInspector
         }
 
         return false;
+    }
+
+    private function insideTrustedRoot(string $name, string $path): bool
+    {
+        $root = match ($name) {
+            'python' => '/opt/geometry-venv/',
+            'dwgread' => '/opt/libredwg/',
+            'sandbox' => '/usr/local/bin/',
+            'worker', 'requirements' => rtrim(str_replace('\\', '/', base_path()), '/').'/',
+            default => '',
+        };
+        $real = realpath($path);
+
+        return $root !== '' && is_string($real)
+            && str_starts_with(str_replace('\\', '/', $real), $root);
     }
 
     private function trustedFile(string $path, bool $executable): bool
