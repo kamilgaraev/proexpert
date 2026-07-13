@@ -139,3 +139,11 @@ Real renderer smoke на committed scanned PDF: 1 страница, preview со
 - Command acceptance fixtures приведены к актуальной owner-approval схеме. Это только изолированные тестовые объекты: production candidate corpus остаётся `pending_owner_approval`, gate не включался и approval не изменялся.
 
 Свежая focused-верификация после форматирования: PHPUnit — 29/29 тестов, 111 assertions; в составе полный `EstimateGenerationBenchmarkCommandTest` 9/9 и `AcceptanceBenchmarkCorpusLoaderTest`. PHPStan затронутых production-файлов — без ошибок при `memory_limit=512M`; Pint — 9 файлов; `git diff --check` — успешно. Первый PHPStan-запуск с лимитом 128 МБ был неполным из-за исчерпания памяти и повторён с достаточным лимитом.
+
+## Пятая минимальная правка C3 (2026-07-13)
+
+Package persistence использует только top-level `draft.source_input_version`. Полный sync и точечный work-item sync захватывают его до транзакции, затем внутри транзакции сначала получают authoritative current version через `SessionBaseInputVersionResolver` и сравнивают версии до обхода local estimates, записи items и финализации цены. Вложенный `localEstimate.input_version` больше не читается и не влияет на решение.
+
+Отсутствующий, malformed или stale top-level version сохраняет пакет blocked под authoritative current version и не создаёт items. Совпадающий top-level version продолжает обычный путь, даже если вложенное устаревшее поле присутствует. Поведенческий тест использует production-shaped draft и проверяет полный и точечный sync без source-string assertions.
+
+Проверка C3: PHPUnit persistence/pricing — 10/10 тестов, 32 assertions; связанные точечные normative flows — 14/14 тестов, 81 assertion. PHPStan production-сервиса — без ошибок; PHP syntax, Pint и `git diff --check` — успешно. Acceptance approval и gate не изменялись.

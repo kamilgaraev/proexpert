@@ -25,8 +25,10 @@ class EstimateGenerationPackagePersistenceService
      */
     public function syncFromDraft(EstimateGenerationSession $session, array $draft): void
     {
-        DB::transaction(function () use ($session, $draft): void {
+        $sourceInputVersion = $draft['source_input_version'] ?? null;
+        DB::transaction(function () use ($session, $draft, $sourceInputVersion): void {
             $inputVersion = $this->baseInputVersions?->resolve($session);
+            $sourceInputCurrent = $this->sourceInputCurrent($sourceInputVersion, $inputVersion);
             $activePackageKeys = $this->draftPackageKeys($draft);
 
             foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
@@ -34,7 +36,14 @@ class EstimateGenerationPackagePersistenceService
                     continue;
                 }
 
-                $this->syncLocalEstimate($session, $localEstimate, (int) $localIndex, $inputVersion);
+                $this->syncLocalEstimate(
+                    $session,
+                    $localEstimate,
+                    (int) $localIndex,
+                    $inputVersion,
+                    $sourceInputVersion,
+                    $sourceInputCurrent,
+                );
             }
 
             $this->retainHistoricalPackages($session, $activePackageKeys);
@@ -46,19 +55,29 @@ class EstimateGenerationPackagePersistenceService
      */
     public function syncWorkItemPackageFromDraft(EstimateGenerationSession $session, array $draft, string $workItemKey): bool
     {
-        foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
-            if (! is_array($localEstimate) || ! $this->localEstimateContainsWorkItem($localEstimate, $workItemKey)) {
-                continue;
+        $sourceInputVersion = $draft['source_input_version'] ?? null;
+
+        return DB::transaction(function () use ($session, $draft, $workItemKey, $sourceInputVersion): bool {
+            $inputVersion = $this->baseInputVersions?->resolve($session);
+            $sourceInputCurrent = $this->sourceInputCurrent($sourceInputVersion, $inputVersion);
+            foreach ($draft['local_estimates'] ?? [] as $localIndex => $localEstimate) {
+                if (! is_array($localEstimate) || ! $this->localEstimateContainsWorkItem($localEstimate, $workItemKey)) {
+                    continue;
+                }
+                $this->syncLocalEstimate(
+                    $session,
+                    $localEstimate,
+                    (int) $localIndex,
+                    $inputVersion,
+                    $sourceInputVersion,
+                    $sourceInputCurrent,
+                );
+
+                return true;
             }
 
-            DB::transaction(function () use ($session, $localEstimate, $localIndex): void {
-                $this->syncLocalEstimate($session, $localEstimate, (int) $localIndex, $this->baseInputVersions?->resolve($session));
-            });
-
-            return true;
-        }
-
-        return false;
+            return false;
+        });
     }
 
     /**
@@ -91,15 +110,17 @@ class EstimateGenerationPackagePersistenceService
     /**
      * @param  array<string, mixed>  $localEstimate
      */
-    private function syncLocalEstimate(EstimateGenerationSession $session, array $localEstimate, int $localIndex, ?string $inputVersion): void
-    {
-        $draftInputVersion = $localEstimate['input_version'] ?? null;
-        $staleInput = is_string($draftInputVersion) && is_string($inputVersion)
-            && preg_match('/^sha256:[a-f0-9]{64}$/D', $draftInputVersion) === 1
-            && ! hash_equals($inputVersion, $draftInputVersion);
-        $workItems = $staleInput ? [] : $this->estimateWorkItems($this->workItems($localEstimate));
+    private function syncLocalEstimate(
+        EstimateGenerationSession $session,
+        array $localEstimate,
+        int $localIndex,
+        ?string $inputVersion,
+        mixed $sourceInputVersion,
+        bool $sourceInputCurrent,
+    ): void {
+        $workItems = $sourceInputCurrent ? $this->estimateWorkItems($this->workItems($localEstimate)) : [];
         $quality = $this->packageQuality($localEstimate, $workItems);
-        if ($staleInput) {
+        if (! $sourceInputCurrent) {
             $quality = [
                 'level' => 'blocked',
                 'critical_flags' => ['stale_input_version'],
@@ -134,6 +155,7 @@ class EstimateGenerationPackagePersistenceService
                 'metadata' => [
                     'generated_from' => 'estimate_generation_v2',
                     'input_version' => $inputVersion,
+                    'source_input_version' => is_string($sourceInputVersion) ? $sourceInputVersion : null,
                 ],
                 'sort_order' => ($localIndex + 1) * 100,
                 'finished_at' => now(),
@@ -143,7 +165,7 @@ class EstimateGenerationPackagePersistenceService
             ]
         );
 
-        if ($staleInput) {
+        if (! $sourceInputCurrent) {
             return;
         }
 
@@ -152,6 +174,15 @@ class EstimateGenerationPackagePersistenceService
         }
 
         $this->refreshPackagePricingState($package);
+    }
+
+    private function sourceInputCurrent(mixed $sourceInputVersion, ?string $inputVersion): bool
+    {
+        return is_string($sourceInputVersion)
+            && preg_match('/^sha256:[a-f0-9]{64}$/D', $sourceInputVersion) === 1
+            && is_string($inputVersion)
+            && preg_match('/^sha256:[a-f0-9]{64}$/D', $inputVersion) === 1
+            && hash_equals($inputVersion, $sourceInputVersion);
     }
 
     private function refreshPackagePricingState(EstimateGenerationPackage $package): void
