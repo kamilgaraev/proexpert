@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPacka
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationFinalWorkItemGuard;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePresenter;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackageSummaryQuery;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Models\Project;
@@ -29,6 +30,7 @@ final class EstimateGenerationPackageController extends Controller
         private readonly EstimateGenerationExporter $exporter,
         private readonly EstimateGenerationFinalWorkItemGuard $finalWorkItemGuard,
         private readonly EstimateGenerationPackagePresenter $presenter,
+        private readonly EstimateGenerationPackageSummaryQuery $summaryQuery,
     ) {}
 
     public function index(Request $request, Project $project, EstimateGenerationSession $session): JsonResponse
@@ -50,9 +52,9 @@ final class EstimateGenerationPackageController extends Controller
                 $query->where('status', $validated['status']);
             }
             $perPage = (int) ($validated['per_page'] ?? 20);
-            $summaryPackages = (clone $query)->get();
+            $summary = $this->summaryQuery->summarize($query);
             $packages = $query->paginate($perPage);
-            $payload = $this->presenter->collection($summaryPackages);
+            $payload = ['summary' => $summary];
             $payload['packages'] = collect($packages->items())
                 ->map(fn (EstimateGenerationPackage $package): array => $this->presenter->summary($package))
                 ->values()

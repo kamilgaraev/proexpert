@@ -9,6 +9,45 @@ use PHPUnit\Framework\TestCase;
 
 final class NormativeCandidatePresenterTest extends TestCase
 {
+    public function test_presenter_returns_structured_privacy_safe_candidate_contract(): void
+    {
+        $payload = (new NormativeCandidatePresenter)->present([
+            'norm_id' => 17,
+            'code' => '06-01-001-01',
+            'name' => 'Бетонирование фундамента',
+            'unit' => 'м3',
+            'collection' => ['code' => 'ГЭСН', 'name' => 'ГЭСН 2022', 'norm_type' => 'gesn'],
+            'section' => ['id' => 9, 'code' => '06', 'name' => 'Бетонные работы', 'type' => 'section', 'path' => '06/01'],
+            'confidence' => 0.91,
+            'score' => 78.25,
+            'match_reasons' => ['name_tokens_match'],
+            'warnings' => ['unit_mismatch'],
+            'learning_sources' => [[
+                'example_id' => 991,
+                'work_name' => 'Частный объект клиента',
+                'source_type' => 'confirmed_feedback',
+                'decision_status' => 'accepted',
+                'normative_code' => '06-01-001-01',
+                'is_positive' => true,
+                'score' => 4.5,
+            ]],
+        ]);
+
+        self::assertSame(['code' => 'ГЭСН', 'name' => 'ГЭСН 2022', 'norm_type' => 'gesn'], $payload['collection']);
+        self::assertSame(['id' => 9, 'code' => '06', 'name' => 'Бетонные работы', 'type' => 'section', 'path' => '06/01'], $payload['section']);
+        self::assertSame([[
+            'source_type' => 'confirmed_feedback',
+            'decision_status' => 'accepted',
+            'normative_code' => '06-01-001-01',
+            'is_positive' => true,
+            'score' => 4.5,
+        ]], $payload['learning_sources']);
+        self::assertArrayNotHasKey('example_id', $payload['learning_sources'][0]);
+        self::assertArrayNotHasKey('work_name', $payload['learning_sources'][0]);
+        self::assertSame('retrieval_score', $payload['score_kind']);
+        self::assertNull($payload['rerank']);
+    }
+
     public function test_presenter_returns_scaled_price_preview_for_work_item_quantity(): void
     {
         $candidate = [
@@ -30,7 +69,7 @@ final class NormativeCandidatePresenterTest extends TestCase
             ],
         ];
 
-        $payload = (new NormativeCandidatePresenter())->present($candidate, [
+        $payload = (new NormativeCandidatePresenter)->present($candidate, [
             'unit' => 'м3',
             'quantity' => 500,
         ]);
@@ -67,7 +106,7 @@ final class NormativeCandidatePresenterTest extends TestCase
             ],
         ];
 
-        $payload = (new NormativeCandidatePresenter())->present($candidate, [
+        $payload = (new NormativeCandidatePresenter)->present($candidate, [
             'unit' => 'м3',
             'quantity' => 10,
         ]);
@@ -104,7 +143,7 @@ final class NormativeCandidatePresenterTest extends TestCase
             ],
         ];
 
-        $payload = (new NormativeCandidatePresenter())->present($candidate, [
+        $payload = (new NormativeCandidatePresenter)->present($candidate, [
             'unit' => 'м3',
             'quantity' => 10,
         ]);

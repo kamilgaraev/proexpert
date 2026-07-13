@@ -7,7 +7,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Normatives;
 class NormativeCandidatePresenter
 {
     /**
-     * @param array<string, mixed> $candidate
+     * @param  array<string, mixed>  $candidate
      * @return array<string, mixed>
      */
     public function present(array $candidate, ?array $workItem = null): array
@@ -21,10 +21,12 @@ class NormativeCandidatePresenter
             'code' => $candidate['code'] ?? null,
             'name' => $candidate['name'] ?? null,
             'unit' => $candidate['unit'] ?? null,
-            'collection' => $candidate['collection'] ?? null,
-            'section' => $candidate['section'] ?? null,
+            'collection' => $this->collection($candidate['collection'] ?? null),
+            'section' => $this->section($candidate['section'] ?? null),
             'confidence' => round((float) ($candidate['confidence'] ?? 0), 4),
             'score' => round((float) ($candidate['score'] ?? 0), 4),
+            'score_kind' => 'retrieval_score',
+            'rerank' => $this->rerank($candidate['rerank'] ?? null),
             'resources_count' => $this->resourcesCount($resources),
             'priced_resources_count' => $this->pricedResourcesCount($resources),
             'unpriced_resources_count' => $pricePreview['unpriced_resources_count'],
@@ -39,14 +41,103 @@ class NormativeCandidatePresenter
             'learning_positive_count' => (int) ($candidate['learning_positive_count'] ?? 0),
             'learning_negative_count' => (int) ($candidate['learning_negative_count'] ?? 0),
             'learning_score' => round((float) ($candidate['learning_score'] ?? 0), 2),
-            'learning_sources' => array_values($candidate['learning_sources'] ?? []),
+            'learning_sources' => $this->learningSources($candidate['learning_sources'] ?? []),
         ];
     }
 
     /**
-     * @param array<string, mixed> $candidate
-     * @param array<string, mixed> $resources
-     * @param array<string, mixed>|null $workItem
+     * @return array{status: string, position: int|null, confidence: float|null, explanation_codes: array<int, string>}|null
+     */
+    private function rerank(mixed $value): ?array
+    {
+        if (! is_array($value) || ! is_string($value['status'] ?? null)) {
+            return null;
+        }
+
+        return [
+            'status' => $value['status'],
+            'position' => isset($value['position']) && is_numeric($value['position']) ? (int) $value['position'] : null,
+            'confidence' => isset($value['confidence']) && is_numeric($value['confidence'])
+                ? round((float) $value['confidence'], 4)
+                : null,
+            'explanation_codes' => $this->strings($value['explanation_codes'] ?? []),
+        ];
+    }
+
+    /**
+     * @return array<int, array{source_type: string|null, decision_status: string|null, normative_code: string|null, is_positive: bool, score: float}>
+     */
+    private function learningSources(mixed $value): array
+    {
+        if (! is_array($value)) {
+            return [];
+        }
+
+        $sources = [];
+        foreach ($value as $source) {
+            if (! is_array($source)) {
+                continue;
+            }
+
+            $sources[] = [
+                'source_type' => $this->nullableString($source['source_type'] ?? null),
+                'decision_status' => $this->nullableString($source['decision_status'] ?? null),
+                'normative_code' => $this->nullableString($source['normative_code'] ?? null),
+                'is_positive' => ($source['is_positive'] ?? false) === true,
+                'score' => round((float) ($source['score'] ?? 0), 4),
+            ];
+        }
+
+        return $sources;
+    }
+
+    /** @return array<int, string> */
+    private function strings(mixed $value): array
+    {
+        return is_array($value)
+            ? array_values(array_filter($value, static fn (mixed $item): bool => is_string($item) && $item !== ''))
+            : [];
+    }
+
+    private function nullableString(mixed $value): ?string
+    {
+        return is_string($value) && $value !== '' ? $value : null;
+    }
+
+    /** @return array{code: string|null, name: string|null, norm_type: string|null}|null */
+    private function collection(mixed $value): ?array
+    {
+        if (! is_array($value)) {
+            return null;
+        }
+
+        return [
+            'code' => $this->nullableString($value['code'] ?? null),
+            'name' => $this->nullableString($value['name'] ?? null),
+            'norm_type' => $this->nullableString($value['norm_type'] ?? null),
+        ];
+    }
+
+    /** @return array{id: int|null, code: string|null, name: string|null, type: string|null, path: string|null}|null */
+    private function section(mixed $value): ?array
+    {
+        if (! is_array($value)) {
+            return null;
+        }
+
+        return [
+            'id' => isset($value['id']) && is_numeric($value['id']) ? (int) $value['id'] : null,
+            'code' => $this->nullableString($value['code'] ?? null),
+            'name' => $this->nullableString($value['name'] ?? null),
+            'type' => $this->nullableString($value['type'] ?? null),
+            'path' => $this->nullableString($value['path'] ?? null),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $candidate
+     * @param  array<string, mixed>  $resources
+     * @param  array<string, mixed>|null  $workItem
      * @return array{
      *     unpriced_resources_count: int,
      *     preview_calculable: bool,
@@ -87,7 +178,7 @@ class NormativeCandidatePresenter
     }
 
     /**
-     * @param array<string, mixed> $resources
+     * @param  array<string, mixed>  $resources
      * @return array{materials: float, machinery: float, labor: float, other: float}
      */
     private function resourceTotals(array $resources, float $quantityFactor): array
@@ -101,7 +192,7 @@ class NormativeCandidatePresenter
 
         foreach ($totals as $group => $total) {
             foreach ($resources[$group] ?? [] as $resource) {
-                if (!is_array($resource) || !$this->resourceHasPositivePrice($resource)) {
+                if (! is_array($resource) || ! $this->resourceHasPositivePrice($resource)) {
                     continue;
                 }
 
@@ -114,7 +205,7 @@ class NormativeCandidatePresenter
     }
 
     /**
-     * @param array<string, mixed> $resource
+     * @param  array<string, mixed>  $resource
      */
     private function resourceTotalPrice(array $resource): float
     {
@@ -126,7 +217,7 @@ class NormativeCandidatePresenter
     }
 
     /**
-     * @param array<string, mixed> $resource
+     * @param  array<string, mixed>  $resource
      */
     private function resourceHasPositivePrice(array $resource): bool
     {
@@ -134,7 +225,7 @@ class NormativeCandidatePresenter
     }
 
     /**
-     * @param array<string, mixed> $resources
+     * @param  array<string, mixed>  $resources
      * @return array<int, string>
      */
     private function priceSources(array $resources): array
@@ -143,11 +234,11 @@ class NormativeCandidatePresenter
 
         foreach ($resources as $group) {
             foreach ($group as $resource) {
-                if (!is_array($resource)) {
+                if (! is_array($resource)) {
                     continue;
                 }
 
-                if (!$this->resourceHasPositivePrice($resource)) {
+                if (! $this->resourceHasPositivePrice($resource)) {
                     continue;
                 }
 
@@ -162,7 +253,7 @@ class NormativeCandidatePresenter
     }
 
     /**
-     * @param array<string, mixed> $resources
+     * @param  array<string, mixed>  $resources
      */
     private function resourcesCount(array $resources): int
     {
@@ -173,7 +264,7 @@ class NormativeCandidatePresenter
     }
 
     /**
-     * @param array<string, mixed> $resources
+     * @param  array<string, mixed>  $resources
      */
     private function pricedResourcesCount(array $resources): int
     {
@@ -191,12 +282,11 @@ class NormativeCandidatePresenter
     }
 
     /**
-     * @param mixed $composition
      * @return array<int, string>
      */
     private function normalizeComposition(mixed $composition): array
     {
-        if (!is_array($composition)) {
+        if (! is_array($composition)) {
             return [];
         }
 

@@ -283,9 +283,11 @@ class EstimateValidationService
             $quantityReviewWorkItemsCount,
             $projectFlags
         );
-        $reviewSummary = ($this->reviewItemService ?? new EstimateGenerationReviewItemService(
+        $reviewItemService = $this->reviewItemService ?? new EstimateGenerationReviewItemService(
             new EstimateGenerationPackagePresenter,
-        ))->summaryForDraft($draft);
+        );
+        $reviewSummary = $reviewItemService->summaryForDraft($draft);
+        $draft['quality_summary']['review_queue_items'] = $reviewItemService->projectionForDraft($draft);
         $draft['quality_summary']['content_version'] = ReviewSummarySnapshot::contentVersion($draft);
         $draft['quality_summary']['review_items'] = ReviewSummarySnapshot::create($draft, $reviewSummary);
 

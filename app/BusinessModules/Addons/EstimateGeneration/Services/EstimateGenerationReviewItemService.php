@@ -6,7 +6,6 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
-use Illuminate\Support\Collection;
 
 final class EstimateGenerationReviewItemService
 {
@@ -81,6 +80,7 @@ final class EstimateGenerationReviewItemService
     public function __construct(
         private readonly EstimateGenerationPackagePresenter $packagePresenter,
         private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy,
+        private readonly ?EstimateGenerationReviewQueueQuery $reviewQueueQuery = null,
     ) {}
 
     /**
@@ -88,31 +88,42 @@ final class EstimateGenerationReviewItemService
      */
     public function forSession(EstimateGenerationSession $session, array $filters = []): array
     {
-        $draft = is_array($session->draft_payload) ? $session->draft_payload : [];
-        $items = $this->draftReviewItems($draft);
-        $items = $this->appendPackageReviewItems($session, $items);
+        if ($session->exists) {
+            return ($this->reviewQueueQuery ?? new EstimateGenerationReviewQueueQuery)->paginate($session, $filters);
+        }
 
-        usort($items, static function (array $left, array $right): int {
-            $severityRank = [self::SEVERITY_BLOCKING => 0, self::SEVERITY_WARNING => 1, self::SEVERITY_OPTIONAL => 2];
-
-            return ($severityRank[$left['severity']] ?? 99) <=> ($severityRank[$right['severity']] ?? 99)
-                ?: strnatcasecmp((string) $left['local_estimate_title'], (string) $right['local_estimate_title'])
-                ?: strnatcasecmp((string) $left['section_title'], (string) $right['section_title'])
-                ?: strnatcasecmp((string) data_get($left, 'work_item.name', ''), (string) data_get($right, 'work_item.name', ''));
-        });
-
-        $items = $this->filterItems($items, $filters);
-
-        $summary = $this->summary($items);
         $perPage = max(min((int) ($filters['per_page'] ?? 20), 100), 1);
-        $lastPage = max((int) ceil(count($items) / $perPage), 1);
-        $page = max(min((int) ($filters['page'] ?? 1), $lastPage), 1);
+        $requestedPage = max((int) ($filters['page'] ?? 1), 1);
+        $retainLimit = $requestedPage * $perPage;
+        $retained = [];
+        $summary = $this->emptySummary();
+        $seen = [];
+
+        $draft = is_array($session->draft_payload) ? $session->draft_payload : [];
+        foreach ($this->draftReviewItems($draft) as $item) {
+            $dedupeKey = $this->dedupeKey($item);
+            if (isset($seen[$dedupeKey])) {
+                continue;
+            }
+            $seen[$dedupeKey] = true;
+
+            if (! $this->matchesFilters($item, $filters)) {
+                continue;
+            }
+
+            $this->incrementSummary($summary, $item);
+            $this->retainItem($retained, $item, $retainLimit);
+        }
+
+        $total = $summary['total'];
+        $lastPage = max((int) ceil($total / $perPage), 1);
+        $page = min($requestedPage, $lastPage);
 
         return [
             'summary' => $summary,
-            'items' => array_slice($items, ($page - 1) * $perPage, $perPage),
+            'items' => array_slice($retained, ($page - 1) * $perPage, $perPage),
             'meta' => [
-                'total' => count($items),
+                'total' => $total,
                 'current_page' => $page,
                 'per_page' => $perPage,
                 'last_page' => $lastPage,
@@ -125,32 +136,62 @@ final class EstimateGenerationReviewItemService
      * @param  array<string, mixed>  $filters
      * @return array<int, array<string, mixed>>
      */
-    private function filterItems(array $items, array $filters): array
+    private function matchesFilters(array $item, array $filters): bool
     {
         $severity = is_string($filters['severity'] ?? null) ? $filters['severity'] : null;
         $requiredAction = is_string($filters['required_action'] ?? null) ? $filters['required_action'] : null;
         $search = is_string($filters['search'] ?? null) ? trim(mb_strtolower($filters['search'])) : '';
 
-        return array_values(array_filter($items, static function (array $item) use ($severity, $requiredAction, $search): bool {
-            if ($severity !== null && ($item['severity'] ?? null) !== $severity) {
-                return false;
-            }
-            if ($requiredAction !== null && ($item['required_action'] ?? null) !== $requiredAction) {
-                return false;
-            }
-            if ($search === '') {
-                return true;
-            }
+        if ($severity !== null && ($item['severity'] ?? null) !== $severity) {
+            return false;
+        }
+        if ($requiredAction !== null && ($item['required_action'] ?? null) !== $requiredAction) {
+            return false;
+        }
+        if ($search === '') {
+            return true;
+        }
 
-            $haystack = mb_strtolower(implode(' ', [
-                (string) ($item['local_estimate_title'] ?? ''),
-                (string) ($item['section_title'] ?? ''),
-                (string) ($item['work_item_key'] ?? ''),
-                (string) data_get($item, 'work_item.name', ''),
-            ]));
+        $haystack = mb_strtolower(implode(' ', [
+            (string) ($item['local_estimate_title'] ?? ''),
+            (string) ($item['section_title'] ?? ''),
+            (string) ($item['work_item_key'] ?? ''),
+            (string) data_get($item, 'work_item.name', ''),
+        ]));
 
-            return str_contains($haystack, $search);
-        }));
+        return str_contains($haystack, $search);
+    }
+
+    private function compareItems(array $left, array $right): int
+    {
+        $severityRank = [self::SEVERITY_BLOCKING => 0, self::SEVERITY_WARNING => 1, self::SEVERITY_OPTIONAL => 2];
+
+        return ($severityRank[$left['severity']] ?? 99) <=> ($severityRank[$right['severity']] ?? 99)
+            ?: strnatcasecmp((string) $left['local_estimate_title'], (string) $right['local_estimate_title'])
+            ?: strnatcasecmp((string) $left['section_title'], (string) $right['section_title'])
+            ?: strnatcasecmp((string) data_get($left, 'work_item.name', ''), (string) data_get($right, 'work_item.name', ''))
+            ?: strcmp((string) $left['key'], (string) $right['key']);
+    }
+
+    /** @param array<int, array<string, mixed>> $retained @param array<string, mixed> $item */
+    private function retainItem(array &$retained, array $item, int $limit): void
+    {
+        $low = 0;
+        $high = count($retained);
+
+        while ($low < $high) {
+            $middle = intdiv($low + $high, 2);
+            if ($this->compareItems($retained[$middle], $item) <= 0) {
+                $low = $middle + 1;
+            } else {
+                $high = $middle;
+            }
+        }
+
+        array_splice($retained, $low, 0, [$item]);
+        if (count($retained) > $limit) {
+            array_pop($retained);
+        }
     }
 
     /**
@@ -160,6 +201,15 @@ final class EstimateGenerationReviewItemService
     public function summaryForDraft(array $draft): array
     {
         return $this->summary($this->draftReviewItems($draft));
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    public function projectionForDraft(array $draft): array
+    {
+        $items = $this->draftReviewItems($draft);
+        usort($items, $this->compareItems(...));
+
+        return $items;
     }
 
     /**
@@ -195,101 +245,6 @@ final class EstimateGenerationReviewItemService
         }
 
         return $items;
-    }
-
-    /**
-     * @param  array<int, array<string, mixed>>  $items
-     * @return array<int, array<string, mixed>>
-     */
-    private function appendPackageReviewItems(EstimateGenerationSession $session, array $items): array
-    {
-        $itemsByKey = [];
-
-        foreach ($items as $item) {
-            $itemsByKey[$this->dedupeKey($item)] = $item;
-        }
-
-        foreach ($this->sessionPackages($session) as $package) {
-            foreach ($package->items as $packageItem) {
-                $workItem = $this->packageWorkItem($packageItem);
-                $reviewItem = $this->reviewItem(
-                    [
-                        'key' => (string) $package->key,
-                        'title' => (string) $package->title,
-                        'scope_type' => (string) $package->scope_type,
-                        'source_refs' => $package->source_refs ?? [],
-                    ],
-                    [
-                        'key' => (string) $package->key.':review',
-                        'title' => (string) $package->title,
-                        'source_refs' => $package->source_refs ?? [],
-                    ],
-                    $workItem
-                );
-
-                if ($reviewItem === null) {
-                    continue;
-                }
-
-                $itemsByKey[$this->dedupeKey($reviewItem)] ??= $reviewItem;
-            }
-        }
-
-        return array_values($itemsByKey);
-    }
-
-    /**
-     * @return Collection<int, \App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage>
-     */
-    private function sessionPackages(EstimateGenerationSession $session): Collection
-    {
-        if ($session->relationLoaded('packages')) {
-            $packages = $session->getRelation('packages');
-
-            return $packages instanceof Collection ? $packages : collect();
-        }
-
-        if (! $session->exists) {
-            return collect();
-        }
-
-        return $session->packages()
-            ->with('items')
-            ->get();
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function packageWorkItem(EstimateGenerationPackageItem $packageItem): array
-    {
-        $workItem = $this->packagePresenter->item($packageItem);
-        $quantityBasis = $workItem['quantity_basis'] ?? '';
-
-        if (is_array($quantityBasis)) {
-            $workItem['quantity_basis'] = (string) ($quantityBasis['description'] ?? $quantityBasis['formula'] ?? '');
-            $workItem['quantity_formula'] = (string) ($quantityBasis['formula'] ?? '');
-        } else {
-            $workItem['quantity_basis'] = (string) $quantityBasis;
-            $workItem['quantity_formula'] = (string) ($workItem['quantity_formula'] ?? '');
-        }
-
-        $resources = is_array($workItem['resources'] ?? null) ? $workItem['resources'] : [];
-        $workItem['materials'] = is_array($resources['materials'] ?? null) ? array_values($resources['materials']) : [];
-        $workItem['labor'] = is_array($resources['labor'] ?? null) ? array_values($resources['labor']) : [];
-        $workItem['machinery'] = is_array($resources['machinery'] ?? null) ? array_values($resources['machinery']) : [];
-        $workItem['other_resources'] = is_array($resources['other'] ?? null) ? array_values($resources['other']) : [];
-        $workItem['description'] = (string) ($workItem['description'] ?? '');
-        $workItem['work_category'] = (string) ($workItem['work_category'] ?? 'custom');
-        $workItem['work_cost'] = (float) ($workItem['direct_cost'] ?? 0);
-        $workItem['materials_cost'] = (float) ($workItem['materials_cost'] ?? 0);
-        $workItem['machinery_cost'] = (float) ($workItem['machinery_cost'] ?? 0);
-        $workItem['labor_cost'] = (float) ($workItem['labor_cost'] ?? 0);
-        $workItem['validation_flags'] = $this->arrayValues($workItem['validation_flags'] ?? $workItem['flags'] ?? []);
-        $workItem['source_refs'] = $this->sourceRefs($workItem);
-        $workItem['confidence'] = (float) ($workItem['confidence'] ?? 0.7);
-
-        return $workItem;
     }
 
     /**
@@ -408,8 +363,20 @@ final class EstimateGenerationReviewItemService
      */
     private function summary(array $items): array
     {
-        $summary = [
-            'total' => count($items),
+        $summary = $this->emptySummary();
+
+        foreach ($items as $item) {
+            $this->incrementSummary($summary, $item);
+        }
+
+        return $summary;
+    }
+
+    /** @return array<string, int> */
+    private function emptySummary(): array
+    {
+        return [
+            'total' => 0,
             self::SEVERITY_BLOCKING => 0,
             self::SEVERITY_WARNING => 0,
             self::SEVERITY_OPTIONAL => 0,
@@ -420,21 +387,22 @@ final class EstimateGenerationReviewItemService
             self::ACTION_RESOLVE_GENERIC_WORK => 0,
             self::ACTION_CHECK_PRICE => 0,
         ];
+    }
 
-        foreach ($items as $item) {
-            $severity = (string) ($item['severity'] ?? '');
-            $action = (string) ($item['required_action'] ?? '');
+    /** @param array<string, int> $summary @param array<string, mixed> $item */
+    private function incrementSummary(array &$summary, array $item): void
+    {
+        $summary['total']++;
+        $severity = (string) ($item['severity'] ?? '');
+        $action = (string) ($item['required_action'] ?? '');
 
-            if (array_key_exists($severity, $summary)) {
-                $summary[$severity]++;
-            }
-
-            if (array_key_exists($action, $summary)) {
-                $summary[$action]++;
-            }
+        if (array_key_exists($severity, $summary)) {
+            $summary[$severity]++;
         }
 
-        return $summary;
+        if (array_key_exists($action, $summary)) {
+            $summary[$action]++;
+        }
     }
 
     /**

@@ -4,12 +4,42 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration;
 
-use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationNoAirWorkItemPolicy;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationReviewQueueQuery;
+use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateValidationService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\ReviewSummarySnapshot;
 use PHPUnit\Framework\TestCase;
 
 final class EstimateValidationServiceTest extends TestCase
 {
+    public function test_validation_refreshes_the_canonical_review_projection_and_freshness_fence(): void
+    {
+        $draft = $this->service()->validate($this->draft([[
+            'key' => 'work-1',
+            'item_type' => 'priced_work',
+            'name' => 'Черновое название',
+            'pricing_status' => 'not_calculated',
+            'pricing_blocker' => 'normative_required',
+            'validation_flags' => ['safe_norm_required', 'pricing_not_calculated'],
+            'normative_match' => ['status' => 'candidate'],
+        ]]));
+        $session = new EstimateGenerationSession(['draft_payload' => $draft]);
+        $query = new EstimateGenerationReviewQueueQuery;
+
+        self::assertTrue($query->hasFreshProjection($session));
+        self::assertSame('Черновое название', $draft['quality_summary']['review_queue_items'][0]['work_item']['name']);
+        $firstVersion = $draft['quality_summary']['review_items']['source_version'];
+
+        $draft['local_estimates'][0]['sections'][0]['work_items'][0]['name'] = 'Актуальное название';
+        self::assertNotSame($firstVersion, ReviewSummarySnapshot::contentVersion($draft));
+
+        $refreshed = $this->service()->validate($draft);
+        self::assertTrue($query->hasFreshProjection(new EstimateGenerationSession(['draft_payload' => $refreshed])));
+        self::assertSame('Актуальное название', $refreshed['quality_summary']['review_queue_items'][0]['work_item']['name']);
+        self::assertNotSame($firstVersion, $refreshed['quality_summary']['review_items']['source_version']);
+    }
+
     public function test_zero_price_priced_work_is_marked_not_calculated(): void
     {
         $draft = $this->service()->validate($this->draft([
@@ -382,7 +412,7 @@ final class EstimateValidationServiceTest extends TestCase
     }
 
     /**
-     * @param array<int, array<string, mixed>> $workItems
+     * @param  array<int, array<string, mixed>>  $workItems
      * @return array<string, mixed>
      */
     private function draft(array $workItems): array
@@ -408,6 +438,6 @@ final class EstimateValidationServiceTest extends TestCase
 
     private function service(): EstimateValidationService
     {
-        return new EstimateValidationService();
+        return new EstimateValidationService;
     }
 }

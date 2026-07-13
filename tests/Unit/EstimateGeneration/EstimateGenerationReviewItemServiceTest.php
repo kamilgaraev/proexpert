@@ -92,7 +92,7 @@ final class EstimateGenerationReviewItemServiceTest extends TestCase
         self::assertSame(1, $result['summary']['check_price']);
         self::assertSame(1, $result['summary']['review_norm']);
         self::assertSame(
-            ['quantity-review', 'duplicate-work', 'select-norm', 'check-price', 'optional-alternative'],
+            ['check-price', 'duplicate-work', 'quantity-review', 'select-norm', 'optional-alternative'],
             array_column($result['items'], 'work_item_key')
         );
 
@@ -250,7 +250,7 @@ final class EstimateGenerationReviewItemServiceTest extends TestCase
         self::assertContains(EstimateGenerationNoAirWorkItemPolicy::NO_AIR_FLAG, $result['items'][0]['work_item']['validation_flags']);
     }
 
-    public function test_uses_package_items_as_fallback_without_duplicating_draft_items(): void
+    public function test_uses_canonical_draft_projection_without_package_fallback(): void
     {
         $package = new EstimateGenerationPackage([
             'key' => 'local-1',
@@ -324,8 +324,8 @@ final class EstimateGenerationReviewItemServiceTest extends TestCase
 
         $result = $this->service()->forSession($session);
 
-        self::assertSame(2, $result['summary']['total']);
-        self::assertSame(['select-norm', 'package-only'], array_column($result['items'], 'work_item_key'));
+        self::assertSame(1, $result['summary']['total']);
+        self::assertSame(['select-norm'], array_column($result['items'], 'work_item_key'));
 
         $itemsByKey = [];
         foreach ($result['items'] as $item) {
@@ -333,9 +333,6 @@ final class EstimateGenerationReviewItemServiceTest extends TestCase
         }
 
         self::assertSame('Draft row', $itemsByKey['select-norm']['work_item']['name']);
-        self::assertSame('Package estimate', $itemsByKey['package-only']['local_estimate_title']);
-        self::assertSame(1, $itemsByKey['package-only']['candidates_count']);
-        self::assertSame('select_norm', $itemsByKey['package-only']['required_action']);
     }
 
     public function test_returns_a_bounded_review_page_with_summary_for_the_full_filtered_queue(): void
@@ -364,6 +361,38 @@ final class EstimateGenerationReviewItemServiceTest extends TestCase
             'per_page' => 2,
             'last_page' => 3,
         ], $result['meta']);
+    }
+
+    public function test_large_queue_contract_uses_query_side_page_and_factual_summary(): void
+    {
+        $workItems = [];
+        foreach (range(1, 1000) as $index) {
+            $workItems[] = $this->workItem([
+                'key' => sprintf('review-%04d', $index),
+                'name' => sprintf('Review %04d', $index),
+                'pricing_status' => 'not_calculated',
+                'pricing_blocker' => 'normative_required',
+                'validation_flags' => ['safe_norm_required', 'pricing_not_calculated'],
+                'normative_match' => ['status' => 'candidate'],
+            ]);
+        }
+
+        $result = $this->service()->forSession(new EstimateGenerationSession([
+            'draft_payload' => $this->draft($workItems),
+        ]), ['page' => 25, 'per_page' => 20]);
+
+        self::assertCount(20, $result['items']);
+        self::assertSame(1000, $result['summary']['total']);
+        self::assertSame(1000, $result['meta']['total']);
+        self::assertSame('review-0481', $result['items'][0]['work_item_key']);
+
+        $source = file_get_contents(dirname(__DIR__, 3).'/app/BusinessModules/Addons/EstimateGeneration/Services/EstimateGenerationReviewQueueQuery.php');
+        self::assertIsString($source);
+        self::assertStringContainsString('jsonb_array_elements', $source);
+        self::assertStringContainsString('DISTINCT ON', $source);
+        self::assertStringContainsString('LIMIT ? OFFSET ?', $source);
+        self::assertStringNotContainsString('->cursor()', $source);
+        self::assertStringNotContainsString('->get()', $source);
     }
 
     private function service(): EstimateGenerationReviewItemService
