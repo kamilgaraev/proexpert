@@ -43,7 +43,17 @@ class ResourceAssemblyService
             || (string) $regionalContext['dataset_version'] !== $decision->datasetVersion) {
             throw new \InvalidArgumentException('accepted_normative_dataset_mismatch');
         }
-        $match = $decision->legacyMatch();
+        $selected = [
+            'key' => $decision->candidateId, 'norm_id' => $decision->normativeId, 'code' => $decision->code,
+            'name' => $decision->name, 'unit' => $decision->unit, 'collection' => $decision->collection,
+            'section' => $decision->section, 'score' => $decision->score, 'confidence' => $decision->confidence,
+            'match_reasons' => $decision->matchReasons, 'warnings' => $decision->warnings,
+            'work_composition' => $decision->workComposition, 'resources' => $decision->resources,
+        ];
+        $match = [
+            'version' => ['source_type' => 'fsnb', 'version_key' => $decision->datasetVersion],
+            'price_version' => null, 'selected' => $selected, 'candidates' => [$selected],
+        ];
         $match['price_version'] = [
             'source_type' => 'regional_catalog',
             'version_key' => (string) $regionalContext['price_version'],
@@ -348,7 +358,7 @@ class ResourceAssemblyService
         }
 
         $decisionPayload = $decision->toArray();
-        $accepted = AcceptedNormativeDecisionData::fromLegacyMatch($match, $decisionPayload);
+        $accepted = AcceptedNormativeDecisionData::fromAcceptedCatalogMatch($match, $decisionPayload);
         $workItem = $this->assembleAcceptedDecision($workItem, $accepted, $match, $decisionPayload, $selectedByUser);
         $flags = $this->acceptedFlags($workItem['validation_flags'] ?? []);
 

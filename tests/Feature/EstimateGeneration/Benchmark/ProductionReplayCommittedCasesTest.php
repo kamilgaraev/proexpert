@@ -38,7 +38,6 @@ final class ProductionReplayCommittedCasesTest extends TestCase
             new LocalBenchmarkObjectReader,
             'repository-production-replay:v1',
         );
-
         self::assertSame(8, $report->attemptedCount);
         self::assertSame(8, $report->succeededCount);
         self::assertSame(0, $report->failedCount);

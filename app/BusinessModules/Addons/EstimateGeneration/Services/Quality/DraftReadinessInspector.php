@@ -39,11 +39,11 @@ final class DraftReadinessInspector
         }
 
         foreach ($this->workItems($draft) as $item) {
-            $quantity = is_array($item['quantity'] ?? null) ? $item['quantity'] : [];
+            $quantity = is_array($item['quantity_evidence'] ?? null) ? $item['quantity_evidence'] : [];
             if (($quantity['source'] ?? null) === 'estimated' || ($item['quantity_source'] ?? null) === 'estimated') {
                 $codes[] = 'estimated_quantity_unconfirmed';
             }
-            $itemEvidence = $quantity['evidence_ids'] ?? $item['evidence_ids'] ?? null;
+            $itemEvidence = $quantity['evidence_ids'] ?? null;
             if (! is_array($itemEvidence) || $itemEvidence === []) {
                 $codes[] = 'evidence_missing';
             }

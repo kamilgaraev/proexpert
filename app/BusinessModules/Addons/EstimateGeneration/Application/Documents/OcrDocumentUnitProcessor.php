@@ -51,6 +51,27 @@ final readonly class OcrDocumentUnitProcessor implements DocumentUnitProcessor
             );
         }
 
+        if (($locator['content_type'] ?? null) === 'application/vnd.most.pdf-page+json') {
+            $payload = json_decode($content, true, 64, JSON_THROW_ON_ERROR);
+            if (! is_array($payload) || ($payload['schema_version'] ?? null) !== 1
+                || ! is_array($payload['geometry'] ?? null) || ! is_array($payload['provenance'] ?? null)) {
+                throw new DocumentUnitProcessingException('pdf_page_geometry_contract_invalid');
+            }
+
+            return new DocumentUnitOutput(
+                version: hash('sha256', $content),
+                text: (string) ($payload['text'] ?? ''),
+                confidence: ($payload['geometry']['vector_elements'] ?? []) !== [] ? 1.0 : 0.8,
+                normalizedPayload: $payload,
+                width: is_int($payload['geometry']['width'] ?? null) ? $payload['geometry']['width'] : null,
+                height: is_int($payload['geometry']['height'] ?? null) ? $payload['geometry']['height'] : null,
+                rotation: is_int($payload['geometry']['rotation'] ?? null) ? $payload['geometry']['rotation'] : null,
+                unitType: $context->type,
+                unitIndex: $context->index,
+                sourceVersion: $context->sourceVersion,
+            );
+        }
+
         $correlationId = AiOperationContext::deterministicId(implode('|', [
             'unit', $context->sessionId, $context->documentId, $context->unitId, $context->sourceVersion,
             $context->claimToken, $context->unitAttemptCount,

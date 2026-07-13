@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages;
 
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\AcceptedNormativeDecisionData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeMatchingWorkflow;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeWorkIntentFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
@@ -72,7 +73,7 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                         'heartbeat_callback' => $heartbeat === null ? null : static fn () => self::renewLease($heartbeat),
                     ];
                     if (! $this->requiresNormative($workItem)) {
-                        $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $this->matcher->enrich([$workItem], $decisionContext)[0];
+                        $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $workItem;
 
                         continue;
                     }
@@ -94,9 +95,26 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
 
                         continue;
                     }
-                    $selected = $result->selectedCandidateId();
-                    $enriched = $this->matcher->enrich([$workItem], [...$decisionContext, 'selected_norm_id' => $selected, 'normative_dataset_version' => $datasetVersion]);
-                    $enriched[0]['normative_retrieval'] = [
+                    $catalogCandidates = is_array($pin['catalog_candidates'] ?? null) ? $pin['catalog_candidates'] : [];
+                    $catalogCandidate = null;
+                    foreach ($catalogCandidates as $candidate) {
+                        if (is_array($candidate) && ($candidate['candidate_id'] ?? null) === $result->selectedCandidateId()) {
+                            $catalogCandidate = $candidate;
+                            break;
+                        }
+                    }
+                    if ($catalogCandidate === null) {
+                        $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $this->blocked($workItem, 'review_required', 'normative_catalog_content_not_pinned');
+
+                        continue;
+                    }
+                    $regionalPin = is_array($pin['regional_context'] ?? null) ? $pin['regional_context'] : $regionalContext;
+                    $enriched = $this->matcher->assembleFromDecision(
+                        $workItem,
+                        AcceptedNormativeDecisionData::fromWorkflowResult($result, $catalogCandidate),
+                        $regionalPin,
+                    );
+                    $enriched['normative_retrieval'] = [
                         'status' => $result->status,
                         'dataset_version' => $datasetVersion,
                         'scoring_version' => $result->candidateSet->scoringVersion,
@@ -105,7 +123,7 @@ final readonly class MatchNormativesStage implements LeaseAwarePipelineStage
                         'reranker_version' => $result->rerankResult?->schemaVersion,
                         'blocking_issues' => [],
                     ];
-                    $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $enriched[0];
+                    $data['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $enriched;
                 }
             }
         }

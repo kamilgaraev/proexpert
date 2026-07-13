@@ -27,7 +27,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Evidence
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\LaravelDocumentSourceReplacementTransaction;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\LaravelEstimateGenerationUnitJobDispatcher;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\MetadataDocumentUnitDetector;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\OcrDocumentUnitProcessor;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProductionDocumentUnitProcessor;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\S3DocumentSourceManifestStorage;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\S3DocumentUnitContentReader;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Geometry\EloquentGeometryRegenerationIntentStore;
@@ -41,6 +41,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\LaravelEs
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\RetryableEstimateGenerationSessionRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Sessions\SessionOperationalSnapshotBuilder;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkCorpusLoader;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkGate;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkAdapterRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseExecutor;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkImmutableObjectStore;
@@ -319,6 +320,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             acceptanceLoader: $app->make(AcceptanceBenchmarkCorpusLoader::class),
             registeredManifests: $app->make(RegisteredBenchmarkManifestRepository::class),
             reportOutput: $app->make(BenchmarkReportOutputStore::class),
+            acceptanceGate: $app->make(AcceptanceBenchmarkGate::class),
         ));
 
         $this->app->singleton(DocumentParsingService::class);
@@ -330,7 +332,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(EstimateGenerationUnitJobDispatcher::class, LaravelEstimateGenerationUnitJobDispatcher::class);
         $this->app->singleton(DocumentUnitExhaustionHandler::class, EloquentDocumentUnitExhaustionHandler::class);
         $this->app->singleton(DocumentUnitContentReader::class, S3DocumentUnitContentReader::class);
-        $this->app->singleton(DocumentUnitProcessor::class, OcrDocumentUnitProcessor::class);
+        $this->app->singleton(DocumentUnitProcessor::class, ProductionDocumentUnitProcessor::class);
         $this->app->singleton(DocumentUnitAggregateReconciler::class, EloquentDocumentUnitAggregateReconciler::class);
         $this->app->singleton(DocumentSourceReplacementTransaction::class, LaravelDocumentSourceReplacementTransaction::class);
         $this->app->singleton(EvidenceRepository::class, EloquentEvidenceRepository::class);

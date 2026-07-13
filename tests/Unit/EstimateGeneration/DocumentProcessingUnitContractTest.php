@@ -6,7 +6,6 @@ namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ArtifactDocumentUnitDetector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DispatchDocumentProcessingUnits;
-use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentManifestNeedsReview;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitClaimStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentProcessingUnitStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\DocumentSourceManifestStorage;
@@ -33,6 +32,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryExtractor;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryWorker;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\PdfTextLayerExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\SpreadsheetDocumentExtractor;
 use DateTimeImmutable;
@@ -347,20 +348,33 @@ final class DocumentProcessingUnitContractTest extends TestCase
                 return new OcrRecognitionResult('sheet', 'v1', [new OcrPageResult(1, 'sheet')]);
             }
         };
+        $geometry = new PdfGeometryExtractor(new class extends PdfGeometryWorker
+        {
+            public function extract(string $content, ?string $filename = null): array
+            {
+                return ['provider' => 'test', 'model' => 'geometry_v1', 'pages' => array_map(static fn (int $page): array => [
+                    'page_number' => $page, 'width' => 100, 'height' => 100, 'rotation' => 0,
+                    'text_blocks' => [['text' => 'page '.$page]], 'vector_elements' => [],
+                    'visual_metrics' => [], 'page_role' => 'plan', 'signals' => [],
+                    'preview' => ['content_base64' => base64_encode('png-pdf-source'), 'sha256' => hash('sha256', 'png-pdf-source')],
+                ], range(1, 200)), 'metadata' => []];
+            }
+        });
         $document = new EstimateGenerationDocument(['filename' => 'house.pdf', 'mime_type' => 'application/pdf', 'page_count' => 200]);
-        $detector = new ArtifactDocumentUnitDetector($storage, $pdf, $spreadsheet, new MetadataDocumentUnitDetector);
+        $detector = new ArtifactDocumentUnitDetector($storage, $pdf, $geometry, $spreadsheet, new MetadataDocumentUnitDetector);
 
         $units = $detector->detect($document, 'sha256:source');
 
         self::assertCount(200, $units);
         self::assertSame(1, $storage->reads);
-        self::assertCount(200, $storage->paths);
+        self::assertCount(400, $storage->paths);
         self::assertSame(range(1, 200), array_column($units, 'index'));
-        self::assertSame('org-10/manifest/pdf_page-200.txt', $units[199]->locator['artifact_path']);
+        self::assertSame('org-10/manifest/sketch-200.txt', $units[199]->locator['artifact_path']);
+        self::assertSame('org-10/manifest/pdf_page-200.txt', $units[199]->locator['geometry_artifact_path']);
     }
 
     #[Test]
-    public function scanned_pdf_without_text_manifest_requires_review_before_dispatch(): void
+    public function scanned_pdf_is_rendered_to_bounded_page_artifact_before_dispatch(): void
     {
         $storage = new class implements DocumentSourceManifestStorage
         {
@@ -388,17 +402,27 @@ final class DocumentProcessingUnitContractTest extends TestCase
             }
         };
         $spreadsheet = new class extends SpreadsheetDocumentExtractor {};
-        $detector = new ArtifactDocumentUnitDetector($storage, $pdf, $spreadsheet, new MetadataDocumentUnitDetector);
+        $geometry = new PdfGeometryExtractor(new class extends PdfGeometryWorker
+        {
+            public function extract(string $content, ?string $filename = null): array
+            {
+                return ['provider' => 'test', 'model' => 'geometry_v1', 'pages' => [[
+                    'page_number' => 1, 'width' => 100, 'height' => 100, 'rotation' => 0,
+                    'text_blocks' => [], 'vector_elements' => [], 'visual_metrics' => [],
+                    'page_role' => 'empty', 'signals' => [],
+                    'preview' => ['content_base64' => base64_encode('rendered-png'), 'sha256' => hash('sha256', 'rendered-png')],
+                ]], 'metadata' => []];
+            }
+        });
+        $detector = new ArtifactDocumentUnitDetector($storage, $pdf, $geometry, $spreadsheet, new MetadataDocumentUnitDetector);
         $document = new EstimateGenerationDocument(['filename' => 'scan.pdf', 'mime_type' => 'application/pdf', 'page_count' => 30]);
 
-        try {
-            $detector->detect($document, 'sha256:scan');
-            self::fail('Scanned PDF must require a page renderer.');
-        } catch (DocumentManifestNeedsReview $error) {
-            self::assertSame('pdf_page_renderer_required', $error->safeCode);
-        }
+        $units = $detector->detect($document, 'sha256:scan');
 
-        self::assertSame(0, $storage->writes);
+        self::assertCount(1, $units);
+        self::assertSame('image/png', $units[0]->locator['content_type']);
+        self::assertSame('sha256:'.hash('sha256', 'rendered-png'), $units[0]->locator['artifact_source_version']);
+        self::assertSame(2, $storage->writes);
     }
 
     #[Test]

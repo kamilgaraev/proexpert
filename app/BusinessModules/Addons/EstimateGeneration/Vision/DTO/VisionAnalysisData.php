@@ -134,6 +134,23 @@ final readonly class VisionAnalysisData
         return $this;
     }
 
+    public function toArray(): array
+    {
+        return [
+            'schema_version' => self::SCHEMA_VERSION,
+            'sheet_type' => $this->sheetType,
+            'evidence' => array_map(static fn (VisionEvidenceData $item): array => $item->toArray(), $this->evidence),
+            'elements' => array_map(static fn (VisionElementData $item): array => $item->toArray(), $this->elements),
+            'scale_candidates' => array_map(static fn (VisionScaleCandidateData $item): array => $item->toArray(), $this->scaleCandidates),
+            'warnings' => $this->warnings,
+            'provider' => $this->provider,
+            'requested_model' => $this->requestedModel,
+            'reported_model' => $this->reportedModel,
+            'model_version' => $this->modelVersion,
+            'usage' => ['status' => $this->usageStatus, 'input_tokens' => $this->inputTokens, 'output_tokens' => $this->outputTokens],
+        ];
+    }
+
     /** @param array<string, mixed> $data @param list<string> $keys */
     private static function hasExactKeys(array $data, array $keys): bool
     {

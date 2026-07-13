@@ -68,7 +68,7 @@ final readonly class PipelineStagePayload
             throw new InvalidArgumentException('Pipeline generation mode is invalid.');
         }
         self::assertList($data['local_estimates']);
-        self::assertQuantityEvidenceDescriptors($data['local_estimates']);
+        self::assertCanonicalQuantityEvidence($data['local_estimates']);
     }
 
     private static function assertExtractedQuantities(array $data): void
@@ -77,27 +77,19 @@ final readonly class PipelineStagePayload
         self::assertArray($data['building_quantities']);
     }
 
-    private static function assertQuantityEvidenceDescriptors(array $localEstimates): void
+    private static function assertCanonicalQuantityEvidence(array $localEstimates): void
     {
-        $keys = ['fingerprint', 'quantity', 'unit', 'locator', 'source_type', 'source_ref', 'source_version', 'producer_name', 'producer_version', 'confidence', 'work_code'];
         foreach ($localEstimates as $localEstimate) {
             foreach (($localEstimate['sections'] ?? []) as $section) {
                 foreach (($section['work_items'] ?? []) as $workItem) {
-                    $descriptor = $workItem['quantity_evidence_descriptor'] ?? null;
-                    if ($descriptor === null) {
+                    $evidence = $workItem['quantity_evidence'] ?? null;
+                    if ($evidence === null) {
                         continue;
                     }
-                    if (! is_array($descriptor) || array_keys($descriptor) !== $keys
-                        || preg_match('/^[a-f0-9]{64}$/D', (string) $descriptor['fingerprint']) !== 1
-                        || preg_match('/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/D', (string) $descriptor['quantity']) !== 1
-                        || ! is_string($descriptor['unit']) || ! is_array($descriptor['locator'])
-                        || ! is_string($descriptor['source_type']) || ! is_string($descriptor['source_ref'])
-                        || ! is_string($descriptor['source_version']) || ! is_string($descriptor['producer_name'])
-                        || ! is_string($descriptor['producer_version'])
-                        || preg_match('/^(?:0|1)\.[0-9]{6}$/D', (string) $descriptor['confidence']) !== 1
-                        || ! is_string($descriptor['work_code'])) {
-                        throw new InvalidArgumentException('Pipeline quantity evidence descriptor is invalid.');
+                    if (! is_array($evidence)) {
+                        throw new InvalidArgumentException('Pipeline canonical quantity evidence is invalid.');
                     }
+                    \App\BusinessModules\Addons\EstimateGeneration\Quantities\QuantityData::fromArray($evidence);
                 }
             }
         }

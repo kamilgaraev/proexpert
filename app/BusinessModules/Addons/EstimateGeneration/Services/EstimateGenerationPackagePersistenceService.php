@@ -290,37 +290,6 @@ class EstimateGenerationPackagePersistenceService
         $evidenceId = $this->positiveInt($workItem['quantity_evidence_id'] ?? null);
         $evidenceFingerprint = $workItem['quantity_evidence_fingerprint'] ?? null;
         if ($evidenceId === null || ! is_string($evidenceFingerprint)) {
-            $descriptor = is_array($workItem['quantity_evidence_descriptor'] ?? null)
-                ? $workItem['quantity_evidence_descriptor']
-                : [];
-            $descriptorFingerprint = $descriptor['fingerprint'] ?? null;
-            $expectedLocator = 'item:'.hash('sha256', $logicalKey);
-            if (is_string($descriptorFingerprint)
-                && ($descriptor['locator']['item_key'] ?? null) === $expectedLocator) {
-                $accepted = DB::table('estimate_generation_accepted_evidence as accepted')
-                    ->join('estimate_generation_pipeline_checkpoints as checkpoint', 'checkpoint.id', '=', 'accepted.checkpoint_id')
-                    ->join('estimate_generation_evidence as evidence', 'evidence.id', '=', 'accepted.evidence_id')
-                    ->where('checkpoint.organization_id', $session->organization_id)
-                    ->where('checkpoint.project_id', $session->project_id)
-                    ->where('checkpoint.session_id', $session->id)
-                    ->where('evidence.organization_id', $session->organization_id)
-                    ->where('evidence.project_id', $session->project_id)
-                    ->where('evidence.session_id', $session->id)
-                    ->whereNull('evidence.invalidated_at')
-                    ->where('accepted.descriptor_fingerprint', $descriptorFingerprint)
-                    ->whereColumn('evidence.fingerprint', 'accepted.descriptor_fingerprint')
-                    ->where('checkpoint.stage', 'plan_work_items')
-                    ->where('checkpoint.status', 'completed')
-                    ->whereColumn('checkpoint.output_version', 'accepted.output_version')
-                    ->orderByDesc('accepted.checkpoint_id')
-                    ->first(['accepted.evidence_id', 'accepted.descriptor_fingerprint']);
-                if ($accepted !== null) {
-                    $evidenceId = (int) $accepted->evidence_id;
-                    $evidenceFingerprint = (string) $accepted->descriptor_fingerprint;
-                }
-            }
-        }
-        if ($evidenceId === null || ! is_string($evidenceFingerprint)) {
             return null;
         }
         $evidence = app(EvidenceRepository::class)->node((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $evidenceId);

@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Pipeline;
 
-use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages\PlanWorkItemsStage;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -12,25 +11,18 @@ use PHPUnit\Framework\TestCase;
 final class AcceptedQuantityEvidenceContractTest extends TestCase
 {
     #[Test]
-    public function planning_stage_is_pure_and_accepted_materialization_is_checkpoint_bound(): void
+    public function planning_consumes_only_canonical_quantity_output(): void
     {
         $root = dirname(__DIR__, 4);
         $stage = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Pipeline/Stages/PlanWorkItemsStage.php');
-        $materializer = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Pipeline/AcceptedQuantityEvidenceMaterializer.php');
-        $store = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Pipeline/EloquentPipelineCheckpointStore.php');
-        $persistence = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Services/EstimateGenerationPackagePersistenceService.php');
 
         self::assertStringNotContainsString('EvidenceRepository', $stage);
         self::assertStringNotContainsString('insertOrGet', $stage);
-        self::assertStringContainsString("'quantity_evidence_descriptor'", $stage);
-        self::assertStringContainsString("'checkpoint_id' => \$claim->checkpointId", $materializer);
-        self::assertStringContainsString("'output_version' => \$result->outputVersion", $materializer);
-        self::assertMatchesRegularExpression(
-            '/\$completed\s*=.*?->update\(\[.*?if \(! \$completed\).*?\$this->completionHook->beforeComplete/s',
-            $store,
-        );
-        self::assertStringContainsString("->where('checkpoint.status', 'completed')", $persistence);
-        self::assertStringContainsString("->whereColumn('checkpoint.output_version', 'accepted.output_version')", $persistence);
+        self::assertStringNotContainsString('quantity_evidence_descriptor', $stage);
+        self::assertStringContainsString("\$quantityOutput['building_quantities']['quantities']", $stage);
+        self::assertStringContainsString("'quantity_evidence'", $stage);
+        self::assertStringContainsString("'quantity_mapping_missing'", $stage);
+        self::assertFileDoesNotExist($root.'/app/BusinessModules/Addons/EstimateGeneration/Pipeline/AcceptedQuantityEvidenceMaterializer.php');
     }
 
     #[Test]
@@ -79,14 +71,13 @@ final class AcceptedQuantityEvidenceContractTest extends TestCase
     }
 
     #[Test]
-    public function accepted_evidence_lookup_uses_checkpoint_and_evidence_scopes(): void
+    public function pricing_uses_direct_canonical_evidence_identity_without_checkpoint_descriptor_lookup(): void
     {
         $persistence = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Services/EstimateGenerationPackagePersistenceService.php');
 
-        self::assertStringContainsString("->join('estimate_generation_evidence as evidence'", $persistence);
-        self::assertStringContainsString("->where('checkpoint.organization_id', \$session->organization_id)", $persistence);
-        self::assertStringContainsString("->where('evidence.organization_id', \$session->organization_id)", $persistence);
-        self::assertStringNotContainsString("->where('accepted.organization_id', \$session->organization_id)", $persistence);
+        self::assertStringContainsString('app(EvidenceRepository::class)->node(', $persistence);
+        self::assertStringNotContainsString('estimate_generation_accepted_evidence', $persistence);
+        self::assertStringNotContainsString('quantity_evidence_descriptor', $persistence);
     }
 
     #[Test]
@@ -101,18 +92,24 @@ final class AcceptedQuantityEvidenceContractTest extends TestCase
     }
 
     #[Test]
-    public function quantity_descriptor_preserves_high_precision_decimal_and_rejects_float(): void
+    public function canonical_quantity_mapping_preserves_formula_source_and_evidence(): void
     {
         $stage = (new \ReflectionClass(PlanWorkItemsStage::class))->newInstanceWithoutConstructor();
-        $method = new \ReflectionMethod($stage, 'attachQuantityEvidence');
-        $context = new PipelineContext(1, 2, 3, 0, 'input:v1', 'processing');
-        $value = '123456789.123456789123456789';
+        $method = new \ReflectionMethod($stage, 'attachCanonicalQuantity');
+        $quantity = [
+            'key' => 'finish.floor', 'unit' => 'm2', 'amount' => '123456789.123456789123456789',
+            'formula_key' => 'floor.net_area', 'formula_version' => 'v2',
+            'formula_inputs' => ['gross' => '123456790'], 'source' => 'derived',
+            'evidence_ids' => ['evidence:page:1'], 'model_version' => 'building-model:v1',
+            'assumptions' => [], 'review_blockers' => [],
+        ];
 
-        $exact = $method->invoke($stage, $context, ['key' => 'exact', 'quantity' => $value, 'unit' => 'm2']);
-        $float = $method->invoke($stage, $context, ['key' => 'float', 'quantity' => 1.25, 'unit' => 'm2']);
+        $mapped = $method->invoke($stage, ['key' => 'floor', 'quantity' => '1', 'unit' => 'pcs', 'metadata' => ['quantity_key' => 'finish.floor']], ['finish.floor' => $quantity]);
+        $missing = $method->invoke($stage, ['key' => 'wall', 'quantity' => '7', 'unit' => 'm2', 'metadata' => ['quantity_key' => 'finish.wall']], ['finish.floor' => $quantity]);
 
-        self::assertSame($value, $exact['quantity_evidence_descriptor']['quantity']);
-        self::assertSame($value, $exact['quantity']);
-        self::assertArrayNotHasKey('quantity_evidence_descriptor', $float);
+        self::assertSame($quantity['amount'], $mapped['quantity']);
+        self::assertSame($quantity, $mapped['quantity_evidence']);
+        self::assertSame('quantity_mapping_missing', $missing['pricing_blocker']);
+        self::assertArrayNotHasKey('quantity_evidence', $missing);
     }
 }

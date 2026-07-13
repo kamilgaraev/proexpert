@@ -137,6 +137,8 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
                             continue;
                         }
                         $sourceRefs = $this->quantityEvidence($item, $quantities->all());
+                        $quantityKey = (string) ($item['metadata']['quantity_key'] ?? '');
+                        $item['quantity_evidence'] = $quantities->all()[$quantityKey]->toArray();
                         $factoryContext = ['organization_id' => 1, 'project_id' => 1, 'session_id' => 1,
                             'checkpoint_claim_token' => '018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c',
                             'input_version' => 'sha256:'.$case->inputSha256, 'logical_attempt' => 1,
@@ -154,7 +156,6 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
                             return BenchmarkPipelineResultData::technicalFailure('production_readiness_blocked');
                         }
                         $item['pricing_finalized_at'] = $item['price_snapshot']['captured_at'];
-                        $item['evidence_ids'] = array_map('intval', $sourceRefs);
                         $workIds[] = (string) $item['key'];
                         $rankings[(string) $item['key']] = $result->rerankResult?->ordering ?? [];
                         $costs[(string) $item['key']] = (string) $item['total_cost'];

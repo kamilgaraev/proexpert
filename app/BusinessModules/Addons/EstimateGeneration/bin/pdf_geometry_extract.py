@@ -348,8 +348,6 @@ def extract(args: argparse.Namespace) -> dict[str, Any]:
                 "classification": classification,
             }
         )
-    if not entities:
-        raise SafeFailure("pdf_vector_geometry_missing")
     all_points = [point for entity in entities for point in entity["points"]]
     geometry_bbox = bbox(all_points)
     bounds = (

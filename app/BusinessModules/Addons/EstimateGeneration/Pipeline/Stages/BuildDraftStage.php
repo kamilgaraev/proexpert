@@ -30,12 +30,16 @@ final readonly class BuildDraftStage implements LeaseAwarePipelineStage
         $data = $context->priorOutputs->payload(ProcessingStage::ResolvePrices);
         $source = $context->priorOutputs->payload(ProcessingStage::UnderstandDocuments);
         $analysis = $context->priorOutputs->payload(ProcessingStage::UnderstandObject)['analysis'];
+        $quantities = $context->priorOutputs->payload(ProcessingStage::ExtractQuantities)['building_quantities'];
         $description = trim((string) Arr::get($analysis, 'object.description', ''));
         $draft = [
             'title' => $description !== ''
                 ? mb_substr($description, 0, 160)
                 : trans_message('estimate_generation.draft_default_title'),
             'generation_mode' => $plan['generation_mode'],
+            'source_input_version' => $source['base_input_version'],
+            'building_model' => Arr::get($analysis, 'normalized_building_model', []),
+            'building_quantities' => $quantities,
             'document_requirements' => $plan['document_requirements'],
             'object_profile' => $plan['object_profile'],
             'package_plan' => $plan['package_plan'],

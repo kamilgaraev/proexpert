@@ -35,7 +35,7 @@ final class ProductionReadinessGateTest extends TestCase
         yield 'scale unconfirmed' => ['geometry_scale_unconfirmed', ['building_model' => ['scale_status' => 'estimated']]];
         yield 'evidence missing' => ['evidence_missing', ['building_model' => ['evidence_ids' => null]]];
         yield 'evidence invalid' => ['evidence_invalid', ['building_model' => ['evidence_ids' => ['bad']]]];
-        yield 'estimated quantity' => ['estimated_quantity_unconfirmed', self::itemOverride(['quantity' => ['source' => 'estimated']])];
+        yield 'estimated quantity' => ['estimated_quantity_unconfirmed', self::itemOverride(['quantity_evidence' => ['source' => 'estimated']])];
         yield 'normative missing' => ['normative_missing', self::itemOverride(['normative_match' => ['status' => 'not_found']])];
         yield 'normative rejected' => ['normative_rejected', self::itemOverride(['normative_match' => ['decision' => ['status' => 'rejected']]])];
         yield 'unit mismatch' => ['unit_mismatch', self::itemOverride(['normative_match' => ['warnings' => ['unit_mismatch']]])];
@@ -84,7 +84,8 @@ final class ProductionReadinessGateTest extends TestCase
             ],
             'quality_summary' => ['duplicate_work_items' => 0, 'review_items' => ['blocking' => 0], 'warning_codes' => []],
             'local_estimates' => [['sections' => [['work_items' => [[
-                'item_type' => 'priced_work', 'quantity' => ['source' => 'evidenced', 'evidence_ids' => [1]],
+                'item_type' => 'priced_work', 'quantity' => '10',
+                'quantity_evidence' => ['source' => 'derived', 'evidence_ids' => [1]],
                 'normative_match' => ['status' => 'matched', 'decision' => ['status' => 'accepted'], 'warnings' => []],
                 'price_snapshot' => ['version_id' => 1], 'pricing_finalized_at' => '2026-07-12T00:00:00Z',
             ]]]]]],

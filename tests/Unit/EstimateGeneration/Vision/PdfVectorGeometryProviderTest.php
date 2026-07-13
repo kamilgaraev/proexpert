@@ -47,13 +47,16 @@ final class PdfVectorGeometryProviderTest extends TestCase
     }
 
     #[Test]
-    public function scanned_only_pdf_is_a_typed_review_requirement(): void
+    public function empty_pdf_preserves_page_without_inventing_vector_geometry(): void
     {
         $path = tempnam(sys_get_temp_dir(), 'raster-pdf-').'.pdf';
         file_put_contents($path, $this->pdf(''));
         try {
-            $this->expectExceptionMessage('pdf_vector_geometry_missing');
-            (new PdfVectorGeometryProvider('python', dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/bin/pdf_geometry_extract.py'))->extractLocal($path);
+            $result = (new PdfVectorGeometryProvider('python', dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/bin/pdf_geometry_extract.py'))->extractLocal($path);
+
+            self::assertSame('empty', $result->pages[0]['classification']);
+            self::assertSame([], $result->entities);
+            self::assertSame([], $result->texts);
         } finally {
             @unlink($path);
         }

@@ -138,11 +138,9 @@ final class EstimateDraftPersistenceService
      */
     public function findApplyBlocker(array $draft): ?array
     {
-        if (array_key_exists('building_model', $draft)) {
-            $inspection = ($this->readinessInspector ?? new DraftReadinessInspector)->inspect($draft);
-            if ($inspection->blockingIssues !== []) {
-                return ['type' => 'blocked', 'code' => $inspection->blockingIssues[0]['code']];
-            }
+        $inspection = ($this->readinessInspector ?? new DraftReadinessInspector)->inspect($draft);
+        if ($inspection->blockingIssues !== []) {
+            return ['type' => 'blocked', 'code' => $inspection->blockingIssues[0]['code']];
         }
 
         $qualityStatus = (string) ($draft['quality_summary']['status'] ?? '');

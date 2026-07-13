@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Console\Commands;
 
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkCorpusLoader;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkGate;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkAdapterRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCommandException;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkContractException;
@@ -57,6 +58,7 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
         private readonly ?AcceptanceBenchmarkCorpusLoader $acceptanceLoader = null,
         private readonly ?RegisteredBenchmarkManifestRepository $registeredManifests = null,
         private readonly ?BenchmarkReportOutputStore $reportOutput = null,
+        private readonly ?AcceptanceBenchmarkGate $acceptanceGate = null,
     ) {
         parent::__construct();
         $this->environment = $environment ?? static fn (): string => (string) app()->environment();
@@ -83,6 +85,9 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
                 (string) $this->option('failure-policy-version'),
                 (bool) $this->option('allow-unsupported'),
             ), $corpus->objects, $corpus->executionReference);
+            if ($dataset === BenchmarkDatasetType::Acceptance) {
+                ($this->acceptanceGate ?? throw new BenchmarkCommandException('acceptance_master_gate_not_configured'))->assert($report);
+            }
             $rendered = $format === 'json' ? $report->canonicalJson() : $this->tablePayload($report);
             $output = $this->option('output');
             if (is_string($output) && $output !== '') {

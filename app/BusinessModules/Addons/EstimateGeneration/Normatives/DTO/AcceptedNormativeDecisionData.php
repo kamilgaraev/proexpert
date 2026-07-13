@@ -88,13 +88,13 @@ final readonly class AcceptedNormativeDecisionData
     }
 
     /** @param array<string, mixed> $match @param array<string, mixed> $decision */
-    public static function fromLegacyMatch(array $match, array $decision): self
+    public static function fromAcceptedCatalogMatch(array $match, array $decision): self
     {
         $selected = $match['selected'] ?? null;
         $version = $match['version']['version_key'] ?? null;
         if (! is_array($selected) || ! is_string($version) || $version === ''
             || ! is_array($selected['resources'] ?? null) || self::resourceCount($selected['resources']) === 0) {
-            throw new InvalidArgumentException('accepted_normative_legacy_match_invalid');
+            throw new InvalidArgumentException('accepted_normative_catalog_match_invalid');
         }
 
         return new self(
@@ -106,23 +106,6 @@ final readonly class AcceptedNormativeDecisionData
             (float) ($selected['score'] ?? 0), (float) ($decision['confidence'] ?? $selected['confidence'] ?? 0),
             self::strings($selected['match_reasons'] ?? []), self::strings($decision['warnings'] ?? []), [],
         );
-    }
-
-    /** @return array<string, mixed> */
-    public function legacyMatch(): array
-    {
-        $selected = [
-            'key' => $this->candidateId, 'norm_id' => $this->normativeId, 'code' => $this->code,
-            'name' => $this->name, 'unit' => $this->unit, 'collection' => $this->collection,
-            'section' => $this->section, 'score' => $this->score, 'confidence' => $this->confidence,
-            'match_reasons' => $this->matchReasons, 'warnings' => $this->warnings,
-            'work_composition' => $this->workComposition, 'resources' => $this->resources,
-        ];
-
-        return [
-            'version' => ['source_type' => 'fsnb', 'version_key' => $this->datasetVersion],
-            'price_version' => null, 'selected' => $selected, 'candidates' => [$selected],
-        ];
     }
 
     private static function resourceCount(array $resources): int

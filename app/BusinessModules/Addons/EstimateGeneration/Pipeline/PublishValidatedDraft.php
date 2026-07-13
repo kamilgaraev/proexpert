@@ -10,6 +10,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateG
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationAuditService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessInspector;
 use DateTimeImmutable;
 
 final readonly class PublishValidatedDraft implements PipelineCompletionHook
@@ -20,16 +21,11 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
         private AdvanceEstimateGeneration $advance,
         private PipelineArtifactStore $artifacts,
         private FinalizationOutbox $finalizations,
-        private AcceptedQuantityEvidenceMaterializer $acceptedEvidence,
+        private DraftReadinessInspector $readiness,
     ) {}
 
     public function beforeComplete(CheckpointClaim $claim, PipelineStageResult $result, DateTimeImmutable $completedAt): void
     {
-        if ($result->stage === ProcessingStage::PlanWorkItems) {
-            $this->acceptedEvidence->materialize($claim, $result);
-
-            return;
-        }
         if ($result->stage !== ProcessingStage::ValidateDraft) {
             return;
         }
@@ -51,9 +47,18 @@ final readonly class PublishValidatedDraft implements PipelineCompletionHook
             || ! hash_equals($claim->context->generationAttemptId, (string) ($session->input_payload['generation_attempt_id'] ?? ''))) {
             throw new StaleEstimateGenerationState($claim->context->sessionId, $claim->context->stateVersion);
         }
+        if (! is_string($draft['source_input_version'] ?? null)
+            || ! hash_equals($claim->context->inputVersion, $draft['source_input_version'])) {
+            throw new StaleEstimateGenerationState($claim->context->sessionId, $claim->context->stateVersion);
+        }
+        $inspection = $this->readiness->inspect($draft);
+        $requiresReview = $inspection->blockingIssues !== [];
+        if ($requiresReview !== $data['requires_review']) {
+            throw new \DomainException('Validated draft readiness is stale.');
+        }
         $this->packages->syncFromDraft($session, $draft);
         $this->audit->recordNormativeDecisionSummary($session, $draft);
-        $this->advance->generationCompleted($session, $data['requires_review'], [
+        $this->advance->generationCompleted($session, $requiresReview, [
             'processing_stage' => ProcessingStage::ValidateDraft->value,
             'processing_progress' => 100,
             'draft_payload' => $draft,

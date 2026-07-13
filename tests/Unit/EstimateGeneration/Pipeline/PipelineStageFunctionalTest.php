@@ -49,7 +49,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\
 use App\BusinessModules\Addons\EstimateGeneration\Services\NormativeWorkItemPlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\PackagePlannerService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ProjectDocumentNormativeReferenceExtractor;
-use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateGenerationQualityGateService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\DraftReadinessInspector;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
 use DateTimeImmutable;
 use PHPUnit\Framework\Attributes\Test;
@@ -101,7 +101,7 @@ final class PipelineStageFunctionalTest extends TestCase
             new AssembleResourcesStage(new AssembleMatchedResources, $results),
             new ResolvePricesStage(new EstimatePricingService, $results),
             new BuildDraftStage($results),
-            new ValidateDraftStage(new EstimateValidationService, new EstimateGenerationQualityGateService, $results),
+            new ValidateDraftStage(new EstimateValidationService, new DraftReadinessInspector, $results),
         ];
         $base = 'sha256:'.str_repeat('a', 64);
         $attempt = '00000000-0000-4000-8000-000000000001';

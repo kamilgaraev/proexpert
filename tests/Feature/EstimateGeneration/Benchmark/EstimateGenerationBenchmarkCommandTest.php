@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\EstimateGeneration\Benchmark;
 
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkCorpusLoader;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\AcceptanceBenchmarkGate;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkAdapterRegistry;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkContractException;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPipelineAdapter;
@@ -264,6 +265,7 @@ final class EstimateGenerationBenchmarkCommandTest extends TestCase
             $acceptanceLoader,
             null,
             $reportOutput,
+            new AcceptanceBenchmarkGate,
         );
         $container = new class extends Container
         {
@@ -321,20 +323,23 @@ final class EstimateGenerationBenchmarkCommandTest extends TestCase
                 'applicable_item_ids' => [], 'evidence_ids_by_item' => [],
             ],
         ], JSON_THROW_ON_ERROR);
-        $input = "P3\n1 1\n255\n0 0 0\n";
-        $cases = [[
-            'id' => 'acceptance-command-001', 'dataset' => 'acceptance', 'source_type' => 'photo_plan',
-            'input_locator' => 's3://org-{organization_id}/estimate-generation/benchmarks/acceptance/case/input.ppm',
-            'expected_locator' => 's3://org-{organization_id}/estimate-generation/benchmarks/acceptance/case/expected.json',
-            'input_sha256' => hash('sha256', $input), 'expected_sha256' => hash('sha256', $expected),
-            'license' => 'private-approved', 'provenance' => 'private:approved', 'tags' => ['private'],
-            'schema_version' => 1, 'expected_model_schema_version' => 'benchmark-expected:v1',
-            'allowed_capabilities' => ['document_understanding'],
-        ]];
-        $objects = [
-            'org-42/estimate-generation/benchmarks/acceptance/case/input.ppm' => $input,
-            'org-42/estimate-generation/benchmarks/acceptance/case/expected.json' => $expected,
-        ];
+        $cases = [];
+        $objects = [];
+        for ($index = 1; $index <= 6; $index++) {
+            $input = "P3\n1 1\n255\n{$index} {$index} {$index}\n";
+            $caseExpected = str_replace('"floor_plan"', '"floor_plan"', $expected).str_repeat(' ', $index);
+            $cases[] = [
+                'id' => 'acceptance-command-00'.$index, 'dataset' => 'acceptance', 'source_type' => 'photo_plan',
+                'input_locator' => "s3://org-{organization_id}/estimate-generation/benchmarks/acceptance/case-{$index}/input.ppm",
+                'expected_locator' => "s3://org-{organization_id}/estimate-generation/benchmarks/acceptance/case-{$index}/expected.json",
+                'input_sha256' => hash('sha256', $input), 'expected_sha256' => hash('sha256', $caseExpected),
+                'license' => 'private-approved', 'provenance' => 'private:approved', 'tags' => ['private'],
+                'schema_version' => 1, 'expected_model_schema_version' => 'benchmark-expected:v1',
+                'allowed_capabilities' => ['document_understanding'],
+            ];
+            $objects["org-42/estimate-generation/benchmarks/acceptance/case-{$index}/input.ppm"] = $input;
+            $objects["org-42/estimate-generation/benchmarks/acceptance/case-{$index}/expected.json"] = $caseExpected;
+        }
         if ($withInvalidUnsupportedCase) {
             $invalidExpected = '{"schema_version":1}';
             $cases[] = array_merge($cases[0], [
