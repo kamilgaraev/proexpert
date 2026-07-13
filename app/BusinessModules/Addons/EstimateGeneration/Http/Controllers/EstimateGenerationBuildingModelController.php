@@ -50,7 +50,7 @@ final class EstimateGenerationBuildingModelController extends Controller
     }
 
     public function evidence(
-        Request $request,
+        ShowEstimateGenerationBuildingModelRequest $request,
         Project $project,
         EstimateGenerationSession $session,
         int $evidence,
