@@ -140,6 +140,14 @@ final class TrainingBenchmarkOnlineMigrationRuntimePostgresTest extends TestCase
 
         DB::statement('CREATE SCHEMA eg_online_probe');
         DB::statement('CREATE TABLE eg_online_probe.eg_online_index_probe (id bigint PRIMARY KEY, value integer NOT NULL)');
+        DB::statement('INSERT INTO eg_online_probe.eg_online_index_probe (id, value) VALUES (1, 1), (2, 1)');
+        try {
+            DB::statement('CREATE UNIQUE INDEX CONCURRENTLY eg_online_index_probe_uq ON eg_online_probe.eg_online_index_probe (value)');
+            self::fail('Duplicate schema-qualified rows unexpectedly produced a valid unique index.');
+        } catch (\Illuminate\Database\QueryException) {
+            self::assertFalse((bool) DB::selectOne("SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'eg_online_index_probe_uq' AND n.nspname = 'eg_online_probe'")->indisvalid);
+        }
+        DB::table('eg_online_probe.eg_online_index_probe')->where('id', 2)->delete();
         (new TrainingBenchmarkOnlineMigrationRuntime)->ensureConcurrentIndex(
             'eg_online_index_probe_uq',
             'CREATE UNIQUE INDEX CONCURRENTLY eg_online_index_probe_uq ON eg_online_probe.eg_online_index_probe (value)',

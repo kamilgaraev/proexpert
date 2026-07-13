@@ -64,24 +64,6 @@ final class TrainingBenchmarkOnlineMigrationRuntime
         DB::select("SELECT set_config('lock_timeout', ?, false), set_config('statement_timeout', ?, false)", [$settings['lock_timeout'], $settings['statement_timeout']]);
     }
 
-    public function runIdempotentPhase(string $phase, callable $operation): void
-    {
-        if (preg_match('/^[a-z0-9_]{3,100}$/D', $phase) !== 1) {
-            throw new InvalidArgumentException('estimate_generation_online_migration_phase_invalid');
-        }
-        DB::statement('CREATE TABLE IF NOT EXISTS estimate_generation_online_migration_phases (phase text PRIMARY KEY, completed_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)');
-        if (DB::table('estimate_generation_online_migration_phases')->where('phase', $phase)->exists()) {
-            return;
-        }
-        DB::transaction(function () use ($phase, $operation): void {
-            if (DB::table('estimate_generation_online_migration_phases')->where('phase', $phase)->lockForUpdate()->exists()) {
-                return;
-            }
-            $operation();
-            DB::table('estimate_generation_online_migration_phases')->insert(['phase' => $phase]);
-        });
-    }
-
     public function backfillDatasets(?callable $interrupt = null): void
     {
         $highWater = (int) DB::table('estimate_generation_training_datasets')->max('id');
@@ -108,33 +90,6 @@ final class TrainingBenchmarkOnlineMigrationRuntime
     {
         $highWater = (int) DB::table('estimate_generation_training_datasets')->max('id');
         $this->runPhase(static fn (int $cursor): array => DB::table('estimate_generation_training_datasets')->where('status', 'processing')->where('id', '>', $cursor)->where('id', '<=', $highWater)->orderBy('id')->limit(500)->pluck('id')->all(), static fn (array $ids) => DB::table('estimate_generation_training_datasets')->whereIn('id', $ids)->update(['status' => 'draft', 'processing_token' => null, 'processing_lease_expires_at' => null, 'error_message' => 'training_dataset_processing_lease_expired']), $interrupt);
-    }
-
-    public function backfill(
-        string $table,
-        string $pendingColumn,
-        int $batchSize,
-        callable $apply,
-        ?callable $interruptAfterBatch = null,
-    ): void {
-        $this->assertIdentifier($table);
-        $this->assertIdentifier($pendingColumn);
-        if ($batchSize < 1 || $batchSize > 10_000) {
-            throw new InvalidArgumentException('estimate_generation_online_migration_batch_invalid');
-        }
-
-        $batch = 0;
-        while (true) {
-            $ids = DB::table($table)->where($pendingColumn, false)->orderBy('id')->limit($batchSize)->pluck('id')->all();
-            if ($ids === []) {
-                return;
-            }
-            $apply($ids);
-            $batch++;
-            if ($interruptAfterBatch !== null && $interruptAfterBatch($batch)) {
-                throw new RuntimeException('estimate_generation_online_migration_interrupted');
-            }
-        }
     }
 
     public function ensureConcurrentIndex(string $name, string $createSql): void
@@ -174,7 +129,7 @@ final class TrainingBenchmarkOnlineMigrationRuntime
             return;
         }
         if ($catalog !== null) {
-            DB::statement('DROP INDEX CONCURRENTLY '.$name);
+            DB::statement('DROP INDEX CONCURRENTLY '.$expectedSchema.'.'.$name);
             $this->checkpoint('index.'.$expectedSchema.'.'.$name.'.invalid_drop');
         }
         DB::statement($createSql);

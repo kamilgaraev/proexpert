@@ -85,6 +85,23 @@ GREEN evidence on the final frozen files:
 The launcher also retains the review-wave hardening for read-only pre-attestation before mutation, environment restoration, full fresh-chain provisioning, exact index definition comparison (ordering, NULLS, operator class, collation, INCLUDE, predicate), schema-qualified constraint catalog operations, partial second-timeout-SET restoration, and per-migration architecture policy.
 
 Final ordinal review-wave implementation commit: `33e5961e fix[lk]: завершён ordinal-контроль online-миграций`.
+
+## Final narrow review fixes
+
+- Removed the unused legacy `runIdempotentPhase()` and generic public `backfill()` APIs. The production chain uses only the four stable high-water backfill methods.
+- Invalid concurrent-index recovery now drops `expected_schema.index_name` explicitly and no longer depends on `search_path`.
+- Added a PostgreSQL behavior case that creates an invalid unique index in a non-public schema and proves that the exact schema-qualified object is dropped and rebuilt valid.
+- Replaced aggregate helper-presence assertions with an explicit per-migration applicability map for `ensureConstraint`, `validateConstraint`, and `swapValidatedConstraint`.
+
+Narrow TDD evidence:
+
+- RED: `vendor\bin\phpunit tests\Unit\EstimateGeneration\Migrations\TrainingBenchmarkOnlineMigrationTest.php` failed because the runtime still exposed `runIdempotentPhase()`.
+- GREEN DB-less: `vendor\bin\phpunit tests\Unit\EstimateGeneration\Migrations\TrainingBenchmarkOnlineMigrationTest.php tests\Unit\EstimateGeneration\Support\EstimateGenerationContractDatabaseProvisionerTest.php`: `OK (6 tests, 117 assertions)`.
+- Focused PostgreSQL: `tests\Runtime\run-training-benchmark-contract.ps1 -Passes 1 -OnlyOrdinal 1`: stable discovery `295`, ordinal smoke `OK (1 test, 61 assertions)`, runtime including non-public invalid-index recovery `OK (4 tests, 31 assertions)`, contract plus adoption `OK (4 tests, 92 assertions)`, cleanup completed.
+- Pint on the three narrow PHP files: `PASS`.
+- PHPStan on the three narrow PHP files: `[OK] No errors`.
+- `php -l` on the three narrow PHP files and `git diff --check`: clean.
+- No additional full 295 replay was run; the project owner waived another repeat, and these changes are limited to removal of unreachable APIs, schema qualification in the helper, and source/behavior tests.
 - `.cbmignore` and `.codebase-memory/` were never staged or modified.
 
 ## Review fix wave
