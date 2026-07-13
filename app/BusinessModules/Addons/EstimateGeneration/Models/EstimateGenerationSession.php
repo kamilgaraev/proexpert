@@ -84,6 +84,26 @@ class EstimateGenerationSession extends Model
         return $this->hasMany(EstimateGenerationAuditEvent::class, 'session_id');
     }
 
+    public function checkpoints(): HasMany
+    {
+        return $this->hasMany(EstimateGenerationPipelineCheckpoint::class, 'session_id');
+    }
+
+    public function processingUnits(): HasMany
+    {
+        return $this->hasMany(EstimateGenerationProcessingUnit::class, 'session_id');
+    }
+
+    public function aiUsage(): HasMany
+    {
+        return $this->hasMany(EstimateGenerationAiUsage::class, 'session_id');
+    }
+
+    public function failures(): HasMany
+    {
+        return $this->hasMany(EstimateGenerationFailure::class, 'session_id');
+    }
+
     public function drawingElements(): HasMany
     {
         return $this->hasMany(EstimateGenerationDrawingElement::class, 'session_id')

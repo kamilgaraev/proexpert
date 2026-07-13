@@ -13,6 +13,12 @@ final class EstimateGenerationAiUsage extends Model
 
     protected $table = 'estimate_generation_ai_usage';
 
+    protected $primaryKey = 'attempt_id';
+
+    protected $keyType = 'string';
+
+    public $incrementing = false;
+
     protected $guarded = [];
 
     protected $casts = [
