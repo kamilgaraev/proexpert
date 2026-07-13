@@ -80,8 +80,13 @@ final class CadRuntimeReadinessInspector
         } catch (\Throwable) {
             return [...$errors, 'cad_libredwg_version_unavailable'];
         }
-        $output = trim($process->getOutput().$process->getErrorOutput());
-        if (! $process->isSuccessful() || $output !== 'dwgread '.$configuration->libredwgVersion) {
+        $versions = [];
+        foreach (preg_split('/\R/', $process->getOutput().$process->getErrorOutput()) ?: [] as $line) {
+            if (preg_match('/^\s*dwgread(?:\s+\(GNU LibreDWG\))?\s+(?<version>\d+\.\d+\.\d+)\s*$/D', $line, $match) === 1) {
+                $versions[] = $match['version'];
+            }
+        }
+        if (! $process->isSuccessful() || $versions !== [$configuration->libredwgVersion]) {
             $errors[] = 'cad_libredwg_version_mismatch';
         }
 

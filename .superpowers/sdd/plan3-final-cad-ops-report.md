@@ -21,3 +21,11 @@
 - GREEN: `VerifiedCadExecution` переносит fingerprint capability в `GeometryProcessRunner::runVerified()`, который повторно хеширует все artifacts непосредственно перед process start.
 - `php artisan test tests/Unit/EstimateGeneration/Vision/VerifiedCadExecutionTest.php --no-coverage`: `6 passed (13 assertions)`. Отдельные data sets: python, dwgread, sandbox, worker, requirements; после мутации стабильный `cad_runtime_artifact_integrity_mismatch`, marker процесса отсутствует. Дополнительный сценарий: первый старт разрешён, после post-verification mutation второй старт отклонён, счётчик остаётся равен одному.
 - `vendor/bin/phpstan analyse --memory-limit=1G ...`: `[OK] No errors`; Pint исправил два style issue, после чего focused suite повторён.
+
+## LibreDWG version output follow-up
+
+- RED requirement: literal equality всего stdout/stderr не совместима с реальным многострочным GNU output и не доказывает однозначность версии.
+- GREEN: inspector рассматривает только полностью anchored строки `dwgread 0.13.4` или `dwgread (GNU LibreDWG) 0.13.4`, требует ровно один token и точное совпадение с invariant `0.13.4`.
+- Behavioral data sets: корректный многострочный GNU output принимается; missing, ambiguous и `0.13.5` возвращают `cad_libredwg_version_mismatch`.
+- `VerifiedCadExecutionTest` теперь сохраняет исходный `APP_ENV` и восстанавливает его либо удаляет переменную в `finally`.
+- Focused PHPUnit завершён с exit code 0; PHPStan: `[OK] No errors`; Pint: только `ordered_imports`, после исправления выполнен повторный запуск.

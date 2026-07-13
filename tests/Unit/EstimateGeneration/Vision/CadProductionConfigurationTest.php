@@ -8,11 +8,23 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\GeometryExtr
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\CadConversionRuntime;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\CadRuntimeConfiguration;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Geometry\CadRuntimeReadinessInspector;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
 final class CadProductionConfigurationTest extends TestCase
 {
+    /** @return array<string, array{string, bool}> */
+    public static function libredwgOutputs(): array
+    {
+        return [
+            'multiline GNU output' => ["dwgread (GNU LibreDWG) 0.13.4\nCopyright 2026 Free Software Foundation", true],
+            'missing version' => ["dwgread GNU LibreDWG\nCopyright 2026", false],
+            'ambiguous versions' => ["dwgread 0.13.4\ndwgread (GNU LibreDWG) 0.13.4", false],
+            'different version' => ["dwgread (GNU LibreDWG) 0.13.5\nCopyright 2026", false],
+        ];
+    }
+
     #[Test]
     public function production_configuration_rejects_relative_runtime_paths(): void
     {
@@ -141,6 +153,36 @@ final class CadProductionConfigurationTest extends TestCase
         }
     }
 
+    #[Test]
+    #[DataProvider('libredwgOutputs')]
+    public function readiness_extracts_one_exact_version_from_gnu_style_output(string $output, bool $accepted): void
+    {
+        $root = sys_get_temp_dir().'/most-cad-version-'.bin2hex(random_bytes(6));
+        mkdir($root);
+        $suffix = PHP_OS_FAMILY === 'Windows' ? '.cmd' : '';
+        $python = $this->executable($root.'/python'.$suffix, 'Python 3.13.0');
+        $dwgread = $this->executable($root.'/dwgread'.$suffix, $output);
+        $sandbox = $this->executable($root.'/sandbox'.$suffix, 'sandbox');
+        $script = $root.'/worker.py';
+        $lock = $root.'/requirements.lock';
+        file_put_contents($script, 'print("ok")');
+        file_put_contents($lock, 'ezdxf==1.4.4 --hash=sha256:abc');
+        try {
+            $errors = (new CadRuntimeReadinessInspector)->inspect(new CadRuntimeConfiguration(
+                $python, $script, $dwgread, '0.13.4', $sandbox, $lock,
+                hash_file('sha256', $script), hash_file('sha256', $lock), 45, 1024, 1024, 10, 1024, 1, 1024, 8,
+            ));
+            $accepted
+                ? self::assertNotContains('cad_libredwg_version_mismatch', $errors)
+                : self::assertContains('cad_libredwg_version_mismatch', $errors);
+        } finally {
+            foreach ([$python, $dwgread, $sandbox, $script, $lock] as $path) {
+                @unlink($path);
+            }
+            @rmdir($root);
+        }
+    }
+
     private function configuration(string $root, string $python): CadRuntimeConfiguration
     {
         return new CadRuntimeConfiguration(
@@ -151,7 +193,11 @@ final class CadProductionConfigurationTest extends TestCase
 
     private function executable(string $path, string $output): string
     {
-        file_put_contents($path, PHP_OS_FAMILY === 'Windows' ? "@echo $output\r\n" : "#!/bin/sh\necho '$output'\n");
+        $lines = preg_split('/\R/', $output) ?: [$output];
+        $body = PHP_OS_FAMILY === 'Windows'
+            ? implode("\r\n", array_map(static fn (string $line): string => '@echo '.$line, $lines))."\r\n"
+            : "#!/bin/sh\n".implode("\n", array_map(static fn (string $line): string => "printf '%s\\n' ".escapeshellarg($line), $lines))."\n";
+        file_put_contents($path, $body);
         chmod($path, 0755);
 
         return $path;

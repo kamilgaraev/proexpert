@@ -81,6 +81,7 @@ final class VerifiedCadExecutionTest extends TestCase
             $python => (string) hash_file('sha256', $python),
             $worker => (string) hash_file('sha256', $worker),
         ]);
+        $previousEnvironment = getenv('APP_ENV');
         putenv('APP_ENV=testing');
         $runner = new GeometryProcessRunner('Windows');
         try {
@@ -94,6 +95,7 @@ final class VerifiedCadExecutionTest extends TestCase
             }
             self::assertCount(1, file($marker, FILE_IGNORE_NEW_LINES));
         } finally {
+            $previousEnvironment === false ? putenv('APP_ENV') : putenv('APP_ENV='.$previousEnvironment);
             @unlink($python);
             @unlink($worker);
             @unlink($marker);
