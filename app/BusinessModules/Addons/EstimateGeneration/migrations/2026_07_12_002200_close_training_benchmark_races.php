@@ -7,8 +7,12 @@ use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
+    public $withinTransaction = false;
+
     public function up(): void
     {
+        DB::statement("SET lock_timeout = '5s'");
+        DB::statement("SET statement_timeout = '15min'");
         DB::unprepared(<<<'SQL'
 CREATE OR REPLACE FUNCTION eg_guard_training_dataset_approval() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -58,6 +62,7 @@ SQL);
 
     public function down(): void
     {
+        throw new RuntimeException('estimate_generation_training_benchmark_migration_is_forward_only');
         DB::statement('ALTER TABLE estimate_generation_benchmark_runs DROP CONSTRAINT IF EXISTS eg_benchmark_closed_state_chk');
         DB::statement(<<<'SQL'
 ALTER TABLE estimate_generation_benchmark_runs ADD CONSTRAINT eg_benchmark_closed_state_chk CHECK (

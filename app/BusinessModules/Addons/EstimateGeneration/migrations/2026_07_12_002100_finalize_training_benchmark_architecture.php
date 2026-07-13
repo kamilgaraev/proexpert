@@ -2,20 +2,28 @@
 
 declare(strict_types=1);
 
+use App\BusinessModules\Addons\EstimateGeneration\Support\TrainingBenchmarkOnlineMigrationRuntime;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
+    public $withinTransaction = false;
+
     public function up(): void
     {
+        DB::statement("SET lock_timeout = '5s'");
+        DB::statement("SET statement_timeout = '15min'");
         DB::statement('ALTER TABLE estimate_generation_training_datasets ADD COLUMN processing_lease_expires_at timestamptz');
         DB::statement('ALTER TABLE estimate_generation_training_datasets ADD COLUMN processing_attempt integer NOT NULL DEFAULT 0');
-        DB::statement('CREATE INDEX eg_training_processing_lease_idx ON estimate_generation_training_datasets (status, processing_lease_expires_at)');
+        $runtime = new TrainingBenchmarkOnlineMigrationRuntime;
+        $runtime->ensureConcurrentIndex('eg_training_processing_lease_idx', 'CREATE INDEX CONCURRENTLY eg_training_processing_lease_idx ON estimate_generation_training_datasets (status, processing_lease_expires_at)');
         DB::statement('ALTER TABLE estimate_generation_training_datasets DROP CONSTRAINT eg_training_processing_token_chk');
-        DB::statement("UPDATE estimate_generation_training_datasets SET status = 'draft', processing_token = NULL, processing_lease_expires_at = NULL, error_message = 'training_dataset_processing_lease_expired' WHERE status = 'processing'");
-        DB::statement("ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT eg_training_processing_lease_chk CHECK ((status = 'processing' AND processing_token IS NOT NULL AND processing_lease_expires_at IS NOT NULL AND processing_attempt > 0) OR (status <> 'processing' AND processing_token IS NULL AND processing_lease_expires_at IS NULL))");
-        DB::statement("ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT eg_training_approval_pair_chk CHECK ((status = 'approved' AND approved_by IS NOT NULL AND approved_at IS NOT NULL) OR status <> 'approved')");
+        $runtime->backfillProcessingLeases();
+        DB::statement("ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT eg_training_processing_lease_chk CHECK ((status = 'processing' AND processing_token IS NOT NULL AND processing_lease_expires_at IS NOT NULL AND processing_attempt > 0) OR (status <> 'processing' AND processing_token IS NULL AND processing_lease_expires_at IS NULL)) NOT VALID");
+        DB::statement('ALTER TABLE estimate_generation_training_datasets VALIDATE CONSTRAINT eg_training_processing_lease_chk');
+        DB::statement("ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT eg_training_approval_pair_chk CHECK ((status = 'approved' AND approved_by IS NOT NULL AND approved_at IS NOT NULL) OR status <> 'approved') NOT VALID");
+        DB::statement('ALTER TABLE estimate_generation_training_datasets VALIDATE CONSTRAINT eg_training_approval_pair_chk');
 
         DB::unprepared(<<<'SQL'
 CREATE OR REPLACE FUNCTION eg_guard_training_dataset_approval() RETURNS trigger LANGUAGE plpgsql AS $$

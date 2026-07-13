@@ -2,23 +2,40 @@
 
 declare(strict_types=1);
 
+use App\BusinessModules\Addons\EstimateGeneration\Support\TrainingBenchmarkOnlineMigrationRuntime;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
+    public $withinTransaction = false;
+
     public function up(): void
     {
+        DB::statement("SET lock_timeout = '5s'");
+        DB::statement("SET statement_timeout = '15min'");
         DB::statement('ALTER TABLE estimate_generation_training_examples ADD COLUMN organization_id bigint, ADD COLUMN dataset_version integer');
-        DB::statement('UPDATE estimate_generation_training_examples e SET organization_id = d.organization_id, dataset_version = d.version FROM estimate_generation_training_datasets d WHERE d.id = e.training_dataset_id');
-        DB::statement('ALTER TABLE estimate_generation_training_examples ALTER COLUMN organization_id SET NOT NULL, ALTER COLUMN dataset_version SET NOT NULL');
-        DB::statement('CREATE UNIQUE INDEX eg_training_dataset_membership_uq ON estimate_generation_training_datasets (id, organization_id, version)');
+        $runtime = new TrainingBenchmarkOnlineMigrationRuntime;
+        $runtime->backfillMembership();
+        foreach (['organization_id', 'dataset_version'] as $column) {
+            $constraint = "eg_training_example_{$column}_nn";
+            DB::statement("ALTER TABLE estimate_generation_training_examples ADD CONSTRAINT {$constraint} CHECK ({$column} IS NOT NULL) NOT VALID");
+            DB::statement("ALTER TABLE estimate_generation_training_examples VALIDATE CONSTRAINT {$constraint}");
+            DB::statement("ALTER TABLE estimate_generation_training_examples ALTER COLUMN {$column} SET NOT NULL");
+            DB::statement("ALTER TABLE estimate_generation_training_examples DROP CONSTRAINT {$constraint}");
+        }
+        $runtime->ensureConcurrentIndex('eg_training_dataset_membership_uq', 'CREATE UNIQUE INDEX CONCURRENTLY eg_training_dataset_membership_uq ON estimate_generation_training_datasets (id, organization_id, version)');
+        DB::statement('ALTER TABLE estimate_generation_training_files ADD CONSTRAINT eg_training_files_dataset_restrict_fk FOREIGN KEY (training_dataset_id) REFERENCES estimate_generation_training_datasets(id) ON DELETE RESTRICT NOT VALID');
+        DB::statement('ALTER TABLE estimate_generation_training_files VALIDATE CONSTRAINT eg_training_files_dataset_restrict_fk');
         DB::statement('ALTER TABLE estimate_generation_training_files DROP CONSTRAINT estimate_generation_training_files_training_dataset_id_foreign');
-        DB::statement('ALTER TABLE estimate_generation_training_files ADD CONSTRAINT estimate_generation_training_files_training_dataset_id_foreign FOREIGN KEY (training_dataset_id) REFERENCES estimate_generation_training_datasets(id) ON DELETE RESTRICT');
+        DB::statement('ALTER TABLE estimate_generation_training_files RENAME CONSTRAINT eg_training_files_dataset_restrict_fk TO estimate_generation_training_files_training_dataset_id_foreign');
+        DB::statement('ALTER TABLE estimate_generation_training_examples ADD CONSTRAINT eg_training_example_membership_fk FOREIGN KEY (training_dataset_id, organization_id, dataset_version) REFERENCES estimate_generation_training_datasets(id, organization_id, version) ON DELETE RESTRICT NOT VALID');
+        DB::statement('ALTER TABLE estimate_generation_training_examples VALIDATE CONSTRAINT eg_training_example_membership_fk');
         DB::statement('ALTER TABLE estimate_generation_training_examples DROP CONSTRAINT estimate_generation_training_examples_training_dataset_id_foreign');
-        DB::statement('ALTER TABLE estimate_generation_training_examples ADD CONSTRAINT eg_training_example_membership_fk FOREIGN KEY (training_dataset_id, organization_id, dataset_version) REFERENCES estimate_generation_training_datasets(id, organization_id, version) ON DELETE RESTRICT');
+        DB::statement('ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT eg_training_dataset_organization_restrict_fk FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT NOT VALID');
+        DB::statement('ALTER TABLE estimate_generation_training_datasets VALIDATE CONSTRAINT eg_training_dataset_organization_restrict_fk');
         DB::statement('ALTER TABLE estimate_generation_training_datasets DROP CONSTRAINT estimate_generation_training_datasets_organization_id_foreign');
-        DB::statement('ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT estimate_generation_training_datasets_organization_id_foreign FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE RESTRICT');
+        DB::statement('ALTER TABLE estimate_generation_training_datasets RENAME CONSTRAINT eg_training_dataset_organization_restrict_fk TO estimate_generation_training_datasets_organization_id_foreign');
 
         DB::statement('ALTER TABLE estimate_generation_benchmark_runs DROP CONSTRAINT eg_benchmark_terminal_chk, DROP CONSTRAINT eg_benchmark_results_chk');
         DB::statement("ALTER TABLE estimate_generation_benchmark_runs ADD CONSTRAINT eg_benchmark_closed_state_chk CHECK (

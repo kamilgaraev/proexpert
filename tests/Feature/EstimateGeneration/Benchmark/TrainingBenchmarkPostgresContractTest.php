@@ -226,18 +226,12 @@ final class TrainingBenchmarkPostgresContractTest extends TestCase
         self::assertSame('draft', DB::table('estimate_generation_training_datasets')->where('id', $dispatchFailureId)->value('status'));
         Queue::assertPushed(ProcessEstimateGenerationTrainingDatasetJob::class, fn (ProcessEstimateGenerationTrainingDatasetJob $queued): bool => $queued->uniqueId() === (string) $dispatchFailureId);
 
-        $raceHardening->down();
-        $finalHardening->down();
-        $storageHardening->down();
-        $edgeHardening->down();
-        $hardening->down();
-        $migration->down();
-        $migration->up();
-        $hardening->up();
-        $edgeHardening->up();
-        $storageHardening->up();
-        $finalHardening->up();
-        $raceHardening->up();
+        try {
+            $raceHardening->down();
+            self::fail('Forward-only production boundary accepted a destructive rollback.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('estimate_generation_training_benchmark_migration_is_forward_only', $exception->getMessage());
+        }
         self::assertTrue(\Illuminate\Support\Facades\Schema::hasTable('estimate_generation_benchmark_runs'));
         self::assertTrue(\Illuminate\Support\Facades\Schema::hasColumn('estimate_generation_benchmark_runs', 'case_results_version_scheme'));
     }

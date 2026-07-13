@@ -39,7 +39,7 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const SUBJECT_DIGEST = [
         'geometry' => '674df1f67e8edc5ab28f42efeb93de0f227cea931617dff3c6499a7a71c76be0',
         'pricing' => '22c28514b665272f7e8cffeb911bf9bda48b098bd25947c04ee22bed41238158',
-        'training' => 'a6a1515725b3a516dfe2f0eb1ccbeaa1971150ca97580dbdf993798cb12003c6',
+        'training' => 'c016e6ee401c18fe32ca7b32a5bb052faab82cc26af4e4827369ef1ba7d6ec0a',
     ];
 
     private const CORE = [
@@ -189,7 +189,8 @@ final class EstimateGenerationContractDatabaseProvisioner
 
     public static function validateLockFunction(array $facts, string $expectedOwner): void
     {
-        $expectedAcl = sprintf('{%1$s=X/%1$s,most_contract_runner=X/%1$s}', $expectedOwner);
+        $runner = getenv('ESTIMATE_GENERATION_CONTRACT_DB_ROLE') ?: '';
+        $expectedAcl = sprintf('{%1$s=X/%1$s,%2$s=X/%1$s}', $expectedOwner, $runner);
         if (($facts['signature'] ?? null) !== 'contract_guard.lock_instance_identity()'
             || ($facts['owner'] ?? null) !== $expectedOwner
             || ($facts['security_definer'] ?? null) !== true

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\BusinessModules\Addons\EstimateGeneration\Support\TrainingBenchmarkOnlineMigrationRuntime;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
@@ -9,8 +10,12 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
+    public $withinTransaction = false;
+
     public function up(): void
     {
+        DB::statement("SET lock_timeout = '5s'");
+        DB::statement("SET statement_timeout = '15min'");
         Schema::table('estimate_generation_training_datasets', function (Blueprint $table): void {
             $table->uuid('dataset_key')->nullable();
             $table->unsignedInteger('version')->nullable();
@@ -24,13 +29,20 @@ return new class extends Migration
             $table->timestampTz('reviewed_at')->nullable();
         });
 
-        DB::statement("UPDATE estimate_generation_training_datasets SET dataset_key = uuid, version = 1, dataset_type = 'development', scope = 'organization', status = CASE WHEN status = 'processing' THEN 'processing' WHEN status IN ('processed', 'failed') THEN 'review_required' ELSE 'draft' END");
-        DB::statement("UPDATE estimate_generation_training_examples SET status = 'pending', accepted_at = NULL, indexed_at = NULL WHERE status IN ('accepted', 'indexed') AND (reviewed_by IS NULL OR reviewed_at IS NULL)");
-        DB::statement('ALTER TABLE estimate_generation_training_datasets ALTER COLUMN dataset_key SET NOT NULL, ALTER COLUMN version SET NOT NULL, ALTER COLUMN dataset_type SET NOT NULL, ALTER COLUMN scope SET NOT NULL');
+        $runtime = new TrainingBenchmarkOnlineMigrationRuntime;
+        $runtime->backfillDatasets();
+        $runtime->backfillExamples();
+        foreach (['dataset_key', 'version', 'dataset_type', 'scope'] as $column) {
+            $constraint = 'eg_training_'.str_replace('dataset_', '', $column).'_nn';
+            DB::statement("ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT {$constraint} CHECK ({$column} IS NOT NULL) NOT VALID");
+            DB::statement("ALTER TABLE estimate_generation_training_datasets VALIDATE CONSTRAINT {$constraint}");
+            DB::statement("ALTER TABLE estimate_generation_training_datasets ALTER COLUMN {$column} SET NOT NULL");
+            DB::statement("ALTER TABLE estimate_generation_training_datasets DROP CONSTRAINT {$constraint}");
+        }
         DB::statement("ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT eg_training_dataset_type_chk CHECK (dataset_type IN ('development','regression','acceptance')), ADD CONSTRAINT eg_training_dataset_status_chk CHECK (status IN ('draft','processing','review_required','approved','rejected','archived')), ADD CONSTRAINT eg_training_dataset_scope_chk CHECK (scope = 'organization' AND organization_id IS NOT NULL), ADD CONSTRAINT eg_training_dataset_approval_chk CHECK (status <> 'approved' OR (approved_by IS NOT NULL AND approved_at IS NOT NULL))");
-        DB::statement('CREATE UNIQUE INDEX eg_training_dataset_key_version_uq ON estimate_generation_training_datasets (organization_id, dataset_key, version)');
-        DB::statement('CREATE UNIQUE INDEX eg_training_dataset_id_version_uq ON estimate_generation_training_datasets (id, version)');
-        DB::statement('CREATE INDEX eg_training_dataset_trust_idx ON estimate_generation_training_datasets (organization_id, dataset_type, status, version)');
+        $runtime->ensureConcurrentIndex('eg_training_dataset_key_version_uq', 'CREATE UNIQUE INDEX CONCURRENTLY eg_training_dataset_key_version_uq ON estimate_generation_training_datasets (organization_id, dataset_key, version)');
+        $runtime->ensureConcurrentIndex('eg_training_dataset_id_version_uq', 'CREATE UNIQUE INDEX CONCURRENTLY eg_training_dataset_id_version_uq ON estimate_generation_training_datasets (id, version)');
+        $runtime->ensureConcurrentIndex('eg_training_dataset_trust_idx', 'CREATE INDEX CONCURRENTLY eg_training_dataset_trust_idx ON estimate_generation_training_datasets (organization_id, dataset_type, status, version)');
         DB::statement("ALTER TABLE estimate_generation_training_examples ADD CONSTRAINT eg_training_example_review_chk CHECK (status NOT IN ('accepted','indexed') OR (reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL))");
 
         Schema::create('estimate_generation_benchmark_runs', function (Blueprint $table): void {

@@ -7,8 +7,12 @@ use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
+    public $withinTransaction = false;
+
     public function up(): void
     {
+        DB::statement("SET lock_timeout = '5s'");
+        DB::statement("SET statement_timeout = '15min'");
         DB::statement('ALTER TABLE estimate_generation_benchmark_runs ADD COLUMN case_results_size bigint, ADD COLUMN case_results_sha256 char(64), ADD COLUMN case_results_etag text, ADD COLUMN case_results_version text, ADD COLUMN case_results_content_type text, ADD COLUMN error_summary text');
         DB::statement('ALTER TABLE estimate_generation_benchmark_runs DROP CONSTRAINT eg_benchmark_closed_state_chk');
         DB::statement(<<<'SQL'

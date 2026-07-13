@@ -2,20 +2,28 @@
 
 declare(strict_types=1);
 
+use App\BusinessModules\Addons\EstimateGeneration\Support\TrainingBenchmarkOnlineMigrationRuntime;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
+    public $withinTransaction = false;
+
     public function up(): void
     {
+        DB::statement("SET lock_timeout = '5s'");
+        DB::statement("SET statement_timeout = '15min'");
         DB::statement('ALTER TABLE estimate_generation_training_datasets ADD COLUMN processing_token uuid');
         DB::statement('ALTER TABLE estimate_generation_benchmark_runs ADD COLUMN case_results_version_scheme text');
-        DB::statement('CREATE UNIQUE INDEX IF NOT EXISTS projects_id_organization_uq ON projects (id, organization_id)');
+        (new TrainingBenchmarkOnlineMigrationRuntime)->ensureConcurrentIndex('projects_id_organization_uq', 'CREATE UNIQUE INDEX CONCURRENTLY projects_id_organization_uq ON projects (id, organization_id)');
+        DB::statement('ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT eg_training_dataset_project_tenant_fk FOREIGN KEY (project_id, organization_id) REFERENCES projects(id, organization_id) ON DELETE RESTRICT NOT VALID');
+        DB::statement('ALTER TABLE estimate_generation_training_datasets VALIDATE CONSTRAINT eg_training_dataset_project_tenant_fk');
         DB::statement('ALTER TABLE estimate_generation_training_datasets DROP CONSTRAINT IF EXISTS estimate_generation_training_datasets_project_id_foreign');
-        DB::statement('ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT eg_training_dataset_project_tenant_fk FOREIGN KEY (project_id, organization_id) REFERENCES projects(id, organization_id) ON DELETE RESTRICT');
-        DB::statement('ALTER TABLE estimate_generation_training_examples ADD CONSTRAINT eg_training_example_review_pair_chk CHECK ((reviewed_by IS NULL AND reviewed_at IS NULL) OR (reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL))');
-        DB::statement("ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT eg_training_processing_token_chk CHECK ((status = 'processing' AND processing_token IS NULL OR processing_token IS NOT NULL) OR (status <> 'processing' AND processing_token IS NULL))");
+        DB::statement('ALTER TABLE estimate_generation_training_examples ADD CONSTRAINT eg_training_example_review_pair_chk CHECK ((reviewed_by IS NULL AND reviewed_at IS NULL) OR (reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL)) NOT VALID');
+        DB::statement('ALTER TABLE estimate_generation_training_examples VALIDATE CONSTRAINT eg_training_example_review_pair_chk');
+        DB::statement("ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT eg_training_processing_token_chk CHECK ((status = 'processing' AND processing_token IS NULL OR processing_token IS NOT NULL) OR (status <> 'processing' AND processing_token IS NULL)) NOT VALID");
+        DB::statement('ALTER TABLE estimate_generation_training_datasets VALIDATE CONSTRAINT eg_training_processing_token_chk');
         DB::statement('ALTER TABLE estimate_generation_benchmark_runs DROP CONSTRAINT eg_benchmark_closed_state_chk');
         DB::statement(<<<'SQL'
 ALTER TABLE estimate_generation_benchmark_runs ADD CONSTRAINT eg_benchmark_closed_state_chk CHECK (
