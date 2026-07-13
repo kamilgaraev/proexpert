@@ -42,7 +42,7 @@ SELECT CASE WHEN COUNT(DISTINCT usage.currency) FILTER (WHERE usage.pricing_stat
        CASE WHEN COUNT(DISTINCT usage.currency) FILTER (WHERE usage.pricing_status = 'available') = 1
             THEN MIN(usage.currency) FILTER (WHERE usage.pricing_status = 'available') END AS currency
 FROM estimate_generation_ai_usage AS usage
-JOIN filtered_sessions ON filtered_sessions.id = usage.session_id
+JOIN filtered_sessions ON usage.organization_id = filtered_sessions.organization_id AND usage.session_id = filtered_sessions.id
 SQL;
 
         return new OperationalQuery($sql, $bindings, ['total_cost', 'currency'], 1);
@@ -73,7 +73,7 @@ SQL;
     SELECT usage.currency,
            SUM(usage.cost_amount)::numeric(20,8) AS total_cost
     FROM estimate_generation_ai_usage AS usage
-    JOIN filtered_sessions ON filtered_sessions.id = usage.session_id
+    JOIN filtered_sessions ON usage.organization_id = filtered_sessions.organization_id AND usage.session_id = filtered_sessions.id
     WHERE usage.pricing_status = 'available' AND usage.currency IS NOT NULL
     GROUP BY usage.currency
 )
@@ -106,7 +106,7 @@ SELECT DATE_TRUNC('day', filtered_sessions.created_at) AS bucket,
        usage.currency,
        COUNT(DISTINCT filtered_sessions.id)::bigint AS sessions
 FROM filtered_sessions
-JOIN estimate_generation_ai_usage AS usage ON usage.session_id = filtered_sessions.id
+JOIN estimate_generation_ai_usage AS usage ON usage.organization_id = filtered_sessions.organization_id AND usage.session_id = filtered_sessions.id
 WHERE usage.pricing_status = 'available' AND usage.currency IN (
 SQL;
         $sql .= $placeholders.') GROUP BY DATE_TRUNC(\'day\', filtered_sessions.created_at), usage.currency'
@@ -142,7 +142,10 @@ SQL;
             $bindings[] = $filters->mode;
         }
 
-        $usageConditions = ['usage_filter.session_id = sessions.id'];
+        $usageConditions = [
+            'usage_filter.organization_id = sessions.organization_id',
+            'usage_filter.session_id = sessions.id',
+        ];
         foreach (['provider' => 'provider', 'model' => 'requested_model', 'stage' => 'stage'] as $property => $column) {
             $value = $filters->{$property};
             if ($value !== null) {
@@ -150,18 +153,18 @@ SQL;
                 $bindings[] = $value;
             }
         }
-        if (count($usageConditions) > 1) {
+        if (count($usageConditions) > 2) {
             $conditions[] = 'EXISTS (SELECT 1 FROM estimate_generation_ai_usage AS usage_filter WHERE '.implode(' AND ', $usageConditions).')';
         }
 
         $sql = <<<'SQL'
 WITH filtered_sessions AS MATERIALIZED (
-    SELECT sessions.id, sessions.status, sessions.applied_at, sessions.state_changed_at,
+    SELECT sessions.id, sessions.organization_id, sessions.status, sessions.applied_at, sessions.state_changed_at,
            sessions.created_at, sessions.updated_at
     FROM estimate_generation_sessions AS sessions
     WHERE
 SQL;
-        $sql .= implode(' AND ', $conditions)."\n)\n";
+        $sql .= "\n    ".implode(' AND ', $conditions)."\n)\n";
 
         return [$sql, $bindings];
     }

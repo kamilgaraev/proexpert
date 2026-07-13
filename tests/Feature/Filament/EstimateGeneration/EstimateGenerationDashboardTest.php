@@ -61,15 +61,35 @@ final class EstimateGenerationDashboardTest extends TestCase
         ];
         foreach (array_slice($queries, 0, 4) as $query) {
             self::assertStringContainsString('WITH filtered_sessions AS MATERIALIZED', $query->sql);
+            self::assertStringContainsString('SELECT sessions.id, sessions.organization_id, sessions.status', $query->sql);
+            self::assertStringContainsString("WHERE\n    sessions.created_at >= ?", $query->sql);
+            self::assertStringContainsString('usage_filter.organization_id = sessions.organization_id', $query->sql);
+            self::assertStringContainsString('usage_filter.session_id = sessions.id', $query->sql);
             self::assertStringContainsString('usage_filter.provider = ?', $query->sql);
             self::assertStringContainsString('usage_filter.requested_model = ?', $query->sql);
             self::assertStringContainsString('usage_filter.stage = ?', $query->sql);
             self::assertSame($canonicalBindings, $query->bindings);
         }
+        self::assertStringContainsString('SELECT sessions.id, sessions.organization_id, sessions.status', $queries[4]->sql);
+        self::assertStringContainsString("WHERE\n    sessions.created_at >= ?", $queries[4]->sql);
+        self::assertStringContainsString('usage_filter.organization_id = sessions.organization_id', $queries[4]->sql);
+        self::assertStringContainsString('usage_filter.session_id = sessions.id', $queries[4]->sql);
         self::assertSame([...$canonicalBindings, 'RUB', 'USD'], $queries[4]->bindings);
         self::assertStringNotContainsString('usage.created_at >= ?', $queries[1]->sql);
         self::assertStringContainsString("DATE_TRUNC('day', filtered_sessions.created_at)", $queries[4]->sql);
-        self::assertStringContainsString('JOIN filtered_sessions ON filtered_sessions.id = usage.session_id', $queries[1]->sql);
+        foreach ([$queries[1], $queries[3]] as $query) {
+            self::assertStringContainsString(
+                'JOIN filtered_sessions ON usage.organization_id = filtered_sessions.organization_id AND usage.session_id = filtered_sessions.id',
+                $query->sql,
+            );
+        }
+        self::assertStringContainsString(
+            'JOIN estimate_generation_ai_usage AS usage ON usage.organization_id = filtered_sessions.organization_id AND usage.session_id = filtered_sessions.id',
+            $queries[4]->sql,
+        );
+        foreach ([$queries[1], $queries[3], $queries[4]] as $query) {
+            self::assertStringNotContainsString('filtered_sessions.id = usage.session_id', $query->sql);
+        }
         self::assertStringContainsString('JOIN filtered_sessions ON filtered_sessions.id = checkpoints.session_id', $queries[2]->sql);
         self::assertStringContainsString('ORDER BY total_cost DESC, currency ASC', $queries[3]->sql);
         self::assertSame(DashboardFilters::MAX_CURRENCY_SERIES + 1, $queries[3]->rowLimit);
