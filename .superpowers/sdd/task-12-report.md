@@ -32,3 +32,14 @@
 ## Concern
 
 Фактические PostgreSQL query plans и конкурентное добавление resolution event локально намеренно не проверялись из-за DB-less ограничения задачи. Перед production-включением требуется staging/production-sized gate: проверить `EXPLAIN (ANALYZE, BUFFERS)` для периодных и tenant/status фильтров и конкурентный сценарий «новая occurrence между открытием страницы и подтверждением». Ожидаемая sequence и блокировка identity должны вернуть state conflict либо создать ровно одно resolution event.
+
+## Review fixes
+
+- Audit JSON больше не является источником идемпотентности. Добавлена отдельная таблица `estimate_generation_admin_operations` с DB-enforced unique `(organization_id, operation, idempotency_key)`, canonical SHA-256 command fingerprint, состояниями `pending/completed`, закрытым result JSON и временными метками.
+- Транзакция сначала делает `INSERT ... ON CONFLICT DO NOTHING`, затем `SELECT ... FOR UPDATE` registry row. Несовпадающий fingerprint возвращает conflict до чтения/изменения failure; matching completed row возвращает точный сохранённый result; только владелец pending claim выполняет tenant/occurrence CAS, append-only resolution и audit, после чего атомарно завершает registry row.
+- Domain failure, представленный результатом, также записывается в audit и переводит claim в `completed`; любое исключение при CAS/audit/completion откатывает всю транзакцию вместе с новым `pending` claim, поэтому сервис не может поймать исключение после сохранения незавершённого ownership row.
+- Fingerprint включает operation, organization/project tenant, actor, failure, session и expected occurrence sequence. Audit payload сохраняет тот же fingerprint и все значимые identity-поля, но не участвует в replay decision.
+- Подготовлена отдельная nontransactional online-миграция с `CREATE/DROP INDEX CONCURRENTLY IF [NOT] EXISTS`. Новые leading indexes закрывают usage default/period, requested model и standalone status, а также failure stage/category, occurrence period/default order и correlated resolution lookup. Существующие leading organization/stage indexes зафиксированы в inventory-тесте.
+- Review-fix RED: отсутствовали registry migration, online-index migration, fingerprint/claim decision и transaction registry claim. GREEN: focused `19 tests / 179 assertions`.
+- Финальная combined DB-less regression после review fixes: `71 tests / 610 assertions`; PHPStan/Larastan 1G, Pint, `php -l`, class-load и `git diff --check` прошли.
+- Обе миграции только написаны и не запускались. После штатного deployment остаются обязательными проверка валидности concurrent indexes, production-sized `EXPLAIN (ANALYZE, BUFFERS)` для каждого resource filter/default order и конкурентный PostgreSQL idempotency/CAS сценарий.

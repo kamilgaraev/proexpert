@@ -6,6 +6,7 @@ namespace Tests\Feature\Filament\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Operations\AdminFailureResolutionAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Operations\AdminFailureResolutionCommand;
+use App\BusinessModules\Addons\EstimateGeneration\Operations\AdminFailureResolutionRegistryClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Operations\AdminFailureResolutionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Operations\AdminFailureResolutionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Operations\AdminFailureResolutionTransaction;
@@ -18,6 +19,61 @@ use ReflectionClass;
 
 final class EstimateGenerationFailureResourceTest extends TestCase
 {
+    public function test_command_fingerprint_is_canonical_and_scope_complete(): void
+    {
+        self::assertSame(
+            'sha256:'.hash('sha256', 'resolve_failure|organization_id=7|project_id=9|actor_id=5|failure_id=0190d0b8-91c1-7b25-9384-271f050f5c89|session_id=11|expected_occurrence_sequence=13'),
+            $this->command()->fingerprint(),
+        );
+    }
+
+    public function test_registry_claim_distinguishes_owner_replay_conflict_and_pending_waiter(): void
+    {
+        $fingerprint = $this->command()->fingerprint();
+        $result = AdminFailureResolutionResult::success()->toArray();
+
+        self::assertSame('execute', AdminFailureResolutionRegistryClaim::decide($fingerprint, $fingerprint, 'pending', null, true)->decision);
+        self::assertSame('pending', AdminFailureResolutionRegistryClaim::decide($fingerprint, $fingerprint, 'pending', null, false)->decision);
+        $replay = AdminFailureResolutionRegistryClaim::decide($fingerprint, $fingerprint, 'completed', $result, false);
+        self::assertSame('replay', $replay->decision);
+        self::assertSame($result, $replay->result);
+        self::assertSame('conflict', AdminFailureResolutionRegistryClaim::decide($fingerprint, 'sha256:'.str_repeat('a', 64), 'completed', $result, false)->decision);
+    }
+
+    public function test_idempotency_registry_migration_has_exact_db_enforced_contract(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_000200_create_estimate_generation_admin_operations.php');
+        self::assertIsString($source);
+
+        foreach (['organization_id', 'operation', 'idempotency_key', 'command_fingerprint', 'status', 'result', 'created_at', 'updated_at', 'completed_at'] as $column) {
+            self::assertStringContainsString("'{$column}'", $source);
+        }
+        self::assertStringContainsString("unique(['organization_id', 'operation', 'idempotency_key'], 'eg_admin_operations_idempotency_uq')", $source);
+        self::assertStringContainsString("CHECK (status IN ('pending','completed'))", $source);
+        self::assertStringContainsString('command_fingerprint ~', $source);
+        self::assertStringContainsString("status = 'pending' AND result IS NULL AND completed_at IS NULL", $source);
+        self::assertStringContainsString("status = 'completed' AND result IS NOT NULL AND completed_at IS NOT NULL", $source);
+    }
+
+    public function test_resolution_transaction_claims_registry_before_mutation_and_never_replays_from_audit_json(): void
+    {
+        $source = $this->source(\App\BusinessModules\Addons\EstimateGeneration\Operations\EloquentAdminFailureResolutionTransaction::class);
+
+        self::assertStringContainsString("table('estimate_generation_admin_operations')->insertOrIgnore", $source);
+        self::assertStringContainsString("table('estimate_generation_admin_operations')", $source);
+        self::assertStringContainsString('->lockForUpdate()', $source);
+        self::assertStringContainsString('AdminFailureResolutionRegistryClaim::decide', $source);
+        self::assertStringContainsString("'command_fingerprint' => \$command->fingerprint()", $source);
+        self::assertStringContainsString("'status' => 'completed'", $source);
+        self::assertStringContainsString("'command_fingerprint' => \$command->fingerprint()", $source);
+        self::assertStringContainsString("throw new \\LogicException('Admin operation registry claim was lost.');", $source);
+        self::assertStringNotContainsString("where('payload->idempotency_key'", $source);
+        self::assertLessThan(
+            strpos($source, "table('estimate_generation_failure_identities')"),
+            strpos($source, "table('estimate_generation_admin_operations')->insertOrIgnore"),
+        );
+    }
+
     public function test_failure_query_selects_only_closed_diagnostics_projection(): void
     {
         self::assertSame([
@@ -30,6 +86,7 @@ final class EstimateGenerationFailureResourceTest extends TestCase
         $source = $this->source(FailureResource::class);
         self::assertStringContainsString("->with('session:id,organization_id,project_id,status')", $source);
         self::assertStringContainsString("safe_context->>'{\$key}' as diagnostic_{\$key}", $source);
+        self::assertStringContainsString("->defaultSort('last_seen_at', 'desc')", $source);
         self::assertStringContainsString('paginationPageOptions([25, 50, 100])', $source);
         foreach (['period', 'organization_id', 'stage', 'category', 'resolved_at'] as $filter) {
             self::assertMatchesRegularExpression("/(?:Filter|SelectFilter|TernaryFilter)::make\\('{$filter}'\\)/", $source);

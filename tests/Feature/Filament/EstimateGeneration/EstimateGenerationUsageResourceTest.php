@@ -11,6 +11,35 @@ use ReflectionClass;
 
 final class EstimateGenerationUsageResourceTest extends TestCase
 {
+    public function test_resource_index_migration_is_online_idempotent_and_covers_each_standalone_filter_and_order(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_000300_add_estimate_generation_resource_indexes.php');
+        self::assertIsString($source);
+        self::assertStringContainsString('public $withinTransaction = false;', $source);
+
+        $indexes = [
+            'eg_usage_created_desc_idx' => 'estimate_generation_ai_usage (created_at DESC)',
+            'eg_usage_requested_model_created_desc_idx' => 'estimate_generation_ai_usage (requested_model, created_at DESC)',
+            'eg_usage_status_created_desc_idx' => 'estimate_generation_ai_usage (status, created_at DESC)',
+            'eg_failure_identities_stage_idx' => 'estimate_generation_failure_identities (stage, id)',
+            'eg_failure_identities_category_idx' => 'estimate_generation_failure_identities (category, id)',
+            'eg_failure_occurrence_recorded_idx' => "estimate_generation_failure_events (recorded_at DESC, failure_id) WHERE event_type = 'occurred'",
+            'eg_failure_resolution_lookup_idx' => "estimate_generation_failure_events (failure_id, resolves_through_sequence DESC) WHERE event_type = 'resolved'",
+        ];
+        foreach ($indexes as $name => $definition) {
+            self::assertStringContainsString("CREATE INDEX CONCURRENTLY IF NOT EXISTS {$name} ON {$definition}", $source);
+            self::assertStringContainsString("DROP INDEX CONCURRENTLY IF EXISTS {$name}", $source);
+        }
+
+        $existing = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000400_create_estimate_generation_ai_usage_table.php');
+        $failures = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000500_create_estimate_generation_failures_table.php');
+        self::assertIsString($existing);
+        self::assertIsString($failures);
+        self::assertStringContainsString("index(['organization_id', 'session_id', 'created_at']", $existing);
+        self::assertStringContainsString("index(['stage', 'status', 'created_at']", $existing);
+        self::assertStringContainsString("index(['organization_id', 'session_id', 'created_at']", $failures);
+    }
+
     public function test_usage_query_and_table_use_the_exact_safe_cost_allowlist(): void
     {
         self::assertSame([
@@ -23,6 +52,7 @@ final class EstimateGenerationUsageResourceTest extends TestCase
 
         $source = $this->source(UsageResource::class);
         self::assertStringContainsString("->with('session:id,organization_id,project_id,status')", $source);
+        self::assertStringContainsString("->defaultSort('created_at', 'desc')", $source);
         foreach ([
             'session_id', 'provider', 'requested_model', 'stage', 'input_tokens',
             'cached_input_tokens', 'output_tokens', 'reasoning_tokens', 'image_count',

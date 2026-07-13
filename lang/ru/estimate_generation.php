@@ -220,6 +220,8 @@ return [
     'failure_resolved' => 'Ошибка отмечена как устранённая.',
     'failure_resolution_state_conflict' => 'Появился новый случай ошибки или её состояние уже изменилось. Обновите страницу.',
     'failure_resolution_failed' => 'Не удалось отметить ошибку как устранённую.',
+    'failure_resolution_idempotency_conflict' => 'Это действие уже использовано для другой ошибки. Обновите страницу и повторите.',
+    'failure_resolution_in_progress' => 'Действие уже выполняется. Обновите страницу через несколько секунд.',
     'dashboard' => [
         'navigation' => 'Центр AI-сметчика',
         'title' => 'Работа AI-сметчика',
