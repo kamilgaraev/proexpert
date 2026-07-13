@@ -39,7 +39,10 @@ final class EvidenceSchema
             EvidenceType::Extracted => [['field_key' => 'attribute', 'field_value' => 'normalized_scalar', 'unit' => 'unit'], ['field_key', 'field_value']],
             EvidenceType::Measured => [['quantity' => 'nonnegative_number', 'unit' => 'unit', 'method' => 'method'], ['quantity', 'unit']],
             EvidenceType::Inferred => [['result_code' => 'domain_code', 'confidence_band' => 'confidence_band'], ['result_code']],
-            EvidenceType::WorkItem => [['work_code' => 'domain_code', 'quantity' => 'canonical_decimal', 'unit' => 'unit'], ['work_code']],
+            EvidenceType::WorkItem => [[
+                'work_code' => 'domain_code', 'quantity' => 'canonical_decimal', 'unit' => 'unit',
+                'quantity_key' => 'quantity_ref', 'formula_hash' => 'sha256', 'source_evidence_hash' => 'sha256',
+            ], ['work_code']],
             EvidenceType::NormativeMatch => [['norm_key' => 'norm_ref', 'score' => 'confidence', 'dataset_version' => 'version'], ['norm_key', 'score', 'dataset_version']],
             EvidenceType::Price => [['amount' => 'nonnegative_number', 'currency' => 'currency', 'price_version' => 'version', 'region_code' => 'region_code'], ['amount', 'currency', 'price_version']],
         };
@@ -86,6 +89,8 @@ final class EvidenceSchema
             'version' => is_string($value) && self::validVersion($value),
             'region_code' => is_string($value) && preg_match('/^[0-9]{1,6}$/D', $value) === 1,
             'currency' => is_string($value) && EvidenceCurrency::tryFrom($value) !== null,
+            'quantity_ref' => self::boundedString($value, 80, '/^[a-z][a-z0-9_.-]{0,79}$/D'),
+            'sha256' => self::boundedString($value, 64, '/^[a-f0-9]{64}$/D'),
             'normalized_scalar' => is_bool($value) || ((is_int($value) || is_float($value)) && is_finite((float) $value) && $value >= 0 && $value <= 1_000_000_000_000)
                 || (is_string($value) && self::validDomainCode($value)),
             'bbox' => self::validBbox($value),

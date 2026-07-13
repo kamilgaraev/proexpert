@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceVerifier;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\MissingRegionalPrice;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\PriceSnapshotData;
 use App\BusinessModules\Addons\EstimateGeneration\Pricing\ResolveRegionalPrice;
@@ -17,13 +19,19 @@ class EstimatePricingService
 
     private ResolveUnitConversion $unitConversion;
 
-    public function __construct(?ResolveRegionalPrice $regionalPrice = null, ?ResolveUnitConversion $unitConversion = null)
-    {
+    private ?AcceptedQuantityEvidenceVerifier $acceptedEvidence;
+
+    public function __construct(
+        ?ResolveRegionalPrice $regionalPrice = null,
+        ?ResolveUnitConversion $unitConversion = null,
+        ?AcceptedQuantityEvidenceVerifier $acceptedEvidence = null,
+    ) {
         $this->regionalPrice = $regionalPrice ?? new ResolveRegionalPrice;
         $this->unitConversion = $unitConversion ?? new ResolveUnitConversion;
+        $this->acceptedEvidence = $acceptedEvidence;
     }
 
-    public function price(array $workItems, array $regionalContext = []): array
+    public function price(array $workItems, array $regionalContext = [], ?PipelineContext $context = null): array
     {
         foreach ($workItems as &$workItem) {
             if ((string) ($workItem['item_type'] ?? 'priced_work') === 'quantity_review') {
@@ -69,6 +77,14 @@ class EstimatePricingService
                 $workItem['labor_cost'] = (string) $laborCost->toScale(2, RoundingMode::HalfUp);
                 $workItem['total_cost'] = (string) $total;
                 $workItem['price_snapshot'] = $this->snapshot($resourceSnapshots, $workCost, $total)->toArray();
+                if ($context !== null && $this->acceptedEvidence?->verify($context, $workItem) !== true) {
+                    $this->blockQuantityEvidence($workItem);
+
+                    continue;
+                }
+                if ($context !== null) {
+                    $workItem['pricing_finalized_at'] = $workItem['price_snapshot']['captured_at'];
+                }
             } catch (MissingRegionalPrice|\Brick\Math\Exception\MathException) {
                 $this->blockMissingSnapshot($workItem);
 
@@ -188,6 +204,17 @@ class EstimatePricingService
         $workItem['validation_flags'] = array_values(array_unique([
             ...(is_array($workItem['validation_flags'] ?? null) ? $workItem['validation_flags'] : []),
             'missing_price_snapshot',
+        ]));
+    }
+
+    private function blockQuantityEvidence(array &$workItem): void
+    {
+        $this->blockMissingSnapshot($workItem);
+        $workItem['pricing_blocker'] = 'quantity_evidence_not_accepted';
+        $workItem['pricing_finalized_at'] = null;
+        $workItem['validation_flags'] = array_values(array_unique([
+            ...(is_array($workItem['validation_flags'] ?? null) ? $workItem['validation_flags'] : []),
+            'quantity_evidence_not_accepted',
         ]));
     }
 }

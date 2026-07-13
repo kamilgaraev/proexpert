@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "status": "pending_owner_approval",
+  "approval_kind": null,
+  "approval_ref": null,
+  "approved_at": null,
+  "privacy_scanner": "most-fixture-privacy",
+  "privacy_scanner_version": "1.0.0",
+  "privacy_result": "passed",
+  "required_review": [
+    "independent_source_ownership",
+    "static_expected_ground_truth",
+    "recorded_prediction_source_sensitivity",
+    "normative_and_price_evidence",
+    "privacy_and_license"
+  ],
+  "gate_execution_allowed": false
+}

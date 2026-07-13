@@ -155,7 +155,6 @@ final readonly class ProductionReplayBenchmarkAdapter implements BenchmarkPipeli
                         if (! is_array($item['price_snapshot'] ?? null) || ! is_string($item['price_snapshot']['captured_at'] ?? null)) {
                             return BenchmarkPipelineResultData::technicalFailure('production_readiness_blocked');
                         }
-                        $item['pricing_finalized_at'] = $item['price_snapshot']['captured_at'];
                         $workIds[] = (string) $item['key'];
                         $rankings[(string) $item['key']] = $result->rerankResult?->ordering ?? [];
                         $costs[(string) $item['key']] = (string) $item['total_cost'];

@@ -52,4 +52,11 @@ final readonly class BuildingModelRepository
             return array_map(static fn ($node): int => $node->id, $nodes) === $ids ? $stored : null;
         });
     }
+
+    public function currentModel(BuildingModelOperationContext $context): ?NormalizedBuildingModelData
+    {
+        $stored = $this->current($context);
+
+        return $stored === null ? null : $this->store->model($stored);
+    }
 }

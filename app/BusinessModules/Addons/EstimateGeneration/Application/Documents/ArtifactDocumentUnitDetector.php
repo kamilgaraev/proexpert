@@ -35,7 +35,33 @@ final readonly class ArtifactDocumentUnitDetector implements DocumentUnitDetecto
         $content = $this->storage->read($document);
 
         if ($firstType === DocumentUnitType::PdfPage) {
-            $geometry = $this->pdfGeometry->extract($content, $document->filename);
+            $geometry = $this->pdfGeometry->extract(
+                $content,
+                $document->filename,
+                function (int $pageNumber, string $path, array $metadata) use ($document, $sourceVersion): array {
+                    $bytes = file_get_contents($path);
+                    if (! is_string($bytes) || $bytes === '') {
+                        throw new DocumentManifestNeedsReview('pdf_raster_vision_artifact_required');
+                    }
+                    $artifactPath = $this->storage->put(
+                        $document,
+                        $sourceVersion,
+                        DocumentUnitType::Sketch,
+                        $pageNumber,
+                        $bytes,
+                        'image/png',
+                    );
+
+                    return [
+                        'artifact_path' => $artifactPath,
+                        'content_type' => 'image/png',
+                        'sha256' => hash('sha256', $bytes),
+                        'bytes' => strlen($bytes),
+                        'width' => $metadata['width'],
+                        'height' => $metadata['height'],
+                    ];
+                },
+            );
             $text = $this->pdf->extract($content, $document->filename);
             $textByPage = [];
             foreach ($text?->pages ?? [] as $page) {
@@ -55,31 +81,21 @@ final readonly class ArtifactDocumentUnitDetector implements DocumentUnitDetecto
                     ],
                 ];
                 $preview = $page->preview;
-                $previewBytes = is_string($preview['content_base64'] ?? null)
-                    ? base64_decode($preview['content_base64'], true)
-                    : false;
-                if (! is_string($previewBytes) || $previewBytes === ''
+                if (! is_string($preview['artifact_path'] ?? null)
                     || ! is_string($preview['sha256'] ?? null)
-                    || ! hash_equals($preview['sha256'], hash('sha256', $previewBytes))) {
+                    || ($preview['content_type'] ?? null) !== 'image/png') {
                     throw new DocumentManifestNeedsReview('pdf_raster_vision_artifact_required');
                 }
-                unset($payload['geometry']['preview']['content_base64']);
                 $geometryPath = $this->storage->put(
                     $document,
                     $sourceVersion,
                     $firstType,
                     $page->pageNumber,
                     json_encode($payload, JSON_THROW_ON_ERROR),
-                );
-                $artifactPath = $this->storage->put(
-                    $document,
-                    $sourceVersion,
-                    DocumentUnitType::Sketch,
-                    $page->pageNumber,
-                    $previewBytes,
+                    'application/json',
                 );
                 $detected[] = new DocumentUnitData($firstType, $page->pageNumber, $sourceVersion, [
-                    'artifact_path' => $artifactPath,
+                    'artifact_path' => $preview['artifact_path'],
                     'geometry_artifact_path' => $geometryPath,
                     'content_type' => 'image/png',
                     'artifact_source_version' => 'sha256:'.$preview['sha256'],

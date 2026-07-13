@@ -10,11 +10,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Documents\DocumentEvi
 class ConstructionSemanticParser
 {
     /**
-     * @param array<string, mixed> $input
-     * @param array<int, array<string, mixed>> $documents
+     * @param  array<string, mixed>  $input
+     * @param  array<int, array<string, mixed>>  $documents
      * @return array<string, mixed>
      */
-    public function parse(array $input, array $documents): array
+    public function parse(array $input, array $documents, ?array $normalizedBuildingModel = null): array
     {
         $description = (string) ($input['description'] ?? '');
         $generationMode = EstimateGenerationMode::fromInput($input['generation_mode'] ?? null)->value;
@@ -44,8 +44,8 @@ class ConstructionSemanticParser
         }, $documents);
 
         $documentContext = $this->buildDocumentContext($documentsPayload);
-        $combinedText = trim($description . "\n" . ($documentContext['context_text'] ?? ''));
-        $objectDescription = trim($description . "\n" . ($documentContext['context_text'] ?? ''));
+        $combinedText = trim($description."\n".($documentContext['context_text'] ?? ''));
+        $objectDescription = trim($description."\n".($documentContext['context_text'] ?? ''));
         $explicitBuildingType = isset($input['building_type']) ? (string) $input['building_type'] : null;
         $buildingType = (string) ($explicitBuildingType ?? $this->detectBuildingType($combinedText) ?? 'custom');
         $objectType = (string) (
@@ -71,7 +71,7 @@ class ConstructionSemanticParser
         $regionalContext = is_array($input['regional_context'] ?? null) ? $input['regional_context'] : [];
         $period = $this->detectPeriod($combinedText);
 
-        return [
+        $analysis = [
             'object' => [
                 'manual_description' => $description,
                 'description' => $objectDescription !== '' ? $objectDescription : $description,
@@ -106,10 +106,15 @@ class ConstructionSemanticParser
                 'scopes' => $scopes['items'],
             ],
         ];
+        if ($normalizedBuildingModel !== null) {
+            $analysis['normalized_building_model'] = $normalizedBuildingModel;
+        }
+
+        return $analysis;
     }
 
     /**
-     * @param array<int, array<string, mixed>> $documentsPayload
+     * @param  array<int, array<string, mixed>>  $documentsPayload
      * @return array<string, mixed>
      */
     private function buildDocumentContext(array $documentsPayload): array
@@ -138,7 +143,7 @@ class ConstructionSemanticParser
         $nonPrimaryDocuments = [];
 
         foreach ($documentsPayload as $document) {
-            if (!DocumentEvidencePolicy::isTrusted($document)) {
+            if (! DocumentEvidencePolicy::isTrusted($document)) {
                 $reviewRequiredDocuments[] = [
                     'id' => $document['id'] ?? null,
                     'filename' => $document['filename'] ?? 'document',
@@ -146,6 +151,7 @@ class ConstructionSemanticParser
                     'quality' => $document['quality'] ?? [],
                 ];
                 $problemFlags[] = 'document_review_required';
+
                 continue;
             }
 
@@ -160,6 +166,7 @@ class ConstructionSemanticParser
                     'document_role' => $documentRole,
                 ];
                 $problemFlags[] = 'document_review_required';
+
                 continue;
             }
 
@@ -169,6 +176,7 @@ class ConstructionSemanticParser
                     'filename' => $document['filename'] ?? 'document',
                     'document_role' => $documentRole,
                 ];
+
                 continue;
             }
 
@@ -179,7 +187,7 @@ class ConstructionSemanticParser
             }
 
             foreach ($document['facts'] ?? [] as $fact) {
-                if (!is_array($fact)) {
+                if (! is_array($fact)) {
                     continue;
                 }
 
@@ -317,7 +325,7 @@ class ConstructionSemanticParser
     }
 
     /**
-     * @param array<int, array<string, mixed>> $sourceRefs
+     * @param  array<int, array<string, mixed>>  $sourceRefs
      * @return array<int, array<string, mixed>>
      */
     private function uniqueSourceRefs(array $sourceRefs): array
@@ -362,7 +370,7 @@ class ConstructionSemanticParser
     }
 
     /**
-     * @param array<string, mixed> $documentContext
+     * @param  array<string, mixed>  $documentContext
      */
     private function detectObjectType(string $description, array $documentContext): ?string
     {
@@ -437,7 +445,7 @@ class ConstructionSemanticParser
                 continue;
             }
 
-            if ($strictMode && !$this->isScopeCandidateLine($normalizedLine, $scopeType)) {
+            if ($strictMode && ! $this->isScopeCandidateLine($normalizedLine, $scopeType)) {
                 continue;
             }
 
@@ -458,7 +466,7 @@ class ConstructionSemanticParser
     }
 
     /**
-     * @param array<string, array<int, string>> $keywords
+     * @param  array<string, array<int, string>>  $keywords
      */
     protected function detectScopeType(string $normalizedLine, array $keywords): ?string
     {
@@ -597,7 +605,7 @@ class ConstructionSemanticParser
     }
 
     /**
-     * @param array<int, array<string, mixed>> $items
+     * @param  array<int, array<string, mixed>>  $items
      * @return array<int, array<string, mixed>>
      */
     protected function uniqueScopeItems(array $items): array
@@ -605,7 +613,7 @@ class ConstructionSemanticParser
         $unique = [];
 
         foreach ($items as $item) {
-            $key = mb_strtolower(($item['scope_type'] ?? 'custom') . '|' . ($item['title'] ?? ''));
+            $key = mb_strtolower(($item['scope_type'] ?? 'custom').'|'.($item['title'] ?? ''));
             $unique[$key] = $item;
         }
 
@@ -657,7 +665,7 @@ class ConstructionSemanticParser
     {
         preg_match_all('/(\d+)\s*этаж/iu', $text, $matches);
 
-        $floors = array_map(static fn (string $value): string => $value . ' этаж', $matches[1] ?? []);
+        $floors = array_map(static fn (string $value): string => $value.' этаж', $matches[1] ?? []);
         $normalized = mb_strtolower($text);
 
         foreach ([
@@ -667,7 +675,7 @@ class ConstructionSemanticParser
         ] as $number => $patterns) {
             foreach ($patterns as $pattern) {
                 if (str_contains($normalized, $pattern)) {
-                    $floors[] = $number . ' этаж';
+                    $floors[] = $number.' этаж';
                     break;
                 }
             }
@@ -688,7 +696,7 @@ class ConstructionSemanticParser
     }
 
     /**
-     * @param array<string, array<int, string>> $keywords
+     * @param  array<string, array<int, string>>  $keywords
      * @return array<int, string>
      */
     protected function scopeCandidateLines(string $text, array $keywords): array
@@ -708,6 +716,7 @@ class ConstructionSemanticParser
 
                 if (count($parts) === 1) {
                     $candidates[] = $sentence;
+
                     continue;
                 }
 
@@ -840,7 +849,7 @@ class ConstructionSemanticParser
     }
 
     /**
-     * @param array<int, string> $zones
+     * @param  array<int, string>  $zones
      * @return array<int, string>
      */
     protected function normalizeDetectedZones(array $zones): array
@@ -857,6 +866,7 @@ class ConstructionSemanticParser
 
             if ($zone === 'Водоснабжение и канализация') {
                 $hasPlumbing = true;
+
                 continue;
             }
 
@@ -871,7 +881,7 @@ class ConstructionSemanticParser
     }
 
     /**
-     * @param array<string, array<int, string>> $keywords
+     * @param  array<string, array<int, string>>  $keywords
      * @return array<int, string>
      */
     protected function expandCompoundScopePart(string $part, array $keywords): array

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "status": "pending_owner_approval",
+  "provider": "most-candidate-recorded-pipeline",
+  "model_version": "production-candidate-2026-07-13",
+  "privacy_scanner": "most-fixture-privacy",
+  "privacy_scanner_version": "1.0.0",
+  "privacy_result": "passed",
+  "approval_kind": null,
+  "approval_ref": null,
+  "approved_at": null,
+  "envelopes": [
+    {"case_id":"candidate-freehand-sketch-731","source_fixture_sha256":"5ffff9503829e84c212e86bd52fa59a6c10b327112dd05e28dcebcd47a01b2da","prediction_status":"recorded_unapproved","prediction_locator":"cases/freehand-sketch/recorded-prediction.json"},
+    {"case_id":"candidate-scanned-pdf-731","source_fixture_sha256":"3b4c2c88ce7c812c603dd4588a73711d1aafb690d29e0f07057f2083a6e95d8f","prediction_status":"recorded_unapproved","prediction_locator":"cases/scanned-pdf/recorded-prediction.json"},
+    {"case_id":"candidate-vector-pdf-731","source_fixture_sha256":"3330938294ed4614ae7fd806ef7368379f631e03f49510734014f183bc72f62c","prediction_status":"recorded_unapproved","prediction_locator":"cases/vector-pdf/recorded-prediction.json"},
+    {"case_id":"candidate-dxf-plan-731","source_fixture_sha256":"b3dfb136031300afde7b8390c1a9fc3231131b21824505f5e7cf117c44c96528","prediction_status":"recorded_unapproved","prediction_locator":"cases/dxf-plan/recorded-prediction.json"},
+    {"case_id":"candidate-real-dwg-731","source_fixture_sha256":"2719f1df49fd39ebec81db62394503af3848ddc43d231b986b6f9b7404283c5c","prediction_status":"recorded_unapproved","prediction_locator":"cases/real-dwg/recorded-prediction.json"},
+    {"case_id":"candidate-scale-ambiguity-731","source_fixture_sha256":"61f5927d13da8f123b3a7d922d773ed445276e5de36ddfb9552af9dd8925a44d","prediction_status":"recorded_unapproved","prediction_locator":"cases/engineering-scale-ambiguity/recorded-prediction.json"}
+  ]
+}

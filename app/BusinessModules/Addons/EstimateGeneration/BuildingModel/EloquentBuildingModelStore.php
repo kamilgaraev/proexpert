@@ -98,6 +98,20 @@ final readonly class EloquentBuildingModelStore implements BuildingModelStore
         );
     }
 
+    public function model(StoredBuildingModel $stored): ?NormalizedBuildingModelData
+    {
+        $raw = $this->database->table('estimate_generation_building_models')
+            ->where('id', $stored->id)
+            ->where('organization_id', $stored->context->organizationId)
+            ->where('project_id', $stored->context->projectId)
+            ->where('session_id', $stored->context->sessionId)
+            ->where('input_version', $stored->context->inputVersion)
+            ->value('model');
+        $payload = is_array($raw) ? $raw : (is_string($raw) ? json_decode($raw, true, 512, JSON_THROW_ON_ERROR) : null);
+
+        return is_array($payload) ? NormalizedBuildingModelData::fromArray($payload) : null;
+    }
+
     public function evidenceIds(StoredBuildingModel $stored): array
     {
         $linked = $this->database->table('estimate_generation_building_model_evidence')

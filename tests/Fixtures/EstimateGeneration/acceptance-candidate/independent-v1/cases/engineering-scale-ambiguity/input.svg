@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="700" viewBox="0 0 1000 700">
+  <rect width="1000" height="700" fill="white"/>
+  <g fill="none" stroke="#111" stroke-width="8">
+    <rect x="130" y="120" width="720" height="430"/>
+    <line x1="490" y1="120" x2="490" y2="550"/>
+    <line x1="130" y1="335" x2="490" y2="335"/>
+  </g>
+  <g font-family="Arial" fill="#111">
+    <text x="145" y="90" font-size="30">План этажа</text>
+    <text x="145" y="615" font-size="28">М 1:50</text>
+    <text x="675" y="615" font-size="28">Масштаб 1:100</text>
+    <text x="285" y="105" font-size="22">6000</text>
+  </g>
+</svg>

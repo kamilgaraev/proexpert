@@ -16,13 +16,12 @@ final class AcceptedQuantityEvidenceContractTest extends TestCase
         $root = dirname(__DIR__, 4);
         $stage = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Pipeline/Stages/PlanWorkItemsStage.php');
 
-        self::assertStringNotContainsString('EvidenceRepository', $stage);
-        self::assertStringNotContainsString('insertOrGet', $stage);
+        self::assertStringContainsString('AcceptedQuantityEvidenceMaterializer', $stage);
         self::assertStringNotContainsString('quantity_evidence_descriptor', $stage);
         self::assertStringContainsString("\$quantityOutput['building_quantities']['quantities']", $stage);
         self::assertStringContainsString("'quantity_evidence'", $stage);
         self::assertStringContainsString("'quantity_mapping_missing'", $stage);
-        self::assertFileDoesNotExist($root.'/app/BusinessModules/Addons/EstimateGeneration/Pipeline/AcceptedQuantityEvidenceMaterializer.php');
+        self::assertFileExists($root.'/app/BusinessModules/Addons/EstimateGeneration/Pipeline/AcceptedQuantityEvidenceMaterializer.php');
     }
 
     #[Test]
@@ -75,7 +74,8 @@ final class AcceptedQuantityEvidenceContractTest extends TestCase
     {
         $persistence = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Services/EstimateGenerationPackagePersistenceService.php');
 
-        self::assertStringContainsString('app(EvidenceRepository::class)->node(', $persistence);
+        self::assertStringContainsString('AcceptedQuantityEvidenceVerifier', $persistence);
+        self::assertStringContainsString('verifyScope(', $persistence);
         self::assertStringNotContainsString('estimate_generation_accepted_evidence', $persistence);
         self::assertStringNotContainsString('quantity_evidence_descriptor', $persistence);
     }

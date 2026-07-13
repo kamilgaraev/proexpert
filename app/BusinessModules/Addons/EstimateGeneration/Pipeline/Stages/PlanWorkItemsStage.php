@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Pipeline\Stages;
 
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceMaterializer;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineContext;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\PipelineStageResult;
@@ -19,6 +20,7 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
     public function __construct(
         private WorkPlanCompiler $compiler,
         private StageResultFactory $results,
+        private AcceptedQuantityEvidenceMaterializer $acceptedEvidence,
     ) {}
 
     public function stage(): ProcessingStage
@@ -46,8 +48,16 @@ final readonly class PlanWorkItemsStage implements LeaseAwarePipelineStage
         foreach ($payload['local_estimates'] as $localIndex => $localEstimate) {
             foreach ($localEstimate['sections'] as $sectionIndex => $section) {
                 foreach ($section['work_items'] as $itemIndex => $item) {
-                    $payload['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] =
-                        $this->attachCanonicalQuantity($item, $quantities);
+                    $mapped = $this->attachCanonicalQuantity($item, $quantities);
+                    $quantityKey = $mapped['metadata']['quantity_key'] ?? null;
+                    $quantity = is_string($quantityKey) ? ($quantities[$quantityKey] ?? null) : null;
+                    if (is_array($quantity) && ($quantity['review_blockers'] ?? []) === []) {
+                        $node = $this->acceptedEvidence->materialize($context, QuantityData::fromArray($quantity), $mapped);
+                        $mapped['quantity_evidence_id'] = $node->id;
+                        $mapped['quantity_evidence_fingerprint'] = $node->fingerprint;
+                        $mapped['quantity_evidence_source_version'] = $node->sourceVersion;
+                    }
+                    $payload['local_estimates'][$localIndex]['sections'][$sectionIndex]['work_items'][$itemIndex] = $mapped;
                 }
             }
         }

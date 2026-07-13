@@ -8,9 +8,9 @@ final class PdfGeometryExtractor
 {
     public function __construct(private readonly PdfGeometryWorker $worker) {}
 
-    public function extract(string $content, ?string $filename = null): PdfGeometryExtractionResult
+    public function extract(string $content, ?string $filename = null, ?callable $previewPublisher = null): PdfGeometryExtractionResult
     {
-        $payload = $this->worker->extract($content, $filename);
+        $payload = $this->worker->extract($content, $filename, $previewPublisher);
         $pages = [];
 
         foreach (array_values($payload['pages'] ?? []) as $page) {

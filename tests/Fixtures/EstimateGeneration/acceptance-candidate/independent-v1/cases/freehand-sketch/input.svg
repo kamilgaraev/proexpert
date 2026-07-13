@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" viewBox="0 0 960 640">
+  <rect width="960" height="640" fill="#faf8f2"/>
+  <path d="M118 108 C310 94 525 119 831 102 L847 516 C618 535 368 502 111 525 Z" fill="none" stroke="#222" stroke-width="13" stroke-linecap="round"/>
+  <path d="M466 112 C452 220 475 392 459 511" fill="none" stroke="#333" stroke-width="10"/>
+  <path d="M459 329 C570 316 702 342 838 326" fill="none" stroke="#333" stroke-width="10"/>
+  <path d="M459 259 Q493 290 459 323" fill="none" stroke="#666" stroke-width="5"/>
+  <text x="190" y="265" font-family="Arial" font-size="34">гостиная</text>
+  <text x="590" y="230" font-family="Arial" font-size="34">кухня</text>
+  <text x="570" y="425" font-family="Arial" font-size="34">спальня</text>
+  <text x="128" y="584" font-family="Arial" font-size="24">эскиз без размеров</text>
+</svg>

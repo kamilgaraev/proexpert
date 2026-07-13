@@ -41,8 +41,14 @@ final readonly class S3DocumentSourceManifestStorage implements DocumentSourceMa
         return $content;
     }
 
-    public function put(EstimateGenerationDocument $document, string $sourceVersion, DocumentUnitType $type, int $index, string $content): string
-    {
+    public function put(
+        EstimateGenerationDocument $document,
+        string $sourceVersion,
+        DocumentUnitType $type,
+        int $index,
+        string $content,
+        string $contentType = 'text/plain',
+    ): string {
         $organization = $document->session?->organization;
 
         if ($organization === null) {
@@ -52,7 +58,12 @@ final readonly class S3DocumentSourceManifestStorage implements DocumentSourceMa
         $path = $this->files->putContent(
             $content,
             sprintf('estimate-generation/sessions/%d/documents/%d/manifests/%s', $document->session_id, $document->id, str_replace(':', '-', $sourceVersion)),
-            sprintf('%s-%05d.txt', $type->value, $index),
+            sprintf('%s-%05d.%s', $type->value, $index, match ($contentType) {
+                'application/json' => 'json',
+                'image/png' => 'png',
+                'text/plain' => 'txt',
+                default => throw new TypedFailureException(FailureCategory::Terminal, 'document_artifact_content_type_invalid'),
+            }),
             'private',
             $organization,
         );

@@ -10,5 +10,12 @@ interface DocumentSourceManifestStorage
 {
     public function read(EstimateGenerationDocument $document): string;
 
-    public function put(EstimateGenerationDocument $document, string $sourceVersion, DocumentUnitType $type, int $index, string $content): string;
+    public function put(
+        EstimateGenerationDocument $document,
+        string $sourceVersion,
+        DocumentUnitType $type,
+        int $index,
+        string $content,
+        string $contentType = 'text/plain',
+    ): string;
 }

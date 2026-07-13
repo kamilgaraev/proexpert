@@ -16,6 +16,8 @@ interface BuildingModelStore
 
     public function find(BuildingModelOperationContext $context): ?StoredBuildingModel;
 
+    public function model(StoredBuildingModel $stored): ?NormalizedBuildingModelData;
+
     /** @return list<int> */
     public function evidenceIds(StoredBuildingModel $stored): array;
 }

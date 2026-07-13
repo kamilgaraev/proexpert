@@ -22,6 +22,30 @@ use InvalidArgumentException;
 
 final class BuildingModelAssembler
 {
+    /** @param non-empty-list<VisionBuildingModelInputData> $inputs */
+    public function assembleVisionMany(array $inputs): NormalizedBuildingModelData
+    {
+        if ($inputs === [] || ! array_is_list($inputs)) {
+            throw new InvalidArgumentException('Vision building model inputs must be a non-empty list.');
+        }
+        $detections = [];
+        foreach ($inputs as $input) {
+            if (! $input instanceof VisionBuildingModelInputData) {
+                throw new InvalidArgumentException('Vision building model input is invalid.');
+            }
+            $model = $this->assembleVision($input)->model;
+            $detections[] = new BuildingModelDetectionData(
+                $input->producerVersion,
+                $model->scaleStatus,
+                $model->scaleMetersPerUnit,
+                $model->floors,
+                $model->evidenceIds,
+            );
+        }
+
+        return $this->assemble($detections);
+    }
+
     public function assembleVision(VisionBuildingModelInputData $input): VisionBuildingModelAssemblyResult
     {
         $confirmed = $input->scale->status === 'confirmed';

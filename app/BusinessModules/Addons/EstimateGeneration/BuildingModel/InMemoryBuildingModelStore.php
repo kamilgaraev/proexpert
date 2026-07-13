@@ -12,6 +12,8 @@ final class InMemoryBuildingModelStore implements BuildingModelStore
 
     private array $evidence = [];
 
+    private array $payloads = [];
+
     private int $nextId = 1;
 
     public function transaction(BuildingModelOperationContext $context, callable $callback): mixed
@@ -33,6 +35,7 @@ final class InMemoryBuildingModelStore implements BuildingModelStore
         }
         $stored = new StoredBuildingModel($this->nextId++, $context, $model->modelVersion, $contentVersion, true);
         $this->models[$slot] = $stored;
+        $this->payloads[$stored->id] = $model;
 
         return $stored;
     }
@@ -48,6 +51,11 @@ final class InMemoryBuildingModelStore implements BuildingModelStore
         $stored = $this->models[$slot] ?? null;
 
         return $stored === null ? null : new StoredBuildingModel($stored->id, $context, $stored->modelVersion, $stored->contentVersion, false);
+    }
+
+    public function model(StoredBuildingModel $stored): ?NormalizedBuildingModelData
+    {
+        return $this->payloads[$stored->id] ?? null;
     }
 
     public function evidenceIds(StoredBuildingModel $stored): array

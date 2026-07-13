@@ -323,8 +323,14 @@ final class DocumentProcessingUnitContractTest extends TestCase
                 return 'pdf-source';
             }
 
-            public function put(EstimateGenerationDocument $document, string $sourceVersion, DocumentUnitType $type, int $index, string $content): string
-            {
+            public function put(
+                EstimateGenerationDocument $document,
+                string $sourceVersion,
+                DocumentUnitType $type,
+                int $index,
+                string $content,
+                string $contentType = 'text/plain',
+            ): string {
                 return $this->paths[] = sprintf('org-10/manifest/%s-%d.txt', $type->value, $index);
             }
         };
@@ -350,14 +356,31 @@ final class DocumentProcessingUnitContractTest extends TestCase
         };
         $geometry = new PdfGeometryExtractor(new class extends PdfGeometryWorker
         {
-            public function extract(string $content, ?string $filename = null): array
-            {
-                return ['provider' => 'test', 'model' => 'geometry_v1', 'pages' => array_map(static fn (int $page): array => [
-                    'page_number' => $page, 'width' => 100, 'height' => 100, 'rotation' => 0,
-                    'text_blocks' => [['text' => 'page '.$page]], 'vector_elements' => [],
-                    'visual_metrics' => [], 'page_role' => 'plan', 'signals' => [],
-                    'preview' => ['content_base64' => base64_encode('png-pdf-source'), 'sha256' => hash('sha256', 'png-pdf-source')],
-                ], range(1, 200)), 'metadata' => []];
+            public function extract(
+                string $content,
+                ?string $filename = null,
+                ?callable $previewPublisher = null,
+            ): array {
+                if ($previewPublisher === null) {
+                    throw new \RuntimeException('pdf_preview_publisher_required');
+                }
+
+                $previewPath = tempnam(sys_get_temp_dir(), 'pdf-preview-');
+                file_put_contents($previewPath, 'png-pdf-source');
+
+                try {
+                    return ['provider' => 'test', 'model' => 'geometry_v1', 'pages' => array_map(
+                        static fn (int $page): array => [
+                            'page_number' => $page, 'width' => 100, 'height' => 100, 'rotation' => 0,
+                            'text_blocks' => [['text' => 'page '.$page]], 'vector_elements' => [],
+                            'visual_metrics' => [], 'page_role' => 'plan', 'signals' => [],
+                            'preview' => $previewPublisher($page, $previewPath, ['width' => 100, 'height' => 100]),
+                        ],
+                        range(1, 200),
+                    ), 'metadata' => []];
+                } finally {
+                    @unlink($previewPath);
+                }
             }
         });
         $document = new EstimateGenerationDocument(['filename' => 'house.pdf', 'mime_type' => 'application/pdf', 'page_count' => 200]);
@@ -385,8 +408,14 @@ final class DocumentProcessingUnitContractTest extends TestCase
                 return 'scanned-pdf';
             }
 
-            public function put(EstimateGenerationDocument $document, string $sourceVersion, DocumentUnitType $type, int $index, string $content): string
-            {
+            public function put(
+                EstimateGenerationDocument $document,
+                string $sourceVersion,
+                DocumentUnitType $type,
+                int $index,
+                string $content,
+                string $contentType = 'text/plain',
+            ): string {
                 $this->writes++;
 
                 return 'org-10/never';
@@ -404,14 +433,28 @@ final class DocumentProcessingUnitContractTest extends TestCase
         $spreadsheet = new class extends SpreadsheetDocumentExtractor {};
         $geometry = new PdfGeometryExtractor(new class extends PdfGeometryWorker
         {
-            public function extract(string $content, ?string $filename = null): array
-            {
-                return ['provider' => 'test', 'model' => 'geometry_v1', 'pages' => [[
-                    'page_number' => 1, 'width' => 100, 'height' => 100, 'rotation' => 0,
-                    'text_blocks' => [], 'vector_elements' => [], 'visual_metrics' => [],
-                    'page_role' => 'empty', 'signals' => [],
-                    'preview' => ['content_base64' => base64_encode('rendered-png'), 'sha256' => hash('sha256', 'rendered-png')],
-                ]], 'metadata' => []];
+            public function extract(
+                string $content,
+                ?string $filename = null,
+                ?callable $previewPublisher = null,
+            ): array {
+                if ($previewPublisher === null) {
+                    throw new \RuntimeException('pdf_preview_publisher_required');
+                }
+
+                $previewPath = tempnam(sys_get_temp_dir(), 'pdf-preview-');
+                file_put_contents($previewPath, 'rendered-png');
+
+                try {
+                    return ['provider' => 'test', 'model' => 'geometry_v1', 'pages' => [[
+                        'page_number' => 1, 'width' => 100, 'height' => 100, 'rotation' => 0,
+                        'text_blocks' => [], 'vector_elements' => [], 'visual_metrics' => [],
+                        'page_role' => 'empty', 'signals' => [],
+                        'preview' => $previewPublisher(1, $previewPath, ['width' => 100, 'height' => 100]),
+                    ]], 'metadata' => []];
+                } finally {
+                    @unlink($previewPath);
+                }
             }
         });
         $detector = new ArtifactDocumentUnitDetector($storage, $pdf, $geometry, $spreadsheet, new MetadataDocumentUnitDetector);

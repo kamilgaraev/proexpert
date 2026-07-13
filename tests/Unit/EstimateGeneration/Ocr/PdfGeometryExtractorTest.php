@@ -6,15 +6,19 @@ namespace Tests\Unit\EstimateGeneration\Ocr;
 
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Geometry\PdfGeometryWorker;
-use Tests\TestCase;
+use PHPUnit\Framework\TestCase;
 
 final class PdfGeometryExtractorTest extends TestCase
 {
     public function test_geometry_extractor_normalizes_worker_pages(): void
     {
-        $worker = new class extends PdfGeometryWorker {
-            public function extract(string $content, ?string $filename = null): array
-            {
+        $worker = new class extends PdfGeometryWorker
+        {
+            public function extract(
+                string $content,
+                ?string $filename = null,
+                ?callable $previewPublisher = null,
+            ): array {
                 return [
                     'provider' => 'pymupdf',
                     'model' => 'geometry_v1',

@@ -336,6 +336,14 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(DocumentUnitAggregateReconciler::class, EloquentDocumentUnitAggregateReconciler::class);
         $this->app->singleton(DocumentSourceReplacementTransaction::class, LaravelDocumentSourceReplacementTransaction::class);
         $this->app->singleton(EvidenceRepository::class, EloquentEvidenceRepository::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinSource::class, \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\EloquentNormativeContextPinSource::class);
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver::class, fn ($app) => new \App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinResolver(
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeContextPinSource::class),
+        ));
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService::class, fn ($app) => new \App\BusinessModules\Addons\EstimateGeneration\Services\EstimateGenerationPackagePersistenceService(
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceVerifier::class),
+        ));
+        $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelStore::class, \App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentBuildingModelStore::class);
         $this->app->singleton(EvidenceSourceReplacementInvalidator::class, EvidenceDocumentSourceReplacementInvalidator::class);
         $this->app->singleton(SessionStateStore::class, EloquentSessionStateStore::class);
         $this->app->singleton(OcrClientInterface::class, TimewebVisionOcrClient::class);

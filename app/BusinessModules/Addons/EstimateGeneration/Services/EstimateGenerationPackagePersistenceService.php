@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services;
 
-use App\BusinessModules\Addons\EstimateGeneration\Evidence\EvidenceRepository;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackage;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationPackageItem;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Pipeline\AcceptedQuantityEvidenceVerifier;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Illuminate\Support\Facades\DB;
@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\DB;
 class EstimateGenerationPackagePersistenceService
 {
     public function __construct(
+        private readonly ?AcceptedQuantityEvidenceVerifier $acceptedEvidence = null,
         private readonly EstimateGenerationNoAirWorkItemPolicy $noAirWorkItemPolicy = new EstimateGenerationNoAirWorkItemPolicy,
     ) {}
 
@@ -289,14 +290,16 @@ class EstimateGenerationPackagePersistenceService
         $session = $package->session()->firstOrFail();
         $evidenceId = $this->positiveInt($workItem['quantity_evidence_id'] ?? null);
         $evidenceFingerprint = $workItem['quantity_evidence_fingerprint'] ?? null;
-        if ($evidenceId === null || ! is_string($evidenceFingerprint)) {
-            return null;
-        }
-        $evidence = app(EvidenceRepository::class)->node((int) $session->organization_id, (int) $session->project_id, (int) $session->id, $evidenceId);
-        if ($evidence === null || $evidence->fingerprint !== $evidenceFingerprint || $evidence->invalidatedAt !== null
-            || ! is_string($evidence->value['quantity'] ?? null)
-            || $this->positiveDecimal($evidence->value['quantity'] ?? null)?->compareTo($quantity) !== 0
-            || ($evidence->value['unit'] ?? null) !== $unit) {
+        $evidenceSourceVersion = $workItem['quantity_evidence_source_version'] ?? null;
+        if ($evidenceId === null || ! is_string($evidenceFingerprint) || ! is_string($evidenceSourceVersion)
+            || $this->acceptedEvidence === null
+            || ! $this->acceptedEvidence->verifyScope(
+                (int) $session->organization_id,
+                (int) $session->project_id,
+                (int) $session->id,
+                $evidenceSourceVersion,
+                $workItem,
+            )) {
             return null;
         }
 

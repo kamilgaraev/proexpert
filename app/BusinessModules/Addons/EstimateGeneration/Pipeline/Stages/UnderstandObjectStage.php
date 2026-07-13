@@ -27,7 +27,11 @@ final readonly class UnderstandObjectStage implements LeaseAwarePipelineStage
     {
         $context->priorOutputs->payload(ProcessingStage::UnderstandDocuments);
         $source = $this->gateway->source($context);
-        $analysis = $this->parser->parse($source['input'], $source['documents']);
+        $analysis = $this->parser->parse(
+            $source['input'],
+            $source['documents'],
+            is_array($source['normalized_building_model'] ?? null) ? $source['normalized_building_model'] : null,
+        );
 
         return $this->results->make($context, $this->stage(), ['analysis' => $analysis]);
     }

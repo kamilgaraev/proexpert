@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
+use App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentSessionBuildingModelBridge;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationProcessingUnit;
 use Illuminate\Database\Connection;
@@ -16,6 +17,7 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
     public function __construct(
         private ReconcileEstimateGenerationDocuments $sessions,
         private Connection $database,
+        private EloquentSessionBuildingModelBridge $buildingModels,
     ) {}
 
     public function reconcile(int $documentId, string $sourceVersion): void
@@ -94,6 +96,7 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
         [$session, $token] = $claim;
 
         try {
+            $this->buildingModels->rebuild((int) $session->getKey());
             $this->sessions->reconcile($session);
             $this->documentQuery()
                 ->whereKey($documentId)
