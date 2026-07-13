@@ -36,6 +36,13 @@ final class BuildingModelPayloadServiceTest extends TestCase
         self::assertSame(2, $payload['quantities']['meta']['last_page']);
         self::assertSame('confirmed', $payload['quantities']['data'][0]['status']);
         self::assertSame('0.970000', $payload['quantities']['data'][0]['confidence']);
+        self::assertSame($this->contentVersion(), $payload['content_version']);
+        self::assertSame('building-model:v1', $payload['building_model']['model_version']);
+        self::assertSame('building-model:v1', $payload['quantities']['data'][0]['model_version']);
+        self::assertArrayHasKey('inputs', $payload['quantities']['data'][0]['formula']);
+        self::assertSame('12.5', $payload['quantities']['data'][0]['formula']['inputs']['items'][0]['amount']);
+        self::assertIsString($payload['quantities']['data'][0]['formula']['inputs']['items'][0]['operands'][0]['value']);
+        self::assertStringNotContainsString('locator', json_encode($payload['quantities']['data'][0]['formula']['inputs'], JSON_THROW_ON_ERROR));
     }
 
     #[Test]
@@ -63,6 +70,49 @@ final class BuildingModelPayloadServiceTest extends TestCase
         self::assertStringNotContainsString('secret-object-key', json_encode($payload, JSON_THROW_ON_ERROR));
     }
 
+    #[Test]
+    public function invalidated_evidence_never_promotes_quantity_trust_and_is_not_readable(): void
+    {
+        $service = new BuildingModelPayloadService(new FakeBuildingModelReadDataSource(
+            $this->model(),
+            [
+                11 => $this->evidence(11, 'document_unit', 'measured', ['quantity' => 12.5, 'unit' => 'm2', 'method' => 'geometry'], '0.100000', true),
+                12 => $this->evidence(12, 'user_input', 'measured', ['quantity' => 12.5, 'unit' => 'm2', 'method' => 'user_confirmed'], '1.000000'),
+            ],
+        ));
+
+        $payload = $service->handle($this->generationSession());
+
+        self::assertSame([12], $payload['quantities']['data'][0]['evidence_ids']);
+        self::assertSame('user_confirmed', $payload['quantities']['data'][0]['source']);
+        self::assertSame('1.000000', $payload['quantities']['data'][0]['confidence']);
+        self::assertSame('confirmed', $payload['quantities']['data'][0]['status']);
+        self::assertNotContains(11, $payload['quantities']['data'][0]['formula']['inputs']['items'][0]['evidence_ids']);
+        self::assertContains(12, $payload['quantities']['data'][0]['formula']['inputs']['items'][0]['evidence_ids']);
+        self::assertNull($service->evidence($this->generationSession(), 11));
+    }
+
+    #[Test]
+    public function all_invalidated_evidence_degrades_quantity_to_review_required(): void
+    {
+        $service = new BuildingModelPayloadService(new FakeBuildingModelReadDataSource(
+            $this->model(),
+            [
+                11 => $this->evidence(11, 'document_unit', 'measured', ['quantity' => 12.5, 'unit' => 'm2', 'method' => 'geometry'], '0.970000', true),
+                12 => $this->evidence(12, 'user_input', 'measured', ['quantity' => 12.5, 'unit' => 'm2', 'method' => 'user_confirmed'], '1.000000', true),
+            ],
+        ));
+
+        $quantity = $service->handle($this->generationSession())['quantities']['data'][0];
+
+        self::assertSame([], $quantity['evidence_ids']);
+        self::assertSame('estimated', $quantity['source']);
+        self::assertSame('needs_review', $quantity['status']);
+        self::assertContains('active_evidence_missing', $quantity['review_blockers']);
+        self::assertSame('0.970000', $quantity['confidence']);
+        self::assertSame([], $quantity['formula']['inputs']['items'][0]['evidence_ids']);
+    }
+
     private function generationSession(): EstimateGenerationSession
     {
         $session = new EstimateGenerationSession;
@@ -83,7 +133,7 @@ final class BuildingModelPayloadServiceTest extends TestCase
     }
 
     /** @param array<string, mixed> $value @return array<string, mixed> */
-    private function evidence(int $id, string $sourceType, string $type, array $value, string $confidence): array
+    private function evidence(int $id, string $sourceType, string $type, array $value, string $confidence, bool $invalidated = false): array
     {
         return [
             'id' => $id,
@@ -101,8 +151,13 @@ final class BuildingModelPayloadServiceTest extends TestCase
             'confidence' => $confidence,
             'producer_name' => 'drawing_analyzer',
             'producer_version' => 'model:v1',
-            'invalidated_at' => null,
+            'invalidated_at' => $invalidated ? '2026-07-13T12:00:00+00:00' : null,
         ];
+    }
+
+    private function contentVersion(): string
+    {
+        return NormalizedBuildingModelData::fromArray($this->model())->contentVersion();
     }
 }
 
@@ -117,7 +172,7 @@ final class FakeBuildingModelReadDataSource implements BuildingModelReadDataSour
 
     public function latestModel(int $organizationId, int $projectId, int $sessionId): ?array
     {
-        return ['content_version' => 'sha256:'.str_repeat('b', 64), 'model' => $this->model];
+        return ['content_version' => NormalizedBuildingModelData::fromArray($this->model)->contentVersion(), 'model' => $this->model];
     }
 
     public function evidenceForIds(int $organizationId, int $projectId, int $sessionId, array $ids): array

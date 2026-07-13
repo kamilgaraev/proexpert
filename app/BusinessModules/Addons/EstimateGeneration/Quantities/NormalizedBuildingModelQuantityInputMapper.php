@@ -56,7 +56,7 @@ final class NormalizedBuildingModelQuantityInputMapper implements BuildingModelQ
         }
 
         return [
-            'model_version' => 'building-model.v1',
+            'model_version' => $model->modelVersion,
             'scale' => ['status' => $model->scaleStatus === 'confirmed' ? 'confirmed' : 'unconfirmed', 'unit' => 'm'],
             'rooms' => $rooms, 'walls' => $walls, 'openings' => $openings,
             'foundations' => [], 'roofs' => [], 'engineering' => $engineering,

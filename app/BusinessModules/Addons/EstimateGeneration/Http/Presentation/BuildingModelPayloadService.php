@@ -17,6 +17,7 @@ final readonly class BuildingModelPayloadService
         private BuildingModelReadDataSource $data,
         private NormalizedBuildingModelQuantityInputMapper $mapper = new NormalizedBuildingModelQuantityInputMapper,
         private BuildingQuantityCalculator $calculator = new BuildingQuantityCalculator,
+        private QuantityFormulaInputsPresenter $formulaInputs = new QuantityFormulaInputsPresenter,
     ) {}
 
     /** @return array<string, mixed> */
@@ -29,13 +30,18 @@ final readonly class BuildingModelPayloadService
         if ($head === null) {
             return [
                 'state_version' => (int) $session->state_version,
-                'model_version' => null,
+                'content_version' => null,
                 'building_model' => null,
                 'quantities' => ['data' => [], 'meta' => $this->meta(0, 1, $perPage)],
             ];
         }
 
         $model = NormalizedBuildingModelData::fromArray($head['model']);
+        $contentVersion = (string) ($head['content_version'] ?? '');
+        if (preg_match('/\Asha256:[a-f0-9]{64}\z/', $contentVersion) !== 1
+            || ! hash_equals($model->contentVersion(), $contentVersion)) {
+            throw new \UnexpectedValueException('Building model content version is invalid.');
+        }
         $calculation = $this->calculator->calculate($this->mapper->map($model));
         $quantities = array_values($calculation->all());
         $total = count($quantities);
@@ -54,7 +60,7 @@ final readonly class BuildingModelPayloadService
 
         return [
             'state_version' => (int) $session->state_version,
-            'model_version' => (string) $head['content_version'],
+            'content_version' => $contentVersion,
             'building_model' => $model->toArray(),
             'quantities' => [
                 'data' => array_map(fn (QuantityData $quantity): array => $this->quantity($quantity, $evidence, $model), $pageItems),
@@ -71,6 +77,9 @@ final readonly class BuildingModelPayloadService
         $sessionId = (int) $session->getKey();
         $row = $this->data->evidence($organizationId, $projectId, $sessionId, $evidenceId);
         if ($row === null) {
+            return null;
+        }
+        if (($row['invalidated_at'] ?? null) !== null) {
             return null;
         }
         $locator = is_array($row['locator'] ?? null) ? $row['locator'] : [];
@@ -104,9 +113,20 @@ final readonly class BuildingModelPayloadService
     /** @param array<int, array<string, mixed>> $evidence @return array<string, mixed> */
     private function quantity(QuantityData $quantity, array $evidence, NormalizedBuildingModelData $model): array
     {
+        if (! hash_equals($model->modelVersion, $quantity->modelVersion)) {
+            throw new \UnexpectedValueException('Quantity building model version is invalid.');
+        }
         $ids = array_values(array_map('intval', array_filter($quantity->evidenceIds, 'ctype_digit')));
-        $rows = array_values(array_intersect_key($evidence, array_flip($ids)));
+        $rows = array_values(array_filter(
+            array_intersect_key($evidence, array_flip($ids)),
+            static fn (array $row): bool => ($row['invalidated_at'] ?? null) === null,
+        ));
+        $activeIds = array_values(array_map(static fn (array $row): int => (int) $row['id'], $rows));
+        sort($activeIds, SORT_NUMERIC);
         $source = $quantity->source->value;
+        if ($source === 'evidenced' && $ids !== [] && $rows === []) {
+            $source = 'estimated';
+        }
         if ($source === 'evidenced' && array_filter($rows, static fn (array $row): bool => ($row['source_type'] ?? null) === 'user_input'
             || (($row['value']['method'] ?? null) === 'user_confirmed')
         ) !== []) {
@@ -116,20 +136,28 @@ final readonly class BuildingModelPayloadService
             ? $model->metrics['minimum_confidence']
             : min(array_map(static fn (array $row): float => (float) ($row['confidence'] ?? 0), $rows));
 
+        $reviewBlockers = $quantity->reviewBlockers;
+        if ($ids !== [] && $rows === []) {
+            $reviewBlockers[] = 'active_evidence_missing';
+        }
+        $reviewBlockers = array_values(array_unique($reviewBlockers));
+        sort($reviewBlockers, SORT_STRING);
+
         return [
             'key' => $quantity->key,
             'amount' => $quantity->amount,
             'unit' => $quantity->unit,
             'source' => $source,
             'confidence' => $this->confidence($confidence),
-            'status' => $quantity->reviewBlockers !== [] || $quantity->assumptions !== [] ? 'needs_review' : 'confirmed',
+            'status' => $reviewBlockers !== [] || $quantity->assumptions !== [] ? 'needs_review' : 'confirmed',
             'formula' => [
                 'key' => $quantity->formulaKey,
                 'version' => $quantity->formulaVersion,
+                'inputs' => $this->formulaInputs->present($quantity->formulaInputs, $activeIds),
             ],
-            'evidence_ids' => $ids,
+            'evidence_ids' => $activeIds,
             'assumptions' => $quantity->assumptions,
-            'review_blockers' => $quantity->reviewBlockers,
+            'review_blockers' => $reviewBlockers,
             'model_version' => $quantity->modelVersion,
         ];
     }

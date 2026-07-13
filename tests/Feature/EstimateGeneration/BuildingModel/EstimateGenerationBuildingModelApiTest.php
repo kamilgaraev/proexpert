@@ -54,10 +54,12 @@ final class EstimateGenerationBuildingModelApiTest extends LaravelTestCase
         $response->assertOk()
             ->assertJsonPath('success', true)
             ->assertJsonPath('data.building_model', null)
+            ->assertJsonPath('data.content_version', null)
             ->assertJsonPath('data.quantities.data', [])
             ->assertJsonPath('data.quantities.meta.total', 0)
             ->assertJsonPath('data.quantities.meta.current_page', 1)
             ->assertJsonPath('data.quantities.meta.per_page', 10)
+            ->assertJsonMissingPath('data.model_version')
             ->assertJsonMissingPath('data.data');
     }
 
@@ -127,6 +129,35 @@ final class EstimateGenerationBuildingModelApiTest extends LaravelTestCase
             ->assertJsonMissingPath('data.locator')
             ->assertJsonMissingPath('data.source_ref');
         self::assertStringNotContainsString('private-locator', $response->getContent());
+    }
+
+    #[Test]
+    public function invalidated_evidence_id_returns_404_and_is_never_exposed(): void
+    {
+        $authorization = Mockery::mock(AuthorizationService::class);
+        $authorization->expects('can')->once()->andReturnTrue();
+        $this->app->instance(AuthorizationService::class, $authorization);
+        $source = Mockery::mock(BuildingModelReadDataSource::class);
+        $source->expects('evidence')->once()->with(9, 17, 41, 101)->andReturn([
+            'id' => 101,
+            'type' => 'measured',
+            'source_type' => 'document_unit',
+            'source_ref' => 'document:91/private',
+            'source_version' => 'sha256:'.str_repeat('a', 64),
+            'locator' => ['document_id' => 91, 'page' => 3],
+            'value' => ['quantity' => 20, 'unit' => 'm2', 'method' => 'geometry'],
+            'confidence' => '0.980000',
+            'producer_name' => 'drawing_analyzer',
+            'producer_version' => 'model:v1',
+            'invalidated_at' => '2026-07-13T12:00:00+00:00',
+        ]);
+        $source->shouldNotReceive('documentNames');
+        $this->mount($source, $this->project(17, 9), $this->generationSession(41, 9, 17));
+        $this->actingAs($this->user(9));
+
+        $this->getJson('/_contract/building-model/projects/17/sessions/41/evidence/101')
+            ->assertNotFound()
+            ->assertJsonPath('success', false);
     }
 
     #[Test]

@@ -42,6 +42,7 @@ final readonly class EloquentBuildingModelReadDataSource implements BuildingMode
             ->where('project_id', $projectId)
             ->where('session_id', $sessionId)
             ->whereIn('id', $ids)
+            ->whereNull('invalidated_at')
             ->get($this->evidenceColumns())
             ->mapWithKeys(fn (stdClass $row): array => [(int) $row->id => $this->evidenceRow($row)])
             ->all();
@@ -54,6 +55,7 @@ final readonly class EloquentBuildingModelReadDataSource implements BuildingMode
             ->where('project_id', $projectId)
             ->where('session_id', $sessionId)
             ->where('id', $evidenceId)
+            ->whereNull('invalidated_at')
             ->first($this->evidenceColumns());
 
         return $row instanceof stdClass ? $this->evidenceRow($row) : null;
