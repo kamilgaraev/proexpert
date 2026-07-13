@@ -443,6 +443,14 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             \App\BusinessModules\Addons\EstimateGeneration\Operations\AdminSessionOperationExecutor::class,
             \App\BusinessModules\Addons\EstimateGeneration\Operations\ApplicationAdminSessionOperationExecutor::class,
         );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Operations\AdminFailureResolutionAuthorizer::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Operations\SystemAdminFailureResolutionAuthorizer::class,
+        );
+        $this->app->singleton(
+            \App\BusinessModules\Addons\EstimateGeneration\Operations\AdminFailureResolutionTransaction::class,
+            \App\BusinessModules\Addons\EstimateGeneration\Operations\EloquentAdminFailureResolutionTransaction::class,
+        );
         $this->app->singleton(GeometryRegenerationIntentStore::class, EloquentGeometryRegenerationIntentStore::class);
         $this->app->singleton(GeometryConfirmationFaultInjector::class, NoopGeometryConfirmationFaultInjector::class);
         $this->app->singleton(GeneratedEstimateWriter::class, LaravelGeneratedEstimateWriter::class);

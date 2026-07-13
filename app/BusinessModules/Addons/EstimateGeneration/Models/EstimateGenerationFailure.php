@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Models;
 
+use App\Models\Organization;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 final class EstimateGenerationFailure extends Model
 {
@@ -25,4 +27,14 @@ final class EstimateGenerationFailure extends Model
         'resolved_at' => 'immutable_datetime',
         'occurrence_count' => 'integer',
     ];
+
+    public function session(): BelongsTo
+    {
+        return $this->belongsTo(EstimateGenerationSession::class, 'session_id');
+    }
+
+    public function organization(): BelongsTo
+    {
+        return $this->belongsTo(Organization::class, 'organization_id');
+    }
 }

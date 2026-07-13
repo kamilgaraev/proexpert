@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Models;
 
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
+use App\Models\Organization;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -60,5 +61,10 @@ final class EstimateGenerationPipelineCheckpoint extends Model
     public function session(): BelongsTo
     {
         return $this->belongsTo(EstimateGenerationSession::class, 'session_id');
+    }
+
+    public function organization(): BelongsTo
+    {
+        return $this->belongsTo(Organization::class, 'organization_id');
     }
 }
