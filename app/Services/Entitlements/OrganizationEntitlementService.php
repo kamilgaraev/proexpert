@@ -99,7 +99,6 @@ class OrganizationEntitlementService
 
         $packageSubscriptions = OrganizationPackageSubscription::query()
             ->where('organization_id', $organizationId)
-            ->standalone()
             ->active()
             ->orderBy('package_slug')
             ->orderBy('id')
@@ -126,9 +125,11 @@ class OrganizationEntitlementService
             $candidate = [
                 'module_slug' => $moduleSlug,
                 'package_slug' => $packageSlug,
-                'subscription_id' => $packageSubscription->subscription_id,
-                'expires_at' => $packageSubscription->expires_at,
-                'access_source' => 'paid_package',
+                'commercial_account_id' => $packageSubscription->commercial_account_id,
+                'expires_at' => $packageSubscription->status->value === 'trialing'
+                    ? $packageSubscription->trial_ends_at
+                    : $packageSubscription->current_period_end_at,
+                'access_source' => $packageSubscription->access_source->value,
             ];
 
             if ($this->shouldUseSource($sources[$moduleSlug] ?? null, $candidate)) {

@@ -4,12 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Billing;
 
+use App\Enums\Billing\PackageAccessSource;
+use App\Enums\Billing\PackageSubscriptionStatus;
 use App\Models\Module;
 use App\Models\Organization;
+use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationModuleActivation;
 use App\Models\OrganizationPackageSubscription;
-use App\Models\OrganizationSubscription;
-use App\Models\SubscriptionPlan;
 use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Modules\PackageCatalogService;
 use Illuminate\Database\Schema\Blueprint;
@@ -20,6 +21,8 @@ class OrganizationPackageEntitlementTest extends TestCase
 {
     private Organization $organization;
 
+    private OrganizationCommercialAccount $account;
+
     public function refreshDatabase(): void {}
 
     protected function setUp(): void
@@ -28,6 +31,7 @@ class OrganizationPackageEntitlementTest extends TestCase
 
         $this->createSchema();
         $this->organization = $this->createOrganization('Основная организация');
+        $this->account = $this->createAccount($this->organization);
     }
 
     public function test_foundation_is_available_without_paid_packages(): void
@@ -37,150 +41,107 @@ class OrganizationPackageEntitlementTest extends TestCase
 
         $this->assertEqualsCanonicalizing(
             $foundation,
-            $this->entitlements()->getEffectiveModuleSlugs($this->organization->id)
+            $this->entitlements()->getEffectiveModuleSlugs($this->organization->id),
         );
     }
 
-    public function test_active_direct_package_uses_standard_catalog_regardless_of_stored_tier(): void
+    public function test_active_paid_package_uses_standard_catalog(): void
     {
         $packageModules = $this->createPackageModules('estimates-norms');
-        $this->createPackageSubscription('estimates-norms', 'legacy-enterprise');
+        $this->createPackageSubscription('estimates-norms');
 
         $this->assertEqualsCanonicalizing(
             $packageModules,
             array_values(array_intersect(
                 $packageModules,
-                $this->entitlements()->getEffectiveModuleSlugs($this->organization->id)
-            ))
+                $this->entitlements()->getEffectiveModuleSlugs($this->organization->id),
+            )),
         );
 
-        $sources = $this->entitlements()->getPackageModuleSources($this->organization->id);
+        $source = $this->entitlements()->getPackageModuleSources($this->organization->id)['budget-estimates'];
 
-        $this->assertSame('paid_package', $sources['budget-estimates']['access_source']);
-        $this->assertNull($sources['budget-estimates']['subscription_id']);
-        $this->assertArrayNotHasKey('tier', $sources['budget-estimates']);
-        $this->assertArrayNotHasKey('is_bundled_with_plan', $sources['budget-estimates']);
+        $this->assertSame('paid_package', $source['access_source']);
+        $this->assertSame($this->account->id, $source['commercial_account_id']);
+        $this->assertArrayNotHasKey('tier', $source);
+        $this->assertArrayNotHasKey('subscription_id', $source);
+        $this->assertArrayNotHasKey('is_bundled_with_plan', $source);
     }
 
-    public function test_legacy_plan_and_bundled_rows_do_not_grant_package_access(): void
+    public function test_active_trial_and_scheduled_removal_keep_access_until_their_deadlines(): void
     {
         $this->createPackageModules('estimates-norms');
-        $plan = $this->createPlan([
-            ['package_slug' => 'estimates-norms', 'tier' => 'standard'],
-        ]);
-        $subscription = $this->createLegacySubscription($plan);
-
-        OrganizationPackageSubscription::create([
-            'organization_id' => $this->organization->id,
-            'subscription_id' => $subscription->id,
-            'is_bundled_with_plan' => true,
-            'package_slug' => 'estimates-norms',
-            'tier' => 'standard',
-            'price_paid' => 0,
-            'activated_at' => now(),
-            'expires_at' => now()->addMonth(),
-        ]);
-
-        $budgetModule = Module::where('slug', 'budget-estimates')->firstOrFail();
-        OrganizationModuleActivation::create([
-            'organization_id' => $this->organization->id,
-            'module_id' => $budgetModule->id,
-            'subscription_id' => $subscription->id,
-            'is_bundled_with_plan' => true,
-            'status' => 'active',
-            'activated_at' => now(),
-            'expires_at' => now()->addMonth(),
-            'paid_amount' => 0,
-        ]);
-
-        $this->assertNotContains(
-            'budget-estimates',
-            $this->entitlements()->getEffectiveModuleSlugs($this->organization->id)
+        $trial = $this->createPackageSubscription(
+            'estimates-norms',
+            PackageSubscriptionStatus::Trialing,
+            PackageAccessSource::Trial,
+            null,
+            now()->addDay(),
         );
-        $this->assertSame([], $this->entitlements()->getPackageModuleSources($this->organization->id));
+
+        $this->assertContains('budget-estimates', $this->entitlements()->getEffectiveModuleSlugs($this->organization->id));
+
+        $trial->update([
+            'status' => PackageSubscriptionStatus::ScheduledForRemoval,
+            'access_source' => PackageAccessSource::PaidPackage,
+            'trial_ends_at' => null,
+            'current_period_end_at' => now()->addDay(),
+        ]);
+
+        $this->assertContains('budget-estimates', $this->entitlements()->getEffectiveModuleSlugs($this->organization->id));
     }
 
-    public function test_expired_unknown_and_foreign_packages_do_not_grant_access(): void
+    public function test_expired_canceled_unknown_and_foreign_packages_do_not_grant_access(): void
     {
         $this->createPackageModules('estimates-norms');
-        $foreignOrganization = $this->createOrganization('Другая организация');
+        $foreign = $this->createOrganization('Другая организация');
+        $foreignAccount = $this->createAccount($foreign);
 
-        $this->createPackageSubscription('estimates-norms', 'standard', now()->subDay());
-        $this->createPackageSubscription('unknown-package', 'standard', now()->addMonth());
         $this->createPackageSubscription(
             'estimates-norms',
-            'standard',
-            now()->addMonth(),
-            $foreignOrganization->id
+            PackageSubscriptionStatus::Expired,
+            account: $this->account,
+        );
+        $this->createPackageSubscription(
+            'unknown-package',
+            PackageSubscriptionStatus::Active,
+            account: $this->account,
+        );
+        $this->createPackageSubscription(
+            'estimates-norms',
+            PackageSubscriptionStatus::Active,
+            account: $foreignAccount,
         );
 
-        $this->assertNotContains(
-            'budget-estimates',
-            $this->entitlements()->getEffectiveModuleSlugs($this->organization->id)
-        );
-        $this->assertContains(
-            'budget-estimates',
-            $this->entitlements()->getEffectiveModuleSlugs($foreignOrganization->id)
-        );
+        $this->assertNotContains('budget-estimates', $this->entitlements()->getEffectiveModuleSlugs($this->organization->id));
+        $this->assertContains('budget-estimates', $this->entitlements()->getEffectiveModuleSlugs($foreign->id));
     }
 
-    public function test_shared_module_remains_available_until_all_direct_packages_expire(): void
+    public function test_shared_module_uses_the_source_with_longest_access(): void
     {
         $this->createModules(['budget-estimates']);
-        $estimates = $this->createPackageSubscription('estimates-norms', 'standard', now()->addDays(5));
-        $finance = $this->createPackageSubscription('finance-contracts', 'standard', now()->addDays(20));
+        $this->createPackageSubscription('estimates-norms', periodEnd: now()->addDays(5));
+        $this->createPackageSubscription('finance-contracts', periodEnd: now()->addDays(20));
 
-        $this->assertContains(
-            'budget-estimates',
-            $this->entitlements()->getEffectiveModuleSlugs($this->organization->id)
-        );
-        $this->assertSame(0, OrganizationModuleActivation::count());
-        $this->assertSame(
-            'finance-contracts',
-            $this->entitlements()->getPackageModuleSources($this->organization->id)['budget-estimates']['package_slug']
-        );
+        $source = $this->entitlements()->getPackageModuleSources($this->organization->id)['budget-estimates'];
 
-        $estimates->update(['expires_at' => now()->subDay()]);
-
-        $this->assertContains(
-            'budget-estimates',
-            $this->entitlements()->getEffectiveModuleSlugs($this->organization->id)
-        );
-        $this->assertSame(0, OrganizationModuleActivation::count());
-
-        $finance->update(['expires_at' => now()->subDay()]);
-
-        $this->assertNotContains(
-            'budget-estimates',
-            $this->entitlements()->getEffectiveModuleSlugs($this->organization->id)
-        );
+        $this->assertSame('finance-contracts', $source['package_slug']);
         $this->assertSame(0, OrganizationModuleActivation::count());
     }
 
-    public function test_deleted_package_row_revokes_access_immediately_without_materialization(): void
+    public function test_deleted_package_row_revokes_access_without_materialization(): void
     {
         $this->createPackageModules('estimates-norms');
-        $package = $this->createPackageSubscription('estimates-norms', 'standard');
+        $package = $this->createPackageSubscription('estimates-norms');
 
-        $this->assertContains(
-            'budget-estimates',
-            $this->entitlements()->getEffectiveModuleSlugs($this->organization->id)
-        );
-        $this->assertSame(0, OrganizationModuleActivation::count());
-
+        $this->assertContains('budget-estimates', $this->entitlements()->getEffectiveModuleSlugs($this->organization->id));
         $package->delete();
-
-        $this->assertNotContains(
-            'budget-estimates',
-            $this->entitlements()->getEffectiveModuleSlugs($this->organization->id)
-        );
+        $this->assertNotContains('budget-estimates', $this->entitlements()->getEffectiveModuleSlugs($this->organization->id));
         $this->assertSame(0, OrganizationModuleActivation::count());
     }
 
-    public function test_indefinite_manual_activation_is_unchanged_by_package_access_operations(): void
+    public function test_indefinite_manual_activation_is_unchanged(): void
     {
         $module = $this->createModules(['budget-estimates'])[0];
-
         $activation = OrganizationModuleActivation::create([
             'organization_id' => $this->organization->id,
             'module_id' => $module->id,
@@ -191,34 +152,22 @@ class OrganizationPackageEntitlementTest extends TestCase
             'paid_amount' => 0,
             'module_settings' => ['source' => 'manual'],
         ]);
-        $package = $this->createPackageSubscription('estimates-norms', 'standard');
         $activation->refresh();
         $snapshot = $activation->getRawOriginal();
+        $package = $this->createPackageSubscription('estimates-norms');
 
-        $this->assertContains(
-            'budget-estimates',
-            $this->entitlements()->getEffectiveModuleSlugs($this->organization->id)
-        );
-        $package->update(['expires_at' => now()->subDay()]);
-        $this->entitlements()->getEffectiveModuleSlugs($this->organization->id);
         $package->delete();
-        $this->entitlements()->getPackageModuleSources($this->organization->id);
+        $this->entitlements()->getEffectiveModuleSlugs($this->organization->id);
 
-        $this->assertSame(
-            $snapshot,
-            $activation->fresh()->getRawOriginal()
-        );
+        $this->assertSame($snapshot, $activation->fresh()->getRawOriginal());
     }
 
-    public function test_package_access_has_no_materialization_command_or_service_api(): void
+    public function test_package_access_has_no_materialization_api(): void
     {
         $adminService = file_get_contents(app_path('Services/Filament/ModuleAdminActionService.php'));
 
         $this->assertIsString($adminService);
-        $this->assertFalse(method_exists(
-            \App\Services\SubscriptionModuleSyncService::class,
-            'repairPackageModuleActivations'
-        ));
+        $this->assertFalse(method_exists(\App\Services\SubscriptionModuleSyncService::class, 'repairPackageModuleActivations'));
         $this->assertFileDoesNotExist(app_path('Console/Commands/RepairPackageModuleEntitlementsCommand.php'));
         $this->assertStringNotContainsString('package_repair', $adminService);
         $this->assertStringNotContainsString('repairPackageModuleActivations', $adminService);
@@ -238,58 +187,44 @@ class OrganizationPackageEntitlementTest extends TestCase
         ]));
     }
 
-    private function createPlan(array $includedPackages): SubscriptionPlan
+    private function createAccount(Organization $organization): OrganizationCommercialAccount
     {
-        return SubscriptionPlan::create([
-            'name' => 'Старый тариф',
-            'slug' => 'legacy-plan-'.SubscriptionPlan::count(),
-            'description' => 'Старый тариф',
-            'price' => 1000,
-            'currency' => 'RUB',
-            'duration_in_days' => 30,
-            'features' => [],
-            'included_packages' => $includedPackages,
-            'is_active' => true,
-            'display_order' => 1,
-        ]);
-    }
-
-    private function createLegacySubscription(
-        SubscriptionPlan $plan,
-        ?int $organizationId = null
-    ): OrganizationSubscription {
-        return OrganizationSubscription::create([
-            'organization_id' => $organizationId ?? $this->organization->id,
-            'subscription_plan_id' => $plan->id,
+        return OrganizationCommercialAccount::create([
+            'organization_id' => $organization->id,
             'status' => 'active',
-            'starts_at' => now(),
-            'ends_at' => now()->addMonth(),
-            'next_billing_at' => now()->addMonth(),
-            'is_auto_payment_enabled' => true,
+            'offer_type' => 'packages',
+            'quote_version' => 1,
+            'billing_anchor_at' => now(),
+            'current_period_start_at' => now(),
+            'current_period_end_at' => now()->addDays(30),
+            'auto_renew_enabled' => true,
         ]);
     }
 
     private function createPackageSubscription(
         string $packageSlug,
-        string $tier,
-        mixed $expiresAt = null,
-        ?int $organizationId = null
+        PackageSubscriptionStatus $status = PackageSubscriptionStatus::Active,
+        PackageAccessSource $source = PackageAccessSource::PaidPackage,
+        mixed $periodEnd = null,
+        mixed $trialEnd = null,
+        ?OrganizationCommercialAccount $account = null,
     ): OrganizationPackageSubscription {
+        $account ??= $this->account;
+
         return OrganizationPackageSubscription::create([
-            'organization_id' => $organizationId ?? $this->organization->id,
-            'subscription_id' => null,
-            'is_bundled_with_plan' => false,
+            'organization_id' => $account->organization_id,
+            'commercial_account_id' => $account->id,
             'package_slug' => $packageSlug,
-            'tier' => $tier,
+            'status' => $status,
+            'access_source' => $source,
             'price_paid' => 1000,
-            'activated_at' => now(),
-            'expires_at' => $expiresAt ?? now()->addMonth(),
+            'current_period_start_at' => now(),
+            'current_period_end_at' => $periodEnd ?? now()->addDays(30),
+            'trial_started_at' => $trialEnd === null ? null : now(),
+            'trial_ends_at' => $trialEnd,
         ]);
     }
 
-    /**
-     * @return array<int, string>
-     */
     private function createPackageModules(string $packageSlug): array
     {
         $slugs = app(PackageCatalogService::class)->tierModules($packageSlug, 'standard');
@@ -298,10 +233,6 @@ class OrganizationPackageEntitlementTest extends TestCase
         return $slugs;
     }
 
-    /**
-     * @param  array<int, string>  $slugs
-     * @return array<int, Module>
-     */
     private function createModules(array $slugs): array
     {
         return array_map(
@@ -324,9 +255,9 @@ class OrganizationPackageEntitlementTest extends TestCase
                     'is_active' => true,
                     'is_system_module' => false,
                     'can_deactivate' => true,
-                ]
+                ],
             ),
-            $slugs
+            $slugs,
         );
     }
 
@@ -334,8 +265,7 @@ class OrganizationPackageEntitlementTest extends TestCase
     {
         Schema::dropIfExists('organization_module_activations');
         Schema::dropIfExists('organization_package_subscriptions');
-        Schema::dropIfExists('organization_subscriptions');
-        Schema::dropIfExists('subscription_plans');
+        Schema::dropIfExists('organization_commercial_accounts');
         Schema::dropIfExists('modules');
         Schema::dropIfExists('organizations');
 
@@ -348,38 +278,16 @@ class OrganizationPackageEntitlementTest extends TestCase
             $table->softDeletes();
         });
 
-        Schema::create('subscription_plans', function (Blueprint $table): void {
+        Schema::create('organization_commercial_accounts', function (Blueprint $table): void {
             $table->id();
-            $table->string('name');
-            $table->string('slug')->unique();
-            $table->text('description')->nullable();
-            $table->decimal('price', 10, 2)->default(0);
-            $table->string('currency', 3)->default('RUB');
-            $table->integer('duration_in_days')->default(30);
-            $table->integer('max_projects')->nullable();
-            $table->integer('max_storage_gb')->nullable();
-            $table->integer('max_users')->nullable();
-            $table->json('features')->nullable();
-            $table->json('included_packages')->nullable();
-            $table->boolean('is_active')->default(true);
-            $table->integer('display_order')->default(0);
-            $table->timestamps();
-        });
-
-        Schema::create('organization_subscriptions', function (Blueprint $table): void {
-            $table->id();
-            $table->foreignId('organization_id');
-            $table->foreignId('subscription_plan_id');
-            $table->string('status')->default('active');
-            $table->timestamp('trial_ends_at')->nullable();
-            $table->timestamp('starts_at')->nullable();
-            $table->timestamp('ends_at')->nullable();
-            $table->timestamp('next_billing_at')->nullable();
-            $table->timestamp('canceled_at')->nullable();
-            $table->timestamp('payment_failure_notified_at')->nullable();
-            $table->string('payment_gateway_subscription_id')->nullable();
-            $table->string('payment_gateway_customer_id')->nullable();
-            $table->boolean('is_auto_payment_enabled')->default(true);
+            $table->foreignId('organization_id')->unique();
+            $table->string('status');
+            $table->string('offer_type');
+            $table->unsignedInteger('quote_version');
+            $table->timestamp('billing_anchor_at')->nullable();
+            $table->timestamp('current_period_start_at')->nullable();
+            $table->timestamp('current_period_end_at')->nullable();
+            $table->boolean('auto_renew_enabled');
             $table->timestamps();
         });
 
@@ -398,14 +306,10 @@ class OrganizationPackageEntitlementTest extends TestCase
             $table->json('dependencies')->nullable();
             $table->json('conflicts')->nullable();
             $table->json('limits')->nullable();
-            $table->string('class_name')->nullable();
-            $table->string('config_file')->nullable();
-            $table->string('icon')->nullable();
             $table->integer('display_order')->default(0);
             $table->boolean('is_active')->default(true);
             $table->boolean('is_system_module')->default(false);
             $table->boolean('can_deactivate')->default(true);
-            $table->string('development_status')->nullable();
             $table->timestamps();
         });
 
@@ -418,32 +322,27 @@ class OrganizationPackageEntitlementTest extends TestCase
             $table->string('status')->default('active');
             $table->timestamp('activated_at')->nullable();
             $table->timestamp('expires_at')->nullable();
-            $table->timestamp('trial_ends_at')->nullable();
-            $table->timestamp('last_used_at')->nullable();
             $table->decimal('paid_amount', 10, 2)->default(0);
-            $table->json('payment_details')->nullable();
-            $table->timestamp('next_billing_date')->nullable();
             $table->json('module_settings')->nullable();
-            $table->json('usage_stats')->nullable();
-            $table->timestamp('cancelled_at')->nullable();
-            $table->text('cancellation_reason')->nullable();
-            $table->boolean('is_auto_renew_enabled')->default(false);
             $table->timestamps();
-            $table->unique(['organization_id', 'module_id']);
         });
 
         Schema::create('organization_package_subscriptions', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('organization_id');
-            $table->foreignId('subscription_id')->nullable();
-            $table->boolean('is_bundled_with_plan')->default(false);
+            $table->foreignId('commercial_account_id');
             $table->string('package_slug', 100);
-            $table->string('tier', 50);
+            $table->string('status');
+            $table->string('access_source');
             $table->decimal('price_paid', 10, 2)->default(0);
-            $table->timestamp('activated_at')->nullable();
-            $table->timestamp('expires_at')->nullable();
+            $table->timestamp('current_period_start_at')->nullable();
+            $table->timestamp('current_period_end_at')->nullable();
+            $table->timestamp('trial_started_at')->nullable();
+            $table->timestamp('trial_ends_at')->nullable();
+            $table->timestamp('cancel_at')->nullable();
+            $table->timestamp('canceled_at')->nullable();
             $table->timestamps();
-            $table->unique(['organization_id', 'package_slug', 'is_bundled_with_plan']);
+            $table->unique(['organization_id', 'package_slug']);
         });
     }
 }

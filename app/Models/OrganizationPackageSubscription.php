@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Enums\Billing\PackageAccessSource;
+use App\Enums\Billing\PackageSubscriptionStatus;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -14,20 +16,29 @@ class OrganizationPackageSubscription extends Model
 
     protected $fillable = [
         'organization_id',
-        'subscription_id',
-        'is_bundled_with_plan',
+        'commercial_account_id',
         'package_slug',
-        'tier',
+        'status',
+        'access_source',
         'price_paid',
-        'activated_at',
-        'expires_at',
+        'current_period_start_at',
+        'current_period_end_at',
+        'trial_started_at',
+        'trial_ends_at',
+        'cancel_at',
+        'canceled_at',
     ];
 
     protected $casts = [
-        'activated_at' => 'datetime',
-        'expires_at' => 'datetime',
+        'status' => PackageSubscriptionStatus::class,
+        'access_source' => PackageAccessSource::class,
         'price_paid' => 'decimal:2',
-        'is_bundled_with_plan' => 'boolean',
+        'current_period_start_at' => 'datetime',
+        'current_period_end_at' => 'datetime',
+        'trial_started_at' => 'datetime',
+        'trial_ends_at' => 'datetime',
+        'cancel_at' => 'datetime',
+        'canceled_at' => 'datetime',
     ];
 
     public function organization(): BelongsTo
@@ -35,41 +46,40 @@ class OrganizationPackageSubscription extends Model
         return $this->belongsTo(Organization::class);
     }
 
-    public function subscription(): BelongsTo
+    public function commercialAccount(): BelongsTo
     {
-        return $this->belongsTo(OrganizationSubscription::class, 'subscription_id');
+        return $this->belongsTo(OrganizationCommercialAccount::class, 'commercial_account_id');
     }
 
     public function isActive(): bool
     {
-        return $this->expires_at === null || $this->expires_at->isFuture();
+        if ($this->status === PackageSubscriptionStatus::Trialing) {
+            return $this->trial_ends_at !== null && $this->trial_ends_at->isFuture();
+        }
+
+        return in_array($this->status?->value, PackageSubscriptionStatus::periodAccessValues(), true)
+            && ($this->current_period_end_at === null || $this->current_period_end_at->isFuture());
     }
 
     public function isExpired(): bool
     {
-        return $this->expires_at !== null && $this->expires_at->isPast();
+        return ! $this->isActive();
     }
 
     public function scopeActive($query)
     {
-        return $query->where(function ($q) {
-            $q->whereNull('expires_at')
-                ->orWhere('expires_at', '>', now());
+        return $query->where(function ($query): void {
+            $query->where(function ($trial): void {
+                $trial->where('status', PackageSubscriptionStatus::Trialing->value)
+                    ->whereNotNull('trial_ends_at')
+                    ->where('trial_ends_at', '>', now());
+            })->orWhere(function ($period): void {
+                $period->whereIn('status', PackageSubscriptionStatus::periodAccessValues())
+                    ->where(function ($dates): void {
+                        $dates->whereNull('current_period_end_at')
+                            ->orWhere('current_period_end_at', '>', now());
+                    });
+            });
         });
-    }
-
-    public function scopeBundled($query)
-    {
-        return $query->where('is_bundled_with_plan', true);
-    }
-
-    public function scopeStandalone($query)
-    {
-        return $query->where('is_bundled_with_plan', false);
-    }
-
-    public function isBundled(): bool
-    {
-        return $this->is_bundled_with_plan === true;
     }
 }
