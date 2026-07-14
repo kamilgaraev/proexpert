@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Api\V1\Landing;
 
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Models\Organization;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
@@ -25,7 +27,6 @@ class OrganizationPackageControllerTest extends TestCase
     {
         parent::setUp();
 
-        $this->withoutMiddleware();
         $this->createSchema();
         $this->organization = Organization::withoutEvents(static fn (): Organization => Organization::create([
             'name' => 'Runtime package organization',
@@ -38,6 +39,20 @@ class OrganizationPackageControllerTest extends TestCase
             'password' => 'password',
             'is_active' => true,
             'current_organization_id' => $this->organization->id,
+        ]);
+        $this->user->forceFill(['email_verified_at' => now()])->save();
+        $this->user->organizations()->attach($this->organization->id, [
+            'is_owner' => true,
+            'is_active' => true,
+        ]);
+
+        $context = AuthorizationContext::getOrganizationContext($this->organization->id);
+        UserRoleAssignment::create([
+            'user_id' => $this->user->id,
+            'role_slug' => 'organization_owner',
+            'role_type' => UserRoleAssignment::TYPE_SYSTEM,
+            'context_id' => $context->id,
+            'is_active' => true,
         ]);
     }
 
@@ -63,10 +78,10 @@ class OrganizationPackageControllerTest extends TestCase
             'current_period_end_at' => now()->addDays(30),
         ]);
 
-        JWTAuth::shouldReceive('parseToken')->once()->andReturnSelf();
-        JWTAuth::shouldReceive('authenticate')->once()->andReturn($this->user);
+        $token = JWTAuth::claims(['organization_id' => $this->organization->id])
+            ->fromUser($this->user);
 
-        $response = $this->actingAs($this->user, 'api_landing')
+        $response = $this->withHeader('Authorization', 'Bearer '.$token)
             ->getJson('/api/v1/landing/packages');
 
         $response->assertOk()
@@ -88,11 +103,46 @@ class OrganizationPackageControllerTest extends TestCase
         $this->assertArrayNotHasKey('is_bundled_with_plan', $active);
     }
 
+    public function test_get_packages_requires_bearer_token(): void
+    {
+        $this->getJson('/api/v1/landing/packages')
+            ->assertUnauthorized();
+    }
+
+    public function test_get_packages_denies_user_without_organization_membership(): void
+    {
+        $user = User::create([
+            'name' => 'User without organization',
+            'email' => 'without-organization@example.com',
+            'password' => 'password',
+            'is_active' => true,
+        ]);
+        $user->forceFill(['email_verified_at' => now()])->save();
+        UserRoleAssignment::create([
+            'user_id' => $user->id,
+            'role_slug' => 'organization_owner',
+            'role_type' => UserRoleAssignment::TYPE_SYSTEM,
+            'context_id' => AuthorizationContext::getSystemContext()->id,
+            'is_active' => true,
+        ]);
+
+        $token = JWTAuth::claims(['organization_id' => $this->organization->id])
+            ->fromUser($user);
+
+        $this->withHeader('Authorization', 'Bearer '.$token)
+            ->getJson('/api/v1/landing/packages')
+            ->assertForbidden()
+            ->assertJsonPath('message', trans_message('landing.organization_context_missing'));
+    }
+
     public function test_old_commercial_routes_are_not_registered(): void
     {
         $routes = app('router')->getRoutes();
+        $packageRoute = $routes->getByName('api.v1.landing.packages.index');
 
-        $this->assertNotNull($routes->getByName('api.v1.landing.packages.index'));
+        $this->assertNotNull($packageRoute);
+        $this->assertContains('interface:lk', $packageRoute->gatherMiddleware());
+        $this->assertContains('authorize:billing.view', $packageRoute->gatherMiddleware());
         $this->assertNull($routes->getByName('api.v1.landing.packages.subscribe'));
         $this->assertNull($routes->getByName('api.v1.landing.packages.unsubscribe'));
         $this->assertNull($routes->getByName('api.v1.landing.billing.subscription.subscribe'));
@@ -104,6 +154,11 @@ class OrganizationPackageControllerTest extends TestCase
     {
         Schema::dropIfExists('organization_package_subscriptions');
         Schema::dropIfExists('organization_commercial_accounts');
+        Schema::dropIfExists('role_conditions');
+        Schema::dropIfExists('user_role_assignments');
+        Schema::dropIfExists('organization_custom_roles');
+        Schema::dropIfExists('authorization_contexts');
+        Schema::dropIfExists('organization_user');
         Schema::dropIfExists('users');
         Schema::dropIfExists('organizations');
 
@@ -112,8 +167,68 @@ class OrganizationPackageControllerTest extends TestCase
             $table->string('name');
             $table->boolean('is_active')->default(true);
             $table->boolean('is_verified')->default(false);
+            $table->boolean('is_holding')->default(false);
+            $table->foreignId('parent_organization_id')->nullable();
             $table->timestamps();
             $table->softDeletes();
+        });
+
+        Schema::create('organization_user', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->foreignId('user_id');
+            $table->boolean('is_owner')->default(false);
+            $table->boolean('is_active')->default(true);
+            $table->json('settings')->nullable();
+            $table->string('project_access_mode')->nullable();
+            $table->timestamps();
+            $table->unique(['user_id', 'organization_id']);
+        });
+
+        Schema::create('authorization_contexts', function (Blueprint $table): void {
+            $table->id();
+            $table->string('type')->index();
+            $table->unsignedBigInteger('resource_id')->nullable()->index();
+            $table->unsignedBigInteger('parent_context_id')->nullable();
+            $table->json('metadata')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('organization_custom_roles', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('organization_id');
+            $table->string('name');
+            $table->string('slug', 100);
+            $table->text('description')->nullable();
+            $table->json('system_permissions');
+            $table->json('module_permissions');
+            $table->json('interface_access');
+            $table->json('conditions')->nullable();
+            $table->boolean('is_active')->default(true);
+            $table->unsignedBigInteger('created_by');
+            $table->timestamps();
+        });
+
+        Schema::create('user_role_assignments', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('user_id');
+            $table->string('role_slug', 100)->index();
+            $table->string('role_type')->default('system');
+            $table->unsignedBigInteger('context_id');
+            $table->unsignedBigInteger('assigned_by')->nullable();
+            $table->timestamp('expires_at')->nullable();
+            $table->boolean('is_active')->default(true)->index();
+            $table->timestamps();
+            $table->unique(['user_id', 'role_slug', 'context_id'], 'unique_user_role_context');
+        });
+
+        Schema::create('role_conditions', function (Blueprint $table): void {
+            $table->id();
+            $table->unsignedBigInteger('assignment_id');
+            $table->string('condition_type')->index();
+            $table->json('condition_data');
+            $table->boolean('is_active')->default(true)->index();
+            $table->timestamps();
         });
 
         Schema::create('users', function (Blueprint $table): void {

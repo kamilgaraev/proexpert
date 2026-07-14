@@ -90,6 +90,6 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'verified', 'organization.con
     ->name('packages.')
     ->group(function () {
         Route::get('/', [OrganizationPackageController::class, 'index'])
+            ->middleware(['interface:lk', 'authorize:billing.view'])
             ->name('index');
-
     });
