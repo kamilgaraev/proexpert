@@ -84,6 +84,17 @@ class CommercialCheckoutControllerTest extends TestCase
             ->assertUnprocessable();
     }
 
+    public function test_full_suite_rejects_nonempty_target_package_list(): void
+    {
+        $this->authenticatedAs($this->owner)
+            ->postJson('/api/v1/landing/billing/commercial/checkout', array_replace($this->payload(), [
+                'full_suite' => true,
+            ]))
+            ->assertUnprocessable();
+
+        $this->assertDatabaseCount('commercial_orders', 0);
+    }
+
     private function payload(): array
     {
         return [

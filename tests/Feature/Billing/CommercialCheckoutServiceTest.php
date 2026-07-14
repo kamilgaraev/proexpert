@@ -66,6 +66,10 @@ class CommercialCheckoutServiceTest extends TestCase
         $this->assertSame(0, OrganizationPackageSubscription::query()->count());
         $this->assertSame(790000, $this->gateway->payments[0]->amountMinor);
         $this->assertSame($this->organization->id, $this->gateway->payments[0]->metadata['organization_id']);
+        $this->assertSame(
+            trans_message('billing.checkout.payment_description'),
+            $this->gateway->payments[0]->description,
+        );
     }
 
     public function test_same_idempotency_and_payload_reuses_order_and_provider_payment(): void
@@ -85,6 +89,24 @@ class CommercialCheckoutServiceTest extends TestCase
         $this->expectException(CommercialCheckoutConflictException::class);
 
         $this->checkout(['planning-schedules']);
+    }
+
+    public function test_full_suite_idempotency_does_not_accept_changed_nonempty_target_payload(): void
+    {
+        $key = '44444444-4444-4444-8444-444444444444';
+        $this->checkoutPayload([
+            'target_package_slugs' => [],
+            'full_suite' => true,
+            'client_idempotency_key' => $key,
+        ]);
+
+        $this->expectException(CommercialCheckoutConflictException::class);
+
+        $this->checkoutPayload([
+            'target_package_slugs' => ['machinery'],
+            'full_suite' => true,
+            'client_idempotency_key' => $key,
+        ]);
     }
 
     public function test_provider_failure_keeps_retryable_intent_and_repeat_uses_same_keys(): void

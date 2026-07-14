@@ -170,6 +170,17 @@ class YooKassaPaymentGatewayTest extends TestCase
         app(YooKassaPaymentGateway::class)->createPayment($this->paymentData('malformed-response-key'));
     }
 
+    public function test_rejects_redirect_payment_without_valid_http_confirmation_url(): void
+    {
+        $response = $this->providerResponse();
+        $response['confirmation']['confirmation_url'] = 'javascript:alert(1)';
+        Http::fake(['*' => Http::response($response, 200)]);
+
+        $this->expectException(UnexpectedValueException::class);
+
+        app(YooKassaPaymentGateway::class)->createPayment($this->paymentData('invalid-confirmation-key'));
+    }
+
     private function paymentData(string $key): CreatePaymentData
     {
         return new CreatePaymentData(

@@ -17,6 +17,9 @@ use App\Models\OrganizationPackageSubscription;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
+
+use function trans_message;
 
 class CommercialCheckoutService
 {
@@ -40,6 +43,10 @@ class CommercialCheckoutService
                 $this->assertSameExistingRequest($existing, $input);
 
                 return [$existing, $existing->payment, false];
+            }
+
+            if ((bool) $input['full_suite'] && $input['target_package_slugs'] !== []) {
+                throw new InvalidArgumentException('Full suite checkout must not contain target packages.');
             }
 
             $this->calculator->assertCurrentQuoteVersion((int) $input['quote_version']);
@@ -110,7 +117,7 @@ class CommercialCheckoutService
                 idempotenceKey: $payment->provider_idempotency_key,
                 amountMinor: $order->amount_minor,
                 currency: $order->currency,
-                description: 'Оплата коммерческого контура МОСТ',
+                description: trans_message('billing.checkout.payment_description'),
                 metadata: [
                     'order_id' => $order->public_id,
                     'organization_id' => $order->organization_id,
@@ -171,8 +178,10 @@ class CommercialCheckoutService
     private function assertSameExistingRequest(CommercialOrder $order, array $input): void
     {
         $requestedFullSuite = (bool) $input['full_suite'];
+        $requestedTargets = $this->normalizeClientSlugs($input['target_package_slugs']);
         $sameTarget = $requestedFullSuite
-            || $this->normalizeClientSlugs($input['target_package_slugs'])
+            ? $requestedTargets === []
+            : $requestedTargets
                 === $this->normalizeClientSlugs($order->selected_package_slugs);
         $sameCurrent = $this->normalizeClientSlugs($input['current_package_slugs'] ?? [])
             === $this->normalizeClientSlugs($order->current_package_slugs);

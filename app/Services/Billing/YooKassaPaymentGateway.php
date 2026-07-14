@@ -40,7 +40,7 @@ class YooKassaPaymentGateway implements PaymentGatewayInterface
             '/payments',
             $payload,
             $payment->idempotenceKey,
-        ));
+        ), true);
     }
 
     public function getPayment(string $paymentId): PaymentGatewayResult
@@ -138,7 +138,7 @@ class YooKassaPaymentGateway implements PaymentGatewayInterface
         }
     }
 
-    private function result(Response $response): PaymentGatewayResult
+    private function result(Response $response, bool $requiresRedirectConfirmation = false): PaymentGatewayResult
     {
         $data = $response->json();
         $id = trim((string) ($data['id'] ?? ''));
@@ -150,13 +150,18 @@ class YooKassaPaymentGateway implements PaymentGatewayInterface
 
         $paymentMethod = is_array($data['payment_method'] ?? null) ? $data['payment_method'] : [];
         $confirmation = is_array($data['confirmation'] ?? null) ? $data['confirmation'] : [];
+        $confirmationUrl = isset($confirmation['confirmation_url'])
+            ? trim((string) $confirmation['confirmation_url'])
+            : '';
+
+        if ($requiresRedirectConfirmation && ! $this->isValidConfirmationUrl($confirmationUrl)) {
+            throw new UnexpectedValueException('YooKassa returned an invalid redirect confirmation URL.');
+        }
 
         return new PaymentGatewayResult(
             id: $id,
             status: $status,
-            confirmationUrl: isset($confirmation['confirmation_url'])
-                ? (string) $confirmation['confirmation_url']
-                : null,
+            confirmationUrl: $confirmationUrl !== '' ? $confirmationUrl : null,
             paymentMethodId: isset($paymentMethod['id']) ? (string) $paymentMethod['id'] : null,
             paymentMethodSaved: ($paymentMethod['saved'] ?? false) === true,
             safeResponse: $this->safeResponse($data),
@@ -168,6 +173,15 @@ class YooKassaPaymentGateway implements PaymentGatewayInterface
         unset($data['recipient']);
 
         return $data;
+    }
+
+    private function isValidConfirmationUrl(string $url): bool
+    {
+        if (filter_var($url, FILTER_VALIDATE_URL) === false) {
+            return false;
+        }
+
+        return in_array(strtolower((string) parse_url($url, PHP_URL_SCHEME)), ['http', 'https'], true);
     }
 
     private function money(int $amountMinor): string

@@ -16,7 +16,7 @@ class CommercialCheckoutRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'target_package_slugs' => ['present', 'array'],
+            'target_package_slugs' => ['present', 'array', 'prohibited_if:full_suite,true'],
             'target_package_slugs.*' => ['required', 'string', 'max:100', 'distinct'],
             'current_package_slugs' => ['present', 'array'],
             'current_package_slugs.*' => ['required', 'string', 'max:100', 'distinct'],
