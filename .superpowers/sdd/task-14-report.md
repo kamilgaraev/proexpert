@@ -8,7 +8,7 @@
 - Дополнена матрица ролей и статусов шестью отдельными правами Filament и least-privilege ролями `support_operator`, `qa_engineer`, `security_auditor`, `super_admin`.
 - Создано описание Filament UX: дашборд и фильтры, timeline сессии, usage/cost, failures, queues/checkpoints, datasets, benchmark, settings/audit, permission denied и privacy rules.
 - Созданы operational и cost/errors runbooks: daily ops, retry/cancel/stuck, provider outage, benchmark regression, escalation, бюджеты, приватность, retention, S3/queue/scheduler зависимости.
-- Подготовлен GStack post-deploy gate с fail-closed проверкой полных SHA через фиксированные root-owned аттестации, обезличенными PDF/JPEG/PNG fixtures, пользовательским E2E, Filament smoke, console/network/privacy assertions и обязательным evidence.
+- Подготовлен GStack post-deploy gate с fail-closed проверкой атомарного root-owned manifest пары backend/admin, обезличенными PDF/JPEG/PNG fixtures, пользовательским E2E, Filament smoke, console/network/privacy assertions и обязательным evidence.
 - Общие Filament navigation/auth тесты переведены с `Tests\TestCase::RefreshDatabase` на DB-less PHPUnit container и расширены контрактами AI-сметчика.
 - Обычные сметы, их ресурсы, модели, таблицы и UI не изменялись.
 
@@ -16,6 +16,8 @@
 
 - Review-fix RED: `tests/Architecture/ai-estimator-release-gate.sh` завершился exit 1, потому что доверенный verifier отсутствовал, а runbook принимал операторские deployed SHA.
 - Review-fix GREEN: тот же тест проверил `bash -n`, fail-closed негативные fixtures и положительный full-SHA fixture без сети и браузера: **PASS**.
+- Re-review RED: source production verifier завершил тест через старый безусловный entrypoint, а две независимые аттестации не обеспечивали атомарную пару и invalidation перед активацией.
+- Re-review GREEN: behavioral test вызывает тот же production main через source-only seam и проверяет exact exit `78`, строгую pair schema, generation, mismatch, owner/mode/symlink, запрет env path override, положительную пару и fail-before-GStack sentinel: **PASS**.
 - Первый DB-less RED после изменения тестов выявил неполную test container wiring. Контракт explicit authorization для общих ресурсов оставлен в прежней области, а AI-specific permissions проверяются отдельной least-privilege матрицей и прямыми `canAccess`/`canViewAny` assertions.
 - После container wiring: 12 passed, 382 assertions.
 - После Pint: повторно 12 passed, 382 assertions.
@@ -50,16 +52,19 @@
 
 Live GStack smoke не выполнялся и не засчитывается. Проверка текущих workflows показала: backend deployment сохраняет только короткий image/Sentry tag, admin deployment не публикует release SHA. Доверенного источника полной идентичности обоих активных компонентов сейчас нет, поэтому статус браузерного gate — **BLOCKED_BY_DEPLOYMENT**.
 
-После review самодекларируемые `DEPLOYED_*` удалены. Добавлены:
+После re-review две независимо обновляемые аттестации заменены единым `/var/lib/most-active-release/smoke-ready.manifest`. Добавлены:
 
-- фиксированные `/var/lib/most-release-attestations/backend.sha256` и `admin.sha256` без возможности переопределить путь;
-- проверка полного SHA, единственной строки, отсутствия symlink, владельца `root:root` и запрета записи группе/остальным;
-- exit code `78` при отсутствии, небезопасных правах или несовпадении аттестации до любого запуска GStack;
-- точные шаги атомарной публикации аттестации deployment-владельцем после успешной активации;
+- строгая четырёхстрочная схема manifest с версией, положительным generation и обоими полными lowercase SHA;
+- production constants путей без переопределения через env и source-only seam для behavioral проверки того же main;
+- общий root-owned `flock` для backend/admin deploy и rollback;
+- обязательное удаление public manifest и active SHA изменяемого компонента до любой activation;
+- обновление active SHA только после доказанной связи фактического artifact с SHA и public readiness/propagation;
+- атомарная публикация общей пары только при двух валидных active SHA; любой сбой после invalidation оставляет gate закрытым;
+- exit code `78` при отсутствующей/небезопасной библиотеке, отсутствующем, небезопасном, некорректном или несовпадающем manifest до любого запуска GStack;
 - безопасный fallback `${GSTACK_BROWSE:-$HOME/.codex/skills/gstack/browse/dist/browse}` при `set -u`;
-- исполняемый статический тест `tests/Architecture/ai-estimator-release-gate.sh` с `bash -n`, негативными fixtures для отсутствующего, malformed, многострочного и несовпадающего manifest и положительным fixture без сети и браузера.
+- исполняемый behavioral test `tests/Architecture/ai-estimator-release-gate.sh` без сети и браузера.
 
-Сначала deployment-владелец должен установить root-owned verifier и настроить публикацию полного SHA обоих компонентов. Для admin требуется узкий привилегированный activation hook; до его появления gate остаётся закрытым. После успешной аттестации выполнить `docs/runbooks/ai-estimator-operations.md`, сохранить SHA, session ID, созданный estimate ID, annotated screenshots, console/network output и результат повторного apply. Отдельно подтвердить workers четырёх очередей, scheduler recovery/finalization, приватный S3, provider readiness, миграции PostgreSQL и отсутствие чувствительных данных.
+Описанный coordinator hook ещё не установлен. В частности, admin pipeline пока не связывает полный SHA с активным bundle и не подтверждает его через public propagation/readiness. До внедрения обоих activation hooks pair manifest публиковать нельзя и gate остаётся закрытым. После успешной аттестации выполнить `docs/runbooks/ai-estimator-operations.md`, сохранить SHA, generation, session ID, созданный estimate ID, annotated screenshots, console/network output и результат повторного apply. Отдельно подтвердить workers четырёх очередей, scheduler recovery/finalization, приватный S3, provider readiness, миграции PostgreSQL и отсутствие чувствительных данных.
 
 ## Ограничения
 

@@ -4,32 +4,14 @@ is_full_release_sha() {
     [[ ${1-} =~ ^[0-9a-f]{40}$ ]]
 }
 
-read_release_attestation() {
-    local path=$1
-    local -a lines
-
-    [[ -f $path && ! -L $path ]] || return 1
-    mapfile -t lines <"$path"
-    ((${#lines[@]} == 1)) || return 1
-    is_full_release_sha "${lines[0]}" || return 1
-    printf '%s\n' "${lines[0]}"
+is_release_generation() {
+    [[ ${1-} =~ ^[1-9][0-9]*$ ]]
 }
 
-verify_release_attestation() {
+is_protected_release_path() {
     local path=$1
-    local reviewed_sha=$2
-    local deployed_sha
-
-    is_full_release_sha "$reviewed_sha" || return 1
-    deployed_sha=$(read_release_attestation "$path") || return 1
-    [[ $deployed_sha == "$reviewed_sha" ]]
-}
-
-verify_protected_release_attestation() {
-    local path=$1
-    local reviewed_sha=$2
-    local expected_uid=${3:-0}
-    local expected_gid=${4:-0}
+    local expected_uid=$2
+    local expected_gid=$3
     local directory
     local mode
 
@@ -43,7 +25,55 @@ verify_protected_release_attestation() {
     [[ -f $path && ! -L $path ]] || return 1
     [[ $(stat -c '%u:%g' "$path") == "$expected_uid:$expected_gid" ]] || return 1
     mode=$(stat -c '%a' "$path")
-    (((8#$mode & 0022) == 0)) || return 1
+    (((8#$mode & 0022) == 0))
+}
 
-    verify_release_attestation "$path" "$reviewed_sha"
+read_active_release_manifest() {
+    local path=$1
+    local -a lines
+    local generation
+    local backend_sha
+    local admin_sha
+
+    mapfile -t lines <"$path"
+    ((${#lines[@]} == 4)) || return 1
+    [[ ${lines[0]} == 'schema=most-active-release/v1' ]] || return 1
+    [[ ${lines[1]} == generation=* ]] || return 1
+    [[ ${lines[2]} == backend_sha=* ]] || return 1
+    [[ ${lines[3]} == admin_sha=* ]] || return 1
+
+    generation=${lines[1]#generation=}
+    backend_sha=${lines[2]#backend_sha=}
+    admin_sha=${lines[3]#admin_sha=}
+
+    is_release_generation "$generation" || return 1
+    is_full_release_sha "$backend_sha" || return 1
+    is_full_release_sha "$admin_sha" || return 1
+
+    printf 'generation=%s\nbackend=%s\nadmin=%s\n' "$generation" "$backend_sha" "$admin_sha"
+}
+
+verify_active_release_manifest() {
+    local path=$1
+    local reviewed_backend_sha=$2
+    local reviewed_admin_sha=$3
+    local expected_uid=$4
+    local expected_gid=$5
+    local manifest
+    local generation
+    local backend_sha
+    local admin_sha
+
+    is_full_release_sha "$reviewed_backend_sha" || return 1
+    is_full_release_sha "$reviewed_admin_sha" || return 1
+    is_protected_release_path "$path" "$expected_uid" "$expected_gid" || return 1
+    manifest=$(read_active_release_manifest "$path") || return 1
+
+    generation=$(printf '%s\n' "$manifest" | sed -n 's/^generation=//p')
+    backend_sha=$(printf '%s\n' "$manifest" | sed -n 's/^backend=//p')
+    admin_sha=$(printf '%s\n' "$manifest" | sed -n 's/^admin=//p')
+    [[ $backend_sha == "$reviewed_backend_sha" ]] || return 1
+    [[ $admin_sha == "$reviewed_admin_sha" ]] || return 1
+
+    printf 'generation=%s\nbackend=%s\nadmin=%s\n' "$generation" "$backend_sha" "$admin_sha"
 }

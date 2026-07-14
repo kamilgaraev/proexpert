@@ -51,46 +51,102 @@ Cancel применяется к незавершённой сессии, ког
 
 ## Deployment gate
 
-Live smoke разрешён только после подтверждения, что backend и admin frontend развёрнуты из проверенных полных SHA. Текущие deployment workflows не публикуют доверенную полную идентичность обоих компонентов: backend сохраняет только короткий тег, admin не сохраняет SHA. Поэтому gate остаётся `BLOCKED_BY_DEPLOYMENT`, пока deployment-владелец не настроит описанные ниже аттестации. Короткий тег, `HEAD` изменяемой рабочей копии, ответ придуманного version endpoint и значение, введённое оператором, доказательством не являются.
+Live smoke разрешён только после подтверждения одной атомарной пары полных SHA backend и admin frontend. Текущие deployment workflows эту пару не публикуют: backend сохраняет только короткий тег, admin не связывает активный bundle с полным SHA. Поэтому gate остаётся `BLOCKED_BY_DEPLOYMENT`, пока общий release coordinator не реализует протокол ниже. Короткий тег, `HEAD` изменяемой рабочей копии, два независимо обновляемых файла и значение, введённое оператором, доказательством не являются.
 
-### Граница доверия и публикация аттестаций
+### Граница доверия
 
-- Проверенные SHA берутся из одобренного release/PR и передаются в verifier только как ожидаемые значения. Допустимы исключительно 40 строчных шестнадцатеричных символов.
-- Фактическая версия читается только из `/var/lib/most-release-attestations/backend.sha256` и `/var/lib/most-release-attestations/admin.sha256`. Путь нельзя переопределить аргументом или переменной окружения.
-- Каталог и файлы принадлежат `root:root`, не доступны на запись группе и остальным пользователям и не являются symlink. Read-only пользователь `codex-ro` может их прочитать, но не изменить.
-- Только deployment-владелец публикует SHA после успешной активации соответствующего компонента. Отсутствие файла, неправильные владелец/права/формат или несовпадение дают exit code `78` и блокируют GStack.
+- Проверенные SHA берутся из одобренного release/PR и передаются verifier только как ожидаемые значения. Допустимы исключительно 40 строчных шестнадцатеричных символов.
+- Verifier читает только `/var/lib/most-active-release/smoke-ready.manifest`. Production wrapper фиксирует этот путь и путь библиотеки при сборке; переменные окружения и аргументы не могут их переопределить.
+- Manifest, его каталог и библиотека verifier принадлежат `root:root`, не доступны на запись группе и остальным пользователям и не являются symlink. Read-only пользователь `codex-ro` может их прочитать, но не изменить.
+- Строгая схема manifest состоит ровно из четырёх строк в указанном порядке: `schema=most-active-release/v1`, положительный десятичный `generation`, `backend_sha`, `admin_sha`. Оба SHA полные и записаны строчными символами.
+- Отсутствие, небезопасные владелец/права, неверная схема или несовпадение пары дают exit code `78` до любого вызова GStack.
 
-Инфраструктурный владелец один раз устанавливает проверенные скрипты из backend release. Эта операция выполняется deployment-пользователем с root-правами, не оператором smoke:
+Инфраструктурный владелец один раз устанавливает проверенные скрипты и создаёт root-owned state. Эти операции выполняет deployment-владелец, не оператор smoke:
 
 ```bash
 install -d -o root -g root -m 0755 /usr/local/lib/most /usr/local/libexec/most
 install -o root -g root -m 0555 scripts/lib/release-attestation.sh /usr/local/lib/most/release-attestation.sh
 install -o root -g root -m 0555 scripts/verify-ai-estimator-release-attestations.sh /usr/local/libexec/most/verify-ai-estimator-release-attestations
-install -d -o root -g root -m 0755 /var/lib/most-release-attestations
+install -d -o root -g root -m 0755 /var/lib/most-active-release
+if [[ ! -e /var/lib/most-active-release/deploy.lock ]]; then
+  install -o root -g root -m 0600 /dev/null /var/lib/most-active-release/deploy.lock
+fi
+if [[ ! -e /var/lib/most-active-release/generation.counter ]]; then
+  printf '0\n' >/var/lib/most-active-release/generation.counter
+  chown root:root /var/lib/most-active-release/generation.counter
+  chmod 0644 /var/lib/most-active-release/generation.counter
+fi
 ```
 
-В самом конце успешного backend deploy deployment-владелец атомарно публикует полный `${GITHUB_SHA}` как `backend`; в самом конце успешной активации admin build выполняет тот же блок с `COMPONENT=admin`. Значения `COMPONENT` и `RELEASE_SHA` задаёт CI из неизменяемого контекста запуска, а не оператор:
+### Обязательный протокол deploy и rollback
+
+Backend и admin activation hooks используют один fixed root-owned lock `/var/lib/most-active-release/deploy.lock` на одном release coordinator. Если компоненты активируются на разных узлах, coordinator и state должны быть вынесены в общий доверенный сервис; локальные независимые locks недопустимы.
+
+Каждый deploy или rollback выполняет под эксклюзивным `flock` следующую последовательность:
+
+1. До любого изменения активного контейнера, symlink или каталога удалить `/var/lib/most-active-release/smoke-ready.manifest` и active SHA изменяемого компонента. Это обязательная pre-activation invalidation, а не cleanup после ошибки.
+2. Активировать целевой backend или admin artifact.
+3. Дождаться public readiness и propagation и доказать связь активного artifact с полным SHA CI.
+4. Атомарно заменить только соответствующий внутренний `backend.active` или `admin.active`.
+5. Проверить оба active SHA, увеличить root-owned generation и одним `mv` опубликовать общий pair manifest.
+
+Любой сбой после шага 1 завершает hook без повторной публикации: public manifest остаётся отсутствующим, verifier возвращает `78`, старый manifest не переживает неуспешную активацию. Rollback следует той же последовательности и не восстанавливает сохранённый старый manifest напрямую.
+
+Каркас coordinator hook, который должен быть встроен в оба deployment workflow:
 
 ```bash
 set -euo pipefail
 
-: "${RELEASE_SHA:?CI must provide the full commit SHA}"
 : "${COMPONENT:?CI must select backend or admin}"
-[[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+: "${RELEASE_SHA:?CI must provide the activated full SHA}"
 [[ "$COMPONENT" == backend || "$COMPONENT" == admin ]]
+[[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
 
-ATTESTATION_DIR=/var/lib/most-release-attestations
-install -d -o root -g root -m 0755 "$ATTESTATION_DIR"
-TMP=$(mktemp "$ATTESTATION_DIR/.${COMPONENT}.XXXXXX")
-trap 'rm -f "$TMP"' EXIT
-printf '%s\n' "$RELEASE_SHA" >"$TMP"
-chown root:root "$TMP"
-chmod 0444 "$TMP"
-mv -f "$TMP" "$ATTESTATION_DIR/$COMPONENT.sha256"
+STATE=/var/lib/most-active-release
+MANIFEST="$STATE/smoke-ready.manifest"
+exec 9<>"$STATE/deploy.lock"
+flock -x 9
+
+rm -f "$MANIFEST" "$STATE/$COMPONENT.active"
+
+activate_component_and_wait_for_public_readiness "$COMPONENT" "$RELEASE_SHA"
+
+ACTIVE_TMP=$(mktemp "$STATE/.${COMPONENT}.active.XXXXXX")
+trap 'rm -f "$ACTIVE_TMP" "${PAIR_TMP:-}" "${COUNTER_TMP:-}"' EXIT
+printf '%s\n' "$RELEASE_SHA" >"$ACTIVE_TMP"
+chown root:root "$ACTIVE_TMP"
+chmod 0444 "$ACTIVE_TMP"
+mv -f "$ACTIVE_TMP" "$STATE/$COMPONENT.active"
+
+for ACTIVE in "$STATE/backend.active" "$STATE/admin.active"; do
+  [[ -f "$ACTIVE" && ! -L "$ACTIVE" ]]
+  [[ $(stat -c '%u:%g:%a' "$ACTIVE") == '0:0:444' ]]
+done
+
+BACKEND_SHA=$(<"$STATE/backend.active")
+ADMIN_SHA=$(<"$STATE/admin.active")
+[[ "$BACKEND_SHA" =~ ^[0-9a-f]{40}$ ]]
+[[ "$ADMIN_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+GENERATION=$(<"$STATE/generation.counter")
+[[ "$GENERATION" =~ ^[0-9]+$ ]]
+GENERATION=$((GENERATION + 1))
+COUNTER_TMP=$(mktemp "$STATE/.generation.XXXXXX")
+printf '%s\n' "$GENERATION" >"$COUNTER_TMP"
+chown root:root "$COUNTER_TMP"
+chmod 0644 "$COUNTER_TMP"
+mv -f "$COUNTER_TMP" "$STATE/generation.counter"
+
+PAIR_TMP=$(mktemp "$STATE/.smoke-ready.XXXXXX")
+printf 'schema=most-active-release/v1\ngeneration=%s\nbackend_sha=%s\nadmin_sha=%s\n' \
+  "$GENERATION" "$BACKEND_SHA" "$ADMIN_SHA" >"$PAIR_TMP"
+chown root:root "$PAIR_TMP"
+chmod 0444 "$PAIR_TMP"
+mv -f "$PAIR_TMP" "$MANIFEST"
 trap - EXIT
 ```
 
-Admin pipeline сейчас не имеет подтверждённого привилегированного шага. До настройки узкого root-owned activation hook для публикации `admin.sha256` smoke запрещён; выдавать deployment-пользователю широкий `sudo` ради этой проверки нельзя.
+`activate_component_and_wait_for_public_readiness` — обязательный deployment-owned hook, а не команда оператора. Для backend он проверяет публичный `/up` и полный immutable revision/digest фактически запущенного image. Для admin CI до активации вкладывает полный SHA в статический файл активируемого bundle; после атомарной смены build hook читает SHA из активного каталога и опрашивает этот же файл через публичный URL с `Cache-Control: no-store` до точного совпадения. Только после этого разрешено обновить `admin.active`. Такой hook ещё не установлен; до его реализации и проверки pair manifest публиковать нельзя.
 
 ### Проверка перед smoke
 
