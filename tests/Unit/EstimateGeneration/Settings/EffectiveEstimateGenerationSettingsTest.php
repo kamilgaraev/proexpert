@@ -68,6 +68,47 @@ final class EffectiveEstimateGenerationSettingsTest extends TestCase
         EffectiveEstimateGenerationSettings::fromRecord($record, 17);
     }
 
+    #[Test]
+    public function it_accepts_jsonb_key_order_for_a_valid_snapshot(): void
+    {
+        $snapshot = $this->snapshot();
+        $databaseSnapshot = [
+            'budgets' => [
+                'currency' => $snapshot['budgets']['currency'],
+                'monthly' => $snapshot['budgets']['monthly'],
+                'daily' => $snapshot['budgets']['daily'],
+            ],
+            'manual_review' => $snapshot['manual_review'],
+            'enabled_formats' => $snapshot['enabled_formats'],
+            'confidence' => [
+                'normative_matching' => $snapshot['confidence']['normative_matching'],
+                'geometry' => $snapshot['confidence']['geometry'],
+                'classification' => $snapshot['confidence']['classification'],
+            ],
+            'retries' => $snapshot['retries'],
+            'timeouts' => $snapshot['timeouts'],
+            'limits' => $snapshot['limits'],
+            'models' => [
+                'normative_matching' => $snapshot['models']['normative_matching'],
+                'classification' => $snapshot['models']['classification'],
+                'vision' => $snapshot['models']['vision'],
+            ],
+            'schema_version' => $snapshot['schema_version'],
+        ];
+
+        $settings = EffectiveEstimateGenerationSettings::fromRecord([
+            'snapshot_id' => 41,
+            'scope' => 'organization',
+            'organization_id' => 17,
+            'version' => 3,
+            'snapshot_hash' => SettingsSnapshotHash::calculate($databaseSnapshot),
+            'snapshot' => $databaseSnapshot,
+        ], 17);
+
+        self::assertSame(41, $settings->snapshotId);
+        self::assertSame('timeweb/vision-v2', $settings->model('vision'));
+    }
+
     /** @return array<string, mixed> */
     private function snapshot(): array
     {

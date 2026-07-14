@@ -40,7 +40,7 @@ final readonly class EffectiveEstimateGenerationSettings
             'idempotency_key' => 'runtime-validation',
             ...array_diff_key($snapshot, ['schema_version' => true]),
         ])->snapshot();
-        if ($validated !== $snapshot) {
+        if (! hash_equals($hash, SettingsSnapshotHash::calculate($validated))) {
             throw new DomainException('estimate_generation_effective_settings_invalid');
         }
 
