@@ -30,6 +30,7 @@ final class EffectiveEstimateGenerationSettingsTest extends TestCase
         self::assertSame(2, $settings->retryAttempts('vision'));
         self::assertSame('0.7800', $settings->confidence('geometry'));
         self::assertTrue($settings->allowsFormat('pdf'));
+        self::assertTrue($settings->allowsFormat('xls'));
         self::assertSame(8, $settings->maxFiles());
         self::assertSame('250.00', $settings->dailyBudget());
     }

@@ -81,7 +81,14 @@ final readonly class EffectiveEstimateGenerationSettings
 
     public function allowsFormat(string $extension): bool
     {
-        return in_array(strtolower($extension), $this->snapshot['enabled_formats'], true);
+        $extension = strtolower($extension);
+        $configuredFormat = match ($extension) {
+            'xls' => 'xlsx',
+            'tif' => 'tiff',
+            default => $extension,
+        };
+
+        return in_array($configuredFormat, $this->snapshot['enabled_formats'], true);
     }
 
     public function maxFiles(): int

@@ -56,10 +56,14 @@ class EstimateGenerationDocumentController extends Controller
             ], trans_message('estimate_generation.documents_uploaded'));
         } catch (StaleEstimateGenerationState|InvalidEstimateGenerationTransition|InvalidEstimateGenerationState) {
             return AdminResponse::error(trans_message('estimate_generation.state_conflict'), 409);
-        } catch (\Throwable) {
+        } catch (\Throwable $exception) {
             Log::error('[EstimateGeneration] Failed to upload documents', [
                 'failure_code' => 'document_upload_failed',
                 'session_id' => $session->id,
+                'exception_class' => $exception::class,
+                'exception_message' => $exception->getMessage(),
+                'exception_file' => $exception->getFile(),
+                'exception_line' => $exception->getLine(),
             ]);
 
             return AdminResponse::error(trans_message('estimate_generation.documents_upload_error'), 500);
