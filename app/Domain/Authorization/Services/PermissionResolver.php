@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Log;
  */
 class PermissionResolver
 {
-    private const CACHE_SCHEMA_VERSION = 'v2';
+    private const CACHE_SCHEMA_VERSION = 'v3';
 
     protected RoleScanner $roleScanner;
 
@@ -651,6 +651,7 @@ class PermissionResolver
             'act_reports' => 'act-reporting',
             'act-reports' => 'act-reporting',
             'ai_estimates' => 'ai-estimates',
+            'estimate_generation' => 'ai-estimates',
             'time_tracking' => 'time-tracking',
             'report_templates' => 'report-templates',
             'warehouse' => 'basic-warehouse',
@@ -691,6 +692,7 @@ class PermissionResolver
             'workforce-management' => 'workforce',
             'one-c-basic-exchange' => 'one_c_exchange',
             'contractor-portal' => 'contractor_marketplace',
+            'ai-estimates' => 'estimate_generation',
         ];
 
         $variants = [
