@@ -125,7 +125,7 @@ final class EstimateGenerationSettingsService
         ];
     }
 
-    /** @return array{snapshot_id: int, version: int, snapshot: array<string, mixed>}|null */
+    /** @return array{snapshot_id: int, scope: string, organization_id: int|null, version: int, snapshot: array<string, mixed>}|null */
     public function currentSnapshot(string $scope, ?int $organizationId): ?array
     {
         if (! in_array($scope, ['global', 'organization'], true)
@@ -149,6 +149,8 @@ final class EstimateGenerationSettingsService
 
         return [
             'snapshot_id' => (int) $snapshot->id,
+            'scope' => (string) $snapshot->scope,
+            'organization_id' => $snapshot->organization_id === null ? null : (int) $snapshot->organization_id,
             'version' => (int) $snapshot->version,
             'snapshot' => $this->decodeSnapshot($snapshot->snapshot),
         ];

@@ -9,11 +9,60 @@ use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSet
 use App\Filament\Pages\EstimateGeneration\EstimateGenerationSettings;
 use DomainException;
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 
 final class EstimateGenerationSettingsTest extends TestCase
 {
+    #[Test]
+    public function scope_switch_reloads_exact_snapshot_and_baseline_atomically(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 4).'/app/Filament/Pages/EstimateGeneration/EstimateGenerationSettings.php');
+        self::assertIsString($source);
+        self::assertStringContainsString('afterStateUpdated', $source);
+        self::assertStringContainsString('reloadScopeSnapshot', $source);
+        self::assertStringContainsString('$scopeEpoch', $source);
+        self::assertStringContainsString("'expected_version' => 0", $source);
+        self::assertStringContainsString("currentSnapshot('organization'", $source);
+        self::assertStringContainsString("currentSnapshot('global', null)", $source);
+        self::assertStringContainsString("'organization_id' => null", $source);
+    }
+
+    #[Test]
+    public function scope_state_covers_global_first_organization_existing_organization_and_tenant_isolation(): void
+    {
+        $defaults = ['models' => ['vision' => 'default'], 'organization_id' => null, 'expected_version' => 0];
+        $global = \App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsScopeState::compose(
+            $defaults, 'global', null,
+            ['scope' => 'global', 'organization_id' => null, 'version' => 3, 'snapshot' => ['models' => ['vision' => 'global']]],
+            '01GLOBALSETTINGSKEY',
+        );
+        self::assertSame(3, $global['expected_version']);
+        self::assertNull($global['organization_id']);
+
+        $firstOrganization = \App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsScopeState::compose(
+            $defaults, 'organization', 71, null, '01FIRSTORGSETTINGS',
+        );
+        self::assertSame(0, $firstOrganization['expected_version']);
+        self::assertSame(71, $firstOrganization['organization_id']);
+
+        $existing = \App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsScopeState::compose(
+            $defaults, 'organization', 71,
+            ['scope' => 'organization', 'organization_id' => 71, 'version' => 4, 'snapshot' => ['models' => ['vision' => 'org-71']]],
+            '01EXISTINGORGSETTINGS',
+        );
+        self::assertSame(4, $existing['expected_version']);
+        self::assertSame(['vision' => 'org-71'], $existing['models']);
+
+        $this->expectException(DomainException::class);
+        \App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsScopeState::compose(
+            $defaults, 'organization', 71,
+            ['scope' => 'organization', 'organization_id' => 72, 'version' => 1, 'snapshot' => []],
+            '01CROSSTENANTSETTING',
+        );
+    }
+
     public function test_closed_schema_builds_canonical_secret_free_snapshot(): void
     {
         $data = EstimateGenerationSettingsData::fromArray($this->validPayload());

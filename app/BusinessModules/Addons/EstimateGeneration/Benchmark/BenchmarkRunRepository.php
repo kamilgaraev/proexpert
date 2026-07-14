@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Benchmark;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationBenchmarkRun;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationTrainingDataset;
+use App\BusinessModules\Addons\EstimateGeneration\Operations\BenchmarkExecutionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Training\TrainingDatasetTrustPolicy;
 use DomainException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -190,7 +191,7 @@ final class BenchmarkRunRepository
     /** @param array<string, mixed> $manifest @return array<string, mixed> */
     private function manifest(EstimateGenerationTrainingDataset $dataset, array $manifest): array
     {
-        foreach (['pipeline_version', 'model_versions', 'normative_version', 'price_version', 'currency'] as $key) {
+        foreach (['pipeline_version', 'model_versions', 'normative_version', 'price_version', 'currency', 'execution_snapshot'] as $key) {
             if (! array_key_exists($key, $manifest)) {
                 throw new DomainException('benchmark_manifest_incomplete');
             }
@@ -199,7 +200,8 @@ final class BenchmarkRunRepository
         return ['organization_id' => (int) $dataset->organization_id, 'training_dataset_id' => (int) $dataset->id,
             'dataset_version' => (int) $dataset->version, 'pipeline_version' => (string) $manifest['pipeline_version'],
             'model_versions' => $manifest['model_versions'], 'normative_version' => (string) $manifest['normative_version'],
-            'price_version' => (string) $manifest['price_version'], 'currency' => (string) $manifest['currency']];
+            'price_version' => (string) $manifest['price_version'], 'currency' => (string) $manifest['currency'],
+            'execution_snapshot' => BenchmarkExecutionSnapshot::fromArray($manifest['execution_snapshot'])->toArray()];
     }
 
     /** @return array<string, mixed> */
@@ -208,7 +210,8 @@ final class BenchmarkRunRepository
         return ['organization_id' => (int) $run->organization_id, 'training_dataset_id' => (int) $run->training_dataset_id,
             'dataset_version' => (int) $run->dataset_version, 'pipeline_version' => (string) $run->pipeline_version,
             'model_versions' => $run->model_versions, 'normative_version' => (string) $run->normative_version,
-            'price_version' => (string) $run->price_version, 'currency' => (string) $run->currency];
+            'price_version' => (string) $run->price_version, 'currency' => (string) $run->currency,
+            'execution_snapshot' => $run->execution_snapshot];
     }
 
     /** @param array<string, mixed> $manifest */

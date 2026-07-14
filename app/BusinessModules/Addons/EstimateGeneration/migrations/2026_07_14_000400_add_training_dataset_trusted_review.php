@@ -19,9 +19,23 @@ return new class extends Migration
         DB::statement('ALTER TABLE estimate_generation_training_datasets ADD COLUMN IF NOT EXISTS trusted_review_submitted_at timestamptz');
         DB::statement('ALTER TABLE estimate_generation_training_datasets ADD COLUMN IF NOT EXISTS trusted_reviewed_by bigint');
         DB::statement('ALTER TABLE estimate_generation_training_datasets ADD COLUMN IF NOT EXISTS trusted_reviewed_at timestamptz');
+        DB::statement('ALTER TABLE estimate_generation_training_datasets ADD COLUMN IF NOT EXISTS trusted_review_migrated_from_approval boolean NOT NULL DEFAULT false');
+        DB::unprepared('DROP TRIGGER IF EXISTS eg_training_dataset_immutable ON estimate_generation_training_datasets;');
+        DB::statement(<<<'SQL'
+UPDATE estimate_generation_training_datasets
+SET trusted_review_status = 'approved',
+    trusted_reviewed_by = approved_by,
+    trusted_reviewed_at = approved_at,
+    trusted_review_migrated_from_approval = true
+WHERE dataset_type = 'development'
+  AND status = 'approved'
+  AND trusted_review_status = 'draft'
+  AND approved_by IS NOT NULL
+  AND approved_at IS NOT NULL
+SQL);
         DB::statement('ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT eg_training_trusted_submitter_fk FOREIGN KEY (trusted_review_submitted_by) REFERENCES system_admins(id) ON DELETE RESTRICT NOT VALID');
         DB::statement('ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT eg_training_trusted_reviewer_fk FOREIGN KEY (trusted_reviewed_by) REFERENCES system_admins(id) ON DELETE RESTRICT NOT VALID');
-        DB::statement("ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT eg_training_trusted_review_ck CHECK (control_version >= 0 AND trusted_review_status IN ('draft','pending','approved','rejected') AND ((trusted_review_status = 'draft' AND trusted_review_submitted_by IS NULL AND trusted_review_submitted_at IS NULL AND trusted_reviewed_by IS NULL AND trusted_reviewed_at IS NULL) OR (trusted_review_status = 'pending' AND trusted_review_submitted_by IS NOT NULL AND trusted_review_submitted_at IS NOT NULL AND trusted_reviewed_by IS NULL AND trusted_reviewed_at IS NULL) OR (trusted_review_status IN ('approved','rejected') AND trusted_review_submitted_by IS NOT NULL AND trusted_review_submitted_at IS NOT NULL AND trusted_reviewed_by IS NOT NULL AND trusted_reviewed_at IS NOT NULL AND trusted_review_submitted_by <> trusted_reviewed_by))) NOT VALID");
+        DB::statement("ALTER TABLE estimate_generation_training_datasets ADD CONSTRAINT eg_training_trusted_review_ck CHECK (control_version >= 0 AND trusted_review_status IN ('draft','pending','approved','rejected') AND ((trusted_review_status = 'draft' AND trusted_review_submitted_by IS NULL AND trusted_review_submitted_at IS NULL AND trusted_reviewed_by IS NULL AND trusted_reviewed_at IS NULL AND NOT trusted_review_migrated_from_approval) OR (trusted_review_status = 'pending' AND trusted_review_submitted_by IS NOT NULL AND trusted_review_submitted_at IS NOT NULL AND trusted_reviewed_by IS NULL AND trusted_reviewed_at IS NULL AND NOT trusted_review_migrated_from_approval) OR (trusted_review_status IN ('approved','rejected') AND trusted_review_submitted_by IS NOT NULL AND trusted_review_submitted_at IS NOT NULL AND trusted_reviewed_by IS NOT NULL AND trusted_reviewed_at IS NOT NULL AND trusted_review_submitted_by <> trusted_reviewed_by AND NOT trusted_review_migrated_from_approval) OR (trusted_review_status = 'approved' AND trusted_review_migrated_from_approval AND trusted_review_submitted_by IS NULL AND trusted_review_submitted_at IS NULL AND trusted_reviewed_by = approved_by AND trusted_reviewed_at = approved_at))) NOT VALID");
         DB::unprepared(<<<'SQL'
 CREATE FUNCTION eg_training_trusted_review_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -37,6 +51,7 @@ BEGIN
 END;
 $$;
 CREATE TRIGGER eg_training_trusted_review_guard_trg BEFORE INSERT OR UPDATE OF status, trusted_review_status, trusted_review_submitted_by, trusted_review_submitted_at, trusted_reviewed_by, trusted_reviewed_at ON estimate_generation_training_datasets FOR EACH ROW EXECUTE FUNCTION eg_training_trusted_review_guard();
+CREATE TRIGGER eg_training_dataset_immutable BEFORE UPDATE ON estimate_generation_training_datasets FOR EACH ROW EXECUTE FUNCTION eg_guard_training_dataset_immutable();
 SQL);
     }
 

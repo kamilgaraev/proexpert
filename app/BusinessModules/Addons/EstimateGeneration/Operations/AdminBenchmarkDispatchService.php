@@ -50,15 +50,35 @@ final readonly class AdminBenchmarkDispatchService
                 throw new DomainException('benchmark_dispatch_not_allowed');
             }
 
-            $manifest = [...$command->manifest, 'organization_id' => $command->organizationId];
+            $datasetManifest = is_array($dataset->stats) ? ($dataset->stats['benchmark_manifest'] ?? null) : null;
+            if (! is_array($datasetManifest)) {
+                throw new DomainException('benchmark_dataset_manifest_missing');
+            }
+            $executionSnapshot = BenchmarkExecutionSnapshot::fromArray([
+                'schema_version' => 1,
+                'organization_id' => (int) $dataset->organization_id,
+                'dataset_id' => (int) $dataset->id,
+                'dataset_type' => (string) $dataset->dataset_type,
+                'dataset_version' => (int) $dataset->version,
+                'dataset_content_hash' => $datasetManifest['dataset_content_hash'] ?? null,
+                'manifest_locator' => $datasetManifest['locator'] ?? null,
+                'manifest_sha256' => $datasetManifest['sha256'] ?? null,
+                'adapter_id' => $command->manifest['adapter_id'] ?? null,
+                'prompt_version' => $command->manifest['prompt_version'] ?? null,
+                'settings_snapshot_id' => $command->manifest['settings_snapshot_id'] ?? null,
+                'settings_snapshot_version' => $command->manifest['settings_snapshot_version'] ?? null,
+                'pipeline_version' => $command->manifest['pipeline_version'] ?? null,
+                'model_versions' => $command->manifest['model_versions'] ?? null,
+                'normative_version' => $command->manifest['normative_version'] ?? null,
+                'price_version' => $command->manifest['price_version'] ?? null,
+                'currency' => $command->manifest['currency'] ?? null,
+            ]);
+            $manifest = [...$command->manifest, 'organization_id' => $command->organizationId, 'execution_snapshot' => $executionSnapshot->toArray()];
             $run = $this->runs->start($dataset, $manifest, $command->idempotencyKey);
             if ($run->wasRecentlyCreated) {
                 $this->bus->dispatch((new RunEstimateGenerationBenchmarkJob(
                     (int) $run->id,
-                    (string) $dataset->dataset_type,
-                    (string) ($command->manifest['adapter_id'] ?? ''),
-                    (string) ($command->manifest['prompt_version'] ?? ''),
-                    isset($command->manifest['manifest_locator']) ? (string) $command->manifest['manifest_locator'] : null,
+                    $command->idempotencyKey,
                 ))->afterCommit());
             }
             $result = ['run_id' => (int) $run->id, 'run_uuid' => (string) $run->uuid];

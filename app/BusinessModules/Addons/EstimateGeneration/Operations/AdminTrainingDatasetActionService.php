@@ -6,6 +6,7 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Operations;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationTrainingDataset;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Training\EstimateGenerationTrainingDatasetService;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Training\TrainingDatasetActionPolicy;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Training\TrainingDatasetReviewStateMachine;
 use App\Filament\Support\FilamentPermission;
 use App\Models\SystemAdmin;
@@ -14,7 +15,7 @@ use Illuminate\Support\Facades\DB;
 
 final readonly class AdminTrainingDatasetActionService
 {
-    private const ACTIONS = ['process', 'submit_review', 'approve_review', 'reject_review'];
+    private const ACTIONS = ['process', 'submit_review', 'approve_review', 'reject_review', 'approve_primary'];
 
     public function __construct(private EstimateGenerationTrainingDatasetService $datasets) {}
 
@@ -43,6 +44,14 @@ final readonly class AdminTrainingDatasetActionService
             }
 
             $reviewStatus = (string) ($dataset->trusted_review_status ?? EstimateGenerationTrainingDataset::TRUSTED_REVIEW_DRAFT);
+            if (! TrainingDatasetActionPolicy::allows(
+                (string) $dataset->dataset_type,
+                (string) $dataset->status,
+                $reviewStatus,
+                $command->action,
+            )) {
+                throw new DomainException('training_dataset_action_state_invalid');
+            }
             $persisted = false;
             if ($command->action === 'process') {
                 $this->datasets->queueProcessing($dataset);
@@ -67,9 +76,11 @@ final readonly class AdminTrainingDatasetActionService
                 ]);
                 $dataset->save();
                 $persisted = true;
-                if ($dataset->status === EstimateGenerationTrainingDataset::STATUS_REVIEW_REQUIRED) {
-                    $dataset = $this->datasets->approve($dataset, $actor);
-                }
+            } elseif ($command->action === 'approve_primary') {
+                $dataset->control_version = $command->expectedVersion + 1;
+                $dataset->save();
+                $persisted = true;
+                $dataset = $this->datasets->approve($dataset, $actor);
             } else {
                 $reviewStatus = TrainingDatasetReviewStateMachine::reject(
                     $reviewStatus,

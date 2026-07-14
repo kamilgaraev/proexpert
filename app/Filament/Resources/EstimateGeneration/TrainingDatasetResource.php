@@ -296,12 +296,14 @@ class TrainingDatasetResource extends Resource
                 Action::make('submit_review')
                     ->label(trans_message('estimate_generation.training_submit_review_action'))
                     ->visible(fn (EstimateGenerationTrainingDataset $record): bool => $record->dataset_type === EstimateGenerationTrainingDataset::TYPE_DEVELOPMENT
+                        && $record->status === EstimateGenerationTrainingDataset::STATUS_REVIEW_REQUIRED
                         && ($record->trusted_review_status ?? EstimateGenerationTrainingDataset::TRUSTED_REVIEW_DRAFT) === EstimateGenerationTrainingDataset::TRUSTED_REVIEW_DRAFT)
                     ->requiresConfirmation()
                     ->action(fn (EstimateGenerationTrainingDataset $record): mixed => self::runAction($record, 'submit_review')),
                 Action::make('approve_review')
                     ->label(trans_message('estimate_generation.training_approve_review_action'))
                     ->visible(fn (EstimateGenerationTrainingDataset $record): bool => $record->dataset_type === EstimateGenerationTrainingDataset::TYPE_DEVELOPMENT
+                        && $record->status === EstimateGenerationTrainingDataset::STATUS_REVIEW_REQUIRED
                         && $record->trusted_review_status === EstimateGenerationTrainingDataset::TRUSTED_REVIEW_PENDING)
                     ->requiresConfirmation()
                     ->action(fn (EstimateGenerationTrainingDataset $record): mixed => self::runAction($record, 'approve_review')),
@@ -309,9 +311,17 @@ class TrainingDatasetResource extends Resource
                     ->label(trans_message('estimate_generation.training_reject_review_action'))
                     ->color('danger')
                     ->visible(fn (EstimateGenerationTrainingDataset $record): bool => $record->dataset_type === EstimateGenerationTrainingDataset::TYPE_DEVELOPMENT
+                        && $record->status === EstimateGenerationTrainingDataset::STATUS_REVIEW_REQUIRED
                         && $record->trusted_review_status === EstimateGenerationTrainingDataset::TRUSTED_REVIEW_PENDING)
                     ->requiresConfirmation()
                     ->action(fn (EstimateGenerationTrainingDataset $record): mixed => self::runAction($record, 'reject_review')),
+                Action::make('approve_primary')
+                    ->label(trans_message('estimate_generation.training_approve_action'))
+                    ->requiresConfirmation()
+                    ->visible(fn (EstimateGenerationTrainingDataset $record): bool => $record->status === EstimateGenerationTrainingDataset::STATUS_REVIEW_REQUIRED
+                        && ($record->dataset_type !== EstimateGenerationTrainingDataset::TYPE_DEVELOPMENT
+                            || $record->trusted_review_status === EstimateGenerationTrainingDataset::TRUSTED_REVIEW_APPROVED))
+                    ->action(fn (EstimateGenerationTrainingDataset $record): mixed => self::runAction($record, 'approve_primary')),
                 DeleteAction::make()
                     ->visible(fn (EstimateGenerationTrainingDataset $record): bool => SystemAdminAccess::can(FilamentPermission::ESTIMATE_GENERATION_DATASETS)
                         && ! in_array($record->status, [EstimateGenerationTrainingDataset::STATUS_APPROVED, EstimateGenerationTrainingDataset::STATUS_ARCHIVED], true)),

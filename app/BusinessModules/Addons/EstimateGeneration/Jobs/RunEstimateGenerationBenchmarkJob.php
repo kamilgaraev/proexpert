@@ -26,10 +26,7 @@ final class RunEstimateGenerationBenchmarkJob implements ShouldQueue
 
     public function __construct(
         public readonly int $runId,
-        public readonly string $datasetType,
-        public readonly string $adapterId,
-        public readonly string $promptVersion,
-        public readonly ?string $manifestLocator,
+        public readonly string $idempotencyKey,
     ) {
         $this->onQueue('estimate-generation-benchmarks');
     }
@@ -42,7 +39,7 @@ final class RunEstimateGenerationBenchmarkJob implements ShouldQueue
 
     public function handle(StoredBenchmarkRunExecutor $executor): void
     {
-        $executor->execute($this->runId, $this->datasetType, $this->adapterId, $this->promptVersion, $this->manifestLocator);
+        $executor->execute($this->runId, $this->idempotencyKey);
     }
 
     public function failed(Throwable $exception): void

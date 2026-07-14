@@ -6,11 +6,5 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Operations;
 
 interface StoredBenchmarkRunExecutor
 {
-    public function execute(
-        int $runId,
-        string $datasetType,
-        string $adapterId,
-        string $promptVersion,
-        ?string $manifestLocator,
-    ): void;
+    public function execute(int $runId, string $idempotencyKey): void;
 }

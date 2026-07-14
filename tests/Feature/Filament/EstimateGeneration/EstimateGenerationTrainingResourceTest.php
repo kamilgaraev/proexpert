@@ -9,11 +9,42 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Training\TrainingData
 use App\BusinessModules\Addons\EstimateGeneration\Services\Training\TrainingDatasetTrustPolicy;
 use App\Filament\Resources\EstimateGeneration\TrainingDatasetResource;
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 
 final class EstimateGenerationTrainingResourceTest extends TestCase
 {
+    #[Test]
+    public function action_policy_has_a_closed_kind_and_status_matrix(): void
+    {
+        $policy = \App\BusinessModules\Addons\EstimateGeneration\Services\Training\TrainingDatasetActionPolicy::class;
+        self::assertTrue($policy::allows('development', 'draft', 'draft', 'process'));
+        self::assertTrue($policy::allows('development', 'review_required', 'draft', 'submit_review'));
+        self::assertTrue($policy::allows('development', 'review_required', 'pending', 'approve_review'));
+        self::assertTrue($policy::allows('development', 'review_required', 'approved', 'approve_primary'));
+        self::assertTrue($policy::allows('acceptance', 'review_required', 'draft', 'approve_primary'));
+        self::assertTrue($policy::allows('regression', 'review_required', 'draft', 'approve_primary'));
+        self::assertFalse($policy::allows('acceptance', 'review_required', 'draft', 'submit_review'));
+        self::assertFalse($policy::allows('regression', 'approved', 'approved', 'train'));
+        self::assertFalse($policy::allows('unknown', 'review_required', 'draft', 'approve_primary'));
+    }
+
+    #[Test]
+    public function upgrade_migration_backfills_approved_development_without_stranding(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_000400_add_training_dataset_trusted_review.php');
+        self::assertIsString($source);
+        self::assertStringContainsString('DROP TRIGGER IF EXISTS eg_training_dataset_immutable', $source);
+        self::assertStringContainsString("dataset_type = 'development'", $source);
+        self::assertStringContainsString("status = 'approved'", $source);
+        self::assertStringContainsString("trusted_review_status = 'approved'", $source);
+        self::assertStringContainsString('approved_by', $source);
+        self::assertStringContainsString('approved_at', $source);
+        self::assertStringContainsString('trusted_review_migrated_from_approval', $source);
+        self::assertStringContainsString('CREATE TRIGGER eg_training_dataset_immutable', $source);
+    }
+
     public function test_old_resource_is_deleted_and_only_new_namespace_is_registered(): void
     {
         $root = dirname(__DIR__, 4);

@@ -144,9 +144,8 @@ final class BenchmarkRunResource extends Resource
                 Select::make('dataset_id')->label(trans_message('estimate_generation.benchmark_dataset'))->options(fn (): array => self::datasetOptions())->searchable()->required(),
                 TextInput::make('pipeline_version')->label(trans_message('estimate_generation.benchmark_pipeline_version'))->required()->maxLength(96),
                 Select::make('adapter_id')->label(trans_message('estimate_generation.benchmark_adapter'))->options([
-                    'production-replay' => trans_message('estimate_generation.benchmark_adapter_production_replay'),
                     'current-baseline' => trans_message('estimate_generation.benchmark_adapter_current_baseline'),
-                ])->default('production-replay')->required(),
+                ])->default('current-baseline')->required(),
                 TextInput::make('prompt_version')->label(trans_message('estimate_generation.benchmark_prompt_version'))->default('recorded-ports:v3')->required()->maxLength(96),
                 TextInput::make('normative_version')->label(trans_message('estimate_generation.benchmark_normative_version'))->required()->maxLength(96),
                 TextInput::make('price_version')->label(trans_message('estimate_generation.benchmark_price_version'))->required()->maxLength(96),
@@ -175,6 +174,8 @@ final class BenchmarkRunResource extends Resource
                         'normative_version' => (string) $data['normative_version'],
                         'price_version' => (string) $data['price_version'],
                         'currency' => (string) $snapshot['budgets']['currency'],
+                        'settings_snapshot_id' => $settings['snapshot_id'],
+                        'settings_snapshot_version' => $settings['version'],
                     ],
                 ));
                 Notification::make()->success()->title(trans_message('estimate_generation.benchmark_queued'))->send();

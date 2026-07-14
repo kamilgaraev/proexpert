@@ -30,9 +30,15 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
         {--output= : Relative path under the benchmark output root}
         {--emit-json : Emit JSON even when an immutable output is written}
         {--manifest= : Relative two-case replay manifest under the fixture root}
+        {--manifest-sha256= : Exact immutable manifest content hash}
+        {--organization-id= : Tenant owning the private manifest}
         {--adapter= : Explicit registered adapter}
         {--pipeline-version= : Version of the evaluated pipeline}
         {--prompt-version=none:v1 : Version of the evaluated prompt set}
+        {--settings-snapshot-id= : Immutable settings snapshot identity}
+        {--settings-snapshot-version= : Immutable settings snapshot version}
+        {--normative-version= : Normative version under evaluation}
+        {--price-version= : Price version under evaluation}
         {--case-timeout-ms=300000 : Per-case timeout}
         {--max-failure-rate=0 : Maximum technical failure ratio}
         {--failure-policy-version=strict-zero:v1 : Versioned failure policy}
@@ -89,7 +95,15 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
             if ($dataset === BenchmarkDatasetType::Acceptance) {
                 ($this->acceptanceGate ?? throw new BenchmarkCommandException('acceptance_master_gate_not_configured'))->assert($report);
             }
-            $rendered = $format === 'json' ? $report->canonicalJson() : $this->tablePayload($report);
+            $payload = $report->jsonSerialize();
+            $payload['settings_snapshot_id'] = (int) $this->option('settings-snapshot-id');
+            $payload['settings_snapshot_version'] = (int) $this->option('settings-snapshot-version');
+            $payload['normative_version'] = (string) $this->option('normative-version');
+            $payload['price_version'] = (string) $this->option('price-version');
+            BenchmarkReportData::sortRecursive($payload);
+            $rendered = $format === 'json'
+                ? json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+                : $this->tablePayload($report);
             $output = $this->option('output');
             if (is_string($output) && $output !== '') {
                 $output = str_replace('{sha256}', hash('sha256', $rendered), $output);
@@ -109,10 +123,22 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
 
     private function corpus(BenchmarkDatasetType $dataset): BenchmarkCorpus
     {
+        $selectedManifest = $this->option('manifest');
+        $selectedOrganizationId = filter_var($this->option('organization-id'), FILTER_VALIDATE_INT);
+        $selectedSha256 = $this->option('manifest-sha256');
+        if (is_string($selectedManifest) && str_starts_with($selectedManifest, 's3://')) {
+            if (! is_int($selectedOrganizationId) || $selectedOrganizationId < 1
+                || ! is_string($selectedSha256) || preg_match('/^[a-f0-9]{64}$/', $selectedSha256) !== 1
+                || $this->acceptanceLoader === null) {
+                throw new BenchmarkCommandException('private_manifest_identity_invalid');
+            }
+
+            return $this->acceptanceLoader->loadForDataset($dataset, $selectedOrganizationId, $selectedManifest, $selectedSha256);
+        }
         if ($dataset !== BenchmarkDatasetType::Acceptance) {
             $manifestPath = $this->repositoryManifestPath;
             $requireAllSourceTypes = true;
-            $manifest = $this->option('manifest');
+            $manifest = $selectedManifest;
             if (is_string($manifest) && $manifest !== '') {
                 $registered = $this->registeredManifests?->byLocator($manifest)
                     ?? throw new BenchmarkCommandException('manifest_not_registered');
@@ -152,7 +178,9 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
         if (($this->environment)() !== 'production') {
             return;
         }
-        if ($dataset !== BenchmarkDatasetType::Acceptance) {
+        $manifest = $this->option('manifest');
+        if ($dataset !== BenchmarkDatasetType::Acceptance
+            && (! is_string($manifest) || ! str_starts_with($manifest, 's3://'))) {
             throw new BenchmarkCommandException('repository_benchmark_forbidden_in_production');
         }
         if (! $this->reportOutput instanceof ProductionImmutableBenchmarkReportOutputStore) {

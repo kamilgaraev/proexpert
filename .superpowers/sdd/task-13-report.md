@@ -30,3 +30,14 @@
 - Миграции, seeders, tinker и любые команды с подключением к БД не запускались согласно owner constraint.
 - Фактическое применение PostgreSQL DDL, очередь и S3-path необходимо проверить в staging после миграции, с production-sized acceptance dataset и ограничениями worker timeout/memory.
 - Сборка frontend не запускалась: задача backend/Filament и правила проекта запрещают build админки.
+
+## Исправления по повторному review
+
+- Authority benchmark перенесён из payload очереди в закрытый immutable `execution_snapshot` сохранённого запуска. Job содержит только `run_id` и idempotency key.
+- Snapshot фиксирует tenant/dataset identity, immutable manifest locator/hash, adapter/prompt, settings snapshot, models, normative/price/currency и pipeline versions. PostgreSQL insert trigger сверяет snapshot с выбранным dataset.
+- Executor повторно загружает запуск и dataset в tenant scope, сверяет сохранённый manifest с immutable dataset stats, проверяет доступность adapter и отклоняет любое несовпадение фактического отчёта до terminal completion.
+- Private S3 manifest выбранного dataset используется для development, regression и acceptance; acceptance дополнительно сохраняет owner/QA gates. Локальные repository fixtures в production по-прежнему запрещены.
+- Небезопасный production default `production-replay` удалён из Filament; default `current-baseline` зарегистрирован во всех окружениях.
+- Dataset actions переведены на закрытую kind/status/trusted-status matrix. Development primary approval отделён от trusted approval; regression/acceptance используют обычный primary review и не получают learning actions.
+- Upgrade migration временно снимает approved-dataset immutability trigger, backfill-ит ранее approved development datasets ограниченным evidence из `approved_by/approved_at`, затем восстанавливает immutable trigger до завершения миграции.
+- Settings page реактивно загружает exact global/organization snapshot, сбрасывает organization при global scope, использует атомарный epoch guard и переносит загруженную version в CAS baseline.

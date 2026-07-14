@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Filament\Pages\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsData;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsScopeState;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsService;
 use App\Filament\Support\FilamentPermission;
 use App\Filament\Support\NavigationGroups;
@@ -37,6 +38,8 @@ final class EstimateGenerationSettings extends Page implements HasSchemas
     /** @var array<string, mixed> */
     public array $data = [];
 
+    public int $scopeEpoch = 0;
+
     public static function getNavigationGroup(): string|\UnitEnum|null
     {
         return NavigationGroups::aiEstimator();
@@ -62,18 +65,10 @@ final class EstimateGenerationSettings extends Page implements HasSchemas
 
     public function mount(): void
     {
-        $data = $this->defaults();
         $current = app(EstimateGenerationSettingsService::class)->currentSnapshot('global', null);
-        if ($current !== null) {
-            $data = [
-                ...$data,
-                ...$current['snapshot'],
-                'scope' => 'global',
-                'organization_id' => null,
-                'expected_version' => $current['version'],
-                'idempotency_key' => (string) Str::ulid(),
-            ];
-        }
+        $data = EstimateGenerationSettingsScopeState::compose(
+            $this->defaults(), 'global', null, $current, (string) Str::ulid(),
+        );
         $this->form->fill($data);
     }
 
@@ -91,10 +86,12 @@ final class EstimateGenerationSettings extends Page implements HasSchemas
                 Select::make('scope')->label(trans_message('estimate_generation.settings_scope'))->options([
                     'global' => trans_message('estimate_generation.settings_scope_global'),
                     'organization' => trans_message('estimate_generation.settings_scope_organization'),
-                ])->live()->required(),
+                ])->live()->afterStateUpdated(fn (?string $state) => $this->changeScope($state))->required(),
                 Select::make('organization_id')->label(trans_message('estimate_generation.training_organization'))
                     ->options(fn (): array => Organization::query()->orderBy('name')->limit(500)->pluck('name', 'id')->all())
-                    ->visible(fn ($get): bool => $get('scope') === 'organization')->searchable(),
+                    ->visible(fn ($get): bool => $get('scope') === 'organization')->live()
+                    ->afterStateUpdated(fn (mixed $state) => $this->changeOrganization($state))
+                    ->required(fn ($get): bool => $get('scope') === 'organization')->searchable(),
                 TextInput::make('expected_version')->label(trans_message('estimate_generation.settings_expected_version'))->integer()->minValue(0)->required(),
                 TextInput::make('idempotency_key')->hidden()->required(),
             ])->columns(2),
@@ -157,6 +154,48 @@ final class EstimateGenerationSettings extends Page implements HasSchemas
         $this->data['expected_version'] = $result['version'];
         $this->data['idempotency_key'] = (string) Str::ulid();
         Notification::make()->success()->title(trans_message('estimate_generation.settings_saved'))->send();
+    }
+
+    public function changeScope(?string $scope): void
+    {
+        if ($scope === 'global') {
+            $this->data['organization_id'] = null;
+            $this->reloadScopeSnapshot('global', null);
+
+            return;
+        }
+        if ($scope === 'organization') {
+            $this->data = [...$this->defaults(), 'scope' => 'organization', 'organization_id' => null];
+        }
+    }
+
+    public function changeOrganization(mixed $organizationId): void
+    {
+        if ($this->data['scope'] !== 'organization') {
+            return;
+        }
+        $id = filter_var($organizationId, FILTER_VALIDATE_INT);
+        if (is_int($id) && $id > 0) {
+            $this->reloadScopeSnapshot('organization', $id);
+        }
+    }
+
+    public function reloadScopeSnapshot(string $scope, ?int $organizationId): void
+    {
+        $scopeEpoch = ++$this->scopeEpoch;
+        $current = $scope === 'organization'
+            ? app(EstimateGenerationSettingsService::class)->currentSnapshot('organization', $organizationId)
+            : app(EstimateGenerationSettingsService::class)->currentSnapshot('global', null);
+        if ($scopeEpoch !== $this->scopeEpoch) {
+            return;
+        }
+        $this->data = EstimateGenerationSettingsScopeState::compose(
+            $this->defaults(),
+            $scope,
+            $scope === 'organization' ? $organizationId : null,
+            $current,
+            (string) Str::ulid(),
+        );
     }
 
     /** @return array<string, mixed> */

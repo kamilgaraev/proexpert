@@ -23,6 +23,7 @@ final class EstimateGenerationBenchmarkRun extends Model
         'case_results_version_scheme',
         'case_results_content_type', 'cost_amount', 'currency', 'status', 'failure_code',
         'error_summary', 'started_at', 'completed_at',
+        'execution_snapshot',
     ];
 
     protected $casts = [
@@ -37,6 +38,7 @@ final class EstimateGenerationBenchmarkRun extends Model
         'cost_amount' => 'decimal:8',
         'started_at' => 'immutable_datetime',
         'completed_at' => 'immutable_datetime',
+        'execution_snapshot' => 'array',
     ];
 
     public function dataset(): BelongsTo

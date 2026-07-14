@@ -83,6 +83,7 @@ class EstimateGenerationTrainingDataset extends Model
         'trusted_review_submitted_at',
         'trusted_reviewed_by',
         'trusted_reviewed_at',
+        'trusted_review_migrated_from_approval',
         'control_version',
     ];
 
@@ -104,6 +105,7 @@ class EstimateGenerationTrainingDataset extends Model
         'trusted_review_submitted_at' => 'immutable_datetime',
         'trusted_reviewed_by' => 'integer',
         'trusted_reviewed_at' => 'immutable_datetime',
+        'trusted_review_migrated_from_approval' => 'boolean',
         'control_version' => 'integer',
     ];
 

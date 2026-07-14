@@ -8,11 +8,91 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunDetailSe
 use App\BusinessModules\Addons\EstimateGeneration\Operations\BenchmarkDispatchPolicy;
 use App\Filament\Resources\EstimateGeneration\BenchmarkRunResource;
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 
 final class EstimateGenerationBenchmarkResourceTest extends TestCase
 {
+    #[Test]
+    public function stored_execution_snapshot_is_the_only_queued_authority(): void
+    {
+        $root = dirname(__DIR__, 4);
+        $job = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Jobs/RunEstimateGenerationBenchmarkJob.php');
+        $executor = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/Operations/ConsoleStoredBenchmarkRunExecutor.php');
+        $migration = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_000500_add_benchmark_execution_snapshot.php');
+
+        self::assertIsString($job);
+        self::assertStringContainsString('public readonly string $idempotencyKey', $job);
+        self::assertStringNotContainsString('datasetType', $job);
+        self::assertStringNotContainsString('manifestLocator', $job);
+        self::assertIsString($executor);
+        self::assertStringContainsString('execution_snapshot', $executor);
+        self::assertStringContainsString('assertReportMatches', $executor);
+        self::assertStringContainsString("where('organization_id'", $executor);
+        self::assertIsString($migration);
+        self::assertStringContainsString('execution_snapshot jsonb', $migration);
+        self::assertStringContainsString('eg_benchmark_execution_snapshot_valid_v1', $migration);
+        self::assertStringContainsString('execution_snapshot <> OLD.execution_snapshot', $migration);
+        $provider = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/EstimateGenerationServiceProvider.php');
+        $resource = file_get_contents($root.'/app/Filament/Resources/EstimateGeneration/BenchmarkRunResource.php');
+        self::assertIsString($provider);
+        self::assertStringContainsString('CurrentBaselineBenchmarkAdapter::class', $provider);
+        self::assertIsString($resource);
+        self::assertStringContainsString("->default('current-baseline')", $resource);
+        self::assertStringNotContainsString("->default('production-replay')", $resource);
+    }
+
+    #[Test]
+    public function snapshot_contract_rejects_cross_tenant_or_inexact_report(): void
+    {
+        $snapshot = \App\BusinessModules\Addons\EstimateGeneration\Operations\BenchmarkExecutionSnapshot::fromArray($this->executionSnapshot());
+        $snapshot->assertDataset(71, 9, 'acceptance', 4, 'sha256:'.str_repeat('a', 64));
+        $snapshot->assertReport($this->matchingReport());
+
+        $this->expectException(\DomainException::class);
+        $snapshot->assertDataset(72, 9, 'acceptance', 4, 'sha256:'.str_repeat('a', 64));
+    }
+
+    #[Test]
+    public function snapshot_contract_rejects_wrong_manifest_and_adapter_report(): void
+    {
+        $snapshot = \App\BusinessModules\Addons\EstimateGeneration\Operations\BenchmarkExecutionSnapshot::fromArray($this->executionSnapshot());
+        $report = $this->matchingReport();
+        $report['adapter_id'] = 'current-baseline';
+
+        $this->expectException(\DomainException::class);
+        $snapshot->assertReport($report);
+    }
+
+    /** @return array<string, mixed> */
+    private function executionSnapshot(): array
+    {
+        return [
+            'schema_version' => 1, 'organization_id' => 71, 'dataset_id' => 9,
+            'dataset_type' => 'acceptance', 'dataset_version' => 4,
+            'dataset_content_hash' => 'sha256:'.str_repeat('a', 64),
+            'manifest_locator' => 's3://org-71/estimate-generation/benchmarks/acceptance/corpus.json',
+            'manifest_sha256' => str_repeat('b', 64), 'adapter_id' => 'production-replay',
+            'prompt_version' => 'recorded-ports:v3', 'settings_snapshot_id' => 8,
+            'settings_snapshot_version' => 2, 'pipeline_version' => 'pipeline:v4',
+            'model_versions' => ['vision' => 'openai/gpt-5'], 'normative_version' => 'normative:v7',
+            'price_version' => 'price:v5', 'currency' => 'RUB',
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function matchingReport(): array
+    {
+        return [
+            'dataset' => 'acceptance', 'manifest_sha256' => str_repeat('b', 64),
+            'adapter_id' => 'production-replay', 'prompt_version' => 'recorded-ports:v3',
+            'pipeline_version' => 'pipeline:v4', 'model_versions' => ['vision' => 'openai/gpt-5'],
+            'normative_version' => 'normative:v7', 'price_version' => 'price:v5', 'currency' => 'RUB',
+            'settings_snapshot_id' => 8, 'settings_snapshot_version' => 2,
+        ];
+    }
+
     /** @return iterable<string, array{string, bool, bool, bool}> */
     public static function dispatchMatrix(): iterable
     {

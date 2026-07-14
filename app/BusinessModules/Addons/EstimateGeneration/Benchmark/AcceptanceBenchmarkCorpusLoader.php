@@ -12,15 +12,24 @@ final readonly class AcceptanceBenchmarkCorpusLoader
 
     public function load(int $organizationId, string $manifestLocator, ?BenchmarkManifest $publicManifest = null): BenchmarkCorpus
     {
+        return $this->loadForDataset(BenchmarkDatasetType::Acceptance, $organizationId, $manifestLocator, null, $publicManifest);
+    }
+
+    public function loadForDataset(BenchmarkDatasetType $dataset, int $organizationId, string $manifestLocator, ?string $expectedSha256 = null, ?BenchmarkManifest $publicManifest = null): BenchmarkCorpus
+    {
         if ($organizationId < 1) {
             throw new BenchmarkContractException('acceptance_organization_invalid');
         }
-        $prefix = 's3://org-'.$organizationId.'/estimate-generation/benchmarks/acceptance/';
+        $prefix = 's3://org-'.$organizationId.'/estimate-generation/benchmarks/'.$dataset->value.'/';
         if (! str_starts_with($manifestLocator, $prefix) || ! str_ends_with($manifestLocator, '.json')
             || str_contains($manifestLocator, '..') || str_contains($manifestLocator, '?')) {
             throw new BenchmarkContractException('acceptance_manifest_locator_invalid');
         }
         $json = $this->store->read(substr($manifestLocator, 5), 2_000_000);
+        $actualSha256 = hash('sha256', $json);
+        if ($expectedSha256 !== null && ! hash_equals($expectedSha256, $actualSha256)) {
+            throw new BenchmarkContractException('manifest_integrity_failed');
+        }
         try {
             $payload = json_decode($json, true, 64, JSON_THROW_ON_ERROR);
         } catch (JsonException) {
@@ -29,9 +38,11 @@ final readonly class AcceptanceBenchmarkCorpusLoader
         if (! is_array($payload)) {
             throw new BenchmarkContractException('acceptance_manifest_invalid');
         }
-        $payload = (new AcceptanceOwnerApprovalGuard($this->store))->approvedManifest($organizationId, $payload);
-        $manifest = BenchmarkManifest::fromArray($payload, __DIR__, hash('sha256', $json), false);
-        $cases = $manifest->casesFor(BenchmarkDatasetType::Acceptance);
+        if ($dataset === BenchmarkDatasetType::Acceptance) {
+            $payload = (new AcceptanceOwnerApprovalGuard($this->store))->approvedManifest($organizationId, $payload);
+        }
+        $manifest = BenchmarkManifest::fromArray($payload, __DIR__, $actualSha256, false);
+        $cases = $manifest->casesFor($dataset);
         if ($cases === [] || count($cases) !== $manifest->caseCount()) {
             throw new BenchmarkContractException('acceptance_dataset_invalid');
         }
@@ -44,7 +55,7 @@ final readonly class AcceptanceBenchmarkCorpusLoader
         return new BenchmarkCorpus(
             $manifest,
             $objects,
-            'acceptance:org-'.$organizationId.':'.$manifest->manifestVersion,
+            $dataset->value.':org-'.$organizationId.':'.$manifest->manifestVersion,
         );
     }
 
