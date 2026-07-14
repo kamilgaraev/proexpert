@@ -23,6 +23,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\VisionProvid
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\ProjectiveTransformFactory;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Providers\BoundedVisionResponseBodyReader;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Providers\TimewebVisionProvider;
+use Illuminate\Http\Client\Factory;
 use Illuminate\Support\Facades\Http;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
@@ -409,6 +410,21 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         }
 
         Http::assertNothingSent();
+        self::assertSame([], $this->attempts);
+        self::assertSame(0, $this->authorizer->releases);
+
+        $this->authorizer->claimGranted = true;
+        Http::swap(new Factory);
+        Http::fake(fn () => Http::response($this->response()));
+        $analysis = $this->provider()->analyze($this->input());
+
+        self::assertSame('vision/model-v1', $analysis->reportedModel);
+        self::assertCount(1, $this->attempts);
+        self::assertSame('succeeded', $this->attempts[0]->status);
+        self::assertSame('measured', $this->attempts[0]->usageStatus);
+        self::assertSame($this->authorizer->attemptIds[0], $this->authorizer->attemptIds[1]);
+        self::assertSame($this->authorizer->attemptIds[0], $this->attempts[0]->context->attemptId);
+        self::assertSame(0, $this->authorizer->releases);
     }
 
     #[Test]
@@ -494,6 +510,11 @@ final class TestAiAttemptAuthorizer implements AiAttemptAuthorizer
 
     public bool $claimGranted = true;
 
+    public int $releases = 0;
+
+    /** @var list<string> */
+    public array $attemptIds = [];
+
     public function authorize(
         AiOperationContext $context,
         string $provider,
@@ -518,8 +539,13 @@ final class TestAiAttemptAuthorizer implements AiAttemptAuthorizer
 
     public function claimWire(string $attemptId): bool
     {
+        $this->attemptIds[] = $attemptId;
+
         return $this->claimGranted;
     }
 
-    public function releaseBeforeWire(string $attemptId): void {}
+    public function releaseBeforeWire(string $attemptId): void
+    {
+        $this->releases++;
+    }
 }

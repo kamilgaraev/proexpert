@@ -52,7 +52,9 @@ final class TimewebVisionUsageAttemptTest extends TestCase
     {
         $this->configure(['model-a'], 1);
         Http::fake();
-        $client = new TimewebVisionOcrClient($this->store(), null, new RejectingOcrWireClaimAuthorizer);
+        $store = $this->store();
+        $authorizer = new RejectingOcrWireClaimAuthorizer;
+        $client = new TimewebVisionOcrClient($store, null, $authorizer);
 
         try {
             $client->recognize($this->input());
@@ -62,6 +64,21 @@ final class TimewebVisionUsageAttemptTest extends TestCase
         }
 
         Http::assertNothingSent();
+        self::assertSame([], $store->rows);
+        self::assertSame(0, $authorizer->releases);
+
+        $authorizer->claimGranted = true;
+        Http::swap(new Factory);
+        Http::fake(fn () => Http::response($this->successPayload('model-a'), 200));
+        $result = $client->recognize($this->input());
+
+        self::assertSame('model-a', $result->model);
+        self::assertCount(1, $store->rows);
+        self::assertSame('succeeded', $store->rows[0]->status);
+        self::assertSame('measured', $store->rows[0]->usageStatus);
+        self::assertSame($authorizer->attemptIds[0], $authorizer->attemptIds[1]);
+        self::assertSame($authorizer->attemptIds[0], $store->rows[0]->context->attemptId);
+        self::assertSame(0, $authorizer->releases);
     }
 
     #[Test]
@@ -205,6 +222,13 @@ final class RecordingAiUsageStore implements AiUsageStore
 
 final class RejectingOcrWireClaimAuthorizer implements AiAttemptAuthorizer
 {
+    public bool $claimGranted = false;
+
+    public int $releases = 0;
+
+    /** @var list<string> */
+    public array $attemptIds = [];
+
     public function authorize(
         AiOperationContext $context,
         string $provider,
@@ -219,8 +243,13 @@ final class RejectingOcrWireClaimAuthorizer implements AiAttemptAuthorizer
 
     public function claimWire(string $attemptId): bool
     {
-        return false;
+        $this->attemptIds[] = $attemptId;
+
+        return $this->claimGranted;
     }
 
-    public function releaseBeforeWire(string $attemptId): void {}
+    public function releaseBeforeWire(string $attemptId): void
+    {
+        $this->releases++;
+    }
 }

@@ -81,8 +81,10 @@ final readonly class TimewebVisionProvider implements VisionProvider
             $httpCode = null;
             $reportedModel = null;
             $analysis = null;
+            $wireClaimed = false;
             try {
                 $this->claimWireOrFail($physicalContext->attemptId);
+                $wireClaimed = true;
                 $timeoutSeconds = $effective?->timeoutSeconds('vision')
                     ?? max(1, min(120, (int) config('estimate-generation.vision.timeout_seconds', 60)));
                 $response = Http::timeout($timeoutSeconds)
@@ -163,10 +165,12 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 $status = 'connection_failed';
                 $lastException = new VisionProviderException('vision_request_failed', retryable: false, previous: $exception);
             } finally {
-                $this->recordAttempt(
-                    $input, $model, $reportedModel, $status, $httpCode, $responsePayload,
-                    (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000)), $physicalContext, $priceSnapshot,
-                );
+                if ($wireClaimed) {
+                    $this->recordAttempt(
+                        $input, $model, $reportedModel, $status, $httpCode, $responsePayload,
+                        (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000)), $physicalContext, $priceSnapshot,
+                    );
+                }
             }
 
             if ($status === 'succeeded') {

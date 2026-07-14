@@ -77,8 +77,10 @@ final readonly class AttemptAwareNormativeLlmClient
             $status = 'connection_failed';
             $httpCode = null;
             $response = [];
+            $wireClaimed = false;
             try {
                 $this->claimWireOrFail($attemptContext->attemptId);
+                $wireClaimed = true;
                 $response = $this->wire->call($model, $messages, $options);
                 $reportedModel = $response['model'] ?? null;
                 $content = trim((string) ($response['content'] ?? ''));
@@ -105,7 +107,9 @@ final readonly class AttemptAwareNormativeLlmClient
             } catch (Throwable $exception) {
                 $last = $exception;
             } finally {
-                $this->record($attemptContext, $model, $status, $httpCode, $response, $started, $priceSnapshot);
+                if ($wireClaimed) {
+                    $this->record($attemptContext, $model, $status, $httpCode, $response, $started, $priceSnapshot);
+                }
                 $heartbeat?->__invoke();
             }
         }

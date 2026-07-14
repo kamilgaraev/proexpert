@@ -21,16 +21,25 @@ use RuntimeException;
 
 final class AttemptAwareNormativeLlmClientTest extends TestCase
 {
+    private object $logger;
+
     protected function setUp(): void
     {
         parent::setUp();
         $app = new Container;
         Container::setInstance($app);
         $app->instance('config', new Repository);
-        $app->instance('log', new class
+        $this->logger = new class
         {
-            public function error(string $message, array $context = []): void {}
-        });
+            /** @var list<string> */
+            public array $errors = [];
+
+            public function error(string $message, array $context = []): void
+            {
+                $this->errors[] = $message;
+            }
+        };
+        $app->instance('log', $this->logger);
         Facade::setFacadeApplication($app);
     }
 
@@ -63,7 +72,13 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
         };
         $store = new class implements AiUsageStore
         {
-            public function record(AiUsageData $data): void {}
+            /** @var list<AiUsageData> */
+            public array $rows = [];
+
+            public function record(AiUsageData $data): void
+            {
+                $this->rows[] = $data;
+            }
         };
         $authorizer = new RejectingWireClaimAuthorizer;
         $client = new AttemptAwareNormativeLlmClient(
@@ -84,6 +99,20 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
         }
         self::assertSame(0, $wire->calls);
         self::assertSame(1, $authorizer->claims);
+        self::assertSame(0, $authorizer->releases);
+        self::assertSame([], $store->rows);
+        self::assertSame([], $this->logger->errors);
+
+        $authorizer->claimGranted = true;
+        $result = $client->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'));
+
+        self::assertSame('{}', $result['content']);
+        self::assertSame(1, $wire->calls);
+        self::assertCount(1, $store->rows);
+        self::assertSame('succeeded', $store->rows[0]->status);
+        self::assertSame($authorizer->attemptIds[0], $authorizer->attemptIds[1]);
+        self::assertSame($authorizer->attemptIds[0], $store->rows[0]->context->attemptId);
+        self::assertSame(0, $authorizer->releases);
     }
 
     #[Test]
@@ -283,6 +312,13 @@ final class RejectingWireClaimAuthorizer implements AiAttemptAuthorizer
 {
     public int $claims = 0;
 
+    public int $releases = 0;
+
+    public bool $claimGranted = false;
+
+    /** @var list<string> */
+    public array $attemptIds = [];
+
     public function authorize(
         AiOperationContext $context,
         string $provider,
@@ -298,9 +334,13 @@ final class RejectingWireClaimAuthorizer implements AiAttemptAuthorizer
     public function claimWire(string $attemptId): bool
     {
         $this->claims++;
+        $this->attemptIds[] = $attemptId;
 
-        return false;
+        return $this->claimGranted;
     }
 
-    public function releaseBeforeWire(string $attemptId): void {}
+    public function releaseBeforeWire(string $attemptId): void
+    {
+        $this->releases++;
+    }
 }

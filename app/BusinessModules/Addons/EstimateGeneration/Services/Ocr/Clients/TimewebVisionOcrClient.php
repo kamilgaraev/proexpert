@@ -147,8 +147,10 @@ final class TimewebVisionOcrClient implements OcrClientInterface
             $status = 'connection_failed';
             $httpCode = null;
             $payload = [];
+            $wireClaimed = false;
             try {
                 $this->claimWireOrFail($physicalContext->attemptId);
+                $wireClaimed = true;
                 $response = Http::timeout($effective?->timeoutSeconds('classification') ?? (int) config('estimate-generation.ocr.timeout_seconds', 60))
                     ->acceptJson()->asJson()->withToken($apiKey)
                     ->post($baseUri.'/chat/completions', $requestPayload);
@@ -192,18 +194,20 @@ final class TimewebVisionOcrClient implements OcrClientInterface
                     previous: $exception
                 );
             } finally {
-                $this->recordAttempt(
-                    $input,
-                    $model,
-                    $attempt,
-                    $wireAttempt,
-                    $status,
-                    $httpCode,
-                    $payload,
-                    (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000)),
-                    $physicalContext,
-                    $priceSnapshot,
-                );
+                if ($wireClaimed) {
+                    $this->recordAttempt(
+                        $input,
+                        $model,
+                        $attempt,
+                        $wireAttempt,
+                        $status,
+                        $httpCode,
+                        $payload,
+                        (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000)),
+                        $physicalContext,
+                        $priceSnapshot,
+                    );
+                }
             }
 
             if ($status === 'succeeded') {
