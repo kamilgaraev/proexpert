@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -35,6 +36,7 @@ return new class extends Migration
             $table->unique(['organization_id', 'client_idempotency_key'], 'commercial_orders_org_client_key_unique');
             $table->unique(['organization_id', 'server_idempotency_key'], 'commercial_orders_org_server_key_unique');
             $table->unique(['id', 'organization_id'], 'commercial_orders_id_org_unique');
+            $table->unique(['id', 'commercial_account_id', 'organization_id'], 'commercial_orders_id_account_org_unique');
             $table->foreign(['commercial_account_id', 'organization_id'], 'commercial_orders_account_tenant_fk')
                 ->references(['id', 'organization_id'])
                 ->on('organization_commercial_accounts')
@@ -49,6 +51,7 @@ return new class extends Migration
             $table->foreignId('commercial_order_id');
             $table->enum('status', ['due', 'grace', 'paid', 'suspended', 'disabled', 'manual_review'])->default('due');
             $table->timestampTz('due_at');
+            $table->date('billing_due_date');
             $table->timestampTz('target_period_start_at');
             $table->timestampTz('target_period_end_at');
             $table->timestampTz('grace_deadline_at');
@@ -61,11 +64,14 @@ return new class extends Migration
             $table->timestampsTz();
 
             $table->unique(['commercial_account_id', 'target_period_start_at'], 'commercial_renewal_account_period_unique');
+            $table->unique('commercial_order_id', 'commercial_renewal_order_unique');
             $table->unique(['id', 'commercial_order_id'], 'commercial_renewal_cycle_order_unique');
             $table->foreign(['commercial_account_id', 'organization_id'], 'commercial_renewal_account_tenant_fk')
                 ->references(['id', 'organization_id'])->on('organization_commercial_accounts')->restrictOnDelete();
             $table->foreign(['commercial_order_id', 'organization_id'], 'commercial_renewal_order_tenant_fk')
                 ->references(['id', 'organization_id'])->on('commercial_orders')->restrictOnDelete();
+            $table->foreign(['commercial_order_id', 'commercial_account_id', 'organization_id'], 'commercial_renewal_order_account_tenant_fk')
+                ->references(['id', 'commercial_account_id', 'organization_id'])->on('commercial_orders')->restrictOnDelete();
             $table->index(['status', 'next_attempt_at', 'id'], 'commercial_renewal_due_idx');
         });
 
@@ -86,7 +92,7 @@ return new class extends Migration
             $table->boolean('payment_method_saved')->default(false);
             $table->jsonb('safe_response')->nullable();
             $table->string('terminal_failure_reason', 80)->nullable();
-            $table->enum('failure_category', ['retryable', 'method_revoked', 'unknown'])->nullable();
+            $table->enum('failure_category', ['retryable', 'method_revoked', 'non_retryable'])->nullable();
             $table->timestampTz('attempted_at')->nullable();
             $table->timestampTz('terminal_at')->nullable();
             $table->timestampsTz();
@@ -96,6 +102,8 @@ return new class extends Migration
             $table->foreign(['commercial_renewal_cycle_id', 'commercial_order_id'], 'commercial_payment_cycle_order_fk')
                 ->references(['id', 'commercial_order_id'])->on('commercial_renewal_cycles')->restrictOnDelete();
         });
+
+        DB::statement("ALTER TABLE commercial_payments ADD CONSTRAINT commercial_payment_role_cycle_check CHECK ((role = 'initial' AND commercial_renewal_cycle_id IS NULL) OR (role = 'renewal' AND commercial_renewal_cycle_id IS NOT NULL))");
 
         Schema::create('commercial_billing_notification_keys', function (Blueprint $table): void {
             $table->char('idempotency_key', 64)->primary();

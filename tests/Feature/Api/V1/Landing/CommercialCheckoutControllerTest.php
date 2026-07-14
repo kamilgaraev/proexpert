@@ -391,7 +391,8 @@ class CommercialCheckoutControllerTest extends TestCase
         });
         Schema::create('commercial_payments', function (Blueprint $table): void {
             $table->id();
-            $table->foreignId('commercial_order_id')->unique();
+            $table->foreignId('commercial_order_id');
+            $table->foreignId('commercial_renewal_cycle_id')->nullable();
             $table->string('role')->default('initial');
             $table->unsignedSmallInteger('attempt_number')->default(1);
             $table->string('provider');

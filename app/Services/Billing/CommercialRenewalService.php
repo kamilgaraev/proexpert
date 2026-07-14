@@ -16,6 +16,7 @@ use App\Models\OrganizationPackageSubscription;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Throwable;
@@ -42,7 +43,7 @@ final class CommercialRenewalService
         $ids = OrganizationCommercialAccount::query()
             ->whereIn('status', ['active', 'grace'])
             ->whereNotNull('current_period_end_at')
-            ->where('current_period_end_at', '<=', $now)
+            ->where('current_period_end_at', '<=', $now->endOfDay())
             ->orderBy('id')->limit(max(1, $limit))->pluck('id');
         $counts = ['processed' => 0, 'created_cycles' => 0, 'created_attempts' => 0, 'failed' => 0, 'suspended' => 0];
 
@@ -58,8 +59,13 @@ final class CommercialRenewalService
                 } elseif (($phase['reconcile_payment'] ?? null) instanceof CommercialPayment) {
                     $this->reconcile($phase['reconcile_payment']);
                 }
-            } catch (Throwable) {
+            } catch (Throwable $exception) {
                 $counts['failed']++;
+                Log::error('Commercial renewal account processing failed.', [
+                    'commercial_account_id' => (int) $id,
+                    'exception' => $exception::class,
+                    'code' => $exception->getCode(),
+                ]);
             }
         }
 
@@ -76,15 +82,28 @@ final class CommercialRenewalService
             $account = OrganizationCommercialAccount::query()->whereKey($accountId)->lockForUpdate()->firstOrFail();
             $periodStart = CarbonImmutable::instance($account->current_period_end_at);
             $periodEnd = $periodStart->addDays(30);
-            $deadline = $periodStart->addDays(7);
+            $dueDay = $periodStart->setTimezone(self::TIMEZONE)->startOfDay();
+            $deadline = $dueDay->addDays(7);
 
-            if ($now->greaterThanOrEqualTo($deadline)) {
+            if ($now->startOfDay()->greaterThanOrEqualTo($deadline)) {
                 $this->suspend($account, $now);
 
                 return ['suspended' => 1];
             }
 
             if (! $account->auto_renew_enabled || ! $account->saved_payment_method_active || trim((string) $account->saved_payment_method_id) === '') {
+                if ($account->status->value === 'grace') {
+                    return [];
+                }
+                if ($now->greaterThanOrEqualTo($periodStart)) {
+                    $this->suspend($account, $now);
+
+                    return ['suspended' => 1];
+                }
+
+                return [];
+            }
+            if ($now->startOfDay()->lessThan($dueDay)) {
                 return [];
             }
             $cycle = CommercialRenewalCycle::query()->where('commercial_account_id', $account->id)->where('target_period_start_at', $periodStart)->lockForUpdate()->first();
@@ -101,7 +120,7 @@ final class CommercialRenewalService
                     'public_id' => (string) Str::uuid(), 'organization_id' => $account->organization_id,
                     'commercial_account_id' => $account->id, 'user_id' => $account->responsible_user_id,
                     'kind' => 'renewal', 'status' => 'pending_payment', 'offer_type' => $account->offer_type->value,
-                    'quote_version' => $quote['quote_version'], 'selected_package_slugs' => $slugs,
+                    'quote_version' => $quote['quote_version'], 'selected_package_slugs' => $quote['target_package_slugs'],
                     'current_package_slugs' => $slugs, 'amount_minor' => $quote['monthly_total_minor'],
                     'amount' => $quote['monthly_total'], 'currency' => $quote['currency'],
                     'period_start_at' => $periodStart, 'period_end_at' => $periodEnd, 'auto_renew_consent' => true,
@@ -109,9 +128,10 @@ final class CommercialRenewalService
                 ]);
                 $cycle = CommercialRenewalCycle::query()->create([
                     'organization_id' => $account->organization_id, 'commercial_account_id' => $account->id,
-                    'commercial_order_id' => $order->id, 'status' => 'due', 'due_at' => $periodStart,
+                    'commercial_order_id' => $order->id, 'status' => 'due', 'due_at' => $dueDay->utc(),
+                    'billing_due_date' => $dueDay->toDateString(),
                     'target_period_start_at' => $periodStart, 'target_period_end_at' => $periodEnd,
-                    'grace_deadline_at' => $deadline, 'attempt_count' => 0, 'next_attempt_at' => $periodStart,
+                    'grace_deadline_at' => $deadline->utc(), 'attempt_count' => 0, 'next_attempt_at' => $dueDay->addHours(3)->utc(),
                 ]);
                 $createdCycle = true;
             }
@@ -187,7 +207,7 @@ final class CommercialRenewalService
 
     private function suspend(OrganizationCommercialAccount $account, CarbonImmutable $now): void
     {
-        $account->forceFill(['status' => 'suspended', 'grace_ends_at' => $now])->save();
+        $account->forceFill(['status' => 'suspended'])->save();
         OrganizationPackageSubscription::query()->where('commercial_account_id', $account->id)->whereIn('access_source', ['paid_package', 'full_suite'])->update(['status' => 'expired', 'canceled_at' => $now]);
         CommercialRenewalCycle::query()->where('commercial_account_id', $account->id)->whereIn('status', ['due', 'grace'])->update(['status' => 'suspended', 'suspended_at' => $now]);
     }

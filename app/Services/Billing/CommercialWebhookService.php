@@ -134,13 +134,14 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                 if ($order->kind === 'renewal') {
                     $wasInGrace = $account->status->value === 'grace';
                     $reason = $authoritative->cancellationReason ?? 'unknown';
-                    $category = $reason === 'permission_revoked' ? 'method_revoked' : (in_array($reason, ['insufficient_funds', 'issuer_unavailable', 'internal_timeout', 'general_decline', 'payment_method_limit_exceeded'], true) ? 'retryable' : 'unknown');
+                    $category = $reason === 'permission_revoked' ? 'method_revoked' : (in_array($reason, ['insufficient_funds', 'issuer_unavailable', 'internal_timeout', 'general_decline', 'payment_method_limit_exceeded'], true) ? 'retryable' : 'non_retryable');
+                    $retryable = $category === 'retryable';
                     $payment->forceFill(['terminal_failure_reason' => $reason, 'failure_category' => $category, 'terminal_at' => now()])->save();
                     $cycle = CommercialRenewalCycle::query()->where('commercial_order_id', $order->id)->lockForUpdate()->first();
                     if ($cycle !== null) {
-                        $cycle->forceFill(['status' => $category === 'method_revoked' ? 'disabled' : 'grace', 'next_attempt_at' => now()->addDay()->startOfDay()->addHours(3)])->save();
+                        $cycle->forceFill(['status' => $retryable ? 'grace' : 'disabled', 'next_attempt_at' => $retryable ? now()->addDay()->startOfDay()->addHours(3) : null])->save();
                     }
-                    $account->forceFill(['status' => 'grace', 'grace_started_at' => $cycle?->due_at, 'grace_ends_at' => $cycle?->grace_deadline_at, 'auto_renew_enabled' => $category !== 'method_revoked' && $account->auto_renew_enabled, 'saved_payment_method_active' => $category !== 'method_revoked'])->save();
+                    $account->forceFill(['status' => 'grace', 'grace_started_at' => $cycle?->due_at, 'grace_ends_at' => $cycle?->grace_deadline_at, 'auto_renew_enabled' => $retryable && $account->auto_renew_enabled, 'saved_payment_method_active' => $retryable])->save();
                     foreach ($packageRows as $row) {
                         if (in_array($row->access_source->value, ['paid_package', 'full_suite'], true)) {
                             $row->forceFill(['status' => 'grace'])->save();
@@ -149,7 +150,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                     if (! $wasInGrace) {
                         $this->notify($order, 'commercial_grace_started_'.$order->public_id, 'billing.renewal.grace_started');
                     }
-                    if ($category === 'method_revoked') {
+                    if (! $retryable) {
                         $this->notify($order, 'commercial_method_disabled_'.$order->public_id, 'billing.renewal.method_disabled');
                     }
                 } else {
@@ -307,9 +308,11 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
             'grace_ends_at' => null,
         ])->save();
 
-        $contour = $order->offer_type === CommercialOfferType::FullSuite
-            ? array_column($this->catalog->allPackages(), 'slug')
-            : $order->selected_package_slugs;
+        $contour = $renewal
+            ? $order->selected_package_slugs
+            : ($order->offer_type === CommercialOfferType::FullSuite
+                ? array_column($this->catalog->allPackages(), 'slug')
+                : $order->selected_package_slugs);
         $source = $order->offer_type === CommercialOfferType::FullSuite ? 'full_suite' : 'paid_package';
 
         foreach ($packageRows as $row) {
@@ -409,14 +412,33 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
             throw new RetryableCommercialWebhookException('Commercial payment is not locally bindable yet.');
         }
 
-        $payment = CommercialPayment::query()
+        $cycle = $order->kind === 'renewal'
+            ? CommercialRenewalCycle::query()
+                ->where('commercial_order_id', $order->id)
+                ->where('commercial_account_id', $order->commercial_account_id)
+                ->where('organization_id', $order->organization_id)
+                ->lockForUpdate()
+                ->first()
+            : null;
+        if ($order->kind === 'renewal' && $cycle === null) {
+            throw new RetryableCommercialWebhookException('Commercial payment is not locally bindable yet.');
+        }
+
+        $payments = CommercialPayment::query()
             ->where('commercial_order_id', $order->id)
             ->where('provider', 'yookassa')
+            ->whereNull('provider_payment_id')
+            ->when(
+                $order->kind === 'renewal',
+                fn ($query) => $query->where('role', 'renewal')->where('commercial_renewal_cycle_id', $cycle?->id),
+                fn ($query) => $query->where('role', 'initial')->whereNull('commercial_renewal_cycle_id'),
+            )
             ->lockForUpdate()
-            ->first();
+            ->get();
+
+        $payment = $payments->count() === 1 ? $payments->first() : null;
 
         if ($payment === null
-            || $payment->provider_payment_id !== null
             || $authoritative->id !== $notification->objectId
             || ! $this->matchesOrderIdentity($authoritative, $payment, $order)) {
             throw new RetryableCommercialWebhookException('Commercial payment is not locally bindable yet.');

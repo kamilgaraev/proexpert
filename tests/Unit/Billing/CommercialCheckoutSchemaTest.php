@@ -58,6 +58,10 @@ class CommercialCheckoutSchemaTest extends TestCase
         $this->assertStringContainsString("enum('role', ['initial', 'renewal'])", $checkout);
         $this->assertStringContainsString('attempt_number', $checkout);
         $this->assertStringNotContainsString("foreignId('commercial_order_id')->unique()", $checkout);
+        $this->assertStringContainsString("date('billing_due_date')", $checkout);
+        $this->assertStringContainsString("unique('commercial_order_id'", $checkout);
+        $this->assertStringContainsString('commercial_renewal_order_account_tenant_fk', $checkout);
+        $this->assertStringContainsString('commercial_payment_role_cycle_check', $checkout);
     }
 
     public function test_commercial_renewal_schedule_is_registered_once_at_three_moscow_time(): void

@@ -56,3 +56,32 @@ Laravel runner помечает тесты предупреждениями из
 - Fixed billing anchor, day-6 end date, day-7 suspension, exact package/full-suite contour и conservative unknown reason покрыты тестами.
 - Trial hourly flow отделён от платежей и не создаёт renewal cycles/payments.
 - В staging не включаются четыре review diff артефакта.
+
+## Review fixes — календарь автопродления
+
+- Календарь переведён с exact timestamp на неизменяемую московскую `billing_due_date`. Due+0 запускается в 03:00 календарной даты даже при `current_period_end_at=14:00`; попытки разрешены только due+0…due+6, due+7 в 03:00 приостанавливает доступ без восьмой попытки. Exact target period timestamps не изменяются.
+- Contractual grace deadline хранится как начало due+7 Europe/Moscow, явно конвертированное в UTC. Delayed suspension больше не перезаписывает его фактическим временем scheduler.
+- Opt-out до первой неуспешной попытки не создаёт cycle/grace/payment. До exact paid end доступ остаётся active, после exact end естественно становится suspended/expired с пустыми grace fields и неизменённым entitlement end.
+- Lost-response webhook связывает ровно единственную незаписанную попытку соответствующего renewal cycle/order. Attempt #2 `succeeded`/`canceled` связывается корректно; несколько незаписанных кандидатов возвращают retryable non-200 без binding/event marker.
+- Retry разрешён только явному allowlist финансовых/временных причин. Revoked, expired/invalid/restricted card, fraud и unknown консервативно отключают дальнейшие списания.
+- Full-suite renewal активирует только `selected_package_slugs` неизменяемого order snapshot; изменение live catalog после создания cycle не расширяет оплаченный контур.
+- Schema усилена unique order→renewal cycle, тройным order/account/organization FK, role/cycle CHECK и cycle/order payment FK. Отдельные SQLite runtime tests подтверждают unique/FK/CHECK нарушения.
+- Batch exception логируется безопасно: commercial account id, exception class и code без provider payload, method id и ключей.
+
+### RED/GREEN
+
+- Calendar RED: cycle отсутствовал в due-date 03:00 при exact end 14:00; opt-out после exact end оставался active. GREEN focused: 2 tests, 15 assertions.
+- Attempt #2/schema RED: binder выбирал первый payment заказа; isolated fixtures дополнительно сохраняли устаревший one-payment unique. GREEN binding/reason/snapshot matrix: 9 tests, 54 assertions.
+- Runtime constraints GREEN: 4 runtime tests плюс static renewal schema test, 19 assertions.
+
+### Свежая матрица после review fixes
+
+- Renewal engine: 11 tests, 53 assertions, exit 0.
+- Commercial webhook: 35 tests, 210 assertions, exit 0.
+- Checkout service: 10 tests, 40 assertions, exit 0.
+- Protected checkout/renewal API: 9 tests, 32 assertions, exit 0.
+- Organization packages API: 9 tests, 46 assertions, exit 0.
+- Gateway + static schema + runtime constraints: 21 tests, 84 assertions, exit 0.
+- Notifications + trial lifecycle: 11 tests, 73 assertions, exit 0.
+- Webhook controller + transaction race: 7 tests, 13 assertions, exit 0.
+- PHPStan/Larastan: `APP_ENV=testing`, 4 изменённых production PHP-файла, `--memory-limit=1G`, `[OK] No errors`.

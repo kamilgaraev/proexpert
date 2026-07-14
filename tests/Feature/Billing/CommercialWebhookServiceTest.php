@@ -178,6 +178,58 @@ class CommercialWebhookServiceTest extends TestCase
         $this->assertSame('pending_payment', $this->order->fresh()->status->value);
     }
 
+    #[DataProvider('secondRenewalAttemptStatusProvider')]
+    public function test_lost_response_binds_exact_second_renewal_attempt(string $status, bool $paid): void
+    {
+        [$cycle] = $this->configureRenewalCycle(now());
+        $second = $this->createUnboundRenewalAttempt($cycle, 2);
+        $this->gateway->payment = $this->paymentResult(
+            status: $status,
+            paid: $paid,
+            id: 'renewal-attempt-2',
+            cancellationReason: $status === 'canceled' ? 'insufficient_funds' : null,
+        );
+
+        $result = app(CommercialWebhookService::class)->process(
+            $this->notification('payment.'.$status, 'renewal-attempt-2', $status),
+            '185.71.76.1',
+        );
+
+        $this->assertSame('processed', $result);
+        $this->assertSame('renewal-attempt-2', $second->fresh()->provider_payment_id);
+        $this->assertSame($status, $second->fresh()->provider_status);
+    }
+
+    public static function secondRenewalAttemptStatusProvider(): array
+    {
+        return [
+            'succeeded' => ['succeeded', true],
+            'canceled' => ['canceled', false],
+        ];
+    }
+
+    public function test_multiple_unbound_renewal_attempts_remain_retryable_without_binding(): void
+    {
+        [$cycle] = $this->configureRenewalCycle(now());
+        $second = $this->createUnboundRenewalAttempt($cycle, 2);
+        $third = $this->createUnboundRenewalAttempt($cycle, 3);
+        $this->gateway->payment = $this->paymentResult(id: 'ambiguous-payment');
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Commercial payment is not locally bindable yet.');
+
+        try {
+            app(CommercialWebhookService::class)->process(
+                $this->notification('payment.succeeded', 'ambiguous-payment', 'succeeded'),
+                '185.71.76.1',
+            );
+        } finally {
+            $this->assertNull($second->fresh()->provider_payment_id);
+            $this->assertNull($third->fresh()->provider_payment_id);
+            $this->assertSame(0, CommercialWebhookEvent::query()->count());
+        }
+    }
+
     public function test_payment_cannot_activate_when_local_order_and_payment_amounts_diverge(): void
     {
         $this->order->forceFill(['amount_minor' => 800000, 'amount' => '8000.00'])->save();
@@ -302,6 +354,22 @@ class CommercialWebhookServiceTest extends TestCase
         $this->assertSame(1, Notification::query()->count());
     }
 
+    public function test_full_suite_renewal_activates_immutable_order_snapshot_only(): void
+    {
+        [$cycle] = $this->configureRenewalCycle(now()->subDay());
+        $this->order->forceFill(['offer_type' => 'full_suite', 'selected_package_slugs' => ['machinery']])->save();
+        $this->gateway->payment = $this->paymentResult(saved: false);
+
+        app(CommercialWebhookService::class)->process(
+            $this->notification('payment.succeeded', 'payment-id', 'succeeded'),
+            '185.71.76.1',
+        );
+
+        $this->assertSame('paid', $cycle->fresh()->status);
+        $this->assertSame(['machinery'], OrganizationPackageSubscription::query()->where('status', 'active')->pluck('package_slug')->all());
+        $this->assertSame(1, OrganizationPackageSubscription::query()->count());
+    }
+
     public function test_success_after_grace_is_flagged_for_manual_reconciliation_without_reactivation(): void
     {
         [$cycle] = $this->configureRenewalCycle(now()->subDays(8));
@@ -348,7 +416,7 @@ class CommercialWebhookServiceTest extends TestCase
         $this->assertSame($autoRenewEnabled, $this->account->fresh()->auto_renew_enabled);
         $this->assertSame('pending_payment', $this->order->fresh()->status->value);
         $this->assertSame('grace', OrganizationPackageSubscription::query()->sole()->status->value);
-        $expectedNotifications = $reason === 'permission_revoked' ? 3 : 2;
+        $expectedNotifications = $autoRenewEnabled ? 2 : 3;
         $this->assertSame($expectedNotifications, Notification::query()->count());
         $this->assertTrue(Notification::query()->get()->every(fn (Notification $notification): bool => $notification->channels === ['in_app']));
     }
@@ -358,7 +426,12 @@ class CommercialWebhookServiceTest extends TestCase
         return [
             'revoked' => ['permission_revoked', 'method_revoked', 'disabled', false],
             'financial retry' => ['insufficient_funds', 'retryable', 'grace', true],
-            'unknown conservative' => ['unknown', 'unknown', 'grace', true],
+            'documented limit retry' => ['payment_method_limit_exceeded', 'retryable', 'grace', true],
+            'expired card' => ['card_expired', 'non_retryable', 'disabled', false],
+            'invalid card' => ['invalid_card_number', 'non_retryable', 'disabled', false],
+            'restricted method' => ['payment_method_restricted', 'non_retryable', 'disabled', false],
+            'fraud' => ['fraud_suspected', 'non_retryable', 'disabled', false],
+            'unknown conservative' => ['unknown', 'non_retryable', 'disabled', false],
         ];
     }
 
@@ -532,12 +605,31 @@ class CommercialWebhookServiceTest extends TestCase
         $cycle = CommercialRenewalCycle::query()->create([
             'organization_id' => $this->organization->id, 'commercial_account_id' => $this->account->id,
             'commercial_order_id' => $this->order->id, 'status' => 'grace', 'due_at' => $periodStart,
+            'billing_due_date' => $periodStart->setTimezone('Europe/Moscow')->toDateString(),
             'target_period_start_at' => $periodStart, 'target_period_end_at' => $targetEnd,
             'grace_deadline_at' => $periodStart->addDays(7), 'attempt_count' => 1,
         ]);
         $this->payment->forceFill(['role' => 'renewal', 'commercial_renewal_cycle_id' => $cycle->id])->save();
 
         return [$cycle, $targetEnd];
+    }
+
+    private function createUnboundRenewalAttempt(CommercialRenewalCycle $cycle, int $attempt): CommercialPayment
+    {
+        return CommercialPayment::query()->create([
+            'commercial_order_id' => $this->order->id,
+            'commercial_renewal_cycle_id' => $cycle->id,
+            'role' => 'renewal',
+            'attempt_number' => $attempt,
+            'provider' => 'yookassa',
+            'provider_payment_id' => null,
+            'provider_status' => 'created',
+            'amount_minor' => 790000,
+            'currency' => 'RUB',
+            'provider_idempotency_key' => 'attempt-'.$attempt,
+            'payment_method_saved' => false,
+            'refunded_amount_minor' => 0,
+        ]);
     }
 
     private function refundResult(string $id, int $amountMinor): RefundGatewayResult
@@ -611,7 +703,7 @@ class CommercialWebhookServiceTest extends TestCase
         });
         Schema::create('commercial_payments', function (Blueprint $table): void {
             $table->id();
-            $table->foreignId('commercial_order_id')->unique();
+            $table->foreignId('commercial_order_id');
             $table->foreignId('commercial_renewal_cycle_id')->nullable();
             $table->string('provider');
             $table->string('provider_payment_id')->nullable()->unique();
@@ -638,6 +730,7 @@ class CommercialWebhookServiceTest extends TestCase
             $table->foreignId('commercial_order_id');
             $table->string('status');
             $table->timestamp('due_at');
+            $table->date('billing_due_date');
             $table->timestamp('target_period_start_at');
             $table->timestamp('target_period_end_at');
             $table->timestamp('grace_deadline_at');

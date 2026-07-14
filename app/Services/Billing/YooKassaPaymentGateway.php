@@ -261,7 +261,7 @@ class YooKassaPaymentGateway implements PaymentGatewayInterface
     private function cancellationReason(array $data): ?string
     {
         $reason = trim((string) ($data['cancellation_details']['reason'] ?? ''));
-        $allowed = ['permission_revoked', 'insufficient_funds', 'issuer_unavailable', 'internal_timeout', 'general_decline', 'payment_method_limit_exceeded', 'card_expired', 'fraud_suspected'];
+        $allowed = ['permission_revoked', 'insufficient_funds', 'issuer_unavailable', 'internal_timeout', 'general_decline', 'payment_method_limit_exceeded', 'card_expired', 'invalid_card_number', 'payment_method_restricted', 'fraud_suspected'];
 
         return in_array($reason, $allowed, true) ? $reason : ($reason === '' ? null : 'unknown');
     }

@@ -112,13 +112,34 @@ final class CommercialRenewalServiceTest extends TestCase
 
     public function test_day_seven_suspends_without_eighth_attempt(): void
     {
+        $periodEnd = CarbonImmutable::parse('2026-07-31 14:00', 'Europe/Moscow');
+        $this->account->forceFill([
+            'current_period_start_at' => $periodEnd->subDays(30)->utc(),
+            'current_period_end_at' => $periodEnd->utc(),
+            'billing_anchor_at' => $periodEnd->utc(),
+        ])->save();
+        OrganizationPackageSubscription::query()->update([
+            'current_period_start_at' => $periodEnd->subDays(30)->utc(),
+            'current_period_end_at' => $periodEnd->utc(),
+        ]);
         $service = app(CommercialRenewalService::class);
         $service->process(CarbonImmutable::parse('2026-07-31 03:00', 'Europe/Moscow'));
+        $cycle = CommercialRenewalCycle::query()->sole();
+        $this->assertSame('2026-07-31', $cycle->billing_due_date->format('Y-m-d'));
+        $this->assertSame('2026-08-07 00:00', $cycle->grace_deadline_at->setTimezone('Europe/Moscow')->format('Y-m-d H:i'));
+
+        for ($day = 1; $day <= 6; $day++) {
+            CommercialPayment::query()->latest('attempt_number')->firstOrFail()->forceFill([
+                'provider_status' => 'canceled',
+                'terminal_at' => CarbonImmutable::parse('2026-07-31 03:01', 'Europe/Moscow')->addDays($day - 1),
+            ])->save();
+            $service->process(CarbonImmutable::parse('2026-07-31 03:00', 'Europe/Moscow')->addDays($day));
+        }
         $service->process(CarbonImmutable::parse('2026-08-07 03:00', 'Europe/Moscow'));
 
         $this->assertSame('suspended', $this->account->fresh()->status->value);
         $this->assertSame('expired', OrganizationPackageSubscription::query()->sole()->status->value);
-        $this->assertSame(1, CommercialPayment::query()->count());
+        $this->assertSame(7, CommercialPayment::query()->count());
         $this->assertSame('suspended', CommercialRenewalCycle::query()->sole()->status);
     }
 
@@ -214,7 +235,9 @@ final class CommercialRenewalServiceTest extends TestCase
 
     public function test_auto_renew_disabled_before_due_creates_no_cycle_or_attempt(): void
     {
-        $this->account->forceFill(['auto_renew_enabled' => false])->save();
+        $periodEnd = CarbonImmutable::parse('2026-07-31 14:00', 'Europe/Moscow');
+        $this->account->forceFill(['current_period_end_at' => $periodEnd->utc(), 'auto_renew_enabled' => false])->save();
+        OrganizationPackageSubscription::query()->update(['current_period_end_at' => $periodEnd->utc()]);
 
         app(CommercialRenewalService::class)->process(CarbonImmutable::parse('2026-07-31 03:00', 'Europe/Moscow'));
 
@@ -222,6 +245,14 @@ final class CommercialRenewalServiceTest extends TestCase
         $this->assertDatabaseCount('commercial_orders', 0);
         $this->assertDatabaseCount('commercial_payments', 0);
         $this->assertSame('active', $this->account->fresh()->status->value);
+
+        app(CommercialRenewalService::class)->process(CarbonImmutable::parse('2026-07-31 15:00', 'Europe/Moscow'));
+
+        $this->assertSame('suspended', $this->account->fresh()->status->value);
+        $this->assertNull($this->account->fresh()->grace_started_at);
+        $this->assertNull($this->account->fresh()->grace_ends_at);
+        $this->assertEquals($periodEnd, OrganizationPackageSubscription::query()->sole()->current_period_end_at);
+        $this->assertSame('expired', OrganizationPackageSubscription::query()->sole()->status->value);
     }
 
     public function test_auto_renew_disabled_during_grace_stops_attempts_but_suspends_at_deadline(): void
@@ -230,16 +261,17 @@ final class CommercialRenewalServiceTest extends TestCase
         $service->process(CarbonImmutable::parse('2026-07-31 03:00', 'Europe/Moscow'));
         CommercialPayment::query()->sole()->forceFill(['provider_status' => 'canceled', 'terminal_at' => '2026-07-31 03:01'])->save();
         CommercialRenewalCycle::query()->sole()->forceFill(['status' => 'disabled'])->save();
-        $this->account->forceFill(['status' => 'grace', 'auto_renew_enabled' => false, 'grace_ends_at' => '2026-08-07 00:00'])->save();
+        $this->account->forceFill(['status' => 'grace', 'auto_renew_enabled' => false, 'grace_ends_at' => '2026-08-06 21:00'])->save();
         OrganizationPackageSubscription::query()->update(['status' => 'grace']);
 
         $service->process(CarbonImmutable::parse('2026-08-01 03:00', 'Europe/Moscow'));
         $this->assertSame(1, CommercialPayment::query()->count());
         $this->assertSame('grace', OrganizationPackageSubscription::query()->sole()->status->value);
-        $service->process(CarbonImmutable::parse('2026-08-07 03:00', 'Europe/Moscow'));
+        $service->process(CarbonImmutable::parse('2026-08-08 03:00', 'Europe/Moscow'));
         $this->assertSame('suspended', $this->account->fresh()->status->value);
         $this->assertSame('expired', OrganizationPackageSubscription::query()->sole()->status->value);
         $this->assertSame(1, CommercialRenewalCycle::query()->count());
+        $this->assertSame('2026-08-07 00:00', $this->account->fresh()->grace_ends_at->setTimezone('Europe/Moscow')->format('Y-m-d H:i'));
     }
 
     private function addPackageRows(array $slugs, string $source = 'paid_package'): void
@@ -306,6 +338,7 @@ final class CommercialRenewalServiceTest extends TestCase
             $t->foreignId('commercial_order_id');
             $t->string('status');
             $t->timestamp('due_at');
+            $t->date('billing_due_date');
             $t->timestamp('target_period_start_at');
             $t->timestamp('target_period_end_at');
             $t->timestamp('grace_deadline_at');
