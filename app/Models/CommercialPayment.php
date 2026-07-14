@@ -14,6 +14,8 @@ class CommercialPayment extends Model
         'amount_minor', 'currency', 'provider_idempotency_key', 'confirmation_url',
         'payment_method_id', 'payment_method_saved', 'safe_response',
         'refunded_amount_minor',
+        'commercial_renewal_cycle_id', 'role', 'attempt_number', 'terminal_failure_reason',
+        'failure_category', 'attempted_at', 'terminal_at',
     ];
 
     protected $casts = [
@@ -21,6 +23,9 @@ class CommercialPayment extends Model
         'payment_method_saved' => 'boolean',
         'safe_response' => 'array',
         'refunded_amount_minor' => 'integer',
+        'attempt_number' => 'integer',
+        'attempted_at' => 'immutable_datetime',
+        'terminal_at' => 'immutable_datetime',
     ];
 
     public function order(): BelongsTo

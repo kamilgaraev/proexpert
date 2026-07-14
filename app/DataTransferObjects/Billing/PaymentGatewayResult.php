@@ -19,5 +19,6 @@ final readonly class PaymentGatewayResult
         public string $currency = '',
         public array $metadata = [],
         public int $refundedAmountMinor = 0,
+        public ?string $cancellationReason = null,
     ) {}
 }

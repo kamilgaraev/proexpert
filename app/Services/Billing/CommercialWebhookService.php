@@ -15,6 +15,7 @@ use App\Interfaces\Billing\PaymentGatewayInterface;
 use App\Models\CommercialOrder;
 use App\Models\CommercialPayment;
 use App\Models\CommercialRefund;
+use App\Models\CommercialRenewalCycle;
 use App\Models\CommercialWebhookEvent;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
@@ -103,7 +104,16 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                     return $this->record($notification, $sourceIp, $fingerprint, $authoritative->status, 'stale');
                 }
 
+                $cycle = $order->kind === 'renewal' ? CommercialRenewalCycle::query()->where('commercial_order_id', $order->id)->lockForUpdate()->first() : null;
+                if ($cycle !== null && (in_array($cycle->status, ['suspended', 'manual_review'], true) || now()->greaterThanOrEqualTo($cycle->grace_deadline_at))) {
+                    $cycle->forceFill(['status' => 'manual_review', 'manual_review_at' => now()])->save();
+
+                    return $this->record($notification, $sourceIp, $fingerprint, $authoritative->status, 'manual_review');
+                }
                 $this->activate($order, $payment, $account, $packageRows, $authoritative);
+                if ($cycle !== null) {
+                    $cycle->forceFill(['status' => 'paid', 'paid_at' => now(), 'next_attempt_at' => null])->save();
+                }
                 $this->notify($order, 'commercial_payment_succeeded', 'billing.webhook.payment_succeeded');
 
                 return $this->record($notification, $sourceIp, $fingerprint, $authoritative->status, 'processed');
@@ -121,7 +131,30 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
 
             if ($notification->event === 'payment.canceled'
                 && $order->status->value === 'pending_payment') {
-                $order->forceFill(['status' => 'canceled'])->save();
+                if ($order->kind === 'renewal') {
+                    $wasInGrace = $account->status->value === 'grace';
+                    $reason = $authoritative->cancellationReason ?? 'unknown';
+                    $category = $reason === 'permission_revoked' ? 'method_revoked' : (in_array($reason, ['insufficient_funds', 'issuer_unavailable', 'internal_timeout', 'general_decline', 'payment_method_limit_exceeded'], true) ? 'retryable' : 'unknown');
+                    $payment->forceFill(['terminal_failure_reason' => $reason, 'failure_category' => $category, 'terminal_at' => now()])->save();
+                    $cycle = CommercialRenewalCycle::query()->where('commercial_order_id', $order->id)->lockForUpdate()->first();
+                    if ($cycle !== null) {
+                        $cycle->forceFill(['status' => $category === 'method_revoked' ? 'disabled' : 'grace', 'next_attempt_at' => now()->addDay()->startOfDay()->addHours(3)])->save();
+                    }
+                    $account->forceFill(['status' => 'grace', 'grace_started_at' => $cycle?->due_at, 'grace_ends_at' => $cycle?->grace_deadline_at, 'auto_renew_enabled' => $category !== 'method_revoked' && $account->auto_renew_enabled, 'saved_payment_method_active' => $category !== 'method_revoked'])->save();
+                    foreach ($packageRows as $row) {
+                        if (in_array($row->access_source->value, ['paid_package', 'full_suite'], true)) {
+                            $row->forceFill(['status' => 'grace'])->save();
+                        }
+                    }
+                    if (! $wasInGrace) {
+                        $this->notify($order, 'commercial_grace_started_'.$order->public_id, 'billing.renewal.grace_started');
+                    }
+                    if ($category === 'method_revoked') {
+                        $this->notify($order, 'commercial_method_disabled_'.$order->public_id, 'billing.renewal.method_disabled');
+                    }
+                } else {
+                    $order->forceFill(['status' => 'canceled'])->save();
+                }
                 $this->notify($order, 'commercial_payment_canceled', 'billing.webhook.payment_canceled');
             }
 
@@ -245,14 +278,15 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
         PaymentGatewayResult $authoritative,
     ): void {
         $order->forceFill(['status' => 'paid'])->save();
-        $canRenew = $order->auto_renew_consent
+        $renewal = $order->kind === 'renewal';
+        $canRenew = $renewal ? $account->auto_renew_enabled : ($order->auto_renew_consent
             && $authoritative->paymentMethodSaved
-            && trim((string) $authoritative->paymentMethodId) !== '';
+            && trim((string) $authoritative->paymentMethodId) !== '');
         $payment->forceFill([
             'provider_status' => 'succeeded',
             'confirmation_url' => null,
-            'payment_method_id' => $canRenew ? $authoritative->paymentMethodId : null,
-            'payment_method_saved' => $canRenew,
+            'payment_method_id' => $renewal ? null : ($canRenew ? $authoritative->paymentMethodId : null),
+            'payment_method_saved' => ! $renewal && $canRenew,
             'safe_response' => $authoritative->safeResponse,
             'refunded_amount_minor' => $authoritative->refundedAmountMinor,
         ])->save();
@@ -264,6 +298,13 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
             'current_period_end_at' => $order->period_end_at,
             'billing_anchor_at' => $order->period_end_at,
             'auto_renew_enabled' => $canRenew,
+            'saved_payment_method_id' => $renewal ? $account->saved_payment_method_id : ($canRenew ? $authoritative->paymentMethodId : null),
+            'saved_payment_method_active' => $canRenew,
+            'saved_payment_method_at' => $renewal ? $account->saved_payment_method_at : ($canRenew ? now() : null),
+            'auto_renew_consented_at' => $renewal ? $account->auto_renew_consented_at : ($canRenew ? now() : null),
+            'auto_renew_terms_version' => $renewal ? $account->auto_renew_terms_version : ($canRenew ? (string) config('commercial_offers.auto_renew_terms_version', '1') : null),
+            'grace_started_at' => null,
+            'grace_ends_at' => null,
         ])->save();
 
         $contour = $order->offer_type === CommercialOfferType::FullSuite

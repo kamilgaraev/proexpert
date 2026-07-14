@@ -8,6 +8,7 @@ use App\Enums\Billing\CommercialOfferType;
 use App\Enums\Billing\CommercialOrderStatus;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class CommercialOrder extends Model
@@ -16,7 +17,7 @@ class CommercialOrder extends Model
         'public_id', 'organization_id', 'commercial_account_id', 'user_id', 'status',
         'offer_type', 'quote_version', 'selected_package_slugs', 'current_package_slugs',
         'amount_minor', 'amount', 'currency', 'period_start_at', 'period_end_at',
-        'auto_renew_consent', 'client_idempotency_key',
+        'auto_renew_consent', 'client_idempotency_key', 'server_idempotency_key', 'kind',
     ];
 
     protected $casts = [
@@ -47,8 +48,18 @@ class CommercialOrder extends Model
         return $this->belongsTo(User::class);
     }
 
-    public function payment(): HasOne
+    public function payments(): HasMany
     {
-        return $this->hasOne(CommercialPayment::class);
+        return $this->hasMany(CommercialPayment::class)->orderBy('attempt_number');
+    }
+
+    public function latestPayment(): HasOne
+    {
+        return $this->hasOne(CommercialPayment::class)->ofMany('attempt_number', 'max');
+    }
+
+    public function renewalCycle(): HasOne
+    {
+        return $this->hasOne(CommercialRenewalCycle::class);
     }
 }

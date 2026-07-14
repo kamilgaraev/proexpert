@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Billing;
 
 use App\DataTransferObjects\Billing\CreatePaymentData;
+use App\DataTransferObjects\Billing\CreateSavedMethodPaymentData;
 use App\Exceptions\Billing\PaymentGatewayConfigurationException;
 use App\Services\Billing\YooKassaPaymentGateway;
 use Illuminate\Http\Client\ConnectionException;
@@ -86,6 +87,31 @@ class YooKassaPaymentGatewayTest extends TestCase
         ));
 
         Http::assertSent(fn (Request $request): bool => $request['save_payment_method'] === true);
+    }
+
+    public function test_creates_saved_method_payment_without_redirect_confirmation(): void
+    {
+        $response = $this->providerResponse(true);
+        unset($response['confirmation']);
+        Http::fake(['*' => Http::response($response, 200)]);
+
+        $result = app(YooKassaPaymentGateway::class)->createSavedMethodPayment(
+            new CreateSavedMethodPaymentData(
+                idempotenceKey: 'renewal-attempt-key',
+                amountMinor: 790000,
+                currency: 'RUB',
+                paymentMethodId: 'saved-method-id',
+                description: 'Продление доступа МОСТ',
+                metadata: ['order_id' => 'renewal-order', 'organization_id' => 7],
+            ),
+        );
+
+        $this->assertSame('provider-payment-id', $result->id);
+        $this->assertNull($result->confirmationUrl);
+        Http::assertSent(fn (Request $request): bool => $request['capture'] === true
+            && $request['payment_method_id'] === 'saved-method-id'
+            && ! array_key_exists('confirmation', $request->data())
+            && $request->hasHeader('Idempotence-Key', 'renewal-attempt-key'));
     }
 
     public function test_missing_credentials_fails_before_http_request(): void

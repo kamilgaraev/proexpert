@@ -35,14 +35,14 @@ class PackageTrialService
         private readonly AccessController $accessController,
     ) {}
 
-    public function start(int $organizationId, string $packageSlug): OrganizationPackageSubscription
+    public function start(int $organizationId, string $packageSlug, ?int $responsibleUserId = null): OrganizationPackageSubscription
     {
         if ($this->packageCatalog->package($packageSlug) === null) {
             throw new BusinessLogicException(trans_message('landing.packages.trial_package_not_found'), 404);
         }
 
         try {
-            $subscription = DB::transaction(function () use ($organizationId, $packageSlug): OrganizationPackageSubscription {
+            $subscription = DB::transaction(function () use ($organizationId, $packageSlug, $responsibleUserId): OrganizationPackageSubscription {
                 $organization = Organization::query()
                     ->whereKey($organizationId)
                     ->lockForUpdate()
@@ -56,15 +56,22 @@ class PackageTrialService
                     throw new BusinessLogicException(trans_message('landing.packages.trial_already_used'), 409);
                 }
 
+                $accountDefaults = [
+                    'status' => CommercialAccountStatus::Free,
+                    'offer_type' => CommercialOfferType::Packages,
+                    'quote_version' => (int) config('commercial_offers.quote_version', 1),
+                    'auto_renew_enabled' => false,
+                ];
+                if ($responsibleUserId !== null) {
+                    $accountDefaults['responsible_user_id'] = $responsibleUserId;
+                }
                 $account = OrganizationCommercialAccount::query()->firstOrCreate(
                     ['organization_id' => $organizationId],
-                    [
-                        'status' => CommercialAccountStatus::Free,
-                        'offer_type' => CommercialOfferType::Packages,
-                        'quote_version' => (int) config('commercial_offers.quote_version', 1),
-                        'auto_renew_enabled' => false,
-                    ],
+                    $accountDefaults,
                 );
+                if ($account->responsible_user_id === null && $responsibleUserId !== null) {
+                    $account->forceFill(['responsible_user_id' => $responsibleUserId])->save();
+                }
 
                 $startedAt = CarbonImmutable::now();
                 $endsAt = $startedAt->addHours($this->trialHours());

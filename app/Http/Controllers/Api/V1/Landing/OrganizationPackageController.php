@@ -6,13 +6,13 @@ namespace App\Http\Controllers\Api\V1\Landing;
 
 use App\Exceptions\BusinessLogicException;
 use App\Http\Responses\LandingResponse;
+use App\Models\User;
 use App\Services\Billing\PackageTrialService;
 use App\Services\Landing\PackageService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
-use Tymon\JWTAuth\Facades\JWTAuth;
 
 use function trans_message;
 
@@ -26,7 +26,14 @@ class OrganizationPackageController
     public function index(Request $request): JsonResponse
     {
         try {
-            $user = JWTAuth::parseToken()->authenticate();
+            $user = $request->user();
+
+            if (! $user instanceof User) {
+                return LandingResponse::error(
+                    trans_message('landing.not_authenticated'),
+                    Response::HTTP_UNAUTHORIZED,
+                );
+            }
             $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
 
             if (! is_numeric($organizationId)) {
@@ -51,7 +58,14 @@ class OrganizationPackageController
     public function startTrial(Request $request, string $packageSlug): JsonResponse
     {
         try {
-            $user = JWTAuth::parseToken()->authenticate();
+            $user = $request->user();
+
+            if (! $user instanceof User) {
+                return LandingResponse::error(
+                    trans_message('landing.not_authenticated'),
+                    Response::HTTP_UNAUTHORIZED,
+                );
+            }
             $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
 
             if (! is_numeric($organizationId)) {
@@ -61,7 +75,7 @@ class OrganizationPackageController
                 );
             }
 
-            $subscription = $this->packageTrialService->start((int) $organizationId, $packageSlug);
+            $subscription = $this->packageTrialService->start((int) $organizationId, $packageSlug, (int) $user->id);
 
             return LandingResponse::success([
                 'package_slug' => $subscription->package_slug,

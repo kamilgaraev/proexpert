@@ -14,6 +14,7 @@ return new class extends Migration
         Schema::create('organization_commercial_accounts', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('organization_id')->unique()->constrained('organizations')->cascadeOnDelete();
+            $table->foreignId('responsible_user_id')->nullable()->constrained('users')->restrictOnDelete();
             $table->enum('status', ['free', 'active', 'grace', 'suspended', 'corporate'])->default('free');
             $table->enum('offer_type', ['packages', 'full_suite', 'corporate'])->default('packages');
             $table->unsignedInteger('quote_version');
@@ -21,6 +22,13 @@ return new class extends Migration
             $table->timestampTz('current_period_start_at')->nullable();
             $table->timestampTz('current_period_end_at')->nullable();
             $table->boolean('auto_renew_enabled')->default(false);
+            $table->string('saved_payment_method_id')->nullable();
+            $table->timestampTz('saved_payment_method_at')->nullable();
+            $table->boolean('saved_payment_method_active')->default(false);
+            $table->timestampTz('auto_renew_consented_at')->nullable();
+            $table->string('auto_renew_terms_version', 50)->nullable();
+            $table->timestampTz('grace_started_at')->nullable();
+            $table->timestampTz('grace_ends_at')->nullable();
             $table->timestampsTz();
             $table->unique(['id', 'organization_id'], 'commercial_accounts_id_org_unique');
         });

@@ -1,0 +1,416 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Feature\Billing;
+
+use App\Contracts\Billing\CommercialWebhookProcessor;
+use App\DataTransferObjects\Billing\CreatePaymentData;
+use App\DataTransferObjects\Billing\CreateSavedMethodPaymentData;
+use App\DataTransferObjects\Billing\PaymentGatewayResult;
+use App\DataTransferObjects\Billing\RefundGatewayResult;
+use App\Interfaces\Billing\PaymentGatewayInterface;
+use App\Models\CommercialOrder;
+use App\Models\CommercialPayment;
+use App\Models\CommercialRenewalCycle;
+use App\Models\Organization;
+use App\Models\OrganizationCommercialAccount;
+use App\Models\OrganizationPackageSubscription;
+use App\Services\Billing\CommercialOfferCalculator;
+use App\Services\Billing\CommercialRenewalService;
+use Carbon\CarbonImmutable;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+use RuntimeException;
+use Tests\TestCase;
+
+final class CommercialRenewalServiceTest extends TestCase
+{
+    private RenewalGatewayFake $gateway;
+
+    private OrganizationCommercialAccount $account;
+
+    private RenewalWebhookProcessorFake $processor;
+
+    public function refreshDatabase(): void {}
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->schema();
+        $this->gateway = new RenewalGatewayFake;
+        $this->app->instance(PaymentGatewayInterface::class, $this->gateway);
+        $this->processor = new RenewalWebhookProcessorFake;
+        $this->app->instance(CommercialWebhookProcessor::class, $this->processor);
+        $organization = Organization::query()->create(['name' => 'МОСТ', 'is_active' => true, 'is_verified' => true]);
+        $this->account = OrganizationCommercialAccount::query()->create([
+            'organization_id' => $organization->id, 'status' => 'active', 'offer_type' => 'packages',
+            'quote_version' => 1, 'billing_anchor_at' => '2026-07-01 00:00:00',
+            'current_period_start_at' => '2026-07-01 00:00:00', 'current_period_end_at' => '2026-07-31 00:00:00',
+            'auto_renew_enabled' => true, 'saved_payment_method_id' => 'saved-method',
+            'saved_payment_method_active' => true, 'responsible_user_id' => 1,
+        ]);
+        OrganizationPackageSubscription::query()->create([
+            'organization_id' => $organization->id, 'commercial_account_id' => $this->account->id,
+            'package_slug' => 'machinery', 'status' => 'active', 'access_source' => 'paid_package',
+            'price_paid' => 7900, 'current_period_start_at' => '2026-07-01 00:00:00',
+            'current_period_end_at' => '2026-07-31 00:00:00',
+        ]);
+    }
+
+    public function test_due_account_creates_one_fixed_cycle_order_and_attempt_and_reuses_it(): void
+    {
+        $at = CarbonImmutable::parse('2026-07-31 03:00:00', 'Europe/Moscow');
+        $service = app(CommercialRenewalService::class);
+
+        $first = $service->process($at, 50);
+        $second = $service->process($at, 50);
+
+        $cycle = CommercialRenewalCycle::query()->sole();
+        $order = CommercialOrder::query()->sole();
+        $payment = CommercialPayment::query()->sole();
+        $this->assertSame(1, $first['processed']);
+        $this->assertSame(0, $second['created_attempts']);
+        $this->assertSame('2026-07-31', $cycle->target_period_start_at->format('Y-m-d'));
+        $this->assertSame('2026-08-30', $cycle->target_period_end_at->format('Y-m-d'));
+        $this->assertSame('renewal', $order->kind);
+        $this->assertSame(['machinery'], $order->selected_package_slugs);
+        $this->assertSame(790000, $order->amount_minor);
+        $this->assertSame(1, $payment->attempt_number);
+        $this->assertSame(1, $this->gateway->creates);
+    }
+
+    public function test_transport_failure_retries_same_local_intent_and_provider_key(): void
+    {
+        $this->gateway->failCreates = 1;
+        $at = CarbonImmutable::parse('2026-07-31 03:00:00', 'Europe/Moscow');
+        $service = app(CommercialRenewalService::class);
+
+        $service->process($at, 50);
+        $key = CommercialPayment::query()->sole()->provider_idempotency_key;
+        $service->process($at, 50);
+
+        $this->assertSame(1, CommercialPayment::query()->count());
+        $this->assertSame($key, CommercialPayment::query()->sole()->provider_idempotency_key);
+        $this->assertSame(2, $this->gateway->creates);
+    }
+
+    public function test_terminal_canceled_attempt_allows_one_new_attempt_on_following_moscow_day(): void
+    {
+        $service = app(CommercialRenewalService::class);
+        $service->process(CarbonImmutable::parse('2026-07-31 03:00', 'Europe/Moscow'));
+        CommercialPayment::query()->sole()->forceFill(['provider_status' => 'canceled', 'terminal_at' => '2026-07-31 03:01'])->save();
+        CommercialRenewalCycle::query()->sole()->forceFill(['status' => 'grace'])->save();
+
+        $service->process(CarbonImmutable::parse('2026-08-01 03:00', 'Europe/Moscow'));
+        $service->process(CarbonImmutable::parse('2026-08-01 20:00', 'Europe/Moscow'));
+
+        $this->assertSame(2, CommercialPayment::query()->count());
+        $this->assertSame([1, 2], CommercialPayment::query()->orderBy('attempt_number')->pluck('attempt_number')->all());
+        $this->assertNotSame(...CommercialPayment::query()->orderBy('attempt_number')->pluck('provider_idempotency_key')->all());
+    }
+
+    public function test_day_seven_suspends_without_eighth_attempt(): void
+    {
+        $service = app(CommercialRenewalService::class);
+        $service->process(CarbonImmutable::parse('2026-07-31 03:00', 'Europe/Moscow'));
+        $service->process(CarbonImmutable::parse('2026-08-07 03:00', 'Europe/Moscow'));
+
+        $this->assertSame('suspended', $this->account->fresh()->status->value);
+        $this->assertSame('expired', OrganizationPackageSubscription::query()->sole()->status->value);
+        $this->assertSame(1, CommercialPayment::query()->count());
+        $this->assertSame('suspended', CommercialRenewalCycle::query()->sole()->status);
+    }
+
+    public function test_pending_reconciliation_blocks_new_attempt_and_succeeded_uses_webhook_transition(): void
+    {
+        $service = app(CommercialRenewalService::class);
+        $service->process(CarbonImmutable::parse('2026-07-31 03:00', 'Europe/Moscow'));
+        $order = CommercialOrder::query()->sole();
+        $this->gateway->lookup = new PaymentGatewayResult(
+            'renewal-1', 'pending', null, 'saved-method', true, ['id' => 'renewal-1'],
+            false, true, 790000, 'RUB', ['order_id' => $order->public_id, 'organization_id' => 1],
+        );
+        $service->process(CarbonImmutable::parse('2026-08-01 03:00', 'Europe/Moscow'));
+        $this->assertSame(1, CommercialPayment::query()->count());
+        $this->assertSame(0, $this->processor->calls);
+
+        $this->gateway->lookup = new PaymentGatewayResult(
+            'renewal-1', 'succeeded', null, 'saved-method', true, ['id' => 'renewal-1'],
+            true, true, 790000, 'RUB', ['order_id' => $order->public_id, 'organization_id' => 1],
+        );
+        $service->process(CarbonImmutable::parse('2026-08-02 03:00', 'Europe/Moscow'));
+        $this->assertSame(1, $this->processor->calls);
+        $this->assertSame('payment.succeeded', $this->processor->lastEvent);
+        $this->assertSame(1, CommercialPayment::query()->count());
+    }
+
+    public function test_direct_succeeded_response_is_reconciled_through_webhook_transition(): void
+    {
+        $result = new PaymentGatewayResult(
+            'renewal-direct-success', 'succeeded', null, 'saved-method', true,
+            ['id' => 'renewal-direct-success', 'status' => 'succeeded'], true, true, 790000, 'RUB',
+            ['order_id' => 'renewal-order', 'organization_id' => 1],
+        );
+        $this->gateway->createResult = $result;
+        $this->gateway->lookup = $result;
+
+        app(CommercialRenewalService::class)->process(CarbonImmutable::parse('2026-07-31 03:00', 'Europe/Moscow'));
+        app(CommercialRenewalService::class)->process(CarbonImmutable::parse('2026-07-31 04:00', 'Europe/Moscow'));
+
+        $this->assertSame(1, $this->processor->calls);
+        $this->assertSame('payment.succeeded', $this->processor->lastEvent);
+        $this->assertSame(1, CommercialPayment::query()->count());
+    }
+
+    public function test_direct_canceled_response_is_reconciled_before_next_daily_attempt(): void
+    {
+        $result = new PaymentGatewayResult(
+            'renewal-direct-canceled', 'canceled', null, 'saved-method', true,
+            ['id' => 'renewal-direct-canceled', 'status' => 'canceled'], false, true, 790000, 'RUB',
+            ['order_id' => 'renewal-order', 'organization_id' => 1], cancellationReason: 'insufficient_funds',
+        );
+        $this->gateway->createResult = $result;
+        $this->gateway->lookup = $result;
+
+        app(CommercialRenewalService::class)->process(CarbonImmutable::parse('2026-07-31 03:00', 'Europe/Moscow'));
+
+        $this->assertSame(1, $this->processor->calls);
+        $this->assertSame('payment.canceled', $this->processor->lastEvent);
+        $this->assertSame(1, CommercialPayment::query()->count());
+    }
+
+    public function test_eight_package_contour_renews_as_packages_at_current_exact_sum(): void
+    {
+        $slugs = ['machinery', 'estimates-norms', 'finance-contracts', 'planning-schedules', 'projects-processes', 'pto-handover', 'quality-safety', 'sales-contractors'];
+        $this->addPackageRows(array_slice($slugs, 1));
+        $at = CarbonImmutable::parse('2026-07-31 03:00', 'Europe/Moscow');
+        $expected = app(CommercialOfferCalculator::class)->preview(
+            $slugs, $slugs, false, $at, $this->account->current_period_start_at, $this->account->current_period_end_at,
+        );
+
+        app(CommercialRenewalService::class)->process($at);
+
+        $order = CommercialOrder::query()->sole();
+        $this->assertSame('packages', $order->offer_type->value);
+        $this->assertSame($expected['monthly_total_minor'], $order->amount_minor);
+        $this->assertEqualsCanonicalizing($slugs, $order->selected_package_slugs);
+    }
+
+    public function test_full_suite_renews_full_catalog_at_current_full_suite_price(): void
+    {
+        $slugs = ['machinery', 'estimates-norms', 'finance-contracts', 'planning-schedules', 'projects-processes', 'pto-handover', 'quality-safety', 'sales-contractors', 'supply-warehouse', 'workforce-output'];
+        $this->addPackageRows(array_slice($slugs, 1), 'full_suite');
+        OrganizationPackageSubscription::query()->where('package_slug', 'machinery')->update(['access_source' => 'full_suite']);
+        $this->account->forceFill(['offer_type' => 'full_suite'])->save();
+
+        app(CommercialRenewalService::class)->process(CarbonImmutable::parse('2026-07-31 03:00', 'Europe/Moscow'));
+
+        $order = CommercialOrder::query()->sole();
+        $this->assertSame('full_suite', $order->offer_type->value);
+        $this->assertSame(7_990_000, $order->amount_minor);
+        $this->assertEqualsCanonicalizing($slugs, $order->selected_package_slugs);
+    }
+
+    public function test_auto_renew_disabled_before_due_creates_no_cycle_or_attempt(): void
+    {
+        $this->account->forceFill(['auto_renew_enabled' => false])->save();
+
+        app(CommercialRenewalService::class)->process(CarbonImmutable::parse('2026-07-31 03:00', 'Europe/Moscow'));
+
+        $this->assertDatabaseCount('commercial_renewal_cycles', 0);
+        $this->assertDatabaseCount('commercial_orders', 0);
+        $this->assertDatabaseCount('commercial_payments', 0);
+        $this->assertSame('active', $this->account->fresh()->status->value);
+    }
+
+    public function test_auto_renew_disabled_during_grace_stops_attempts_but_suspends_at_deadline(): void
+    {
+        $service = app(CommercialRenewalService::class);
+        $service->process(CarbonImmutable::parse('2026-07-31 03:00', 'Europe/Moscow'));
+        CommercialPayment::query()->sole()->forceFill(['provider_status' => 'canceled', 'terminal_at' => '2026-07-31 03:01'])->save();
+        CommercialRenewalCycle::query()->sole()->forceFill(['status' => 'disabled'])->save();
+        $this->account->forceFill(['status' => 'grace', 'auto_renew_enabled' => false, 'grace_ends_at' => '2026-08-07 00:00'])->save();
+        OrganizationPackageSubscription::query()->update(['status' => 'grace']);
+
+        $service->process(CarbonImmutable::parse('2026-08-01 03:00', 'Europe/Moscow'));
+        $this->assertSame(1, CommercialPayment::query()->count());
+        $this->assertSame('grace', OrganizationPackageSubscription::query()->sole()->status->value);
+        $service->process(CarbonImmutable::parse('2026-08-07 03:00', 'Europe/Moscow'));
+        $this->assertSame('suspended', $this->account->fresh()->status->value);
+        $this->assertSame('expired', OrganizationPackageSubscription::query()->sole()->status->value);
+        $this->assertSame(1, CommercialRenewalCycle::query()->count());
+    }
+
+    private function addPackageRows(array $slugs, string $source = 'paid_package'): void
+    {
+        foreach ($slugs as $slug) {
+            OrganizationPackageSubscription::query()->create([
+                'organization_id' => 1, 'commercial_account_id' => $this->account->id,
+                'package_slug' => $slug, 'status' => 'active', 'access_source' => $source,
+                'price_paid' => 7900, 'current_period_start_at' => '2026-07-01 00:00:00',
+                'current_period_end_at' => '2026-07-31 00:00:00',
+            ]);
+        }
+    }
+
+    private function schema(): void
+    {
+        foreach (['commercial_payments', 'commercial_renewal_cycles', 'commercial_orders', 'organization_package_subscriptions', 'organization_commercial_accounts', 'organizations'] as $table) {
+            Schema::dropIfExists($table);
+        }
+        Schema::create('organizations', fn (Blueprint $t) => [$t->id(), $t->string('name'), $t->boolean('is_active'), $t->boolean('is_verified'), $t->timestamps(), $t->softDeletes()]);
+        Schema::create('organization_commercial_accounts', function (Blueprint $t): void {
+            $t->id();
+            $t->foreignId('organization_id');
+            $t->string('status');
+            $t->string('offer_type');
+            $t->unsignedInteger('quote_version');
+            $t->timestamp('billing_anchor_at')->nullable();
+            $t->timestamp('current_period_start_at')->nullable();
+            $t->timestamp('current_period_end_at')->nullable();
+            $t->boolean('auto_renew_enabled');
+            $t->string('saved_payment_method_id')->nullable();
+            $t->boolean('saved_payment_method_active');
+            $t->foreignId('responsible_user_id')->nullable();
+            $t->timestamp('grace_started_at')->nullable();
+            $t->timestamp('grace_ends_at')->nullable();
+            $t->timestamps();
+        });
+        Schema::create('commercial_orders', function (Blueprint $t): void {
+            $t->id();
+            $t->uuid('public_id');
+            $t->foreignId('organization_id');
+            $t->foreignId('commercial_account_id');
+            $t->foreignId('user_id');
+            $t->string('kind');
+            $t->string('status');
+            $t->string('offer_type');
+            $t->unsignedInteger('quote_version');
+            $t->json('selected_package_slugs');
+            $t->json('current_package_slugs');
+            $t->unsignedBigInteger('amount_minor');
+            $t->decimal('amount', 14, 2);
+            $t->string('currency');
+            $t->timestamp('period_start_at');
+            $t->timestamp('period_end_at');
+            $t->boolean('auto_renew_consent');
+            $t->string('client_idempotency_key');
+            $t->string('server_idempotency_key')->nullable();
+            $t->timestamps();
+        });
+        Schema::create('commercial_renewal_cycles', function (Blueprint $t): void {
+            $t->id();
+            $t->foreignId('organization_id');
+            $t->foreignId('commercial_account_id');
+            $t->foreignId('commercial_order_id');
+            $t->string('status');
+            $t->timestamp('due_at');
+            $t->timestamp('target_period_start_at');
+            $t->timestamp('target_period_end_at');
+            $t->timestamp('grace_deadline_at');
+            $t->unsignedSmallInteger('attempt_count');
+            $t->timestamp('last_attempt_at')->nullable();
+            $t->timestamp('next_attempt_at')->nullable();
+            $t->timestamp('paid_at')->nullable();
+            $t->timestamp('suspended_at')->nullable();
+            $t->timestamp('manual_review_at')->nullable();
+            $t->timestamps();
+        });
+        Schema::create('commercial_payments', function (Blueprint $t): void {
+            $t->id();
+            $t->foreignId('commercial_order_id');
+            $t->foreignId('commercial_renewal_cycle_id')->nullable();
+            $t->string('role');
+            $t->unsignedSmallInteger('attempt_number');
+            $t->string('provider');
+            $t->string('provider_payment_id')->nullable();
+            $t->string('provider_status');
+            $t->unsignedBigInteger('amount_minor');
+            $t->string('currency');
+            $t->uuid('provider_idempotency_key');
+            $t->text('confirmation_url')->nullable();
+            $t->string('payment_method_id')->nullable();
+            $t->boolean('payment_method_saved');
+            $t->json('safe_response')->nullable();
+            $t->unsignedBigInteger('refunded_amount_minor')->default(0);
+            $t->string('terminal_failure_reason')->nullable();
+            $t->string('failure_category')->nullable();
+            $t->timestamp('attempted_at')->nullable();
+            $t->timestamp('terminal_at')->nullable();
+            $t->timestamps();
+        });
+        Schema::create('organization_package_subscriptions', function (Blueprint $t): void {
+            $t->id();
+            $t->foreignId('organization_id');
+            $t->foreignId('commercial_account_id');
+            $t->string('package_slug');
+            $t->string('status');
+            $t->string('access_source');
+            $t->decimal('price_paid', 12, 2);
+            $t->timestamp('current_period_start_at')->nullable();
+            $t->timestamp('current_period_end_at')->nullable();
+            $t->timestamp('trial_started_at')->nullable();
+            $t->timestamp('trial_ends_at')->nullable();
+            $t->timestamp('cancel_at')->nullable();
+            $t->timestamp('canceled_at')->nullable();
+            $t->foreignId('source_order_id')->nullable();
+            $t->timestamps();
+        });
+    }
+}
+
+final class RenewalGatewayFake implements PaymentGatewayInterface
+{
+    public int $creates = 0;
+
+    public int $failCreates = 0;
+
+    public ?PaymentGatewayResult $lookup = null;
+
+    public ?PaymentGatewayResult $createResult = null;
+
+    public function createPayment(CreatePaymentData $payment): PaymentGatewayResult
+    {
+        throw new RuntimeException('Not used.');
+    }
+
+    public function createSavedMethodPayment(CreateSavedMethodPaymentData $payment): PaymentGatewayResult
+    {
+        $this->creates++;
+        if ($this->failCreates-- > 0) {
+            throw new RuntimeException('timeout');
+        }
+
+        return $this->createResult ?? new PaymentGatewayResult('renewal-'.$this->creates, 'pending', null, $payment->paymentMethodId, true, ['id' => 'renewal-'.$this->creates], false, true, $payment->amountMinor, $payment->currency, $payment->metadata);
+    }
+
+    public function getPayment(string $paymentId): PaymentGatewayResult
+    {
+        return $this->lookup ?? throw new RuntimeException('provider unavailable');
+    }
+
+    public function getRefund(string $refundId): RefundGatewayResult
+    {
+        throw new RuntimeException('Not used.');
+    }
+}
+
+final class RenewalWebhookProcessorFake implements CommercialWebhookProcessor
+{
+    public int $calls = 0;
+
+    public ?string $lastEvent = null;
+
+    public function process(\App\DataTransferObjects\Billing\YooKassaWebhookNotification $notification, string $sourceIp): string
+    {
+        $this->calls++;
+        $this->lastEvent = $notification->event;
+        CommercialPayment::query()->where('provider_payment_id', $notification->objectId)->update([
+            'provider_status' => $notification->objectState,
+            'terminal_at' => now(),
+        ]);
+
+        return 'processed';
+    }
+}

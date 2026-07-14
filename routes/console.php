@@ -5,6 +5,18 @@ use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
 
+Schedule::command('commercial:process-renewals --limit=100')
+    ->dailyAt('03:00')
+    ->timezone('Europe/Moscow')
+    ->withoutOverlapping(120)
+    ->onOneServer();
+
+Schedule::command('commercial:process-trial-lifecycle')
+    ->hourly()
+    ->timezone('Europe/Moscow')
+    ->withoutOverlapping(15)
+    ->onOneServer();
+
 Schedule::job(new RecoverExpiredTrainingDatasetLeasesJob)
     ->everyFiveMinutes()
     ->withoutOverlapping();

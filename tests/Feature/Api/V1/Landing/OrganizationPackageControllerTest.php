@@ -380,6 +380,7 @@ class OrganizationPackageControllerTest extends TestCase
         Schema::create('organization_commercial_accounts', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('organization_id')->unique();
+            $table->foreignId('responsible_user_id')->nullable();
             $table->string('status');
             $table->string('offer_type');
             $table->unsignedInteger('quote_version');

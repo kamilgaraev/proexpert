@@ -6,6 +6,7 @@ namespace Tests\Feature\Billing;
 
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\DataTransferObjects\Billing\CreatePaymentData;
+use App\DataTransferObjects\Billing\CreateSavedMethodPaymentData;
 use App\DataTransferObjects\Billing\PaymentGatewayResult;
 use App\DataTransferObjects\Billing\RefundGatewayResult;
 use App\DataTransferObjects\Billing\YooKassaWebhookNotification;
@@ -13,6 +14,7 @@ use App\Interfaces\Billing\PaymentGatewayInterface;
 use App\Models\CommercialOrder;
 use App\Models\CommercialPayment;
 use App\Models\CommercialRefund;
+use App\Models\CommercialRenewalCycle;
 use App\Models\CommercialWebhookEvent;
 use App\Models\Organization;
 use App\Models\OrganizationCommercialAccount;
@@ -264,6 +266,102 @@ class CommercialWebhookServiceTest extends TestCase
         $this->assertNull($this->payment->fresh()->payment_method_id);
     }
 
+    public function test_day_six_renewal_success_keeps_original_target_end_and_anchor(): void
+    {
+        [$cycle, $targetEnd] = $this->configureRenewalCycle(now()->subDays(6));
+        $this->gateway->payment = $this->paymentResult(saved: false);
+
+        $result = app(CommercialWebhookService::class)->process(
+            $this->notification('payment.succeeded', 'payment-id', 'succeeded'),
+            '185.71.76.1',
+        );
+
+        $this->assertSame('processed', $result);
+        $account = $this->account->fresh();
+        $this->assertSame('active', $account->status->value);
+        $this->assertSame($targetEnd->getTimestamp(), $account->current_period_end_at->getTimestamp());
+        $this->assertSame($targetEnd->getTimestamp(), $account->billing_anchor_at->getTimestamp());
+        $this->assertSame('paid', $cycle->fresh()->status);
+        $remainingDays = now()->diffInDays($account->current_period_end_at);
+        $this->assertGreaterThanOrEqual(23, $remainingDays);
+        $this->assertLessThanOrEqual(25, $remainingDays);
+        $this->assertSame('active', OrganizationPackageSubscription::query()->sole()->status->value);
+    }
+
+    public function test_late_duplicate_webhook_after_renewal_success_does_not_repeat_transition(): void
+    {
+        [$cycle] = $this->configureRenewalCycle(now()->subDay());
+        $this->gateway->payment = $this->paymentResult(saved: false);
+        $notification = $this->notification('payment.succeeded', 'payment-id', 'succeeded');
+        $service = app(CommercialWebhookService::class);
+
+        $this->assertSame('processed', $service->process($notification, '127.0.0.1'));
+        $this->assertSame('duplicate', $service->process($notification, '185.71.76.1'));
+
+        $this->assertSame('paid', $cycle->fresh()->status);
+        $this->assertSame(1, Notification::query()->count());
+    }
+
+    public function test_success_after_grace_is_flagged_for_manual_reconciliation_without_reactivation(): void
+    {
+        [$cycle] = $this->configureRenewalCycle(now()->subDays(8));
+        $cycle->forceFill(['status' => 'suspended', 'suspended_at' => now()->subDay()])->save();
+        $this->account->forceFill(['status' => 'suspended'])->save();
+        $this->gateway->payment = $this->paymentResult(saved: false);
+
+        $result = app(CommercialWebhookService::class)->process(
+            $this->notification('payment.succeeded', 'payment-id', 'succeeded'),
+            '185.71.76.1',
+        );
+
+        $this->assertSame('manual_review', $result);
+        $this->assertSame('manual_review', $cycle->fresh()->status);
+        $this->assertSame('pending_payment', $this->order->fresh()->status->value);
+        $this->assertSame('suspended', $this->account->fresh()->status->value);
+        $this->assertSame('grace', OrganizationPackageSubscription::query()->sole()->status->value);
+        $this->assertSame(0, Notification::query()->count());
+    }
+
+    #[DataProvider('renewalCancellationReasonProvider')]
+    public function test_renewal_cancellation_reason_controls_retry_policy(
+        string $reason,
+        string $category,
+        string $cycleStatus,
+        bool $autoRenewEnabled,
+    ): void {
+        [$cycle] = $this->configureRenewalCycle(now());
+        $cycle->forceFill(['status' => 'due'])->save();
+        $this->account->forceFill(['status' => 'active', 'grace_started_at' => null, 'grace_ends_at' => null])->save();
+        OrganizationPackageSubscription::query()->update(['status' => 'active']);
+        $this->gateway->payment = $this->paymentResult(
+            status: 'canceled', paid: false, cancellationReason: $reason,
+        );
+
+        app(CommercialWebhookService::class)->process(
+            $this->notification('payment.canceled', 'payment-id', 'canceled'),
+            '185.71.76.1',
+        );
+
+        $this->assertSame($category, $this->payment->fresh()->failure_category);
+        $this->assertSame($reason, $this->payment->fresh()->terminal_failure_reason);
+        $this->assertSame($cycleStatus, $cycle->fresh()->status);
+        $this->assertSame($autoRenewEnabled, $this->account->fresh()->auto_renew_enabled);
+        $this->assertSame('pending_payment', $this->order->fresh()->status->value);
+        $this->assertSame('grace', OrganizationPackageSubscription::query()->sole()->status->value);
+        $expectedNotifications = $reason === 'permission_revoked' ? 3 : 2;
+        $this->assertSame($expectedNotifications, Notification::query()->count());
+        $this->assertTrue(Notification::query()->get()->every(fn (Notification $notification): bool => $notification->channels === ['in_app']));
+    }
+
+    public static function renewalCancellationReasonProvider(): array
+    {
+        return [
+            'revoked' => ['permission_revoked', 'method_revoked', 'disabled', false],
+            'financial retry' => ['insufficient_funds', 'retryable', 'grace', true],
+            'unknown conservative' => ['unknown', 'unknown', 'grace', true],
+        ];
+    }
+
     public function test_canceled_pending_order_notifies_once_but_cannot_downgrade_paid_order(): void
     {
         $this->gateway->payment = $this->paymentResult(status: 'canceled', paid: false);
@@ -398,6 +496,7 @@ class CommercialWebhookServiceTest extends TestCase
         bool $test = true,
         int $amountMinor = 790000,
         string $currency = 'RUB',
+        ?string $cancellationReason = null,
     ): PaymentGatewayResult {
         return new PaymentGatewayResult(
             id: $id, status: $status, confirmationUrl: null, paymentMethodId: 'method-id',
@@ -405,7 +504,40 @@ class CommercialWebhookServiceTest extends TestCase
             paid: $paid, test: $test, amountMinor: $amountMinor, currency: $currency,
             metadata: $metadata ?? ['order_id' => $this->order->public_id, 'organization_id' => $this->organization->id],
             refundedAmountMinor: $refundedAmountMinor,
+            cancellationReason: $cancellationReason,
         );
+    }
+
+    private function configureRenewalCycle($periodStart): array
+    {
+        $periodStart = \Carbon\CarbonImmutable::instance($periodStart);
+        $targetEnd = $periodStart->addDays(30);
+        $this->order->forceFill([
+            'kind' => 'renewal', 'current_package_slugs' => ['machinery'],
+            'period_start_at' => $periodStart, 'period_end_at' => $targetEnd,
+        ])->save();
+        $this->account->forceFill([
+            'status' => 'grace', 'offer_type' => 'packages',
+            'current_period_start_at' => $periodStart->subDays(30), 'current_period_end_at' => $periodStart,
+            'billing_anchor_at' => $periodStart, 'auto_renew_enabled' => true,
+            'saved_payment_method_id' => 'saved-method', 'saved_payment_method_active' => true,
+            'grace_started_at' => $periodStart, 'grace_ends_at' => $periodStart->addDays(7),
+        ])->save();
+        OrganizationPackageSubscription::query()->create([
+            'organization_id' => $this->organization->id, 'commercial_account_id' => $this->account->id,
+            'package_slug' => 'machinery', 'status' => 'grace', 'access_source' => 'paid_package',
+            'price_paid' => 7900, 'current_period_start_at' => $periodStart->subDays(30),
+            'current_period_end_at' => $periodStart, 'source_order_id' => $this->order->id,
+        ]);
+        $cycle = CommercialRenewalCycle::query()->create([
+            'organization_id' => $this->organization->id, 'commercial_account_id' => $this->account->id,
+            'commercial_order_id' => $this->order->id, 'status' => 'grace', 'due_at' => $periodStart,
+            'target_period_start_at' => $periodStart, 'target_period_end_at' => $targetEnd,
+            'grace_deadline_at' => $periodStart->addDays(7), 'attempt_count' => 1,
+        ]);
+        $this->payment->forceFill(['role' => 'renewal', 'commercial_renewal_cycle_id' => $cycle->id])->save();
+
+        return [$cycle, $targetEnd];
     }
 
     private function refundResult(string $id, int $amountMinor): RefundGatewayResult
@@ -415,7 +547,7 @@ class CommercialWebhookServiceTest extends TestCase
 
     private function createSchema(): void
     {
-        foreach (['notifications', 'commercial_webhook_events', 'commercial_refunds', 'commercial_payments', 'commercial_orders', 'organization_package_trial_usages', 'organization_package_subscriptions', 'organization_commercial_accounts', 'users', 'organizations'] as $table) {
+        foreach (['notifications', 'commercial_webhook_events', 'commercial_refunds', 'commercial_payments', 'commercial_renewal_cycles', 'commercial_orders', 'organization_package_trial_usages', 'organization_package_subscriptions', 'organization_commercial_accounts', 'users', 'organizations'] as $table) {
             Schema::dropIfExists($table);
         }
         Schema::create('organizations', function (Blueprint $table): void {
@@ -439,6 +571,7 @@ class CommercialWebhookServiceTest extends TestCase
         Schema::create('organization_commercial_accounts', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('organization_id')->unique();
+            $table->foreignId('responsible_user_id')->nullable();
             $table->string('status');
             $table->string('offer_type');
             $table->unsignedInteger('quote_version');
@@ -446,6 +579,13 @@ class CommercialWebhookServiceTest extends TestCase
             $table->timestamp('current_period_start_at')->nullable();
             $table->timestamp('current_period_end_at')->nullable();
             $table->boolean('auto_renew_enabled');
+            $table->string('saved_payment_method_id')->nullable();
+            $table->timestamp('saved_payment_method_at')->nullable();
+            $table->boolean('saved_payment_method_active')->default(false);
+            $table->timestamp('auto_renew_consented_at')->nullable();
+            $table->string('auto_renew_terms_version')->nullable();
+            $table->timestamp('grace_started_at')->nullable();
+            $table->timestamp('grace_ends_at')->nullable();
             $table->timestamps();
         });
         Schema::create('commercial_orders', function (Blueprint $table): void {
@@ -454,6 +594,7 @@ class CommercialWebhookServiceTest extends TestCase
             $table->foreignId('organization_id');
             $table->foreignId('commercial_account_id');
             $table->foreignId('user_id');
+            $table->string('kind')->default('purchase');
             $table->string('status');
             $table->string('offer_type');
             $table->unsignedInteger('quote_version');
@@ -471,6 +612,7 @@ class CommercialWebhookServiceTest extends TestCase
         Schema::create('commercial_payments', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('commercial_order_id')->unique();
+            $table->foreignId('commercial_renewal_cycle_id')->nullable();
             $table->string('provider');
             $table->string('provider_payment_id')->nullable()->unique();
             $table->string('provider_status');
@@ -482,6 +624,29 @@ class CommercialWebhookServiceTest extends TestCase
             $table->boolean('payment_method_saved');
             $table->json('safe_response')->nullable();
             $table->unsignedBigInteger('refunded_amount_minor')->default(0);
+            $table->string('role')->default('initial');
+            $table->unsignedSmallInteger('attempt_number')->default(1);
+            $table->string('terminal_failure_reason')->nullable();
+            $table->string('failure_category')->nullable();
+            $table->timestamp('terminal_at')->nullable();
+            $table->timestamps();
+        });
+        Schema::create('commercial_renewal_cycles', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->foreignId('commercial_account_id');
+            $table->foreignId('commercial_order_id');
+            $table->string('status');
+            $table->timestamp('due_at');
+            $table->timestamp('target_period_start_at');
+            $table->timestamp('target_period_end_at');
+            $table->timestamp('grace_deadline_at');
+            $table->unsignedSmallInteger('attempt_count')->default(0);
+            $table->timestamp('last_attempt_at')->nullable();
+            $table->timestamp('next_attempt_at')->nullable();
+            $table->timestamp('paid_at')->nullable();
+            $table->timestamp('suspended_at')->nullable();
+            $table->timestamp('manual_review_at')->nullable();
             $table->timestamps();
         });
         Schema::create('organization_package_subscriptions', function (Blueprint $table): void {
@@ -565,6 +730,11 @@ class AuthoritativeGatewayFake implements PaymentGatewayInterface
     public int $paymentLookups = 0;
 
     public function createPayment(CreatePaymentData $payment): PaymentGatewayResult
+    {
+        throw new RuntimeException('Not used.');
+    }
+
+    public function createSavedMethodPayment(CreateSavedMethodPaymentData $payment): PaymentGatewayResult
     {
         throw new RuntimeException('Not used.');
     }

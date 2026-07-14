@@ -41,4 +41,41 @@ class CommercialCheckoutSchemaTest extends TestCase
         $this->assertStringContainsString('->restrictOnDelete()', $webhooks);
         $this->assertStringNotContainsString('->nullOnDelete()', $webhooks);
     }
+
+    public function test_renewal_schema_supports_multiple_attempts_and_one_grace_cycle_per_period(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $commercial = file_get_contents($root.'/database/migrations/2026_07_14_000001_create_commercial_package_model.php');
+        $checkout = file_get_contents($root.'/database/migrations/2026_07_14_000002_create_commercial_checkout_tables.php');
+
+        $this->assertIsString($commercial);
+        $this->assertIsString($checkout);
+        $this->assertStringContainsString('saved_payment_method_id', $commercial);
+        $this->assertStringContainsString('grace_ends_at', $commercial);
+        $this->assertStringContainsString("Schema::create('commercial_renewal_cycles'", $checkout);
+        $this->assertStringContainsString("unique(['commercial_account_id', 'target_period_start_at']", $checkout);
+        $this->assertStringContainsString("enum('kind', ['purchase', 'renewal'])", $checkout);
+        $this->assertStringContainsString("enum('role', ['initial', 'renewal'])", $checkout);
+        $this->assertStringContainsString('attempt_number', $checkout);
+        $this->assertStringNotContainsString("foreignId('commercial_order_id')->unique()", $checkout);
+    }
+
+    public function test_commercial_renewal_schedule_is_registered_once_at_three_moscow_time(): void
+    {
+        $schedule = file_get_contents(dirname(__DIR__, 3).'/routes/console.php');
+        $this->assertIsString($schedule);
+        $this->assertSame(1, substr_count($schedule, "Schedule::command('commercial:process-renewals --limit=100')"));
+        $this->assertStringContainsString("->dailyAt('03:00')", $schedule);
+        $this->assertStringContainsString("->timezone('Europe/Moscow')", $schedule);
+        $this->assertStringContainsString('->withoutOverlapping(120)', $schedule);
+        $this->assertStringContainsString('->onOneServer()', $schedule);
+    }
+
+    public function test_trial_lifecycle_has_separate_hourly_schedule(): void
+    {
+        $schedule = file_get_contents(dirname(__DIR__, 3).'/routes/console.php');
+        $this->assertIsString($schedule);
+        $this->assertSame(1, substr_count($schedule, "Schedule::command('commercial:process-trial-lifecycle')"));
+        $this->assertStringContainsString("Schedule::command('commercial:process-trial-lifecycle')\n    ->hourly()", $schedule);
+    }
 }

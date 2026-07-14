@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Billing;
 
 use App\DataTransferObjects\Billing\CreatePaymentData;
+use App\DataTransferObjects\Billing\CreateSavedMethodPaymentData;
 use App\DataTransferObjects\Billing\PaymentGatewayResult;
 use App\DataTransferObjects\Billing\RefundGatewayResult;
 use App\DataTransferObjects\Billing\YooKassaWebhookNotification;
@@ -348,6 +349,7 @@ class CommercialCheckoutServiceTest extends TestCase
         Schema::create('organization_commercial_accounts', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('organization_id')->unique();
+            $table->foreignId('responsible_user_id')->nullable();
             $table->string('status');
             $table->string('offer_type');
             $table->unsignedInteger('quote_version');
@@ -355,6 +357,13 @@ class CommercialCheckoutServiceTest extends TestCase
             $table->timestamp('current_period_start_at')->nullable();
             $table->timestamp('current_period_end_at')->nullable();
             $table->boolean('auto_renew_enabled');
+            $table->string('saved_payment_method_id')->nullable();
+            $table->timestamp('saved_payment_method_at')->nullable();
+            $table->boolean('saved_payment_method_active')->default(false);
+            $table->timestamp('auto_renew_consented_at')->nullable();
+            $table->string('auto_renew_terms_version')->nullable();
+            $table->timestamp('grace_started_at')->nullable();
+            $table->timestamp('grace_ends_at')->nullable();
             $table->timestamps();
         });
         Schema::create('organization_package_subscriptions', function (Blueprint $table): void {
@@ -403,6 +412,8 @@ class CommercialCheckoutServiceTest extends TestCase
         Schema::create('commercial_payments', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('commercial_order_id')->unique();
+            $table->string('role')->default('initial');
+            $table->unsignedSmallInteger('attempt_number')->default(1);
             $table->string('provider');
             $table->string('provider_payment_id')->nullable()->unique();
             $table->string('provider_status');
@@ -479,6 +490,11 @@ class CheckoutGatewayFake implements PaymentGatewayInterface
             paymentMethodSaved: false,
             safeResponse: ['id' => 'provider-'.count($this->payments), 'status' => 'pending'],
         );
+    }
+
+    public function createSavedMethodPayment(CreateSavedMethodPaymentData $payment): PaymentGatewayResult
+    {
+        throw new RuntimeException('Not used.');
     }
 
     public function getPayment(string $paymentId): PaymentGatewayResult

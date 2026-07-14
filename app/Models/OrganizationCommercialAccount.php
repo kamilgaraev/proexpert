@@ -17,6 +17,7 @@ class OrganizationCommercialAccount extends Model
 
     protected $fillable = [
         'organization_id',
+        'responsible_user_id',
         'status',
         'offer_type',
         'quote_version',
@@ -24,6 +25,8 @@ class OrganizationCommercialAccount extends Model
         'current_period_start_at',
         'current_period_end_at',
         'auto_renew_enabled',
+        'saved_payment_method_id', 'saved_payment_method_at', 'saved_payment_method_active',
+        'auto_renew_consented_at', 'auto_renew_terms_version', 'grace_started_at', 'grace_ends_at',
     ];
 
     protected $casts = [
@@ -34,6 +37,11 @@ class OrganizationCommercialAccount extends Model
         'current_period_start_at' => 'datetime',
         'current_period_end_at' => 'datetime',
         'auto_renew_enabled' => 'boolean',
+        'saved_payment_method_at' => 'immutable_datetime',
+        'saved_payment_method_active' => 'boolean',
+        'auto_renew_consented_at' => 'immutable_datetime',
+        'grace_started_at' => 'immutable_datetime',
+        'grace_ends_at' => 'immutable_datetime',
     ];
 
     public function organization(): BelongsTo
@@ -41,8 +49,18 @@ class OrganizationCommercialAccount extends Model
         return $this->belongsTo(Organization::class);
     }
 
+    public function responsibleUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'responsible_user_id');
+    }
+
     public function packageSubscriptions(): HasMany
     {
         return $this->hasMany(OrganizationPackageSubscription::class, 'commercial_account_id');
+    }
+
+    public function renewalCycles(): HasMany
+    {
+        return $this->hasMany(CommercialRenewalCycle::class, 'commercial_account_id');
     }
 }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Billing;
 
 use App\DataTransferObjects\Billing\CreatePaymentData;
+use App\DataTransferObjects\Billing\CreateSavedMethodPaymentData;
 use App\DataTransferObjects\Billing\PaymentGatewayResult;
 use App\DataTransferObjects\Billing\RefundGatewayResult;
 use App\Exceptions\Billing\PaymentGatewayConfigurationException;
@@ -50,6 +51,17 @@ class YooKassaPaymentGateway implements PaymentGatewayInterface
             'GET',
             '/payments/'.rawurlencode($paymentId),
         ));
+    }
+
+    public function createSavedMethodPayment(CreateSavedMethodPaymentData $payment): PaymentGatewayResult
+    {
+        return $this->result($this->request('POST', '/payments', [
+            'amount' => ['value' => $this->money($payment->amountMinor), 'currency' => $payment->currency],
+            'capture' => true,
+            'payment_method_id' => $payment->paymentMethodId,
+            'description' => $payment->description,
+            'metadata' => $payment->metadata,
+        ], $payment->idempotenceKey));
     }
 
     public function getRefund(string $refundId): RefundGatewayResult
@@ -218,6 +230,7 @@ class YooKassaPaymentGateway implements PaymentGatewayInterface
             refundedAmountMinor: isset($refundedAmount['value'])
                 ? $this->minorAmount($refundedAmount['value'])
                 : 0,
+            cancellationReason: $this->cancellationReason($data),
         );
     }
 
@@ -240,7 +253,17 @@ class YooKassaPaymentGateway implements PaymentGatewayInterface
             ] : null,
             'created_at' => $data['created_at'] ?? null,
             'captured_at' => $data['captured_at'] ?? null,
+            'cancellation_details' => isset($data['cancellation_details']['reason'])
+                ? ['reason' => $this->cancellationReason($data)] : null,
         ], static fn (mixed $value): bool => $value !== null);
+    }
+
+    private function cancellationReason(array $data): ?string
+    {
+        $reason = trim((string) ($data['cancellation_details']['reason'] ?? ''));
+        $allowed = ['permission_revoked', 'insufficient_funds', 'issuer_unavailable', 'internal_timeout', 'general_decline', 'payment_method_limit_exceeded', 'card_expired', 'fraud_suspected'];
+
+        return in_array($reason, $allowed, true) ? $reason : ($reason === '' ? null : 'unknown');
     }
 
     private function isValidConfirmationUrl(string $url): bool

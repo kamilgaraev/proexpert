@@ -36,13 +36,13 @@ class CommercialCheckoutService
             $existing = CommercialOrder::query()
                 ->where('organization_id', $organization->getKey())
                 ->where('client_idempotency_key', (string) $input['client_idempotency_key'])
-                ->with('payment')
+                ->with('latestPayment')
                 ->first();
 
             if ($existing !== null) {
                 $this->assertSameExistingRequest($existing, $input);
 
-                return [$existing, $existing->payment, false];
+                return [$existing, $existing->latestPayment, false];
             }
 
             if ((bool) $input['full_suite'] && $input['target_package_slugs'] !== []) {
@@ -76,6 +76,7 @@ class CommercialCheckoutService
 
             $account ??= OrganizationCommercialAccount::query()->create([
                 'organization_id' => $organization->getKey(),
+                'responsible_user_id' => $user->getKey(),
                 'status' => 'free',
                 'offer_type' => 'packages',
                 'quote_version' => (int) $quote['quote_version'],
@@ -100,8 +101,10 @@ class CommercialCheckoutService
                 'auto_renew_consent' => (bool) $input['auto_renew_consent'],
                 'client_idempotency_key' => (string) $input['client_idempotency_key'],
             ]);
-            $payment = $order->payment()->create([
+            $payment = $order->payments()->create([
                 'provider' => 'yookassa',
+                'role' => 'initial',
+                'attempt_number' => 1,
                 'provider_status' => 'created',
                 'amount_minor' => $order->amount_minor,
                 'currency' => $order->currency,
