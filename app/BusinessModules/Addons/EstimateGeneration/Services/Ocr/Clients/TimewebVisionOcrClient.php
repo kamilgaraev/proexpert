@@ -148,7 +148,7 @@ final class TimewebVisionOcrClient implements OcrClientInterface
             $httpCode = null;
             $payload = [];
             try {
-                $this->markSentOrRelease($physicalContext->attemptId);
+                $this->claimWireOrFail($physicalContext->attemptId);
                 $response = Http::timeout($effective?->timeoutSeconds('classification') ?? (int) config('estimate-generation.ocr.timeout_seconds', 60))
                     ->acceptJson()->asJson()->withToken($apiKey)
                     ->post($baseUri.'/chat/completions', $requestPayload);
@@ -268,19 +268,26 @@ final class TimewebVisionOcrClient implements OcrClientInterface
         );
     }
 
-    private function markSentOrRelease(string $attemptId): void
+    private function claimWireOrFail(string $attemptId): void
     {
         if ($this->budgetAuthorizer === null) {
             return;
         }
         try {
-            $this->budgetAuthorizer->markSent($attemptId);
+            $claimed = $this->budgetAuthorizer->claimWire($attemptId);
         } catch (Throwable $exception) {
             try {
                 $this->budgetAuthorizer->releaseBeforeWire($attemptId);
             } catch (Throwable) {
             }
             throw $exception;
+        }
+        if (! $claimed) {
+            throw new OcrProviderException(
+                'estimate_generation.ocr_wire_replay_forbidden',
+                409,
+                'wire_replay_forbidden',
+            );
         }
     }
 

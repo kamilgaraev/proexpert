@@ -46,7 +46,16 @@ final class NormativeMatchingWorkflowTest extends TestCase
                     throw new NormativeRerankingUnavailable;
                 }
 
-                return new NormativeRerankResultData('1', ['1'], ['unit_match'], ['norm:1'], 0.8, 'reranked', 'normative-rerank-v1', 'fake');
+                return new NormativeRerankResultData(
+                    '1',
+                    ['1'],
+                    ['unit_match'],
+                    ['norm:1'],
+                    0.8,
+                    $this->mode === 'review' ? 'requires_review' : 'reranked',
+                    'normative-rerank-v1',
+                    'fake',
+                );
             }
         };
         $workflow = new NormativeMatchingWorkflow(new NormativeRetrievalService($source, new NormativeHardGate, 16, null), $reranker);
@@ -55,11 +64,14 @@ final class NormativeMatchingWorkflowTest extends TestCase
 
         self::assertSame($expected, $result->status);
         self::assertSame($expectedCalls, $calls);
+        if ($mode === 'review') {
+            self::assertSame(['normative_match_low_confidence'], $result->blockingIssues);
+        }
     }
 
     public static function statuses(): array
     {
-        return [['empty', true, 'review_required', 0], ['ok', false, 'retrieval_only', 0], ['ok', true, 'reranked', 1], ['unavailable', true, 'unavailable', 1]];
+        return [['empty', true, 'review_required', 0], ['ok', false, 'retrieval_only', 0], ['ok', true, 'reranked', 1], ['review', true, 'review_required', 1], ['unavailable', true, 'unavailable', 1]];
     }
 
     private function intent(): WorkIntentData

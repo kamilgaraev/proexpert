@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Observability;
 
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrDocumentInput;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Clients\TimewebVisionOcrClient;
@@ -43,6 +45,23 @@ final class TimewebVisionUsageAttemptTest extends TestCase
         Facade::setFacadeApplication(null);
         Container::setInstance(null);
         parent::tearDown();
+    }
+
+    #[Test]
+    public function replay_without_claim_never_calls_ocr_wire(): void
+    {
+        $this->configure(['model-a'], 1);
+        Http::fake();
+        $client = new TimewebVisionOcrClient($this->store(), null, new RejectingOcrWireClaimAuthorizer);
+
+        try {
+            $client->recognize($this->input());
+            self::fail('Replay without claim reached OCR wire.');
+        } catch (OcrProviderException $exception) {
+            self::assertSame('wire_replay_forbidden', $exception->providerCode);
+        }
+
+        Http::assertNothingSent();
     }
 
     #[Test]
@@ -182,4 +201,26 @@ final class RecordingAiUsageStore implements AiUsageStore
     {
         $this->rows[] = $data;
     }
+}
+
+final class RejectingOcrWireClaimAuthorizer implements AiAttemptAuthorizer
+{
+    public function authorize(
+        AiOperationContext $context,
+        string $provider,
+        string $model,
+        int $maxInputTokens,
+        int $maxOutputTokens,
+        int $imageCount = 0,
+        int $pageCount = 0,
+    ): AiPriceSnapshot {
+        return AiPriceSnapshot::fromArray([]);
+    }
+
+    public function claimWire(string $attemptId): bool
+    {
+        return false;
+    }
+
+    public function releaseBeforeWire(string $attemptId): void {}
 }

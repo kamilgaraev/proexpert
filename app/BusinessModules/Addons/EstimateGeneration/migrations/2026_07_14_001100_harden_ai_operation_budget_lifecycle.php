@@ -49,9 +49,9 @@ SET status = CASE WHEN status = 'reserved' THEN 'authorized' ELSE status END,
 SQL);
         DB::statement('ALTER TABLE estimate_generation_ai_budget_reservations ALTER COLUMN immutable_fingerprint SET NOT NULL');
         DB::statement('ALTER TABLE estimate_generation_ai_budget_reservations ALTER COLUMN expires_at SET NOT NULL');
-        DB::statement("ALTER TABLE estimate_generation_ai_budget_reservations ADD CONSTRAINT eg_budget_reservation_status_ck CHECK (status IN ('authorized','sent_pending','pending_reconciliation','settled','released','failed'))");
+        DB::statement("ALTER TABLE estimate_generation_ai_budget_reservations ADD CONSTRAINT eg_budget_reservation_status_ck CHECK (status IN ('authorized','sent_pending','reconciliation_required','settled','released'))");
         DB::statement("ALTER TABLE estimate_generation_ai_budget_reservations ADD CONSTRAINT eg_budget_reservation_fingerprint_ck CHECK (immutable_fingerprint ~ '^sha256:[a-f0-9]{64}$')");
-        DB::statement("ALTER TABLE estimate_generation_ai_budget_reservations ADD CONSTRAINT eg_budget_reservation_state_ck CHECK ((status IN ('authorized','sent_pending','pending_reconciliation') AND actual_amount IS NULL AND settled_at IS NULL) OR (status IN ('settled','released','failed') AND actual_amount IS NOT NULL AND settled_at IS NOT NULL))");
+        DB::statement("ALTER TABLE estimate_generation_ai_budget_reservations ADD CONSTRAINT eg_budget_reservation_state_ck CHECK ((status IN ('authorized','sent_pending','reconciliation_required') AND actual_amount IS NULL AND settled_at IS NULL) OR (status = 'settled' AND actual_amount IS NOT NULL AND settled_at IS NOT NULL) OR (status = 'released' AND actual_amount = 0 AND settled_at IS NOT NULL))");
 
         DB::statement('DROP FUNCTION IF EXISTS eg_reserve_ai_budget(uuid, bigint, bigint, bigint, bigint, numeric, text, jsonb)');
         DB::statement('DROP FUNCTION IF EXISTS eg_settle_ai_budget(uuid, numeric, text)');
@@ -126,13 +126,13 @@ BEGIN
     OR v_global.currency <> p_currency OR v_organization.currency <> p_currency THEN
     RAISE EXCEPTION 'estimate_generation_ai_budget_snapshot_invalid';
   END IF;
-  SELECT COALESCE(sum(CASE WHEN status IN ('settled','failed') THEN actual_amount WHEN status = 'released' THEN 0 ELSE reserved_amount END), 0)
+  SELECT COALESCE(sum(CASE WHEN status = 'settled' THEN actual_amount WHEN status = 'released' THEN 0 ELSE reserved_amount END), 0)
     INTO v_global_daily FROM estimate_generation_ai_budget_reservations WHERE daily_period = CURRENT_DATE AND currency = p_currency;
-  SELECT COALESCE(sum(CASE WHEN status IN ('settled','failed') THEN actual_amount WHEN status = 'released' THEN 0 ELSE reserved_amount END), 0)
+  SELECT COALESCE(sum(CASE WHEN status = 'settled' THEN actual_amount WHEN status = 'released' THEN 0 ELSE reserved_amount END), 0)
     INTO v_global_monthly FROM estimate_generation_ai_budget_reservations WHERE monthly_period = date_trunc('month', CURRENT_DATE)::date AND currency = p_currency;
-  SELECT COALESCE(sum(CASE WHEN status IN ('settled','failed') THEN actual_amount WHEN status = 'released' THEN 0 ELSE reserved_amount END), 0)
+  SELECT COALESCE(sum(CASE WHEN status = 'settled' THEN actual_amount WHEN status = 'released' THEN 0 ELSE reserved_amount END), 0)
     INTO v_org_daily FROM estimate_generation_ai_budget_reservations WHERE organization_id = p_organization AND daily_period = CURRENT_DATE AND currency = p_currency;
-  SELECT COALESCE(sum(CASE WHEN status IN ('settled','failed') THEN actual_amount WHEN status = 'released' THEN 0 ELSE reserved_amount END), 0)
+  SELECT COALESCE(sum(CASE WHEN status = 'settled' THEN actual_amount WHEN status = 'released' THEN 0 ELSE reserved_amount END), 0)
     INTO v_org_monthly FROM estimate_generation_ai_budget_reservations WHERE organization_id = p_organization AND monthly_period = date_trunc('month', CURRENT_DATE)::date AND currency = p_currency;
   IF v_global_daily + p_amount > v_global.daily_budget OR v_global_monthly + p_amount > v_global.monthly_budget
     OR v_org_daily + p_amount > v_organization.daily_budget OR v_org_monthly + p_amount > v_organization.monthly_budget THEN
@@ -152,7 +152,7 @@ CREATE FUNCTION eg_mark_ai_budget_sent(p_attempt uuid) RETURNS boolean LANGUAGE 
 BEGIN
   UPDATE estimate_generation_ai_budget_reservations SET status = 'sent_pending', expires_at = now() + interval '24 hours'
     WHERE attempt_id = p_attempt AND status = 'authorized';
-  IF NOT FOUND AND NOT EXISTS (SELECT 1 FROM estimate_generation_ai_budget_reservations WHERE attempt_id = p_attempt AND status IN ('sent_pending','pending_reconciliation','settled','failed')) THEN
+  IF NOT FOUND AND NOT EXISTS (SELECT 1 FROM estimate_generation_ai_budget_reservations WHERE attempt_id = p_attempt AND status IN ('sent_pending','reconciliation_required','settled')) THEN
     RAISE EXCEPTION 'estimate_generation_ai_budget_send_state_invalid';
   END IF;
   RETURN true;
@@ -170,9 +170,9 @@ END; $$;
 
 CREATE FUNCTION eg_mark_ai_budget_reconciliation(p_attempt uuid) RETURNS boolean LANGUAGE plpgsql AS $$
 BEGIN
-  UPDATE estimate_generation_ai_budget_reservations SET status = 'pending_reconciliation', expires_at = now() + interval '24 hours'
-    WHERE attempt_id = p_attempt AND status IN ('authorized','sent_pending');
-  IF NOT FOUND AND NOT EXISTS (SELECT 1 FROM estimate_generation_ai_budget_reservations WHERE attempt_id = p_attempt AND status IN ('pending_reconciliation','settled','failed')) THEN
+  UPDATE estimate_generation_ai_budget_reservations SET status = 'reconciliation_required', expires_at = now()
+    WHERE attempt_id = p_attempt AND status = 'sent_pending';
+  IF NOT FOUND AND NOT EXISTS (SELECT 1 FROM estimate_generation_ai_budget_reservations WHERE attempt_id = p_attempt AND status IN ('reconciliation_required','settled')) THEN
     RAISE EXCEPTION 'estimate_generation_ai_budget_reconciliation_state_invalid';
   END IF;
   RETURN true;
@@ -181,7 +181,7 @@ END; $$;
 CREATE FUNCTION eg_settle_ai_budget(p_attempt uuid, p_actual numeric, p_currency text) RETURNS boolean LANGUAGE plpgsql AS $$
 BEGIN
   UPDATE estimate_generation_ai_budget_reservations SET status = 'settled', actual_amount = p_actual, settled_at = now(), expires_at = now()
-    WHERE attempt_id = p_attempt AND currency = p_currency AND status IN ('authorized','sent_pending','pending_reconciliation') AND p_actual BETWEEN 0 AND reserved_amount;
+    WHERE attempt_id = p_attempt AND currency = p_currency AND status IN ('sent_pending','reconciliation_required') AND p_actual BETWEEN 0 AND reserved_amount;
   IF NOT FOUND AND NOT EXISTS (SELECT 1 FROM estimate_generation_ai_budget_reservations WHERE attempt_id = p_attempt AND status = 'settled' AND currency = p_currency AND actual_amount = p_actual) THEN
     RAISE EXCEPTION 'estimate_generation_ai_budget_settlement_invalid';
   END IF;
@@ -193,13 +193,14 @@ DECLARE v_count integer;
 BEGIN
   WITH expired AS (
     SELECT reservation_id, status FROM estimate_generation_ai_budget_reservations
-    WHERE status IN ('authorized','sent_pending','pending_reconciliation') AND expires_at <= now()
+    WHERE status IN ('authorized','sent_pending') AND expires_at <= now()
     ORDER BY expires_at LIMIT LEAST(GREATEST(p_limit, 1), 1000) FOR UPDATE SKIP LOCKED
   )
   UPDATE estimate_generation_ai_budget_reservations reservations
-    SET status = CASE WHEN expired.status = 'authorized' THEN 'released' ELSE 'failed' END,
-        actual_amount = CASE WHEN expired.status = 'authorized' THEN 0 ELSE reservations.reserved_amount END,
-        settled_at = now(), expires_at = now()
+    SET status = CASE WHEN expired.status = 'authorized' THEN 'released' ELSE 'reconciliation_required' END,
+        actual_amount = CASE WHEN expired.status = 'authorized' THEN 0 ELSE NULL END,
+        settled_at = CASE WHEN expired.status = 'authorized' THEN now() ELSE NULL END,
+        expires_at = now()
     FROM expired WHERE reservations.reservation_id = expired.reservation_id;
   GET DIAGNOSTICS v_count = ROW_COUNT;
   RETURN v_count;
@@ -219,13 +220,13 @@ SQL);
             DB::statement('ALTER TABLE estimate_generation_ai_budget_reservations DROP CONSTRAINT IF EXISTS eg_budget_reservation_fingerprint_ck');
             DB::statement(<<<'SQL'
 UPDATE estimate_generation_ai_budget_reservations
-SET status = CASE WHEN status IN ('authorized', 'sent_pending', 'pending_reconciliation') THEN 'reserved' ELSE 'settled' END,
+SET status = CASE WHEN status IN ('authorized', 'sent_pending', 'reconciliation_required', 'failed') THEN 'reserved' ELSE 'settled' END,
     actual_amount = CASE
-        WHEN status IN ('authorized', 'sent_pending', 'pending_reconciliation') THEN NULL
+        WHEN status IN ('authorized', 'sent_pending', 'reconciliation_required', 'failed') THEN NULL
         WHEN status = 'released' THEN 0
-        ELSE COALESCE(actual_amount, reserved_amount)
+        ELSE actual_amount
     END,
-    settled_at = CASE WHEN status IN ('authorized', 'sent_pending', 'pending_reconciliation') THEN NULL ELSE COALESCE(settled_at, now()) END
+    settled_at = CASE WHEN status IN ('authorized', 'sent_pending', 'reconciliation_required', 'failed') THEN NULL ELSE settled_at END
 SQL);
             DB::statement("ALTER TABLE estimate_generation_ai_budget_reservations ADD CONSTRAINT eg_budget_reservation_status_ck CHECK (status IN ('reserved','settled'))");
             DB::statement("ALTER TABLE estimate_generation_ai_budget_reservations ADD CONSTRAINT eg_budget_reservation_state_ck CHECK ((status = 'reserved' AND actual_amount IS NULL AND settled_at IS NULL) OR (status = 'settled' AND actual_amount IS NOT NULL AND settled_at IS NOT NULL))");

@@ -62,9 +62,11 @@ final readonly class AiBudgetGuard
         }
     }
 
-    public function markSent(string $attemptId): void
+    public function claimWire(string $attemptId): bool
     {
-        $this->database->selectOne('SELECT eg_mark_ai_budget_sent(?) AS marked', [$attemptId]);
+        $result = $this->database->selectOne('SELECT eg_claim_ai_budget_wire(?) AS claimed', [$attemptId]);
+
+        return is_object($result) && in_array($result->claimed, [true, 1, '1', 't'], true);
     }
 
     public function releaseBeforeWire(string $attemptId): void
@@ -85,5 +87,13 @@ final readonly class AiBudgetGuard
         $this->database->selectOne('SELECT eg_settle_ai_budget(?, ?, ?) AS settled', [
             $attemptId, $actual->amount, $actual->currency,
         ]);
+    }
+
+    public function reconcileExpired(int $limit): int
+    {
+        $bounded = max(1, min(1000, $limit));
+        $result = $this->database->selectOne('SELECT eg_reconcile_expired_ai_budgets(?) AS reconciled', [$bounded]);
+
+        return is_object($result) ? max(0, (int) $result->reconciled) : 0;
     }
 }

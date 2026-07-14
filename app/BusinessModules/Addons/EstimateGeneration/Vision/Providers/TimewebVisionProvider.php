@@ -82,7 +82,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
             $reportedModel = null;
             $analysis = null;
             try {
-                $this->markSentOrRelease($physicalContext->attemptId);
+                $this->claimWireOrFail($physicalContext->attemptId);
                 $timeoutSeconds = $effective?->timeoutSeconds('vision')
                     ?? max(1, min(120, (int) config('estimate-generation.vision.timeout_seconds', 60)));
                 $response = Http::timeout($timeoutSeconds)
@@ -153,6 +153,9 @@ final readonly class TimewebVisionProvider implements VisionProvider
             } catch (VisionContractException $exception) {
                 $status = 'malformed_response';
                 $lastException = $exception;
+            } catch (VisionProviderException $exception) {
+                $status = 'connection_failed';
+                $lastException = $exception;
             } catch (ConnectionException $exception) {
                 $status = 'connection_failed';
                 $lastException = new VisionProviderException('vision_connection_failed', retryable: true, previous: $exception);
@@ -182,19 +185,22 @@ final readonly class TimewebVisionProvider implements VisionProvider
         throw new VisionProviderException('vision_provider_failed');
     }
 
-    private function markSentOrRelease(string $attemptId): void
+    private function claimWireOrFail(string $attemptId): void
     {
         if ($this->budgetAuthorizer === null) {
             return;
         }
         try {
-            $this->budgetAuthorizer->markSent($attemptId);
+            $claimed = $this->budgetAuthorizer->claimWire($attemptId);
         } catch (Throwable $exception) {
             try {
                 $this->budgetAuthorizer->releaseBeforeWire($attemptId);
             } catch (Throwable) {
             }
             throw $exception;
+        }
+        if (! $claimed) {
+            throw new VisionProviderException('vision_wire_replay_forbidden');
         }
     }
 

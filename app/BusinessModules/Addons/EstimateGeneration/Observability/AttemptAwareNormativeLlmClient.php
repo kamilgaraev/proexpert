@@ -78,7 +78,7 @@ final readonly class AttemptAwareNormativeLlmClient
             $httpCode = null;
             $response = [];
             try {
-                $this->markSentOrRelease($attemptContext->attemptId);
+                $this->claimWireOrFail($attemptContext->attemptId);
                 $response = $this->wire->call($model, $messages, $options);
                 $reportedModel = $response['model'] ?? null;
                 $content = trim((string) ($response['content'] ?? ''));
@@ -99,6 +99,9 @@ final readonly class AttemptAwareNormativeLlmClient
                 $status = $exception->attemptStatus;
                 $httpCode = $exception->httpCode;
                 $last = $exception;
+                if ($exception->attemptStatus === 'wire_replay_forbidden') {
+                    throw $exception;
+                }
             } catch (Throwable $exception) {
                 $last = $exception;
             } finally {
@@ -110,19 +113,22 @@ final readonly class AttemptAwareNormativeLlmClient
         throw $last ?? new InvalidArgumentException('No reranker models configured.');
     }
 
-    private function markSentOrRelease(string $attemptId): void
+    private function claimWireOrFail(string $attemptId): void
     {
         if ($this->budgetAuthorizer === null) {
             return;
         }
         try {
-            $this->budgetAuthorizer->markSent($attemptId);
+            $claimed = $this->budgetAuthorizer->claimWire($attemptId);
         } catch (Throwable $exception) {
             try {
                 $this->budgetAuthorizer->releaseBeforeWire($attemptId);
             } catch (Throwable) {
             }
             throw $exception;
+        }
+        if (! $claimed) {
+            throw new RerankWireException('wire_replay_forbidden');
         }
     }
 

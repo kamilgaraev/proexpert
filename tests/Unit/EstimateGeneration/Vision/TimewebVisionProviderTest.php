@@ -396,6 +396,22 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
+    public function replay_without_wire_claim_fails_closed_before_provider_call(): void
+    {
+        $this->authorizer->claimGranted = false;
+        Http::fake();
+
+        try {
+            $this->provider()->analyze($this->input());
+            self::fail('Replay without a wire claim reached the provider.');
+        } catch (VisionProviderException $exception) {
+            self::assertSame('vision_wire_replay_forbidden', $exception->reason);
+        }
+
+        Http::assertNothingSent();
+    }
+
+    #[Test]
     public function authorizer_pricing_snapshot_is_attached_and_unavailable_pricing_does_not_drop_usage(): void
     {
         Http::fake(fn () => Http::response($this->response()));
@@ -476,6 +492,8 @@ final class TestAiAttemptAuthorizer implements AiAttemptAuthorizer
 {
     public bool $available = true;
 
+    public bool $claimGranted = true;
+
     public function authorize(
         AiOperationContext $context,
         string $provider,
@@ -498,7 +516,10 @@ final class TestAiAttemptAuthorizer implements AiAttemptAuthorizer
         ] : []);
     }
 
-    public function markSent(string $attemptId): void {}
+    public function claimWire(string $attemptId): bool
+    {
+        return $this->claimGranted;
+    }
 
     public function releaseBeforeWire(string $attemptId): void {}
 }

@@ -4,17 +4,88 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Observability;
 
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AttemptAwareNormativeLlmClient;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireException;
+use Illuminate\Config\Repository;
+use Illuminate\Container\Container;
+use Illuminate\Support\Facades\Facade;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 
 final class AttemptAwareNormativeLlmClientTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $app = new Container;
+        Container::setInstance($app);
+        $app->instance('config', new Repository);
+        $app->instance('log', new class
+        {
+            public function error(string $message, array $context = []): void {}
+        });
+        Facade::setFacadeApplication($app);
+    }
+
+    protected function tearDown(): void
+    {
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication(null);
+        Container::setInstance(null);
+        parent::tearDown();
+    }
+
+    #[Test]
+    public function replay_without_claim_never_calls_reranker_wire(): void
+    {
+        $wire = new class implements RerankWireClient
+        {
+            public int $calls = 0;
+
+            public function provider(): string
+            {
+                return 'timeweb';
+            }
+
+            public function call(string $model, array $messages, array $options): array
+            {
+                $this->calls++;
+
+                return ['content' => '{}', 'model' => $model, 'usage_available' => false];
+            }
+        };
+        $store = new class implements AiUsageStore
+        {
+            public function record(AiUsageData $data): void {}
+        };
+        $authorizer = new RejectingWireClaimAuthorizer;
+        $client = new AttemptAwareNormativeLlmClient(
+            $wire,
+            $store,
+            ['model-a', 'model-b'],
+            [],
+            null,
+            null,
+            $authorizer,
+        );
+
+        try {
+            $client->chat([], [], $this->context('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7c'));
+            self::fail('Replay without claim reached reranker wire.');
+        } catch (RerankWireException $exception) {
+            self::assertSame('wire_replay_forbidden', $exception->attemptStatus);
+        }
+        self::assertSame(0, $wire->calls);
+        self::assertSame(1, $authorizer->claims);
+    }
+
     #[Test]
     public function each_model_wire_attempt_gets_one_row_and_new_claim_gets_new_ids(): void
     {
@@ -206,4 +277,30 @@ final class AttemptAwareNormativeLlmClientTest extends TestCase
         return ['organization_id' => 1, 'project_id' => 2, 'session_id' => 3, 'checkpoint_claim_token' => $claim,
             'input_version' => 'sha256:abc', 'work_item_key' => 'work-1', 'logical_attempt' => 1];
     }
+}
+
+final class RejectingWireClaimAuthorizer implements AiAttemptAuthorizer
+{
+    public int $claims = 0;
+
+    public function authorize(
+        AiOperationContext $context,
+        string $provider,
+        string $model,
+        int $maxInputTokens,
+        int $maxOutputTokens,
+        int $imageCount = 0,
+        int $pageCount = 0,
+    ): AiPriceSnapshot {
+        return AiPriceSnapshot::fromArray([]);
+    }
+
+    public function claimWire(string $attemptId): bool
+    {
+        $this->claims++;
+
+        return false;
+    }
+
+    public function releaseBeforeWire(string $attemptId): void {}
 }

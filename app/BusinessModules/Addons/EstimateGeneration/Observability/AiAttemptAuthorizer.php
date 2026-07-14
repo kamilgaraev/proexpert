@@ -16,7 +16,7 @@ interface AiAttemptAuthorizer
         int $pageCount = 0,
     ): AiPriceSnapshot;
 
-    public function markSent(string $attemptId): void;
+    public function claimWire(string $attemptId): bool;
 
     public function releaseBeforeWire(string $attemptId): void;
 }

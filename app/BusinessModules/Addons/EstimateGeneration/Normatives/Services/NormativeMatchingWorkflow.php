@@ -28,6 +28,14 @@ readonly class NormativeMatchingWorkflow
         } catch (NormativeRerankingUnavailable) {
             return new NormativeWorkflowResultData('unavailable', $set, null, ['normative_reranking_unavailable']);
         }
+        if ($reranked->status === 'requires_review') {
+            return new NormativeWorkflowResultData(
+                'review_required',
+                $set,
+                $reranked,
+                ['normative_match_low_confidence'],
+            );
+        }
 
         return new NormativeWorkflowResultData('reranked', $set, $reranked, []);
     }

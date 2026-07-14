@@ -41,9 +41,9 @@ final readonly class AiAttemptBudgetAuthorizer implements AiAttemptAuthorizer
         return $price;
     }
 
-    public function markSent(string $attemptId): void
+    public function claimWire(string $attemptId): bool
     {
-        $this->budgets->markSent($attemptId);
+        return $this->budgets->claimWire($attemptId);
     }
 
     public function releaseBeforeWire(string $attemptId): void
