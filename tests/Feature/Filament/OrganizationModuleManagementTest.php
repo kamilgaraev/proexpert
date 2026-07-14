@@ -120,6 +120,7 @@ class OrganizationModuleManagementTest extends TestCase
             'subject_id' => $organization->id,
         ]);
         $this->assertSame('sync_entitlements', $event->context['operation']);
+        $this->assertArrayNotHasKey('package_repair', $event->context);
     }
 
     public function test_module_resources_expose_safe_operations_without_direct_mutation(): void
@@ -165,7 +166,7 @@ class OrganizationModuleManagementTest extends TestCase
         $organization = Organization::factory()->create();
         $module = Module::query()->create([
             'name' => 'Quality Control',
-            'slug' => 'quality-control-' . $organization->id,
+            'slug' => 'quality-control-'.$organization->id,
             'version' => '1.0.0',
             'type' => 'feature',
             'billing_model' => 'subscription',

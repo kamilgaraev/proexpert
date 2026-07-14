@@ -274,7 +274,6 @@ final class ModuleAdminActionService
         return DB::transaction(function () use ($organization, $actor): ?ActivityEvent {
             $beforeCounts = $this->organizationEntitlementCounts($organization);
             $subscriptionSync = $this->subscriptionModuleSyncService->ensureBundledModulesSyncedForOrganization((int) $organization->id);
-            $packageRepair = $this->subscriptionModuleSyncService->repairPackageModuleActivationsForOrganization((int) $organization->id);
             $this->accessController->clearAccessCache((int) $organization->id);
             $organization->refresh();
 
@@ -293,7 +292,6 @@ final class ModuleAdminActionService
                 context: [
                     'operation' => 'sync_entitlements',
                     'subscription_sync' => $subscriptionSync,
-                    'package_repair' => $packageRepair,
                 ],
             );
         });
@@ -311,9 +309,9 @@ final class ModuleAdminActionService
     }
 
     /**
-     * @param array<string, mixed> $before
-     * @param array<string, mixed> $after
-     * @param array<string, mixed> $context
+     * @param  array<string, mixed>  $before
+     * @param  array<string, mixed>  $after
+     * @param  array<string, mixed>  $context
      */
     private function recordActivationAction(
         SystemAdmin $actor,

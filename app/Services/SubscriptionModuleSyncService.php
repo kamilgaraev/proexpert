@@ -3,13 +3,10 @@
 namespace App\Services;
 
 use App\Models\Module;
-use App\Models\Organization;
 use App\Models\OrganizationModuleActivation;
 use App\Models\OrganizationPackageSubscription;
 use App\Models\OrganizationSubscription;
 use App\Models\SubscriptionPlan;
-use App\Modules\Core\AccessController;
-use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Modules\PackageCatalogService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -20,7 +17,6 @@ use function trans_message;
 class SubscriptionModuleSyncService
 {
     public function __construct(
-        private readonly OrganizationEntitlementService $entitlementService,
         private readonly PackageCatalogService $packageCatalog
     ) {}
 
@@ -278,112 +274,6 @@ class SubscriptionModuleSyncService
         return $this->syncModulesOnSubscribe($subscription);
     }
 
-    public function repairPackageModuleActivations(?int $organizationId = null): array
-    {
-        $organizationIds = $organizationId !== null
-            ? Organization::query()->whereKey($organizationId)->pluck('id')
-            : $this->getOrganizationsWithActivePackageEntitlements();
-
-        $result = [
-            'organizations_count' => 0,
-            'created_count' => 0,
-            'restored_count' => 0,
-            'skipped_count' => 0,
-            'missing_modules_count' => 0,
-        ];
-
-        foreach ($organizationIds as $id) {
-            $organizationResult = $this->repairPackageModuleActivationsForOrganization((int) $id);
-            $result['organizations_count']++;
-            $result['created_count'] += $organizationResult['created_count'];
-            $result['restored_count'] += $organizationResult['restored_count'];
-            $result['skipped_count'] += $organizationResult['skipped_count'];
-            $result['missing_modules_count'] += $organizationResult['missing_modules_count'];
-        }
-
-        return $result;
-    }
-
-    public function repairPackageModuleActivationsForOrganization(int $organizationId): array
-    {
-        $sources = $this->entitlementService->getPackageModuleSources($organizationId);
-
-        if ($sources === []) {
-            app(AccessController::class)->clearAccessCache($organizationId);
-
-            return [
-                'created_count' => 0,
-                'restored_count' => 0,
-                'skipped_count' => 0,
-                'missing_modules_count' => 0,
-            ];
-        }
-
-        $modules = Module::query()
-            ->where('is_active', true)
-            ->whereIn('slug', array_keys($sources))
-            ->get()
-            ->keyBy('slug');
-
-        $result = [
-            'created_count' => 0,
-            'restored_count' => 0,
-            'skipped_count' => 0,
-            'missing_modules_count' => 0,
-        ];
-
-        DB::transaction(function () use ($organizationId, $sources, $modules, &$result): void {
-            foreach ($sources as $moduleSlug => $source) {
-                $module = $modules->get($moduleSlug);
-
-                if (! $module instanceof Module) {
-                    $result['missing_modules_count']++;
-
-                    continue;
-                }
-
-                $existingActivation = OrganizationModuleActivation::query()
-                    ->where('organization_id', $organizationId)
-                    ->where('module_id', $module->id)
-                    ->first();
-
-                $attributes = [
-                    'organization_id' => $organizationId,
-                    'module_id' => $module->id,
-                    'subscription_id' => $source['subscription_id'] ?? null,
-                    'is_bundled_with_plan' => false,
-                    'status' => 'active',
-                    'activated_at' => $existingActivation?->activated_at ?? now(),
-                    'expires_at' => $source['expires_at'] ?? null,
-                    'cancelled_at' => null,
-                    'cancellation_reason' => null,
-                    'paid_amount' => 0,
-                    'module_settings' => $existingActivation?->module_settings ?? [],
-                ];
-
-                if (! $existingActivation) {
-                    OrganizationModuleActivation::create($attributes);
-                    $result['created_count']++;
-
-                    continue;
-                }
-
-                if ($this->activationNeedsRepair($existingActivation, $attributes)) {
-                    $existingActivation->update($attributes);
-                    $result['restored_count']++;
-
-                    continue;
-                }
-
-                $result['skipped_count']++;
-            }
-        });
-
-        app(AccessController::class)->clearAccessCache($organizationId);
-
-        return $result;
-    }
-
     public function getBundledModulesForPlan(string $planSlug): array
     {
         $plan = SubscriptionPlan::where('slug', $planSlug)->first();
@@ -405,47 +295,6 @@ class SubscriptionModuleSyncService
                 ];
             })
             ->toArray();
-    }
-
-    private function getOrganizationsWithActivePackageEntitlements(): Collection
-    {
-        $packageOrganizationIds = OrganizationPackageSubscription::query()
-            ->standalone()
-            ->active()
-            ->whereIn('package_slug', collect($this->packageCatalog->allPackages())->pluck('slug'))
-            ->pluck('organization_id');
-
-        return $packageOrganizationIds->unique()->values();
-    }
-
-    private function activationNeedsRepair(OrganizationModuleActivation $activation, array $attributes): bool
-    {
-        if (! $activation->isActive()) {
-            return true;
-        }
-
-        if ((int) $activation->subscription_id !== (int) ($attributes['subscription_id'] ?? 0)) {
-            return true;
-        }
-
-        if ((bool) $activation->is_bundled_with_plan !== (bool) $attributes['is_bundled_with_plan']) {
-            return true;
-        }
-
-        if ($activation->status !== 'active' || $activation->cancelled_at !== null || $activation->cancellation_reason !== null) {
-            return true;
-        }
-
-        return $this->normalizeDateValue($activation->expires_at) !== $this->normalizeDateValue($attributes['expires_at'] ?? null);
-    }
-
-    private function normalizeDateValue(mixed $value): ?string
-    {
-        if ($value instanceof \DateTimeInterface) {
-            return $value->format('Y-m-d H:i:s');
-        }
-
-        return is_string($value) ? $value : null;
     }
 
     private function activateModuleForSubscription(

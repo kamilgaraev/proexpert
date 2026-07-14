@@ -12,7 +12,6 @@ use App\Models\OrganizationSubscription;
 use App\Models\SubscriptionPlan;
 use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Modules\PackageCatalogService;
-use App\Services\SubscriptionModuleSyncService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
@@ -135,6 +134,7 @@ class OrganizationPackageEntitlementTest extends TestCase
             'budget-estimates',
             $this->entitlements()->getEffectiveModuleSlugs($this->organization->id)
         );
+        $this->assertSame(0, OrganizationModuleActivation::count());
         $this->assertSame(
             'finance-contracts',
             $this->entitlements()->getPackageModuleSources($this->organization->id)['budget-estimates']['package_slug']
@@ -146,6 +146,7 @@ class OrganizationPackageEntitlementTest extends TestCase
             'budget-estimates',
             $this->entitlements()->getEffectiveModuleSlugs($this->organization->id)
         );
+        $this->assertSame(0, OrganizationModuleActivation::count());
 
         $finance->update(['expires_at' => now()->subDay()]);
 
@@ -153,13 +154,34 @@ class OrganizationPackageEntitlementTest extends TestCase
             'budget-estimates',
             $this->entitlements()->getEffectiveModuleSlugs($this->organization->id)
         );
+        $this->assertSame(0, OrganizationModuleActivation::count());
     }
 
-    public function test_direct_module_activation_remains_an_independent_access_source(): void
+    public function test_deleted_package_row_revokes_access_immediately_without_materialization(): void
+    {
+        $this->createPackageModules('estimates-norms');
+        $package = $this->createPackageSubscription('estimates-norms', 'standard');
+
+        $this->assertContains(
+            'budget-estimates',
+            $this->entitlements()->getEffectiveModuleSlugs($this->organization->id)
+        );
+        $this->assertSame(0, OrganizationModuleActivation::count());
+
+        $package->delete();
+
+        $this->assertNotContains(
+            'budget-estimates',
+            $this->entitlements()->getEffectiveModuleSlugs($this->organization->id)
+        );
+        $this->assertSame(0, OrganizationModuleActivation::count());
+    }
+
+    public function test_indefinite_manual_activation_is_unchanged_by_package_access_operations(): void
     {
         $module = $this->createModules(['budget-estimates'])[0];
 
-        OrganizationModuleActivation::create([
+        $activation = OrganizationModuleActivation::create([
             'organization_id' => $this->organization->id,
             'module_id' => $module->id,
             'is_bundled_with_plan' => false,
@@ -167,48 +189,39 @@ class OrganizationPackageEntitlementTest extends TestCase
             'activated_at' => now(),
             'expires_at' => null,
             'paid_amount' => 0,
+            'module_settings' => ['source' => 'manual'],
         ]);
+        $package = $this->createPackageSubscription('estimates-norms', 'standard');
+        $activation->refresh();
+        $snapshot = $activation->getRawOriginal();
 
         $this->assertContains(
             'budget-estimates',
             $this->entitlements()->getEffectiveModuleSlugs($this->organization->id)
         );
-    }
-
-    public function test_repair_materializes_only_active_direct_package_modules(): void
-    {
-        $this->createPackageModules('estimates-norms');
-        $this->createPackageSubscription('estimates-norms', 'obsolete-tier');
-
-        $bundledOrganization = $this->createOrganization('Организация со старым пакетом');
-        $plan = $this->createPlan([]);
-        $legacySubscription = $this->createLegacySubscription($plan, $bundledOrganization->id);
-        OrganizationPackageSubscription::create([
-            'organization_id' => $bundledOrganization->id,
-            'subscription_id' => $legacySubscription->id,
-            'is_bundled_with_plan' => true,
-            'package_slug' => 'estimates-norms',
-            'tier' => 'standard',
-            'price_paid' => 0,
-            'activated_at' => now(),
-            'expires_at' => now()->addMonth(),
-        ]);
-
-        $result = app(SubscriptionModuleSyncService::class)->repairPackageModuleActivations();
-
-        $this->assertSame(2, $result['created_count']);
-        $this->assertSame(0, $result['restored_count']);
-        $this->assertSame(0, OrganizationModuleActivation::where('organization_id', $bundledOrganization->id)->count());
+        $package->update(['expires_at' => now()->subDay()]);
+        $this->entitlements()->getEffectiveModuleSlugs($this->organization->id);
+        $package->delete();
+        $this->entitlements()->getPackageModuleSources($this->organization->id);
 
         $this->assertSame(
-            2,
-            OrganizationModuleActivation::query()
-                ->where('organization_id', $this->organization->id)
-                ->whereNull('subscription_id')
-                ->where('is_bundled_with_plan', false)
-                ->where('status', 'active')
-                ->count()
+            $snapshot,
+            $activation->fresh()->getRawOriginal()
         );
+    }
+
+    public function test_package_access_has_no_materialization_command_or_service_api(): void
+    {
+        $adminService = file_get_contents(app_path('Services/Filament/ModuleAdminActionService.php'));
+
+        $this->assertIsString($adminService);
+        $this->assertFalse(method_exists(
+            \App\Services\SubscriptionModuleSyncService::class,
+            'repairPackageModuleActivations'
+        ));
+        $this->assertFileDoesNotExist(app_path('Console/Commands/RepairPackageModuleEntitlementsCommand.php'));
+        $this->assertStringNotContainsString('package_repair', $adminService);
+        $this->assertStringNotContainsString('repairPackageModuleActivations', $adminService);
     }
 
     private function entitlements(): OrganizationEntitlementService

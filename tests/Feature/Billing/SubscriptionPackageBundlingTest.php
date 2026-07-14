@@ -642,33 +642,6 @@ class SubscriptionPackageBundlingTest extends TestCase
         );
     }
 
-    public function test_repair_command_creates_missing_package_module_activations(): void
-    {
-        $this->createPackageModules('supply-warehouse', 'pro');
-
-        OrganizationPackageSubscription::create([
-            'organization_id' => $this->organization->id,
-            'package_slug' => 'supply-warehouse',
-            'tier' => 'pro',
-            'price_paid' => 7900,
-            'activated_at' => now(),
-            'expires_at' => now()->addDays(30),
-            'is_bundled_with_plan' => false,
-        ]);
-
-        $this->artisan('entitlements:repair-package-modules', [
-            'organizationId' => $this->organization->id,
-        ])->assertExitCode(0);
-
-        $basicWarehouseModule = Module::where('slug', 'basic-warehouse')->firstOrFail();
-
-        $this->assertDatabaseHas('organization_module_activations', [
-            'organization_id' => $this->organization->id,
-            'module_id' => $basicWarehouseModule->id,
-            'status' => 'active',
-        ]);
-    }
-
     private function createPlan(string $slug, array $includedPackages, int $price = 9900): SubscriptionPlan
     {
         return SubscriptionPlan::create([
