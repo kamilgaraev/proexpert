@@ -65,7 +65,7 @@ final class EstimateGenerationSettingsService
             }
 
             $snapshot = $data->snapshot();
-            $snapshotHash = hash('sha256', json_encode($snapshot, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+            $snapshotHash = SettingsSnapshotHash::calculate($snapshot);
             $snapshotId = (int) DB::table('estimate_generation_setting_snapshots')->insertGetId([
                 'scope' => $data->scope,
                 'organization_id' => $scopeOrganizationId,

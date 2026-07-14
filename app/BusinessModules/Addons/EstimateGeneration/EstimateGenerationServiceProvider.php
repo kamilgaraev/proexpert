@@ -116,6 +116,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeW
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\PostgresNormativeCandidateSource;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\Storage\EstimateSourceStorageService;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\SystemNormativePinClock;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPricingCatalog;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AttemptAwareNormativeLlmClient;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\EloquentAiUsageStore;
@@ -183,6 +184,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\SpreadsheetDocume
 use App\BusinessModules\Addons\EstimateGeneration\Services\ProjectDocumentNormativeReferenceExtractor;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimatorReadinessService;
 use App\BusinessModules\Addons\EstimateGeneration\Services\ResourceAssemblyService;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsService;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\CadGeometryProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionResponseBodyReader;
@@ -207,6 +210,21 @@ class EstimateGenerationServiceProvider extends ServiceProvider
 
     public function register(): void
     {
+        $this->app->singleton(EffectiveSettingsResolver::class, static fn ($app): EffectiveSettingsResolver => new EffectiveSettingsResolver(
+            static fn (int $organizationId): array => $app->make(EstimateGenerationSettingsService::class)->snapshotForNewWork($organizationId),
+            static function () use ($app): array {
+                $snapshot = $app->make(EstimateGenerationSettingsService::class)->currentSnapshot('global', null);
+                if (! is_array($snapshot)) {
+                    throw new \DomainException('estimate_generation_global_settings_snapshot_missing');
+                }
+                $record = $app->make(EstimateGenerationSettingsService::class)->snapshotForNewWork(null);
+
+                return $record;
+            },
+        ));
+        $this->app->singleton(AiPricingCatalog::class, static fn (): AiPricingCatalog => new AiPricingCatalog(
+            is_array(config('estimate-generation.ai_pricing_catalog')) ? config('estimate-generation.ai_pricing_catalog') : [],
+        ));
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Monitoring\EstimateGenerationDashboardRepository::class,
             \App\BusinessModules\Addons\EstimateGeneration\Monitoring\SqlEstimateGenerationDashboardRepository::class,
@@ -245,7 +263,13 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             openFileLimit: (int) config('estimate-generation.vision.geometry_runtime.open_file_limit'),
         ));
         $this->app->singleton(VisionResponseBodyReader::class, BoundedVisionResponseBodyReader::class);
-        $this->app->singleton(TimewebVisionProvider::class);
+        $this->app->singleton(TimewebVisionProvider::class, static fn ($app): TimewebVisionProvider => new TimewebVisionProvider(
+            $app->make(AiUsageStore::class),
+            $app->make(\App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionResponseBodyReader::class),
+            $app->runningUnitTests() ? null : $app->make(EffectiveSettingsResolver::class),
+            $app->runningUnitTests() ? null : $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptBudgetAuthorizer::class),
+            $app->runningUnitTests() ? null : $app->make(\App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimitsGuard::class),
+        ));
         $this->app->singleton(VisionProvider::class, TimewebVisionProvider::class);
         $this->app->singleton(CadRuntimeConfiguration::class, fn (): CadRuntimeConfiguration => CadRuntimeConfiguration::fromArray(
             (array) config('estimate-generation.vision.cad_runtime', []),
@@ -369,7 +393,12 @@ class EstimateGenerationServiceProvider extends ServiceProvider
         $this->app->singleton(\App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelStore::class, \App\BusinessModules\Addons\EstimateGeneration\BuildingModel\EloquentBuildingModelStore::class);
         $this->app->singleton(EvidenceSourceReplacementInvalidator::class, EvidenceDocumentSourceReplacementInvalidator::class);
         $this->app->singleton(SessionStateStore::class, EloquentSessionStateStore::class);
-        $this->app->singleton(OcrClientInterface::class, TimewebVisionOcrClient::class);
+        $this->app->singleton(OcrClientInterface::class, static fn ($app): TimewebVisionOcrClient => new TimewebVisionOcrClient(
+            $app->make(AiUsageStore::class),
+            $app->runningUnitTests() ? null : $app->make(EffectiveSettingsResolver::class),
+            $app->runningUnitTests() ? null : $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptBudgetAuthorizer::class),
+            $app->runningUnitTests() ? null : $app->make(\App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimitsGuard::class),
+        ));
         $this->app->singleton(AiUsageStore::class, EloquentAiUsageStore::class);
         $this->app->singleton(FailureStore::class, EloquentFailureStore::class);
         $this->app->singleton(FailureWorkflowHandler::class, EloquentFailureWorkflowHandler::class);

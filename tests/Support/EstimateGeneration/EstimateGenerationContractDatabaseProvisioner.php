@@ -12,12 +12,12 @@ final class EstimateGenerationContractDatabaseProvisioner
     private const LOCK_FUNCTION_DEFINITION_SHA256 = '5485864f6b968742ea73b23de39fed9e33380d5f5649f924923352ef8e4510f8';
 
     private const INVENTORY_DIGEST = [
-        'geometry' => 'f61bab3389d9d603a80b1b70770d4b996005f539f002a88626dd99555be6d12d',
-        'training' => 'c95cb2cc331fe5c1b041784f226061fd5f1540c95c38e15d84b63e801d47081f',
-        'pricing' => 'c95cb2cc331fe5c1b041784f226061fd5f1540c95c38e15d84b63e801d47081f',
+        'geometry' => '9161a6506611b7281e16ca0879c2e9f42795e635535a38ec103a64ba25a9d56a',
+        'training' => 'a377586a0fd8364b3a5b6c2591727cd76981a93d90a8de7e80da94ca7fa3833b',
+        'pricing' => 'a377586a0fd8364b3a5b6c2591727cd76981a93d90a8de7e80da94ca7fa3833b',
     ];
 
-    private const FRESH_INVENTORY_DIGEST = 'e98b40f412c018fcbb78990210cccd3770cf5487af2f28e8c30b9aa3c2e3f7ff';
+    private const FRESH_INVENTORY_DIGEST = 'a9c95cf60e6a43a48866c5cc1bc066a9d5c66f56be397013c762a72a11ec521f';
 
     private const SUBJECT = [
         'geometry' => [
@@ -39,7 +39,7 @@ final class EstimateGenerationContractDatabaseProvisioner
     ];
 
     private const SUBJECT_DIGEST = [
-        'geometry' => '674df1f67e8edc5ab28f42efeb93de0f227cea931617dff3c6499a7a71c76be0',
+        'geometry' => '7c8e415a2953e695d89dfdb1aa55cf928635384d576ad153f2762fe28d21e9fe',
         'pricing' => '22c28514b665272f7e8cffeb911bf9bda48b098bd25947c04ee22bed41238158',
         'training' => 'ff394b33d8717a20622b4895a627e8784d987f0d11611601b5446fd59ee23026',
     ];
@@ -102,6 +102,7 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_000900_guard_review_summary_source_version.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_001000_create_estimate_generation_building_models_table.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_001100_add_price_snapshots_to_estimate_generation_package_items.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_11_002000_create_estimate_generation_settings_and_budgets.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_000100_create_geometry_regeneration_outbox_table.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_000200_add_input_version_to_estimate_generation_packages.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_000250_convert_session_payloads_to_jsonb.php',
@@ -112,6 +113,14 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001400_finalize_estimate_generation_pricing_boundary.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001500_publish_accepted_evidence_and_close_pricing_provenance.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001600_harden_accepted_evidence_mapping.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_000100_add_estimate_generation_dashboard_indexes.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_000200_create_estimate_generation_admin_operations.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_000300_add_estimate_generation_resource_indexes.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_000400_add_training_dataset_trusted_review.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_000450_add_settings_snapshot_hash.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_000500_add_benchmark_execution_snapshot.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_000950_canonicalize_settings_snapshot_hashes.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_001000_create_ai_budget_reservations.php',
     ];
 
     public static function assertSafe(array $connection, bool $enabled): void

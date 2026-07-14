@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Observability;
 
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRerankerModelSet;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveEstimateGenerationSettings;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
 use Closure;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -19,6 +21,8 @@ final readonly class AttemptAwareNormativeLlmClient
         private ?array $configuredModels = null,
         private ?array $configuredPrices = null,
         private ?NormativeRerankerModelSet $modelSet = null,
+        private ?EffectiveSettingsResolver $settingsResolver = null,
+        private ?AiAttemptBudgetAuthorizer $budgetAuthorizer = null,
     ) {}
 
     /**
@@ -47,11 +51,30 @@ final readonly class AttemptAwareNormativeLlmClient
         ], JSON_THROW_ON_ERROR);
         $correlationId = AiOperationContext::deterministicId('rerank|'.$seed);
         $physicalInvocationId = (string) Str::uuid();
-        $models = $this->models();
+        $effective = $this->settingsResolver?->forOperation($correlationId, $organizationId);
+        $models = $this->models($effective);
+        $options['timeout'] = $effective?->timeoutSeconds('normative_matching') ?? ($options['timeout'] ?? null);
         $last = null;
 
         foreach ($models as $index => $model) {
             $heartbeat?->__invoke();
+            $attemptContext = new AiOperationContext(
+                $correlationId,
+                AiOperationContext::deterministicId($physicalInvocationId.'|'.$model.'|'.($index + 1)),
+                $organizationId,
+                $projectId,
+                $sessionId,
+                'match_normatives',
+                'rerank',
+                $index + 1,
+            );
+            $priceSnapshot = $this->budgetAuthorizer?->authorize(
+                $attemptContext,
+                $this->wire->provider(),
+                $model,
+                max(1, (int) config('estimate-generation.normative_matching.reranker.max_input_tokens', 64_000)),
+                max(1, (int) ($options['max_tokens'] ?? 800)),
+            ) ?? AiPriceSnapshot::fromArray($this->price($model));
             $started = hrtime(true);
             $status = 'connection_failed';
             $httpCode = null;
@@ -75,7 +98,7 @@ final readonly class AttemptAwareNormativeLlmClient
             } catch (Throwable $exception) {
                 $last = $exception;
             } finally {
-                $this->record($correlationId, $physicalInvocationId, $organizationId, $projectId, $sessionId, $model, $index + 1, $status, $httpCode, $response, $started);
+                $this->record($attemptContext, $model, $status, $httpCode, $response, $started, $priceSnapshot);
                 $heartbeat?->__invoke();
             }
         }
@@ -84,14 +107,12 @@ final readonly class AttemptAwareNormativeLlmClient
     }
 
     /** @param array<string, mixed> $response */
-    private function record(string $correlationId, string $physicalInvocationId, int $organizationId, int $projectId, int $sessionId, string $model, int $ordinal, string $status, ?int $httpCode, array $response, int $started): void
+    private function record(AiOperationContext $context, string $model, string $status, ?int $httpCode, array $response, int $started, AiPriceSnapshot $snapshot): void
     {
         try {
-            $context = new AiOperationContext($correlationId, AiOperationContext::deterministicId($physicalInvocationId.'|'.$model.'|'.$ordinal), $organizationId, $projectId, $sessionId, 'match_normatives', 'rerank', $ordinal);
             $usageAvailable = ($response['usage_available'] ?? false) === true;
             $input = $usageAvailable ? max(0, (int) ($response['input_tokens'] ?? 0)) : 0;
             $output = $usageAvailable ? max(0, (int) ($response['output_tokens'] ?? 0)) : 0;
-            $snapshot = AiPriceSnapshot::fromArray($this->price($model));
             $this->usageStore->record(new AiUsageData(
                 context: $context,
                 provider: $this->wire->provider(),
@@ -114,8 +135,15 @@ final readonly class AttemptAwareNormativeLlmClient
     }
 
     /** @return array<int, string> */
-    private function models(): array
+    private function models(?EffectiveEstimateGenerationSettings $effective = null): array
     {
+        if ($effective !== null) {
+            return array_fill(
+                0,
+                $effective->retryAttempts('normative_matching') + 1,
+                $effective->model('normative_matching'),
+            );
+        }
         if ($this->configuredModels === null) {
             return ($this->modelSet ?? new NormativeRerankerModelSet)->models;
         }
