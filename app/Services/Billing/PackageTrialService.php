@@ -23,6 +23,13 @@ use function trans_message;
 
 class PackageTrialService
 {
+    private const TRIAL_LEDGER_UNIQUE_CONSTRAINT =
+        'organization_package_trial_usages_organization_id_package_slug_unique';
+
+    private const SQLITE_TRIAL_LEDGER_UNIQUE_MESSAGE =
+        'UNIQUE constraint failed: organization_package_trial_usages.organization_id, '
+        .'organization_package_trial_usages.package_slug';
+
     public function __construct(
         private readonly PackageCatalogService $packageCatalog,
         private readonly AccessController $accessController,
@@ -120,6 +127,17 @@ class PackageTrialService
 
     private function isUniqueConstraintViolation(QueryException $exception): bool
     {
-        return in_array((string) ($exception->errorInfo[0] ?? $exception->getCode()), ['23000', '23505'], true);
+        $sqlState = (string) ($exception->errorInfo[0] ?? $exception->getCode());
+        $driverMessage = trim((string) ($exception->errorInfo[2] ?? ''));
+
+        if ($sqlState === '23505') {
+            return str_contains(
+                $driverMessage,
+                'unique constraint "'.self::TRIAL_LEDGER_UNIQUE_CONSTRAINT.'"',
+            );
+        }
+
+        return $sqlState === '23000'
+            && $driverMessage === self::SQLITE_TRIAL_LEDGER_UNIQUE_MESSAGE;
     }
 }

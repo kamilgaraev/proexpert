@@ -11,8 +11,10 @@ use App\Models\OrganizationPackageSubscription;
 use App\Models\OrganizationPackageTrialUsage;
 use App\Services\Billing\PackageTrialService;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\QueryException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use LogicException;
 use Tests\TestCase;
@@ -145,6 +147,49 @@ class PackageTrialServiceTest extends TestCase
         $this->assertSame(0, OrganizationPackageSubscription::query()->count());
     }
 
+    public function test_maps_trial_ledger_composite_unique_race_to_business_conflict(): void
+    {
+        $armed = true;
+        OrganizationPackageTrialUsage::creating(function (OrganizationPackageTrialUsage $usage) use (&$armed): void {
+            if (! $armed || $usage->package_slug !== 'machinery') {
+                return;
+            }
+
+            $armed = false;
+            DB::table('organization_package_trial_usages')->insert([
+                'organization_id' => $usage->organization_id,
+                'package_slug' => $usage->package_slug,
+                'started_at' => $usage->started_at,
+                'ends_at' => $usage->ends_at,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        });
+
+        $this->expectException(BusinessLogicException::class);
+        $this->expectExceptionCode(409);
+
+        app(PackageTrialService::class)->start($this->organization->id, 'machinery');
+    }
+
+    public function test_does_not_map_unrelated_unique_violation_to_trial_conflict(): void
+    {
+        $armed = true;
+        OrganizationPackageTrialUsage::creating(function (OrganizationPackageTrialUsage $usage) use (&$armed): void {
+            if (! $armed || $usage->package_slug !== 'estimates-norms') {
+                return;
+            }
+
+            $armed = false;
+            DB::table('unrelated_unique_guards')->insert(['code' => 'duplicate']);
+            DB::table('unrelated_unique_guards')->insert(['code' => 'duplicate']);
+        });
+
+        $this->expectException(QueryException::class);
+
+        app(PackageTrialService::class)->start($this->organization->id, 'estimates-norms');
+    }
+
     public function test_trial_usage_model_refuses_update_and_delete(): void
     {
         app(PackageTrialService::class)->start($this->organization->id, 'machinery');
@@ -188,6 +233,7 @@ class PackageTrialServiceTest extends TestCase
     private function createSchema(): void
     {
         Schema::dropIfExists('organization_package_trial_usages');
+        Schema::dropIfExists('unrelated_unique_guards');
         Schema::dropIfExists('organization_package_subscriptions');
         Schema::dropIfExists('organization_commercial_accounts');
         Schema::dropIfExists('organizations');
@@ -240,6 +286,11 @@ class PackageTrialServiceTest extends TestCase
             $table->timestamp('ends_at');
             $table->timestamps();
             $table->unique(['organization_id', 'package_slug']);
+        });
+
+        Schema::create('unrelated_unique_guards', function (Blueprint $table): void {
+            $table->id();
+            $table->string('code')->unique();
         });
     }
 }

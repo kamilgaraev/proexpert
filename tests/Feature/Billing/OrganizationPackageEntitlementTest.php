@@ -276,6 +276,7 @@ class OrganizationPackageEntitlementTest extends TestCase
         ?OrganizationCommercialAccount $account = null,
     ): OrganizationPackageSubscription {
         $account ??= $this->account;
+        $isTrial = $status === PackageSubscriptionStatus::Trialing;
 
         return OrganizationPackageSubscription::create([
             'organization_id' => $account->organization_id,
@@ -284,8 +285,8 @@ class OrganizationPackageEntitlementTest extends TestCase
             'status' => $status,
             'access_source' => $source,
             'price_paid' => 1000,
-            'current_period_start_at' => now(),
-            'current_period_end_at' => $periodEnd === false ? null : ($periodEnd ?? now()->addDays(30)),
+            'current_period_start_at' => $isTrial ? null : now(),
+            'current_period_end_at' => $isTrial || $periodEnd === false ? null : ($periodEnd ?? now()->addDays(30)),
             'trial_started_at' => $trialEnd === null ? null : now(),
             'trial_ends_at' => $trialEnd,
         ]);
