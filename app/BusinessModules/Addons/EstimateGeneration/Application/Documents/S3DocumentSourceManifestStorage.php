@@ -13,7 +13,7 @@ final readonly class S3DocumentSourceManifestStorage implements DocumentSourceMa
 {
     public function __construct(private FileService $files) {}
 
-    public function read(EstimateGenerationDocument $document): string
+    public function open(EstimateGenerationDocument $document): SeekableDocumentSource
     {
         $document->loadMissing('session.organization');
         $organization = $document->session?->organization;
@@ -37,10 +37,17 @@ final readonly class S3DocumentSourceManifestStorage implements DocumentSourceMa
             throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
         }
 
-        $content = '';
+        $temporary = tmpfile();
+        if (! is_resource($temporary)) {
+            fclose($stream);
+
+            throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
+        }
+
+        $bytes = 0;
         try {
             while (! feof($stream)) {
-                $remaining = $maxBytes + 1 - strlen($content);
+                $remaining = $maxBytes + 1 - $bytes;
                 if ($remaining <= 0) {
                     throw new TypedFailureException(FailureCategory::UserActionRequired, 'document_source_too_large', [
                         'max_file_size_bytes' => $maxBytes,
@@ -53,17 +60,32 @@ final readonly class S3DocumentSourceManifestStorage implements DocumentSourceMa
                 if ($chunk === '' && ! feof($stream)) {
                     throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
                 }
-                $content .= $chunk;
+                $chunkBytes = strlen($chunk);
+                $offset = 0;
+                while ($offset < $chunkBytes) {
+                    $written = fwrite($temporary, substr($chunk, $offset));
+                    if (! is_int($written) || $written < 1) {
+                        throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
+                    }
+                    $offset += $written;
+                }
+                $bytes += $chunkBytes;
             }
+        } catch (\Throwable $exception) {
+            fclose($temporary);
+
+            throw $exception;
         } finally {
             fclose($stream);
         }
 
-        if ($content === '' || strlen($content) !== $declaredBytes) {
+        if ($bytes < 1 || $bytes !== $declaredBytes || ! fflush($temporary) || ! rewind($temporary)) {
+            fclose($temporary);
+
             throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
         }
 
-        return $content;
+        return new SeekableDocumentSource($temporary, $bytes);
     }
 
     public function put(

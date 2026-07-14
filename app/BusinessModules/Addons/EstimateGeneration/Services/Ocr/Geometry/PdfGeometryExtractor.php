@@ -10,7 +10,19 @@ final class PdfGeometryExtractor
 
     public function extract(string $content, ?string $filename = null, ?callable $previewPublisher = null): PdfGeometryExtractionResult
     {
-        $payload = $this->worker->extract($content, $filename, $previewPublisher);
+        return $this->result($this->worker->extract($content, $filename, $previewPublisher));
+    }
+
+    public function extractFile(string $path, ?string $filename = null, ?callable $previewPublisher = null): PdfGeometryExtractionResult
+    {
+        return $this->result($this->worker->extractFile($path, $filename, $previewPublisher));
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function result(array $payload): PdfGeometryExtractionResult
+    {
         $pages = [];
 
         foreach (array_values($payload['pages'] ?? []) as $page) {

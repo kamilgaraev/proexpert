@@ -11,17 +11,22 @@ final readonly class ProcessBenchmarkCaseExecutor implements BenchmarkCaseExecut
 {
     private const TERMINATION_GRACE_MICROSECONDS = 100_000;
 
+    private UnixProcessGroupRuntime $unixRuntime;
+
     public function __construct(
         private string $phpBinary,
         private string $artisanPath,
         private int $maxOutputBytes = 1_048_576,
         private string $memoryLimit = '128M',
+        ?UnixProcessGroupRuntime $unixRuntime = null,
     ) {
         if (! is_file($phpBinary) || ! is_file($artisanPath)
             || $maxOutputBytes < 1024 || $maxOutputBytes > 16_777_216
             || ! preg_match('/^(?:64|96|128|192|256)M$/', $memoryLimit)) {
             throw new BenchmarkContractException('process_executor_config_invalid');
         }
+
+        $this->unixRuntime = $unixRuntime ?? new UnixProcessGroupRuntime;
     }
 
     public function execute(
@@ -39,8 +44,13 @@ final readonly class ProcessBenchmarkCaseExecutor implements BenchmarkCaseExecut
             '--case-id='.$request->caseId,
             '--adapter='.$request->adapterId,
         ];
-        if (PHP_OS_FAMILY !== 'Windows' && is_executable('/usr/bin/setsid')) {
-            array_unshift($command, '/usr/bin/setsid');
+        if (PHP_OS_FAMILY !== 'Windows') {
+            try {
+                $this->unixRuntime->assertAvailable();
+                $command = $this->unixRuntime->wrap($command);
+            } catch (BenchmarkContractException $exception) {
+                return BenchmarkPipelineResultData::technicalFailure($exception->reason);
+            }
         }
         $process = new Process($command, dirname($this->artisanPath), timeout: null);
         if (PHP_OS_FAMILY === 'Windows') {
@@ -53,14 +63,18 @@ final readonly class ProcessBenchmarkCaseExecutor implements BenchmarkCaseExecut
             $process->start();
             while ($process->isRunning()) {
                 if (hrtime(true) >= $deadline) {
-                    $this->terminateTree($process);
+                    if (! $this->terminateTree($process)) {
+                        return BenchmarkPipelineResultData::technicalFailure('worker_process_group_termination_failed');
+                    }
 
                     return BenchmarkPipelineResultData::technicalFailure('case_timeout');
                 }
                 $stdout .= $process->getIncrementalOutput();
                 $stderrBytes += strlen($process->getIncrementalErrorOutput());
                 if (strlen($stdout) + $stderrBytes > $this->maxOutputBytes) {
-                    $this->terminateTree($process);
+                    if (! $this->terminateTree($process)) {
+                        return BenchmarkPipelineResultData::technicalFailure('worker_process_group_termination_failed');
+                    }
 
                     return BenchmarkPipelineResultData::technicalFailure('worker_output_limit');
                 }
@@ -69,7 +83,9 @@ final readonly class ProcessBenchmarkCaseExecutor implements BenchmarkCaseExecut
             $stdout .= $process->getIncrementalOutput();
             $stderrBytes += strlen($process->getIncrementalErrorOutput());
         } catch (Throwable) {
-            $this->terminateTree($process);
+            if (! $this->terminateTree($process)) {
+                return BenchmarkPipelineResultData::technicalFailure('worker_process_group_termination_failed');
+            }
 
             return BenchmarkPipelineResultData::technicalFailure('worker_exception');
         }
@@ -83,7 +99,7 @@ final readonly class ProcessBenchmarkCaseExecutor implements BenchmarkCaseExecut
         return BenchmarkPipelineResultData::fromProtocolJson(trim($stdout));
     }
 
-    private function terminateTree(Process $process): void
+    private function terminateTree(Process $process): bool
     {
         $pid = $process->getPid();
         if ($pid !== null && PHP_OS_FAMILY === 'Windows') {
@@ -92,25 +108,15 @@ final readonly class ProcessBenchmarkCaseExecutor implements BenchmarkCaseExecut
             $killer->run();
             PendingBenchmarkProcessRegistry::retainUntilKilled($process);
 
-            return;
+            return true;
         }
-        if ($pid !== null && PHP_OS_FAMILY !== 'Windows' && function_exists('posix_kill')) {
-            @posix_kill(-$pid, SIGTERM);
-            $this->waitForExit($process);
-            if ($process->isRunning()) {
-                @posix_kill(-$pid, SIGKILL);
-            }
+        if ($pid !== null && PHP_OS_FAMILY !== 'Windows') {
+            return $this->unixRuntime->terminate($process, self::TERMINATION_GRACE_MICROSECONDS);
         }
         if ($process->isRunning()) {
             $process->stop(0.0);
         }
-    }
 
-    private function waitForExit(Process $process): void
-    {
-        $deadline = hrtime(true) + self::TERMINATION_GRACE_MICROSECONDS * 1_000;
-        while ($process->isRunning() && hrtime(true) < $deadline) {
-            usleep(5_000);
-        }
+        return ! $process->isRunning();
     }
 }

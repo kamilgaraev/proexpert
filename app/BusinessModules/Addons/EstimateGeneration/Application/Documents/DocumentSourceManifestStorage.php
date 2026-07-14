@@ -8,7 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocum
 
 interface DocumentSourceManifestStorage
 {
-    public function read(EstimateGenerationDocument $document): string;
+    public function open(EstimateGenerationDocument $document): SeekableDocumentSource;
 
     public function put(
         EstimateGenerationDocument $document,

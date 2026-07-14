@@ -33,9 +33,14 @@ final class S3DocumentSourceManifestStorageTest extends LaravelTestCase
         $document = $this->document(strlen($content));
         Storage::fake('s3')->put($document->storage_path, $content);
 
-        $result = (new S3DocumentSourceManifestStorage($this->app->make(FileService::class)))->read($document);
+        $source = (new S3DocumentSourceManifestStorage($this->app->make(FileService::class)))->open($document);
 
-        self::assertSame($content, $result);
+        try {
+            self::assertSame(strlen($content), $source->bytes());
+            self::assertSame($content, file_get_contents($source->path()));
+        } finally {
+            $source->close();
+        }
     }
 
     #[Test]
@@ -46,10 +51,30 @@ final class S3DocumentSourceManifestStorageTest extends LaravelTestCase
         Storage::fake('s3')->put($document->storage_path, str_repeat('b', 1025));
 
         try {
-            (new S3DocumentSourceManifestStorage($this->app->make(FileService::class)))->read($document);
+            (new S3DocumentSourceManifestStorage($this->app->make(FileService::class)))->open($document);
             self::fail('Expected bounded stream rejection.');
         } catch (TypedFailureException $exception) {
             self::assertSame('document_source_too_large', $exception->safeCode);
+        }
+    }
+
+    #[Test]
+    public function large_object_is_spooled_to_disk_without_a_second_php_string(): void
+    {
+        config()->set('estimate-generation.ocr.max_sync_file_bytes', 20 * 1024 * 1024);
+        $bytes = 12 * 1024 * 1024;
+        $document = $this->document($bytes);
+        Storage::fake('s3')->put($document->storage_path, str_repeat('c', $bytes));
+        gc_collect_cycles();
+        $before = memory_get_usage(true);
+
+        $source = (new S3DocumentSourceManifestStorage($this->app->make(FileService::class)))->open($document);
+
+        try {
+            self::assertSame($bytes, filesize($source->path()));
+            self::assertLessThan(4 * 1024 * 1024, memory_get_usage(true) - $before);
+        } finally {
+            $source->close();
         }
     }
 

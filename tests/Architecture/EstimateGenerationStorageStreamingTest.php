@@ -23,12 +23,20 @@ final class EstimateGenerationStorageStreamingTest extends TestCase
     public function s3_document_reads_are_chunked_and_bounded_by_the_document_contract(): void
     {
         $source = $this->source('Application/Documents/S3DocumentSourceManifestStorage.php');
+        $contract = $this->source('Application/Documents/DocumentSourceManifestStorage.php');
+        $consumer = $this->source('Application/Documents/ArtifactDocumentUnitDetector.php');
 
         self::assertStringNotContainsString('stream_get_contents(', $source);
+        self::assertStringNotContainsString('$content .=', $source);
         self::assertStringContainsString('fread(', $source);
         self::assertStringContainsString('maxReadableBytes(', $source);
         self::assertStringContainsString("'document_source_too_large'", $source);
         self::assertStringContainsString('fclose($stream)', $source);
+        self::assertStringContainsString('public function open(', $contract);
+        self::assertStringContainsString('): SeekableDocumentSource;', $contract);
+        self::assertStringNotContainsString('read(EstimateGenerationDocument $document): string', $contract);
+        self::assertStringContainsString('$this->storage->open($document)', $consumer);
+        self::assertStringContainsString('->extractFile(', $consumer);
     }
 
     private function source(string $relative): string

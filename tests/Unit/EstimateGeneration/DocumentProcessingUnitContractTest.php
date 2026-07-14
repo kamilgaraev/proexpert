@@ -23,6 +23,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\InMemory
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\MetadataDocumentUnitDetector;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\S3DocumentUnitContentReader;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SeekableDocumentSource;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob;
@@ -316,11 +317,14 @@ final class DocumentProcessingUnitContractTest extends TestCase
             /** @var list<string> */
             public array $paths = [];
 
-            public function read(EstimateGenerationDocument $document): string
+            public function open(EstimateGenerationDocument $document): SeekableDocumentSource
             {
                 $this->reads++;
+                $stream = tmpfile();
+                fwrite($stream, 'pdf-source');
+                rewind($stream);
 
-                return 'pdf-source';
+                return new SeekableDocumentSource($stream, 10);
             }
 
             public function put(
@@ -342,7 +346,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
         {
             public function __construct(private array $results) {}
 
-            public function extract(string $content, ?string $filename = null): ?OcrRecognitionResult
+            public function extractFile(string $path, ?string $filename = null): ?OcrRecognitionResult
             {
                 return new OcrRecognitionResult('pdf_text', 'v1', $this->results);
             }
@@ -356,8 +360,8 @@ final class DocumentProcessingUnitContractTest extends TestCase
         };
         $geometry = new PdfGeometryExtractor(new class extends PdfGeometryWorker
         {
-            public function extract(
-                string $content,
+            public function extractFile(
+                string $sourcePath,
                 ?string $filename = null,
                 ?callable $previewPublisher = null,
             ): array {
@@ -403,9 +407,13 @@ final class DocumentProcessingUnitContractTest extends TestCase
         {
             public int $writes = 0;
 
-            public function read(EstimateGenerationDocument $document): string
+            public function open(EstimateGenerationDocument $document): SeekableDocumentSource
             {
-                return 'scanned-pdf';
+                $stream = tmpfile();
+                fwrite($stream, 'scanned-pdf');
+                rewind($stream);
+
+                return new SeekableDocumentSource($stream, 11);
             }
 
             public function put(
@@ -425,7 +433,7 @@ final class DocumentProcessingUnitContractTest extends TestCase
         {
             public function __construct() {}
 
-            public function extract(string $content, ?string $filename = null): ?OcrRecognitionResult
+            public function extractFile(string $path, ?string $filename = null): ?OcrRecognitionResult
             {
                 return null;
             }
@@ -433,8 +441,8 @@ final class DocumentProcessingUnitContractTest extends TestCase
         $spreadsheet = new class extends SpreadsheetDocumentExtractor {};
         $geometry = new PdfGeometryExtractor(new class extends PdfGeometryWorker
         {
-            public function extract(
-                string $content,
+            public function extractFile(
+                string $sourcePath,
                 ?string $filename = null,
                 ?callable $previewPublisher = null,
             ): array {

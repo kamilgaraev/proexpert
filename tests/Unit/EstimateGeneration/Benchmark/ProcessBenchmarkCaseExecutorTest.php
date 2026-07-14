@@ -7,11 +7,29 @@ namespace Tests\Unit\EstimateGeneration\Benchmark;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseExecutionRequest;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkManifest;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\ProcessBenchmarkCaseExecutor;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\UnixProcessGroupRuntime;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
 final class ProcessBenchmarkCaseExecutorTest extends TestCase
 {
+    #[Test]
+    public function unix_process_group_runtime_discovers_sets_id_without_a_literal_path_and_fails_closed(): void
+    {
+        $runtime = new UnixProcessGroupRuntime(
+            static fn (string $name): ?string => in_array($name, ['setsid', 'kill'], true) ? PHP_BINARY : null,
+        );
+        $runtime->assertAvailable();
+        self::assertSame(PHP_BINARY, $runtime->setsidBinary());
+        self::assertSame(PHP_BINARY, $runtime->wrap(['php', 'worker.php'])[0]);
+        $source = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Benchmark/ProcessBenchmarkCaseExecutor.php');
+        self::assertIsString($source);
+        self::assertStringNotContainsString('/usr/bin/setsid', $source);
+
+        $this->expectException(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkContractException::class);
+        (new UnixProcessGroupRuntime(static fn (): ?string => null))->setsidBinary();
+    }
+
     #[Test]
     public function hanging_worker_is_killed_with_bounded_wall_time_and_safe_timeout_code(): void
     {

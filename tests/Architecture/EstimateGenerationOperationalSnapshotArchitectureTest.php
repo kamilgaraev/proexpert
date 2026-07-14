@@ -78,9 +78,15 @@ final class EstimateGenerationOperationalSnapshotArchitectureTest extends TestCa
         $reviewGuard = $this->migration('2026_07_11_000900_guard_review_summary_source_version.php');
         self::assertStringContainsString('eg_review_summary_source_guard_trg', $reviewGuard);
         self::assertStringContainsString('source_version IS DISTINCT FROM content_version', $reviewGuard);
-        self::assertStringContainsString('input_version IS NULL', $reviewGuard);
-        self::assertStringContainsString('snapshot_input_version IS DISTINCT FROM input_version', $reviewGuard);
-        self::assertStringContainsString('classifier_version <> 2', $reviewGuard);
+        self::assertStringContainsString('classifier_version <> 1', $reviewGuard);
+        self::assertStringNotContainsString('snapshot_input_version', $reviewGuard);
+
+        $reviewUpgrade = $this->migration('2026_07_14_001050_upgrade_review_summary_freshness_guard.php');
+        self::assertStringContainsString('CREATE OR REPLACE FUNCTION eg_review_summary_source_guard()', $reviewUpgrade);
+        self::assertStringContainsString('input_version IS NULL', $reviewUpgrade);
+        self::assertStringContainsString('snapshot_input_version IS DISTINCT FROM input_version', $reviewUpgrade);
+        self::assertStringContainsString('classifier_version <> 2', $reviewUpgrade);
+        self::assertStringContainsString('classifier_version <> 1', strstr($reviewUpgrade, 'public function down'));
     }
 
     #[Test]

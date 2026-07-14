@@ -38,6 +38,32 @@ class PdfGeometryWorker
             throw new PdfGeometryExtractionException('pdf_geometry_empty_content');
         }
 
+        $temporary = tmpfile();
+        if (! is_resource($temporary)) {
+            throw new PdfGeometryExtractionException('pdf_geometry_temp_file_failed');
+        }
+        $path = stream_get_meta_data($temporary)['uri'] ?? null;
+
+        try {
+            if (! is_string($path) || fwrite($temporary, $content) !== strlen($content) || ! fflush($temporary)) {
+                throw new PdfGeometryExtractionException('pdf_geometry_temp_file_failed');
+            }
+
+            return $this->extractFile($path, $filename, $previewPublisher);
+        } finally {
+            fclose($temporary);
+        }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function extractFile(string $sourcePath, ?string $filename = null, ?callable $previewPublisher = null): array
+    {
+        if (! is_file($sourcePath) || ! is_readable($sourcePath) || filesize($sourcePath) < 1) {
+            throw new PdfGeometryExtractionException('pdf_geometry_empty_content');
+        }
+
         $scriptPath = $this->scriptPath();
 
         if (! is_file($scriptPath)) {
@@ -48,7 +74,7 @@ class PdfGeometryWorker
 
         $workspace = $this->temporaryWorkspace();
         $inputPath = $workspace.DIRECTORY_SEPARATOR.'source.pdf';
-        if (file_put_contents($inputPath, $content, LOCK_EX) !== strlen($content)) {
+        if (! copy($sourcePath, $inputPath)) {
             $this->removeWorkspace($workspace);
 
             throw new PdfGeometryExtractionException('pdf_geometry_temp_file_failed');

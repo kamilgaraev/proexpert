@@ -33,6 +33,33 @@ class PdfTextLayerExtractor
             return null;
         }
 
+        return $this->result($pages, $filename);
+    }
+
+    public function extractFile(string $path, ?string $filename = null): ?OcrRecognitionResult
+    {
+        try {
+            $pages = $this->pdfParserRuntime->withRaisedMemoryLimit(
+                static fn (): array => (new Parser)->parseFile($path)->getPages()
+            );
+        } catch (Throwable $exception) {
+            Log::info('[EstimateGeneration OCR] PDF text layer extraction skipped', [
+                'failure_code' => 'pdf_text_layer_unreadable',
+                'failure_fingerprint' => hash('sha256', $exception::class.'|'.(string) $exception->getCode()),
+            ]);
+
+            return null;
+        }
+
+        return $this->result($pages, $filename);
+    }
+
+    /**
+     * @param  array<int, mixed>  $pages
+     */
+    private function result(array $pages, ?string $filename): ?OcrRecognitionResult
+    {
+
         $pageResults = [];
 
         foreach ($pages as $index => $page) {

@@ -32,9 +32,9 @@ class SpreadsheetDocumentExtractor
             );
         }
 
-        $tempPathWithExtension = $tempPath . '.' . ($extension !== '' ? $extension : 'xlsx');
+        $tempPathWithExtension = $tempPath.'.'.($extension !== '' ? $extension : 'xlsx');
 
-        if (!rename($tempPath, $tempPathWithExtension)) {
+        if (! rename($tempPath, $tempPathWithExtension)) {
             if (is_file($tempPath)) {
                 unlink($tempPath);
             }
@@ -53,9 +53,22 @@ class SpreadsheetDocumentExtractor
                 );
             }
 
-            $reader = IOFactory::createReaderForFile($tempPathWithExtension);
+            return $this->extractFile($document, $tempPathWithExtension);
+        } finally {
+            if (is_file($tempPathWithExtension)) {
+                unlink($tempPathWithExtension);
+            }
+        }
+    }
+
+    public function extractFile(EstimateGenerationDocument $document, string $path): OcrRecognitionResult
+    {
+        $extension = strtolower((string) ($document->meta['original_extension'] ?? pathinfo($document->filename, PATHINFO_EXTENSION)));
+
+        try {
+            $reader = IOFactory::createReaderForFile($path);
             $reader->setReadDataOnly(true);
-            $spreadsheet = $reader->load($tempPathWithExtension);
+            $spreadsheet = $reader->load($path);
 
             try {
                 $pages = $this->pagesFromSpreadsheet($spreadsheet);
@@ -84,10 +97,6 @@ class SpreadsheetDocumentExtractor
                 providerCode: 'spreadsheet_parse_error',
                 previous: $exception,
             );
-        } finally {
-            if (is_file($tempPathWithExtension)) {
-                unlink($tempPathWithExtension);
-            }
         }
     }
 
@@ -108,7 +117,7 @@ class SpreadsheetDocumentExtractor
                 $maxColumns,
             );
             $highestColumn = Coordinate::stringFromColumnIndex($highestColumnIndex);
-            $lines = ['Sheet: ' . $worksheet->getTitle()];
+            $lines = ['Sheet: '.$worksheet->getTitle()];
 
             foreach ($worksheet->getRowIterator(1, $highestRow) as $row) {
                 $values = [];
