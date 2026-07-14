@@ -50,8 +50,8 @@ class DocumentGenerationReadinessService
         $summary = $this->summary($documents, $effective);
 
         return [
-            'can_analyze' => $summary['pending_count'] === 0,
-            'can_generate' => $summary['pending_count'] === 0 && $summary['action_required_count'] === 0,
+            'can_analyze' => $summary['can_analyze'],
+            'can_generate' => $summary['can_generate'],
             'blocking_message_key' => $this->blockingMessageKey($summary),
             'summary' => $summary,
         ];
@@ -78,6 +78,7 @@ class DocumentGenerationReadinessService
         $qualityReviewDocuments = $items->where('requires_quality_review', true)->where('status', '!=', 'ignored');
         $lowQualityDocuments = $items->where('has_low_quality', true)->where('status', '!=', 'ignored');
         $actionRequiredCount = $actionRequired->count();
+        $hasDocuments = $items->isNotEmpty();
 
         return [
             'total' => $items->count(),
@@ -91,13 +92,13 @@ class DocumentGenerationReadinessService
             'quality_review_count' => $qualityReviewDocuments->count(),
             'low_quality_count' => $lowQualityDocuments->count(),
             'action_required_count' => $actionRequiredCount,
-            'has_documents' => $items->isNotEmpty(),
+            'has_documents' => $hasDocuments,
             'has_pending' => $pending->isNotEmpty(),
             'has_action_required' => $actionRequiredCount > 0,
-            'can_analyze' => $pending->isEmpty(),
-            'can_generate' => $pending->isEmpty() && $actionRequiredCount === 0,
+            'can_analyze' => $hasDocuments && $pending->isEmpty(),
+            'can_generate' => $hasDocuments && $pending->isEmpty() && $actionRequiredCount === 0,
             'problem_flags' => $this->problemFlags($items),
-            'statuses' => $items->countBy('status')->all(),
+            'statuses' => (object) $items->countBy('status')->all(),
             'items' => $items->values()->all(),
         ];
     }

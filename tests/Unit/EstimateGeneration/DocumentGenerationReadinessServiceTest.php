@@ -41,6 +41,11 @@ final class DocumentGenerationReadinessServiceTest extends TestCase
 
         self::assertFalse($result['summary']['has_documents']);
         self::assertSame(0, $result['summary']['total']);
+        self::assertFalse($result['can_analyze']);
+        self::assertFalse($result['can_generate']);
+        self::assertFalse($result['summary']['can_analyze']);
+        self::assertFalse($result['summary']['can_generate']);
+        self::assertSame('{}', json_encode($result['summary']['statuses'], JSON_THROW_ON_ERROR));
     }
 
     public function test_threshold_and_toggle_change_final_document_readiness_decision(): void

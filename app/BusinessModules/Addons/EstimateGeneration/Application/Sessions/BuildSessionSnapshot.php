@@ -56,7 +56,14 @@ final class BuildSessionSnapshot
             : EstimateGenerationStatus::from((string) $session->status);
         $blockers = $this->list($readinessSummary['blockers'] ?? []);
         $warnings = $this->list($readinessSummary['warnings'] ?? []);
-        $actions = $this->availableActions($session, $status, $permissions, $blockers, $readinessEvaluated);
+        $actions = $this->availableActions(
+            $session,
+            $status,
+            $permissions,
+            $blockers,
+            $readinessEvaluated,
+            $documentsSummary,
+        );
         $draft = is_array($session->draft_payload) ? $session->draft_payload : [];
         $metrics = is_array($readinessSummary['metrics'] ?? null) ? $readinessSummary['metrics'] : [];
 
@@ -92,6 +99,7 @@ final class BuildSessionSnapshot
     /**
      * @param  list<string>  $permissions
      * @param  list<array<string, mixed>>  $blockers
+     * @param  array<string, mixed>  $documentsSummary
      * @return list<array{action: string, label: string, method: string, endpoint: string, requires_confirmation: bool}>
      */
     private function availableActions(
@@ -100,6 +108,7 @@ final class BuildSessionSnapshot
         array $permissions,
         array $blockers,
         bool $readinessEvaluated,
+        array $documentsSummary,
     ): array {
         if ($status === EstimateGenerationStatus::Archived) {
             return [];
@@ -107,6 +116,13 @@ final class BuildSessionSnapshot
 
         $available = [];
         foreach (self::STATUS_ACTIONS[$status->value] ?? [] as $action) {
+            if (
+                $action === EstimateGenerationAction::StartDocumentProcessing
+                && array_key_exists('total', $documentsSummary)
+                && (int) $documentsSummary['total'] === 0
+            ) {
+                continue;
+            }
             if ($action === EstimateGenerationAction::Export && ! $status->allowsExport()) {
                 continue;
             }

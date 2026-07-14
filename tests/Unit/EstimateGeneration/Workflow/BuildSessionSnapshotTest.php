@@ -74,6 +74,22 @@ final class BuildSessionSnapshotTest extends TestCase
     }
 
     #[Test]
+    public function empty_draft_does_not_expose_document_processing_action(): void
+    {
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $this->makeSession(EstimateGenerationStatus::Draft),
+            permissions: ['estimate_generation.upload_documents', 'estimate_generation.generate'],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+            documentsSummary: ['total' => 0],
+        );
+
+        self::assertSame(
+            ['upload_documents', 'cancel'],
+            array_column($snapshot->availableActions, 'action'),
+        );
+    }
+
+    #[Test]
     public function unevaluated_readiness_never_exposes_apply(): void
     {
         $snapshot = app(BuildSessionSnapshot::class)->handle(
