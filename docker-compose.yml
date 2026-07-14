@@ -10,7 +10,7 @@ services:
     image: ${MOST_IMAGE_REF:-ghcr.io/kamilgaraev/proexpert/prohelper:${MOST_IMAGE_TAG:-latest}}
     container_name: prohelper-api
     restart: unless-stopped
-    command: "php -d memory_limit=1G artisan octane:start --server=roadrunner --host=0.0.0.0 --port=8000 --workers=4 --max-requests=1000"
+    command: "php -d memory_limit=1G artisan octane:start --server=roadrunner --host=0.0.0.0 --port=8000 --workers=4 --max-requests=1000 --rr-config=/var/www/html/.rr.yaml"
     ports:
       - "127.0.0.1:8000:8000"
     env_file: .env

@@ -146,4 +146,4 @@ USER www-data
 RUN php artisan view:cache
 
 # По умолчанию запускаем Octane
-CMD ["php", "artisan", "octane:start", "--server=roadrunner", "--host=0.0.0.0", "--port=8000"]
+CMD ["php", "artisan", "octane:start", "--server=roadrunner", "--host=0.0.0.0", "--port=8000", "--rr-config=/var/www/html/.rr.yaml"]
