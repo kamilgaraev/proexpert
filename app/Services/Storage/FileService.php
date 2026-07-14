@@ -247,6 +247,18 @@ class FileService
         }
     }
 
+    private function safeStorageFailureCode(\Throwable $exception): string
+    {
+        return in_array($exception->getMessage(), [
+            's3_bucket_versioning_required',
+            's3_object_head_invalid',
+            's3_object_tagging_failed',
+            's3_object_tagging_unavailable',
+        ], true)
+            ? $exception->getMessage()
+            : 's3_upload_failed';
+    }
+
     /**
      * Загрузить файл и вернуть путь или false.
      */
@@ -440,6 +452,7 @@ class FileService
                     'organization_id' => $org?->id,
                     'duration_ms' => $durationMs,
                     'exception_class' => get_class($e),
+                    'failure_code' => $this->safeStorageFailureCode($e),
                     'exception_message' => $privacyMode ? 'redacted' : $e->getMessage(),
                     'aws_error_code' => $e instanceof \Aws\Exception\AwsException ? $e->getAwsErrorCode() : null,
                     'trace' => $privacyMode ? 'redacted' : $e->getTraceAsString(),
@@ -449,6 +462,7 @@ class FileService
                     'path' => $logStoragePath,
                     'error' => $privacyMode ? 'redacted' : $e->getMessage(),
                     'exception_class' => get_class($e),
+                    'failure_code' => $this->safeStorageFailureCode($e),
                     'trace' => $privacyMode ? 'redacted' : $e->getTraceAsString(),
                 ]);
 
