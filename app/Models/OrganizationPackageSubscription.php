@@ -27,6 +27,7 @@ class OrganizationPackageSubscription extends Model
         'trial_ends_at',
         'cancel_at',
         'canceled_at',
+        'source_order_id',
     ];
 
     protected $casts = [
@@ -49,6 +50,11 @@ class OrganizationPackageSubscription extends Model
     public function commercialAccount(): BelongsTo
     {
         return $this->belongsTo(OrganizationCommercialAccount::class, 'commercial_account_id');
+    }
+
+    public function sourceOrder(): BelongsTo
+    {
+        return $this->belongsTo(CommercialOrder::class, 'source_order_id');
     }
 
     public function isActive(): bool

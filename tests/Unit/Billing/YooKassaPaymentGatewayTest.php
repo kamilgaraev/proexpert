@@ -157,8 +157,50 @@ class YooKassaPaymentGatewayTest extends TestCase
         $result = app(YooKassaPaymentGateway::class)->getPayment('provider-payment-id');
 
         $this->assertSame('provider-payment-id', $result->id);
+        $this->assertFalse($result->paid);
+        $this->assertTrue($result->test);
+        $this->assertSame(1290000, $result->amountMinor);
+        $this->assertSame('RUB', $result->currency);
+        $this->assertSame(['order_id' => 'order-id', 'organization_id' => 1], $result->metadata);
+        $this->assertSame(0, $result->refundedAmountMinor);
         Http::assertSent(fn (Request $request): bool => $request->method() === 'GET'
             && $request->url() === 'https://api.yookassa.ru/v3/payments/provider-payment-id');
+    }
+
+    public function test_gets_authoritative_refund_with_related_payment_id(): void
+    {
+        Http::fake([
+            'https://api.yookassa.ru/v3/refunds/provider-refund-id' => Http::response([
+                'id' => 'provider-refund-id',
+                'payment_id' => 'provider-payment-id',
+                'status' => 'succeeded',
+                'amount' => ['value' => '1200.50', 'currency' => 'RUB'],
+                'created_at' => '2026-07-14T11:00:00.000Z',
+            ], 200),
+        ]);
+
+        $result = app(YooKassaPaymentGateway::class)->getRefund('provider-refund-id');
+
+        $this->assertSame('provider-refund-id', $result->id);
+        $this->assertSame('provider-payment-id', $result->paymentId);
+        $this->assertSame('succeeded', $result->status);
+        $this->assertSame(120050, $result->amountMinor);
+        $this->assertSame('RUB', $result->currency);
+        Http::assertSent(fn (Request $request): bool => $request->method() === 'GET'
+            && $request->url() === 'https://api.yookassa.ru/v3/refunds/provider-refund-id');
+    }
+
+    public function test_rejects_malformed_refund_success_response(): void
+    {
+        Http::fake(['*' => Http::response([
+            'id' => 'provider-refund-id',
+            'status' => 'succeeded',
+            'amount' => ['value' => '1.00', 'currency' => 'RUB'],
+        ], 200)]);
+
+        $this->expectException(UnexpectedValueException::class);
+
+        app(YooKassaPaymentGateway::class)->getRefund('provider-refund-id');
     }
 
     public function test_rejects_malformed_success_response(): void
@@ -168,6 +210,17 @@ class YooKassaPaymentGatewayTest extends TestCase
         $this->expectException(UnexpectedValueException::class);
 
         app(YooKassaPaymentGateway::class)->createPayment($this->paymentData('malformed-response-key'));
+    }
+
+    public function test_get_payment_rejects_missing_authoritative_flags(): void
+    {
+        $response = $this->providerResponse();
+        unset($response['paid'], $response['test']);
+        Http::fake(['*' => Http::response($response, 200)]);
+
+        $this->expectException(UnexpectedValueException::class);
+
+        app(YooKassaPaymentGateway::class)->getPayment('provider-payment-id');
     }
 
     public function test_rejects_redirect_payment_without_valid_http_confirmation_url(): void

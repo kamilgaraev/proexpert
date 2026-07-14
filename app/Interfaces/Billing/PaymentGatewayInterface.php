@@ -6,10 +6,13 @@ namespace App\Interfaces\Billing;
 
 use App\DataTransferObjects\Billing\CreatePaymentData;
 use App\DataTransferObjects\Billing\PaymentGatewayResult;
+use App\DataTransferObjects\Billing\RefundGatewayResult;
 
 interface PaymentGatewayInterface
 {
     public function createPayment(CreatePaymentData $payment): PaymentGatewayResult;
 
     public function getPayment(string $paymentId): PaymentGatewayResult;
+
+    public function getRefund(string $refundId): RefundGatewayResult;
 }

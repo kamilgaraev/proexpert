@@ -7,24 +7,25 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class CommercialPayment extends Model
+class CommercialRefund extends Model
 {
     protected $fillable = [
-        'commercial_order_id', 'provider', 'provider_payment_id', 'provider_status',
-        'amount_minor', 'currency', 'provider_idempotency_key', 'confirmation_url',
-        'payment_method_id', 'payment_method_saved', 'safe_response',
-        'refunded_amount_minor',
+        'commercial_order_id', 'commercial_payment_id', 'provider', 'provider_refund_id',
+        'provider_status', 'amount_minor', 'currency', 'safe_response',
     ];
 
     protected $casts = [
         'amount_minor' => 'integer',
-        'payment_method_saved' => 'boolean',
         'safe_response' => 'array',
-        'refunded_amount_minor' => 'integer',
     ];
 
     public function order(): BelongsTo
     {
         return $this->belongsTo(CommercialOrder::class, 'commercial_order_id');
+    }
+
+    public function payment(): BelongsTo
+    {
+        return $this->belongsTo(CommercialPayment::class, 'commercial_payment_id');
     }
 }

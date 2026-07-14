@@ -12,6 +12,14 @@ return [
         'timeout' => (int) env('YOOKASSA_TIMEOUT', 10),
         'retry_attempts' => (int) env('YOOKASSA_RETRY_ATTEMPTS', 3),
         'retry_delay_ms' => (int) env('YOOKASSA_RETRY_DELAY_MS', 150),
+        'webhook_source_cidrs' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env('YOOKASSA_WEBHOOK_SOURCE_CIDRS', '185.71.76.0/27,185.71.77.0/27,77.75.153.0/25,77.75.156.11/32,77.75.156.35/32,77.75.154.128/25,2a02:5180::/32')),
+        ))),
+        'trusted_proxy_cidrs' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env('YOOKASSA_TRUSTED_PROXY_CIDRS', '')),
+        ))),
     ],
 
     /*

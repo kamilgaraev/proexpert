@@ -22,4 +22,21 @@ class CommercialCheckoutSchemaTest extends TestCase
         $this->assertStringNotContainsString('balance_transaction', $migration);
         $this->assertStringNotContainsString('subscription_plan', $migration);
     }
+
+    public function test_webhook_schema_tracks_idempotent_events_refunds_and_source_entitlements(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $commercial = file_get_contents($root.'/database/migrations/2026_07_14_000001_create_commercial_package_model.php');
+        $webhooks = file_get_contents($root.'/database/migrations/2026_07_14_000003_create_commercial_webhook_tables.php');
+
+        $this->assertIsString($commercial);
+        $this->assertIsString($webhooks);
+        $this->assertStringContainsString("auto_renew_enabled')->default(false)", $commercial);
+        $this->assertStringContainsString('source_order_id', $webhooks);
+        $this->assertStringContainsString("Schema::create('commercial_refunds'", $webhooks);
+        $this->assertStringContainsString("Schema::create('commercial_webhook_events'", $webhooks);
+        $this->assertStringContainsString("unique('fingerprint'", $webhooks);
+        $this->assertStringContainsString('refunded_amount_minor', $webhooks);
+        $this->assertStringContainsString("foreign(['commercial_payment_id', 'commercial_order_id']", $webhooks);
+    }
 }

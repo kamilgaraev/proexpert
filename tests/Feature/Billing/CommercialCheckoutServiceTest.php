@@ -6,6 +6,7 @@ namespace Tests\Feature\Billing;
 
 use App\DataTransferObjects\Billing\CreatePaymentData;
 use App\DataTransferObjects\Billing\PaymentGatewayResult;
+use App\DataTransferObjects\Billing\RefundGatewayResult;
 use App\Exceptions\Billing\CommercialCheckoutConflictException;
 use App\Interfaces\Billing\PaymentGatewayInterface;
 use App\Models\CommercialOrder;
@@ -412,6 +413,11 @@ class CheckoutGatewayFake implements PaymentGatewayInterface
     }
 
     public function getPayment(string $paymentId): PaymentGatewayResult
+    {
+        throw new RuntimeException('Not used.');
+    }
+
+    public function getRefund(string $refundId): RefundGatewayResult
     {
         throw new RuntimeException('Not used.');
     }

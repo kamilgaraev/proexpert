@@ -6,6 +6,7 @@ namespace Tests\Feature\Api\V1\Landing;
 
 use App\DataTransferObjects\Billing\CreatePaymentData;
 use App\DataTransferObjects\Billing\PaymentGatewayResult;
+use App\DataTransferObjects\Billing\RefundGatewayResult;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Interfaces\Billing\PaymentGatewayInterface;
@@ -345,6 +346,11 @@ class ControllerCheckoutGatewayFake implements PaymentGatewayInterface
     }
 
     public function getPayment(string $paymentId): PaymentGatewayResult
+    {
+        throw new \RuntimeException('Not used.');
+    }
+
+    public function getRefund(string $refundId): RefundGatewayResult
     {
         throw new \RuntimeException('Not used.');
     }

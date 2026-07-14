@@ -20,7 +20,7 @@ return new class extends Migration
             $table->timestampTz('billing_anchor_at')->nullable();
             $table->timestampTz('current_period_start_at')->nullable();
             $table->timestampTz('current_period_end_at')->nullable();
-            $table->boolean('auto_renew_enabled')->default(true);
+            $table->boolean('auto_renew_enabled')->default(false);
             $table->timestampsTz();
             $table->unique(['id', 'organization_id'], 'commercial_accounts_id_org_unique');
         });
