@@ -11,6 +11,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        Schema::table('estimate_generation_sessions', function (Blueprint $table): void {
+            $table->unique(['id', 'organization_id'], 'eg_sessions_organization_scope_uq');
+        });
+
         Schema::create('estimate_generation_ai_budget_reservations', function (Blueprint $table): void {
             $table->uuid('reservation_id')->primary();
             $table->uuid('attempt_id')->unique();
@@ -127,5 +131,8 @@ SQL);
             DB::statement('DROP FUNCTION IF EXISTS eg_reserve_ai_budget(uuid, bigint, bigint, bigint, bigint, numeric, text, jsonb)');
         }
         Schema::dropIfExists('estimate_generation_ai_budget_reservations');
+        Schema::table('estimate_generation_sessions', function (Blueprint $table): void {
+            $table->dropUnique('eg_sessions_organization_scope_uq');
+        });
     }
 };
