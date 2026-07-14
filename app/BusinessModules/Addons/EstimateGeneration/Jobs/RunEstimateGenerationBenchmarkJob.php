@@ -15,6 +15,10 @@ use Throwable;
 
 final class RunEstimateGenerationBenchmarkJob implements ShouldQueue
 {
+    public const CONNECTION = 'redis_estimate_generation_benchmarks';
+
+    public const QUEUE = 'estimate-generation-benchmarks';
+
     use Dispatchable;
     use InteractsWithQueue;
     use Queueable;
@@ -28,13 +32,14 @@ final class RunEstimateGenerationBenchmarkJob implements ShouldQueue
         public readonly int $runId,
         public readonly string $idempotencyKey,
     ) {
-        $this->onQueue('estimate-generation-benchmarks');
+        $this->onConnection(self::CONNECTION);
+        $this->onQueue(self::QUEUE);
     }
 
     /** @return list<WithoutOverlapping> */
     public function middleware(): array
     {
-        return [(new WithoutOverlapping('estimate-generation-benchmark:'.$this->runId))->expireAfter(3700)];
+        return [(new WithoutOverlapping('estimate-generation-benchmark:'.$this->runId))->expireAfter(4300)];
     }
 
     public function handle(StoredBenchmarkRunExecutor $executor): void

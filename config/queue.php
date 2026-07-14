@@ -93,6 +93,18 @@ return [
             'after_commit' => false,
         ],
 
+        'redis_estimate_generation_benchmarks' => [
+            'driver' => 'redis',
+            'connection' => env(
+                'REDIS_ESTIMATE_GENERATION_BENCHMARK_QUEUE_CONNECTION',
+                env('REDIS_QUEUE_CONNECTION', 'default'),
+            ),
+            'queue' => 'estimate-generation-benchmarks',
+            'retry_after' => (int) env('REDIS_ESTIMATE_GENERATION_BENCHMARK_RETRY_AFTER', 4200),
+            'block_for' => null,
+            'after_commit' => false,
+        ],
+
     ],
 
     /*

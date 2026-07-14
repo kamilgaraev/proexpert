@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\RecoverEstimateGenerationUnitsJob;
+use App\BusinessModules\Addons\EstimateGeneration\Jobs\RunEstimateGenerationBenchmarkJob;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -51,5 +52,37 @@ final class EstimateGenerationUnitHorizonContractTest extends TestCase
         self::assertSame(RecoverEstimateGenerationUnitsJob::QUEUE, $recovery->queue);
         self::assertSame(20, $unit->tries);
         self::assertSame(3, $recovery->tries);
+    }
+
+    #[Test]
+    public function benchmark_job_has_an_isolated_connection_and_safe_timeout_ordering(): void
+    {
+        $horizon = require dirname(__DIR__, 3).'/config/horizon.php';
+        $queue = require dirname(__DIR__, 3).'/config/queue.php';
+        $job = new RunEstimateGenerationBenchmarkJob(1, 'benchmark-key');
+
+        self::assertSame(RunEstimateGenerationBenchmarkJob::CONNECTION, $job->connection);
+        self::assertSame(RunEstimateGenerationBenchmarkJob::QUEUE, $job->queue);
+        self::assertArrayHasKey(RunEstimateGenerationBenchmarkJob::CONNECTION, $queue['connections']);
+        self::assertSame(
+            RunEstimateGenerationBenchmarkJob::QUEUE,
+            $queue['connections'][RunEstimateGenerationBenchmarkJob::CONNECTION]['queue'],
+        );
+
+        foreach (['production', 'local'] as $environment) {
+            $supervisor = $horizon['environments'][$environment]['supervisor-estimate-generation-benchmarks'];
+            self::assertSame(RunEstimateGenerationBenchmarkJob::CONNECTION, $supervisor['connection']);
+            self::assertSame([RunEstimateGenerationBenchmarkJob::QUEUE], $supervisor['queue']);
+            self::assertGreaterThan($job->timeout, $supervisor['timeout']);
+            self::assertGreaterThan(
+                $supervisor['timeout'],
+                $queue['connections'][RunEstimateGenerationBenchmarkJob::CONNECTION]['retry_after'],
+            );
+        }
+
+        self::assertArrayHasKey(
+            RunEstimateGenerationBenchmarkJob::CONNECTION.':'.RunEstimateGenerationBenchmarkJob::QUEUE,
+            $horizon['waits'],
+        );
     }
 }
