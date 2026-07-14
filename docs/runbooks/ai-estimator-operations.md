@@ -51,17 +51,56 @@ Cancel применяется к незавершённой сессии, ког
 
 ## Deployment gate
 
-Live smoke разрешён только после подтверждения, что backend и admin frontend развёрнуты из проверенных SHA. Если SHA не совпадает, статус gate — `BLOCKED_BY_DEPLOYMENT`; скриншоты и поведение старого release не являются evidence задачи.
+Live smoke разрешён только после подтверждения, что backend и admin frontend развёрнуты из проверенных полных SHA. Текущие deployment workflows не публикуют доверенную полную идентичность обоих компонентов: backend сохраняет только короткий тег, admin не сохраняет SHA. Поэтому gate остаётся `BLOCKED_BY_DEPLOYMENT`, пока deployment-владелец не настроит описанные ниже аттестации. Короткий тег, `HEAD` изменяемой рабочей копии, ответ придуманного version endpoint и значение, введённое оператором, доказательством не являются.
 
-Перед запуском задать только несекретные URL/ID и пути к обезличенным fixtures. Учётные данные передаются через переменные окружения или заранее импортированную тестовую сессию, но не сохраняются в скрипте.
+### Граница доверия и публикация аттестаций
+
+- Проверенные SHA берутся из одобренного release/PR и передаются в verifier только как ожидаемые значения. Допустимы исключительно 40 строчных шестнадцатеричных символов.
+- Фактическая версия читается только из `/var/lib/most-release-attestations/backend.sha256` и `/var/lib/most-release-attestations/admin.sha256`. Путь нельзя переопределить аргументом или переменной окружения.
+- Каталог и файлы принадлежат `root:root`, не доступны на запись группе и остальным пользователям и не являются symlink. Read-only пользователь `codex-ro` может их прочитать, но не изменить.
+- Только deployment-владелец публикует SHA после успешной активации соответствующего компонента. Отсутствие файла, неправильные владелец/права/формат или несовпадение дают exit code `78` и блокируют GStack.
+
+Инфраструктурный владелец один раз устанавливает проверенные скрипты из backend release. Эта операция выполняется deployment-пользователем с root-правами, не оператором smoke:
+
+```bash
+install -d -o root -g root -m 0755 /usr/local/lib/most /usr/local/libexec/most
+install -o root -g root -m 0555 scripts/lib/release-attestation.sh /usr/local/lib/most/release-attestation.sh
+install -o root -g root -m 0555 scripts/verify-ai-estimator-release-attestations.sh /usr/local/libexec/most/verify-ai-estimator-release-attestations
+install -d -o root -g root -m 0755 /var/lib/most-release-attestations
+```
+
+В самом конце успешного backend deploy deployment-владелец атомарно публикует полный `${GITHUB_SHA}` как `backend`; в самом конце успешной активации admin build выполняет тот же блок с `COMPONENT=admin`. Значения `COMPONENT` и `RELEASE_SHA` задаёт CI из неизменяемого контекста запуска, а не оператор:
 
 ```bash
 set -euo pipefail
 
-: "${EXPECTED_BACKEND_SHA:?}"
-: "${EXPECTED_ADMIN_SHA:?}"
-: "${DEPLOYED_BACKEND_SHA:?}"
-: "${DEPLOYED_ADMIN_SHA:?}"
+: "${RELEASE_SHA:?CI must provide the full commit SHA}"
+: "${COMPONENT:?CI must select backend or admin}"
+[[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+[[ "$COMPONENT" == backend || "$COMPONENT" == admin ]]
+
+ATTESTATION_DIR=/var/lib/most-release-attestations
+install -d -o root -g root -m 0755 "$ATTESTATION_DIR"
+TMP=$(mktemp "$ATTESTATION_DIR/.${COMPONENT}.XXXXXX")
+trap 'rm -f "$TMP"' EXIT
+printf '%s\n' "$RELEASE_SHA" >"$TMP"
+chown root:root "$TMP"
+chmod 0444 "$TMP"
+mv -f "$TMP" "$ATTESTATION_DIR/$COMPONENT.sha256"
+trap - EXIT
+```
+
+Admin pipeline сейчас не имеет подтверждённого привилегированного шага. До настройки узкого root-owned activation hook для публикации `admin.sha256` smoke запрещён; выдавать deployment-пользователю широкий `sudo` ради этой проверки нельзя.
+
+### Проверка перед smoke
+
+Перед запуском задать только проверенные SHA, несекретные URL/ID и пути к обезличенным fixtures. Учётные данные передаются через переменные окружения или заранее импортированную тестовую сессию, но не сохраняются в скрипте.
+
+```bash
+set -euo pipefail
+
+: "${REVIEWED_BACKEND_SHA:?}"
+: "${REVIEWED_ADMIN_SHA:?}"
 : "${APP_URL:?}"
 : "${FILAMENT_URL:?}"
 : "${PROJECT_ID:?}"
@@ -70,15 +109,24 @@ set -euo pipefail
 : "${PNG_FIXTURE:?}"
 : "${SMOKE_DIR:=/tmp/most-ai-estimator-smoke}"
 
-test "$EXPECTED_BACKEND_SHA" = "$DEPLOYED_BACKEND_SHA"
-test "$EXPECTED_ADMIN_SHA" = "$DEPLOYED_ADMIN_SHA"
+[[ "$REVIEWED_BACKEND_SHA" =~ ^[0-9a-f]{40}$ ]]
+[[ "$REVIEWED_ADMIN_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+ssh \
+  -o BatchMode=yes \
+  -o StrictHostKeyChecking=yes \
+  -i /mnt/c/Users/kamilgaraev/.ssh/codex_readonly \
+  codex-ro@89.169.44.117 \
+  /usr/local/libexec/most/verify-ai-estimator-release-attestations \
+  "$REVIEWED_BACKEND_SHA" "$REVIEWED_ADMIN_SHA"
+
 test -r "$PDF_FIXTURE" && test -r "$JPEG_FIXTURE" && test -r "$PNG_FIXTURE"
 mkdir -p "$SMOKE_DIR"
 
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
 B=""
 test -n "$ROOT" && test -x "$ROOT/.agents/skills/gstack/browse/dist/browse" && B="$ROOT/.agents/skills/gstack/browse/dist/browse"
-test -n "$B" || B="$GSTACK_BROWSE/browse"
+test -n "$B" || B="${GSTACK_BROWSE:-$HOME/.codex/skills/gstack/browse/dist/browse}"
 test -x "$B"
 
 $B goto "$APP_URL/projects/$PROJECT_ID/estimates/ai-workspace"
