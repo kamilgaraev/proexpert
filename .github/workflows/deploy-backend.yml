@@ -66,8 +66,10 @@ jobs:
             MOST_RELEASE_SHA=${{ github.sha }}
           tags: |
             ${{ steps.meta.outputs.image_repo }}:${{ steps.meta.outputs.release_sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: |
+            type=gha,scope=most-backend-prod
+            type=gha
+          cache-to: type=gha,scope=most-backend-prod,mode=max
 
       - name: Deploy exact image digest
         uses: appleboy/ssh-action@v1.0.3

@@ -44,6 +44,25 @@ final class DockerComposeSecurityTest extends TestCase
         self::assertStringContainsString("      - 'public/**'", $workflow);
     }
 
+    public function test_backend_image_reuses_runtime_layers_between_releases(): void
+    {
+        $rootPath = dirname(__DIR__, 3);
+        $dockerfile = file_get_contents($rootPath.'/Dockerfile.prod');
+        $workflow = file_get_contents($rootPath.'/.github/workflows/deploy-backend.yml');
+
+        self::assertIsString($dockerfile);
+        self::assertIsString($workflow);
+
+        $releaseArgument = strpos($dockerfile, 'ARG MOST_RELEASE_SHA');
+        $runtimeDependencies = strpos($dockerfile, 'RUN npm ci --omit=dev --ignore-scripts');
+
+        self::assertIsInt($releaseArgument);
+        self::assertIsInt($runtimeDependencies);
+        self::assertGreaterThan($runtimeDependencies, $releaseArgument);
+        self::assertStringContainsString("cache-from: |\n            type=gha,scope=most-backend-prod\n            type=gha", $workflow);
+        self::assertStringContainsString('cache-to: type=gha,scope=most-backend-prod,mode=max', $workflow);
+    }
+
     public function test_monitoring_stack_deploys_container_alerting_services(): void
     {
         $rootPath = dirname(__DIR__, 3);
