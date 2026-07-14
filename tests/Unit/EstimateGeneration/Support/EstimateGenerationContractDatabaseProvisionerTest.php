@@ -153,6 +153,23 @@ final class EstimateGenerationContractDatabaseProvisionerTest extends TestCase
 
         self::assertSame($actual, $sorted);
         self::assertSame(count($registered), count(array_unique($registered, SORT_STRING)));
+        self::assertContains(
+            'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_001200_close_truthful_settings_schema.php',
+            $registered,
+        );
+        $budgetWireIndex = array_search(
+            'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_001150_enforce_exactly_once_ai_budget_wire_claims.php',
+            $registered,
+            true,
+        );
+        $truthfulSettingsIndex = array_search(
+            'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_001200_close_truthful_settings_schema.php',
+            $registered,
+            true,
+        );
+        self::assertIsInt($budgetWireIndex);
+        self::assertIsInt($truthfulSettingsIndex);
+        self::assertLessThan($truthfulSettingsIndex, $budgetWireIndex);
         self::assertSame([
             'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001700_rebuild_estimate_generation_training_and_benchmarks.php',
             'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_12_001800_harden_estimate_generation_training_and_benchmarks.php',

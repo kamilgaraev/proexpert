@@ -45,6 +45,14 @@ final class NormativeCandidateRerankerTest extends TestCase
         self::assertSame(0.8, $result->confidence);
     }
 
+    public function test_disabled_low_confidence_review_keeps_valid_normative_rerank_ready(): void
+    {
+        $result = $this->reranker($this->validResponse(), effectiveSettings: true, manualReview: false)
+            ->rerank($this->intent(), $this->context(), $this->set());
+
+        self::assertSame('reranked', $result->status);
+    }
+
     #[DataProvider('invalidResponses')]
     public function test_response_schema_fails_closed(array $response): void
     {
@@ -133,7 +141,7 @@ final class NormativeCandidateRerankerTest extends TestCase
         return ['selected_candidate_id' => 'a', 'ordering' => ['a', 'b'], 'explanation_codes' => ['unit_match'], 'evidence_refs' => ['norm:1'], 'confidence' => 0.8, 'schema_version' => 'normative-rerank-v1'];
     }
 
-    private function reranker(array $payload, ?RerankWireException $failure = null, bool $usage = true, array &$messages = [], int &$calls = 0, bool $effectiveSettings = false): LLMNormativeCandidateReranker
+    private function reranker(array $payload, ?RerankWireException $failure = null, bool $usage = true, array &$messages = [], int &$calls = 0, bool $effectiveSettings = false, bool $manualReview = true): LLMNormativeCandidateReranker
     {
         $provider = new class implements LLMProviderInterface
         {
@@ -182,7 +190,7 @@ final class NormativeCandidateRerankerTest extends TestCase
             public function record(AiUsageData $data): void {}
         };
 
-        $resolver = $effectiveSettings ? $this->settingsResolver() : null;
+        $resolver = $effectiveSettings ? $this->settingsResolver($manualReview) : null;
 
         return new LLMNormativeCandidateReranker(
             $provider,
@@ -190,7 +198,7 @@ final class NormativeCandidateRerankerTest extends TestCase
         );
     }
 
-    private function settingsResolver(): EffectiveSettingsResolver
+    private function settingsResolver(bool $manualReview): EffectiveSettingsResolver
     {
         $snapshot = [
             'schema_version' => 2,
@@ -200,7 +208,7 @@ final class NormativeCandidateRerankerTest extends TestCase
             'retries' => ['vision' => 2, 'classification' => 1, 'normative_matching' => 0],
             'confidence' => ['classification' => '0.7000', 'geometry' => '0.7800', 'normative_matching' => '0.8200'],
             'enabled_formats' => ['pdf'],
-            'manual_review' => ['low_confidence' => true],
+            'manual_review' => ['low_confidence' => $manualReview],
             'budgets' => ['daily' => '250.00', 'monthly' => '4000.00', 'currency' => 'RUB'],
         ];
         $global = EffectiveEstimateGenerationSettings::fromRecord([

@@ -106,6 +106,12 @@ final readonly class OcrDocumentUnitProcessor implements DocumentUnitProcessor
             unitType: $context->type,
             unitIndex: $context->index,
             sourceVersion: $context->sourceVersion,
+            qualitySignals: [
+                'classification' => [
+                    'confidence' => $page->confidence,
+                    'provider_requires_review' => ($recognition->metadata['requires_review'] ?? false) === true,
+                ],
+            ],
         );
     }
 }

@@ -81,6 +81,12 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             unitType: $context->type,
             unitIndex: $context->index,
             sourceVersion: $context->sourceVersion,
+            qualitySignals: [
+                'geometry' => [
+                    'confidence' => $geometry->unitStatus === 'confirmed' ? 1.0 : 0.7,
+                    'hard_blockers' => $geometry->unitStatus === 'confirmed' ? [] : ['unit_unconfirmed'],
+                ],
+            ],
         );
     }
 
@@ -158,6 +164,15 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         );
         $analysis = $this->vision->analyze($input)->mapPolygonsToSource($preprocessed->transform);
         $payload = $analysis->toArray();
+        $geometryConfidence = $analysis->elements === []
+            ? null
+            : min(array_map(static fn ($element): float => $element->confidence, $analysis->elements));
+        $hardGeometryWarnings = array_values(array_intersect($analysis->warnings, [
+            'scale_missing',
+            'scale_conflict',
+            'perspective_confirmation_required',
+            'geometry_incomplete',
+        ]));
         $pdfGeometry = null;
         $geometryPath = $context->locator['geometry_artifact_path'] ?? null;
         if (is_string($geometryPath)) {
@@ -212,6 +227,12 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             unitType: $context->type,
             unitIndex: $context->index,
             sourceVersion: $context->sourceVersion,
+            qualitySignals: [
+                'geometry' => [
+                    'confidence' => $geometryConfidence,
+                    'hard_blockers' => $hardGeometryWarnings,
+                ],
+            ],
         );
     }
 }

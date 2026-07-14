@@ -26,7 +26,9 @@ BEGIN
     OR lower(payload::text) ~ '(api[_-]?key|secret|credential|password|bearer|raw[_-]?prompt|endpoint|access[_-]?token)'
     OR NOT payload ?& ARRAY['schema_version','models','limits','timeouts','retries','confidence','enabled_formats','manual_review','budgets']
     OR (payload - ARRAY['schema_version','models','limits','timeouts','retries','confidence','enabled_formats','manual_review','budgets']) <> '{}'::jsonb
-    OR payload->>'schema_version' <> '2' THEN
+    OR jsonb_typeof(payload->'schema_version') <> 'number'
+    OR (payload->>'schema_version') !~ '^[0-9]+$'
+    OR payload->'schema_version' <> '2'::jsonb THEN
     RETURN false;
   END IF;
   IF jsonb_typeof(payload->'models') <> 'object'
@@ -55,6 +57,9 @@ BEGIN
   IF jsonb_typeof(payload->'limits') <> 'object'
     OR NOT (payload->'limits') ?& ARRAY['max_files','max_pages_per_file','max_total_pages']
     OR ((payload->'limits') - ARRAY['max_files','max_pages_per_file','max_total_pages']) <> '{}'::jsonb
+    OR jsonb_typeof(payload #> '{limits,max_files}') <> 'number'
+    OR jsonb_typeof(payload #> '{limits,max_pages_per_file}') <> 'number'
+    OR jsonb_typeof(payload #> '{limits,max_total_pages}') <> 'number'
     OR (payload #>> '{limits,max_files}') !~ '^[0-9]+$'
     OR (payload #>> '{limits,max_pages_per_file}') !~ '^[0-9]+$'
     OR (payload #>> '{limits,max_total_pages}') !~ '^[0-9]+$'
@@ -77,6 +82,7 @@ BEGIN
   END LOOP;
   IF jsonb_typeof(payload->'enabled_formats') <> 'array'
     OR jsonb_array_length(payload->'enabled_formats') NOT BETWEEN 1 AND 8
+    OR EXISTS (SELECT 1 FROM jsonb_array_elements(payload->'enabled_formats') item WHERE jsonb_typeof(item) <> 'string')
     OR (SELECT count(*) FROM jsonb_array_elements_text(payload->'enabled_formats'))
       <> (SELECT count(DISTINCT value) FROM jsonb_array_elements_text(payload->'enabled_formats')) THEN
     RETURN false;
@@ -95,6 +101,9 @@ BEGIN
   IF jsonb_typeof(payload->'budgets') <> 'object'
     OR NOT (payload->'budgets') ?& ARRAY['daily','monthly','currency']
     OR ((payload->'budgets') - ARRAY['daily','monthly','currency']) <> '{}'::jsonb
+    OR jsonb_typeof(payload #> '{budgets,daily}') <> 'string'
+    OR jsonb_typeof(payload #> '{budgets,monthly}') <> 'string'
+    OR jsonb_typeof(payload #> '{budgets,currency}') <> 'string'
     OR (payload #>> '{budgets,daily}') !~ '^(0|[1-9][0-9]{0,17})\.[0-9]{2}$'
     OR (payload #>> '{budgets,monthly}') !~ '^(0|[1-9][0-9]{0,17})\.[0-9]{2}$'
     OR (payload #>> '{budgets,currency}') NOT IN ('RUB','USD','EUR')

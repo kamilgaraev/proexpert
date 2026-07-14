@@ -47,6 +47,22 @@ use PHPUnit\Framework\TestCase;
 final class DocumentProcessingUnitContractTest extends TestCase
 {
     #[Test]
+    public function quality_signals_are_part_of_the_persisted_unit_output_contract(): void
+    {
+        $output = new DocumentUnitOutput(
+            'output-v1',
+            'recognized',
+            normalizedPayload: ['provider' => 'test'],
+            qualitySignals: ['classification' => ['confidence' => 0.61]],
+        );
+
+        self::assertSame([
+            'provider' => 'test',
+            'quality_signals' => ['classification' => ['confidence' => 0.61]],
+        ], $output->persistedNormalizedPayload());
+    }
+
+    #[Test]
     public function duplicate_detector_units_are_normalized_to_one_stable_identity(): void
     {
         $unit = new DocumentUnitData(DocumentUnitType::PdfPage, 1, 'sha256:source', ['page' => 1]);

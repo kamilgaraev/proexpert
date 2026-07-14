@@ -55,6 +55,29 @@ final class TruthfulSettingsContractTest extends TestCase
     }
 
     #[Test]
+    public function php_contract_rejects_json_type_coercions_for_schema_limits_and_budgets(): void
+    {
+        foreach ([
+            ['limits' => ['max_files' => '8', 'max_pages_per_file' => 80, 'max_total_pages' => 800]],
+            ['budgets' => ['daily' => 100.00, 'monthly' => '1000.00', 'currency' => 'RUB']],
+            ['budgets' => ['daily' => '100.00', 'monthly' => 1000.00, 'currency' => 'RUB']],
+        ] as $override) {
+            try {
+                EstimateGenerationSettingsData::fromArray($this->command($override));
+                self::fail('Settings JSON type coercion was accepted.');
+            } catch (DomainException) {
+                self::addToAssertionCount(1);
+            }
+        }
+
+        $snapshot = EstimateGenerationSettingsData::fromArray($this->command())->snapshot();
+        $snapshot['schema_version'] = '2';
+
+        $this->expectException(DomainException::class);
+        EffectiveEstimateGenerationSettings::fromRecord($this->record($snapshot), 17);
+    }
+
+    #[Test]
     public function changing_each_remaining_control_changes_effective_runtime_configuration(): void
     {
         $base = EstimateGenerationSettingsData::fromArray($this->command())->snapshot();
@@ -104,6 +127,7 @@ final class TruthfulSettingsContractTest extends TestCase
                 'BusinessModules/Addons/EstimateGeneration/Vision/Providers/TimewebVisionProvider.php',
                 'BusinessModules/Addons/EstimateGeneration/Services/Ocr/Clients/TimewebVisionOcrClient.php',
                 'BusinessModules/Addons/EstimateGeneration/Observability/AttemptAwareNormativeLlmClient.php',
+                'BusinessModules/Addons/EstimateGeneration/Services/Quality/EstimateGenerationQualityReviewPolicy.php',
                 'BusinessModules/Addons/EstimateGeneration/Application/Documents/UploadEstimateGenerationDocuments.php',
                 'BusinessModules/Addons/EstimateGeneration/Settings/DocumentRuntimeLimitsGuard.php',
                 'BusinessModules/Addons/EstimateGeneration/Observability/AiBudgetGuard.php',
@@ -138,7 +162,14 @@ final class TruthfulSettingsContractTest extends TestCase
 
         self::assertStringContainsString('eg_setting_snapshot_valid_v2', $migration);
         self::assertStringContainsString('DROP FUNCTION eg_setting_snapshot_valid_v1', $migration);
-        self::assertStringContainsString("payload->>'schema_version' <> '2'", $migration);
+        self::assertStringContainsString("jsonb_typeof(payload->'schema_version') <> 'number'", $migration);
+        self::assertStringContainsString("payload->'schema_version' <> '2'::jsonb", $migration);
+        foreach (['max_files', 'max_pages_per_file', 'max_total_pages'] as $limit) {
+            self::assertStringContainsString("jsonb_typeof(payload #> '{limits,{$limit}}') <> 'number'", $migration);
+        }
+        foreach (['daily', 'monthly', 'currency'] as $budget) {
+            self::assertStringContainsString("jsonb_typeof(payload #> '{budgets,{$budget}}') <> 'string'", $migration);
+        }
         self::assertStringContainsString("ARRAY['vision','classification','normative_matching']", $migration);
         self::assertStringContainsString("ARRAY['classification','geometry','normative_matching']", $migration);
         self::assertStringContainsString("ARRAY['low_confidence']", $migration);

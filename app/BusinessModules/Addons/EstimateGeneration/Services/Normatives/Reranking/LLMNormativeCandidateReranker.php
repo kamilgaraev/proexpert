@@ -11,6 +11,8 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\DTO\WorkIntentData;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Exceptions\NormativeRerankingInvalidResponse;
 use App\BusinessModules\Addons\EstimateGeneration\Normatives\Exceptions\NormativeRerankingUnavailable;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AttemptAwareNormativeLlmClient;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateGenerationQualityReviewPolicy;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveEstimateGenerationSettings;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use Throwable;
 
@@ -18,7 +20,15 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
 {
     private const PROMPT_BYTE_LIMIT = 16384;
 
-    public function __construct(private readonly LLMProviderInterface $llmProvider, private readonly AttemptAwareNormativeLlmClient $attemptAwareClient) {}
+    private EstimateGenerationQualityReviewPolicy $qualityReview;
+
+    public function __construct(
+        private readonly LLMProviderInterface $llmProvider,
+        private readonly AttemptAwareNormativeLlmClient $attemptAwareClient,
+        ?EstimateGenerationQualityReviewPolicy $qualityReview = null,
+    ) {
+        $this->qualityReview = $qualityReview ?? new EstimateGenerationQualityReviewPolicy;
+    }
 
     public function rerank(WorkIntentData $workItem, NormativeCandidateDecisionContextData $context, NormativeCandidateSetData $candidateSet): NormativeRerankResultData
     {
@@ -66,9 +76,13 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
         }
 
         $result = $this->validate($decoded, $workItem, $context, $candidateSet);
-        $threshold = $response['effective_confidence_threshold'] ?? null;
-        if (($response['manual_review_low_confidence'] ?? false) === true
-            && is_string($threshold) && is_numeric($threshold) && $result->confidence < (float) $threshold) {
+        $effective = $response['effective_settings'] ?? null;
+        $qualityDecision = $effective instanceof EffectiveEstimateGenerationSettings
+            ? $this->qualityReview->decide($effective, [
+                'normative_matching' => ['confidence' => $result->confidence],
+            ])
+            : null;
+        if ($qualityDecision?->requiresReview === true) {
             return new NormativeRerankResultData(
                 $result->selectedCandidateId,
                 $result->ordering,

@@ -56,6 +56,7 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                     ->where('source_version', $sourceVersion)
                     ->orderBy('page_number')
                     ->get();
+                $qualitySignals = $this->qualitySignals($pages->pluck('normalized_payload')->all());
                 $document->forceFill([
                     'extracted_text' => $pages->pluck('text')->filter()->implode("\n\n"),
                     'structured_payload' => [
@@ -75,7 +76,7 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
                     'progress_percent' => 100,
                     'quality_score' => 1.0,
                     'quality_level' => 'good',
-                    'facts_summary' => [],
+                    'facts_summary' => $qualitySignals === [] ? [] : ['quality_signals' => $qualitySignals],
                     'ocr_finished_at' => now(),
                 ]);
             }
@@ -121,6 +122,49 @@ final readonly class EloquentDocumentUnitAggregateReconciler implements Document
 
             throw $error;
         }
+    }
+
+    /**
+     * @param  array<int, mixed>  $payloads
+     * @return array<string, array<string, mixed>>
+     */
+    private function qualitySignals(array $payloads): array
+    {
+        $result = [];
+
+        foreach ($payloads as $payload) {
+            $signals = is_array($payload) && is_array($payload['quality_signals'] ?? null)
+                ? $payload['quality_signals']
+                : [];
+            foreach ($signals as $domain => $signal) {
+                if (! is_string($domain) || ! is_array($signal)) {
+                    continue;
+                }
+                $confidence = $signal['confidence'] ?? null;
+                if ((is_int($confidence) || is_float($confidence)) && is_finite((float) $confidence)) {
+                    $current = $result[$domain]['confidence'] ?? null;
+                    $result[$domain]['confidence'] = $current === null
+                        ? (float) $confidence
+                        : min((float) $current, (float) $confidence);
+                }
+                if (is_bool($signal['provider_requires_review'] ?? null)) {
+                    $result[$domain]['provider_requires_review'] = ($result[$domain]['provider_requires_review'] ?? false) === true
+                        || $signal['provider_requires_review'];
+                }
+                $blockers = is_array($signal['hard_blockers'] ?? null) ? $signal['hard_blockers'] : [];
+                if ($blockers !== []) {
+                    $current = is_array($result[$domain]['hard_blockers'] ?? null)
+                        ? $result[$domain]['hard_blockers']
+                        : [];
+                    $result[$domain]['hard_blockers'] = array_values(array_unique([
+                        ...$current,
+                        ...array_values(array_filter($blockers, 'is_string')),
+                    ]));
+                }
+            }
+        }
+
+        return $result;
     }
 
     /** @return Builder<EstimateGenerationDocument> */

@@ -90,8 +90,7 @@ final readonly class AttemptAwareNormativeLlmClient
                     ? 'malformed_response' : 'succeeded';
                 if ($status === 'succeeded') {
                     if ($effective !== null) {
-                        $response['effective_confidence_threshold'] = $effective->confidence('normative_matching');
-                        $response['manual_review_low_confidence'] = $effective->requiresManualReview('low_confidence');
+                        $response['effective_settings'] = $effective;
                     }
 
                     return $response;

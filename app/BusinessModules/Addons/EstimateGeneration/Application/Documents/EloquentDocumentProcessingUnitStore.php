@@ -168,7 +168,7 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
             $page->forceFill(['output_version' => $output->version, 'width' => $output->width, 'height' => $output->height,
                 'rotation' => $output->rotation, 'text' => $output->text,
                 'text_hash' => $output->text !== '' ? hash('sha256', $output->text) : null,
-                'confidence' => $output->confidence, 'normalized_payload' => $output->normalizedPayload,
+                'confidence' => $output->confidence, 'normalized_payload' => $output->persistedNormalizedPayload(),
                 'quality_flags' => []])->save();
 
             return $this->query()

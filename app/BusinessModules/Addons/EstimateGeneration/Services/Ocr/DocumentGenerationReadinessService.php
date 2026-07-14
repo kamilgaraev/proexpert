@@ -6,6 +6,10 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Ocr;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Quality\EstimateGenerationQualityReviewPolicy;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveEstimateGenerationSettings;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
 use Illuminate\Support\Collection;
 
 class DocumentGenerationReadinessService
@@ -13,6 +17,15 @@ class DocumentGenerationReadinessService
     private const PENDING_STATUSES = ['uploaded', 'queued', 'processing'];
 
     private const ACTION_REQUIRED_STATUSES = ['failed', 'needs_review'];
+
+    private EstimateGenerationQualityReviewPolicy $qualityReview;
+
+    public function __construct(
+        private readonly ?EffectiveSettingsResolver $settingsResolver = null,
+        ?EstimateGenerationQualityReviewPolicy $qualityReview = null,
+    ) {
+        $this->qualityReview = $qualityReview ?? new EstimateGenerationQualityReviewPolicy;
+    }
 
     /**
      * @return array<string, mixed>
@@ -22,7 +35,17 @@ class DocumentGenerationReadinessService
         $documents = $session->relationLoaded('documents')
             ? $session->documents
             : $session->documents()->get();
-        $summary = $this->summary($documents);
+        $effective = $this->settingsResolver?->forOperation(
+            AiOperationContext::deterministicId(implode('|', [
+                'document-readiness',
+                (string) $session->organization_id,
+                (string) $session->getKey(),
+                (string) $session->state_version,
+            ])),
+            (int) $session->organization_id,
+            (int) $session->getKey(),
+        );
+        $summary = $this->summary($documents, $effective);
 
         return [
             'can_analyze' => $summary['pending_count'] === 0,
@@ -33,12 +56,12 @@ class DocumentGenerationReadinessService
     }
 
     /**
-     * @param Collection<int, EstimateGenerationDocument> $documents
+     * @param  Collection<int, EstimateGenerationDocument>  $documents
      * @return array<string, mixed>
      */
-    public function summary(Collection $documents): array
+    public function summary(Collection $documents, ?EffectiveEstimateGenerationSettings $settings = null): array
     {
-        $items = $documents->map(fn (EstimateGenerationDocument $document): array => $this->documentState($document));
+        $items = $documents->map(fn (EstimateGenerationDocument $document): array => $this->documentState($document, $settings));
         $pending = $items->where('is_pending', true);
         $failed = $items->where('status', 'failed');
         $needsReview = $items->where('status', 'needs_review');
@@ -50,6 +73,7 @@ class DocumentGenerationReadinessService
         $conflictDocuments = $items->where('has_conflicts', true)->where('status', '!=', 'ignored');
         $missingUnderstandingDocuments = $items->where('missing_document_understanding', true)->where('status', '!=', 'ignored');
         $understandingReviewDocuments = $items->where('requires_document_review', true)->where('status', '!=', 'ignored');
+        $qualityReviewDocuments = $items->where('requires_quality_review', true)->where('status', '!=', 'ignored');
         $lowQualityDocuments = $items->where('has_low_quality', true)->where('status', '!=', 'ignored');
         $actionRequiredCount = $actionRequired->count();
 
@@ -62,6 +86,7 @@ class DocumentGenerationReadinessService
             'ignored_count' => $ignored->count(),
             'missing_understanding_count' => $missingUnderstandingDocuments->count(),
             'understanding_review_count' => $understandingReviewDocuments->count(),
+            'quality_review_count' => $qualityReviewDocuments->count(),
             'low_quality_count' => $lowQualityDocuments->count(),
             'action_required_count' => $actionRequiredCount,
             'has_documents' => $items->isNotEmpty(),
@@ -78,8 +103,10 @@ class DocumentGenerationReadinessService
     /**
      * @return array<string, mixed>
      */
-    private function documentState(EstimateGenerationDocument $document): array
-    {
+    private function documentState(
+        EstimateGenerationDocument $document,
+        ?EffectiveEstimateGenerationSettings $settings,
+    ): array {
         $status = (string) ($document->status ?? 'uploaded');
         $isPending = in_array($status, self::PENDING_STATUSES, true);
         $isActionStatus = in_array($status, self::ACTION_REQUIRED_STATUSES, true);
@@ -87,8 +114,13 @@ class DocumentGenerationReadinessService
         $qualityFlags = is_array($document->quality_flags) ? $document->quality_flags : [];
         $hasConflicts = (is_array($factsSummary['conflicts'] ?? null) && $factsSummary['conflicts'] !== []);
         $hasLowQuality = in_array($document->quality_level, ['low', 'unusable'], true);
-        $missingDocumentUnderstanding = !$isPending && $this->missingDocumentUnderstanding($factsSummary);
-        $requiresDocumentReview = !$isPending && $this->requiresDocumentReview($factsSummary);
+        $missingDocumentUnderstanding = ! $isPending && $this->missingDocumentUnderstanding($factsSummary);
+        $requiresDocumentReview = ! $isPending && $this->requiresDocumentReview($factsSummary);
+        $qualitySignals = is_array($factsSummary['quality_signals'] ?? null) ? $factsSummary['quality_signals'] : [];
+        $qualityDecision = $settings === null || $isPending
+            ? null
+            : $this->qualityReview->decide($settings, $qualitySignals);
+        $requiresQualityReview = $qualityDecision?->requiresReview ?? false;
 
         return [
             'id' => $document->id,
@@ -107,18 +139,21 @@ class DocumentGenerationReadinessService
             'has_low_quality' => $hasLowQuality,
             'missing_document_understanding' => $missingDocumentUnderstanding,
             'requires_document_review' => $requiresDocumentReview,
+            'requires_quality_review' => $requiresQualityReview,
+            'quality_review_reasons' => $qualityDecision?->reasons ?? [],
             'is_pending' => $isPending,
             'is_action_required' => $isActionStatus
                 || $hasConflicts
                 || $hasLowQuality
                 || $missingDocumentUnderstanding
-                || $requiresDocumentReview,
+                || $requiresDocumentReview
+                || $requiresQualityReview,
             'updated_at' => $document->updated_at?->toISOString(),
         ];
     }
 
     /**
-     * @param Collection<int, array<string, mixed>> $items
+     * @param  Collection<int, array<string, mixed>>  $items
      * @return array<int, string>
      */
     private function problemFlags(Collection $items): array
@@ -141,6 +176,10 @@ class DocumentGenerationReadinessService
             $flags[] = 'document_understanding_requires_review';
         }
 
+        if ($items->where('requires_quality_review', true)->where('status', '!=', 'ignored')->isNotEmpty()) {
+            $flags[] = 'document_quality_requires_review';
+        }
+
         if ($items->where('status', 'failed')->isNotEmpty()) {
             $flags[] = 'document_processing_failed';
         }
@@ -149,7 +188,7 @@ class DocumentGenerationReadinessService
     }
 
     /**
-     * @param array<string, mixed> $factsSummary
+     * @param  array<string, mixed>  $factsSummary
      */
     private function missingDocumentUnderstanding(array $factsSummary): bool
     {
@@ -161,7 +200,7 @@ class DocumentGenerationReadinessService
     }
 
     /**
-     * @param array<string, mixed> $factsSummary
+     * @param  array<string, mixed>  $factsSummary
      */
     private function requiresDocumentReview(array $factsSummary): bool
     {
@@ -177,7 +216,7 @@ class DocumentGenerationReadinessService
     }
 
     /**
-     * @param array<string, mixed> $summary
+     * @param  array<string, mixed>  $summary
      */
     private function blockingMessageKey(array $summary): ?string
     {
