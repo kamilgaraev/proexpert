@@ -55,6 +55,10 @@ class CommercialCheckoutService
                 ->where('organization_id', $organization->getKey())
                 ->lockForUpdate()
                 ->first();
+
+            if ($account?->status->value === 'grace') {
+                throw new CommercialCheckoutConflictException('Commercial contour cannot change during grace.');
+            }
             $serverCurrent = $this->currentPackageSlugs((int) $organization->getKey());
             $clientCurrent = $this->normalizeClientSlugs($input['current_package_slugs'] ?? []);
 

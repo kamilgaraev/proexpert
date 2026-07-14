@@ -8,6 +8,7 @@ use App\Contracts\Billing\CommercialWebhookProcessor;
 use App\DataTransferObjects\Billing\CreateSavedMethodPaymentData;
 use App\DataTransferObjects\Billing\YooKassaWebhookNotification;
 use App\Interfaces\Billing\PaymentGatewayInterface;
+use App\Models\CommercialContourChange;
 use App\Models\CommercialOrder;
 use App\Models\CommercialPayment;
 use App\Models\CommercialRenewalCycle;
@@ -84,6 +85,39 @@ final class CommercialRenewalService
             $periodEnd = $periodStart->addDays(30);
             $dueDay = $periodStart->setTimezone(self::TIMEZONE)->startOfDay();
             $deadline = $dueDay->addDays(7);
+            $scheduledChange = CommercialContourChange::query()
+                ->where('commercial_account_id', $account->id)
+                ->where('organization_id', $account->organization_id)
+                ->where('status', 'scheduled')
+                ->where('apply_at', $periodStart)
+                ->lockForUpdate()
+                ->first();
+
+            if ($scheduledChange !== null && $scheduledChange->target_package_slugs === []) {
+                OrganizationPackageSubscription::query()
+                    ->where('commercial_account_id', $account->id)
+                    ->whereIn('access_source', ['paid_package', 'full_suite'])
+                    ->update([
+                        'status' => 'expired',
+                        'current_period_end_at' => $periodStart,
+                        'cancel_at' => null,
+                        'canceled_at' => $periodStart,
+                    ]);
+                $account->forceFill([
+                    'status' => 'free',
+                    'offer_type' => 'packages',
+                    'auto_renew_enabled' => false,
+                    'saved_payment_method_active' => false,
+                    'grace_started_at' => null,
+                    'grace_ends_at' => null,
+                ])->save();
+                $scheduledChange->forceFill([
+                    'status' => 'applied',
+                    'applied_at' => $periodStart,
+                ])->save();
+
+                return [];
+            }
 
             if ($now->startOfDay()->greaterThanOrEqualTo($deadline)) {
                 $this->suspend($account, $now);
@@ -109,19 +143,22 @@ final class CommercialRenewalService
             $cycle = CommercialRenewalCycle::query()->where('commercial_account_id', $account->id)->where('target_period_start_at', $periodStart)->lockForUpdate()->first();
             $createdCycle = false;
             if ($cycle === null) {
-                $slugs = OrganizationPackageSubscription::query()->where('commercial_account_id', $account->id)->whereIn('access_source', ['paid_package', 'full_suite'])->active()->orderBy('package_slug')->pluck('package_slug')->all();
+                $currentSlugs = OrganizationPackageSubscription::query()->where('commercial_account_id', $account->id)->whereIn('access_source', ['paid_package', 'full_suite'])->active()->orderBy('package_slug')->pluck('package_slug')->all();
+                $slugs = $scheduledChange?->target_package_slugs ?? $currentSlugs;
                 if ($slugs === []) {
                     return [];
                 }
-                $fullSuite = $account->offer_type->value === 'full_suite';
-                $quote = $this->calculator->preview($slugs, $slugs, $fullSuite, $now, $account->current_period_start_at, $account->current_period_end_at);
+                $fullSuite = $scheduledChange !== null
+                    ? $scheduledChange->offer_type->value === 'full_suite'
+                    : $account->offer_type->value === 'full_suite';
+                $quote = $this->calculator->preview($slugs, $currentSlugs, $fullSuite, $now, $account->current_period_start_at, $account->current_period_end_at);
                 $key = sprintf('renewal:%d:%s', $account->id, $periodStart->toIso8601String());
                 $order = CommercialOrder::query()->create([
                     'public_id' => (string) Str::uuid(), 'organization_id' => $account->organization_id,
                     'commercial_account_id' => $account->id, 'user_id' => $account->responsible_user_id,
-                    'kind' => 'renewal', 'status' => 'pending_payment', 'offer_type' => $account->offer_type->value,
+                    'kind' => 'renewal', 'status' => 'pending_payment', 'offer_type' => $quote['offer_type'],
                     'quote_version' => $quote['quote_version'], 'selected_package_slugs' => $quote['target_package_slugs'],
-                    'current_package_slugs' => $slugs, 'amount_minor' => $quote['monthly_total_minor'],
+                    'current_package_slugs' => $currentSlugs, 'amount_minor' => $quote['monthly_total_minor'],
                     'amount' => $quote['monthly_total'], 'currency' => $quote['currency'],
                     'period_start_at' => $periodStart, 'period_end_at' => $periodEnd, 'auto_renew_consent' => true,
                     'client_idempotency_key' => $key, 'server_idempotency_key' => $key,
@@ -133,6 +170,13 @@ final class CommercialRenewalService
                     'target_period_start_at' => $periodStart, 'target_period_end_at' => $periodEnd,
                     'grace_deadline_at' => $deadline->utc(), 'attempt_count' => 0, 'next_attempt_at' => $dueDay->addHours(3)->utc(),
                 ]);
+                if ($scheduledChange !== null) {
+                    $scheduledChange->forceFill([
+                        'status' => 'applied',
+                        'commercial_order_id' => $order->id,
+                        'applied_at' => $periodStart,
+                    ])->save();
+                }
                 $createdCycle = true;
             }
             $latest = $cycle->payments()->orderByDesc('attempt_number')->lockForUpdate()->first();

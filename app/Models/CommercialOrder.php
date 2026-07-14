@@ -62,4 +62,9 @@ class CommercialOrder extends Model
     {
         return $this->hasOne(CommercialRenewalCycle::class);
     }
+
+    public function refunds(): HasMany
+    {
+        return $this->hasMany(CommercialRefund::class);
+    }
 }

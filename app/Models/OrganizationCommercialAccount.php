@@ -63,4 +63,9 @@ class OrganizationCommercialAccount extends Model
     {
         return $this->hasMany(CommercialRenewalCycle::class, 'commercial_account_id');
     }
+
+    public function contourChanges(): HasMany
+    {
+        return $this->hasMany(CommercialContourChange::class, 'commercial_account_id');
+    }
 }
