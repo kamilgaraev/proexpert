@@ -8,12 +8,12 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Exceptions\Normativ
 
 final readonly class NormativeDatasetPinPolicy
 {
-    public function __construct(private ApprovedNormativeDatasetLookup $lookup, private NormativePinClock $clock, private ?string $configuredVersion = null) {}
+    public function __construct(private ApprovedNormativeDatasetLookup $lookup, private NormativePinClock $clock) {}
 
     public function resolve(?string $requestedVersion): array
     {
-        $approvedVersion = $this->configuredVersion ?? config('estimate-generation.normative_matching.approved_dataset_version');
-        if (! is_string($approvedVersion) || $approvedVersion === '' || ! $this->lookup->approved($approvedVersion)) {
+        $approvedVersion = $this->lookup->latestApprovedVersion();
+        if ($approvedVersion === null) {
             throw new NormativeContextPinUnavailable('Approved normative dataset is unavailable.');
         }
         if ($requestedVersion !== null && $requestedVersion !== '' && ! hash_equals($approvedVersion, $requestedVersion)) {

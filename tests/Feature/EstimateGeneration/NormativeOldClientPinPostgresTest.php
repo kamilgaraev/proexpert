@@ -70,6 +70,9 @@ final class NormativeOldClientPinPostgresTest extends TestCase
             'source_type' => EstimateSourceType::FSNB_2022,
             'version_key' => $version, 'bucket' => 'contract', 'prefix' => $version,
             'status' => EstimateImportStatus::PARSED,
+            'rows_imported' => 1,
+            'errors_count' => 0,
+            'finished_at' => now(),
         ]);
         $moduleId = (int) DB::table('modules')->insertGetId([
             'name' => 'AI-сметчик',
@@ -98,7 +101,6 @@ final class NormativeOldClientPinPostgresTest extends TestCase
                 return new DateTimeImmutable('2026-07-12T10:00:00+03:00');
             }
         });
-        config()->set('estimate-generation.normative_matching.approved_dataset_version', $version);
         $url = "/api/v1/admin/projects/{$project->id}/estimate-generation/sessions";
         $fixtureDatasetIds = [];
         $unauthorized = null;
@@ -204,11 +206,6 @@ final class NormativeOldClientPinPostgresTest extends TestCase
 
             $before = EstimateGenerationSession::query()->where('organization_id', $organization->id)->count();
             $this->postJson($url, ['description' => 'test', 'normative_dataset_version' => 'foreign-version'])->assertUnprocessable();
-            self::assertSame($before, EstimateGenerationSession::query()->where('organization_id', $organization->id)->count());
-
-            config()->set('estimate-generation.normative_matching.approved_dataset_version', null);
-            $this->app->forgetInstance(\App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeDatasetPinPolicy::class);
-            $this->postJson($url, ['description' => 'test'])->assertUnprocessable();
             self::assertSame($before, EstimateGenerationSession::query()->where('organization_id', $organization->id)->count());
         } finally {
             EstimateGenerationSession::query()->where('organization_id', $organization->id)->delete();
