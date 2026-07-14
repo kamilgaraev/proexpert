@@ -17,6 +17,9 @@ final readonly class AcceptanceBenchmarkCorpusLoader
 
     public function loadForDataset(BenchmarkDatasetType $dataset, int $organizationId, string $manifestLocator, ?string $expectedSha256 = null, ?BenchmarkManifest $publicManifest = null): BenchmarkCorpus
     {
+        if ($dataset !== BenchmarkDatasetType::Acceptance) {
+            throw new BenchmarkContractException('acceptance_dataset_only');
+        }
         if ($organizationId < 1) {
             throw new BenchmarkContractException('acceptance_organization_invalid');
         }

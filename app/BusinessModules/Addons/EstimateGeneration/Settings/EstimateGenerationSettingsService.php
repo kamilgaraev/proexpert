@@ -65,11 +65,13 @@ final class EstimateGenerationSettingsService
             }
 
             $snapshot = $data->snapshot();
+            $snapshotHash = hash('sha256', json_encode($snapshot, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
             $snapshotId = (int) DB::table('estimate_generation_setting_snapshots')->insertGetId([
                 'scope' => $data->scope,
                 'organization_id' => $scopeOrganizationId,
                 'version' => $currentVersion + 1,
                 'snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR),
+                'snapshot_hash' => $snapshotHash,
                 'daily_budget' => $data->budgets['daily'],
                 'monthly_budget' => $data->budgets['monthly'],
                 'currency' => $data->budgets['currency'],
@@ -98,7 +100,7 @@ final class EstimateGenerationSettingsService
         });
     }
 
-    /** @return array{snapshot_id: int, version: int, snapshot: array<string, mixed>} */
+    /** @return array{snapshot_id: int, scope: string, organization_id: int|null, version: int, snapshot_hash: string, snapshot: array<string, mixed>} */
     public function snapshotForNewWork(?int $organizationId): array
     {
         $snapshot = null;
@@ -118,10 +120,15 @@ final class EstimateGenerationSettingsService
             throw new DomainException('estimate_generation_settings_snapshot_missing');
         }
 
+        $decoded = $this->decodeSnapshot($snapshot->snapshot);
+
         return [
             'snapshot_id' => (int) $snapshot->id,
+            'scope' => (string) $snapshot->scope,
+            'organization_id' => $snapshot->organization_id === null ? null : (int) $snapshot->organization_id,
             'version' => (int) $snapshot->version,
-            'snapshot' => $this->decodeSnapshot($snapshot->snapshot),
+            'snapshot_hash' => (string) $snapshot->snapshot_hash,
+            'snapshot' => $decoded,
         ];
     }
 

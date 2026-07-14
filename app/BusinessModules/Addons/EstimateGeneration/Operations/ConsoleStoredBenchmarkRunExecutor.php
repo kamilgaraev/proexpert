@@ -56,6 +56,7 @@ final readonly class ConsoleStoredBenchmarkRunExecutor implements StoredBenchmar
             return;
         }
         if (! hash_equals((string) $snapshot->get('manifest_locator'), (string) ($datasetManifest['locator'] ?? ''))
+            || ! hash_equals((string) $snapshot->get('manifest_base_prefix'), (string) ($datasetManifest['base_prefix'] ?? ''))
             || ! hash_equals((string) $snapshot->get('manifest_sha256'), (string) ($datasetManifest['sha256'] ?? ''))
             || ! $this->adapters->has((string) $snapshot->get('adapter_id'))) {
             $this->runs->fail((int) $run->organization_id, (string) $run->uuid, 'benchmark_execution_snapshot_mismatch', 'benchmark_execution_failed');
@@ -71,9 +72,14 @@ final readonly class ConsoleStoredBenchmarkRunExecutor implements StoredBenchmar
             '--prompt-version' => (string) $snapshot->get('prompt_version'),
             '--manifest' => (string) $snapshot->get('manifest_locator'),
             '--manifest-sha256' => (string) $snapshot->get('manifest_sha256'),
+            '--base-prefix' => (string) $snapshot->get('manifest_base_prefix'),
             '--organization-id' => (string) $snapshot->get('organization_id'),
             '--settings-snapshot-id' => (string) $snapshot->get('settings_snapshot_id'),
             '--settings-snapshot-version' => (string) $snapshot->get('settings_snapshot_version'),
+            '--settings-scope' => (string) $snapshot->get('settings_scope'),
+            '--settings-organization-id' => $snapshot->get('settings_organization_id') === null ? '' : (string) $snapshot->get('settings_organization_id'),
+            '--settings-snapshot-hash' => (string) $snapshot->get('settings_snapshot_hash'),
+            '--settings-limits' => json_encode($snapshot->get('settings_limits'), JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
             '--normative-version' => (string) $snapshot->get('normative_version'),
             '--price-version' => (string) $snapshot->get('price_version'),
             '--case-timeout-ms' => (string) max(100, min(3_600_000, (int) config('estimate-generation.benchmark.admin_case_timeout_ms', 300000))),

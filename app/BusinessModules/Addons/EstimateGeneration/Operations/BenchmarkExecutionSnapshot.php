@@ -10,8 +10,9 @@ final readonly class BenchmarkExecutionSnapshot
 {
     private const KEYS = [
         'schema_version', 'organization_id', 'dataset_id', 'dataset_type', 'dataset_version',
-        'dataset_content_hash', 'manifest_locator', 'manifest_sha256', 'adapter_id', 'prompt_version',
-        'settings_snapshot_id', 'settings_snapshot_version', 'pipeline_version', 'model_versions',
+        'dataset_content_hash', 'manifest_base_prefix', 'manifest_locator', 'manifest_sha256', 'adapter_id', 'prompt_version',
+        'settings_snapshot_id', 'settings_snapshot_version', 'settings_scope', 'settings_organization_id',
+        'settings_snapshot_hash', 'settings_limits', 'pipeline_version', 'model_versions',
         'normative_version', 'price_version', 'currency',
     ];
 
@@ -29,12 +30,17 @@ final readonly class BenchmarkExecutionSnapshot
             || ! self::positive($values['organization_id']) || ! self::positive($values['dataset_id'])
             || ! self::positive($values['dataset_version']) || ! self::positive($values['settings_snapshot_id'])
             || ! self::positive($values['settings_snapshot_version'])
+            || ! in_array($values['settings_scope'], ['global', 'organization'], true)
+            || ($values['settings_scope'] === 'global' && $values['settings_organization_id'] !== null)
+            || ($values['settings_scope'] === 'organization' && $values['settings_organization_id'] !== $values['organization_id'])
+            || ! self::hash($values['settings_snapshot_hash']) || ! self::limits($values['settings_limits'])
             || ! in_array($values['dataset_type'], ['development', 'regression', 'acceptance'], true)
             || ! self::hash($values['dataset_content_hash'], true) || ! self::hash($values['manifest_sha256'])
             || ! self::identifier($values['adapter_id']) || ! self::version($values['prompt_version'])
             || ! self::version($values['pipeline_version']) || ! self::version($values['normative_version'])
             || ! self::version($values['price_version']) || ! in_array($values['currency'], ['RUB', 'USD', 'EUR'], true)
-            || ! self::models($values['model_versions']) || ! self::locator($values['manifest_locator'], (int) $values['organization_id'], (string) $values['dataset_type'])) {
+            || ! self::models($values['model_versions']) || ! self::basePrefix($values['manifest_base_prefix'], (int) $values['organization_id'], (string) $values['dataset_type'])
+            || ! self::locator($values['manifest_locator'], (int) $values['organization_id'], (string) $values['dataset_type'])) {
             throw new DomainException('benchmark_execution_snapshot_invalid');
         }
 
@@ -70,6 +76,8 @@ final readonly class BenchmarkExecutionSnapshot
             'model_versions' => 'model_versions', 'normative_version' => 'normative_version',
             'price_version' => 'price_version', 'currency' => 'currency',
             'settings_snapshot_id' => 'settings_snapshot_id', 'settings_snapshot_version' => 'settings_snapshot_version',
+            'settings_scope' => 'settings_scope', 'settings_organization_id' => 'settings_organization_id',
+            'settings_snapshot_hash' => 'settings_snapshot_hash', 'settings_limits' => 'settings_limits',
         ];
         foreach ($mapping as $snapshotKey => $reportKey) {
             if (! array_key_exists($reportKey, $report)
@@ -106,10 +114,30 @@ final readonly class BenchmarkExecutionSnapshot
             && array_reduce($value, static fn (bool $valid, mixed $model): bool => $valid && is_string($model) && strlen($model) <= 192, true);
     }
 
+    private static function limits(mixed $value): bool
+    {
+        return is_array($value)
+            && array_keys($value) === ['max_files', 'max_pages_per_file', 'max_total_pages']
+            && array_reduce($value, static fn (bool $valid, mixed $limit): bool => $valid && is_int($limit) && $limit > 0, true);
+    }
+
     private static function locator(mixed $value, int $organizationId, string $type): bool
     {
-        return is_string($value) && preg_match('#^s3://org-'.$organizationId.'/estimate-generation/benchmarks/'.preg_quote($type, '#').'/[A-Za-z0-9._/-]+\.json$#', $value) === 1
+        $pattern = $type === 'acceptance'
+            ? '#^s3://org-'.$organizationId.'/estimate-generation/benchmarks/acceptance/[A-Za-z0-9._/-]+\.json$#'
+            : '#^s3://org-'.$organizationId.'/estimate-generation/benchmark-imports/sha256-[a-f0-9]{64}/manifest/[a-f0-9]{64}\.json$#';
+
+        return is_string($value) && preg_match($pattern, $value) === 1
             && ! str_contains($value, '..') && ! str_contains($value, '?');
+    }
+
+    private static function basePrefix(mixed $value, int $organizationId, string $type): bool
+    {
+        $pattern = $type === 'acceptance'
+            ? '#^org-'.$organizationId.'/estimate-generation/benchmarks/acceptance/$#'
+            : '#^org-'.$organizationId.'/estimate-generation/benchmark-imports/sha256-[a-f0-9]{64}/objects/$#';
+
+        return is_string($value) && preg_match($pattern, $value) === 1;
     }
 
     private static function canonical(mixed $value): string

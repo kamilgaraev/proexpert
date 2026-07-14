@@ -15,6 +15,62 @@ use ReflectionClass;
 final class EstimateGenerationBenchmarkResourceTest extends TestCase
 {
     #[Test]
+    public function dataset_private_reader_resolves_only_relative_paths_inside_exact_tenant_prefix(): void
+    {
+        $store = new class implements \App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPrivateObjectStore
+        {
+            public string $path = '';
+
+            public function read(string $path, int $maxBytes): string
+            {
+                $this->path = $path;
+
+                return 'payload';
+            }
+        };
+        $reader = new \App\BusinessModules\Addons\EstimateGeneration\Benchmark\DatasetPrivateBenchmarkObjectReader(
+            $store, 71, 'org-71/estimate-generation/benchmark-imports/sha256-abc/objects/',
+        );
+        $case = new \App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseData(
+            'case-1', \App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkDatasetType::Regression,
+            \App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkSourceType::VectorPdf,
+            'inputs/a.pdf', 'expected/a.json', hash('sha256', 'payload'), hash('sha256', 'payload'),
+            'private', 'tenant-import', [], 1, 'model:v1', [], '',
+        );
+        self::assertSame('payload', $reader->read($case, 'input', 100));
+        self::assertSame('org-71/estimate-generation/benchmark-imports/sha256-abc/objects/inputs/a.pdf', $store->path);
+    }
+
+    #[Test]
+    public function dataset_private_reader_rejects_traversal_absolute_uri_and_foreign_prefix(): void
+    {
+        $store = new class implements \App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPrivateObjectStore
+        {
+            public function read(string $path, int $maxBytes): string
+            {
+                self::fail('store must not be called');
+            }
+        };
+        $reader = new \App\BusinessModules\Addons\EstimateGeneration\Benchmark\DatasetPrivateBenchmarkObjectReader(
+            $store, 71, 'org-71/estimate-generation/benchmark-imports/sha256-abc/objects/',
+        );
+        foreach (['../secret', '/absolute/file', 's3://org-72/file', 'https://example.test/file'] as $locator) {
+            try {
+                $case = new \App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseData(
+                    'case-1', \App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkDatasetType::Development,
+                    \App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkSourceType::VectorPdf,
+                    $locator, 'expected/a.json', str_repeat('a', 64), str_repeat('b', 64),
+                    'private', 'tenant-import', [], 1, 'model:v1', [], '',
+                );
+                $reader->read($case, 'input', 100);
+                self::fail('unsafe locator accepted');
+            } catch (\App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkContractException) {
+                self::addToAssertionCount(1);
+            }
+        }
+    }
+
+    #[Test]
     public function stored_execution_snapshot_is_the_only_queued_authority(): void
     {
         $root = dirname(__DIR__, 4);
@@ -34,6 +90,10 @@ final class EstimateGenerationBenchmarkResourceTest extends TestCase
         self::assertStringContainsString('execution_snapshot jsonb', $migration);
         self::assertStringContainsString('eg_benchmark_execution_snapshot_valid_v1', $migration);
         self::assertStringContainsString('execution_snapshot <> OLD.execution_snapshot', $migration);
+        self::assertStringContainsString('estimate_generation_setting_snapshots', $migration);
+        self::assertStringContainsString('settings_snapshot_hash', $migration);
+        self::assertStringContainsString("settings_row.snapshot->'models'", $migration);
+        self::assertStringContainsString("settings_row.snapshot->'limits'", $migration);
         $provider = file_get_contents($root.'/app/BusinessModules/Addons/EstimateGeneration/EstimateGenerationServiceProvider.php');
         $resource = file_get_contents($root.'/app/Filament/Resources/EstimateGeneration/BenchmarkRunResource.php');
         self::assertIsString($provider);
@@ -41,6 +101,18 @@ final class EstimateGenerationBenchmarkResourceTest extends TestCase
         self::assertIsString($resource);
         self::assertStringContainsString("->default('current-baseline')", $resource);
         self::assertStringNotContainsString("->default('production-replay')", $resource);
+    }
+
+    #[Test]
+    public function dispatch_service_loads_effective_settings_and_rejects_caller_stale_identity(): void
+    {
+        $source = file_get_contents((new ReflectionClass(\App\BusinessModules\Addons\EstimateGeneration\Operations\AdminBenchmarkDispatchService::class))->getFileName());
+        self::assertIsString($source);
+        self::assertStringContainsString('snapshotForNewWork((int) $dataset->organization_id)', $source);
+        self::assertStringContainsString('benchmark_settings_snapshot_stale', $source);
+        self::assertStringContainsString("'model_versions' => \$settingsPayload['models']", $source);
+        self::assertStringContainsString("'currency' => \$settingsPayload['budgets']['currency']", $source);
+        self::assertStringContainsString("'settings_limits' => \$settingsPayload['limits']", $source);
     }
 
     #[Test]
@@ -72,10 +144,14 @@ final class EstimateGenerationBenchmarkResourceTest extends TestCase
             'schema_version' => 1, 'organization_id' => 71, 'dataset_id' => 9,
             'dataset_type' => 'acceptance', 'dataset_version' => 4,
             'dataset_content_hash' => 'sha256:'.str_repeat('a', 64),
+            'manifest_base_prefix' => 'org-71/estimate-generation/benchmarks/acceptance/',
             'manifest_locator' => 's3://org-71/estimate-generation/benchmarks/acceptance/corpus.json',
             'manifest_sha256' => str_repeat('b', 64), 'adapter_id' => 'production-replay',
             'prompt_version' => 'recorded-ports:v3', 'settings_snapshot_id' => 8,
             'settings_snapshot_version' => 2, 'pipeline_version' => 'pipeline:v4',
+            'settings_scope' => 'organization', 'settings_organization_id' => 71,
+            'settings_snapshot_hash' => str_repeat('c', 64),
+            'settings_limits' => ['max_files' => 20, 'max_pages_per_file' => 500, 'max_total_pages' => 2000],
             'model_versions' => ['vision' => 'openai/gpt-5'], 'normative_version' => 'normative:v7',
             'price_version' => 'price:v5', 'currency' => 'RUB',
         ];
@@ -90,6 +166,9 @@ final class EstimateGenerationBenchmarkResourceTest extends TestCase
             'pipeline_version' => 'pipeline:v4', 'model_versions' => ['vision' => 'openai/gpt-5'],
             'normative_version' => 'normative:v7', 'price_version' => 'price:v5', 'currency' => 'RUB',
             'settings_snapshot_id' => 8, 'settings_snapshot_version' => 2,
+            'settings_scope' => 'organization', 'settings_organization_id' => 71,
+            'settings_snapshot_hash' => str_repeat('c', 64),
+            'settings_limits' => ['max_files' => 20, 'max_pages_per_file' => 500, 'max_total_pages' => 2000],
         ];
     }
 

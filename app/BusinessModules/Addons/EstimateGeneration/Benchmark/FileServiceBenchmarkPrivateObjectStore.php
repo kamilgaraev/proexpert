@@ -68,7 +68,10 @@ final readonly class FileServiceBenchmarkPrivateObjectStore implements Benchmark
 
     private function assertPath(string $path, int $maxBytes): void
     {
-        if (! preg_match('#^org-[1-9][0-9]*/estimate-generation/benchmarks/[0-9a-f-]{36}/[a-f0-9]{64}\.json$#', $path)
+        $validPath = preg_match('#^org-[1-9][0-9]*/estimate-generation/benchmarks/[0-9a-f-]{36}/[a-f0-9]{64}\.json$#D', $path) === 1
+            || preg_match('#^org-[1-9][0-9]*/estimate-generation/benchmarks/acceptance/[A-Za-z0-9][A-Za-z0-9._/-]{0,511}$#D', $path) === 1
+            || preg_match('#^org-[1-9][0-9]*/estimate-generation/benchmark-imports/sha256-[a-f0-9]{64}/(?:objects/[A-Za-z0-9][A-Za-z0-9._/-]{0,511}|manifest/[a-f0-9]{64}\.json)$#D', $path) === 1;
+        if (! $validPath || str_contains($path, '..') || str_contains($path, '//')
             || $maxBytes < 1 || $maxBytes > 64_000_000) {
             throw new BenchmarkContractException('private_object_path_invalid');
         }

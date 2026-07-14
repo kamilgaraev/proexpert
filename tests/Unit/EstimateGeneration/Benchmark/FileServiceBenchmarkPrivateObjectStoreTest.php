@@ -53,13 +53,35 @@ final class FileServiceBenchmarkPrivateObjectStoreTest extends TestCase
         self::assertSame($hash, $store->putImmutable($path, $body, 'application/json')->sha256);
     }
 
-    public function test_it_rejects_acceptance_corpus_and_non_content_addressed_paths(): void
+    public function test_it_accepts_closed_content_addressed_dataset_paths(): void
+    {
+        $store = new FileServiceBenchmarkPrivateObjectStore($this->files());
+        $hash = str_repeat('a', 64);
+
+        self::assertSame(hash('sha256', 'input'), $store->putImmutable(
+            'org-7/estimate-generation/benchmark-imports/sha256-'.$hash.'/objects/cases/input.json',
+            'input',
+            'application/json',
+        )->sha256);
+        self::assertSame(hash('sha256', 'manifest'), $store->putImmutable(
+            'org-7/estimate-generation/benchmark-imports/sha256-'.$hash.'/manifest/'.$hash.'.json',
+            'manifest',
+            'application/json',
+        )->sha256);
+        self::assertSame(hash('sha256', 'acceptance'), $store->putImmutable(
+            'org-7/estimate-generation/benchmarks/acceptance/'.$hash.'.json',
+            'acceptance',
+            'application/json',
+        )->sha256);
+    }
+
+    public function test_it_rejects_non_content_addressed_dataset_paths(): void
     {
         $store = new FileServiceBenchmarkPrivateObjectStore($this->files());
 
         $this->expectException(BenchmarkContractException::class);
         $this->expectExceptionMessage('private_object_path_invalid');
-        $store->read('org-7/estimate-generation/benchmarks/acceptance/manifest.json', 1024);
+        $store->read('org-7/estimate-generation/benchmark-imports/current/objects/input.json', 1024);
     }
 
     private function files(): FileService

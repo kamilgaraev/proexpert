@@ -8,7 +8,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationBench
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationTrainingDataset;
 use App\BusinessModules\Addons\EstimateGeneration\Operations\AdminBenchmarkDispatchCommand;
 use App\BusinessModules\Addons\EstimateGeneration\Operations\AdminBenchmarkDispatchService;
-use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsService;
 use App\Filament\Resources\EstimateGeneration\BenchmarkRunResource\Pages;
 use App\Filament\Support\FilamentPermission;
 use App\Filament\Support\NavigationGroups;
@@ -158,8 +157,6 @@ final class BenchmarkRunResource extends Resource
                 if ($actor === null || ! $dataset instanceof EstimateGenerationTrainingDataset || $dataset->organization_id === null) {
                     return;
                 }
-                $settings = app(EstimateGenerationSettingsService::class)->snapshotForNewWork((int) $dataset->organization_id);
-                $snapshot = $settings['snapshot'];
                 app(AdminBenchmarkDispatchService::class)->handle(new AdminBenchmarkDispatchCommand(
                     actorId: (int) $actor->id,
                     datasetId: (int) $dataset->id,
@@ -170,12 +167,8 @@ final class BenchmarkRunResource extends Resource
                         'pipeline_version' => (string) $data['pipeline_version'],
                         'adapter_id' => (string) $data['adapter_id'],
                         'prompt_version' => (string) $data['prompt_version'],
-                        'model_versions' => $snapshot['models'],
                         'normative_version' => (string) $data['normative_version'],
                         'price_version' => (string) $data['price_version'],
-                        'currency' => (string) $snapshot['budgets']['currency'],
-                        'settings_snapshot_id' => $settings['snapshot_id'],
-                        'settings_snapshot_version' => $settings['version'],
                     ],
                 ));
                 Notification::make()->success()->title(trans_message('estimate_generation.benchmark_queued'))->send();

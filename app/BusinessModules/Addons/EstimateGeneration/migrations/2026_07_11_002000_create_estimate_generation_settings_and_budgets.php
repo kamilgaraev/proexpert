@@ -17,6 +17,7 @@ return new class extends Migration
             $table->unsignedBigInteger('organization_id')->nullable();
             $table->unsignedInteger('version');
             $table->jsonb('snapshot');
+            $table->char('snapshot_hash', 64);
             $table->decimal('daily_budget', 20, 2);
             $table->decimal('monthly_budget', 20, 2);
             $table->char('currency', 3);
@@ -187,6 +188,7 @@ SQL);
         DB::statement('ALTER TABLE estimate_generation_setting_snapshots ADD CONSTRAINT eg_setting_snapshot_shape_ck CHECK (eg_setting_snapshot_valid_v1(snapshot, daily_budget, monthly_budget, currency))');
         DB::statement("ALTER TABLE estimate_generation_setting_snapshots ADD CONSTRAINT eg_setting_snapshot_scope_ck CHECK (scope IN ('global','organization') AND ((scope = 'global' AND organization_id IS NULL) OR (scope = 'organization' AND organization_id IS NOT NULL)))");
         DB::statement("ALTER TABLE estimate_generation_setting_snapshots ADD CONSTRAINT eg_setting_snapshot_currency_ck CHECK (currency IN ('RUB','USD','EUR'))");
+        DB::statement("ALTER TABLE estimate_generation_setting_snapshots ADD CONSTRAINT eg_setting_snapshot_hash_ck CHECK (snapshot_hash ~ '^[a-f0-9]{64}$')");
         DB::statement('ALTER TABLE estimate_generation_setting_snapshots ADD CONSTRAINT eg_setting_snapshot_budget_ck CHECK (daily_budget >= 0 AND monthly_budget >= daily_budget)');
         DB::statement("ALTER TABLE estimate_generation_setting_audits ADD CONSTRAINT eg_setting_audit_scope_ck CHECK (scope IN ('global','organization') AND ((scope = 'global' AND organization_id IS NULL) OR (scope = 'organization' AND organization_id IS NOT NULL)))");
         DB::statement("ALTER TABLE estimate_generation_setting_audits ADD CONSTRAINT eg_setting_audit_key_ck CHECK (key IN ('models','limits','timeouts','retries','confidence','enabled_formats','manual_review','budgets'))");

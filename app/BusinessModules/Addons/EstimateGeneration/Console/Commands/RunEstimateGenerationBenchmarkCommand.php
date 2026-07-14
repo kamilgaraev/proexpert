@@ -16,6 +16,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkReportData;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkReportOutputStore;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunner;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunOptions;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\DatasetPrivateBenchmarkCorpusLoader;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\LocalBenchmarkReportOutputStore;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\ProductionImmutableBenchmarkReportOutputStore;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\RegisteredBenchmarkManifestRepository;
@@ -31,12 +32,17 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
         {--emit-json : Emit JSON even when an immutable output is written}
         {--manifest= : Relative two-case replay manifest under the fixture root}
         {--manifest-sha256= : Exact immutable manifest content hash}
+        {--base-prefix= : Exact tenant import object prefix for development/regression}
         {--organization-id= : Tenant owning the private manifest}
         {--adapter= : Explicit registered adapter}
         {--pipeline-version= : Version of the evaluated pipeline}
         {--prompt-version=none:v1 : Version of the evaluated prompt set}
         {--settings-snapshot-id= : Immutable settings snapshot identity}
         {--settings-snapshot-version= : Immutable settings snapshot version}
+        {--settings-scope= : global|organization}
+        {--settings-organization-id= : Organization identity for an override}
+        {--settings-snapshot-hash= : Canonical settings snapshot hash}
+        {--settings-limits= : Canonical JSON processing limits}
         {--normative-version= : Normative version under evaluation}
         {--price-version= : Price version under evaluation}
         {--case-timeout-ms=300000 : Per-case timeout}
@@ -66,6 +72,7 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
         private readonly ?RegisteredBenchmarkManifestRepository $registeredManifests = null,
         private readonly ?BenchmarkReportOutputStore $reportOutput = null,
         private readonly ?AcceptanceBenchmarkGate $acceptanceGate = null,
+        private readonly ?DatasetPrivateBenchmarkCorpusLoader $datasetPrivateLoader = null,
     ) {
         parent::__construct();
         $this->environment = $environment ?? static fn (): string => (string) app()->environment();
@@ -96,8 +103,14 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
                 ($this->acceptanceGate ?? throw new BenchmarkCommandException('acceptance_master_gate_not_configured'))->assert($report);
             }
             $payload = $report->jsonSerialize();
-            $payload['settings_snapshot_id'] = (int) $this->option('settings-snapshot-id');
-            $payload['settings_snapshot_version'] = (int) $this->option('settings-snapshot-version');
+            if (($settingsLimits = (string) $this->option('settings-limits')) !== '') {
+                $payload['settings_snapshot_id'] = (int) $this->option('settings-snapshot-id');
+                $payload['settings_snapshot_version'] = (int) $this->option('settings-snapshot-version');
+                $payload['settings_scope'] = (string) $this->option('settings-scope');
+                $payload['settings_organization_id'] = ($settingsOrganizationId = filter_var($this->option('settings-organization-id'), FILTER_VALIDATE_INT)) === false ? null : $settingsOrganizationId;
+                $payload['settings_snapshot_hash'] = (string) $this->option('settings-snapshot-hash');
+                $payload['settings_limits'] = json_decode($settingsLimits, true, 8, JSON_THROW_ON_ERROR);
+            }
             $payload['normative_version'] = (string) $this->option('normative-version');
             $payload['price_version'] = (string) $this->option('price-version');
             BenchmarkReportData::sortRecursive($payload);
@@ -133,7 +146,15 @@ final class RunEstimateGenerationBenchmarkCommand extends Command
                 throw new BenchmarkCommandException('private_manifest_identity_invalid');
             }
 
-            return $this->acceptanceLoader->loadForDataset($dataset, $selectedOrganizationId, $selectedManifest, $selectedSha256);
+            if ($dataset === BenchmarkDatasetType::Acceptance) {
+                return $this->acceptanceLoader->loadForDataset($dataset, $selectedOrganizationId, $selectedManifest, $selectedSha256);
+            }
+            $basePrefix = $this->option('base-prefix');
+            if (! is_string($basePrefix) || $this->datasetPrivateLoader === null) {
+                throw new BenchmarkCommandException('dataset_private_base_prefix_invalid');
+            }
+
+            return $this->datasetPrivateLoader->load($dataset, $selectedOrganizationId, $basePrefix, $selectedManifest, $selectedSha256);
         }
         if ($dataset !== BenchmarkDatasetType::Acceptance) {
             $manifestPath = $this->repositoryManifestPath;

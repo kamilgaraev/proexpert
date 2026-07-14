@@ -8,6 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkRunReposito
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\RunEstimateGenerationBenchmarkJob;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationBenchmarkRun;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationTrainingDataset;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsService;
 use App\Filament\Support\FilamentPermission;
 use App\Models\SystemAdmin;
 use DomainException;
@@ -19,6 +20,7 @@ final readonly class AdminBenchmarkDispatchService
     public function __construct(
         private BenchmarkRunRepository $runs,
         private Dispatcher $bus,
+        private EstimateGenerationSettingsService $settings,
     ) {}
 
     /** @return array{run_id: int, run_uuid: string, idempotent_replay: bool} */
@@ -54,6 +56,24 @@ final readonly class AdminBenchmarkDispatchService
             if (! is_array($datasetManifest)) {
                 throw new DomainException('benchmark_dataset_manifest_missing');
             }
+            $settings = $this->settings->snapshotForNewWork((int) $dataset->organization_id);
+            foreach (['settings_snapshot_id' => 'snapshot_id', 'settings_snapshot_version' => 'version'] as $requested => $actual) {
+                if (isset($command->manifest[$requested]) && (int) $command->manifest[$requested] !== $settings[$actual]) {
+                    throw new DomainException('benchmark_settings_snapshot_stale');
+                }
+            }
+            $settingsPayload = $settings['snapshot'];
+            if (! is_array($settingsPayload['models'] ?? null) || ! is_array($settingsPayload['limits'] ?? null)
+                || ! is_array($settingsPayload['budgets'] ?? null) || ! is_string($settingsPayload['budgets']['currency'] ?? null)) {
+                throw new DomainException('benchmark_settings_snapshot_invalid');
+            }
+            $effectiveManifest = [
+                ...$command->manifest,
+                'model_versions' => $settingsPayload['models'],
+                'currency' => $settingsPayload['budgets']['currency'],
+                'settings_snapshot_id' => $settings['snapshot_id'],
+                'settings_snapshot_version' => $settings['version'],
+            ];
             $executionSnapshot = BenchmarkExecutionSnapshot::fromArray([
                 'schema_version' => 1,
                 'organization_id' => (int) $dataset->organization_id,
@@ -61,19 +81,24 @@ final readonly class AdminBenchmarkDispatchService
                 'dataset_type' => (string) $dataset->dataset_type,
                 'dataset_version' => (int) $dataset->version,
                 'dataset_content_hash' => $datasetManifest['dataset_content_hash'] ?? null,
+                'manifest_base_prefix' => $datasetManifest['base_prefix'] ?? null,
                 'manifest_locator' => $datasetManifest['locator'] ?? null,
                 'manifest_sha256' => $datasetManifest['sha256'] ?? null,
-                'adapter_id' => $command->manifest['adapter_id'] ?? null,
-                'prompt_version' => $command->manifest['prompt_version'] ?? null,
-                'settings_snapshot_id' => $command->manifest['settings_snapshot_id'] ?? null,
-                'settings_snapshot_version' => $command->manifest['settings_snapshot_version'] ?? null,
-                'pipeline_version' => $command->manifest['pipeline_version'] ?? null,
-                'model_versions' => $command->manifest['model_versions'] ?? null,
-                'normative_version' => $command->manifest['normative_version'] ?? null,
-                'price_version' => $command->manifest['price_version'] ?? null,
-                'currency' => $command->manifest['currency'] ?? null,
+                'adapter_id' => $effectiveManifest['adapter_id'] ?? null,
+                'prompt_version' => $effectiveManifest['prompt_version'] ?? null,
+                'settings_snapshot_id' => $settings['snapshot_id'],
+                'settings_snapshot_version' => $settings['version'],
+                'settings_scope' => $settings['scope'],
+                'settings_organization_id' => $settings['organization_id'],
+                'settings_snapshot_hash' => $settings['snapshot_hash'],
+                'settings_limits' => $settingsPayload['limits'],
+                'pipeline_version' => $effectiveManifest['pipeline_version'] ?? null,
+                'model_versions' => $effectiveManifest['model_versions'],
+                'normative_version' => $effectiveManifest['normative_version'] ?? null,
+                'price_version' => $effectiveManifest['price_version'] ?? null,
+                'currency' => $effectiveManifest['currency'],
             ]);
-            $manifest = [...$command->manifest, 'organization_id' => $command->organizationId, 'execution_snapshot' => $executionSnapshot->toArray()];
+            $manifest = [...$effectiveManifest, 'organization_id' => $command->organizationId, 'execution_snapshot' => $executionSnapshot->toArray()];
             $run = $this->runs->start($dataset, $manifest, $command->idempotencyKey);
             if ($run->wasRecentlyCreated) {
                 $this->bus->dispatch((new RunEstimateGenerationBenchmarkJob(

@@ -42,3 +42,24 @@
 - Upgrade migration временно снимает approved-dataset immutability trigger, backfill-ит ранее approved development datasets ограниченным evidence из `approved_by/approved_at`, затем восстанавливает immutable trigger до завершения миграции.
 - Settings page реактивно загружает exact global/organization snapshot, сбрасывает organization при global scope, использует атомарный epoch guard и переносит загруженную version в CAS baseline.
 - Создание dataset теперь требует проверенный JSON manifest: manifest проверяется на закрытый контракт и наличие cases выбранного kind, сохраняется приватно в tenant S3 path, а locator/hash и dataset content hash фиксируются в immutable stats до review. Processing сохраняет эту identity и не затирает её агрегатной статистикой.
+
+## Исправления по второму повторному review
+
+- Acceptance corpus loader снова строго acceptance-only. Для development/regression добавлены отдельные loader/reader, принимающие только относительные нормализованные locator-ы и разрешающие их исключительно под точным tenant import prefix.
+- Обычный processing доступен всем трём dataset kinds через единую закрытую action matrix; learning/tuning по-прежнему возможны только для trusted-approved development.
+- Dataset import переведён на S3-first staging через immutable conditional object store. Content-addressed prefix не зависит от DB ID, включает hashes всех uploads; DB-транзакция создаёт только dataset и memberships после успешной загрузки. Компенсация удаляет исключительно объекты с `created=true`, поэтому retry переиспользует ранее существовавшие immutable objects.
+- Manifest case locators связываются с uploads по SHA-256; неизвестные supporting files сохраняются отдельно и не получают authority manifest case.
+- Benchmark dispatch самостоятельно загружает текущий effective settings snapshot (organization override или global), отклоняет stale requested identity и формирует models/currency/limits только из authoritative snapshot.
+- PostgreSQL insert guard сверяет settings identity, scope, organization, hash, models, limits и currency execution snapshot с текущей записью settings; execution snapshot остаётся неизменяемым.
+- Immutable object store получил закрытый whitelist для content-addressed import manifest/object paths и acceptance paths; исполняемый unit-контракт подтверждает разрешённые и запрещённые пути.
+
+## Проверки второго повторного review
+
+- Целевые Filament-тесты: 43 passed, 257 assertions.
+- Полный DB-less Filament-модуль: 120 passed, 926 assertions.
+- Benchmark command: 9 passed, 27 assertions.
+- Immutable object store: 3 passed, 9 assertions.
+- PHPStan/Larastan по изменённым production-файлам с `--memory-limit=512M`: ошибок не найдено.
+- Pint по 17 изменённым PHP-файлам: PASS.
+- `php -l` по всем изменённым PHP-файлам: PASS.
+- `git diff --check`: PASS.

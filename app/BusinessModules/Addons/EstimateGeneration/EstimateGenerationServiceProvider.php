@@ -325,6 +325,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             registeredManifests: $app->make(RegisteredBenchmarkManifestRepository::class),
             reportOutput: $app->make(BenchmarkReportOutputStore::class),
             acceptanceGate: $app->make(AcceptanceBenchmarkGate::class),
+            datasetPrivateLoader: $app->make(\App\BusinessModules\Addons\EstimateGeneration\Benchmark\DatasetPrivateBenchmarkCorpusLoader::class),
         ));
         $this->app->singleton(
             \App\BusinessModules\Addons\EstimateGeneration\Operations\StoredBenchmarkRunExecutor::class,
