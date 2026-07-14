@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Feature\Filament;
 
 use App\Filament\Pages\Dashboard;
+use App\Filament\Pages\EstimateGeneration\EstimateGenerationDashboard;
+use App\Filament\Pages\EstimateGeneration\EstimateGenerationSettings;
 use App\Filament\Resources\ActivityEventResource;
 use App\Filament\Resources\BlogArticleResource;
 use App\Filament\Resources\BlogCategoryResource;
@@ -12,6 +14,12 @@ use App\Filament\Resources\BlogCommentResource;
 use App\Filament\Resources\BlogMediaAssetResource;
 use App\Filament\Resources\BlogSeoSettingsResource;
 use App\Filament\Resources\BlogTagResource;
+use App\Filament\Resources\EstimateGeneration\BenchmarkRunResource;
+use App\Filament\Resources\EstimateGeneration\FailureResource;
+use App\Filament\Resources\EstimateGeneration\PipelineCheckpointResource;
+use App\Filament\Resources\EstimateGeneration\SessionResource;
+use App\Filament\Resources\EstimateGeneration\TrainingDatasetResource;
+use App\Filament\Resources\EstimateGeneration\UsageResource;
 use App\Filament\Resources\ModuleResource;
 use App\Filament\Resources\Monitoring\ApplicationErrorResource;
 use App\Filament\Resources\NotificationAnalyticsResource;
@@ -29,23 +37,71 @@ use App\Filament\Resources\UserResource;
 use App\Filament\Support\NavigationGroups;
 use App\Models\SystemAdmin;
 use App\Services\Security\SystemAdminRoleService;
-use Illuminate\Support\Facades\Auth;
+use Illuminate\Container\Container;
+use Illuminate\Filesystem\Filesystem;
+use Illuminate\Support\Facades\Facade;
+use Illuminate\Translation\FileLoader;
+use Illuminate\Translation\Translator;
+use PHPUnit\Framework\TestCase;
 use ReflectionProperty;
-use Tests\TestCase;
 
 final class SystemAdminNavigationTest extends TestCase
 {
+    private object $auth;
+
     protected function setUp(): void
     {
         parent::setUp();
 
-        app(SystemAdminRoleService::class)->clearCache();
+        $container = new Container;
+        $loader = new FileLoader(new Filesystem, dirname(__DIR__, 3).DIRECTORY_SEPARATOR.'lang');
+        $container->instance('translator', new Translator($loader, 'ru'));
+        $container->instance('app', new class
+        {
+            public function getLocale(): string
+            {
+                return 'ru';
+            }
+        });
+        $container->instance('config', new class
+        {
+            public function get(string $key, mixed $default = null): mixed
+            {
+                return $default;
+            }
+        });
+
+        $this->auth = new class
+        {
+            public ?SystemAdmin $user = null;
+
+            public function guard(?string $name = null): self
+            {
+                return $this;
+            }
+
+            public function user(): ?SystemAdmin
+            {
+                return $this->user;
+            }
+
+            public function logout(): void
+            {
+                $this->user = null;
+            }
+        };
+        $container->instance('auth', $this->auth);
+        $container->instance(SystemAdminRoleService::class, $this->roleService());
+
+        Container::setInstance($container);
+        Facade::setFacadeApplication($container);
     }
 
     protected function tearDown(): void
     {
-        Auth::guard('system_admin')->logout();
-        app(SystemAdminRoleService::class)->clearCache();
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication(null);
+        Container::setInstance(null);
 
         parent::tearDown();
     }
@@ -59,6 +115,8 @@ final class SystemAdminNavigationTest extends TestCase
             'Биллинг',
             'Пользователи',
             'Блог CMS',
+            'База знаний',
+            'AI-сметчик',
             'Поддержка',
             'Уведомления',
             'Аудит',
@@ -71,6 +129,17 @@ final class SystemAdminNavigationTest extends TestCase
         self::assertSame(NavigationGroups::dashboard(), Dashboard::getNavigationGroup());
         self::assertSame(10, Dashboard::getNavigationSort());
         self::assertSame('heroicon-o-chart-pie', $this->navigationIconFor(Dashboard::class));
+    }
+
+    public function test_ai_estimator_pages_use_one_ordered_navigation_group(): void
+    {
+        self::assertSame(NavigationGroups::aiEstimator(), EstimateGenerationDashboard::getNavigationGroup());
+        self::assertSame(1, EstimateGenerationDashboard::getNavigationSort());
+        self::assertSame('heroicon-o-presentation-chart-line', $this->navigationIconFor(EstimateGenerationDashboard::class));
+
+        self::assertSame(NavigationGroups::aiEstimator(), EstimateGenerationSettings::getNavigationGroup());
+        self::assertSame(12, EstimateGenerationSettings::getNavigationSort());
+        self::assertSame('heroicon-o-adjustments-horizontal', $this->navigationIconFor(EstimateGenerationSettings::class));
     }
 
     public function test_panel_navigation_groups_do_not_duplicate_resource_icons(): void
@@ -98,13 +167,29 @@ final class SystemAdminNavigationTest extends TestCase
         self::assertFalse(PaymentTransactionResource::shouldRegisterNavigation());
         self::assertFalse(ActivityEventResource::shouldRegisterNavigation());
 
-        Auth::guard('system_admin')->logout();
+        self::assertFalse(EstimateGenerationDashboard::canAccess());
+        self::assertFalse(SessionResource::shouldRegisterNavigation());
+        self::assertFalse(TrainingDatasetResource::shouldRegisterNavigation());
+
+        $this->auth->logout();
         $this->actingAsRole('support_viewer');
 
         self::assertTrue(SupportRequestResource::shouldRegisterNavigation());
         self::assertFalse(BlogArticleResource::shouldRegisterNavigation());
         self::assertFalse(NotificationTemplateResource::shouldRegisterNavigation());
         self::assertFalse(ActivityEventResource::shouldRegisterNavigation());
+
+        $this->auth->logout();
+        $this->actingAsRole('support_operator');
+
+        self::assertTrue(EstimateGenerationDashboard::canAccess());
+        self::assertTrue(SessionResource::shouldRegisterNavigation());
+        self::assertTrue(UsageResource::shouldRegisterNavigation());
+        self::assertTrue(FailureResource::shouldRegisterNavigation());
+        self::assertTrue(PipelineCheckpointResource::shouldRegisterNavigation());
+        self::assertFalse(TrainingDatasetResource::shouldRegisterNavigation());
+        self::assertFalse(BenchmarkRunResource::shouldRegisterNavigation());
+        self::assertFalse(EstimateGenerationSettings::canAccess());
     }
 
     /**
@@ -218,18 +303,81 @@ final class SystemAdminNavigationTest extends TestCase
                 'sort' => 10,
                 'icon' => 'heroicon-o-shield-check',
             ],
+            SessionResource::class => [
+                'group' => NavigationGroups::aiEstimator(),
+                'sort' => 2,
+                'icon' => 'heroicon-o-command-line',
+            ],
+            UsageResource::class => [
+                'group' => NavigationGroups::aiEstimator(),
+                'sort' => 3,
+                'icon' => 'heroicon-o-banknotes',
+            ],
+            FailureResource::class => [
+                'group' => NavigationGroups::aiEstimator(),
+                'sort' => 4,
+                'icon' => 'heroicon-o-exclamation-triangle',
+            ],
+            PipelineCheckpointResource::class => [
+                'group' => NavigationGroups::aiEstimator(),
+                'sort' => 5,
+                'icon' => 'heroicon-o-queue-list',
+            ],
+            TrainingDatasetResource::class => [
+                'group' => NavigationGroups::aiEstimator(),
+                'sort' => 10,
+                'icon' => 'heroicon-o-academic-cap',
+            ],
+            BenchmarkRunResource::class => [
+                'group' => NavigationGroups::aiEstimator(),
+                'sort' => 11,
+                'icon' => 'heroicon-o-beaker',
+            ],
         ];
     }
 
     private function actingAsRole(string $role): SystemAdmin
     {
-        $admin = SystemAdmin::factory()->role($role)->create([
+        $admin = new SystemAdmin([
+            'role' => $role,
             'is_active' => true,
         ]);
-
-        $this->actingAs($admin, 'system_admin');
+        $this->auth->user = $admin;
 
         return $admin;
+    }
+
+    private function roleService(): SystemAdminRoleService
+    {
+        $rolesPath = dirname(__DIR__, 3).DIRECTORY_SEPARATOR.'config'.DIRECTORY_SEPARATOR
+            .'RoleDefinitions'.DIRECTORY_SEPARATOR.'system_admin';
+
+        return new class($rolesPath) extends SystemAdminRoleService
+        {
+            public function __construct(private readonly string $rolesPath) {}
+
+            public function hasPermission(SystemAdmin $systemAdmin, string $permission): bool
+            {
+                if (! $systemAdmin->isActive()) {
+                    return false;
+                }
+
+                $contents = file_get_contents($this->rolesPath.DIRECTORY_SEPARATOR.$systemAdmin->role.'.json');
+                if (! is_string($contents)) {
+                    return false;
+                }
+
+                $definition = json_decode($contents, true, flags: JSON_THROW_ON_ERROR);
+                $permissions = array_merge(
+                    $definition['system_permissions'] ?? [],
+                    ...array_values($definition['module_permissions'] ?? []),
+                );
+
+                return in_array('*', $permissions, true) || in_array($permission, $permissions, true);
+            }
+
+            public function clearCache(): void {}
+        };
     }
 
     private function navigationIconFor(string $class): string
