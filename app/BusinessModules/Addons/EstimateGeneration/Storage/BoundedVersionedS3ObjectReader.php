@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Storage;
 
+use App\Services\Storage\Exceptions\VersionedObjectIntegrityException;
+use App\Services\Storage\Exceptions\VersionedObjectTransportException;
 use App\Services\Storage\FileService;
-use RuntimeException;
 use Throwable;
 
 final readonly class BoundedVersionedS3ObjectReader
@@ -35,16 +36,9 @@ final readonly class BoundedVersionedS3ObjectReader
         }
         try {
             $object = $this->files->describeVersion($path, $versionId, $maxBytes);
-        } catch (RuntimeException $exception) {
-            if (in_array($exception->getMessage(), [
-                's3_object_size_invalid',
-                's3_object_size_mismatch',
-                's3_object_version_mismatch',
-                's3_object_stream_invalid',
-                's3_bucket_versioning_required',
-            ], true)) {
-                throw new S3ObjectLocatorException('estimate_generation_object_integrity_failed', 0, $exception);
-            }
+        } catch (VersionedObjectIntegrityException $exception) {
+            throw new S3ObjectLocatorException('estimate_generation_object_integrity_failed', 0, $exception);
+        } catch (VersionedObjectTransportException $exception) {
             throw new S3ObjectTransportException('estimate_generation_object_storage_unavailable', 0, $exception);
         } catch (Throwable $exception) {
             throw new S3ObjectTransportException('estimate_generation_object_storage_unavailable', 0, $exception);

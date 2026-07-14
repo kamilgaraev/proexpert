@@ -82,6 +82,16 @@ final class FailureNormalizerTest extends TestCase
             FailureCategory::Recoverable,
             'document_storage_unavailable',
         ];
+        yield 'pipeline artifact transport' => [
+            new TypedFailureException(FailureCategory::Recoverable, 'pipeline_artifact_storage_unavailable'),
+            FailureCategory::Recoverable,
+            'pipeline_artifact_storage_unavailable',
+        ];
+        yield 'pipeline artifact integrity' => [
+            new TypedFailureException(FailureCategory::Terminal, 'pipeline_artifact_integrity_failed'),
+            FailureCategory::Terminal,
+            'pipeline_artifact_integrity_failed',
+        ];
     }
 
     #[Test]

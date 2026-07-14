@@ -6,6 +6,7 @@ namespace Tests\Unit\EstimateGeneration\Storage;
 
 use App\BusinessModules\Addons\EstimateGeneration\Storage\BoundedVersionedS3ObjectReader;
 use App\BusinessModules\Addons\EstimateGeneration\Storage\S3ObjectTransportException;
+use App\Services\Storage\Exceptions\VersionedObjectIntegrityException;
 use App\Services\Storage\FileService;
 use DomainException;
 use PHPUnit\Framework\Attributes\Test;
@@ -58,7 +59,7 @@ final class BoundedVersionedS3ObjectReaderTest extends TestCase
 
             public function describeVersion(string $path, ?string $versionId, int $maxBytes = 64_000_000): array
             {
-                throw new \RuntimeException('s3_object_size_mismatch');
+                throw new VersionedObjectIntegrityException('provider wording is irrelevant');
             }
         };
         $this->expectException(\App\BusinessModules\Addons\EstimateGeneration\Storage\S3ObjectLocatorException::class);

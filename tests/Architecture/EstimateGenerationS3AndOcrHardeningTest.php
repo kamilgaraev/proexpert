@@ -19,6 +19,10 @@ final class EstimateGenerationS3AndOcrHardeningTest extends TestCase
         self::assertStringNotContainsString("?? 'legacy'", $source);
         self::assertStringContainsString('generation_attempt_required', $source);
         self::assertStringContainsString('putImmutable(', $source);
+        self::assertStringContainsString('pipeline_artifact_storage_unavailable', $source);
+        self::assertStringContainsString('pipeline_artifact_integrity_failed', $source);
+        self::assertStringContainsString('FailureCategory::Recoverable', $source);
+        self::assertStringContainsString('FailureCategory::Terminal', $source);
         $workflow = file_get_contents(dirname(__DIR__, 2).'/docs/workflows/ai-estimator.md');
         $runbook = file_get_contents(dirname(__DIR__, 2).'/docs/runbooks/ai-estimator-production-readiness.md');
         self::assertIsString($workflow);

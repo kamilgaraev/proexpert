@@ -182,7 +182,7 @@ final class RasterPreprocessorTest extends DatabaseLessTestCase
     }
 
     #[Test]
-    public function it_detects_tampered_derivative_and_animation(): void
+    public function it_detects_a_tampered_derivative_as_terminal_integrity_failure(): void
     {
         Storage::disk('s3')->put('org-7/uploads/source.png', $this->png(40, 40, [100, 100, 100]));
         $result = $this->preprocessor->preprocess($this->input());
@@ -190,10 +190,14 @@ final class RasterPreprocessorTest extends DatabaseLessTestCase
         try {
             $this->preprocessor->preprocess($this->input());
             self::fail('Tampered derivative was accepted.');
-        } catch (RasterPreprocessingException $exception) {
-            self::assertSame('derivative_hash_collision', $exception->reason);
+        } catch (\App\BusinessModules\Addons\EstimateGeneration\Storage\S3ObjectLocatorException $exception) {
+            self::assertSame('estimate_generation_derivative_integrity_failed', $exception->getMessage());
         }
+    }
 
+    #[Test]
+    public function it_rejects_animated_raster_sources(): void
+    {
         $animated = $this->png(10, 10, [0, 0, 0]).'acTL';
         Storage::disk('s3')->put('org-7/uploads/source.png', $animated);
         $this->expectException(RasterPreprocessingException::class);

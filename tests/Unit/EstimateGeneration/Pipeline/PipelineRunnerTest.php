@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Pipeline;
 
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointClaim;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\CheckpointClaimStatus;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\LeaseAwarePipelineStage;
@@ -131,6 +133,26 @@ final class PipelineRunnerTest extends TestCase
         self::assertSame(2, $stage->executions);
         self::assertSame(2, $this->store->attempts($this->context(), $stage->stage()));
         self::assertSame($stage->stage(), $result?->stage);
+    }
+
+    #[Test]
+    public function recoverable_pipeline_artifact_transport_failure_is_retried_with_a_new_claim(): void
+    {
+        $stage = new ThrowOnceStage(
+            ProcessingStage::UnderstandObject,
+            new TypedFailureException(FailureCategory::Recoverable, 'pipeline_artifact_storage_unavailable'),
+        );
+        $runner = $this->runner([$stage]);
+
+        try {
+            $runner->runNext($this->context());
+            self::fail('First transport attempt must fail.');
+        } catch (TypedFailureException $exception) {
+            self::assertSame(FailureCategory::Recoverable, $exception->category);
+        }
+
+        self::assertSame(ProcessingStage::UnderstandObject, $runner->runNext($this->context())?->stage);
+        self::assertSame(2, $this->store->attempts($this->context(), $stage->stage()));
     }
 
     #[Test]
@@ -526,6 +548,30 @@ final class ThrowingStage implements PipelineStage
     public function execute(PipelineContext $context): PipelineStageResult
     {
         throw $this->error;
+    }
+}
+
+final class ThrowOnceStage implements PipelineStage
+{
+    private int $executions = 0;
+
+    public function __construct(
+        private readonly ProcessingStage $processingStage,
+        private readonly Throwable $error,
+    ) {}
+
+    public function stage(): ProcessingStage
+    {
+        return $this->processingStage;
+    }
+
+    public function execute(PipelineContext $context): PipelineStageResult
+    {
+        if (++$this->executions === 1) {
+            throw $this->error;
+        }
+
+        return new PipelineStageResult($this->processingStage, 'sha256:recovered', []);
     }
 }
 

@@ -6,6 +6,8 @@ namespace Tests\Unit\EstimateGeneration\Benchmark;
 
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkContractException;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\FileServiceBenchmarkPrivateObjectStore;
+use App\Services\Storage\Exceptions\VersionedObjectIntegrityException;
+use App\Services\Storage\Exceptions\VersionedObjectTransportException;
 use App\Services\Storage\FileService;
 use Aws\CommandInterface;
 use Aws\Exception\AwsException;
@@ -37,7 +39,7 @@ final class FileServiceImmutableObjectTest extends TestCase
     {
         $client = new RecordingS3Client([
             new Result(['ETag' => '"etag-1"', 'VersionId' => 'version-1']),
-            new Result(),
+            new Result,
         ]);
 
         $this->files($client)->putImmutable(
@@ -143,8 +145,35 @@ final class FileServiceImmutableObjectTest extends TestCase
     {
         $client = new RecordingS3Client([new Result(['ETag' => 'etag'])]);
 
+        $this->expectException(VersionedObjectIntegrityException::class);
         $this->expectExceptionMessage('s3_bucket_versioning_required');
         $this->files($client)->putImmutable('org-7/object.json', 'body', 'application/json');
+    }
+
+    public function test_missing_pinned_version_is_integrity_failure(): void
+    {
+        $client = new RecordingS3Client;
+        $command = $this->createMock(CommandInterface::class);
+        $client->responses = [new AwsException('provider wording is irrelevant', $command, [
+            'response' => new Response(404),
+            'code' => 'NoSuchVersion',
+        ])];
+
+        $this->expectException(VersionedObjectIntegrityException::class);
+        $this->files($client)->describeVersion('org-7/object.json', 'missing-version', 20);
+    }
+
+    public function test_provider_outage_is_transport_failure(): void
+    {
+        $client = new RecordingS3Client;
+        $command = $this->createMock(CommandInterface::class);
+        $client->responses = [new AwsException('provider wording is irrelevant', $command, [
+            'response' => new Response(503),
+            'code' => 'ServiceUnavailable',
+        ])];
+
+        $this->expectException(VersionedObjectTransportException::class);
+        $this->files($client)->describeVersion('org-7/object.json', 'version-1', 20);
     }
 
     private function files(S3ClientInterface $client): FileService

@@ -4,6 +4,9 @@ namespace App\Services\Storage;
 
 use App\Models\Organization;
 use App\Services\Logging\LoggingService;
+use App\Services\Storage\Exceptions\VersionedObjectIntegrityException;
+use App\Services\Storage\Exceptions\VersionedObjectTransportException;
+use Aws\Exception\AwsException;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\UploadedFile;
@@ -33,13 +36,13 @@ class FileService
     /** @return array{path:string,body:string,size:int,sha256:string,etag:?string,version_id:?string,content_type:string,created:bool} */
     public function putImmutable(string $path, string $body, string $contentType): array
     {
-        $client = $this->s3Client();
-        $config = $this->disk()->getConfig();
-        $bucket = $config['bucket'] ?? null;
-        if (! is_string($bucket) || $bucket === '') {
-            throw new \RuntimeException('s3_conditional_put_unavailable');
-        }
         try {
+            $client = $this->s3Client();
+            $config = $this->disk()->getConfig();
+            $bucket = $config['bucket'] ?? null;
+            if (! is_string($bucket) || $bucket === '') {
+                throw new VersionedObjectTransportException('s3_conditional_put_unavailable');
+            }
             $result = $client->putObject([
                 'Bucket' => $bucket, 'Key' => $path, 'Body' => $body,
                 'ContentType' => $contentType, 'IfNoneMatch' => '*',
@@ -47,7 +50,7 @@ class FileService
             $etag = is_string($result['ETag'] ?? null) ? trim($result['ETag'], '"') : null;
             $version = is_string($result['VersionId'] ?? null) ? $result['VersionId'] : null;
             if ($version === null || trim($version) === '') {
-                throw new \RuntimeException('s3_bucket_versioning_required');
+                throw new VersionedObjectIntegrityException('s3_bucket_versioning_required');
             }
 
             $this->tagEstimateGenerationObject($path, $version, true);
@@ -55,10 +58,10 @@ class FileService
             return ['path' => $path, 'body' => $body, 'size' => strlen($body),
                 'sha256' => hash('sha256', $body), 'etag' => $etag, 'version_id' => $version,
                 'content_type' => $contentType, 'created' => true];
-        } catch (\Aws\Exception\AwsException $exception) {
+        } catch (AwsException $exception) {
             $status = $exception->getStatusCode();
             if (! in_array($status, [409, 412], true)) {
-                throw new \RuntimeException('s3_conditional_put_failed', 0, $exception);
+                throw $this->versionedAwsException($exception);
             }
 
             $existing = $this->describeVersion($path, null);
@@ -66,54 +69,72 @@ class FileService
 
             return [...$existing, 'created' => false];
         } catch (\InvalidArgumentException $exception) {
-            throw new \RuntimeException('s3_conditional_put_unavailable', 0, $exception);
+            throw new VersionedObjectTransportException('s3_conditional_put_unavailable', 0, $exception);
+        } catch (VersionedObjectIntegrityException|VersionedObjectTransportException $exception) {
+            throw $exception;
+        } catch (\Throwable $exception) {
+            throw new VersionedObjectTransportException('s3_conditional_put_unavailable', 0, $exception);
         }
     }
 
     /** @return array{path:string,body:string,size:int,sha256:string,etag:?string,version_id:?string,content_type:string} */
     public function describeVersion(string $path, ?string $versionId, int $maxBytes = 64_000_000): array
     {
-        $client = $this->s3Client();
-        $bucket = $this->disk()->getConfig()['bucket'] ?? null;
-        if (! is_string($bucket) || $bucket === '') {
-            throw new \RuntimeException('s3_versioned_read_unavailable');
+        try {
+            $client = $this->s3Client();
+            $bucket = $this->disk()->getConfig()['bucket'] ?? null;
+            if (! is_string($bucket) || $bucket === '') {
+                throw new VersionedObjectTransportException('s3_versioned_read_unavailable');
+            }
+        } catch (VersionedObjectTransportException $exception) {
+            throw $exception;
+        } catch (\Throwable $exception) {
+            throw new VersionedObjectTransportException('s3_versioned_read_unavailable', 0, $exception);
         }
         $arguments = ['Bucket' => $bucket, 'Key' => $path];
         if ($versionId !== null && $versionId !== '') {
             $arguments['VersionId'] = $versionId;
         }
-        $head = $client->headObject($arguments);
+        try {
+            $head = $client->headObject($arguments);
+        } catch (AwsException $exception) {
+            throw $this->versionedAwsException($exception);
+        }
         $resolvedVersion = is_string($head['VersionId'] ?? null) ? $head['VersionId'] : $versionId;
         if ($resolvedVersion === null || trim($resolvedVersion) === '') {
-            throw new \RuntimeException('s3_bucket_versioning_required');
+            throw new VersionedObjectIntegrityException('s3_bucket_versioning_required');
         }
         $contentLength = $head['ContentLength'] ?? null;
         if (! is_numeric($contentLength) || (int) $contentLength < 0 || (int) $contentLength > $maxBytes) {
-            throw new \RuntimeException('s3_object_size_invalid');
+            throw new VersionedObjectIntegrityException('s3_object_size_invalid');
         }
         $arguments['VersionId'] = $resolvedVersion;
-        $object = $client->getObject($arguments);
+        try {
+            $object = $client->getObject($arguments);
+        } catch (AwsException $exception) {
+            throw $this->versionedAwsException($exception);
+        }
         if (isset($object['VersionId']) && (string) $object['VersionId'] !== $resolvedVersion) {
-            throw new \RuntimeException('s3_object_version_mismatch');
+            throw new VersionedObjectIntegrityException('s3_object_version_mismatch');
         }
         $stream = $object['Body'] ?? null;
         if (! is_object($stream) || ! method_exists($stream, 'read') || ! method_exists($stream, 'eof')) {
-            throw new \RuntimeException('s3_object_stream_invalid');
+            throw new VersionedObjectIntegrityException('s3_object_stream_invalid');
         }
         $body = '';
         while (! $stream->eof()) {
             $remaining = $maxBytes + 1 - strlen($body);
             if ($remaining <= 0) {
-                throw new \RuntimeException('s3_object_size_invalid');
+                throw new VersionedObjectIntegrityException('s3_object_size_invalid');
             }
             $chunk = $stream->read(min(8192, $remaining));
             if (! is_string($chunk)) {
-                throw new \RuntimeException('s3_object_stream_invalid');
+                throw new VersionedObjectIntegrityException('s3_object_stream_invalid');
             }
             $body .= $chunk;
         }
         if (strlen($body) !== (int) $contentLength) {
-            throw new \RuntimeException('s3_object_size_mismatch');
+            throw new VersionedObjectIntegrityException('s3_object_size_mismatch');
         }
 
         return ['path' => $path, 'body' => $body, 'size' => strlen($body),
@@ -121,6 +142,17 @@ class FileService
             'etag' => is_string($head['ETag'] ?? null) ? trim($head['ETag'], '"') : null,
             'version_id' => $resolvedVersion,
             'content_type' => is_string($head['ContentType'] ?? null) ? $head['ContentType'] : 'application/octet-stream'];
+    }
+
+    private function versionedAwsException(
+        AwsException $exception,
+    ): VersionedObjectIntegrityException|VersionedObjectTransportException {
+        $code = (string) $exception->getAwsErrorCode();
+        if ($exception->getStatusCode() === 404 || in_array($code, ['NoSuchKey', 'NoSuchVersion', 'NotFound'], true)) {
+            return new VersionedObjectIntegrityException('s3_pinned_object_unavailable', 0, $exception);
+        }
+
+        return new VersionedObjectTransportException('s3_versioned_object_transport_failed', 0, $exception);
     }
 
     /** @return array{size:int,version_id:string} */
