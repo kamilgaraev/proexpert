@@ -137,6 +137,37 @@ class OrganizationPackageControllerTest extends TestCase
             ]);
     }
 
+    public function test_get_packages_marks_trial_used_from_expired_subscription_history(): void
+    {
+        $account = OrganizationCommercialAccount::query()->create([
+            'organization_id' => $this->organization->id,
+            'status' => 'free',
+            'offer_type' => 'packages',
+            'quote_version' => 1,
+            'auto_renew_enabled' => false,
+        ]);
+        OrganizationPackageSubscription::query()->create([
+            'organization_id' => $this->organization->id,
+            'commercial_account_id' => $account->id,
+            'package_slug' => 'machinery',
+            'status' => 'expired',
+            'access_source' => 'trial',
+            'price_paid' => 0,
+            'trial_started_at' => now()->subDays(5),
+            'trial_ends_at' => now()->subDays(2),
+        ]);
+        $token = JWTAuth::claims(['organization_id' => $this->organization->id])->fromUser($this->user);
+
+        $this->withHeader('Authorization', 'Bearer '.$token)
+            ->getJson('/api/v1/landing/packages')
+            ->assertOk()
+            ->assertJsonFragment([
+                'slug' => 'machinery',
+                'trial_available' => false,
+                'trial_used' => true,
+            ]);
+    }
+
     public function test_get_packages_requires_bearer_token(): void
     {
         $this->getJson('/api/v1/landing/packages')

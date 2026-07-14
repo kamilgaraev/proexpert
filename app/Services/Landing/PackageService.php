@@ -30,6 +30,10 @@ class PackageService
         $usedTrials = OrganizationPackageTrialUsage::query()
             ->where('organization_id', $organizationId)
             ->pluck('package_slug')
+            ->merge(OrganizationPackageSubscription::query()
+                ->where('organization_id', $organizationId)
+                ->pluck('package_slug'))
+            ->unique()
             ->flip();
 
         return collect($this->packageCatalog->allPackages())
