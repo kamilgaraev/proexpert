@@ -2,15 +2,16 @@
 
 namespace App\BusinessModules\Features\Notifications\Services;
 
-use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\BusinessModules\Features\Notifications\Channels\EmailChannel;
-use App\BusinessModules\Features\Notifications\Channels\TelegramChannel;
 use App\BusinessModules\Features\Notifications\Channels\InAppChannel;
+use App\BusinessModules\Features\Notifications\Channels\TelegramChannel;
 use App\BusinessModules\Features\Notifications\Channels\WebSocketChannel;
 use App\BusinessModules\Features\Notifications\Jobs\SendNotificationJob;
+use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\Models\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
+use RuntimeException;
 use Throwable;
 
 class NotificationService
@@ -48,7 +49,7 @@ class NotificationService
             $requiredPermissions
         );
 
-        if (!$this->permissionResolver->canReceive($user, $requiredPermissions, $organizationId, $data)) {
+        if (! $this->permissionResolver->canReceive($user, $requiredPermissions, $organizationId, $data)) {
             Log::info('Notification skipped due to recipient permissions', [
                 'user_id' => $user->id,
                 'notification_type' => $notificationType,
@@ -64,13 +65,13 @@ class NotificationService
                 $organizationId
             );
         }
-        
-        if (!$forceSend && !$this->preferenceManager->canSend($user, $notificationType, $organizationId)) {
+
+        if (! $forceSend && ! $this->preferenceManager->canSend($user, $notificationType, $organizationId)) {
             Log::info('Notification skipped due to preferences', [
                 'user_id' => $user->id,
                 'notification_type' => $notificationType,
             ]);
-            
+
             return $this->createNotification(
                 $user,
                 $type,
@@ -89,7 +90,7 @@ class NotificationService
                 'user_id' => $user->id,
                 'notification_type' => $notificationType,
                 'channels' => $effectiveChannels,
-                'priority' => $priority
+                'priority' => $priority,
             ]);
         } else {
             $effectiveChannels = $channels ?? $this->preferenceManager->getChannels(
@@ -202,20 +203,24 @@ class NotificationService
     {
         $channelClass = $this->getChannelClass($channel);
 
-        if (!$channelClass) {
+        if (! $channelClass) {
             Log::error('Unknown notification channel', ['channel' => $channel]);
-            return false;
+            throw new RuntimeException("Unknown notification channel: {$channel}");
         }
 
         $notifiable = $notification->notifiable;
 
-        if (!$notifiable) {
+        if (! $notifiable) {
             Log::error('Notifiable not found', ['notification_id' => $notification->id]);
-            return false;
+            throw new RuntimeException("Notification recipient not found: {$notification->id}");
         }
 
         try {
             $result = $channelClass->send($notifiable, $notification);
+
+            if (! $result) {
+                throw new RuntimeException("Notification channel {$channel} reported a failed delivery");
+            }
 
             $deliveryStatus = $notification->delivery_status ?? [];
             $deliveryStatus[$channel] = $result ? 'sent' : 'failed';
@@ -233,7 +238,7 @@ class NotificationService
             $deliveryStatus[$channel] = 'failed';
             $notification->update(['delivery_status' => $deliveryStatus]);
 
-            return false;
+            throw $e;
         }
     }
 
@@ -249,4 +254,3 @@ class NotificationService
         return $channels[$channel] ?? null;
     }
 }
-

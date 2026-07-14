@@ -1,39 +1,34 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\Notifications\Channels;
 
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\BusinessModules\Features\Notifications\Models\NotificationAnalytics;
+use Illuminate\Contracts\Broadcasting\Factory;
 use Illuminate\Support\Facades\Log;
+use RuntimeException;
+use Throwable;
 
 class WebSocketChannel
 {
+    public function __construct(private readonly Factory $broadcasting) {}
+
     public function send($notifiable, Notification $notification): bool
     {
+        if (config('broadcasting.default') !== 'reverb') {
+            throw new RuntimeException('WebSocket channel requires the Reverb broadcasting connection');
+        }
+
+        $analytics = NotificationAnalytics::create([
+            'notification_id' => $notification->id,
+            'channel' => 'websocket',
+            'status' => 'pending',
+        ]);
+
         try {
-            if (config('broadcasting.default') !== 'reverb') {
-                Log::warning('WebSocket channel disabled: broadcasting driver is not reverb');
-
-                return false;
-            }
-
-            $analytics = NotificationAnalytics::create([
-                'notification_id' => $notification->id,
-                'channel' => 'websocket',
-                'status' => 'pending',
-            ]);
-
-            Log::info('[WebSocket] Sending HTTP to Reverb', [
-                'notification_id' => $notification->id,
-                'notifiable_id' => $notifiable->id,
-            ]);
-
-            $this->sendToReverbViaHttp($notification, $notifiable);
-
-            Log::info('[WebSocket] Sent to Reverb', [
-                'notification_id' => $notification->id,
-            ]);
-
+            $this->broadcastNotification($notification, $notifiable);
             $analytics->updateStatus('sent');
 
             Log::info('WebSocket notification broadcasted', [
@@ -42,74 +37,42 @@ class WebSocketChannel
             ]);
 
             return true;
+        } catch (Throwable $exception) {
+            $analytics->updateStatus('failed');
+            $analytics->update(['error_message' => $exception->getMessage()]);
 
-        } catch (\Throwable $e) {
             Log::warning('WebSocket notification failed', [
                 'notification_id' => $notification->id,
-                'error' => $e->getMessage(),
+                'notifiable_id' => $notifiable->id,
+                'exception' => $exception::class,
             ]);
 
-            if (isset($analytics)) {
-                $analytics->updateStatus('failed');
-                $analytics->update(['error_message' => $e->getMessage()]);
-            }
-
-            return false;
+            throw $exception;
         }
     }
 
-    protected function sendToReverbViaHttp(Notification $notification, $notifiable): void
+    protected function broadcastNotification(Notification $notification, object $notifiable): void
     {
-        $appId = config('broadcasting.connections.reverb.app_id');
-        $key = config('broadcasting.connections.reverb.key');
-        $secret = config('broadcasting.connections.reverb.secret');
-        $host = config('broadcasting.connections.reverb.options.host');
-        $port = config('broadcasting.connections.reverb.options.port');
-        $scheme = config('broadcasting.connections.reverb.options.scheme');
-
         $interface = $notification->data['interface'] ?? 'lk';
-        $channel = 'private-App.Models.User.'.$notifiable->id.'.'.$interface;
-        $event = 'notification.new';
-        $data = json_encode([
-            'id' => $notification->id,
-            'type' => $notification->type,
-            'notification_type' => $notification->notification_type,
-            'priority' => $notification->priority,
-            'data' => $notification->data,
-            'created_at' => $notification->created_at->toIso8601String(),
-            'read_at' => $notification->read_at?->toIso8601String(),
-        ]);
 
-        $body = json_encode([
-            'name' => $event,
-            'channels' => [$channel],
-            'data' => $data,
-        ]);
-
-        $path = "/apps/{$appId}/events";
-        $timestamp = time();
-        $bodyMd5 = md5($body);
-
-        $queryString = "auth_key={$key}&auth_timestamp={$timestamp}&auth_version=1.0&body_md5={$bodyMd5}";
-        $stringToSign = "POST\n{$path}\n{$queryString}";
-        $authSignature = hash_hmac('sha256', $stringToSign, $secret);
-
-        $url = "{$scheme}://{$host}:{$port}{$path}?{$queryString}&auth_signature={$authSignature}";
-
-        $response = \Illuminate\Support\Facades\Http::timeout(5)
-            ->withBody($body, 'application/json')
-            ->post($url);
-
-        Log::info('[WebSocket] HTTP response', [
-            'status' => $response->status(),
-            'body' => $response->body(),
-        ]);
-
-        if (! $response->successful()) {
-            Log::warning('[WebSocket] Reverb HTTP failed', [
-                'status' => $response->status(),
-                'body' => $response->body(),
-            ]);
+        if (! in_array($interface, ['admin', 'lk'], true)) {
+            throw new RuntimeException("Unsupported notification interface: {$interface}");
         }
+
+        $channel = 'private-App.Models.User.'.$notifiable->id.'.'.$interface;
+
+        $this->broadcasting->connection('reverb')->broadcast(
+            [$channel],
+            'notification.new',
+            [
+                'id' => $notification->id,
+                'type' => $notification->type,
+                'notification_type' => $notification->notification_type,
+                'priority' => $notification->priority,
+                'data' => $notification->data,
+                'created_at' => $notification->created_at->toIso8601String(),
+                'read_at' => $notification->read_at?->toIso8601String(),
+            ]
+        );
     }
 }

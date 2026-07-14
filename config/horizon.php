@@ -22,6 +22,7 @@ return [
         'redis_estimate_generation:estimate-generation-unit-maintenance' => 60,
         'redis_estimate_generation_benchmarks:estimate-generation-benchmarks' => 300,
         'redis:estimate-generation' => 120,
+        'redis:broadcast' => 60,
         'redis:notifications-critical' => 30,
         'redis:notifications-high' => 60,
         'redis:notifications' => 120,
@@ -89,7 +90,7 @@ return [
             ],
             'supervisor-normal' => [
                 'connection' => 'redis',
-                'queue' => ['notifications', 'default'],
+                'queue' => ['broadcast', 'notifications', 'default'],
                 'balance' => 'auto',
                 'autoScalingStrategy' => 'time',
                 'minProcesses' => 1,
@@ -242,7 +243,7 @@ return [
             ],
             'supervisor-1' => [
                 'connection' => 'redis',
-                'queue' => ['imports', 'notifications-critical', 'notifications-high', 'notifications', 'notifications-low', 'default'],
+                'queue' => ['imports', 'broadcast', 'notifications-critical', 'notifications-high', 'notifications', 'notifications-low', 'default'],
                 'balance' => 'simple',
                 'processes' => 3,
                 'tries' => 3,
