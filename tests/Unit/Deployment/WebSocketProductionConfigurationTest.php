@@ -33,8 +33,9 @@ final class WebSocketProductionConfigurationTest extends TestCase
         $workflow = file_get_contents(dirname(__DIR__, 3).'/.github/workflows/deploy-backend.yml');
 
         self::assertIsString($workflow);
+        self::assertStringContainsString("grep -Eq '^laravel-worker(_[0-9]+|:)'", $workflow);
         self::assertStringContainsString("supervisorctl stop 'laravel-worker:*'", $workflow);
-        self::assertStringContainsString("pgrep -af '/var/www/prohelper/artisan queue:work'", $workflow);
+        self::assertStringContainsString("pgrep -af '^php /var/www/prohelper/artisan queue:work( |$)'", $workflow);
         self::assertStringContainsString('@fsockopen', $workflow);
     }
 }
