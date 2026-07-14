@@ -41,7 +41,8 @@ class SiteRequestService
     public function __construct(
         private readonly SiteRequestWorkflowService $workflowService,
         private readonly SiteRequestCalendarService $calendarService,
-        private readonly SiteRequestsModule $module
+        private readonly SiteRequestsModule $module,
+        private readonly SiteRequestSortResolver $sortResolver
     ) {}
 
     /**
@@ -101,8 +102,8 @@ class SiteRequestService
         $this->applyFilters($query, $filters);
 
         // Сортировка
-        $sortBy = $filters['sort_by'] ?? 'created_at';
-        $sortDir = $filters['sort_dir'] ?? 'desc';
+        $sortBy = $this->sortResolver->column((string) ($filters['sort_by'] ?? 'created_at'));
+        $sortDir = $this->sortResolver->direction((string) ($filters['sort_dir'] ?? 'desc'));
         $query->orderBy($sortBy, $sortDir);
 
         return $query->paginate($perPage);
