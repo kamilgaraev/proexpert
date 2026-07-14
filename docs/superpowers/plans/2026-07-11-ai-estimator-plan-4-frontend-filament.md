@@ -886,7 +886,7 @@ List сравнивает pipeline/model/normative/price versions, metrics, cost
 
 - [ ] **Step 6: Реализовать settings/budgets**
 
-Настройки: models per stage, file/page limits, timeout, retry, confidence thresholds, enabled formats, manual-review rules, organization/global daily/monthly budgets. Secrets отсутствуют в schema. Settings snapshot применяется только к новым processing units/calls.
+Настройки: models, timeout и retry только для AI-стадий vision/classification/normative matching; file/page limits; реально используемые classification/geometry/normative-matching confidence thresholds; enabled formats; low-confidence manual review; organization/global daily/monthly budgets. Детерминированные planning/pricing не имеют декоративных AI-controls. Secrets отсутствуют в schema. Settings snapshot применяется только к новым processing units/calls.
 
 - [ ] **Step 7: Запустить tests и commit**
 

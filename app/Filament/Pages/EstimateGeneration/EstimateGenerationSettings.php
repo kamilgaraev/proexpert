@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Pages\EstimateGeneration;
 
+use App\BusinessModules\Addons\EstimateGeneration\Normatives\Services\NormativeRerankerModelSet;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsData;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsScopeState;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EstimateGenerationSettingsService;
@@ -77,9 +78,7 @@ final class EstimateGenerationSettings extends Page implements HasSchemas
         $stages = [
             'vision' => trans_message('estimate_generation.settings_stage_vision'),
             'classification' => trans_message('estimate_generation.settings_stage_classification'),
-            'planning' => trans_message('estimate_generation.settings_stage_planning'),
             'normative_matching' => trans_message('estimate_generation.settings_stage_normative_matching'),
-            'pricing' => trans_message('estimate_generation.settings_stage_pricing'),
         ];
         $components = [
             Section::make(trans_message('estimate_generation.settings_scope_section'))->schema([
@@ -116,7 +115,6 @@ final class EstimateGenerationSettings extends Page implements HasSchemas
             TextInput::make('confidence.classification')->label(trans_message('estimate_generation.settings_confidence_classification'))->required(),
             TextInput::make('confidence.geometry')->label(trans_message('estimate_generation.settings_confidence_geometry'))->required(),
             TextInput::make('confidence.normative_matching')->label(trans_message('estimate_generation.settings_confidence_normative'))->required(),
-            TextInput::make('confidence.pricing')->label(trans_message('estimate_generation.settings_confidence_pricing'))->required(),
         ])->columns(2);
         $components[] = Section::make(trans_message('estimate_generation.settings_formats_section'))->schema([
             CheckboxList::make('enabled_formats')->label(trans_message('estimate_generation.settings_enabled_formats'))->options(array_combine(
@@ -126,10 +124,7 @@ final class EstimateGenerationSettings extends Page implements HasSchemas
         ]);
         $components[] = Section::make(trans_message('estimate_generation.settings_review_section'))->schema([
             Toggle::make('manual_review.low_confidence')->label(trans_message('estimate_generation.settings_review_low_confidence')),
-            Toggle::make('manual_review.missing_evidence')->label(trans_message('estimate_generation.settings_review_missing_evidence')),
-            Toggle::make('manual_review.price_outlier')->label(trans_message('estimate_generation.settings_review_price_outlier')),
-            Toggle::make('manual_review.normative_fallback')->label(trans_message('estimate_generation.settings_review_normative_fallback')),
-        ])->columns(2);
+        ]);
         $components[] = Section::make(trans_message('estimate_generation.settings_budgets_section'))->schema([
             TextInput::make('budgets.daily')->label(trans_message('estimate_generation.settings_daily_budget'))->regex('/^(?:0|[1-9]\d{0,17})\.\d{2}$/')->required(),
             TextInput::make('budgets.monthly')->label(trans_message('estimate_generation.settings_monthly_budget'))->regex('/^(?:0|[1-9]\d{0,17})\.\d{2}$/')->required(),
@@ -201,16 +196,21 @@ final class EstimateGenerationSettings extends Page implements HasSchemas
     /** @return array<string, mixed> */
     private function defaults(): array
     {
-        $stages = ['vision', 'classification', 'planning', 'normative_matching', 'pricing'];
+        $stages = ['vision', 'classification', 'normative_matching'];
+        $models = [
+            'vision' => (string) config('estimate-generation.vision.model'),
+            'classification' => (string) config('estimate-generation.ocr.model'),
+            'normative_matching' => (new NormativeRerankerModelSet)->models[0],
+        ];
 
         return [
             'scope' => 'global', 'organization_id' => null, 'expected_version' => 0, 'idempotency_key' => (string) Str::ulid(),
-            'models' => array_fill_keys($stages, 'openai/gpt-5'),
+            'models' => $models,
             'limits' => ['max_files' => 20, 'max_pages_per_file' => 500, 'max_total_pages' => 2000],
             'timeouts' => array_fill_keys($stages, 120), 'retries' => array_fill_keys($stages, 2),
-            'confidence' => ['classification' => '0.8000', 'geometry' => '0.7500', 'normative_matching' => '0.8500', 'pricing' => '0.9000'],
+            'confidence' => ['classification' => '0.8000', 'geometry' => '0.7500', 'normative_matching' => '0.8500'],
             'enabled_formats' => ['pdf', 'jpg', 'jpeg', 'png', 'tiff', 'dxf', 'dwg', 'xlsx'],
-            'manual_review' => ['low_confidence' => true, 'missing_evidence' => true, 'price_outlier' => true, 'normative_fallback' => true],
+            'manual_review' => ['low_confidence' => true],
             'budgets' => ['daily' => '0.00', 'monthly' => '0.00', 'currency' => 'RUB'],
         ];
     }

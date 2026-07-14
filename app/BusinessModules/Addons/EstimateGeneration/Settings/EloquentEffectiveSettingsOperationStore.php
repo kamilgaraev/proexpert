@@ -35,6 +35,7 @@ final readonly class EloquentEffectiveSettingsOperationStore implements Effectiv
                     ->where('hashes.algorithm', '=', 'jcs-sha256-v1');
             })
             ->where('snapshots.id', $snapshotId)
+            ->whereRaw("snapshots.snapshot->>'schema_version' = '2'")
             ->select(['snapshots.id', 'snapshots.scope', 'snapshots.organization_id', 'snapshots.version', 'snapshots.snapshot', 'hashes.snapshot_hash'])
             ->first();
         if (! is_object($row)) {

@@ -58,14 +58,14 @@ final class EffectiveSettingsResolverTest extends TestCase
     private function record(string $scope): array
     {
         $snapshot = [
-            'schema_version' => 1,
-            'models' => ['vision' => 'timeweb/vision-v2', 'classification' => 'timeweb/classify-v1', 'planning' => 'timeweb/plan-v1', 'normative_matching' => 'timeweb/rerank-v1', 'pricing' => 'timeweb/pricing-v1'],
+            'schema_version' => 2,
+            'models' => ['vision' => 'timeweb/vision-v2', 'classification' => 'timeweb/classify-v1', 'normative_matching' => 'timeweb/rerank-v1'],
             'limits' => ['max_files' => 8, 'max_pages_per_file' => 120, 'max_total_pages' => 500],
-            'timeouts' => ['vision' => 45, 'classification' => 30, 'planning' => 30, 'normative_matching' => 20, 'pricing' => 20],
-            'retries' => ['vision' => 2, 'classification' => 1, 'planning' => 1, 'normative_matching' => 2, 'pricing' => 1],
-            'confidence' => ['classification' => '0.7000', 'geometry' => '0.7800', 'normative_matching' => '0.8200', 'pricing' => '0.9000'],
+            'timeouts' => ['vision' => 45, 'classification' => 30, 'normative_matching' => 20],
+            'retries' => ['vision' => 2, 'classification' => 1, 'normative_matching' => 2],
+            'confidence' => ['classification' => '0.7000', 'geometry' => '0.7800', 'normative_matching' => '0.8200'],
             'enabled_formats' => ['pdf'],
-            'manual_review' => ['low_confidence' => true, 'missing_evidence' => true, 'price_outlier' => true, 'normative_fallback' => true],
+            'manual_review' => ['low_confidence' => true],
             'budgets' => ['daily' => '250.00', 'monthly' => '4000.00', 'currency' => 'RUB'],
         ];
 

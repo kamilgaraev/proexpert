@@ -49,7 +49,7 @@ final class EstimateGenerationSettingsService
                 return $this->validatedReplay($operation->result);
             }
 
-            $current = DB::table('estimate_generation_setting_snapshots')
+            $latest = DB::table('estimate_generation_setting_snapshots')
                 ->where('scope', $data->scope)
                 ->where(function ($query) use ($scopeOrganizationId): void {
                     $scopeOrganizationId === null
@@ -59,17 +59,29 @@ final class EstimateGenerationSettingsService
                 ->orderByDesc('version')
                 ->lockForUpdate()
                 ->first();
+            $current = DB::table('estimate_generation_setting_snapshots')
+                ->where('scope', $data->scope)
+                ->where(function ($query) use ($scopeOrganizationId): void {
+                    $scopeOrganizationId === null
+                        ? $query->whereNull('organization_id')
+                        : $query->where('organization_id', $scopeOrganizationId);
+                })
+                ->whereRaw("snapshot->>'schema_version' = '2'")
+                ->orderByDesc('version')
+                ->lockForUpdate()
+                ->first();
             $currentVersion = is_object($current) ? (int) $current->version : 0;
             if ($data->expectedVersion !== $currentVersion) {
                 throw new DomainException('estimate_generation_settings_version_conflict');
             }
 
+            $nextVersion = is_object($latest) ? (int) $latest->version + 1 : 1;
             $snapshot = $data->snapshot();
             $snapshotHash = SettingsSnapshotHash::calculate($snapshot);
             $snapshotId = (int) DB::table('estimate_generation_setting_snapshots')->insertGetId([
                 'scope' => $data->scope,
                 'organization_id' => $scopeOrganizationId,
-                'version' => $currentVersion + 1,
+                'version' => $nextVersion,
                 'snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR),
                 'snapshot_hash' => $snapshotHash,
                 'daily_budget' => $data->budgets['daily'],
@@ -88,7 +100,7 @@ final class EstimateGenerationSettingsService
             $oldSnapshot = $this->decodeSnapshot(is_object($current) ? $current->snapshot : null);
             $this->recordAudit($snapshotId, $actorId, $data, $oldSnapshot, $snapshot, $commandFingerprint);
 
-            $result = ['snapshot_id' => $snapshotId, 'version' => $currentVersion + 1];
+            $result = ['snapshot_id' => $snapshotId, 'version' => $nextVersion];
             $updated = DB::table('estimate_generation_setting_operations')
                 ->where('id', $operation->id)
                 ->where('status', 'pending')
@@ -114,12 +126,14 @@ final class EstimateGenerationSettingsService
             $snapshot = DB::table('estimate_generation_setting_snapshots')
                 ->where('scope', 'organization')
                 ->where('organization_id', $organizationId)
+                ->whereRaw("snapshot->>'schema_version' = '2'")
                 ->orderByDesc('version')
                 ->first();
         }
         $snapshot ??= DB::table('estimate_generation_setting_snapshots')
             ->where('scope', 'global')
             ->whereNull('organization_id')
+            ->whereRaw("snapshot->>'schema_version' = '2'")
             ->orderByDesc('version')
             ->first();
         if (! is_object($snapshot)) {
@@ -155,6 +169,7 @@ final class EstimateGenerationSettingsService
                     ? $query->whereNull('organization_id')
                     : $query->where('organization_id', $organizationId);
             })
+            ->whereRaw("snapshot->>'schema_version' = '2'")
             ->orderByDesc('version')
             ->first();
         if (! is_object($snapshot)) {

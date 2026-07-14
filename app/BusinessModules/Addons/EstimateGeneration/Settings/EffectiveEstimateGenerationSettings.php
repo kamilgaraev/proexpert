@@ -25,7 +25,7 @@ final readonly class EffectiveEstimateGenerationSettings
         $scope = $record['scope'] ?? null;
         $organizationId = $record['organization_id'] ?? null;
         $hash = $record['snapshot_hash'] ?? null;
-        if (! is_array($snapshot) || ($snapshot['schema_version'] ?? null) !== 1
+        if (! is_array($snapshot) || ($snapshot['schema_version'] ?? null) !== 2
             || ! in_array($scope, ['global', 'organization'], true)
             || ($scope === 'global' && $organizationId !== null)
             || ($scope === 'organization' && $organizationId !== $workOrganizationId)
@@ -33,10 +33,15 @@ final readonly class EffectiveEstimateGenerationSettings
             || ! hash_equals($hash, SettingsSnapshotHash::calculate($snapshot))) {
             throw new DomainException('estimate_generation_effective_settings_invalid');
         }
-        foreach (['models', 'limits', 'timeouts', 'retries', 'confidence', 'enabled_formats', 'manual_review', 'budgets'] as $key) {
-            if (! array_key_exists($key, $snapshot)) {
-                throw new DomainException('estimate_generation_effective_settings_incomplete');
-            }
+        $validated = EstimateGenerationSettingsData::fromArray([
+            'scope' => $scope,
+            'organization_id' => $organizationId,
+            'expected_version' => 0,
+            'idempotency_key' => 'runtime-validation',
+            ...array_diff_key($snapshot, ['schema_version' => true]),
+        ])->snapshot();
+        if ($validated !== $snapshot) {
+            throw new DomainException('estimate_generation_effective_settings_invalid');
         }
 
         return new self(

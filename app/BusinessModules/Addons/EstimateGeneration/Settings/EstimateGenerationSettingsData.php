@@ -13,11 +13,11 @@ final readonly class EstimateGenerationSettingsData
         'timeouts', 'retries', 'confidence', 'enabled_formats', 'manual_review', 'budgets',
     ];
 
-    private const STAGES = ['vision', 'classification', 'planning', 'normative_matching', 'pricing'];
+    private const STAGES = ['vision', 'classification', 'normative_matching'];
 
-    private const CONFIDENCE_KEYS = ['classification', 'geometry', 'normative_matching', 'pricing'];
+    private const CONFIDENCE_KEYS = ['classification', 'geometry', 'normative_matching'];
 
-    private const REVIEW_KEYS = ['low_confidence', 'missing_evidence', 'price_outlier', 'normative_fallback'];
+    private const REVIEW_KEYS = ['low_confidence'];
 
     private const FORMATS = ['pdf', 'jpg', 'jpeg', 'png', 'tiff', 'dxf', 'dwg', 'xlsx'];
 
@@ -97,7 +97,7 @@ final readonly class EstimateGenerationSettingsData
     public function snapshot(): array
     {
         return [
-            'schema_version' => 1,
+            'schema_version' => 2,
             'models' => $this->models,
             'limits' => $this->limits,
             'timeouts' => $this->timeouts,

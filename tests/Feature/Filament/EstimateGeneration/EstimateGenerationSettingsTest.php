@@ -105,7 +105,7 @@ final class EstimateGenerationSettingsTest extends TestCase
     {
         $source = $this->source(EstimateGenerationSettingsService::class);
 
-        foreach (['expectedVersion', 'idempotencyKey', 'commandFingerprint', 'lockForUpdate', '\'version\' => $currentVersion + 1', 'estimate_generation_setting_audits', 'old_value', 'new_value'] as $contract) {
+        foreach (['expectedVersion', 'idempotencyKey', 'commandFingerprint', 'lockForUpdate', '\'version\' => $nextVersion', 'estimate_generation_setting_audits', 'old_value', 'new_value'] as $contract) {
             self::assertStringContainsString($contract, $source);
         }
         self::assertStringNotContainsString('updateOrInsert', $source);
@@ -178,7 +178,7 @@ final class EstimateGenerationSettingsTest extends TestCase
 
         self::assertIsString($compatibility);
         self::assertStringNotContainsString('DROP TRIGGER', $compatibility);
-        self::assertStringNotContainsString("->update([", $compatibility);
+        self::assertStringNotContainsString('->update([', $compatibility);
         self::assertIsString($sideTable);
         self::assertStringContainsString('public $withinTransaction = false', $sideTable);
         self::assertStringContainsString("SET lock_timeout TO '2s'", $sideTable);
@@ -192,7 +192,7 @@ final class EstimateGenerationSettingsTest extends TestCase
     /** @return array<string, mixed> */
     private function validPayload(): array
     {
-        $stages = ['vision', 'classification', 'planning', 'normative_matching', 'pricing'];
+        $stages = ['vision', 'classification', 'normative_matching'];
 
         return [
             'scope' => 'organization',
@@ -203,9 +203,9 @@ final class EstimateGenerationSettingsTest extends TestCase
             'limits' => ['max_files' => 20, 'max_pages_per_file' => 500, 'max_total_pages' => 2000],
             'timeouts' => array_fill_keys($stages, 120),
             'retries' => array_fill_keys($stages, 2),
-            'confidence' => ['classification' => '0.8000', 'geometry' => '0.7500', 'normative_matching' => '0.8500', 'pricing' => '0.9000'],
+            'confidence' => ['classification' => '0.8000', 'geometry' => '0.7500', 'normative_matching' => '0.8500'],
             'enabled_formats' => ['pdf', 'png', 'xlsx'],
-            'manual_review' => ['low_confidence' => true, 'missing_evidence' => true, 'price_outlier' => true, 'normative_fallback' => true],
+            'manual_review' => ['low_confidence' => true],
             'budgets' => ['daily' => '100.00', 'monthly' => '1000.00', 'currency' => 'RUB'],
         ];
     }
