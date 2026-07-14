@@ -21,7 +21,7 @@ class SendNotificationJob implements ShouldQueue
 
     public int $tries;
 
-    public int $retryAfter;
+    public int $backoff;
 
     public function __construct(Notification $notification)
     {
@@ -29,7 +29,7 @@ class SendNotificationJob implements ShouldQueue
 
         $priorityConfig = config("notifications.priorities.{$notification->priority}");
         $this->tries = $priorityConfig['retry_times'] ?? 3;
-        $this->retryAfter = $priorityConfig['retry_after'] ?? 300;
+        $this->backoff = $priorityConfig['retry_after'] ?? 300;
     }
 
     public function handle(NotificationService $notificationService): void
@@ -86,10 +86,5 @@ class SendNotificationJob implements ShouldQueue
             'error' => $exception->getMessage(),
             'attempts' => $this->attempts(),
         ]);
-    }
-
-    public function retryUntil(): \DateTime
-    {
-        return now()->addHours(24);
     }
 }

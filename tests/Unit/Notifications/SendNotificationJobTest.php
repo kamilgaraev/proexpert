@@ -67,4 +67,20 @@ final class SendNotificationJobTest extends TestCase
 
         (new SendNotificationJob($notification))->handle($service);
     }
+
+    public function test_retry_policy_is_bounded_and_uses_laravel_backoff(): void
+    {
+        $notification = new Notification;
+        $notification->setRawAttributes([
+            'priority' => 'normal',
+            'channels' => json_encode(['websocket'], JSON_THROW_ON_ERROR),
+            'delivery_status' => json_encode([], JSON_THROW_ON_ERROR),
+        ], true);
+
+        $job = new SendNotificationJob($notification);
+
+        self::assertSame(3, $job->tries);
+        self::assertSame(300, $job->backoff);
+        self::assertFalse(method_exists($job, 'retryUntil'));
+    }
 }
