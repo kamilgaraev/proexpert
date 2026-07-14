@@ -23,9 +23,12 @@ class OcrDocumentStorageService
         UploadedFile $file,
         User $user
     ): EstimateGenerationDocument {
-        $content = file_get_contents((string) $file->getRealPath());
+        $realPath = $file->getRealPath();
+        $checksum = is_string($realPath) && $realPath !== ''
+            ? @hash_file('sha256', $realPath)
+            : false;
 
-        if ($content === false) {
+        if (! is_string($checksum) || preg_match('/^[a-f0-9]{64}$/', $checksum) !== 1) {
             throw new TypedFailureException(FailureCategory::UserActionRequired, 'document_read_failed');
         }
 
@@ -39,8 +42,6 @@ class OcrDocumentStorageService
         if ($storagePath === false) {
             throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
         }
-
-        $checksum = hash('sha256', $content);
 
         return EstimateGenerationDocument::create([
             'session_id' => $session->id,

@@ -22,19 +22,44 @@ final readonly class S3DocumentSourceManifestStorage implements DocumentSourceMa
             throw new TypedFailureException(FailureCategory::Terminal, 'document_storage_scope_invalid');
         }
 
+        $maxBytes = $this->maxReadableBytes($document);
+        $declaredBytes = (int) ($document->file_size_bytes ?? 0);
+        if ($declaredBytes < 1 || $declaredBytes > $maxBytes) {
+            throw new TypedFailureException(FailureCategory::UserActionRequired, 'document_source_too_large', [
+                'file_size_bytes' => $declaredBytes,
+                'max_file_size_bytes' => $maxBytes,
+            ]);
+        }
+
         $stream = $this->files->disk($organization)->readStream((string) $document->storage_path);
 
         if (! is_resource($stream)) {
             throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
         }
 
+        $content = '';
         try {
-            $content = stream_get_contents($stream);
+            while (! feof($stream)) {
+                $remaining = $maxBytes + 1 - strlen($content);
+                if ($remaining <= 0) {
+                    throw new TypedFailureException(FailureCategory::UserActionRequired, 'document_source_too_large', [
+                        'max_file_size_bytes' => $maxBytes,
+                    ]);
+                }
+                $chunk = fread($stream, min(1_048_576, $remaining));
+                if (! is_string($chunk)) {
+                    throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
+                }
+                if ($chunk === '' && ! feof($stream)) {
+                    throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
+                }
+                $content .= $chunk;
+            }
         } finally {
             fclose($stream);
         }
 
-        if (! is_string($content) || $content === '') {
+        if ($content === '' || strlen($content) !== $declaredBytes) {
             throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
         }
 
@@ -73,5 +98,19 @@ final readonly class S3DocumentSourceManifestStorage implements DocumentSourceMa
         }
 
         return $path;
+    }
+
+    private function maxReadableBytes(EstimateGenerationDocument $document): int
+    {
+        $mimeType = strtolower((string) $document->mime_type);
+
+        return match (true) {
+            $mimeType === 'application/pdf' => max(1, (int) config('estimate-generation.ocr.max_pdf_file_bytes', 200 * 1024 * 1024)),
+            str_contains($mimeType, 'spreadsheet'),
+            str_contains($mimeType, 'excel'),
+            str_contains($mimeType, 'csv') => max(1, (int) config('estimate-generation.ocr.max_spreadsheet_file_bytes', 50 * 1024 * 1024)),
+            in_array($mimeType, ['application/dxf', 'application/dwg', 'image/vnd.dwg'], true) => max(1, (int) config('estimate-generation.ocr.max_cad_file_bytes', 200 * 1024 * 1024)),
+            default => max(1, (int) config('estimate-generation.ocr.max_sync_file_bytes', 10 * 1024 * 1024)),
+        };
     }
 }
