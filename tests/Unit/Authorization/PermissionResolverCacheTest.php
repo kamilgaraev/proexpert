@@ -32,6 +32,8 @@ final class PermissionResolverCacheTest extends TestCase
         Cache::put('custom_role_snabzenie_global', ['slug' => 'snabzenie'], 3600);
         Cache::put('system_perms_custom_snabzenie_75', ['admin.access'], 3600);
         Cache::put('module_perms_custom_snabzenie_75', ['catalog_management' => ['materials.view']], 3600);
+        Cache::put('system_perms_v2_custom_snabzenie_75', ['admin.access'], 3600);
+        Cache::put('module_perms_v2_custom_snabzenie_75', ['catalog_management' => ['materials.view']], 3600);
         Cache::put('user_permission_version_167', 4, 3600);
 
         $this->resolver()->clearRolePermissionCache(
@@ -45,6 +47,8 @@ final class PermissionResolverCacheTest extends TestCase
         $this->assertNull(Cache::get('custom_role_snabzenie_global'));
         $this->assertNull(Cache::get('system_perms_custom_snabzenie_75'));
         $this->assertNull(Cache::get('module_perms_custom_snabzenie_75'));
+        $this->assertNull(Cache::get('system_perms_v2_custom_snabzenie_75'));
+        $this->assertNull(Cache::get('module_perms_v2_custom_snabzenie_75'));
         $this->assertSame(5, Cache::get('user_permission_version_167'));
     }
 

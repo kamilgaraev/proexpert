@@ -14,7 +14,7 @@ use InvalidArgumentException;
 class RoleScanner
 {
     private const ROLES_PATH = 'config/RoleDefinitions';
-    private const CACHE_KEY = 'authorization_roles';
+    private const CACHE_KEY = 'authorization_roles:v2';
     private const CACHE_TTL = 3600; // 1 час
 
     /**

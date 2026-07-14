@@ -135,6 +135,9 @@
     "ai-estimates": [
       "*"
     ],
+    "estimate-generation": [
+      "*"
+    ],
     "procurement": [
       "*"
     ],
