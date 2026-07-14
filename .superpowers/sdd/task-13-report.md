@@ -25,6 +25,13 @@
 - `php -l` по 26 затронутым PHP-файлам: PASS.
 - `git diff --check`: PASS.
 
+## Финальные блокеры Task 13
+
+- Историческая миграция `2026_07_11_002000` восстановлена без `snapshot_hash`. Новый ordered upgrade `2026_07_14_000450` добавляет nullable-колонку только при отсутствии, блокирует конкурентные записи, временно снимает immutable trigger, нормализует определение constraint и детерминированно пересчитывает SHA-256 каждого JSONB snapshot bounded keyset-пакетами по 500 записей. После `NOT VALID`/`VALIDATE` колонка становится `NOT NULL`, trigger восстанавливается даже при исключении; down удаляет constraint и колонку.
+- Dataset import preflight строит точный уникальный набор обязательных input/expected SHA-256 для всех cases выбранного manifest, отклоняет missing, duplicate и unexpected uploads до S3 и DB persistence. Один shared hash может обслужить несколько locators внутри одного dataset.
+- Immutable orchestrator после каждого S3 put повторно сверяет tenant-bound locator, SHA-256, version и ETag. Любая поздняя ошибка или ошибка DB callback компенсирует в обратном порядке только receipts с `created=true`; retry принимает только подтверждённые immutable receipts с `created=false`.
+- Финальные behavioral contracts: migration/corpus — 20 passed, 119 assertions; полный DB-less Filament-модуль — 121 passed, 942 assertions; benchmark/store/manifest/corpus — 25 passed, 115 assertions.
+
 ## Ограничения проверки
 
 - Миграции, seeders, tinker и любые команды с подключением к БД не запускались согласно owner constraint.

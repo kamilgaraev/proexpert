@@ -5,9 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Training;
 
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkDatasetType;
-use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkImmutableObjectStore;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkManifest;
-use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPrivateObject;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationTrainingDataset;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationTrainingExample;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationTrainingFile;
@@ -37,7 +35,7 @@ final class EstimateGenerationTrainingDatasetService
         private readonly WorkIntentClassifier $workIntentClassifier,
         private readonly EstimateGenerationLearningRecorder $learningRecorder,
         private readonly TrainingDatasetTrustPolicy $trustPolicy,
-        private readonly BenchmarkImmutableObjectStore $immutableObjects,
+        private readonly DatasetImportCorpusOrchestrator $datasetImport,
     ) {}
 
     /**
@@ -97,11 +95,25 @@ final class EstimateGenerationTrainingDatasetService
                 'benchmark_manifest_file' => [trans_message('estimate_generation.training_benchmark_manifest_invalid')],
             ]);
         }
-        $uploadHashes = $this->uploadedContentHashes($data);
+        $uploads = $this->datasetImportUploads($data);
+        $uploadHashes = array_map(static fn (DatasetImportUpload $upload): string => $upload->sha256, $uploads);
+        sort($uploadHashes, SORT_STRING);
         $datasetContentHash = hash('sha256', $manifestSha256.':'.implode(':', $uploadHashes));
         $manifestBasePrefix = $datasetType === EstimateGenerationTrainingDataset::TYPE_ACCEPTANCE
             ? OrganizationStoragePath::forOrganization((int) $organization->id, 'estimate-generation/benchmarks/acceptance/')
             : OrganizationStoragePath::forOrganization((int) $organization->id, "estimate-generation/benchmark-imports/sha256-{$datasetContentHash}/objects/");
+        try {
+            $importPlan = DatasetImportCorpusPlan::fromManifest(
+                $benchmarkManifest,
+                BenchmarkDatasetType::from($datasetType),
+                $manifestBasePrefix,
+                $uploads,
+            );
+        } catch (\DomainException) {
+            throw ValidationException::withMessages([
+                'benchmark_manifest_file' => [trans_message('estimate_generation.training_benchmark_manifest_invalid')],
+            ]);
+        }
 
         if ($projectId !== null) {
             $project = Project::query()
@@ -115,73 +127,68 @@ final class EstimateGenerationTrainingDatasetService
             }
         }
 
-        $stagedObjects = [];
-        try {
-            $manifestStoragePath = $datasetType === EstimateGenerationTrainingDataset::TYPE_ACCEPTANCE
-                ? $manifestBasePrefix.$manifestSha256.'.json'
-                : str_replace('/objects/', '/manifest/', $manifestBasePrefix).$manifestSha256.'.json';
-            $manifestObject = $this->immutableObjects->putImmutable($manifestStoragePath, $manifestJson, 'application/json');
-            $stagedObjects[] = $manifestObject;
-            $stagedFiles = $this->stageDatasetFiles($data, $manifestBasePrefix, $benchmarkManifest, $stagedObjects);
+        $manifestStoragePath = $datasetType === EstimateGenerationTrainingDataset::TYPE_ACCEPTANCE
+            ? $manifestBasePrefix.$manifestSha256.'.json'
+            : str_replace('/objects/', '/manifest/', $manifestBasePrefix).$manifestSha256.'.json';
 
-            return DB::transaction(function () use ($actor, $data, $datasetType, $organization, $projectId, $manifestSha256, $manifestBasePrefix, $datasetContentHash, $manifestObject, $stagedFiles): EstimateGenerationTrainingDataset {
-                $dataset = EstimateGenerationTrainingDataset::query()->create([
-                    'uuid' => (string) Str::uuid(),
-                    'dataset_key' => (string) Str::uuid(),
-                    'version' => 1,
-                    'dataset_type' => $datasetType,
-                    'scope' => 'organization',
-                    'organization_id' => (int) $organization->id,
-                    'project_id' => $projectId,
-                    'created_by_system_admin_id' => $actor?->id,
-                    'title' => trim((string) ($data['title'] ?? '')),
-                    'source_system' => (string) ($data['source_system'] ?? 'grandsmeta'),
-                    'status' => EstimateGenerationTrainingDataset::STATUS_DRAFT,
-                    'quality_status' => 'pending',
-                    'trusted_review_status' => EstimateGenerationTrainingDataset::TRUSTED_REVIEW_DRAFT,
-                    'control_version' => 0,
-                    'source_quality_score' => $this->boundedQuality($data['source_quality_score'] ?? 0.85),
-                    'region_name' => $this->nullableString($data['region_name'] ?? null),
-                    'period_name' => $this->nullableString($data['period_name'] ?? null),
-                    'notes' => $this->nullableString($data['notes'] ?? null),
-                    'stats' => [
-                        'uploaded_files' => 0,
-                        'parsed_rows' => 0,
-                        'accepted_rows' => 0,
-                        'skipped_rows' => 0,
-                        'learning_examples_created' => 0,
-                        'benchmark_manifest' => [
-                            'locator' => 's3://'.$manifestObject->path,
-                            'sha256' => $manifestSha256,
-                            'base_prefix' => $manifestBasePrefix,
-                            'object_version' => $manifestObject->versionId,
-                            'object_etag' => $manifestObject->etag,
-                            'dataset_content_hash' => 'sha256:'.$datasetContentHash,
-                        ],
-                    ],
-                ]);
-                foreach ($stagedFiles as $file) {
-                    EstimateGenerationTrainingFile::query()->create([
-                        'training_dataset_id' => (int) $dataset->id,
+        return $this->datasetImport->execute(
+            $manifestStoragePath,
+            $manifestJson,
+            $manifestSha256,
+            $importPlan,
+            function ($manifestObject, array $stagedFiles) use ($actor, $data, $datasetType, $organization, $projectId, $manifestSha256, $manifestBasePrefix, $datasetContentHash): EstimateGenerationTrainingDataset {
+                return DB::transaction(function () use ($actor, $data, $datasetType, $organization, $projectId, $manifestSha256, $manifestBasePrefix, $datasetContentHash, $manifestObject, $stagedFiles): EstimateGenerationTrainingDataset {
+                    $dataset = EstimateGenerationTrainingDataset::query()->create([
+                        'uuid' => (string) Str::uuid(),
+                        'dataset_key' => (string) Str::uuid(),
+                        'version' => 1,
+                        'dataset_type' => $datasetType,
+                        'scope' => 'organization',
                         'organization_id' => (int) $organization->id,
-                        'file_role' => $file['role'], 'storage_disk' => 's3', 'storage_path' => $file['object']->path,
-                        'original_name' => $file['name'], 'mime_type' => $file['mime'],
-                        'file_size' => $file['object']->contentLength, 'file_hash' => $file['object']->sha256,
-                        'metadata' => ['object_version' => $file['object']->versionId, 'object_etag' => $file['object']->etag],
+                        'project_id' => $projectId,
+                        'created_by_system_admin_id' => $actor?->id,
+                        'title' => trim((string) ($data['title'] ?? '')),
+                        'source_system' => (string) ($data['source_system'] ?? 'grandsmeta'),
+                        'status' => EstimateGenerationTrainingDataset::STATUS_DRAFT,
+                        'quality_status' => 'pending',
+                        'trusted_review_status' => EstimateGenerationTrainingDataset::TRUSTED_REVIEW_DRAFT,
+                        'control_version' => 0,
+                        'source_quality_score' => $this->boundedQuality($data['source_quality_score'] ?? 0.85),
+                        'region_name' => $this->nullableString($data['region_name'] ?? null),
+                        'period_name' => $this->nullableString($data['period_name'] ?? null),
+                        'notes' => $this->nullableString($data['notes'] ?? null),
+                        'stats' => [
+                            'uploaded_files' => 0,
+                            'parsed_rows' => 0,
+                            'accepted_rows' => 0,
+                            'skipped_rows' => 0,
+                            'learning_examples_created' => 0,
+                            'benchmark_manifest' => [
+                                'locator' => 's3://'.$manifestObject->path,
+                                'sha256' => $manifestSha256,
+                                'base_prefix' => $manifestBasePrefix,
+                                'object_version' => $manifestObject->versionId,
+                                'object_etag' => $manifestObject->etag,
+                                'dataset_content_hash' => 'sha256:'.$datasetContentHash,
+                            ],
+                        ],
                     ]);
-                }
-                $dataset->forceFill(['stats' => [...($dataset->stats ?? []), 'uploaded_files' => count($stagedFiles)]])->save();
+                    foreach ($stagedFiles as $file) {
+                        EstimateGenerationTrainingFile::query()->create([
+                            'training_dataset_id' => (int) $dataset->id,
+                            'organization_id' => (int) $organization->id,
+                            'file_role' => $file['upload']->role, 'storage_disk' => 's3', 'storage_path' => $file['object']->path,
+                            'original_name' => $file['upload']->name, 'mime_type' => $file['upload']->mimeType,
+                            'file_size' => $file['object']->contentLength, 'file_hash' => $file['object']->sha256,
+                            'metadata' => ['object_version' => $file['object']->versionId, 'object_etag' => $file['object']->etag],
+                        ]);
+                    }
+                    $dataset->forceFill(['stats' => [...($dataset->stats ?? []), 'uploaded_files' => count($stagedFiles)]])->save();
 
-                return $dataset->fresh(['files']) ?? $dataset;
-            });
-        } catch (Throwable $exception) {
-            foreach (array_reverse($stagedObjects) as $object) {
-                if ($object->created) {
-                    $this->immutableObjects->removeCreated($object);
-                }
-            }
-            throw $exception;
-        }
+                    return $dataset->fresh(['files']) ?? $dataset;
+                });
+            },
+        );
     }
 
     public function queueProcessing(EstimateGenerationTrainingDataset $dataset): void
@@ -607,12 +614,8 @@ final class EstimateGenerationTrainingDatasetService
         }
     }
 
-    /**
-     * @param  array<string, mixed>  $data
-     * @param  list<BenchmarkPrivateObject>  $ownedObjects
-     * @return list<array{role: string, name: string, mime: string|null, object: BenchmarkPrivateObject}>
-     */
-    private function stageDatasetFiles(array $data, string $basePrefix, BenchmarkManifest $manifest, array &$ownedObjects): array
+    /** @param array<string, mixed> $data @return list<DatasetImportUpload> */
+    private function datasetImportUploads(array $data): array
     {
         $fields = [
             'reference_estimate_file' => EstimateGenerationTrainingFile::ROLE_REFERENCE_ESTIMATE,
@@ -621,13 +624,7 @@ final class EstimateGenerationTrainingDatasetService
             'scans' => EstimateGenerationTrainingFile::ROLE_SCAN,
             'statements' => EstimateGenerationTrainingFile::ROLE_STATEMENT,
         ];
-        $staged = [];
-        $paths = [];
-        $locators = [];
-        foreach ($manifest->cases() as $case) {
-            $locators[$case->inputSha256] = $case->inputLocator;
-            $locators[$case->expectedSha256] = $case->expectedLocator;
-        }
+        $uploads = [];
         foreach ($fields as $field => $role) {
             $files = is_array($data[$field] ?? null) ? $data[$field] : [$data[$field] ?? null];
             foreach ($files as $file) {
@@ -639,45 +636,16 @@ final class EstimateGenerationTrainingDatasetService
                 if (! preg_match('/^[A-Za-z0-9][A-Za-z0-9._-]{0,190}$/D', $name)) {
                     throw ValidationException::withMessages([$field => [trans_message('estimate_generation.training_upload_failed')]]);
                 }
-                $sha256 = hash('sha256', $content);
-                $locator = $locators[$sha256] ?? null;
-                if (is_string($locator) && str_starts_with($locator, 's3://'.$basePrefix)) {
-                    $path = substr($locator, 5);
-                } elseif (is_string($locator) && preg_match('#^[A-Za-z0-9][A-Za-z0-9._/-]{0,511}$#D', $locator) === 1
-                    && ! str_contains($locator, '..') && ! str_contains($locator, '://')) {
-                    $path = $basePrefix.$locator;
-                } else {
-                    $path = $basePrefix.'support/'.$sha256.'-'.$name;
-                }
-                if (isset($paths[$path])) {
-                    throw ValidationException::withMessages([$field => [trans_message('estimate_generation.training_upload_failed')]]);
-                }
-                $paths[$path] = true;
-                $object = $this->immutableObjects->putImmutable($path, $content, $file->getMimeType() ?: 'application/octet-stream');
-                $ownedObjects[] = $object;
-                $staged[] = ['role' => $role, 'name' => $name, 'mime' => $file->getMimeType(), 'object' => $object];
+                $uploads[] = new DatasetImportUpload(
+                    $role,
+                    $name,
+                    $file->getMimeType() ?: 'application/octet-stream',
+                    $content,
+                );
             }
         }
 
-        return $staged;
-    }
-
-    /** @param array<string, mixed> $data @return list<string> */
-    private function uploadedContentHashes(array $data): array
-    {
-        $hashes = [];
-        foreach (['reference_estimate_file', 'project_documents', 'drawings', 'scans', 'statements'] as $field) {
-            $files = is_array($data[$field] ?? null) ? $data[$field] : [$data[$field] ?? null];
-            foreach ($files as $file) {
-                if ($file instanceof TemporaryUploadedFile && ($path = $file->getRealPath()) !== false
-                    && ($hash = hash_file('sha256', $path)) !== false) {
-                    $hashes[] = $hash;
-                }
-            }
-        }
-        sort($hashes, SORT_STRING);
-
-        return $hashes;
+        return $uploads;
     }
 
     private function storeUploadedFile(

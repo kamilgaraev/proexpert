@@ -61,12 +61,15 @@ final class EstimateGenerationTrainingResourceTest extends TestCase
         self::assertStringContainsString("'benchmark_manifest' =>", $service);
         self::assertStringContainsString('estimate-generation/benchmark-imports/sha256-{$datasetContentHash}/objects/', $service);
         self::assertStringContainsString("'dataset_content_hash'", $service);
-        self::assertStringContainsString('putImmutable(', $service);
-        self::assertStringContainsString('stageDatasetFiles(', $service);
+        self::assertStringContainsString('DatasetImportCorpusPlan::fromManifest(', $service);
+        self::assertStringContainsString('$this->datasetImport->execute(', $service);
         self::assertStringContainsString('DB::transaction(function () use', $service);
-        self::assertStringContainsString('if ($object->created)', $service);
-        self::assertStringContainsString('removeCreated($object)', $service);
         self::assertStringNotContainsString('->put($manifestStoragePath', $service);
+        $orchestrator = file_get_contents((new ReflectionClass(\App\BusinessModules\Addons\EstimateGeneration\Services\Training\DatasetImportCorpusOrchestrator::class))->getFileName());
+        self::assertIsString($orchestrator);
+        self::assertStringContainsString('putImmutable(', $orchestrator);
+        self::assertStringContainsString('if ($receipt->created)', $orchestrator);
+        self::assertStringContainsString('removeCreated($receipt)', $orchestrator);
     }
 
     public function test_old_resource_is_deleted_and_only_new_namespace_is_registered(): void

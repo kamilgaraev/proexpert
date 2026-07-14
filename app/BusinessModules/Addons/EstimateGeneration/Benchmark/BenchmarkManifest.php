@@ -207,10 +207,10 @@ final readonly class BenchmarkManifest
                 $locators[$locator] = $case->dataset->value;
             }
             foreach (['input' => $case->inputSha256, 'expected' => $case->expectedSha256] as $role => $digest) {
-                if (isset($digestOwners[$digest])) {
+                if (isset($digestOwners[$digest]) && $digestOwners[$digest] !== $case->dataset->value) {
                     throw new BenchmarkManifestException('digest_ownership_collision');
                 }
-                $digestOwners[$digest] = $case->id.':'.$role;
+                $digestOwners[$digest] = $case->dataset->value;
             }
         }
     }

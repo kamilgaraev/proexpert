@@ -115,13 +115,16 @@ final class BenchmarkManifestTest extends TestCase
     }
 
     #[Test]
-    public function it_rejects_same_case_input_and_expected_digest(): void
+    public function it_allows_shared_digest_inside_one_dataset(): void
     {
         $manifest = $this->validInlineManifest();
+        $manifest['cases'] = [$manifest['cases'][0]];
+        $manifest['cases'][0]['dataset'] = 'acceptance';
+        $manifest['cases'][0]['input_locator'] = 's3://org-{organization_id}/estimate-generation/benchmarks/acceptance/input.json';
+        $manifest['cases'][0]['expected_locator'] = 's3://org-{organization_id}/estimate-generation/benchmarks/acceptance/expected.json';
         $manifest['cases'][0]['expected_sha256'] = $manifest['cases'][0]['input_sha256'];
 
-        $this->expectExceptionMessage('digest_ownership_collision');
-        BenchmarkManifest::fromArray($manifest, $this->fixtureRoot);
+        self::assertCount(1, BenchmarkManifest::fromArray($manifest, $this->fixtureRoot, null, false)->cases());
     }
 
     #[Test]

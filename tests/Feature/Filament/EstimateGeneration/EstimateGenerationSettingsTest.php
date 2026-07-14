@@ -145,6 +145,30 @@ final class EstimateGenerationSettingsTest extends TestCase
         self::assertStringContainsString("ARRAY['low_confidence','missing_evidence','price_outlier','normative_fallback']", $source);
     }
 
+    public function test_settings_snapshot_hash_is_added_by_an_ordered_upgrade_migration(): void
+    {
+        $root = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/';
+        $historical = file_get_contents($root.'2026_07_11_002000_create_estimate_generation_settings_and_budgets.php');
+        $upgrade = file_get_contents($root.'2026_07_14_000450_add_settings_snapshot_hash.php');
+        $consumer = file_get_contents($root.'2026_07_14_000500_add_benchmark_execution_snapshot.php');
+
+        self::assertIsString($historical);
+        self::assertStringNotContainsString('snapshot_hash', $historical);
+        self::assertIsString($upgrade);
+        self::assertStringContainsString("Schema::hasColumn('estimate_generation_setting_snapshots', 'snapshot_hash')", $upgrade);
+        self::assertStringContainsString('pg_catalog.sha256(pg_catalog.convert_to(snapshot::text', $upgrade);
+        self::assertStringContainsString('WHERE id > ?', $upgrade);
+        self::assertStringContainsString('ORDER BY id', $upgrade);
+        self::assertStringContainsString('LIMIT 500', $upgrade);
+        self::assertStringContainsString("data_type = 'character' AND character_maximum_length = 64", $upgrade);
+        self::assertStringContainsString('NOT VALID', $upgrade);
+        self::assertStringContainsString('VALIDATE CONSTRAINT eg_setting_snapshot_hash_ck', $upgrade);
+        self::assertStringContainsString('ALTER COLUMN snapshot_hash SET NOT NULL', $upgrade);
+        self::assertStringContainsString('DROP COLUMN IF EXISTS snapshot_hash', $upgrade);
+        self::assertIsString($consumer);
+        self::assertStringContainsString('settings_snapshot_hash', $consumer);
+    }
+
     /** @return array<string, mixed> */
     private function validPayload(): array
     {
