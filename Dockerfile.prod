@@ -64,7 +64,7 @@ ENV PATH="/opt/geometry-venv/bin:/opt/libredwg/bin:${PATH}" \
     ESTIMATE_GENERATION_CAD_SCRIPT="/var/www/html/app/BusinessModules/Addons/EstimateGeneration/bin/cad_geometry_extract.py" \
     ESTIMATE_GENERATION_CAD_REQUIREMENTS_LOCK="/var/www/html/docker/geometry/requirements.lock" \
     ESTIMATE_GENERATION_CAD_SCRIPT_SHA256="dee9a3aa554e9aff7170c6c18f177ee9635c00f6fe3ef07f83664c2d905dc913" \
-    ESTIMATE_GENERATION_CAD_REQUIREMENTS_SHA256="d69903bfe72c066d2560e62879030b764645cd08019e22423da34ce26dcc1c9d"
+    ESTIMATE_GENERATION_CAD_REQUIREMENTS_SHA256="361f194843f454173e791632b52088ea00e90001453eba78de448f4dbfa4e03e"
 
 # Конфигурация расширений GD
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg

@@ -1,2 +1,3 @@
 pypdfium2==5.8.0
 ezdxf==1.4.4
+numpy==2.5.1
