@@ -16,7 +16,9 @@ final class OperationalReadinessInputFactory
     {
         $reviewFresh = (int) ($session['review_classifier_version'] ?? 0) === ReviewSummarySnapshot::VERSION
             && preg_match('/^sha256:[0-9a-f]{64}$/', (string) ($session['review_content_version'] ?? '')) === 1
-            && hash_equals((string) $session['review_content_version'], (string) ($session['review_source_version'] ?? ''));
+            && hash_equals((string) $session['review_content_version'], (string) ($session['review_source_version'] ?? ''))
+            && preg_match('/^sha256:[0-9a-f]{64}$/', (string) ($session['review_canonical_input_version'] ?? '')) === 1
+            && hash_equals((string) $session['review_canonical_input_version'], (string) ($session['review_input_version'] ?? ''));
 
         $total = $this->number($session, 'quality_total_work_items');
         $operations = $this->number($session, 'quality_operation_work_items');

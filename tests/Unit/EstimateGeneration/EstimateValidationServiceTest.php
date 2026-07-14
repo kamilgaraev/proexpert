@@ -427,6 +427,7 @@ final class EstimateValidationServiceTest extends TestCase
     private function draft(array $workItems): array
     {
         return [
+            'source_input_version' => 'sha256:'.str_repeat('a', 64),
             'local_estimates' => [
                 [
                     'key' => 'local-1',

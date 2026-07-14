@@ -127,6 +127,8 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
                 ->selectRaw($this->jsonInteger('review_classifier_version', '{quality_summary,review_items,classifier_version}'))
                 ->selectRaw("COALESCE(draft_payload #>> '{quality_summary,content_version}', '') AS review_content_version")
                 ->selectRaw("COALESCE(draft_payload #>> '{quality_summary,review_items,source_version}', '') AS review_source_version")
+                ->selectRaw("COALESCE(draft_payload #>> '{source_input_version}', '') AS review_canonical_input_version")
+                ->selectRaw("COALESCE(draft_payload #>> '{quality_summary,review_items,input_version}', '') AS review_input_version")
                 ->selectRaw("jsonb_array_length(CASE WHEN jsonb_typeof(COALESCE(draft_payload->'problem_flags', problem_flags)) = 'array' THEN COALESCE(draft_payload->'problem_flags', problem_flags) ELSE '[]'::jsonb END) AS problem_flags_count")
                 ->selectRaw("jsonb_array_length(jsonb_path_query_array(COALESCE(draft_payload, '{}'::jsonb), '$.local_estimates[*].sections[*].work_items[*] ? (@.item_type == \"priced_work\" && @.pricing_status == \"calculated\" && @.total_cost <= 0)')) AS quality_zero_total_calculated_work_items");
         }

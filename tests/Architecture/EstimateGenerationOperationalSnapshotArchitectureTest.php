@@ -38,6 +38,8 @@ final class EstimateGenerationOperationalSnapshotArchitectureTest extends TestCa
         self::assertStringContainsString('COALESCE(input_tokens, 0)', $source);
         self::assertStringContainsString('COUNT(cost_amount) > 0', $source);
         self::assertStringContainsString('usage_unavailable', $source);
+        self::assertStringContainsString('review_canonical_input_version', $source);
+        self::assertStringContainsString('review_input_version', $source);
         self::assertStringContainsString('actionRequiredSql()', $source);
         self::assertStringContainsString('facts_summary->', $this->source('Services/Quality/DocumentReadinessClassifier.php'));
         self::assertStringContainsString('outbox_max_updated_at', $source);
@@ -76,7 +78,8 @@ final class EstimateGenerationOperationalSnapshotArchitectureTest extends TestCa
         $reviewGuard = $this->migration('2026_07_11_000900_guard_review_summary_source_version.php');
         self::assertStringContainsString('eg_review_summary_source_guard_trg', $reviewGuard);
         self::assertStringContainsString('source_version IS DISTINCT FROM content_version', $reviewGuard);
-        self::assertStringContainsString('classifier_version <> 1', $reviewGuard);
+        self::assertStringContainsString('snapshot_input_version IS DISTINCT FROM input_version', $reviewGuard);
+        self::assertStringContainsString('classifier_version <> 2', $reviewGuard);
     }
 
     #[Test]

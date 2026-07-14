@@ -33,9 +33,11 @@ final class OperationalReadinessInputFactoryTest extends TestCase
                 'review_blocking' => 2,
                 'review_warning' => 2,
                 'review_optional' => 1,
-                'review_classifier_version' => 1,
+                'review_classifier_version' => 2,
                 'review_content_version' => 'sha256:'.str_repeat('a', 64),
                 'review_source_version' => 'sha256:'.str_repeat('a', 64),
+                'review_canonical_input_version' => 'sha256:'.str_repeat('b', 64),
+                'review_input_version' => 'sha256:'.str_repeat('b', 64),
                 'problem_flags_count' => 3,
             ],
             documents: ['total' => 2, 'ready' => 2, 'pending' => 0, 'action_required' => 0],
@@ -108,5 +110,22 @@ final class OperationalReadinessInputFactoryTest extends TestCase
         self::assertSame(1, $input->metrics['review_summary_stale']);
         self::assertContains('review_summary_stale', array_column($result['blockers'], 'code'));
         self::assertFalse($result['can_apply']);
+    }
+
+    #[Test]
+    public function input_version_mismatch_marks_the_operational_snapshot_stale(): void
+    {
+        $input = (new OperationalReadinessInputFactory)->fromAggregates([
+            'status' => 'ready_to_apply',
+            'has_draft' => true,
+            'review_classifier_version' => 2,
+            'review_content_version' => 'sha256:'.str_repeat('a', 64),
+            'review_source_version' => 'sha256:'.str_repeat('a', 64),
+            'review_canonical_input_version' => 'sha256:'.str_repeat('b', 64),
+            'review_input_version' => 'sha256:'.str_repeat('c', 64),
+        ], [], [], []);
+
+        self::assertSame(1, $input->metrics['review_summary_stale']);
+        self::assertSame(0, $input->metrics['review_items_blocking']);
     }
 }
