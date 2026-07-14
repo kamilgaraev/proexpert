@@ -7,6 +7,8 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
 use App\BusinessModules\Addons\EstimateGeneration\Storage\BoundedVersionedS3ObjectReader;
+use App\BusinessModules\Addons\EstimateGeneration\Storage\S3ObjectLocatorException;
+use App\BusinessModules\Addons\EstimateGeneration\Storage\S3ObjectTransportException;
 
 final readonly class S3DocumentUnitContentReader implements DocumentUnitContentReader
 {
@@ -33,8 +35,10 @@ final readonly class S3DocumentUnitContentReader implements DocumentUnitContentR
                 $sha256,
                 $versionId,
             )->body;
-        } catch (\DomainException $exception) {
+        } catch (S3ObjectLocatorException $exception) {
             throw new TypedFailureException(FailureCategory::Terminal, 'document_artifact_integrity_failed', previous: $exception);
+        } catch (S3ObjectTransportException $exception) {
+            throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable', previous: $exception);
         }
     }
 

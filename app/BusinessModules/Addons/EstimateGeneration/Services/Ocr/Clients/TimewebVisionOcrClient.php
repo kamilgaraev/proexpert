@@ -16,6 +16,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrConfigurationException;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrProviderException;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\OcrRuntimeEnvironment;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimits;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveEstimateGenerationSettings;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
@@ -35,6 +36,7 @@ final class TimewebVisionOcrClient implements OcrClientInterface
         private readonly ?EffectiveSettingsResolver $settingsResolver = null,
         private readonly ?AiAttemptAuthorizer $budgetAuthorizer = null,
         private readonly ?DocumentRuntimeLimits $documentLimits = null,
+        private readonly ?OcrRuntimeEnvironment $runtimeEnvironment = null,
     ) {}
 
     public function recognize(OcrDocumentInput $input): OcrRecognitionResult
@@ -44,7 +46,7 @@ final class TimewebVisionOcrClient implements OcrClientInterface
         $effective = $input->operationContext instanceof AiOperationContext && $this->settingsResolver !== null
             ? $this->settingsResolver->forOperation($input->operationContext->correlationId, $input->operationContext->organizationId, $input->operationContext->sessionId)
             : null;
-        if (app()->environment('production') && $effective === null) {
+        if (($this->runtimeEnvironment?->isProduction() ?? false) && $effective === null) {
             throw new OcrConfigurationException;
         }
         if ($effective !== null) {

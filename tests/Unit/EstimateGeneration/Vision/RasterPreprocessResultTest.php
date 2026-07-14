@@ -38,6 +38,7 @@ final class RasterPreprocessResultTest extends TestCase
         $data = array_replace([
             'derivativeStorageKey' => 'org-7/estimate-generation/11/vision/v1/'.str_repeat('a', 64).'.png',
             'derivativeHash' => 'sha256:'.str_repeat('a', 64), 'derivativeVersion' => 'raster-preprocessor:v1',
+            'derivativeBytes' => 100, 'derivativeVersionId' => 'version-1',
             'sourceWidth' => 100, 'sourceHeight' => 80, 'outputWidth' => 100, 'outputHeight' => 80,
             'sharpness' => 0.2, 'dynamicRange' => 0.8, 'blankRatio' => 0.1, 'clippingRatio' => 0.1,
             'skewDegrees' => null, 'perspectiveStatus' => 'not_required', 'warnings' => [],
@@ -45,6 +46,7 @@ final class RasterPreprocessResultTest extends TestCase
 
         return new RasterPreprocessResult(
             $data['derivativeStorageKey'], $data['derivativeHash'], $data['derivativeVersion'],
+            $data['derivativeBytes'], $data['derivativeVersionId'],
             $data['sourceWidth'], $data['sourceHeight'], $data['outputWidth'], $data['outputHeight'],
             $data['sharpness'], $data['dynamicRange'], $data['blankRatio'], $data['clippingRatio'],
             $data['skewDegrees'], $data['perspectiveStatus'], (new ProjectiveTransformFactory)->identity(), $data['warnings'],

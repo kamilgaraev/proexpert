@@ -123,6 +123,23 @@ class FileService
             'content_type' => is_string($head['ContentType'] ?? null) ? $head['ContentType'] : 'application/octet-stream'];
     }
 
+    /** @return array{size:int,version_id:string} */
+    public function describeHead(string $path): array
+    {
+        $bucket = $this->disk()->getConfig()['bucket'] ?? null;
+        if (! is_string($bucket) || $bucket === '') {
+            throw new \RuntimeException('s3_versioned_read_unavailable');
+        }
+        $head = $this->s3Client()->headObject(['Bucket' => $bucket, 'Key' => $path]);
+        $size = $head['ContentLength'] ?? null;
+        $version = $head['VersionId'] ?? null;
+        if (! is_numeric($size) || (int) $size < 1 || ! is_string($version) || trim($version) === '') {
+            throw new \RuntimeException('s3_object_head_invalid');
+        }
+
+        return ['size' => (int) $size, 'version_id' => $version];
+    }
+
     public function removeImmutable(string $path, ?string $versionId): void
     {
         $bucket = $this->disk()->getConfig()['bucket'] ?? null;

@@ -17,7 +17,8 @@ final class InMemoryPipelineArtifactStore implements PipelineArtifactStore
         if (strlen($content) > $definition->maxArtifactBytes) {
             throw new DomainException('Pipeline artifact exceeds its stage bound.');
         }
-        $key = sprintf('memory/%d/%d/%s/%s/%s', $context->organizationId, $context->sessionId, $context->generationAttemptId ?? 'legacy', $definition->stage->value, $version);
+        $attemptId = $this->attemptId($context);
+        $key = sprintf('memory/%d/%d/%s/%s/%s', $context->organizationId, $context->sessionId, $attemptId, $definition->stage->value, $version);
         $this->artifacts[$key] = $data;
 
         return new PipelineArtifactReference('memory_json_v1', $key, $version, strlen($content));
@@ -26,7 +27,7 @@ final class InMemoryPipelineArtifactStore implements PipelineArtifactStore
     public function read(PipelineContext $context, PipelineArtifactReference $reference): array
     {
         $key = $reference->objectKey;
-        $prefix = sprintf('memory/%d/%d/%s/', $context->organizationId, $context->sessionId, $context->generationAttemptId ?? 'legacy');
+        $prefix = sprintf('memory/%d/%d/%s/', $context->organizationId, $context->sessionId, $this->attemptId($context));
         if (! is_string($key) || ! str_starts_with($key, $prefix)) {
             throw new DomainException('Pipeline artifact tenant fence failed.');
         }
@@ -39,5 +40,10 @@ final class InMemoryPipelineArtifactStore implements PipelineArtifactStore
         }
 
         return $data;
+    }
+
+    private function attemptId(PipelineContext $context): string
+    {
+        return $context->generationAttemptId ?? throw new DomainException('generation_attempt_required');
     }
 }

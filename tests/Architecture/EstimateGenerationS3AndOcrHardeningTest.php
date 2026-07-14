@@ -46,6 +46,17 @@ final class EstimateGenerationS3AndOcrHardeningTest extends TestCase
             self::assertStringNotContainsString('->get(', $consumer);
             self::assertStringNotContainsString('stream_get_contents(', $consumer);
         }
+
+        $raster = $this->source('Vision/Preprocessing/RasterPreprocessor.php');
+        $input = $this->source('Vision/DTO/RasterPreprocessInput.php');
+        $result = $this->source('Vision/DTO/RasterPreprocessResult.php');
+        self::assertStringContainsString('BoundedVersionedS3ObjectReader', $raster);
+        self::assertStringNotContainsString('BoundedStorageReader', $raster);
+        self::assertStringContainsString('sourceBytes', $input);
+        self::assertStringContainsString('sourceVersionId', $input);
+        self::assertStringContainsString('derivativeBytes', $result);
+        self::assertStringContainsString('derivativeVersionId', $result);
+        self::assertStringContainsString('putImmutable(', $raster);
     }
 
     #[Test]
@@ -59,10 +70,23 @@ final class EstimateGenerationS3AndOcrHardeningTest extends TestCase
         self::assertIsString($environment);
         self::assertStringNotContainsString('modelsFor(', $client);
         self::assertStringNotContainsString('fallbackToAnotherModel(', $client);
+        self::assertStringNotContainsString('app()->environment', $client);
         self::assertStringNotContainsString('ESTIMATE_GENERATION_OCR_MODELS', $config);
         self::assertStringNotContainsString('ESTIMATE_GENERATION_OCR_PDF_MODELS', $config);
         self::assertStringNotContainsString('ESTIMATE_GENERATION_OCR_MODELS=', $environment);
         self::assertStringNotContainsString('ESTIMATE_GENERATION_OCR_PDF_MODELS=', $environment);
+    }
+
+    #[Test]
+    public function estimate_generation_runtime_has_no_missing_physical_attempt_substitution(): void
+    {
+        $root = dirname(__DIR__, 2).'/app/BusinessModules/Addons/EstimateGeneration';
+        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root));
+        foreach ($iterator as $file) {
+            if ($file->isFile() && $file->getExtension() === 'php') {
+                self::assertStringNotContainsString("?? 'legacy'", (string) file_get_contents($file->getPathname()), $file->getPathname());
+            }
+        }
     }
 
     private function source(string $relative): string

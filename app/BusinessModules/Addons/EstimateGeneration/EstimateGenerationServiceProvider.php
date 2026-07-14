@@ -279,6 +279,7 @@ class EstimateGenerationServiceProvider extends ServiceProvider
             $app->make(EffectiveSettingsResolver::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer::class),
             $app->make(\App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimits::class),
+            new \App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\FixedOcrRuntimeEnvironment($app->environment('production')),
         ));
         $this->app->singleton(VisionProvider::class, TimewebVisionProvider::class);
         $this->app->singleton(CadRuntimeConfiguration::class, fn (): CadRuntimeConfiguration => CadRuntimeConfiguration::fromArray(

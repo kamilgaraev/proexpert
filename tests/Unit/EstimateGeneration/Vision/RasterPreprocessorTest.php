@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Vision;
 
+use App\BusinessModules\Addons\EstimateGeneration\Storage\BoundedVersionedS3ObjectReader;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\RasterPreprocessInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\RasterPreprocessingException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPreprocessor;
-use App\Services\Logging\LoggingService;
 use App\Services\Storage\FileService;
 use Illuminate\Support\Facades\Storage;
 use PHPUnit\Framework\Attributes\Test;
@@ -21,7 +21,8 @@ final class RasterPreprocessorTest extends DatabaseLessTestCase
     {
         parent::setUp();
         Storage::fake('s3');
-        $this->preprocessor = new RasterPreprocessor(new FileService($this->createMock(LoggingService::class)));
+        $files = $this->files();
+        $this->preprocessor = new RasterPreprocessor($files, reader: new BoundedVersionedS3ObjectReader($files));
     }
 
     #[Test]
@@ -63,7 +64,7 @@ final class RasterPreprocessorTest extends DatabaseLessTestCase
         $files = $this->createMock(FileService::class);
         $files->expects(self::never())->method('disk');
         $this->expectException(RasterPreprocessingException::class);
-        (new RasterPreprocessor($files))->preprocess($this->input(storageKey: 'org-8/uploads/source.png'));
+        (new RasterPreprocessor($files, reader: new BoundedVersionedS3ObjectReader($files)))->preprocess($this->input(storageKey: 'org-8/uploads/source.png'));
     }
 
     #[Test]
@@ -298,7 +299,37 @@ final class RasterPreprocessorTest extends DatabaseLessTestCase
     {
         $content = Storage::disk('s3')->exists($storageKey) ? Storage::disk('s3')->get($storageKey) : '';
 
-        return new RasterPreprocessInput(7, 11, 13, 1, 'sha256:'.hash('sha256', $content), $storageKey, $contentType, $quad, $perspectiveRequired, 20_000_000, $maxPixels, $maxDimension);
+        $sha = 'sha256:'.hash('sha256', $content);
+
+        return new RasterPreprocessInput(7, 11, 13, 1, $sha, $storageKey, $contentType, max(1, strlen($content)), $sha, 'test-version', $quad, $perspectiveRequired, 20_000_000, $maxPixels, $maxDimension);
+    }
+
+    private function files(): FileService
+    {
+        return new class extends FileService
+        {
+            public function __construct() {}
+
+            public function describeVersion(string $path, ?string $versionId, int $maxBytes = 64_000_000): array
+            {
+                $body = Storage::disk('s3')->get($path);
+
+                return ['path' => $path, 'body' => $body, 'size' => strlen($body), 'sha256' => hash('sha256', $body),
+                    'etag' => null, 'version_id' => 'test-version', 'content_type' => 'image/png'];
+            }
+
+            public function putImmutable(string $path, string $body, string $contentType): array
+            {
+                $created = ! Storage::disk('s3')->exists($path);
+                if ($created) {
+                    Storage::disk('s3')->put($path, $body);
+                }
+                $stored = Storage::disk('s3')->get($path);
+
+                return ['path' => $path, 'body' => $stored, 'size' => strlen($stored), 'sha256' => hash('sha256', $stored),
+                    'etag' => null, 'version_id' => 'derivative-version', 'content_type' => $contentType, 'created' => $created];
+            }
+        };
     }
 
     /** @param array{0: int, 1: int, 2: int} $rgb */

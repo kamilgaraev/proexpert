@@ -5,7 +5,11 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
 use App\BusinessModules\Addons\EstimateGeneration\Storage\BoundedVersionedS3ObjectReader;
+use App\BusinessModules\Addons\EstimateGeneration\Storage\S3ObjectLocatorException;
+use App\BusinessModules\Addons\EstimateGeneration\Storage\S3ObjectTransportException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\CadGeometryProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\RasterPreprocessInput;
@@ -39,6 +43,10 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             };
         } catch (DocumentUnitProcessingException $exception) {
             throw $exception;
+        } catch (S3ObjectLocatorException $exception) {
+            throw new TypedFailureException(FailureCategory::Terminal, 'document_artifact_integrity_failed', previous: $exception);
+        } catch (S3ObjectTransportException $exception) {
+            throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable', previous: $exception);
         } catch (Throwable) {
             throw new DocumentUnitProcessingException('document_geometry_processing_failed');
         }
@@ -87,6 +95,12 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         $artifactVersion = is_string($context->locator['artifact_source_version'] ?? null)
             ? $context->locator['artifact_source_version']
             : $context->sourceVersion;
+        $sourceBytes = $context->locator['artifact_bytes'] ?? null;
+        $sourceSha256 = $context->locator['artifact_sha256'] ?? null;
+        $sourceVersionId = $context->locator['artifact_version_id'] ?? null;
+        if (! is_int($sourceBytes) || ! is_string($sourceSha256) || ! is_string($sourceVersionId)) {
+            throw new DocumentUnitProcessingException('raster_source_locator_invalid');
+        }
         $preprocessed = $this->raster->preprocess(new RasterPreprocessInput(
             organizationId: $context->organizationId,
             sessionId: $context->sessionId,
@@ -97,13 +111,18 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             contentType: is_string($context->locator['content_type'] ?? null)
                 ? $context->locator['content_type']
                 : $context->mimeType,
+            sourceBytes: $sourceBytes,
+            sourceSha256: $sourceSha256,
+            sourceVersionId: $sourceVersionId,
             perspectiveRequired: $context->type === DocumentUnitType::Sketch,
         ));
         $image = $this->reader->read(
             $context->organizationId,
             $preprocessed->derivativeStorageKey,
             max(1, (int) config('estimate-generation.vision.preprocessing.max_bytes', 20_000_000)),
-            expectedSha256: $preprocessed->derivativeHash,
+            $preprocessed->derivativeBytes,
+            $preprocessed->derivativeHash,
+            $preprocessed->derivativeVersionId,
         )->body;
         $correlationId = AiOperationContext::deterministicId(implode('|', [
             'vision-unit', $context->sessionId, $context->documentId, $context->unitId,

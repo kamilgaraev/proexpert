@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration\Storage;
 
 use App\BusinessModules\Addons\EstimateGeneration\Storage\BoundedVersionedS3ObjectReader;
+use App\BusinessModules\Addons\EstimateGeneration\Storage\S3ObjectTransportException;
 use App\Services\Storage\FileService;
 use DomainException;
 use PHPUnit\Framework\Attributes\Test;
@@ -30,6 +31,22 @@ final class BoundedVersionedS3ObjectReaderTest extends TestCase
         self::assertSame($body, $object->body);
         self::assertSame(strlen($body), $object->bytes);
         self::assertSame('version-7', $object->versionId);
+    }
+
+    #[Test]
+    public function storage_transport_failure_is_distinct_from_locator_failure(): void
+    {
+        $files = new class extends FileService
+        {
+            public function __construct() {}
+
+            public function describeVersion(string $path, ?string $versionId, int $maxBytes = 64_000_000): array
+            {
+                throw new \RuntimeException('network down');
+            }
+        };
+        $this->expectException(S3ObjectTransportException::class);
+        (new BoundedVersionedS3ObjectReader($files))->read(7, 'org-7/a', 10, 1, 'sha256:'.str_repeat('a', 64), 'v1');
     }
 
     #[Test]

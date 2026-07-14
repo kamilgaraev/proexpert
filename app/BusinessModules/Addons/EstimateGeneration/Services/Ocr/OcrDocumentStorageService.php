@@ -49,6 +49,14 @@ class OcrDocumentStorageService
         if ($storagePath === false) {
             throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
         }
+        try {
+            $head = $this->fileService->describeHead($storagePath);
+        } catch (\Throwable $exception) {
+            throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable', previous: $exception);
+        }
+        if ($head['size'] !== $file->getSize()) {
+            throw new TypedFailureException(FailureCategory::Terminal, 'document_storage_integrity_failed');
+        }
 
         return EstimateGenerationDocument::create([
             'session_id' => $session->id,
@@ -70,6 +78,7 @@ class OcrDocumentStorageService
             'meta' => [
                 'original_extension' => $file->getClientOriginalExtension(),
                 'original_name' => $file->getClientOriginalName(),
+                'storage_version_id' => $head['version_id'],
             ],
         ]);
     }

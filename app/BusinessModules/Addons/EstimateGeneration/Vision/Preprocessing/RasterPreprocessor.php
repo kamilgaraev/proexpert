@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing;
 
+use App\BusinessModules\Addons\EstimateGeneration\Storage\BoundedVersionedS3ObjectReader;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\ProjectiveTransformData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\RasterPreprocessInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\RasterPreprocessResult;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Exceptions\RasterPreprocessingException;
-use App\Models\Organization;
 use App\Services\Storage\FileService;
 use Intervention\Image\Drivers\Gd\Driver as GdDriver;
 use Intervention\Image\ImageManager;
@@ -22,22 +22,15 @@ final readonly class RasterPreprocessor
 
     public function __construct(
         private FileService $files,
+        private BoundedVersionedS3ObjectReader $reader,
         private ProjectiveTransformFactory $transforms = new ProjectiveTransformFactory,
-        private BoundedStorageReader $reader = new BoundedStorageReader,
         private RasterAnimationInspector $animation = new RasterAnimationInspector,
     ) {}
 
     public function preprocess(RasterPreprocessInput $input): RasterPreprocessResult
     {
         $this->assertTenantKey($input);
-        $disk = $this->files->disk();
-        if (! $disk->exists($input->storageKey)) {
-            throw new RasterPreprocessingException('source_not_found');
-        }
-        $bytes = $this->reader->read($disk, $input->storageKey, $input->maxBytes);
-        if (! hash_equals($input->sourceVersion, 'sha256:'.hash('sha256', $bytes))) {
-            throw new RasterPreprocessingException('source_version_mismatch');
-        }
+        $bytes = $this->reader->read($input->organizationId, $input->storageKey, $input->maxBytes, $input->sourceBytes, $input->sourceSha256, $input->sourceVersionId)->body;
         $this->animation->assertSingleFrame($bytes, $input->contentType);
         $dimensions = @getimagesizefromstring($bytes);
         $mime = is_array($dimensions) ? ($dimensions['mime'] ?? null) : null;
@@ -100,24 +93,12 @@ final readonly class RasterPreprocessor
         $output = $manager->read($normalized)->greyscale()->contrast(12)->scaleDown($input->maxDimension, $input->maxDimension);
         $outputBytes = (string) $output->toPng(indexed: false, interlaced: false);
         $hash = hash('sha256', $outputBytes);
-        $organization = new Organization;
-        $organization->id = $input->organizationId;
         $directory = "estimate-generation/{$input->sessionId}/vision/v1";
         $filename = "{$hash}.png";
         $key = "org-{$input->organizationId}/{$directory}/{$filename}";
-        if ($disk->exists($key)) {
-            try {
-                $storedDerivative = $this->reader->read($disk, $key, strlen($outputBytes));
-            } catch (RasterPreprocessingException) {
-                throw new RasterPreprocessingException('derivative_hash_collision');
-            }
-            if (! hash_equals($hash, hash('sha256', $storedDerivative))) {
-                throw new RasterPreprocessingException('derivative_hash_collision');
-            }
-        } else {
-            if ($this->files->putContent($outputBytes, $directory, $filename, 'private', $organization) !== $key) {
-                throw new RasterPreprocessingException('derivative_storage_failed');
-            }
+        $stored = $this->files->putImmutable($key, $outputBytes, 'image/png');
+        if ($stored['size'] !== strlen($outputBytes) || ! hash_equals($hash, $stored['sha256'])) {
+            throw new RasterPreprocessingException('derivative_hash_collision');
         }
         [$sharpness, $dynamicRange, $blankRatio, $clippingRatio] = $this->quality($outputBytes);
         if ($sharpness < 0.015) {
@@ -131,7 +112,7 @@ final readonly class RasterPreprocessor
         }
 
         return new RasterPreprocessResult(
-            $key, "sha256:{$hash}", self::VERSION, $sourceWidth, $sourceHeight,
+            $key, "sha256:{$hash}", self::VERSION, $stored['size'], (string) $stored['version_id'], $sourceWidth, $sourceHeight,
             $output->width(), $output->height(), $sharpness, $dynamicRange, $blankRatio, $clippingRatio,
             $skewDegrees, $perspectiveStatus, $transform, array_values(array_unique($warnings)),
         );

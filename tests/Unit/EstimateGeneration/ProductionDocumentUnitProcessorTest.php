@@ -68,7 +68,7 @@ final class ProductionDocumentUnitProcessorTest extends TestCase
                     return $this->geometry;
                 }
             },
-            new RasterPreprocessor($files),
+            new RasterPreprocessor($files, reader: new BoundedVersionedS3ObjectReader($files)),
             new BoundedVersionedS3ObjectReader($files),
         );
         $context = new DocumentUnitExecutionContext(

@@ -11,7 +11,9 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Clients\TimewebVisionOcrClient;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrConfigurationException;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrProviderException;
+use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\FixedOcrRuntimeEnvironment;
 use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
 use Illuminate\Http\Client\ConnectionException;
@@ -45,6 +47,14 @@ final class TimewebVisionUsageAttemptTest extends TestCase
         Facade::setFacadeApplication(null);
         Container::setInstance(null);
         parent::tearDown();
+    }
+
+    #[Test]
+    public function production_runtime_without_effective_snapshot_fails_closed(): void
+    {
+        $this->configure(['model-a'], 1);
+        $this->expectException(OcrConfigurationException::class);
+        (new TimewebVisionOcrClient(runtimeEnvironment: new FixedOcrRuntimeEnvironment(true)))->recognize($this->input());
     }
 
     #[Test]
@@ -97,19 +107,17 @@ final class TimewebVisionUsageAttemptTest extends TestCase
     }
 
     #[Test]
-    public function arbitrary_non_json_response_is_malformed_and_falls_back_to_next_model(): void
+    public function arbitrary_non_json_response_fails_without_changing_the_pinned_model(): void
     {
         $store = $this->store();
-        $this->configure(['model-a', 'model-b'], 1);
-        Http::fakeSequence()
-            ->push(['model' => 'model-a', 'choices' => [['message' => ['content' => 'plain OCR text']]]], 200)
-            ->push($this->successPayload('model-b'), 200);
-
-        $result = (new TimewebVisionOcrClient($store))->recognize($this->input());
-
-        self::assertSame('model-b', $result->model);
-        self::assertSame(['malformed_response', 'succeeded'], array_map(fn (AiUsageData $row): string => $row->status, $store->rows));
-        self::assertCount(2, $store->rows);
+        $this->configure(['model-a'], 1);
+        Http::fake(fn () => Http::response(['model' => 'model-a', 'choices' => [['message' => ['content' => 'plain OCR text']]]], 200));
+        try {
+            (new TimewebVisionOcrClient($store))->recognize($this->input());
+            self::fail('Malformed response must fail.');
+        } catch (OcrProviderException) {
+        }
+        self::assertSame(['malformed_response'], array_map(fn (AiUsageData $row): string => $row->status, $store->rows));
     }
 
     #[Test]
@@ -139,14 +147,17 @@ final class TimewebVisionUsageAttemptTest extends TestCase
     }
 
     #[Test]
-    public function reported_model_mismatch_is_malformed_and_routes_to_next_model(): void
+    public function reported_model_mismatch_fails_without_changing_the_pinned_model(): void
     {
         $store = $this->store();
-        $this->configure(['model-a', 'model-b'], 1);
-        Http::fakeSequence()->push($this->successPayload('unexpected-model'), 200)->push($this->successPayload('model-b'), 200);
-
-        self::assertSame('model-b', (new TimewebVisionOcrClient($store))->recognize($this->input())->model);
-        self::assertSame(['malformed_response', 'succeeded'], array_map(fn (AiUsageData $row): string => $row->status, $store->rows));
+        $this->configure(['model-a'], 1);
+        Http::fake(fn () => Http::response($this->successPayload('unexpected-model'), 200));
+        try {
+            (new TimewebVisionOcrClient($store))->recognize($this->input());
+            self::fail('Reported model mismatch must fail.');
+        } catch (OcrProviderException) {
+        }
+        self::assertSame(['malformed_response'], array_map(fn (AiUsageData $row): string => $row->status, $store->rows));
     }
 
     #[Test]

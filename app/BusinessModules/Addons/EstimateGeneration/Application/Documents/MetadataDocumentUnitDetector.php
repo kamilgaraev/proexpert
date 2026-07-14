@@ -28,8 +28,21 @@ final class MetadataDocumentUnitDetector implements DocumentUnitDetector
 
         if (str_starts_with($mime, 'image/') || in_array($extension, ['png', 'jpg', 'jpeg', 'webp', 'tif', 'tiff'], true)) {
             $type = ($meta['is_sketch'] ?? false) === true ? DocumentUnitType::Sketch : DocumentUnitType::RasterImage;
+            $units = $this->indexed($type, max(1, (int) ($meta['frame_count'] ?? 1)), $sourceVersion, 'frame');
 
-            return $this->indexed($type, max(1, (int) ($meta['frame_count'] ?? 1)), $sourceVersion, 'frame');
+            return array_map(static fn (DocumentUnitData $unit): DocumentUnitData => new DocumentUnitData(
+                $unit->type,
+                $unit->index,
+                $unit->sourceVersion,
+                [...$unit->locator,
+                    'artifact_path' => (string) $document->storage_path,
+                    'artifact_bytes' => (int) $document->file_size_bytes,
+                    'artifact_sha256' => $sourceVersion,
+                    'artifact_source_version' => $sourceVersion,
+                    'artifact_version_id' => is_string($meta['storage_version_id'] ?? null) ? $meta['storage_version_id'] : '',
+                    'content_type' => $mime,
+                ],
+            ), $units);
         }
 
         return $this->indexed(DocumentUnitType::TextPage, max(1, (int) ($document->page_count ?? 1)), $sourceVersion, 'page');
