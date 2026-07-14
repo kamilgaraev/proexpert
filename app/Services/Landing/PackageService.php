@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Landing;
 
 use App\Models\OrganizationPackageSubscription;
+use App\Models\OrganizationPackageTrialUsage;
 use App\Services\Modules\PackageCatalogService;
 
 class PackageService
@@ -26,9 +27,13 @@ class PackageService
             ->active()
             ->get()
             ->keyBy('package_slug');
+        $usedTrials = OrganizationPackageTrialUsage::query()
+            ->where('organization_id', $organizationId)
+            ->pluck('package_slug')
+            ->flip();
 
         return collect($this->packageCatalog->allPackages())
-            ->map(function (array $package) use ($subscriptions): array {
+            ->map(function (array $package) use ($subscriptions, $usedTrials): array {
                 $subscription = $subscriptions->get($package['slug']);
                 $standard = $package['tiers']['standard'];
                 $priceMinor = (int) $standard['price'] * 100;
@@ -51,6 +56,8 @@ class PackageService
                     'current_period_start_at' => $subscription?->current_period_start_at?->toISOString(),
                     'current_period_end_at' => $subscription?->current_period_end_at?->toISOString(),
                     'trial_ends_at' => $subscription?->trial_ends_at?->toISOString(),
+                    'trial_used' => $usedTrials->has($package['slug']),
+                    'trial_available' => ! $usedTrials->has($package['slug']),
                 ];
             })
             ->values()

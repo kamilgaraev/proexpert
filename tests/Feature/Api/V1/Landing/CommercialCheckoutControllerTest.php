@@ -13,6 +13,7 @@ use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Interfaces\Billing\PaymentGatewayInterface;
 use App\Models\CommercialContourChange;
 use App\Models\CommercialOrder;
+use App\Models\CommercialRenewalCycle;
 use App\Models\Organization;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
@@ -30,6 +31,8 @@ class CommercialCheckoutControllerTest extends TestCase
 
     private User $owner;
 
+    private ControllerCheckoutGatewayFake $gateway;
+
     public function refreshDatabase(): void {}
 
     protected function setUp(): void
@@ -46,7 +49,8 @@ class CommercialCheckoutControllerTest extends TestCase
         ]));
         $this->owner = $this->createUser('owner-checkout@example.test');
         $this->attachRole($this->owner, 'organization_owner');
-        $this->app->instance(PaymentGatewayInterface::class, new ControllerCheckoutGatewayFake);
+        $this->gateway = new ControllerCheckoutGatewayFake;
+        $this->app->instance(PaymentGatewayInterface::class, $this->gateway);
     }
 
     public function test_owner_creates_checkout_through_protected_route(): void
@@ -167,6 +171,89 @@ class CommercialCheckoutControllerTest extends TestCase
         $this->assertDatabaseCount('commercial_orders', 0);
     }
 
+    public function test_owner_creates_idempotent_manual_payment_for_fixed_grace_cycle(): void
+    {
+        CarbonImmutable::setTestNow('2026-07-20 12:00:00');
+        $account = $this->commercialAccount();
+        $anchor = CarbonImmutable::parse('2026-08-13 12:00:00');
+        $account->forceFill([
+            'status' => 'grace',
+            'current_period_start_at' => '2026-06-14 12:00:00',
+            'current_period_end_at' => '2026-07-14 12:00:00',
+            'billing_anchor_at' => $anchor,
+            'grace_started_at' => '2026-07-14 12:00:00',
+            'grace_ends_at' => '2026-07-21 12:00:00',
+        ])->save();
+        [$order] = $this->commercialOrder($this->organization, $account, 'pending_payment');
+        $order->forceFill([
+            'kind' => 'renewal',
+            'selected_package_slugs' => ['machinery'],
+            'current_package_slugs' => ['machinery'],
+            'period_start_at' => '2026-07-14 12:00:00',
+            'period_end_at' => $anchor,
+        ])->save();
+        $order->payments()->delete();
+        $cycle = CommercialRenewalCycle::query()->create([
+            'organization_id' => $this->organization->id,
+            'commercial_account_id' => $account->id,
+            'commercial_order_id' => $order->id,
+            'status' => 'grace',
+            'due_at' => '2026-07-14 12:00:00',
+            'target_period_start_at' => '2026-07-14 12:00:00',
+            'target_period_end_at' => $anchor,
+            'grace_deadline_at' => '2026-07-21 12:00:00',
+            'attempt_count' => 1,
+        ]);
+        $key = '33333333-3333-4333-8333-333333333333';
+
+        $first = $this->authenticatedAs($this->owner)->postJson(
+            '/api/v1/landing/billing/commercial/renewal/manual-payment',
+            ['client_idempotency_key' => $key],
+        );
+        $second = $this->authenticatedAs($this->owner)->postJson(
+            '/api/v1/landing/billing/commercial/renewal/manual-payment',
+            ['client_idempotency_key' => $key],
+        );
+
+        $first->assertCreated()
+            ->assertJsonPath('data.order_id', $order->public_id)
+            ->assertJsonPath('data.payment_status', 'pending')
+            ->assertJsonPath('data.confirmation_url', 'https://yookassa.test/confirmation')
+            ->assertJsonPath('data.period_end_at', $anchor->toJSON());
+        $second->assertOk()->assertJsonPath('data.order_id', $order->public_id);
+        $this->assertDatabaseCount('commercial_orders', 1);
+        $this->assertDatabaseCount('commercial_payments', 1);
+        $this->assertSame($cycle->id, $order->payments()->firstOrFail()->commercial_renewal_cycle_id);
+        $this->assertSame($key, $order->payments()->firstOrFail()->provider_idempotency_key);
+        $this->assertCount(1, $this->gateway->createdPayments);
+        $this->assertSame($order->public_id, $this->gateway->createdPayments[0]->metadata['order_id']);
+        $this->assertSame($key, $this->gateway->createdPayments[0]->metadata['manual_payment_key']);
+        $this->assertEquals($anchor, $account->fresh()->billing_anchor_at);
+        $this->assertSame('grace', $account->fresh()->status->value);
+    }
+
+    public function test_manual_payment_requires_active_grace_deadline(): void
+    {
+        $this->authenticatedAs($this->owner)->postJson(
+            '/api/v1/landing/billing/commercial/renewal/manual-payment',
+            ['client_idempotency_key' => '55555555-5555-4555-8555-555555555555'],
+        )->assertConflict();
+
+        $this->assertCount(0, $this->gateway->createdPayments);
+    }
+
+    public function test_manual_payment_denies_view_only_member(): void
+    {
+        $accountant = $this->createUser('manual-payment-view@example.test');
+        $this->attachRole($accountant, 'accountant');
+
+        $this->authenticatedAs($accountant)->postJson(
+            '/api/v1/landing/billing/commercial/renewal/manual-payment',
+            ['client_idempotency_key' => '44444444-4444-4444-8444-444444444444'],
+        )->assertForbidden();
+        $this->assertCount(0, $this->gateway->createdPayments);
+    }
+
     public function test_order_status_is_tenant_isolated_safe_and_has_no_entitlement_side_effect(): void
     {
         [$order, $payment] = $this->commercialOrder($this->organization, $this->commercialAccount(), 'pending_payment');
@@ -265,6 +352,31 @@ class CommercialCheckoutControllerTest extends TestCase
             ->assertJsonPath('data.refunds_summary.count', 1)
             ->assertJsonPath('data.refunds_summary.amount_minor', 790000)
             ->assertJsonPath('data.refunds_summary.fully_refunded', true);
+    }
+
+    public function test_canceled_renewal_attempt_is_exposed_as_failed_terminal_status(): void
+    {
+        $account = $this->commercialAccount();
+        [$order, $payment] = $this->commercialOrder($this->organization, $account, 'pending_payment');
+        $order->forceFill(['kind' => 'renewal'])->save();
+        $payment->forceFill(['provider_status' => 'canceled', 'terminal_at' => now()])->save();
+        CommercialRenewalCycle::query()->create([
+            'organization_id' => $this->organization->id,
+            'commercial_account_id' => $account->id,
+            'commercial_order_id' => $order->id,
+            'status' => 'grace',
+            'due_at' => now()->subDay(),
+            'target_period_start_at' => $order->period_start_at,
+            'target_period_end_at' => $order->period_end_at,
+            'grace_deadline_at' => now()->addDays(6),
+            'attempt_count' => 1,
+        ]);
+
+        $this->authenticatedAs($this->owner)
+            ->getJson('/api/v1/landing/billing/commercial/orders/'.$order->public_id)
+            ->assertOk()
+            ->assertJsonPath('data.status', 'failed')
+            ->assertJsonPath('data.payment_status', 'canceled');
     }
 
     public function test_removal_is_scheduled_idempotently_for_fixed_anchor_without_revoking_current_access(): void
@@ -400,7 +512,36 @@ class CommercialCheckoutControllerTest extends TestCase
         $this->assertSame([
             'status', 'auto_renew_enabled', 'saved_method_available', 'next_billing_at',
             'grace_started_at', 'grace_ends_at', 'retry_status', 'attempt_count', 'next_attempt_at',
+            'scheduled_change',
         ], array_keys($response->json('data')));
+    }
+
+    public function test_renewal_state_restores_scheduled_reduction_with_fixed_anchor(): void
+    {
+        $account = $this->commercialAccount();
+        $anchor = CarbonImmutable::parse('2026-08-14 12:00:00');
+        $account->forceFill(['billing_anchor_at' => $anchor, 'current_period_end_at' => $anchor])->save();
+        CommercialContourChange::query()->create([
+            'public_id' => (string) \Illuminate\Support\Str::uuid(),
+            'organization_id' => $this->organization->id,
+            'commercial_account_id' => $account->id,
+            'user_id' => $this->owner->id,
+            'status' => 'scheduled',
+            'offer_type' => 'packages',
+            'quote_version' => 1,
+            'target_package_slugs' => ['machinery'],
+            'current_package_slugs' => ['machinery', 'planning-schedules'],
+            'apply_at' => $anchor,
+            'client_idempotency_key' => 'schedule-state-000000000000000000001',
+        ]);
+
+        $this->authenticatedAs($this->owner)
+            ->getJson('/api/v1/landing/billing/commercial/renewal')
+            ->assertOk()
+            ->assertJsonPath('data.scheduled_change.status', 'scheduled')
+            ->assertJsonPath('data.scheduled_change.target_package_slugs', ['machinery'])
+            ->assertJsonPath('data.scheduled_change.apply_at', $anchor->toJSON())
+            ->assertJsonPath('data.scheduled_change.billing_anchor_at', $anchor->toJSON());
     }
 
     public function test_renewal_state_denies_user_without_organization_membership(): void
@@ -807,8 +948,12 @@ class CommercialCheckoutControllerTest extends TestCase
 
 class ControllerCheckoutGatewayFake implements PaymentGatewayInterface
 {
+    public array $createdPayments = [];
+
     public function createPayment(CreatePaymentData $payment): PaymentGatewayResult
     {
+        $this->createdPayments[] = $payment;
+
         return new PaymentGatewayResult(
             id: 'provider-api-payment',
             status: 'pending',

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Billing;
 
+use App\Models\CommercialContourChange;
 use App\Models\CommercialRenewalCycle;
 use App\Models\OrganizationCommercialAccount;
 use Illuminate\Support\Facades\DB;
@@ -14,6 +15,12 @@ final class CommercialRenewalStateService
     {
         $account = OrganizationCommercialAccount::query()->where('organization_id', $organizationId)->first();
         $cycle = $account === null ? null : CommercialRenewalCycle::query()->where('commercial_account_id', $account->id)->latest('id')->first();
+        $scheduledChange = $account === null ? null : CommercialContourChange::query()
+            ->where('commercial_account_id', $account->id)
+            ->where('organization_id', $organizationId)
+            ->where('status', 'scheduled')
+            ->latest('id')
+            ->first();
 
         return [
             'status' => $account?->status?->value ?? 'free',
@@ -25,6 +32,14 @@ final class CommercialRenewalStateService
             'retry_status' => $cycle?->status,
             'attempt_count' => $cycle?->attempt_count ?? 0,
             'next_attempt_at' => $cycle?->next_attempt_at?->toIso8601String(),
+            'scheduled_change' => $scheduledChange === null ? null : [
+                'status' => $scheduledChange->status,
+                'offer_type' => $scheduledChange->offer_type->value,
+                'target_package_slugs' => $scheduledChange->target_package_slugs,
+                'current_package_slugs' => $scheduledChange->current_package_slugs,
+                'apply_at' => $scheduledChange->apply_at?->toJSON(),
+                'billing_anchor_at' => $account?->billing_anchor_at?->toJSON(),
+            ],
         ];
     }
 

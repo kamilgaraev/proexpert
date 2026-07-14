@@ -111,6 +111,32 @@ class OrganizationPackageControllerTest extends TestCase
         $this->assertArrayNotHasKey('is_bundled_with_plan', $active);
     }
 
+    public function test_get_packages_returns_authoritative_trial_availability_after_reload(): void
+    {
+        OrganizationPackageTrialUsage::query()->create([
+            'organization_id' => $this->organization->id,
+            'package_slug' => 'machinery',
+            'started_at' => now()->subDays(5),
+            'ends_at' => now()->subDays(2),
+        ]);
+        $token = JWTAuth::claims(['organization_id' => $this->organization->id])->fromUser($this->user);
+
+        $response = $this->withHeader('Authorization', 'Bearer '.$token)
+            ->getJson('/api/v1/landing/packages');
+
+        $response->assertOk()
+            ->assertJsonFragment([
+                'slug' => 'machinery',
+                'trial_available' => false,
+                'trial_used' => true,
+            ])
+            ->assertJsonFragment([
+                'slug' => 'planning-schedules',
+                'trial_available' => true,
+                'trial_used' => false,
+            ]);
+    }
+
     public function test_get_packages_requires_bearer_token(): void
     {
         $this->getJson('/api/v1/landing/packages')
@@ -388,6 +414,10 @@ class OrganizationPackageControllerTest extends TestCase
             $table->timestamp('current_period_start_at')->nullable();
             $table->timestamp('current_period_end_at')->nullable();
             $table->boolean('auto_renew_enabled');
+            $table->string('saved_payment_method_id')->nullable();
+            $table->boolean('saved_payment_method_active')->default(false);
+            $table->timestamp('grace_started_at')->nullable();
+            $table->timestamp('grace_ends_at')->nullable();
             $table->timestamps();
         });
 

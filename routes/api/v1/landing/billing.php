@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Http\Controllers\Api\V1\Landing\Billing\BalanceController;
 use App\Http\Controllers\Api\V1\Landing\Billing\CommercialBillingController;
 use App\Http\Controllers\Api\V1\Landing\Billing\CommercialCheckoutController;
+use App\Http\Controllers\Api\V1\Landing\Billing\CommercialManualPaymentController;
 use App\Http\Controllers\Api\V1\Landing\Billing\CommercialRenewalController;
 use App\Http\Controllers\Api\V1\Landing\OrganizationDashboardController;
 use Illuminate\Support\Facades\Route;
@@ -35,4 +36,6 @@ Route::middleware(['interface:lk'])
             ->name('commercial.contour.schedule');
         Route::post('commercial/renewal/disable', [CommercialRenewalController::class, 'disable'])
             ->middleware(['authorize:billing.manage'])->name('commercial.renewal.disable');
+        Route::post('commercial/renewal/manual-payment', [CommercialManualPaymentController::class, 'store'])
+            ->middleware(['authorize:billing.manage'])->name('commercial.renewal.manual-payment');
     });

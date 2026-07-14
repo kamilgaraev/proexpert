@@ -510,6 +510,11 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
             ->lockForUpdate()
             ->get();
 
+        $manualPaymentKey = trim((string) ($authoritative->metadata['manual_payment_key'] ?? ''));
+        if ($manualPaymentKey !== '') {
+            $payments = $payments->where('provider_idempotency_key', $manualPaymentKey)->values();
+        }
+
         $payment = $payments->count() === 1 ? $payments->first() : null;
 
         if ($payment === null

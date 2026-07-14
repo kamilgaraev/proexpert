@@ -93,11 +93,16 @@ final class CommercialBillingQueryService
         $canceledPayment = $payments->last(
             static fn ($payment): bool => $payment->provider_status === 'canceled',
         );
+        $status = $order->status->value === 'pending_payment'
+            && $order->kind === 'renewal'
+            && $latestPayment?->provider_status === 'canceled'
+                ? 'failed'
+                : $order->status->value;
 
         $payload = [
             'order_id' => $order->public_id,
             'kind' => $order->kind,
-            'status' => $order->status->value,
+            'status' => $status,
             'payment_status' => $latestPayment?->provider_status,
             'amount' => $order->amount,
             'amount_minor' => $order->amount_minor,
