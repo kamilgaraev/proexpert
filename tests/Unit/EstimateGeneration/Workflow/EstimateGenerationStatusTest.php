@@ -37,6 +37,7 @@ final class EstimateGenerationStatusTest extends TestCase
             'generate',
             'review',
             'apply',
+            'export',
             'retry',
             'cancel',
             'archive',

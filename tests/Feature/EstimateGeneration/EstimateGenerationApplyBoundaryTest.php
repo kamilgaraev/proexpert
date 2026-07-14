@@ -110,7 +110,7 @@ final class EstimateGenerationApplyBoundaryTest extends TestCase
 
         $applyMethod = strstr($source, 'public function apply(');
         self::assertIsString($applyMethod);
-        $applyMethod = strstr($applyMethod, 'public function selectNormativeCandidate(', true);
+        $applyMethod = strstr($applyMethod, 'public function rebuildSection(', true);
         self::assertIsString($applyMethod);
         self::assertStringNotContainsString('DB::transaction', $applyMethod);
         self::assertStringNotContainsString('forceFill(', $applyMethod);
