@@ -57,8 +57,15 @@ class OrganizationPackageSubscription extends Model
             return $this->trial_ends_at !== null && $this->trial_ends_at->isFuture();
         }
 
-        return in_array($this->status?->value, PackageSubscriptionStatus::periodAccessValues(), true)
-            && ($this->current_period_end_at === null || $this->current_period_end_at->isFuture());
+        if (! in_array($this->status?->value, PackageSubscriptionStatus::periodAccessValues(), true)) {
+            return false;
+        }
+
+        if ($this->access_source === PackageAccessSource::Corporate) {
+            return $this->current_period_end_at === null || $this->current_period_end_at->isFuture();
+        }
+
+        return $this->current_period_end_at !== null && $this->current_period_end_at->isFuture();
     }
 
     public function isExpired(): bool
@@ -75,9 +82,18 @@ class OrganizationPackageSubscription extends Model
                     ->where('trial_ends_at', '>', now());
             })->orWhere(function ($period): void {
                 $period->whereIn('status', PackageSubscriptionStatus::periodAccessValues())
-                    ->where(function ($dates): void {
-                        $dates->whereNull('current_period_end_at')
-                            ->orWhere('current_period_end_at', '>', now());
+                    ->where(function ($access): void {
+                        $access->where(function ($corporate): void {
+                            $corporate->where('access_source', PackageAccessSource::Corporate->value)
+                                ->where(function ($dates): void {
+                                    $dates->whereNull('current_period_end_at')
+                                        ->orWhere('current_period_end_at', '>', now());
+                                });
+                        })->orWhere(function ($paid): void {
+                            $paid->where('access_source', '!=', PackageAccessSource::Corporate->value)
+                                ->whereNotNull('current_period_end_at')
+                                ->where('current_period_end_at', '>', now());
+                        });
                     });
             });
         });

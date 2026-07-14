@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Casts\AsArrayObject;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Casts\AsArrayObject;
 
 class SubscriptionPlan extends Model
 {
@@ -26,7 +26,6 @@ class SubscriptionPlan extends Model
         'max_users',
         'max_contractor_invitations',
         'features',
-        'included_packages',
         'is_active',
         'display_order',
     ];
@@ -34,7 +33,6 @@ class SubscriptionPlan extends Model
     protected $casts = [
         'price' => 'decimal:2',
         'trial_days' => 'integer',
-        'included_packages' => 'array',
         'features' => AsArrayObject::class, // Для удобной работы с JSON-полем
         'is_active' => 'boolean',
         'max_projects' => 'integer',
@@ -52,4 +50,4 @@ class SubscriptionPlan extends Model
     {
         return $query->where('is_active', true)->orderBy('display_order');
     }
-} 
+}

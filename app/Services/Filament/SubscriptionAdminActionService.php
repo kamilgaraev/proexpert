@@ -123,7 +123,6 @@ final class SubscriptionAdminActionService
             $subscription->enterprise_constructor_config = $config;
             $subscription->save();
             $subscription->syncModulesExpiration();
-            $subscription->syncPackagesExpiration();
 
             return $this->recordSubscriptionAction(
                 actor: $actor,
@@ -167,7 +166,6 @@ final class SubscriptionAdminActionService
             $subscription->enterprise_constructor_config = $config;
             $subscription->save();
             $subscription->syncModulesExpiration();
-            $subscription->syncPackagesExpiration();
 
             return $this->recordSubscriptionAction(
                 actor: $actor,
@@ -186,9 +184,9 @@ final class SubscriptionAdminActionService
     }
 
     /**
-     * @param array<string, mixed> $before
-     * @param array<string, mixed> $after
-     * @param array<string, mixed> $context
+     * @param  array<string, mixed>  $before
+     * @param  array<string, mixed>  $after
+     * @param  array<string, mixed>  $context
      */
     private function recordSubscriptionAction(
         SystemAdmin $actor,

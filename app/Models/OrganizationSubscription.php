@@ -64,29 +64,14 @@ class OrganizationSubscription extends Model
             });
     }
 
-    public function bundledPackages(): HasMany
-    {
-        return $this->hasMany(OrganizationPackageSubscription::class, 'subscription_id')
-            ->where('is_bundled_with_plan', true);
-    }
-
-    public function activeBundledPackages(): HasMany
-    {
-        return $this->bundledPackages()
-            ->where(function ($query) {
-                $query->whereNull('expires_at')
-                    ->orWhere('expires_at', '>', now());
-            });
-    }
-
     /**
      * Проверить, активна ли подписка (не истекла и не отменена)
      */
     public function isActive(): bool
     {
-        return $this->status === 'active' 
+        return $this->status === 'active'
             && $this->ends_at > now()
-            && !$this->isCanceled();
+            && ! $this->isCanceled();
     }
 
     /**
@@ -113,11 +98,11 @@ class OrganizationSubscription extends Model
         if ($this->isExpired()) {
             return 'expired';
         }
-        
+
         if ($this->isCanceled()) {
             return 'canceled_active';
         }
-        
+
         return $this->status;
     }
 
@@ -126,13 +111,6 @@ class OrganizationSubscription extends Model
         return $this->bundledModules()->update([
             'expires_at' => $this->ends_at,
             'next_billing_date' => $this->next_billing_at,
-        ]);
-    }
-
-    public function syncPackagesExpiration(): int
-    {
-        return $this->bundledPackages()->update([
-            'expires_at' => $this->ends_at,
         ]);
     }
 
@@ -145,13 +123,6 @@ class OrganizationSubscription extends Model
                 'cancelled_at' => now(),
                 'cancellation_reason' => $reason,
             ]);
-    }
-
-    public function expireBundledPackages(): int
-    {
-        return $this->bundledPackages()->update([
-            'expires_at' => now(),
-        ]);
     }
 
     public function reactivateBundledModules(): int
@@ -167,4 +138,4 @@ class OrganizationSubscription extends Model
                 'next_billing_date' => $this->next_billing_at,
             ]);
     }
-} 
+}

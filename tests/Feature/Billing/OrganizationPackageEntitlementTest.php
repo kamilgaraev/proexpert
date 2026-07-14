@@ -116,6 +116,51 @@ class OrganizationPackageEntitlementTest extends TestCase
         $this->assertContains('budget-estimates', $this->entitlements()->getEffectiveModuleSlugs($foreign->id));
     }
 
+    public function test_package_linked_to_another_organizations_account_does_not_grant_access(): void
+    {
+        $this->createPackageModules('estimates-norms');
+        $foreign = $this->createOrganization('Чужая организация');
+        $foreignAccount = $this->createAccount($foreign);
+
+        OrganizationPackageSubscription::create([
+            'organization_id' => $this->organization->id,
+            'commercial_account_id' => $foreignAccount->id,
+            'package_slug' => 'estimates-norms',
+            'status' => PackageSubscriptionStatus::Active,
+            'access_source' => PackageAccessSource::PaidPackage,
+            'price_paid' => 12900,
+            'current_period_start_at' => now(),
+            'current_period_end_at' => now()->addDays(30),
+        ]);
+
+        $this->assertNotContains(
+            'budget-estimates',
+            $this->entitlements()->getEffectiveModuleSlugs($this->organization->id),
+        );
+    }
+
+    public function test_null_period_end_is_denied_for_paid_statuses_and_allowed_only_for_corporate(): void
+    {
+        $this->createPackageModules('estimates-norms');
+        $this->createPackageModules('machinery');
+        $this->createPackageSubscription(
+            'estimates-norms',
+            PackageSubscriptionStatus::Grace,
+            periodEnd: false,
+        );
+        $this->createPackageSubscription(
+            'machinery',
+            PackageSubscriptionStatus::Active,
+            PackageAccessSource::Corporate,
+            periodEnd: false,
+        );
+
+        $slugs = $this->entitlements()->getEffectiveModuleSlugs($this->organization->id);
+
+        $this->assertNotContains('rate-management', $slugs);
+        $this->assertContains('machinery-operations', $slugs);
+    }
+
     public function test_shared_module_uses_the_source_with_longest_access(): void
     {
         $this->createModules(['budget-estimates']);
@@ -219,7 +264,7 @@ class OrganizationPackageEntitlementTest extends TestCase
             'access_source' => $source,
             'price_paid' => 1000,
             'current_period_start_at' => now(),
-            'current_period_end_at' => $periodEnd ?? now()->addDays(30),
+            'current_period_end_at' => $periodEnd === false ? null : ($periodEnd ?? now()->addDays(30)),
             'trial_started_at' => $trialEnd === null ? null : now(),
             'trial_ends_at' => $trialEnd,
         ]);

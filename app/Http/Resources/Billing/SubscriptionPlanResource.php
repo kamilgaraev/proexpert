@@ -12,6 +12,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
  *     schema="SubscriptionPlanResource",
  *     title="Subscription Plan Resource",
  *     description="Ресурс тарифного плана",
+ *
  *     @OA\Property(property="id", type="integer", example=1),
  *     @OA\Property(property="name", type="string", example="Старт"),
  *     @OA\Property(property="slug", type="string", example="start"),
@@ -41,7 +42,7 @@ class SubscriptionPlanResource extends JsonResource
             'name' => $this->name,
             'slug' => $this->slug,
             'description' => $this->description,
-            'price' => (float)$this->price, // Убедимся, что это float
+            'price' => (float) $this->price, // Убедимся, что это float
             'currency' => $this->currency,
             'duration_in_days' => $this->duration_in_days,
             'max_projects' => $this->max_projects,
@@ -49,8 +50,7 @@ class SubscriptionPlanResource extends JsonResource
             'max_storage_gb' => $this->max_storage_gb,
             'max_contractor_invitations' => $this->max_contractor_invitations,
             'features' => $this->features, // Already an AsArrayObject, should cast to array
-            'included_packages' => $this->included_packages ?? [],
             'display_order' => $this->display_order,
         ];
     }
-} 
+}

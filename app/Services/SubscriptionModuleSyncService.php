@@ -1,13 +1,13 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services;
 
 use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
-use App\Models\OrganizationPackageSubscription;
 use App\Models\OrganizationSubscription;
 use App\Models\SubscriptionPlan;
-use App\Services\Modules\PackageCatalogService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -16,126 +16,62 @@ use function trans_message;
 
 class SubscriptionModuleSyncService
 {
-    public function __construct(
-        private readonly PackageCatalogService $packageCatalog
-    ) {}
-
     public function syncModulesOnSubscribe(OrganizationSubscription $subscription): array
     {
-        $plan = $subscription->plan;
-        $organizationId = $subscription->organization_id;
-        $moduleSlugs = $this->getBundledModuleSlugsForPlan($plan);
-        $modulesToActivate = Module::active()
-            ->whereIn('slug', $moduleSlugs)
-            ->get();
+        $modules = $this->getModulesForPlan($subscription->plan);
+        $activated = 0;
+        $converted = 0;
+        $changes = [];
 
-        $activatedCount = 0;
-        $convertedCount = 0;
-        $packagesActivatedCount = 0;
-        $packagesConvertedCount = 0;
-        $modules = [];
+        DB::transaction(function () use ($subscription, $modules, &$activated, &$converted, &$changes): void {
+            foreach ($modules as $module) {
+                $result = $this->activateModuleForSubscription($subscription->organization_id, $module, $subscription);
 
-        DB::transaction(function () use (
-            $plan,
-            $modulesToActivate,
-            $organizationId,
-            $subscription,
-            &$activatedCount,
-            &$convertedCount,
-            &$packagesActivatedCount,
-            &$packagesConvertedCount,
-            &$modules
-        ) {
-            foreach ($this->getIncludedPackages($plan) as $package) {
-                $existingPackage = OrganizationPackageSubscription::query()
-                    ->where('organization_id', $organizationId)
-                    ->where('package_slug', $package['package_slug'])
-                    ->first();
-
-                if ($existingPackage?->isActive() && ! $existingPackage->isBundled()) {
-                    $packagesConvertedCount++;
-                } elseif (! $existingPackage) {
-                    $packagesActivatedCount++;
-                }
-
-                OrganizationPackageSubscription::updateOrCreate(
-                    [
-                        'organization_id' => $organizationId,
-                        'package_slug' => $package['package_slug'],
-                        'is_bundled_with_plan' => true,
-                    ],
-                    [
-                        'subscription_id' => $subscription->id,
-                        'tier' => $package['tier'],
-                        'price_paid' => 0,
-                        'activated_at' => now(),
-                        'expires_at' => $subscription->ends_at,
-                    ]
-                );
-            }
-
-            foreach ($modulesToActivate as $module) {
-                $result = $this->activateModuleForSubscription($organizationId, $module, $subscription);
-
-                if ($result === 'converted') {
-                    $convertedCount++;
-                } elseif ($result === 'activated') {
-                    $activatedCount++;
+                if ($result === 'activated') {
+                    $activated++;
+                } elseif ($result === 'converted') {
+                    $converted++;
                 }
 
                 if ($result !== null) {
-                    $modules[] = [
-                        'slug' => $module->slug,
-                        'name' => $module->name,
-                        'action' => $result,
-                    ];
+                    $changes[] = ['slug' => $module->slug, 'name' => $module->name, 'action' => $result];
                 }
             }
         });
 
         return [
             'success' => true,
-            'activated_count' => $activatedCount,
-            'converted_count' => $convertedCount,
-            'packages_activated_count' => $packagesActivatedCount,
-            'packages_converted_count' => $packagesConvertedCount,
-            'modules' => $modules,
+            'activated_count' => $activated,
+            'converted_count' => $converted,
+            'modules' => $changes,
         ];
     }
 
     public function syncModulesOnPlanChange(
         OrganizationSubscription $subscription,
         SubscriptionPlan $oldPlan,
-        SubscriptionPlan $newPlan
+        SubscriptionPlan $newPlan,
     ): array {
-        $organizationId = $subscription->organization_id;
-
-        $oldModuleIds = $this->getModulesForPlan($oldPlan)->pluck('id');
+        $oldIds = $this->getModulesForPlan($oldPlan)->pluck('id');
         $newModules = $this->getModulesForPlan($newPlan);
-        $newModuleIds = $newModules->pluck('id');
-
-        $modulesToRemove = $oldModuleIds->diff($newModuleIds);
-
-        $deactivatedCount = 0;
-        $activatedCount = 0;
-        $convertedCount = 0;
-        $packagesDeactivatedCount = 0;
+        $removeIds = $oldIds->diff($newModules->pluck('id'));
+        $deactivated = 0;
+        $activated = 0;
+        $converted = 0;
 
         DB::transaction(function () use (
-            $modulesToRemove,
-            $newModules,
-            $organizationId,
             $subscription,
             $newPlan,
-            $oldPlan,
-            &$deactivatedCount,
-            &$activatedCount,
-            &$convertedCount,
-            &$packagesDeactivatedCount
-        ) {
-            if ($modulesToRemove->isNotEmpty()) {
-                $deactivatedCount = OrganizationModuleActivation::where('organization_id', $organizationId)
-                    ->whereIn('module_id', $modulesToRemove)
+            $newModules,
+            $removeIds,
+            &$deactivated,
+            &$activated,
+            &$converted,
+        ): void {
+            if ($removeIds->isNotEmpty()) {
+                $deactivated = OrganizationModuleActivation::query()
+                    ->where('organization_id', $subscription->organization_id)
+                    ->whereIn('module_id', $removeIds)
                     ->where('subscription_id', $subscription->id)
                     ->where('is_bundled_with_plan', true)
                     ->update([
@@ -143,100 +79,56 @@ class SubscriptionModuleSyncService
                         'cancelled_at' => now(),
                         'cancellation_reason' => trans_message(
                             'billing.modules.not_included_in_plan',
-                            ['plan' => $newPlan->name]
+                            ['plan' => $newPlan->name],
                         ),
                     ]);
             }
 
-            foreach ($this->getRemovedPackageKeys($oldPlan, $newPlan) as $package) {
-                $packagesDeactivatedCount += OrganizationPackageSubscription::query()
-                    ->where('organization_id', $organizationId)
-                    ->where('subscription_id', $subscription->id)
-                    ->where('is_bundled_with_plan', true)
-                    ->where('package_slug', $package['package_slug'])
-                    ->update(['expires_at' => now()]);
-            }
-
-            foreach ($this->getIncludedPackages($newPlan) as $package) {
-                OrganizationPackageSubscription::updateOrCreate(
-                    [
-                        'organization_id' => $organizationId,
-                        'package_slug' => $package['package_slug'],
-                        'is_bundled_with_plan' => true,
-                    ],
-                    [
-                        'subscription_id' => $subscription->id,
-                        'tier' => $package['tier'],
-                        'price_paid' => 0,
-                        'activated_at' => now(),
-                        'expires_at' => $subscription->ends_at,
-                    ]
-                );
-            }
-
             foreach ($newModules as $module) {
-                $result = $this->activateModuleForSubscription($organizationId, $module, $subscription);
+                $result = $this->activateModuleForSubscription(
+                    $subscription->organization_id,
+                    $module,
+                    $subscription,
+                );
 
-                if ($result === 'converted') {
-                    $convertedCount++;
-                } elseif ($result === 'activated') {
-                    $activatedCount++;
+                if ($result === 'activated') {
+                    $activated++;
+                } elseif ($result === 'converted') {
+                    $converted++;
                 }
             }
         });
 
         return [
             'success' => true,
-            'deactivated_count' => $deactivatedCount,
-            'activated_count' => $activatedCount,
-            'converted_count' => $convertedCount,
-            'packages_deactivated_count' => $packagesDeactivatedCount,
+            'deactivated_count' => $deactivated,
+            'activated_count' => $activated,
+            'converted_count' => $converted,
         ];
     }
 
     public function syncModulesOnRenew(OrganizationSubscription $subscription): int
     {
-        $updatedCount = $subscription->syncModulesExpiration();
-        $packagesUpdatedCount = $subscription->syncPackagesExpiration();
+        $updated = $subscription->syncModulesExpiration();
 
         Log::info('Bundled modules renewed with subscription', [
             'subscription_id' => $subscription->id,
             'organization_id' => $subscription->organization_id,
-            'modules_count' => $updatedCount,
-            'packages_count' => $packagesUpdatedCount,
+            'modules_count' => $updated,
             'new_expires_at' => $subscription->ends_at,
         ]);
 
-        return $updatedCount;
+        return $updated;
     }
 
     public function handleSubscriptionCancellation(OrganizationSubscription $subscription): int
     {
-        $deactivatedCount = $subscription->deactivateBundledModules(trans_message('billing.subscription.cancelled'));
-        $expiredPackagesCount = $subscription->expireBundledPackages();
-
-        Log::warning('Bundled modules deactivated due to subscription cancellation', [
-            'subscription_id' => $subscription->id,
-            'organization_id' => $subscription->organization_id,
-            'modules_count' => $deactivatedCount,
-            'packages_count' => $expiredPackagesCount,
-        ]);
-
-        return $deactivatedCount;
+        return $subscription->deactivateBundledModules(trans_message('billing.subscription.cancelled'));
     }
 
     public function handleSubscriptionReactivation(OrganizationSubscription $subscription): int
     {
-        $reactivatedCount = $subscription->reactivateBundledModules();
-        $subscription->syncPackagesExpiration();
-
-        Log::info('Bundled modules reactivated with subscription', [
-            'subscription_id' => $subscription->id,
-            'organization_id' => $subscription->organization_id,
-            'modules_count' => $reactivatedCount,
-        ]);
-
-        return $reactivatedCount;
+        return $subscription->reactivateBundledModules();
     }
 
     public function ensureBundledModulesSyncedForOrganization(int $organizationId): array
@@ -246,29 +138,20 @@ class SubscriptionModuleSyncService
             ->where('organization_id', $organizationId)
             ->where('status', 'active')
             ->whereNull('canceled_at')
-            ->where(function ($query) {
-                $query->whereNull('ends_at')
-                    ->orWhere('ends_at', '>', now());
+            ->where(function ($query): void {
+                $query->whereNull('ends_at')->orWhere('ends_at', '>', now());
             })
             ->latest('id')
             ->first();
 
-        if (! $subscription || ! $subscription->plan) {
-            return $this->emptySyncResult();
+        if ($subscription?->plan === null) {
+            return $this->emptyResult();
         }
 
-        $includedPackages = $this->getIncludedPackages($subscription->plan);
-        $bundledModuleSlugs = $this->getBundledModuleSlugsForPlan($subscription->plan);
+        $slugs = $this->getBundledModuleSlugsForPlan($subscription->plan);
 
-        if ($includedPackages === [] && $bundledModuleSlugs === []) {
-            return $this->emptySyncResult();
-        }
-
-        if (
-            ! $this->hasMissingBundledPackage($organizationId, $subscription, $includedPackages)
-            && ! $this->hasMissingBundledModule($organizationId, $bundledModuleSlugs)
-        ) {
-            return $this->emptySyncResult();
+        if ($slugs === [] || ! $this->hasMissingBundledModule($organizationId, $slugs)) {
+            return $this->emptyResult();
         }
 
         return $this->syncModulesOnSubscribe($subscription);
@@ -276,45 +159,44 @@ class SubscriptionModuleSyncService
 
     public function getBundledModulesForPlan(string $planSlug): array
     {
-        $plan = SubscriptionPlan::where('slug', $planSlug)->first();
+        $plan = SubscriptionPlan::query()->where('slug', $planSlug)->first();
 
-        if (! $plan) {
+        if ($plan === null) {
             return [];
         }
 
         return $this->getModulesForPlan($plan)
-            ->map(function ($module) {
-                return [
-                    'id' => $module->id,
-                    'name' => $module->name,
-                    'slug' => $module->slug,
-                    'description' => $module->description,
-                    'category' => $module->category,
-                    'features' => $module->features,
-                    'icon' => $module->icon,
-                ];
-            })
-            ->toArray();
+            ->map(static fn (Module $module): array => [
+                'id' => $module->id,
+                'name' => $module->name,
+                'slug' => $module->slug,
+                'description' => $module->description,
+                'category' => $module->category,
+                'features' => $module->features,
+                'icon' => $module->icon,
+            ])
+            ->all();
     }
 
     private function activateModuleForSubscription(
         int $organizationId,
         Module $module,
-        OrganizationSubscription $subscription
+        OrganizationSubscription $subscription,
     ): ?string {
-        $existingActivation = OrganizationModuleActivation::where('organization_id', $organizationId)
+        $activation = OrganizationModuleActivation::query()
+            ->where('organization_id', $organizationId)
             ->where('module_id', $module->id)
             ->first();
 
-        if ($existingActivation) {
-            if ($existingActivation->isStandalone() && $existingActivation->isActive()) {
-                $existingActivation->convertToBundled($subscription);
+        if ($activation !== null) {
+            if ($activation->isStandalone() && $activation->isActive()) {
+                $activation->convertToBundled($subscription);
 
                 return 'converted';
             }
 
-            if ($existingActivation->isBundled()) {
-                $existingActivation->update([
+            if ($activation->isBundled()) {
+                $activation->update([
                     'subscription_id' => $subscription->id,
                     'status' => 'active',
                     'expires_at' => $subscription->ends_at,
@@ -351,121 +233,38 @@ class SubscriptionModuleSyncService
             ->get();
     }
 
-    private function hasMissingBundledPackage(
-        int $organizationId,
-        OrganizationSubscription $subscription,
-        array $includedPackages
-    ): bool {
-        foreach ($includedPackages as $package) {
-            $existingPackage = OrganizationPackageSubscription::query()
-                ->where('organization_id', $organizationId)
-                ->where('package_slug', $package['package_slug'])
-                ->where('is_bundled_with_plan', true)
-                ->first();
-
-            if (
-                ! $existingPackage
-                || ! $existingPackage->isBundled()
-                || ! $existingPackage->isActive()
-                || $existingPackage->subscription_id !== $subscription->id
-                || $existingPackage->tier !== $package['tier']
-            ) {
-                return true;
-            }
-        }
-
-        return false;
+    private function getBundledModuleSlugsForPlan(SubscriptionPlan $plan): array
+    {
+        return Module::active()
+            ->includedInPlan($plan->slug)
+            ->pluck('slug')
+            ->all();
     }
 
-    private function hasMissingBundledModule(int $organizationId, array $bundledModuleSlugs): bool
+    private function hasMissingBundledModule(int $organizationId, array $slugs): bool
     {
-        if ($bundledModuleSlugs === []) {
-            return false;
-        }
-
-        $activeModuleSlugs = OrganizationModuleActivation::query()
+        $active = OrganizationModuleActivation::query()
             ->join('modules', 'modules.id', '=', 'organization_module_activations.module_id')
             ->where('organization_module_activations.organization_id', $organizationId)
             ->where('organization_module_activations.status', 'active')
             ->where('modules.is_active', true)
-            ->where(function ($query) {
+            ->where(function ($query): void {
                 $query->whereNull('organization_module_activations.expires_at')
                     ->orWhere('organization_module_activations.expires_at', '>', now());
             })
             ->pluck('modules.slug')
             ->all();
 
-        return count(array_diff($bundledModuleSlugs, $activeModuleSlugs)) > 0;
+        return array_diff($slugs, $active) !== [];
     }
 
-    private function emptySyncResult(): array
+    private function emptyResult(): array
     {
         return [
             'success' => true,
             'activated_count' => 0,
             'converted_count' => 0,
-            'packages_activated_count' => 0,
-            'packages_converted_count' => 0,
             'modules' => [],
         ];
-    }
-
-    private function getBundledModuleSlugsForPlan(SubscriptionPlan $plan): array
-    {
-        $slugs = Module::active()
-            ->includedInPlan($plan->slug)
-            ->pluck('slug')
-            ->all();
-
-        foreach ($this->getIncludedPackages($plan) as $package) {
-            $tierModules = $this->packageCatalog->tierModules($package['package_slug'], $package['tier']);
-            $slugs = array_merge($slugs, $tierModules);
-        }
-
-        return array_values(array_unique($slugs));
-    }
-
-    private function getRemovedPackageKeys(SubscriptionPlan $oldPlan, SubscriptionPlan $newPlan): array
-    {
-        $newKeys = collect($this->getIncludedPackages($newPlan))
-            ->mapWithKeys(fn (array $package): array => [
-                $this->packageKey($package) => true,
-            ]);
-
-        return collect($this->getIncludedPackages($oldPlan))
-            ->filter(fn (array $package): bool => ! $newKeys->has($this->packageKey($package)))
-            ->values()
-            ->all();
-    }
-
-    private function getIncludedPackages(SubscriptionPlan $plan): array
-    {
-        return collect($plan->included_packages ?? [])
-            ->filter(fn ($package): bool => is_array($package))
-            ->map(function (array $package): ?array {
-                $packageSlug = $package['package_slug'] ?? $package['slug'] ?? null;
-                $tier = $package['tier'] ?? null;
-
-                if (! is_string($packageSlug) || ! is_string($tier)) {
-                    return null;
-                }
-
-                if (! $this->packageCatalog->tierExists($packageSlug, $tier)) {
-                    return null;
-                }
-
-                return [
-                    'package_slug' => $packageSlug,
-                    'tier' => $tier,
-                ];
-            })
-            ->filter()
-            ->values()
-            ->all();
-    }
-
-    private function packageKey(array $package): string
-    {
-        return $package['package_slug'].':'.$package['tier'];
     }
 }

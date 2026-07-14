@@ -12,7 +12,7 @@ use InvalidArgumentException;
 
 class CommercialOfferCalculator
 {
-    private const SECONDS_PER_DAY = 86400;
+    private const MICROSECONDS_PER_DAY = 86400000000;
 
     public function __construct(
         private readonly PackageCatalogService $packageCatalog,
@@ -41,7 +41,7 @@ class CommercialOfferCalculator
             ? $this->fullSuitePrice()
             : $this->sumPrices($target, $catalog);
         $now = CarbonImmutable::instance($calculatedAt ?? now());
-        [$periodStart, $periodEnd, $remainingRatio, $hasCurrentPeriod] = $this->period(
+        [$periodStart, $periodEnd, $remainingSeconds, $periodSeconds, $hasCurrentPeriod] = $this->period(
             $now,
             $currentPeriodStartAt,
             $currentPeriodEndAt,
@@ -51,9 +51,17 @@ class CommercialOfferCalculator
             $amountDueNow = $monthlyTotal;
         } elseif ($fullSuite) {
             $currentTotal = $this->sumPrices($current, $catalog);
-            $amountDueNow = max(0.0, ($monthlyTotal - $currentTotal) * $remainingRatio);
+            $amountDueNow = $this->prorate(
+                max(0, $monthlyTotal - $currentTotal),
+                $remainingSeconds,
+                $periodSeconds,
+            );
         } else {
-            $amountDueNow = $this->sumPrices($added, $catalog) * $remainingRatio;
+            $amountDueNow = $this->prorate(
+                $this->sumPrices($added, $catalog),
+                $remainingSeconds,
+                $periodSeconds,
+            );
         }
 
         $savingsAmount = $fullSuite ? $catalogTotal - $monthlyTotal : 0;
@@ -68,8 +76,11 @@ class CommercialOfferCalculator
             'added_package_slugs' => $added,
             'removed_package_slugs' => $removed,
             'monthly_total' => $this->money($monthlyTotal),
+            'monthly_total_minor' => $monthlyTotal,
             'amount_due_now' => $this->money($amountDueNow),
+            'amount_due_now_minor' => $amountDueNow,
             'savings_amount' => $this->money($savingsAmount),
+            'savings_amount_minor' => $savingsAmount,
             'savings_percent' => $catalogTotal > 0
                 ? round(($savingsAmount / $catalogTotal) * 100, 2)
                 : 0.0,
@@ -100,7 +111,7 @@ class CommercialOfferCalculator
                 throw new InvalidArgumentException('Package catalog contains an invalid price.');
             }
 
-            $prices[$slug] = (int) $price;
+            $prices[$slug] = (int) $price * 100;
         }
 
         return $prices;
@@ -143,23 +154,33 @@ class CommercialOfferCalculator
         ?CarbonInterface $currentStart,
         ?CarbonInterface $currentEnd,
     ): array {
+        if (($currentStart === null) !== ($currentEnd === null)) {
+            throw new InvalidArgumentException('Both commercial billing period boundaries are required.');
+        }
+
         if ($currentStart !== null && $currentEnd !== null) {
             $start = CarbonImmutable::instance($currentStart);
             $end = CarbonImmutable::instance($currentEnd);
 
-            if ((int) $start->diffInSeconds($end) !== $this->billingPeriodDays() * self::SECONDS_PER_DAY) {
+            if (! $end->greaterThan($start)) {
+                throw new InvalidArgumentException('Commercial billing period end must follow its start.');
+            }
+
+            if ((int) $start->diffInMicroseconds($end) !== $this->billingPeriodDays() * self::MICROSECONDS_PER_DAY) {
                 throw new InvalidArgumentException('Commercial billing period must be exactly 30 days.');
             }
 
             if ($now->greaterThanOrEqualTo($start) && $now->lessThan($end)) {
-                $periodSeconds = $start->diffInSeconds($end);
-                $remainingSeconds = $now->diffInSeconds($end);
+                $periodSeconds = (int) $start->diffInSeconds($end);
+                $remainingSeconds = (int) $now->diffInSeconds($end);
 
-                return [$start, $end, $remainingSeconds / $periodSeconds, true];
+                return [$start, $end, $remainingSeconds, $periodSeconds, true];
             }
         }
 
-        return [$now, $now->addDays($this->billingPeriodDays()), 1.0, false];
+        $periodSeconds = $this->billingPeriodDays() * 86400;
+
+        return [$now, $now->addDays($this->billingPeriodDays()), $periodSeconds, $periodSeconds, false];
     }
 
     private function quoteVersion(): int
@@ -174,7 +195,7 @@ class CommercialOfferCalculator
 
     private function fullSuitePrice(): int
     {
-        return (int) config('commercial_offers.full_suite_price', 79900);
+        return (int) config('commercial_offers.full_suite_price', 79900) * 100;
     }
 
     private function recommendationThreshold(): int
@@ -182,8 +203,17 @@ class CommercialOfferCalculator
         return (int) config('commercial_offers.full_suite_recommendation_threshold', 8);
     }
 
-    private function money(int|float $amount): float
+    private function prorate(int $amountMinor, int $remainingSeconds, int $periodSeconds): int
     {
-        return round((float) $amount, 2);
+        if ($amountMinor === 0) {
+            return 0;
+        }
+
+        return intdiv(($amountMinor * $remainingSeconds) + intdiv($periodSeconds, 2), $periodSeconds);
+    }
+
+    private function money(int $amountMinor): string
+    {
+        return sprintf('%d.%02d', intdiv($amountMinor, 100), $amountMinor % 100);
     }
 }

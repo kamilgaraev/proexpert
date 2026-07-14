@@ -99,6 +99,12 @@ class OrganizationEntitlementService
 
         $packageSubscriptions = OrganizationPackageSubscription::query()
             ->where('organization_id', $organizationId)
+            ->whereHas('commercialAccount', function ($account): void {
+                $account->whereColumn(
+                    'organization_commercial_accounts.organization_id',
+                    'organization_package_subscriptions.organization_id',
+                );
+            })
             ->active()
             ->orderBy('package_slug')
             ->orderBy('id')

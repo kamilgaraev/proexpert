@@ -24,8 +24,7 @@ class OrganizationSubscriptionController extends Controller
     public function __construct(
         protected OrganizationSubscriptionService $subscriptionService,
         protected OrganizationSubscriptionRepository $subscriptionRepository
-    ) {
-    }
+    ) {}
 
     public function show(Request $request): JsonResponse
     {
@@ -341,7 +340,7 @@ class OrganizationSubscriptionController extends Controller
 
     private function formatSubscription(OrganizationSubscription $subscription): array
     {
-        $subscription->loadMissing(['plan', 'activeBundledModules.module', 'activeBundledPackages']);
+        $subscription->loadMissing(['plan', 'activeBundledModules.module']);
         $plan = $subscription->plan;
 
         $bundledModules = $subscription->activeBundledModules
@@ -357,28 +356,6 @@ class OrganizationSubscriptionController extends Controller
             ])
             ->values();
 
-        $includedPackages = $subscription->activeBundledPackages
-            ->map(function ($packageSubscription): array {
-                $configPath = config_path('Packages/' . $packageSubscription->package_slug . '.json');
-                $config = file_exists($configPath)
-                    ? json_decode((string) file_get_contents($configPath), true)
-                    : [];
-                $tier = $config['tiers'][$packageSubscription->tier] ?? [];
-
-                return [
-                    'package_slug' => $packageSubscription->package_slug,
-                    'tier' => $packageSubscription->tier,
-                    'name' => $config['name'] ?? $packageSubscription->package_slug,
-                    'tier_label' => $tier['label'] ?? $packageSubscription->tier,
-                    'description' => $config['description'] ?? null,
-                    'icon' => $config['icon'] ?? null,
-                    'color' => $config['color'] ?? null,
-                    'modules' => $tier['modules'] ?? [],
-                    'expires_at' => $packageSubscription->expires_at?->format('Y-m-d H:i:s'),
-                ];
-            })
-            ->values();
-
         return [
             'id' => $subscription->id,
             'status' => $subscription->status,
@@ -389,7 +366,6 @@ class OrganizationSubscriptionController extends Controller
                 'price' => $plan?->price ?? 0,
                 'currency' => $plan?->currency ?? 'RUB',
                 'features' => $plan?->features ?? [],
-                'included_packages' => $plan?->included_packages ?? [],
             ],
             'is_trial' => false,
             'trial_ends_at' => $subscription->trial_ends_at?->format('Y-m-d H:i:s'),
@@ -398,8 +374,6 @@ class OrganizationSubscriptionController extends Controller
             'is_canceled' => $subscription->canceled_at !== null,
             'canceled_at' => $subscription->canceled_at?->format('Y-m-d H:i:s'),
             'is_auto_payment_enabled' => $subscription->is_auto_payment_enabled,
-            'included_packages' => $includedPackages,
-            'included_packages_count' => $includedPackages->count(),
             'bundled_modules' => $bundledModules,
             'bundled_modules_count' => $bundledModules->count(),
         ];

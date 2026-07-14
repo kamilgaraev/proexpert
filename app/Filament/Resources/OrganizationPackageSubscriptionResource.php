@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
-use App\Filament\Support\TableEmptyState;
 use App\Filament\Resources\OrganizationPackageSubscriptionResource\Pages;
 use App\Filament\Support\FilamentPermission;
 use App\Filament\Support\NavigationGroups;
 use App\Filament\Support\SystemAdminAccess;
+use App\Filament\Support\TableEmptyState;
 use App\Models\OrganizationPackageSubscription;
 use Filament\Actions\ViewAction;
 use Filament\Infolists;
@@ -26,11 +26,11 @@ class OrganizationPackageSubscriptionResource extends Resource
 {
     protected static ?string $model = OrganizationPackageSubscription::class;
 
-    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-archive-box';
+    protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-archive-box';
 
     protected static ?int $navigationSort = 30;
 
-    public static function getNavigationGroup(): string | \UnitEnum | null
+    public static function getNavigationGroup(): string|\UnitEnum|null
     {
         return NavigationGroups::platform();
     }
@@ -65,24 +65,22 @@ class OrganizationPackageSubscriptionResource extends Resource
                             ->label(trans_message('widgets.modules.organization')),
                         Infolists\Components\TextEntry::make('package_slug')
                             ->label(trans_message('widgets.package_subscriptions.package')),
-                        Infolists\Components\TextEntry::make('tier')
-                            ->label(trans_message('widgets.package_subscriptions.tier')),
-                        Infolists\Components\TextEntry::make('is_bundled_with_plan')
-                            ->label(trans_message('widgets.module_activations.source'))
-                            ->formatStateUsing(fn (mixed $state): string => (bool) $state
-                                ? trans_message('widgets.module_activations.source_plan')
-                                : trans_message('widgets.module_activations.source_manual'))
+                        Infolists\Components\TextEntry::make('status')
+                            ->label(trans_message('widgets.module_activations.status'))
                             ->badge(),
-                        Infolists\Components\TextEntry::make('subscription.id')
+                        Infolists\Components\TextEntry::make('access_source')
+                            ->label(trans_message('widgets.module_activations.source'))
+                            ->badge(),
+                        Infolists\Components\TextEntry::make('commercialAccount.id')
                             ->label(trans_message('widgets.package_subscriptions.subscription'))
                             ->placeholder(trans_message('widgets.common.empty_value')),
                         Infolists\Components\TextEntry::make('price_paid')
                             ->label(trans_message('widgets.package_subscriptions.price_paid'))
                             ->money('RUB'),
-                        Infolists\Components\TextEntry::make('activated_at')
+                        Infolists\Components\TextEntry::make('current_period_start_at')
                             ->label(trans_message('widgets.module_activations.activated_at'))
                             ->dateTime(),
-                        Infolists\Components\TextEntry::make('expires_at')
+                        Infolists\Components\TextEntry::make('current_period_end_at')
                             ->label(trans_message('widgets.module_activations.expires_at'))
                             ->dateTime()
                             ->placeholder(trans_message('widgets.common.empty_value')),
@@ -94,7 +92,7 @@ class OrganizationPackageSubscriptionResource extends Resource
     public static function table(Table $table): Table
     {
         return TableEmptyState::for($table, 'package_subscriptions', 'heroicon-o-archive-box')
-            ->modifyQueryUsing(fn (Builder $query): Builder => $query->with(['organization', 'subscription']))
+            ->modifyQueryUsing(fn (Builder $query): Builder => $query->with(['organization', 'commercialAccount']))
             ->columns([
                 Tables\Columns\TextColumn::make('organization.name')
                     ->label(trans_message('widgets.modules.organization'))
@@ -104,29 +102,24 @@ class OrganizationPackageSubscriptionResource extends Resource
                     ->label(trans_message('widgets.package_subscriptions.package'))
                     ->searchable()
                     ->sortable(),
-                Tables\Columns\TextColumn::make('tier')
-                    ->label(trans_message('widgets.package_subscriptions.tier'))
+                Tables\Columns\TextColumn::make('status')
+                    ->label(trans_message('widgets.module_activations.status'))
+                    ->badge()
                     ->sortable(),
-                Tables\Columns\TextColumn::make('is_bundled_with_plan')
+                Tables\Columns\TextColumn::make('access_source')
                     ->label(trans_message('widgets.module_activations.source'))
-                    ->formatStateUsing(fn (mixed $state): string => (bool) $state
-                        ? trans_message('widgets.module_activations.source_plan')
-                        : trans_message('widgets.module_activations.source_manual'))
                     ->badge(),
                 Tables\Columns\TextColumn::make('price_paid')
                     ->label(trans_message('widgets.package_subscriptions.price_paid'))
                     ->money('RUB')
                     ->sortable(),
-                Tables\Columns\TextColumn::make('expires_at')
+                Tables\Columns\TextColumn::make('current_period_end_at')
                     ->label(trans_message('widgets.module_activations.expires_at'))
                     ->dateTime()
                     ->placeholder(trans_message('widgets.common.empty_value'))
                     ->sortable(),
             ])
-            ->filters([
-                Tables\Filters\TernaryFilter::make('is_bundled_with_plan')
-                    ->label(trans_message('widgets.module_activations.source')),
-            ])
+            ->filters([])
             ->actions([
                 ViewAction::make(),
             ])

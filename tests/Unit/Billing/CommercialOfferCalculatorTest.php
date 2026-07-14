@@ -32,8 +32,9 @@ class CommercialOfferCalculatorTest extends TestCase
         $quote = $this->calculator()->preview([]);
 
         $this->assertSame('packages', $quote['offer_type']);
-        $this->assertSame(0.0, $quote['monthly_total']);
-        $this->assertSame(0.0, $quote['amount_due_now']);
+        $this->assertSame('0.00', $quote['monthly_total']);
+        $this->assertSame('0.00', $quote['amount_due_now']);
+        $this->assertSame(0, $quote['amount_due_now_minor']);
         $this->assertSame([], $quote['target_package_slugs']);
         $this->assertSame('RUB', $quote['currency']);
         $this->assertSame(30, $quote['billing_period_days']);
@@ -43,8 +44,9 @@ class CommercialOfferCalculatorTest extends TestCase
     {
         $quote = $this->calculator()->preview(['estimates-norms']);
 
-        $this->assertSame(12900.0, $quote['monthly_total']);
-        $this->assertSame(12900.0, $quote['amount_due_now']);
+        $this->assertSame('12900.00', $quote['monthly_total']);
+        $this->assertSame('12900.00', $quote['amount_due_now']);
+        $this->assertSame(1290000, $quote['amount_due_now_minor']);
         $this->assertSame(['estimates-norms'], $quote['added_package_slugs']);
     }
 
@@ -71,9 +73,9 @@ class CommercialOfferCalculatorTest extends TestCase
 
         $this->assertSame('full_suite', $quote['offer_type']);
         $this->assertSame(self::PACKAGES, $quote['target_package_slugs']);
-        $this->assertSame(79900.0, $quote['monthly_total']);
-        $this->assertSame(79900.0, $quote['amount_due_now']);
-        $this->assertSame(23100.0, $quote['savings_amount']);
+        $this->assertSame('79900.00', $quote['monthly_total']);
+        $this->assertSame('79900.00', $quote['amount_due_now']);
+        $this->assertSame('23100.00', $quote['savings_amount']);
         $this->assertSame(22.43, $quote['savings_percent']);
     }
 
@@ -86,7 +88,7 @@ class CommercialOfferCalculatorTest extends TestCase
         ]);
 
         $this->assertSame(['estimates-norms'], $quote['target_package_slugs']);
-        $this->assertSame(12900.0, $quote['monthly_total']);
+        $this->assertSame('12900.00', $quote['monthly_total']);
     }
 
     public function test_unknown_slug_and_stale_quote_version_are_rejected(): void
@@ -106,7 +108,7 @@ class CommercialOfferCalculatorTest extends TestCase
         $now = CarbonImmutable::parse('2026-07-14 10:00:00', 'UTC');
         $quote = $this->calculator()->preview(['planning-schedules'], calculatedAt: $now);
 
-        $this->assertSame(7900.0, $quote['amount_due_now']);
+        $this->assertSame('7900.00', $quote['amount_due_now']);
         $this->assertTrue($now->equalTo($quote['period_start_at']));
         $this->assertTrue($now->addDays(30)->equalTo($quote['period_end_at']));
     }
@@ -123,7 +125,7 @@ class CommercialOfferCalculatorTest extends TestCase
             currentPeriodEndAt: $end,
         );
 
-        $this->assertSame(10320.0, $quote['amount_due_now']);
+        $this->assertSame('10320.00', $quote['amount_due_now']);
         $this->assertTrue($start->equalTo($quote['period_start_at']));
         $this->assertTrue($end->equalTo($quote['period_end_at']));
     }
@@ -139,7 +141,7 @@ class CommercialOfferCalculatorTest extends TestCase
             currentPeriodEndAt: $start->addDays(30),
         );
 
-        $this->assertSame(0.0, $quote['amount_due_now']);
+        $this->assertSame('0.00', $quote['amount_due_now']);
         $this->assertSame(['estimates-norms'], $quote['removed_package_slugs']);
     }
 
@@ -155,7 +157,7 @@ class CommercialOfferCalculatorTest extends TestCase
             currentPeriodEndAt: $start->addDays(30),
         );
 
-        $this->assertSame(2080.0, $quote['amount_due_now']);
+        $this->assertSame('2080.00', $quote['amount_due_now']);
     }
 
     public function test_existing_period_must_be_exactly_thirty_days(): void
@@ -168,6 +170,31 @@ class CommercialOfferCalculatorTest extends TestCase
             calculatedAt: $start->addDay(),
             currentPeriodStartAt: $start,
             currentPeriodEndAt: $start->addDays(29),
+        );
+    }
+
+    public function test_existing_period_requires_both_boundaries(): void
+    {
+        $start = CarbonImmutable::parse('2026-07-01 00:00:00', 'UTC');
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->calculator()->preview(
+            ['planning-schedules'],
+            calculatedAt: $start->addDay(),
+            currentPeriodStartAt: $start,
+        );
+    }
+
+    public function test_existing_period_rejects_microsecond_over_thirty_days(): void
+    {
+        $start = CarbonImmutable::parse('2026-07-01 00:00:00.000000', 'UTC');
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->calculator()->preview(
+            ['planning-schedules'],
+            calculatedAt: $start->addDay(),
+            currentPeriodStartAt: $start,
+            currentPeriodEndAt: $start->addDays(30)->addMicrosecond(),
         );
     }
 

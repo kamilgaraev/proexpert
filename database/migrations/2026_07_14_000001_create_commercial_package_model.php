@@ -22,6 +22,7 @@ return new class extends Migration
             $table->timestampTz('current_period_end_at')->nullable();
             $table->boolean('auto_renew_enabled')->default(true);
             $table->timestampsTz();
+            $table->unique(['id', 'organization_id'], 'commercial_accounts_id_org_unique');
         });
 
         DB::table('organization_package_subscriptions')->delete();
@@ -43,8 +44,10 @@ return new class extends Migration
 
         Schema::table('organization_package_subscriptions', function (Blueprint $table): void {
             $table->foreignId('commercial_account_id')
-                ->after('organization_id')
-                ->constrained('organization_commercial_accounts')
+                ->after('organization_id');
+            $table->foreign(['commercial_account_id', 'organization_id'], 'org_package_account_tenant_fk')
+                ->references(['id', 'organization_id'])
+                ->on('organization_commercial_accounts')
                 ->cascadeOnDelete();
             $table->enum('status', [
                 'trialing',
@@ -89,7 +92,7 @@ return new class extends Migration
         DB::table('organization_package_subscriptions')->delete();
 
         Schema::table('organization_package_subscriptions', function (Blueprint $table): void {
-            $table->dropForeign(['commercial_account_id']);
+            $table->dropForeign('org_package_account_tenant_fk');
             $table->dropUnique(['organization_id', 'package_slug']);
             $table->dropIndex('org_package_access_idx');
             $table->dropColumn([
