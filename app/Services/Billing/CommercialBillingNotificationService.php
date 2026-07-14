@@ -26,9 +26,14 @@ final class CommercialBillingNotificationService
     {
         $now = CarbonImmutable::instance($at);
         foreach ([3, 1] as $days) {
-            OrganizationCommercialAccount::query()->where('auto_renew_enabled', true)->whereDate('current_period_end_at', $now->addDays($days)->toDateString())->each(
-                fn (OrganizationCommercialAccount $account) => $this->notify($account, 'commercial_upcoming_'.$days.'_'.$account->current_period_end_at?->toDateString(), 'billing.renewal.upcoming_'.$days),
-            );
+            $targetStart = $now->setTimezone('Europe/Moscow')->addDays($days)->startOfDay()->utc();
+            $targetEnd = $targetStart->addDay();
+            OrganizationCommercialAccount::query()->where('auto_renew_enabled', true)
+                ->where('current_period_end_at', '>=', $targetStart)
+                ->where('current_period_end_at', '<', $targetEnd)
+                ->each(
+                    fn (OrganizationCommercialAccount $account) => $this->notify($account, 'commercial_upcoming_'.$days.'_'.$account->current_period_end_at?->toDateString(), 'billing.renewal.upcoming_'.$days),
+                );
         }
         OrganizationCommercialAccount::query()->where('status', 'grace')->each(fn (OrganizationCommercialAccount $account) => $this->notify($account, 'commercial_grace_'.$now->toDateString(), 'billing.renewal.grace_update'));
         OrganizationCommercialAccount::query()->where('status', 'suspended')->whereNotNull('grace_ends_at')->each(fn (OrganizationCommercialAccount $account) => $this->notify($account, 'commercial_grace_ended_'.$account->id, 'billing.renewal.grace_ended'));

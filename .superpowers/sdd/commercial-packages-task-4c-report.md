@@ -85,3 +85,21 @@ Laravel runner помечает тесты предупреждениями из
 - Notifications + trial lifecycle: 11 tests, 73 assertions, exit 0.
 - Webhook controller + transaction race: 7 tests, 13 assertions, exit 0.
 - PHPStan/Larastan: `APP_ENV=testing`, 4 изменённых production PHP-файла, `--memory-limit=1G`, `[OK] No errors`.
+
+## Re-review fixes — доступ в grace и московские upcoming dates
+
+- `OrganizationPackageSubscription::isActive()` и `scopeActive()` теперь обрабатывают `grace` отдельно от immutable paid period: эффективная граница берётся из tenant-matched commercial account `grace_ends_at`. Active/scheduled paid, corporate и trial сохранили прежние независимые правила.
+- `OrganizationEntitlementService` и `PackageService` уже использовали `scopeActive()`. Ручные обходы в checkout current contour и renewal contour переведены на тот же scope, поэтому grace contour считается текущим до contractual deadline и исчезает строго на нём.
+- Интеграционный тест через реальный `OrganizationEntitlementService` подтверждает доступ до due, после canceled в grace, tenant isolation, отсутствие paid entitlement на deadline при сохранении free foundation и day-6 success с exact target end.
+- Upcoming 3/1 days больше не используют DB `whereDate`. Для каждой московской целевой даты строится полуинтервал `[startOfDay, nextStartOfDay)`, обе границы явно сохраняются в UTC. Due в 00:30 Moscow корректно уведомляется на московские -3/-1, но не -4/-2, повторные запуски дедуплицируются.
+
+### RED/GREEN и проверки re-review
+
+- RED: grace row исчезал из реального entitlement сразу после immutable `current_period_end_at`; GREEN grace integration — 1 test, 10 assertions.
+- Moscow upcoming focused + existing notification lifecycle — 2 tests, 35 assertions; совместный финальный focused запуск с grace — 3 tests, 45 assertions.
+- Existing organization package entitlement regression — 11 tests, 30 assertions.
+- Renewal engine regression — 11 tests, 53 assertions.
+- Checkout regression — 10 tests, 40 assertions.
+- Webhook/day-6 regression — 35 tests, 210 assertions.
+- PHPStan/Larastan: `APP_ENV=testing`, 4 production PHP-файла, `--memory-limit=1G`, `[OK] No errors`.
+- Pint `--test`: 7 изменённых PHP-файлов, PASS; `php -l`: 7/7; `git diff --check`: PASS.

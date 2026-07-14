@@ -63,6 +63,16 @@ class OrganizationPackageSubscription extends Model
             return $this->trial_ends_at !== null && $this->trial_ends_at->isFuture();
         }
 
+        if ($this->status === PackageSubscriptionStatus::Grace) {
+            $account = $this->commercialAccount;
+
+            return $account instanceof OrganizationCommercialAccount
+                && $account->organization_id === $this->organization_id
+                && $account->status->value === 'grace'
+                && $account->grace_ends_at !== null
+                && $account->grace_ends_at->isFuture();
+        }
+
         if (! in_array($this->status?->value, PackageSubscriptionStatus::periodAccessValues(), true)) {
             return false;
         }
@@ -87,7 +97,10 @@ class OrganizationPackageSubscription extends Model
                     ->whereNotNull('trial_ends_at')
                     ->where('trial_ends_at', '>', now());
             })->orWhere(function ($period): void {
-                $period->whereIn('status', PackageSubscriptionStatus::periodAccessValues())
+                $period->whereIn('status', [
+                    PackageSubscriptionStatus::Active->value,
+                    PackageSubscriptionStatus::ScheduledForRemoval->value,
+                ])
                     ->where(function ($access): void {
                         $access->where(function ($corporate): void {
                             $corporate->where('access_source', PackageAccessSource::Corporate->value)
@@ -100,6 +113,17 @@ class OrganizationPackageSubscription extends Model
                                 ->whereNotNull('current_period_end_at')
                                 ->where('current_period_end_at', '>', now());
                         });
+                    });
+            })->orWhere(function ($grace): void {
+                $grace->where('status', PackageSubscriptionStatus::Grace->value)
+                    ->where('access_source', '!=', PackageAccessSource::Corporate->value)
+                    ->whereHas('commercialAccount', function ($account): void {
+                        $account->whereColumn(
+                            'organization_commercial_accounts.organization_id',
+                            'organization_package_subscriptions.organization_id',
+                        )->where('organization_commercial_accounts.status', 'grace')
+                            ->whereNotNull('organization_commercial_accounts.grace_ends_at')
+                            ->where('organization_commercial_accounts.grace_ends_at', '>', now());
                     });
             });
         });

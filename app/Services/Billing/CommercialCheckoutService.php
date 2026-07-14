@@ -157,20 +157,8 @@ class CommercialCheckoutService
     {
         $slugs = OrganizationPackageSubscription::query()
             ->where('organization_id', $organizationId)
-            ->whereIn('status', ['active', 'grace', 'scheduled_for_removal'])
             ->whereIn('access_source', ['paid_package', 'full_suite', 'corporate'])
-            ->where(function ($query): void {
-                $query->where('access_source', 'corporate')
-                    ->where(function ($corporate): void {
-                        $corporate->whereNull('current_period_end_at')
-                            ->orWhere('current_period_end_at', '>', now());
-                    })
-                    ->orWhere(function ($paid): void {
-                        $paid->where('access_source', '!=', 'corporate')
-                            ->whereNotNull('current_period_end_at')
-                            ->where('current_period_end_at', '>', now());
-                    });
-            })
+            ->active()
             ->pluck('package_slug')
             ->all();
 

@@ -67,6 +67,30 @@ final class CommercialBillingNotificationServiceTest extends TestCase
         $this->assertSame('suspended', $account->fresh()->status->value);
     }
 
+    public function test_upcoming_notifications_use_moscow_calendar_dates_for_utc_previous_day(): void
+    {
+        $this->schema();
+        $user = User::query()->create(['name' => 'Owner', 'email' => 'calendar@example.test', 'password' => 'password', 'is_active' => true]);
+        $due = CarbonImmutable::parse('2026-07-17 00:30:00', 'Europe/Moscow');
+        OrganizationCommercialAccount::query()->create([
+            'organization_id' => 1, 'responsible_user_id' => $user->id, 'status' => 'active',
+            'offer_type' => 'packages', 'quote_version' => 1, 'current_period_end_at' => $due->utc(),
+            'auto_renew_enabled' => true, 'saved_payment_method_active' => true,
+        ]);
+        $service = app(CommercialBillingNotificationService::class);
+
+        $service->processRenewalLifecycle(CarbonImmutable::parse('2026-07-13 03:00', 'Europe/Moscow'));
+        $this->assertSame(0, Notification::query()->count());
+        $service->processRenewalLifecycle(CarbonImmutable::parse('2026-07-14 03:00', 'Europe/Moscow'));
+        $service->processRenewalLifecycle(CarbonImmutable::parse('2026-07-14 20:00', 'Europe/Moscow'));
+        $this->assertSame(1, Notification::query()->count());
+        $service->processRenewalLifecycle(CarbonImmutable::parse('2026-07-15 03:00', 'Europe/Moscow'));
+        $this->assertSame(1, Notification::query()->count());
+        $service->processRenewalLifecycle(CarbonImmutable::parse('2026-07-16 03:00', 'Europe/Moscow'));
+        $service->processRenewalLifecycle(CarbonImmutable::parse('2026-07-16 20:00', 'Europe/Moscow'));
+        $this->assertSame(2, Notification::query()->count());
+    }
+
     private function schema(): void
     {
         foreach (['notifications', 'commercial_billing_notification_keys', 'commercial_payments', 'commercial_renewal_cycles', 'organization_package_trial_usages', 'organization_package_subscriptions', 'organization_commercial_accounts', 'users'] as $table) {

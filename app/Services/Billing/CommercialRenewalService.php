@@ -109,7 +109,7 @@ final class CommercialRenewalService
             $cycle = CommercialRenewalCycle::query()->where('commercial_account_id', $account->id)->where('target_period_start_at', $periodStart)->lockForUpdate()->first();
             $createdCycle = false;
             if ($cycle === null) {
-                $slugs = OrganizationPackageSubscription::query()->where('commercial_account_id', $account->id)->whereIn('access_source', ['paid_package', 'full_suite'])->whereIn('status', ['active', 'grace'])->orderBy('package_slug')->pluck('package_slug')->all();
+                $slugs = OrganizationPackageSubscription::query()->where('commercial_account_id', $account->id)->whereIn('access_source', ['paid_package', 'full_suite'])->active()->orderBy('package_slug')->pluck('package_slug')->all();
                 if ($slugs === []) {
                     return [];
                 }
