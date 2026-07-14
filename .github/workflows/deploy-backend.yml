@@ -114,11 +114,21 @@ jobs:
               printf 'SENTRY_RELEASE=prohelper@%s\n' "${RELEASE_SHA}" >> .env
             fi
 
+            if supervisorctl status 2>/dev/null | grep -q '^laravel-worker:'; then
+              supervisorctl stop 'laravel-worker:*'
+            fi
+
+            if pgrep -af '/var/www/prohelper/artisan queue:work' >/dev/null; then
+              echo 'Legacy Laravel queue workers are still running; refusing dual queue ownership'
+              exit 1
+            fi
+
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan migrate:safe --force
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose up -d --force-recreate --remove-orphans ${BACKEND_SERVICES}
 
             for attempt in $(seq 1 24); do
-              if docker compose exec -T api curl -fsS http://localhost:8000/up >/dev/null; then
+              if docker compose exec -T api curl -fsS http://localhost:8000/up >/dev/null \
+                && docker compose exec -T websockets php -r 'exit(@fsockopen("127.0.0.1", 8080) ? 0 : 1);'; then
                 echo "Backend deployment successful: ${IMAGE_REF}"
                 exit 0
               fi
@@ -126,4 +136,5 @@ jobs:
             done
 
             docker compose logs --tail=200 api
+            docker compose logs --tail=200 websockets
             exit 1

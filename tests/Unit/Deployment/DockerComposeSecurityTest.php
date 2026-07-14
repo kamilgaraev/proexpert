@@ -17,6 +17,16 @@ final class DockerComposeSecurityTest extends TestCase
         self::assertStringNotContainsString('"8000:8000"', $compose);
     }
 
+    public function test_reverb_port_is_private_and_the_container_has_a_healthcheck(): void
+    {
+        $compose = file_get_contents(dirname(__DIR__, 3).'/docker-compose.yml');
+
+        self::assertIsString($compose);
+        self::assertStringContainsString('"127.0.0.1:8080:8080"', $compose);
+        self::assertStringNotContainsString('      - "8080:8080"', $compose);
+        self::assertStringContainsString('@fsockopen', $compose);
+    }
+
     public function test_production_docker_context_keeps_filament_vite_build_assets(): void
     {
         $rootPath = dirname(__DIR__, 3);

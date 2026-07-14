@@ -1,7 +1,8 @@
 <?php
 
+declare(strict_types=1);
+
+use App\Broadcasting\UserChannel;
 use Illuminate\Support\Facades\Broadcast;
 
-Broadcast::channel('App.Models.User.{id}.{interface}', function ($user, $id, $interface) {
-    return (int) $user->id === (int) $id && in_array($interface, ['admin', 'lk']);
-});
+Broadcast::channel('App.Models.User.{id}.{interface}', UserChannel::class);
