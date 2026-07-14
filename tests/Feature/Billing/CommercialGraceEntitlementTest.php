@@ -157,10 +157,20 @@ final class CommercialGraceEntitlementTest extends TestCase
         $corporate = OrganizationPackageSubscription::query()->create([
             'organization_id' => 10,
             'commercial_account_id' => $account->id,
-            'package_slug' => 'planning-schedules',
+            'package_slug' => 'finance-contracts',
             'status' => 'active',
             'access_source' => 'corporate',
             'price_paid' => 0,
+            'current_period_start_at' => $anchor->subDays(30),
+            'current_period_end_at' => $anchor,
+        ]);
+        $removed = OrganizationPackageSubscription::query()->create([
+            'organization_id' => 10,
+            'commercial_account_id' => $account->id,
+            'package_slug' => 'planning-schedules',
+            'status' => 'scheduled_for_removal',
+            'access_source' => 'paid_package',
+            'price_paid' => 7900,
             'current_period_start_at' => $anchor->subDays(30),
             'current_period_end_at' => $anchor,
         ]);
@@ -169,7 +179,9 @@ final class CommercialGraceEntitlementTest extends TestCase
         CarbonImmutable::setTestNow($anchor->addMinute());
         $this->assertTrue($row->fresh()->isActive());
         $this->assertTrue($corporate->fresh()->isActive());
+        $this->assertFalse($removed->fresh()->isActive());
         $this->assertArrayHasKey('machinery-operations', $service->getPackageModuleSources(10));
+        $this->assertArrayNotHasKey('schedule-management', $service->getPackageModuleSources(10));
         $this->assertSame('active', $row->fresh()->status->value);
         $this->assertSame('active', $account->fresh()->status->value);
 
@@ -179,6 +191,43 @@ final class CommercialGraceEntitlementTest extends TestCase
         $this->assertArrayNotHasKey('machinery-operations', $service->getPackageModuleSources(10));
         $this->assertSame('active', $row->fresh()->status->value);
         $this->assertSame('active', $account->fresh()->status->value);
+        CarbonImmutable::setTestNow();
+    }
+
+    public function test_empty_scheduled_contour_has_no_processing_backstop_after_anchor(): void
+    {
+        config()->set('commercial_offers.renewal_processing_window_minutes', 5);
+        $anchor = CarbonImmutable::parse('2026-07-31 11:00', 'UTC');
+        $account = OrganizationCommercialAccount::query()->create([
+            'organization_id' => 20,
+            'status' => 'active',
+            'offer_type' => 'packages',
+            'quote_version' => 1,
+            'billing_anchor_at' => $anchor,
+            'current_period_start_at' => $anchor->subDays(30),
+            'current_period_end_at' => $anchor,
+            'auto_renew_enabled' => true,
+            'saved_payment_method_id' => 'saved-method',
+            'saved_payment_method_active' => true,
+        ]);
+        foreach (['machinery', 'planning-schedules'] as $slug) {
+            OrganizationPackageSubscription::query()->create([
+                'organization_id' => 20,
+                'commercial_account_id' => $account->id,
+                'package_slug' => $slug,
+                'status' => 'scheduled_for_removal',
+                'access_source' => 'paid_package',
+                'price_paid' => 7900,
+                'current_period_start_at' => $anchor->subDays(30),
+                'current_period_end_at' => $anchor,
+            ]);
+        }
+
+        CarbonImmutable::setTestNow($anchor->addSecond());
+        $rows = OrganizationPackageSubscription::query()->orderBy('id')->get();
+
+        $this->assertTrue($rows->every(fn (OrganizationPackageSubscription $row): bool => ! $row->isActive()));
+        $this->assertSame(0, OrganizationPackageSubscription::query()->active()->count());
         CarbonImmutable::setTestNow();
     }
 }

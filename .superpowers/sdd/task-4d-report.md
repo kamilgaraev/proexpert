@@ -161,3 +161,12 @@ GREEN:
 - Новая миграция проверена статически, но не запускалась.
 - PostgreSQL execution plan и реальное конкурентное поведение нескольких соединений локально не измерялись; fair progression доказан реальным SQLite DB query с количеством строк больше batch limit.
 - Live YooKassa, production scheduler и production данные не вызывались; секреты провайдера не использовались.
+
+## Финальное ограничение processing backstop
+
+- Техническое пятиминутное окно теперь применяется только к сохраняемым строкам со статусом `active`.
+- `scheduled_for_removal` остаётся допустимым для immutable period snapshot renewal, но не получает доступ после exact anchor ни через `isActive()`, ни через `scopeActive()`.
+- RED подтвердил ошибочный доступ удаляемой строки в mixed-контуре и всех строк empty scheduled contour; GREEN подтвердил немедленное отключение при сохранении доступа активного пакета.
+- Focused gate: backstop/grace `3/3 (24 assertions)`, entitlement `11/11 (30 assertions)`, renewal `18/18 (100 assertions)`.
+- Полный Task 4D regression: `OK (112 tests, 575 assertions)`.
+- `php -l`: 2/2 файла; Larastan/PHPStan: `[OK] No errors`; Pint `--test`: 2/2 PASS; `git diff --check`: без ошибок.

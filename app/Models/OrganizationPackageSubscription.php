@@ -16,7 +16,7 @@ class OrganizationPackageSubscription extends Model
 
     private const RENEWABLE_ACCESS_SOURCES = ['paid_package', 'full_suite', 'corporate'];
 
-    private const RENEWABLE_STATUSES = ['active', 'scheduled_for_removal'];
+    private const PROCESSING_ACCESS_STATUSES = ['active'];
 
     protected $fillable = [
         'organization_id',
@@ -130,7 +130,7 @@ class OrganizationPackageSubscription extends Model
                 $windowMinutes = max(0, (int) config('commercial_offers.renewal_processing_window_minutes', 5));
                 $now = now()->utc();
 
-                $processing->whereIn('status', self::RENEWABLE_STATUSES)
+                $processing->whereIn('status', self::PROCESSING_ACCESS_STATUSES)
                     ->whereIn('access_source', self::RENEWABLE_ACCESS_SOURCES)
                     ->whereNotNull('current_period_end_at')
                     ->where('current_period_end_at', '<=', $now)
@@ -168,7 +168,7 @@ class OrganizationPackageSubscription extends Model
 
     private function hasRenewalProcessingAccess(): bool
     {
-        if (! in_array($this->status?->value, self::RENEWABLE_STATUSES, true)
+        if (! in_array($this->status?->value, self::PROCESSING_ACCESS_STATUSES, true)
             || ! in_array($this->access_source?->value, self::RENEWABLE_ACCESS_SOURCES, true)
             || $this->current_period_end_at === null) {
             return false;
