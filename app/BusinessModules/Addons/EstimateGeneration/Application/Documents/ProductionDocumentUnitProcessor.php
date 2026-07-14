@@ -5,13 +5,13 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Storage\BoundedVersionedS3ObjectReader;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\CadGeometryProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\RasterPreprocessInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing\RasterPreprocessor;
 use App\Models\Organization;
-use App\Services\Storage\FileService;
 use Throwable;
 
 final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProcessor
@@ -21,7 +21,7 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         private VisionProvider $vision,
         private CadGeometryProvider $cad,
         private RasterPreprocessor $raster,
-        private FileService $files,
+        private BoundedVersionedS3ObjectReader $reader,
     ) {}
 
     public function process(DocumentUnitExecutionContext $context): DocumentUnitOutput
@@ -99,10 +99,12 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
                 : $context->mimeType,
             perspectiveRequired: $context->type === DocumentUnitType::Sketch,
         ));
-        $image = $this->files->disk()->get($preprocessed->derivativeStorageKey);
-        if (! is_string($image) || $image === '') {
-            throw new DocumentUnitProcessingException('vision_derivative_unavailable');
-        }
+        $image = $this->reader->read(
+            $context->organizationId,
+            $preprocessed->derivativeStorageKey,
+            max(1, (int) config('estimate-generation.vision.preprocessing.max_bytes', 20_000_000)),
+            expectedSha256: $preprocessed->derivativeHash,
+        )->body;
         $correlationId = AiOperationContext::deterministicId(implode('|', [
             'vision-unit', $context->sessionId, $context->documentId, $context->unitId,
             $context->sourceVersion, $context->claimToken, $context->unitAttemptCount,
@@ -140,8 +142,21 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
         $pdfGeometry = null;
         $geometryPath = $context->locator['geometry_artifact_path'] ?? null;
         if (is_string($geometryPath)) {
-            $geometryContent = $this->files->disk()->get($geometryPath);
-            $decoded = is_string($geometryContent) ? json_decode($geometryContent, true, 64, JSON_THROW_ON_ERROR) : null;
+            $geometryBytes = $context->locator['geometry_artifact_bytes'] ?? null;
+            $geometrySha256 = $context->locator['geometry_artifact_sha256'] ?? null;
+            $geometryVersionId = $context->locator['geometry_artifact_version_id'] ?? null;
+            if (! is_int($geometryBytes) || ! is_string($geometrySha256) || ! is_string($geometryVersionId)) {
+                throw new DocumentUnitProcessingException('pdf_page_geometry_locator_invalid');
+            }
+            $geometryContent = $this->reader->read(
+                $context->organizationId,
+                $geometryPath,
+                max(1, (int) config('estimate-generation.ocr.max_sync_file_bytes', 10 * 1024 * 1024)),
+                $geometryBytes,
+                $geometrySha256,
+                $geometryVersionId,
+            )->body;
+            $decoded = json_decode($geometryContent, true, 64, JSON_THROW_ON_ERROR);
             if (! is_array($decoded) || ! is_array($decoded['geometry'] ?? null)) {
                 throw new DocumentUnitProcessingException('pdf_page_geometry_contract_invalid');
             }

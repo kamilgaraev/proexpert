@@ -25,6 +25,7 @@ Bucket имеет включённые versioning, закрытый публич
 Разрешённый object scope ограничен префиксами:
 
 - `org-*/estimate-generation/sessions/`
+- `org-*/estimate-generation/sessions/*/pipeline/attempts/*/`
 - `org-*/estimate-generation/sessions/*/vision/v1/`
 - `org-*/estimate-generation/benchmarks/`
 - `org-*/estimate-generation/benchmark-imports/`

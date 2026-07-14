@@ -41,9 +41,12 @@ final class TimewebVisionOcrClient implements OcrClientInterface
     {
         $apiKey = trim((string) config('estimate-generation.ocr.timeweb.api_key', ''));
         $baseUri = rtrim(trim((string) config('estimate-generation.ocr.timeweb.base_uri', 'https://api.timeweb.ai/v1')), '/');
-        $effective = $input->operationContext instanceof AiOperationContext
-            ? $this->settingsResolver?->forOperation($input->operationContext->correlationId, $input->operationContext->organizationId, $input->operationContext->sessionId)
+        $effective = $input->operationContext instanceof AiOperationContext && $this->settingsResolver !== null
+            ? $this->settingsResolver->forOperation($input->operationContext->correlationId, $input->operationContext->organizationId, $input->operationContext->sessionId)
             : null;
+        if (app()->environment('production') && $effective === null) {
+            throw new OcrConfigurationException;
+        }
         if ($effective !== null) {
             if ($input->operationContext instanceof AiOperationContext) {
                 $this->documentLimits?->assertWithinTotalPages($input->operationContext, $effective);
@@ -54,40 +57,14 @@ final class TimewebVisionOcrClient implements OcrClientInterface
                 throw new OcrProviderException('estimate_generation.ocr_runtime_limits_exceeded', 422);
             }
         }
-        $models = $this->modelsFor($input, $effective);
+        $model = $effective?->model('classification')
+            ?? trim((string) config('estimate-generation.ocr.model', ''));
 
-        if ($apiKey === '' || $baseUri === '' || $models === []) {
+        if ($apiKey === '' || $baseUri === '' || $model === '') {
             throw new OcrConfigurationException;
         }
 
-        $lastException = null;
-
-        foreach ($models as $attempt => $model) {
-            try {
-                return $this->recognizeWithModel($input, $baseUri, $apiKey, $model, $attempt + 1, $effective);
-            } catch (OcrProviderException $exception) {
-                $lastException = $exception;
-
-                Log::warning('[EstimateGeneration OCR] Timeweb OCR model failed', [
-                    'provider' => self::PROVIDER,
-                    'model' => $model,
-                    'attempt' => $attempt + 1,
-                    'mime_type' => $input->mimeType,
-                    'status' => $exception->statusCode,
-                    'provider_code' => $exception->providerCode,
-                ]);
-
-                if (! $this->fallbackToAnotherModel($exception)) {
-                    throw $exception;
-                }
-            }
-        }
-
-        if ($lastException instanceof OcrProviderException) {
-            throw $lastException;
-        }
-
-        throw new OcrProviderException('estimate_generation.ocr_provider_unavailable');
+        return $this->recognizeWithModel($input, $baseUri, $apiKey, $model, 1, $effective);
     }
 
     private function recognizeWithModel(
@@ -300,16 +277,6 @@ final class TimewebVisionOcrClient implements OcrClientInterface
         return in_array($status, [408, 429], true) || $status >= 500;
     }
 
-    private function fallbackToAnotherModel(OcrProviderException $exception): bool
-    {
-        if ($exception->providerCode === 'empty_timeweb_response') {
-            return true;
-        }
-        $status = $exception->statusCode;
-
-        return $status === null || $status === 404 || in_array($status, [408, 429], true) || $status >= 500;
-    }
-
     /** @param array<string, mixed> $payload */
     private function recordAttempt(
         OcrDocumentInput $input,
@@ -374,35 +341,6 @@ final class TimewebVisionOcrClient implements OcrClientInterface
             pageId: $base->pageId,
             unitId: $base->unitId,
         );
-    }
-
-    /**
-     * @return array<int, string>
-     */
-    private function modelsFor(OcrDocumentInput $input, ?EffectiveEstimateGenerationSettings $effective = null): array
-    {
-        if ($effective !== null) {
-            return [$effective->model('classification')];
-        }
-        $configKey = $this->isPdf($input) ? 'pdf_models' : 'models';
-        $models = config("estimate-generation.ocr.timeweb.{$configKey}");
-
-        if ($models === null || $models === '') {
-            $models = config('estimate-generation.ocr.model', 'gemini/gemini-3.1-flash-lite');
-        }
-
-        if (is_string($models)) {
-            $models = explode(',', $models);
-        }
-
-        if (! is_array($models)) {
-            return [];
-        }
-
-        return array_values(array_unique(array_filter(array_map(
-            static fn (mixed $model): string => trim((string) $model),
-            $models
-        ))));
     }
 
     /**

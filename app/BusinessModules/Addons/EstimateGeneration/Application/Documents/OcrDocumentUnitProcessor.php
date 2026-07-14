@@ -27,13 +27,7 @@ final readonly class OcrDocumentUnitProcessor implements DocumentUnitProcessor
             throw new DocumentUnitProcessingException('unit_artifact_manifest_required');
         }
 
-        $stream = $this->reader->open($context);
-
-        try {
-            $content = stream_get_contents($stream);
-        } finally {
-            fclose($stream);
-        }
+        $content = $this->reader->read($context);
 
         if (! is_string($content) || $content === '') {
             throw new DocumentUnitProcessingException('unit_content_empty');

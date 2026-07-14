@@ -91,8 +91,6 @@ return [
         'timeweb' => [
             'api_key' => $envValue('ESTIMATE_GENERATION_OCR_API_KEY', $envValue('TIMEWEB_AI_API_KEY')),
             'base_uri' => $envValue('ESTIMATE_GENERATION_OCR_BASE_URI', $envValue('TIMEWEB_AI_BASE_URI', 'https://api.timeweb.ai/v1')),
-            'models' => $envValue('ESTIMATE_GENERATION_OCR_MODELS', $envValue('ESTIMATE_GENERATION_OCR_MODEL', 'gemini/gemini-3.1-flash-lite').',gemini/gemini-3.1-flash,openai/gpt-5-mini'),
-            'pdf_models' => $envValue('ESTIMATE_GENERATION_OCR_PDF_MODELS', 'openai/gpt-5-mini,openai/gpt-5-nano'),
             'image_detail' => $envValue('ESTIMATE_GENERATION_OCR_IMAGE_DETAIL', 'high'),
         ],
     ],

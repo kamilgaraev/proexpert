@@ -20,7 +20,13 @@ final class PipelineArtifactEnvelopeTest extends TestCase
         $definition = PipelineDefinitionGraph::standard()->get(ProcessingStage::UnderstandObject);
         $input = 'sha256:'.str_repeat('a', 64);
         $dependencies = [ProcessingStage::UnderstandDocuments->value => 'sha256:'.str_repeat('b', 64)];
-        $reference = new PipelineArtifactReference('s3_json_v1', 'org-2/ai-estimator/sessions/1/attempts/x/object.json', 'sha256:'.str_repeat('c', 64), 120);
+        $reference = new PipelineArtifactReference(
+            's3_json_v1',
+            'org-2/estimate-generation/sessions/1/pipeline/attempts/123e4567-e89b-12d3-a456-426614174000/object.json',
+            'sha256:'.str_repeat('c', 64),
+            120,
+            'version-1',
+        );
         $output = PipelineStageOutput::create($definition, $input, $dependencies, $reference);
 
         self::assertSame($output->version, PipelineStageOutput::fromEnvelope($output->envelope(), $output->version)->version);

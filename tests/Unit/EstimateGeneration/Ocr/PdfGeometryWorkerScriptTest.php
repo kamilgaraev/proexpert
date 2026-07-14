@@ -37,6 +37,7 @@ final class PdfGeometryWorkerScriptTest extends TestCase
                         'content_type' => 'image/png',
                         'sha256' => $published[$pageNumber],
                         'bytes' => strlen($bytes),
+                        'version_id' => 'version-'.$pageNumber,
                         'width' => $metadata['width'],
                         'height' => $metadata['height'],
                     ];
@@ -117,6 +118,7 @@ final class PdfGeometryWorkerScriptTest extends TestCase
                         'content_type' => 'image/png',
                         'sha256' => hash('sha256', $bytes),
                         'bytes' => strlen($bytes),
+                        'version_id' => 'version-'.$pageNumber,
                         'width' => $metadata['width'],
                         'height' => $metadata['height'],
                     ];

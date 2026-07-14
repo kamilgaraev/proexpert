@@ -78,10 +78,10 @@ final class TimewebVisionOcrClientTest extends TestCase
         });
     }
 
-    public function test_it_uses_pdf_models_and_input_file_part_for_pdf_documents(): void
+    public function test_it_uses_the_pinned_model_and_input_file_part_for_pdf_documents(): void
     {
         $this->configureClient([
-            'estimate-generation.ocr.timeweb.pdf_models' => 'openai/gpt-5-mini',
+            'estimate-generation.ocr.model' => 'openai/gpt-5-mini',
         ]);
 
         Http::fake([
@@ -128,17 +128,18 @@ final class TimewebVisionOcrClientTest extends TestCase
         });
     }
 
-    public function test_it_falls_back_to_next_model_after_provider_error(): void
+    public function test_it_retries_the_same_pinned_model_after_provider_error(): void
     {
         $this->configureClient([
-            'estimate-generation.ocr.timeweb.models' => 'gemini/gemini-3.1-flash-lite,gemini/gemini-3.1-flash',
+            'estimate-generation.ocr.model' => 'gemini/gemini-3.1-flash-lite',
+            'estimate-generation.ocr.retry_attempts' => 2,
         ]);
 
         Http::fake([
             'https://api.timeweb.ai/v1/chat/completions' => Http::sequence()
                 ->push(['error' => ['code' => 'model_failed']], 503)
                 ->push([
-                    'model' => 'gemini/gemini-3.1-flash',
+                    'model' => 'gemini/gemini-3.1-flash-lite',
                     'choices' => [
                         [
                             'message' => [
@@ -154,7 +155,7 @@ final class TimewebVisionOcrClientTest extends TestCase
             mimeType: 'image/jpeg',
         ));
 
-        $this->assertSame('gemini/gemini-3.1-flash', $result->model);
+        $this->assertSame('gemini/gemini-3.1-flash-lite', $result->model);
         $this->assertSame('Готовый текст', $result->text());
         Http::assertSentCount(2);
     }
@@ -236,8 +237,7 @@ final class TimewebVisionOcrClientTest extends TestCase
         $defaults = [
             'estimate-generation.ocr.timeweb.api_key' => 'timeweb-key',
             'estimate-generation.ocr.timeweb.base_uri' => 'https://api.timeweb.ai/v1',
-            'estimate-generation.ocr.timeweb.models' => 'gemini/gemini-3.1-flash-lite,gemini/gemini-3.1-flash',
-            'estimate-generation.ocr.timeweb.pdf_models' => 'openai/gpt-5-mini,openai/gpt-5-nano',
+            'estimate-generation.ocr.model' => 'gemini/gemini-3.1-flash-lite',
             'estimate-generation.ocr.timeweb.image_detail' => 'high',
             'estimate-generation.ocr.max_tokens' => 4096,
             'estimate-generation.ocr.timeout_seconds' => 60,

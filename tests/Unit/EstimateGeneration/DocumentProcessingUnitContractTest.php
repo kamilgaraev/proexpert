@@ -24,6 +24,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Metadata
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\ProcessDocumentUnit;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\S3DocumentUnitContentReader;
 use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\SeekableDocumentSource;
+use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\StoredDocumentArtifact;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Jobs\ProcessEstimateGenerationUnitJob;
@@ -334,8 +335,11 @@ final class DocumentProcessingUnitContractTest extends TestCase
                 int $index,
                 string $content,
                 string $contentType = 'text/plain',
-            ): string {
-                return $this->paths[] = sprintf('org-10/manifest/%s-%d.txt', $type->value, $index);
+            ): StoredDocumentArtifact {
+                $path = sprintf('org-10/manifest/%s-%d.txt', $type->value, $index);
+                $this->paths[] = $path;
+
+                return new StoredDocumentArtifact($path, strlen($content), 'sha256:'.hash('sha256', $content), 'version-'.$index, $contentType);
             }
         };
         $pages = array_map(
@@ -423,10 +427,10 @@ final class DocumentProcessingUnitContractTest extends TestCase
                 int $index,
                 string $content,
                 string $contentType = 'text/plain',
-            ): string {
+            ): StoredDocumentArtifact {
                 $this->writes++;
 
-                return 'org-10/never';
+                return new StoredDocumentArtifact('org-10/never', strlen($content), 'sha256:'.hash('sha256', $content), 'version-'.$index, $contentType);
             }
         };
         $pdf = new class extends PdfTextLayerExtractor

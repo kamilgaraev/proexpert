@@ -6,27 +6,36 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
-use App\Services\Storage\FileService;
+use App\BusinessModules\Addons\EstimateGeneration\Storage\BoundedVersionedS3ObjectReader;
 
 final readonly class S3DocumentUnitContentReader implements DocumentUnitContentReader
 {
-    public function __construct(private FileService $files) {}
+    public function __construct(private BoundedVersionedS3ObjectReader $reader) {}
 
-    public function open(DocumentUnitExecutionContext $context)
+    public function read(DocumentUnitExecutionContext $context): string
     {
-        $path = is_string($context->locator['artifact_path'] ?? null)
-            ? $context->locator['artifact_path']
-            : $context->storagePath;
+        $path = $context->locator['artifact_path'] ?? null;
+        $bytes = $context->locator['artifact_bytes'] ?? null;
+        $sha256 = $context->locator['artifact_sha256'] ?? null;
+        $versionId = $context->locator['artifact_version_id'] ?? null;
+        if (! is_string($path) || ! is_int($bytes) || ! is_string($sha256) || ! is_string($versionId)) {
+            throw new TypedFailureException(FailureCategory::Terminal, 'document_artifact_locator_invalid');
+        }
 
         self::assertOrganizationPath($path, $context->organizationId);
 
-        $stream = $this->files->disk()->readStream($path);
-
-        if (! is_resource($stream)) {
-            throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');
+        try {
+            return $this->reader->read(
+                $context->organizationId,
+                $path,
+                max(1, (int) config('estimate-generation.ocr.max_sync_file_bytes', 10 * 1024 * 1024)),
+                $bytes,
+                $sha256,
+                $versionId,
+            )->body;
+        } catch (\DomainException $exception) {
+            throw new TypedFailureException(FailureCategory::Terminal, 'document_artifact_integrity_failed', previous: $exception);
         }
-
-        return $stream;
     }
 
     public static function assertOrganizationPath(string $path, int $organizationId): void

@@ -17,5 +17,5 @@ interface DocumentSourceManifestStorage
         int $index,
         string $content,
         string $contentType = 'text/plain',
-    ): string;
+    ): StoredDocumentArtifact;
 }

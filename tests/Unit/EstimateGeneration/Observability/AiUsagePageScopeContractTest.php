@@ -61,13 +61,9 @@ final class AiUsagePageScopeContractTest extends TestCase
     {
         $reader = new class implements DocumentUnitContentReader
         {
-            public function open(DocumentUnitExecutionContext $context)
+            public function read(DocumentUnitExecutionContext $context): string
             {
-                $stream = fopen('php://temp', 'w+b');
-                fwrite($stream, 'image-bytes');
-                rewind($stream);
-
-                return $stream;
+                return 'image-bytes';
             }
         };
         $ocr = new class implements OcrClientInterface

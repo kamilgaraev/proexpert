@@ -6,6 +6,5 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Application\Documents;
 
 interface DocumentUnitContentReader
 {
-    /** @return resource */
-    public function open(DocumentUnitExecutionContext $context);
+    public function read(DocumentUnitExecutionContext $context): string;
 }

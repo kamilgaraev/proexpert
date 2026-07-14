@@ -95,31 +95,35 @@ final readonly class S3DocumentSourceManifestStorage implements DocumentSourceMa
         int $index,
         string $content,
         string $contentType = 'text/plain',
-    ): string {
+    ): StoredDocumentArtifact {
         $organization = $document->session?->organization;
 
         if ($organization === null) {
             throw new TypedFailureException(FailureCategory::Terminal, 'document_organization_unavailable');
         }
 
-        $path = $this->files->putContent(
-            $content,
-            sprintf('estimate-generation/sessions/%d/documents/%d/manifests/%s', $document->session_id, $document->id, str_replace(':', '-', $sourceVersion)),
-            sprintf('%s-%05d.%s', $type->value, $index, match ($contentType) {
-                'application/json' => 'json',
-                'image/png' => 'png',
-                'text/plain' => 'txt',
-                default => throw new TypedFailureException(FailureCategory::Terminal, 'document_artifact_content_type_invalid'),
-            }),
-            'private',
-            $organization,
-        );
+        $directory = sprintf('estimate-generation/sessions/%d/documents/%d/manifests/%s', $document->session_id, $document->id, str_replace(':', '-', $sourceVersion));
+        $filename = sprintf('%s-%05d.%s', $type->value, $index, match ($contentType) {
+            'application/json' => 'json',
+            'image/png' => 'png',
+            'text/plain' => 'txt',
+            default => throw new TypedFailureException(FailureCategory::Terminal, 'document_artifact_content_type_invalid'),
+        });
+        $path = sprintf('org-%d/%s/%s', $organization->id, $directory, $filename);
+        $stored = $this->files->putImmutable($path, $content, $contentType);
 
-        if (! is_string($path) || ! str_starts_with($path, 'org-'.$organization->id.'/')) {
+        if (! hash_equals($path, $stored['path']) || ! hash_equals(hash('sha256', $content), $stored['sha256'])
+            || $stored['size'] !== strlen($content) || ! hash_equals($content, $stored['body'])) {
             throw new TypedFailureException(FailureCategory::Recoverable, 'document_artifact_write_failed');
         }
 
-        return $path;
+        return new StoredDocumentArtifact(
+            $path,
+            $stored['size'],
+            'sha256:'.$stored['sha256'],
+            (string) $stored['version_id'],
+            $contentType,
+        );
     }
 
     private function maxReadableBytes(EstimateGenerationDocument $document): int

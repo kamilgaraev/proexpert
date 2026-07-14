@@ -183,7 +183,7 @@ final class TimewebVisionUsageAttemptTest extends TestCase
     {
         config()->set('estimate-generation.ocr.timeweb.api_key', 'fixture-key');
         config()->set('estimate-generation.ocr.timeweb.base_uri', 'https://fixture.invalid/v1');
-        config()->set('estimate-generation.ocr.timeweb.models', $models);
+        config()->set('estimate-generation.ocr.model', (string) ($models[0] ?? ''));
         config()->set('estimate-generation.ocr.retry_attempts', $retries);
         config()->set('estimate-generation.ocr.retry_delay_ms', 0);
     }

@@ -12,6 +12,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Application\Documents\Producti
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
+use App\BusinessModules\Addons\EstimateGeneration\Storage\BoundedVersionedS3ObjectReader;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\CadGeometryProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VectorGeometryData;
@@ -38,7 +39,7 @@ final class ProductionDocumentUnitProcessorTest extends TestCase
             new OcrDocumentUnitProcessor(
                 new class implements DocumentUnitContentReader
                 {
-                    public function open(DocumentUnitExecutionContext $context)
+                    public function read(DocumentUnitExecutionContext $context): string
                     {
                         throw new \LogicException('OCR reader must not be called for CAD.');
                     }
@@ -68,7 +69,7 @@ final class ProductionDocumentUnitProcessorTest extends TestCase
                 }
             },
             new RasterPreprocessor($files),
-            $files,
+            new BoundedVersionedS3ObjectReader($files),
         );
         $context = new DocumentUnitExecutionContext(
             1, 2, 3, 4, 5, DocumentUnitType::CadDrawing, 1,

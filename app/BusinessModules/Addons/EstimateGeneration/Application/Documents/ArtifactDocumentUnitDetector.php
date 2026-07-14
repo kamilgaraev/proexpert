@@ -44,7 +44,7 @@ final readonly class ArtifactDocumentUnitDetector implements DocumentUnitDetecto
                         if (! is_string($bytes) || $bytes === '') {
                             throw new DocumentManifestNeedsReview('pdf_raster_vision_artifact_required');
                         }
-                        $artifactPath = $this->storage->put(
+                        $artifact = $this->storage->put(
                             $document,
                             $sourceVersion,
                             DocumentUnitType::Sketch,
@@ -54,10 +54,11 @@ final readonly class ArtifactDocumentUnitDetector implements DocumentUnitDetecto
                         );
 
                         return [
-                            'artifact_path' => $artifactPath,
-                            'content_type' => 'image/png',
-                            'sha256' => hash('sha256', $bytes),
-                            'bytes' => strlen($bytes),
+                            'artifact_path' => $artifact->path,
+                            'content_type' => $artifact->contentType,
+                            'sha256' => substr($artifact->sha256, 7),
+                            'bytes' => $artifact->bytes,
+                            'version_id' => $artifact->versionId,
                             'width' => $metadata['width'],
                             'height' => $metadata['height'],
                         ];
@@ -87,7 +88,7 @@ final readonly class ArtifactDocumentUnitDetector implements DocumentUnitDetecto
                         || ($preview['content_type'] ?? null) !== 'image/png') {
                         throw new DocumentManifestNeedsReview('pdf_raster_vision_artifact_required');
                     }
-                    $geometryPath = $this->storage->put(
+                    $geometryArtifact = $this->storage->put(
                         $document,
                         $sourceVersion,
                         $firstType,
@@ -97,7 +98,13 @@ final readonly class ArtifactDocumentUnitDetector implements DocumentUnitDetecto
                     );
                     $detected[] = new DocumentUnitData($firstType, $page->pageNumber, $sourceVersion, [
                         'artifact_path' => $preview['artifact_path'],
-                        'geometry_artifact_path' => $geometryPath,
+                        'artifact_bytes' => $preview['bytes'],
+                        'artifact_sha256' => 'sha256:'.$preview['sha256'],
+                        'artifact_version_id' => $preview['version_id'],
+                        'geometry_artifact_path' => $geometryArtifact->path,
+                        'geometry_artifact_bytes' => $geometryArtifact->bytes,
+                        'geometry_artifact_sha256' => $geometryArtifact->sha256,
+                        'geometry_artifact_version_id' => $geometryArtifact->versionId,
                         'content_type' => 'image/png',
                         'artifact_source_version' => 'sha256:'.$preview['sha256'],
                     ]);
@@ -115,7 +122,7 @@ final readonly class ArtifactDocumentUnitDetector implements DocumentUnitDetecto
             $detected = [];
 
             foreach ($recognition->pages as $page) {
-                $artifactPath = $this->storage->put(
+                $artifact = $this->storage->put(
                     $document,
                     $sourceVersion,
                     $firstType,
@@ -123,10 +130,7 @@ final readonly class ArtifactDocumentUnitDetector implements DocumentUnitDetecto
                     $page->text,
                 );
 
-                $detected[] = new DocumentUnitData($firstType, $page->pageNumber, $sourceVersion, [
-                    'artifact_path' => $artifactPath,
-                    'content_type' => 'text/plain',
-                ]);
+                $detected[] = new DocumentUnitData($firstType, $page->pageNumber, $sourceVersion, $artifact->locator());
             }
 
             return DocumentUnitData::normalize($detected);

@@ -74,6 +74,7 @@ grep -Fq 'chown root:root "$BACKEND_ROOT/.env"' "$BOOTSTRAP"
 
 grep -Fq 'REDIS_ESTIMATE_GENERATION_BENCHMARK_RETRY_AFTER=' "$ENV_EXAMPLE"
 grep -Fq 'org-*/estimate-generation/sessions/' "$RUNBOOK"
+grep -Fq 'org-*/estimate-generation/sessions/*/pipeline/attempts/*/' "$RUNBOOK"
 grep -Fq 'org-*/estimate-generation/sessions/*/vision/v1/' "$RUNBOOK"
 grep -Fq 'org-*/estimate-generation/benchmarks/' "$RUNBOOK"
 grep -Fq 'org-*/estimate-generation/benchmark-imports/' "$RUNBOOK"
