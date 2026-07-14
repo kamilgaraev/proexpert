@@ -127,3 +127,37 @@ GREEN:
 ### Ограничение concurrency-проверки
 
 - SQLite не доказывает реальную PostgreSQL-конкуренцию двух соединений и row-level locking. Поэтому реальная race не заявляется: проверены production PostgreSQL unique/lock contracts и детерминированная ветка exhausted deadlock через `QueryException` с SQLSTATE `40P01`.
+
+## Финальный fix-wave по re-review
+
+### Исправления
+
+- Renewal snapshot больше не зависит от `active()` и текущего времени: контур читается tenant-safe по account, organization, источникам `paid_package`/`full_suite`/`corporate`, разрешённым статусам и точному `current_period_end_at = billing anchor`.
+- Добавлено вычисляемое техническое окно `commercial_offers.renewal_processing_window_minutes = 5`. Оно сохраняет доступ только для eligible auto-renew account между exact anchor и первым scheduler tick, не меняет persisted status и автоматически истекает при остановленном scheduler.
+- Первый due tick переводит целевой контур в обычный семидневный grace до provider/reconciliation side effect. Corporate-источник меняется только если входит в renewal target; unrelated corporate access сохраняется.
+- Due query выбирает только actionable now: future anchors, pending reconciliation до `next_attempt_at` и ночные retries до 03:00 не занимают limit. Сортировка по due action, last attempt и id обеспечивает продвижение очереди без OFFSET.
+- Повторные transport failures одного provider intent ограничены пятиминутным интервалом и продвигают `next_attempt_at`/`last_attempt_at`.
+- Добавлены production-индексы account due scan и current-cycle actionable lookup; миграция локально не запускалась.
+
+### RED → GREEN evidence
+
+- Ordinary и full-suite renewal на первом post-anchor tick в RED не создавали order из-за пустого time-sensitive snapshot; в GREEN создают точный immutable order/payment/grace contour, включая целевой corporate source.
+- Технический backstop в RED возвращал `false` сразу после anchor; в GREEN `isActive()` и `scopeActive()` дают одинаковый tenant-safe доступ до пяти минут и отзывают его точно на границе без persisted-мутаций.
+- При 100 non-actionable grace cycles lower IDs в RED due account за limit не обрабатывался; в GREEN он обрабатывается на текущем тике.
+- Второй transport failure в RED занимал следующий минутный тик; в GREEN следующий retry допускается только через пять минут с тем же локальным intent/idempotency key.
+- Полный gate выявил и затем подтвердил исправление regression, при котором unrelated corporate row ошибочно истекал.
+
+### Финальные проверки
+
+- Полный Task 4D regression: `OK (111 tests, 571 assertions)`.
+- Focused renewal/grace/entitlement: renewal `18/18 (100 assertions)`, grace `2/2 (20 assertions)`, общий entitlement `11/11 (30 assertions)`.
+- `php -l`: 9/9 изменённых PHP-файлов без синтаксических ошибок.
+- Larastan/PHPStan по модели, двум production services и новой migration: `[OK] No errors`.
+- Pint `--test`: 9/9 файлов PASS.
+- `git diff --check`: без ошибок.
+
+### Ограничения
+
+- Новая миграция проверена статически, но не запускалась.
+- PostgreSQL execution plan и реальное конкурентное поведение нескольких соединений локально не измерялись; fair progression доказан реальным SQLite DB query с количеством строк больше batch limit.
+- Live YooKassa, production scheduler и production данные не вызывались; секреты провайдера не использовались.

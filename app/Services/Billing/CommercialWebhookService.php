@@ -163,10 +163,13 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                     }
                     $account->forceFill(['status' => 'grace', 'grace_started_at' => $cycle?->due_at, 'grace_ends_at' => $cycle?->grace_deadline_at, 'auto_renew_enabled' => $retryable && $account->auto_renew_enabled, 'saved_payment_method_active' => $retryable])->save();
                     foreach ($packageRows as $row) {
-                        if (in_array($row->access_source->value, ['paid_package', 'full_suite'], true)) {
+                        if (in_array($row->access_source->value, ['paid_package', 'full_suite', 'corporate'], true)) {
                             if (in_array($row->package_slug, $order->selected_package_slugs, true)) {
                                 $row->forceFill(['status' => 'grace'])->save();
 
+                                continue;
+                            }
+                            if ($row->access_source->value === 'corporate') {
                                 continue;
                             }
                             $row->forceFill([

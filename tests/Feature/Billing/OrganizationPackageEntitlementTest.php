@@ -355,6 +355,8 @@ class OrganizationPackageEntitlementTest extends TestCase
             $table->timestamp('current_period_start_at')->nullable();
             $table->timestamp('current_period_end_at')->nullable();
             $table->boolean('auto_renew_enabled');
+            $table->string('saved_payment_method_id')->nullable();
+            $table->boolean('saved_payment_method_active')->default(false);
             $table->timestamp('grace_started_at')->nullable();
             $table->timestamp('grace_ends_at')->nullable();
             $table->timestamps();

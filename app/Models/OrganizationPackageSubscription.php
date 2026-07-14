@@ -14,6 +14,10 @@ class OrganizationPackageSubscription extends Model
 {
     use HasFactory;
 
+    private const RENEWABLE_ACCESS_SOURCES = ['paid_package', 'full_suite', 'corporate'];
+
+    private const RENEWABLE_STATUSES = ['active', 'scheduled_for_removal'];
+
     protected $fillable = [
         'organization_id',
         'commercial_account_id',
@@ -78,10 +82,18 @@ class OrganizationPackageSubscription extends Model
         }
 
         if ($this->access_source === PackageAccessSource::Corporate) {
-            return $this->current_period_end_at === null || $this->current_period_end_at->isFuture();
+            if ($this->current_period_end_at === null || $this->current_period_end_at->isFuture()) {
+                return true;
+            }
+
+            return $this->hasRenewalProcessingAccess();
         }
 
-        return $this->current_period_end_at !== null && $this->current_period_end_at->isFuture();
+        if ($this->current_period_end_at !== null && $this->current_period_end_at->isFuture()) {
+            return true;
+        }
+
+        return $this->hasRenewalProcessingAccess();
     }
 
     public function isExpired(): bool
@@ -114,9 +126,34 @@ class OrganizationPackageSubscription extends Model
                                 ->where('current_period_end_at', '>', now());
                         });
                     });
+            })->orWhere(function ($processing): void {
+                $windowMinutes = max(0, (int) config('commercial_offers.renewal_processing_window_minutes', 5));
+                $now = now()->utc();
+
+                $processing->whereIn('status', self::RENEWABLE_STATUSES)
+                    ->whereIn('access_source', self::RENEWABLE_ACCESS_SOURCES)
+                    ->whereNotNull('current_period_end_at')
+                    ->where('current_period_end_at', '<=', $now)
+                    ->where('current_period_end_at', '>', $now->copy()->subMinutes($windowMinutes))
+                    ->whereHas('commercialAccount', function ($account): void {
+                        $account->whereColumn(
+                            'organization_commercial_accounts.organization_id',
+                            'organization_package_subscriptions.organization_id',
+                        )->whereColumn(
+                            'organization_commercial_accounts.current_period_end_at',
+                            'organization_package_subscriptions.current_period_end_at',
+                        )->whereColumn(
+                            'organization_commercial_accounts.billing_anchor_at',
+                            'organization_package_subscriptions.current_period_end_at',
+                        )->where('organization_commercial_accounts.status', 'active')
+                            ->where('organization_commercial_accounts.auto_renew_enabled', true)
+                            ->where('organization_commercial_accounts.saved_payment_method_active', true)
+                            ->whereNotNull('organization_commercial_accounts.saved_payment_method_id')
+                            ->where('organization_commercial_accounts.saved_payment_method_id', '!=', '');
+                    });
             })->orWhere(function ($grace): void {
                 $grace->where('status', PackageSubscriptionStatus::Grace->value)
-                    ->where('access_source', '!=', PackageAccessSource::Corporate->value)
+                    ->whereIn('access_source', self::RENEWABLE_ACCESS_SOURCES)
                     ->whereHas('commercialAccount', function ($account): void {
                         $account->whereColumn(
                             'organization_commercial_accounts.organization_id',
@@ -127,5 +164,35 @@ class OrganizationPackageSubscription extends Model
                     });
             });
         });
+    }
+
+    private function hasRenewalProcessingAccess(): bool
+    {
+        if (! in_array($this->status?->value, self::RENEWABLE_STATUSES, true)
+            || ! in_array($this->access_source?->value, self::RENEWABLE_ACCESS_SOURCES, true)
+            || $this->current_period_end_at === null) {
+            return false;
+        }
+
+        $windowMinutes = max(0, (int) config('commercial_offers.renewal_processing_window_minutes', 5));
+        $now = now();
+        if ($windowMinutes === 0
+            || $now->lessThan($this->current_period_end_at)
+            || $now->greaterThanOrEqualTo($this->current_period_end_at->copy()->addMinutes($windowMinutes))) {
+            return false;
+        }
+
+        $account = $this->commercialAccount;
+
+        return $account instanceof OrganizationCommercialAccount
+            && $account->organization_id === $this->organization_id
+            && $account->status->value === 'active'
+            && $account->auto_renew_enabled
+            && $account->saved_payment_method_active
+            && trim((string) $account->saved_payment_method_id) !== ''
+            && $account->current_period_end_at !== null
+            && $account->billing_anchor_at !== null
+            && $account->current_period_end_at->equalTo($this->current_period_end_at)
+            && $account->billing_anchor_at->equalTo($this->current_period_end_at);
     }
 }

@@ -92,6 +92,14 @@ class CommercialCheckoutSchemaTest extends TestCase
         $this->assertStringNotContainsString("->dailyAt('03:00')", $renewalSchedule);
     }
 
+    public function test_commercial_due_query_has_account_and_cycle_indexes(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 3).'/database/migrations/2026_07_14_000005_add_commercial_renewal_due_indexes.php');
+        $this->assertIsString($migration);
+        $this->assertStringContainsString("['status', 'current_period_end_at', 'id']", $migration);
+        $this->assertStringContainsString("['commercial_account_id', 'organization_id', 'target_period_start_at', 'status', 'next_attempt_at']", $migration);
+    }
+
     public function test_trial_lifecycle_has_separate_hourly_schedule(): void
     {
         $schedule = file_get_contents(dirname(__DIR__, 3).'/routes/console.php');

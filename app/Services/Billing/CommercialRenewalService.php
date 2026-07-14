@@ -16,6 +16,7 @@ use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
+use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -42,14 +43,39 @@ final class CommercialRenewalService
     public function process(CarbonInterface $at, int $limit = 100): array
     {
         $now = CarbonImmutable::instance($at)->setTimezone(self::TIMEZONE);
+        $queryNow = $now->utc();
         if (Schema::hasTable('notifications')) {
             $this->notifications->processRenewalLifecycle($now);
         }
         $ids = OrganizationCommercialAccount::query()
-            ->whereIn('status', ['active', 'grace'])
-            ->whereNotNull('current_period_end_at')
-            ->where('current_period_end_at', '<=', $now->endOfDay())
-            ->orderBy('id')->limit(max(1, $limit))->pluck('id');
+            ->from('organization_commercial_accounts as accounts')
+            ->leftJoin('commercial_renewal_cycles as current_cycle', function (JoinClause $join): void {
+                $join->on('current_cycle.commercial_account_id', '=', 'accounts.id')
+                    ->on('current_cycle.organization_id', '=', 'accounts.organization_id')
+                    ->on('current_cycle.target_period_start_at', '=', 'accounts.current_period_end_at');
+            })
+            ->whereIn('accounts.status', ['active', 'grace'])
+            ->whereNotNull('accounts.current_period_end_at')
+            ->where('accounts.current_period_end_at', '<=', $queryNow)
+            ->where(function ($actionable) use ($queryNow): void {
+                $actionable->whereNull('current_cycle.id')
+                    ->orWhere(function ($cycle) use ($queryNow): void {
+                        $cycle->whereIn('current_cycle.status', ['due', 'grace'])
+                            ->whereNotNull('current_cycle.next_attempt_at')
+                            ->where('current_cycle.next_attempt_at', '<=', $queryNow);
+                    })
+                    ->orWhere(function ($expiredGrace) use ($queryNow): void {
+                        $expiredGrace->where('accounts.status', 'grace')
+                            ->whereNotNull('accounts.grace_ends_at')
+                            ->where('accounts.grace_ends_at', '<=', $queryNow);
+                    });
+            })
+            ->orderByRaw('COALESCE(current_cycle.next_attempt_at, accounts.current_period_end_at)')
+            ->orderByRaw('CASE WHEN current_cycle.last_attempt_at IS NULL THEN 0 ELSE 1 END')
+            ->orderBy('current_cycle.last_attempt_at')
+            ->orderBy('accounts.id')
+            ->limit(max(1, $limit))
+            ->pluck('accounts.id');
         $counts = ['processed' => 0, 'created_cycles' => 0, 'created_attempts' => 0, 'failed' => 0, 'suspended' => 0];
 
         foreach ($ids as $id) {
@@ -152,7 +178,15 @@ final class CommercialRenewalService
             $cycle = CommercialRenewalCycle::query()->where('commercial_account_id', $account->id)->where('target_period_start_at', $periodStart)->lockForUpdate()->first();
             $createdCycle = false;
             if ($cycle === null) {
-                $currentSlugs = OrganizationPackageSubscription::query()->where('commercial_account_id', $account->id)->whereIn('access_source', ['paid_package', 'full_suite'])->active()->orderBy('package_slug')->pluck('package_slug')->all();
+                $currentSlugs = OrganizationPackageSubscription::query()
+                    ->where('commercial_account_id', $account->id)
+                    ->where('organization_id', $account->organization_id)
+                    ->whereIn('access_source', ['paid_package', 'full_suite', 'corporate'])
+                    ->whereIn('status', ['active', 'scheduled_for_removal'])
+                    ->where('current_period_end_at', $periodStart)
+                    ->orderBy('package_slug')
+                    ->pluck('package_slug')
+                    ->all();
                 $slugs = $scheduledChange?->target_package_slugs ?? $currentSlugs;
                 if ($slugs === []) {
                     return [];
@@ -253,6 +287,11 @@ final class CommercialRenewalService
                 return ['payment' => $latest, 'created_cycles' => (int) $createdCycle, 'created_attempts' => 1];
             }
 
+            $cycle->forceFill([
+                'last_attempt_at' => $now,
+                'next_attempt_at' => $now->addMinutes(self::RECONCILIATION_INTERVAL_MINUTES)->utc(),
+            ])->save();
+
             return ['payment' => $latest, 'created_cycles' => (int) $createdCycle];
         }, 3);
     }
@@ -271,11 +310,16 @@ final class CommercialRenewalService
 
         OrganizationPackageSubscription::query()
             ->where('commercial_account_id', $account->id)
-            ->whereIn('access_source', ['paid_package', 'full_suite'])
+            ->where('organization_id', $account->organization_id)
+            ->whereIn('access_source', ['paid_package', 'full_suite', 'corporate'])
+            ->where('current_period_end_at', $periodStart)
             ->each(function (OrganizationPackageSubscription $subscription) use ($targetPackageSlugs, $periodStart): void {
                 if (in_array($subscription->package_slug, $targetPackageSlugs, true)) {
                     $subscription->forceFill(['status' => 'grace'])->save();
 
+                    return;
+                }
+                if ($subscription->access_source->value === 'corporate') {
                     return;
                 }
 
@@ -316,7 +360,7 @@ final class CommercialRenewalService
     private function suspend(OrganizationCommercialAccount $account, CarbonImmutable $now): void
     {
         $account->forceFill(['status' => 'suspended'])->save();
-        OrganizationPackageSubscription::query()->where('commercial_account_id', $account->id)->whereIn('access_source', ['paid_package', 'full_suite'])->update(['status' => 'expired', 'canceled_at' => $now]);
+        OrganizationPackageSubscription::query()->where('commercial_account_id', $account->id)->where('organization_id', $account->organization_id)->whereIn('access_source', ['paid_package', 'full_suite'])->update(['status' => 'expired', 'canceled_at' => $now]);
         CommercialRenewalCycle::query()->where('commercial_account_id', $account->id)->whereIn('status', ['due', 'grace'])->update(['status' => 'suspended', 'suspended_at' => $now]);
     }
 
