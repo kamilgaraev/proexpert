@@ -90,6 +90,27 @@ class OrganizationPackageEntitlementTest extends TestCase
         $this->assertContains('budget-estimates', $this->entitlements()->getEffectiveModuleSlugs($this->organization->id));
     }
 
+    public function test_trial_access_disappears_after_trial_end_without_grace_or_period(): void
+    {
+        $this->createPackageModules('estimates-norms');
+        $trial = $this->createPackageSubscription(
+            'estimates-norms',
+            PackageSubscriptionStatus::Trialing,
+            PackageAccessSource::Trial,
+            false,
+            now()->addHour(),
+        );
+
+        $this->assertContains('budget-estimates', $this->entitlements()->getEffectiveModuleSlugs($this->organization->id));
+
+        $this->travel(2)->hours();
+
+        $this->assertNotContains('budget-estimates', $this->entitlements()->getEffectiveModuleSlugs($this->organization->id));
+        $this->assertSame(PackageSubscriptionStatus::Trialing, $trial->fresh()->status);
+        $this->assertNull($trial->fresh()->current_period_start_at);
+        $this->assertNull($trial->fresh()->current_period_end_at);
+    }
+
     public function test_expired_canceled_unknown_and_foreign_packages_do_not_grant_access(): void
     {
         $this->createPackageModules('estimates-norms');

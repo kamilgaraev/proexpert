@@ -92,4 +92,8 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'verified', 'organization.con
         Route::get('/', [OrganizationPackageController::class, 'index'])
             ->middleware(['interface:lk', 'authorize:billing.view'])
             ->name('index');
+
+        Route::post('/{packageSlug}/trial', [OrganizationPackageController::class, 'startTrial'])
+            ->middleware(['interface:lk', 'authorize:billing.manage'])
+            ->name('trial');
     });

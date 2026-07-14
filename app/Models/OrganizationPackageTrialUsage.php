@@ -7,6 +7,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use LogicException;
 
 class OrganizationPackageTrialUsage extends Model
 {
@@ -23,6 +24,17 @@ class OrganizationPackageTrialUsage extends Model
         'started_at' => 'datetime',
         'ends_at' => 'datetime',
     ];
+
+    protected static function booted(): void
+    {
+        static::updating(static function (): never {
+            throw new LogicException('Package trial usage history is immutable.');
+        });
+
+        static::deleting(static function (): never {
+            throw new LogicException('Package trial usage history is immutable.');
+        });
+    }
 
     public function organization(): BelongsTo
     {
