@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
-use App\Filament\Support\TableEmptyState;
 use App\Filament\Resources\OrganizationSubscriptionResource\Pages;
 use App\Filament\Support\FilamentPermission;
 use App\Filament\Support\NavigationGroups;
 use App\Filament\Support\SystemAdminAccess;
+use App\Filament\Support\TableEmptyState;
 use App\Models\Organization;
 use App\Models\OrganizationSubscription;
 use App\Models\SubscriptionPlan;
@@ -32,11 +32,11 @@ class OrganizationSubscriptionResource extends Resource
 {
     protected static ?string $model = OrganizationSubscription::class;
 
-    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-credit-card';
+    protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-credit-card';
 
     protected static ?int $navigationSort = 20;
 
-    public static function getNavigationGroup(): string | \UnitEnum | null
+    public static function getNavigationGroup(): string|\UnitEnum|null
     {
         return NavigationGroups::billing();
     }
@@ -236,22 +236,6 @@ class OrganizationSubscriptionResource extends Resource
                     ->action(function (array $data, OrganizationSubscription $record): void {
                         self::grantManualExtension($record, $data);
                     }),
-                Action::make('revoke_manual_extension')
-                    ->label(trans_message('filament_actions.subscription.extension.revoke_label'))
-                    ->icon('heroicon-o-arrow-uturn-left')
-                    ->color('danger')
-                    ->requiresConfirmation()
-                    ->modalHeading(trans_message('filament_actions.subscription.extension.revoke_heading'))
-                    ->schema([
-                        Forms\Components\Textarea::make('reason')
-                            ->label(trans_message('filament_actions.subscription.reason'))
-                            ->required()
-                            ->maxLength(500),
-                    ])
-                    ->visible(fn (OrganizationSubscription $record): bool => self::hasManualExtension($record) && self::canManageSubscriptions())
-                    ->action(function (array $data, OrganizationSubscription $record): void {
-                        self::revokeManualExtension($record, $data);
-                    }),
             ])
             ->bulkActions([])
             ->defaultSort('created_at', 'desc');
@@ -348,33 +332,9 @@ class OrganizationSubscriptionResource extends Resource
         Notification::make()->success()->title(trans_message('filament_actions.subscription.extension.grant_success'))->send();
     }
 
-    private static function revokeManualExtension(OrganizationSubscription $subscription, array $data): void
-    {
-        $actor = SystemAdminAccess::user();
-
-        if ($actor === null) {
-            return;
-        }
-
-        app(SubscriptionAdminActionService::class)->revokeManualExtension(
-            subscription: $subscription,
-            actor: $actor,
-            reason: (string) ($data['reason'] ?? ''),
-        );
-
-        Notification::make()->success()->title(trans_message('filament_actions.subscription.extension.revoke_success'))->send();
-    }
-
     private static function canManageSubscriptions(): bool
     {
         return SystemAdminAccess::can(FilamentPermission::SUBSCRIPTIONS_MANAGE);
-    }
-
-    private static function hasManualExtension(OrganizationSubscription $subscription): bool
-    {
-        $config = is_array($subscription->enterprise_constructor_config) ? $subscription->enterprise_constructor_config : [];
-
-        return isset($config['manual_extension']) && is_array($config['manual_extension']);
     }
 
     private static function maskExternalId(?string $value): string
@@ -383,7 +343,7 @@ class OrganizationSubscriptionResource extends Resource
             return trans_message('widgets.common.empty_value');
         }
 
-        return strlen($value) <= 8 ? $value : substr($value, 0, 4) . '...' . substr($value, -4);
+        return strlen($value) <= 8 ? $value : substr($value, 0, 4).'...'.substr($value, -4);
     }
 
     private static function statusLabel(?string $status): string

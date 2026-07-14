@@ -2,13 +2,13 @@
 
 namespace App\Services\Billing;
 
-use App\Models\User;
-use App\Models\SubscriptionPlan;
 use App\Interfaces\Billing\SubscriptionLimitsServiceInterface;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Cache;
-use App\Repositories\Landing\OrganizationSubscriptionRepository;
 use App\Models\OrganizationSubscription;
+use App\Models\SubscriptionPlan;
+use App\Models\User;
+use App\Repositories\Landing\OrganizationSubscriptionRepository;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
 {
@@ -23,13 +23,13 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
     {
         // КРИТИЧНО: Кешируем весь результат более агрессивно + timeout + fallback
         $cacheKey = "user_limits_full_{$user->id}_{$user->current_organization_id}";
-        
+
         try {
             return \Illuminate\Support\Facades\Cache::remember($cacheKey, 600, function () use ($user) {
                 // Timeout для операции
                 $startTime = microtime(true);
                 $timeoutSeconds = 3;
-                
+
                 try {
                     // Смотрим только подписку организации
                     $organizationId = $user->current_organization_id;
@@ -38,7 +38,7 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
                         if ((microtime(true) - $startTime) > $timeoutSeconds) {
                             throw new \Exception('Timeout getting subscription');
                         }
-                        
+
                         $orgSubscription = $this->organizationSubscriptionRepo->getByOrganizationId($organizationId);
                         // Подписка активна, если не истекла (даже если отменена, но срок еще не закончился)
                         if ($orgSubscription && $orgSubscription->status === 'active' && $orgSubscription->ends_at > now()) {
@@ -48,7 +48,7 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
 
                     // Если нет активной организационной подписки — отдаём базовые лимиты
                     return $this->getDefaultLimitsData($user);
-                    
+
                 } catch (\Exception $e) {
                     // Fallback на базовые лимиты при любых ошибках
                     return $this->getFallbackLimitsData($user);
@@ -59,7 +59,7 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
             return $this->getFallbackLimitsData($user);
         }
     }
-    
+
     /**
      * Быстрые базовые лимиты без запросов к БД
      */
@@ -78,7 +78,6 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
             'upgrade_required' => true,
         ];
     }
-
 
     private function getDefaultLimitsData(User $user): array
     {
@@ -152,9 +151,9 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
     public function getCurrentUsage(User $user): array
     {
         $organizationId = $user->current_organization_id;
-        
+
         $cacheKey = "user_usage_{$user->id}_{$organizationId}";
-        
+
         return Cache::remember($cacheKey, 300, function () use ($organizationId) {
             return [
                 'projects' => $this->getProjectsCount($organizationId),
@@ -182,7 +181,7 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
         // КРИТИЧНО: Кешируем storage usage на 10 минут, т.к. он редко меняется
         return \Illuminate\Support\Facades\Cache::remember("storage_usage_{$organizationId}", 600, function () use ($organizationId) {
             $org = \App\Models\Organization::find($organizationId);
-            if ($org && !is_null($org->storage_used_mb)) {
+            if ($org && ! is_null($org->storage_used_mb)) {
                 return (float) $org->storage_used_mb;
             }
 
@@ -193,9 +192,9 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
                     ->join('contracts', 'completed_works.contract_id', '=', 'contracts.id')
                     ->where('contracts.organization_id', $organizationId)
                     ->count();
-                
+
                 $materialsCount = \App\Models\Material::where('organization_id', $organizationId)->count();
-                
+
                 return ($completedWorksCount * 0.1) + ($materialsCount * 0.05);
             } catch (\Exception $e) {
                 // Если запросы не работают, возвращаем минимальное значение
@@ -207,35 +206,39 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
     public function canCreateUser(User $user): bool
     {
         $limitsData = $this->getUserLimitsData($user);
-        
-        if (!$limitsData['has_subscription']) {
+
+        if (! $limitsData['has_subscription']) {
             $defaultLimits = config('billing.default_limits');
             $currentUsage = $this->getCurrentUsage($user);
+
             return $currentUsage['users'] < ($defaultLimits['max_users'] ?? 1);
         }
-        
+
         $userLimit = $limitsData['limits']['users'];
+
         return $userLimit['is_unlimited'] || $userLimit['used'] < $userLimit['limit'];
     }
 
     public function canCreateProject(User $user): bool
     {
         $limitsData = $this->getUserLimitsData($user);
-        
-        if (!$limitsData['has_subscription']) {
+
+        if (! $limitsData['has_subscription']) {
             $defaultLimits = config('billing.default_limits');
             $currentUsage = $this->getCurrentUsage($user);
+
             return $currentUsage['projects'] < ($defaultLimits['max_projects'] ?? 1);
         }
-        
+
         $projectLimit = $limitsData['limits']['projects'];
+
         return $projectLimit['is_unlimited'] || $projectLimit['used'] < $projectLimit['limit'];
     }
 
     private function generateWarnings(SubscriptionPlan $plan, array $currentUsage): array
     {
         $warnings = [];
-        
+
         if ($plan->max_users && $currentUsage['users'] >= $plan->max_users * 0.8) {
             $warnings[] = [
                 'type' => 'users',
@@ -245,35 +248,35 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
                     : 'Приближаетесь к лимиту количества пользователей',
             ];
         }
-        
+
         if ($plan->max_projects && $currentUsage['projects'] >= $plan->max_projects * 0.8) {
             $warnings[] = [
                 'type' => 'projects',
                 'level' => $currentUsage['projects'] >= $plan->max_projects ? 'critical' : 'warning',
-                'message' => $currentUsage['projects'] >= $plan->max_projects 
+                'message' => $currentUsage['projects'] >= $plan->max_projects
                     ? 'Достигнут лимит количества проектов'
                     : 'Приближаетесь к лимиту количества проектов',
             ];
         }
-        
+
         $storageLimit = $plan->max_storage_gb * 1024;
         if ($storageLimit && $currentUsage['storage_mb'] >= $storageLimit * 0.8) {
             $warnings[] = [
                 'type' => 'storage',
                 'level' => $currentUsage['storage_mb'] >= $storageLimit ? 'critical' : 'warning',
-                'message' => $currentUsage['storage_mb'] >= $storageLimit 
+                'message' => $currentUsage['storage_mb'] >= $storageLimit
                     ? 'Достигнут лимит дискового пространства'
                     : 'Приближаетесь к лимиту дискового пространства',
             ];
         }
-        
+
         return $warnings;
     }
 
     private function generateDefaultWarnings(array $defaultLimits, array $currentUsage): array
     {
         $warnings = [];
-        
+
         if ($currentUsage['users'] >= ($defaultLimits['max_users'] ?? 1)) {
             $warnings[] = [
                 'type' => 'users',
@@ -281,7 +284,7 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
                 'message' => 'Достигнут лимит бесплатного тарифа. Оформите подписку для добавления пользователей.',
             ];
         }
-        
+
         if ($currentUsage['projects'] >= ($defaultLimits['max_projects'] ?? 1)) {
             $warnings[] = [
                 'type' => 'projects',
@@ -289,7 +292,7 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
                 'message' => 'Достигнут лимит бесплатного тарифа. Оформите подписку для создания новых проектов.',
             ];
         }
-        
+
         if ($currentUsage['storage_mb'] >= ($defaultLimits['max_storage_mb'] ?? 100)) {
             $warnings[] = [
                 'type' => 'storage',
@@ -297,7 +300,7 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
                 'message' => 'Достигнут лимит дискового пространства бесплатного тарифа. Оформите подписку.',
             ];
         }
-        
+
         return $warnings;
     }
 
@@ -321,9 +324,9 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
         $pattern = "user_limits_full_*_{$organizationId}";
         $patternLimits = "subscription_limits_*_{$organizationId}";
         $patternUsage = "user_usage_*_{$organizationId}";
-        
+
         Cache::forget("storage_usage_{$organizationId}");
-        
+
         if (method_exists(Cache::getStore(), 'flush')) {
             return;
         }
@@ -335,14 +338,16 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
     public function canCreateContractorInvitation(User $user): bool
     {
         $limitsData = $this->getUserLimitsData($user);
-        
-        if (!$limitsData['has_subscription']) {
+
+        if (! $limitsData['has_subscription']) {
             $defaultLimits = config('billing.default_limits');
             $currentUsage = $this->getCurrentUsage($user);
+
             return $currentUsage['contractor_invitations'] < ($defaultLimits['max_contractor_invitations'] ?? 5);
         }
-        
+
         $invitationLimit = $limitsData['limits']['contractor_invitations'];
+
         return $invitationLimit['is_unlimited'] || $invitationLimit['used'] < $invitationLimit['limit'];
     }
 
@@ -357,13 +362,12 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
 
         if (! $orgSubscription || $orgSubscription->status !== 'active' || $orgSubscription->ends_at <= now()) {
             $defaultLimits = config('billing.default_limits');
+
             return $currentUsage < ($defaultLimits['max_contractor_invitations'] ?? 5);
         }
 
         $plan = $orgSubscription->plan;
-        $constructorLimits = $this->getEnterpriseConstructorLimits($orgSubscription);
-        $invitationLimit = $constructorLimits['contractor_invitations']
-            ?? ($plan->max_contractor_invitations ?? null);
+        $invitationLimit = $plan->max_contractor_invitations ?? null;
 
         return $invitationLimit === null || $currentUsage < $invitationLimit;
     }
@@ -380,47 +384,48 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
     public function getRemainingContractorInvitations(User $user): int
     {
         $limitsData = $this->getUserLimitsData($user);
-        
-        if (!$limitsData['has_subscription']) {
+
+        if (! $limitsData['has_subscription']) {
             $defaultLimits = config('billing.default_limits');
             $currentUsage = $this->getCurrentUsage($user);
+
             return max(0, ($defaultLimits['max_contractor_invitations'] ?? 5) - $currentUsage['contractor_invitations']);
         }
-        
+
         $invitationLimit = $limitsData['limits']['contractor_invitations'];
         if ($invitationLimit['is_unlimited']) {
             return 999999;
         }
-        
+
         return max(0, $invitationLimit['limit'] - $invitationLimit['used']);
     }
 
     private function generateSubscriptionWarnings(OrganizationSubscription $subscription, SubscriptionPlan $plan, array $currentUsage): array
     {
         $warnings = $this->generateWarnings($plan, $currentUsage);
-        
+
         // Добавляем предупреждение об отмененной подписке
         if ($subscription->isCanceled()) {
             $warnings[] = [
                 'type' => 'subscription_canceled',
                 'level' => 'warning',
-                'message' => 'Подписка отменена и закончится ' . $subscription->ends_at->format('d.m.Y') . '. Автопродление отключено.',
+                'message' => 'Подписка отменена и закончится '.$subscription->ends_at->format('d.m.Y').'. Автопродление отключено.',
             ];
         }
-        
+
         // Предупреждение о скором окончании подписки
         $daysLeft = (int) ceil(now()->diffInDays($subscription->ends_at, false));
-        if ($daysLeft <= 7 && $daysLeft > 0 && !$subscription->isCanceled()) {
+        if ($daysLeft <= 7 && $daysLeft > 0 && ! $subscription->isCanceled()) {
             $daysUnit = $this->formatDaysUnit($daysLeft);
             $warnings[] = [
                 'type' => 'subscription_expiring',
                 'level' => $daysLeft <= 3 ? 'critical' : 'warning',
-                'message' => $daysLeft <= 3 
+                'message' => $daysLeft <= 3
                     ? "Подписка заканчивается через {$daysLeft} {$daysUnit}. Пополните баланс для автопродления."
                     : "Подписка заканчивается через {$daysLeft} {$daysUnit}.",
             ];
         }
-        
+
         return $warnings;
     }
 
@@ -443,12 +448,10 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
     {
         $plan = $subscription->plan;
         $currentUsage = $this->getCurrentUsage($user);
-        $constructorLimits = $this->getEnterpriseConstructorLimits($subscription);
-        $maxProjects = $constructorLimits['projects'] ?? $plan->max_projects;
-        $maxUsers = $constructorLimits['users'] ?? $plan->max_users;
-        $maxStorageGb = $constructorLimits['storage_gb'] ?? $plan->max_storage_gb;
-        $maxContractorInvitations = $constructorLimits['contractor_invitations']
-            ?? ($plan->max_contractor_invitations ?? null);
+        $maxProjects = $plan->max_projects;
+        $maxUsers = $plan->max_users;
+        $maxStorageGb = $plan->max_storage_gb;
+        $maxContractorInvitations = $plan->max_contractor_invitations ?? null;
 
         return [
             'has_subscription' => true,
@@ -478,30 +481,5 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
             'features' => $plan->features ? (array) $plan->features : [],
             'warnings' => $this->generateSubscriptionWarnings($subscription, $plan, $currentUsage),
         ];
-    }
-
-    /**
-     * @return array<string, int>
-     */
-    private function getEnterpriseConstructorLimits(OrganizationSubscription $subscription): array
-    {
-        if (($subscription->plan?->slug ?? null) !== 'enterprise') {
-            return [];
-        }
-
-        $limits = $subscription->enterprise_constructor_config['limits'] ?? null;
-
-        if (!is_array($limits)) {
-            return [];
-        }
-
-        return array_filter([
-            'users' => isset($limits['users']) ? (int) $limits['users'] : null,
-            'projects' => isset($limits['projects']) ? (int) $limits['projects'] : null,
-            'storage_gb' => isset($limits['storage_gb']) ? (int) $limits['storage_gb'] : null,
-            'contractor_invitations' => isset($limits['contractor_invitations'])
-                ? (int) $limits['contractor_invitations']
-                : null,
-        ], static fn ($value) => $value !== null);
     }
 }

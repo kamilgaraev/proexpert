@@ -106,21 +106,8 @@ final class SubscriptionAdminActionService
                 ? $subscription->ends_at->copy()
                 : now();
             $newEndsAt = $baseEndsAt->copy()->addDays($days);
-            $config = is_array($subscription->enterprise_constructor_config)
-                ? $subscription->enterprise_constructor_config
-                : [];
-            $config['manual_extension'] = [
-                'previous_ends_at' => $subscription->ends_at?->toISOString(),
-                'granted_until' => $newEndsAt->toISOString(),
-                'days' => $days,
-                'reason' => $reason,
-                'granted_at' => now()->toISOString(),
-                'granted_by_system_admin_id' => $actor->id,
-            ];
-
             $subscription->ends_at = $newEndsAt;
             $subscription->next_billing_at = $newEndsAt;
-            $subscription->enterprise_constructor_config = $config;
             $subscription->save();
             $subscription->syncModulesExpiration();
 
@@ -135,48 +122,6 @@ final class SubscriptionAdminActionService
                 context: [
                     'operation' => 'grant_manual_extension',
                     'days' => $days,
-                    'reason' => $reason,
-                ],
-            );
-        });
-    }
-
-    public function revokeManualExtension(
-        OrganizationSubscription $subscription,
-        SystemAdmin $actor,
-        string $reason,
-    ): ?ActivityEvent {
-        return DB::transaction(function () use ($subscription, $actor, $reason): ?ActivityEvent {
-            $subscription->refresh();
-            $config = is_array($subscription->enterprise_constructor_config)
-                ? $subscription->enterprise_constructor_config
-                : [];
-            $extension = $config['manual_extension'] ?? null;
-
-            if (! is_array($extension) || empty($extension['previous_ends_at'])) {
-                return null;
-            }
-
-            $before = $this->stateSnapshot($subscription);
-            $previousEndsAt = Carbon::parse((string) $extension['previous_ends_at']);
-            unset($config['manual_extension']);
-
-            $subscription->ends_at = $previousEndsAt;
-            $subscription->next_billing_at = $previousEndsAt;
-            $subscription->enterprise_constructor_config = $config;
-            $subscription->save();
-            $subscription->syncModulesExpiration();
-
-            return $this->recordSubscriptionAction(
-                actor: $actor,
-                subscription: $subscription->refresh(),
-                eventType: 'system_admin.subscriptions.manual_extension_revoked',
-                titleKey: 'filament_actions.audit.subscription_manual_extension_revoked_title',
-                descriptionKey: 'filament_actions.audit.subscription_manual_extension_revoked_description',
-                before: $before,
-                after: $this->stateSnapshot($subscription),
-                context: [
-                    'operation' => 'revoke_manual_extension',
                     'reason' => $reason,
                 ],
             );
@@ -235,7 +180,6 @@ final class SubscriptionAdminActionService
             'next_billing_at' => $subscription->next_billing_at?->toISOString(),
             'canceled_at' => $subscription->canceled_at?->toISOString(),
             'is_auto_payment_enabled' => $subscription->is_auto_payment_enabled,
-            'enterprise_constructor_config' => $subscription->enterprise_constructor_config,
         ];
     }
 }

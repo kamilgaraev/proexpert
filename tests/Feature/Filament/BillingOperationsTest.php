@@ -86,12 +86,11 @@ class BillingOperationsTest extends TestCase
         ]);
     }
 
-    public function test_it_grants_and_revokes_manual_subscription_extension_with_audit(): void
+    public function test_it_grants_manual_subscription_extension_with_audit(): void
     {
         [$admin, $subscription] = $this->subscriptionFixture([
             'ends_at' => now()->addDays(5),
             'next_billing_at' => now()->addDays(5),
-            'enterprise_constructor_config' => [],
         ]);
         $originalEndsAt = $subscription->ends_at?->toISOString();
 
@@ -105,27 +104,11 @@ class BillingOperationsTest extends TestCase
         $subscription->refresh();
 
         $this->assertInstanceOf(ActivityEvent::class, $grantEvent);
-        $this->assertSame('loyalty_adjustment', $subscription->enterprise_constructor_config['manual_extension']['reason']);
-        $this->assertSame($originalEndsAt, $subscription->enterprise_constructor_config['manual_extension']['previous_ends_at']);
+        $this->assertNotSame($originalEndsAt, $subscription->ends_at?->toISOString());
+        $this->assertSame($subscription->ends_at?->toISOString(), $subscription->next_billing_at?->toISOString());
         $this->assertDatabaseHas('activity_events', [
             'id' => $grantEvent->id,
             'event_type' => 'system_admin.subscriptions.manual_extension_granted',
-        ]);
-
-        $revokeEvent = app(SubscriptionAdminActionService::class)->revokeManualExtension(
-            subscription: $subscription,
-            actor: $admin,
-            reason: 'operator_rollback',
-        );
-
-        $subscription->refresh();
-
-        $this->assertInstanceOf(ActivityEvent::class, $revokeEvent);
-        $this->assertSame($originalEndsAt, $subscription->ends_at?->toISOString());
-        $this->assertArrayNotHasKey('manual_extension', $subscription->enterprise_constructor_config ?? []);
-        $this->assertDatabaseHas('activity_events', [
-            'id' => $revokeEvent->id,
-            'event_type' => 'system_admin.subscriptions.manual_extension_revoked',
         ]);
     }
 
@@ -139,7 +122,7 @@ class BillingOperationsTest extends TestCase
         $this->assertStringContainsString("Action::make('cancel_at_period_end')", $subscriptionSource);
         $this->assertStringContainsString("Action::make('reactivate')", $subscriptionSource);
         $this->assertStringContainsString("Action::make('grant_manual_extension')", $subscriptionSource);
-        $this->assertStringContainsString("Action::make('revoke_manual_extension')", $subscriptionSource);
+        $this->assertStringNotContainsString("Action::make('revoke_manual_extension')", $subscriptionSource);
         $this->assertStringContainsString('FilamentPermission::SUBSCRIPTIONS_MANAGE', $subscriptionSource);
         $this->assertStringContainsString('->bulkActions([])', $subscriptionSource);
 
@@ -155,7 +138,7 @@ class BillingOperationsTest extends TestCase
     }
 
     /**
-     * @param array<string, mixed> $subscriptionOverrides
+     * @param  array<string, mixed>  $subscriptionOverrides
      * @return array{0: SystemAdmin, 1: OrganizationSubscription}
      */
     private function subscriptionFixture(array $subscriptionOverrides = []): array
@@ -167,7 +150,7 @@ class BillingOperationsTest extends TestCase
         $organization = Organization::factory()->create();
         $plan = SubscriptionPlan::query()->create([
             'name' => 'Billing Business',
-            'slug' => 'billing-business-' . $organization->id,
+            'slug' => 'billing-business-'.$organization->id,
             'price' => 9900,
             'currency' => 'RUB',
             'is_active' => true,

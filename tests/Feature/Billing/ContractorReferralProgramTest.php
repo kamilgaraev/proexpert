@@ -7,7 +7,6 @@ namespace Tests\Feature\Billing;
 use App\Models\BalanceTransaction;
 use App\Models\ContractorInvitation;
 use App\Models\Organization;
-use App\Models\OrganizationSubscription;
 use App\Models\SubscriptionPlan;
 use App\Models\User;
 use App\Services\Billing\BalanceService;
@@ -21,12 +20,12 @@ use Tests\TestCase;
 final class ContractorReferralProgramTest extends TestCase
 {
     private Organization $invitingOrganization;
+
     private Organization $invitedOrganization;
+
     private User $invitingUser;
 
-    public function refreshDatabase(): void
-    {
-    }
+    public function refreshDatabase(): void {}
 
     protected function setUp(): void
     {
@@ -267,7 +266,6 @@ final class ContractorReferralProgramTest extends TestCase
             $table->string('payment_gateway_subscription_id')->nullable();
             $table->string('payment_gateway_customer_id')->nullable();
             $table->boolean('is_auto_payment_enabled')->default(true);
-            $table->json('enterprise_constructor_config')->nullable();
             $table->timestamps();
         });
 
