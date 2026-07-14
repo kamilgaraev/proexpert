@@ -86,9 +86,11 @@ jobs:
             IMAGE_DIGEST="${{ steps.build.outputs.digest }}"
             IMAGE_REF="${IMAGE_REPO}@${IMAGE_DIGEST}"
             BACKEND_SERVICES="api websockets horizon worker-heavy worker-ifc scheduler"
+            REVERB_APP_KEY="${{ secrets.REVERB_APP_KEY }}"
 
             [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
             [[ "${IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+            [[ "${REVERB_APP_KEY}" =~ ^[0-9a-f]{64}$ ]]
 
             cd /var/www/prohelper
             git fetch origin "${RELEASE_SHA}"
@@ -112,6 +114,11 @@ jobs:
               sed -i "s/^SENTRY_RELEASE=.*/SENTRY_RELEASE=prohelper@${RELEASE_SHA}/" .env
             else
               printf 'SENTRY_RELEASE=prohelper@%s\n' "${RELEASE_SHA}" >> .env
+            fi
+            if grep -q '^REVERB_APP_KEY=' .env; then
+              sed -i "s|^REVERB_APP_KEY=.*|REVERB_APP_KEY=${REVERB_APP_KEY}|" .env
+            else
+              printf 'REVERB_APP_KEY=%s\n' "${REVERB_APP_KEY}" >> .env
             fi
 
             SUPERVISOR_STATUS="$(supervisorctl status 2>/dev/null || true)"

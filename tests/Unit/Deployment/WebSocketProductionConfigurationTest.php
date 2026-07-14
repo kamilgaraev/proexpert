@@ -36,6 +36,8 @@ final class WebSocketProductionConfigurationTest extends TestCase
         self::assertStringContainsString("grep -Eq '^laravel-worker(_[0-9]+|:)'", $workflow);
         self::assertStringContainsString("supervisorctl stop 'laravel-worker:*'", $workflow);
         self::assertStringContainsString("pgrep -af '^php /var/www/prohelper/artisan queue:work( |$)'", $workflow);
+        self::assertStringContainsString('REVERB_APP_KEY="${{ secrets.REVERB_APP_KEY }}"', $workflow);
+        self::assertStringContainsString("s|^REVERB_APP_KEY=.*|REVERB_APP_KEY=\${REVERB_APP_KEY}|", $workflow);
         self::assertStringContainsString('@fsockopen', $workflow);
     }
 }
