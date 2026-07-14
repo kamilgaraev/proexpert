@@ -187,11 +187,11 @@ class FileService
 
     protected function s3Client(): \Aws\S3\S3ClientInterface
     {
-        $adapter = $this->disk()->getAdapter();
-        if (! method_exists($adapter, 'getClient')) {
+        $disk = $this->disk();
+        if (! method_exists($disk, 'getClient')) {
             throw new \RuntimeException('s3_conditional_put_unavailable');
         }
-        $client = $adapter->getClient();
+        $client = $disk->getClient();
         if (! $client instanceof \Aws\S3\S3ClientInterface) {
             throw new \RuntimeException('s3_conditional_put_unavailable');
         }
@@ -251,6 +251,7 @@ class FileService
     {
         return in_array($exception->getMessage(), [
             's3_bucket_versioning_required',
+            's3_conditional_put_unavailable',
             's3_object_head_invalid',
             's3_object_tagging_failed',
             's3_object_tagging_unavailable',
