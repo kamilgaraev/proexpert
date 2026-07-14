@@ -36,9 +36,12 @@ FINAL_STAGE_LINE=$(grep -n '^FROM php:' "$DOCKERFILE" | cut -d: -f1)
 RELEASE_ARG_LINE=$(grep -n '^ARG MOST_RELEASE_SHA$' "$DOCKERFILE" | cut -d: -f1)
 [[ $RELEASE_ARG_LINE -gt $FINAL_STAGE_LINE ]]
 grep -Fq 'coordinate-most-release.sh backend' "$WORKFLOW"
+grep -Fq "'scripts/**'" "$WORKFLOW"
 grep -Fq 'flock -x' "$COORDINATOR"
 grep -Fq 'smoke-ready.manifest' "$COORDINATOR"
 grep -Fq 'Cache-Control: no-store' "$COORDINATOR"
+grep -Fq 'verify_public_release "$BACKEND_RELEASE_URL" "$backend"' "$COORDINATOR"
+grep -Fq 'verify_public_release "$ADMIN_RELEASE_URL" "$admin"' "$COORDINATOR"
 grep -Fq 'chown -R root:root "$staging"' "$COORDINATOR"
 grep -Fq 'mv "$staging" "$release"' "$COORDINATOR"
 

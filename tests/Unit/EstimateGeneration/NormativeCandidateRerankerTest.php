@@ -16,6 +16,11 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\AttemptAwareNorm
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireClient;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\RerankWireException;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Normatives\Reranking\LLMNormativeCandidateReranker;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveEstimateGenerationSettings;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsOperationStore;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsPair;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\SettingsSnapshotHash;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use DateTimeImmutable;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -29,6 +34,15 @@ final class NormativeCandidateRerankerTest extends TestCase
 
         self::assertSame(['a', 'b'], $result->ordering);
         self::assertSame('reranked', $result->status);
+    }
+
+    public function test_effective_confidence_threshold_requires_manual_review(): void
+    {
+        $result = $this->reranker($this->validResponse(), effectiveSettings: true)
+            ->rerank($this->intent(), $this->context(), $this->set());
+
+        self::assertSame('requires_review', $result->status);
+        self::assertSame(0.8, $result->confidence);
     }
 
     #[DataProvider('invalidResponses')]
@@ -119,7 +133,7 @@ final class NormativeCandidateRerankerTest extends TestCase
         return ['selected_candidate_id' => 'a', 'ordering' => ['a', 'b'], 'explanation_codes' => ['unit_match'], 'evidence_refs' => ['norm:1'], 'confidence' => 0.8, 'schema_version' => 'normative-rerank-v1'];
     }
 
-    private function reranker(array $payload, ?RerankWireException $failure = null, bool $usage = true, array &$messages = [], int &$calls = 0): LLMNormativeCandidateReranker
+    private function reranker(array $payload, ?RerankWireException $failure = null, bool $usage = true, array &$messages = [], int &$calls = 0, bool $effectiveSettings = false): LLMNormativeCandidateReranker
     {
         $provider = new class implements LLMProviderInterface
         {
@@ -168,7 +182,49 @@ final class NormativeCandidateRerankerTest extends TestCase
             public function record(AiUsageData $data): void {}
         };
 
-        return new LLMNormativeCandidateReranker($provider, new AttemptAwareNormativeLlmClient($wire, $store, ['model-v1'], []));
+        $resolver = $effectiveSettings ? $this->settingsResolver() : null;
+
+        return new LLMNormativeCandidateReranker(
+            $provider,
+            new AttemptAwareNormativeLlmClient($wire, $store, ['model-v1'], [], null, $resolver),
+        );
+    }
+
+    private function settingsResolver(): EffectiveSettingsResolver
+    {
+        $snapshot = [
+            'schema_version' => 1,
+            'models' => ['vision' => 'vision/model-v1', 'classification' => 'classification/model-v1', 'planning' => 'planning/model-v1', 'normative_matching' => 'model-v1', 'pricing' => 'pricing/model-v1'],
+            'limits' => ['max_files' => 8, 'max_pages_per_file' => 120, 'max_total_pages' => 500],
+            'timeouts' => ['vision' => 10, 'classification' => 30, 'planning' => 30, 'normative_matching' => 20, 'pricing' => 20],
+            'retries' => ['vision' => 2, 'classification' => 1, 'planning' => 1, 'normative_matching' => 0, 'pricing' => 1],
+            'confidence' => ['classification' => '0.7000', 'geometry' => '0.7800', 'normative_matching' => '0.8200', 'pricing' => '0.9000'],
+            'enabled_formats' => ['pdf'],
+            'manual_review' => ['low_confidence' => true, 'missing_evidence' => true, 'price_outlier' => true, 'normative_fallback' => true],
+            'budgets' => ['daily' => '250.00', 'monthly' => '4000.00', 'currency' => 'RUB'],
+        ];
+        $global = EffectiveEstimateGenerationSettings::fromRecord([
+            'snapshot_id' => 40, 'scope' => 'global', 'organization_id' => null, 'version' => 1,
+            'snapshot_hash' => SettingsSnapshotHash::calculate($snapshot), 'snapshot' => $snapshot,
+        ], 1);
+        $effective = EffectiveEstimateGenerationSettings::fromRecord([
+            'snapshot_id' => 41, 'scope' => 'organization', 'organization_id' => 1, 'version' => 1,
+            'snapshot_hash' => SettingsSnapshotHash::calculate($snapshot), 'snapshot' => $snapshot,
+        ], 1);
+        $store = new class($global, $effective) implements EffectiveSettingsOperationStore
+        {
+            public function __construct(
+                private readonly EffectiveEstimateGenerationSettings $global,
+                private readonly EffectiveEstimateGenerationSettings $effective,
+            ) {}
+
+            public function pin(string $correlationId, int $organizationId, int $sessionId): EffectiveSettingsPair
+            {
+                return new EffectiveSettingsPair($this->global, $this->effective);
+            }
+        };
+
+        return new EffectiveSettingsResolver($store);
     }
 
     private function intent(): WorkIntentData

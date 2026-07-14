@@ -69,6 +69,8 @@ final readonly class EloquentAiUsageStore implements AiUsageStore
         }
         if ($this->budgetGuard !== null && $cost->pricingStatus === 'available') {
             $this->budgetGuard->settle($data->context->attemptId, $cost);
+        } elseif ($this->budgetGuard !== null) {
+            $this->budgetGuard->pendingReconciliation($data->context->attemptId);
         }
     }
 }

@@ -9,7 +9,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveEstimateGene
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
 use Closure;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 use InvalidArgumentException;
 use Throwable;
 
@@ -22,7 +21,7 @@ final readonly class AttemptAwareNormativeLlmClient
         private ?array $configuredPrices = null,
         private ?NormativeRerankerModelSet $modelSet = null,
         private ?EffectiveSettingsResolver $settingsResolver = null,
-        private ?AiAttemptBudgetAuthorizer $budgetAuthorizer = null,
+        private ?AiAttemptAuthorizer $budgetAuthorizer = null,
     ) {}
 
     /**
@@ -50,8 +49,7 @@ final readonly class AttemptAwareNormativeLlmClient
                 ? array_values(array_map('strval', $domainContext['dataset_versions'])) : [],
         ], JSON_THROW_ON_ERROR);
         $correlationId = AiOperationContext::deterministicId('rerank|'.$seed);
-        $physicalInvocationId = (string) Str::uuid();
-        $effective = $this->settingsResolver?->forOperation($correlationId, $organizationId);
+        $effective = $this->settingsResolver?->forOperation($correlationId, $organizationId, $sessionId);
         $models = $this->models($effective);
         $options['timeout'] = $effective?->timeoutSeconds('normative_matching') ?? ($options['timeout'] ?? null);
         $last = null;
@@ -60,7 +58,7 @@ final readonly class AttemptAwareNormativeLlmClient
             $heartbeat?->__invoke();
             $attemptContext = new AiOperationContext(
                 $correlationId,
-                AiOperationContext::deterministicId($physicalInvocationId.'|'.$model.'|'.($index + 1)),
+                AiPhysicalAttemptIdentity::fromParts($operation->checkpointClaimToken, $model, $index + 1, $operation->inputVersion.'|'.($domainContext['prompt_version'] ?? 'rerank:v1')),
                 $organizationId,
                 $projectId,
                 $sessionId,
@@ -80,6 +78,7 @@ final readonly class AttemptAwareNormativeLlmClient
             $httpCode = null;
             $response = [];
             try {
+                $this->markSentOrRelease($attemptContext->attemptId);
                 $response = $this->wire->call($model, $messages, $options);
                 $reportedModel = $response['model'] ?? null;
                 $content = trim((string) ($response['content'] ?? ''));
@@ -88,6 +87,11 @@ final readonly class AttemptAwareNormativeLlmClient
                     || (is_string($reportedModel) && $reportedModel !== $model)
                     ? 'malformed_response' : 'succeeded';
                 if ($status === 'succeeded') {
+                    if ($effective !== null) {
+                        $response['effective_confidence_threshold'] = $effective->confidence('normative_matching');
+                        $response['manual_review_low_confidence'] = $effective->requiresManualReview('low_confidence');
+                    }
+
                     return $response;
                 }
                 $last = new RerankWireException('malformed_response');
@@ -104,6 +108,22 @@ final readonly class AttemptAwareNormativeLlmClient
         }
 
         throw $last ?? new InvalidArgumentException('No reranker models configured.');
+    }
+
+    private function markSentOrRelease(string $attemptId): void
+    {
+        if ($this->budgetAuthorizer === null) {
+            return;
+        }
+        try {
+            $this->budgetAuthorizer->markSent($attemptId);
+        } catch (Throwable $exception) {
+            try {
+                $this->budgetAuthorizer->releaseBeforeWire($attemptId);
+            } catch (Throwable) {
+            }
+            throw $exception;
+        }
     }
 
     /** @param array<string, mixed> $response */
@@ -156,9 +176,7 @@ final readonly class AttemptAwareNormativeLlmClient
     /** @return array<string, mixed> */
     private function price(string $model): array
     {
-        $price = $this->configuredPrices !== null
-            ? ($this->configuredPrices[$model] ?? [])
-            : config("estimate-generation.ai_pricing.timeweb.models.{$model}", []);
+        $price = $this->configuredPrices[$model] ?? [];
 
         return is_array($price) ? $price : [];
     }

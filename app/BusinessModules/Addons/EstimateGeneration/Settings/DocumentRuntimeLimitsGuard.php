@@ -8,7 +8,7 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationConte
 use DomainException;
 use Illuminate\Database\Connection;
 
-final readonly class DocumentRuntimeLimitsGuard
+final readonly class DocumentRuntimeLimitsGuard implements DocumentRuntimeLimits
 {
     public function __construct(private Connection $database) {}
 

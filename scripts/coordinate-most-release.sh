@@ -36,6 +36,8 @@ publish_pair() {
     backend=$(<"$STATE/backend.active")
     admin=$(<"$STATE/admin.active")
     is_sha "$backend" && is_sha "$admin"
+    verify_public_release "$BACKEND_RELEASE_URL" "$backend"
+    verify_public_release "$ADMIN_RELEASE_URL" "$admin"
     generation=$(<"$STATE/generation.counter")
     [[ $generation =~ ^[0-9]+$ ]]
     generation=$((generation + 1))

@@ -4,8 +4,12 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Settings;
 
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveEstimateGenerationSettings;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsOperationStore;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsPair;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\SettingsSnapshotHash;
+use PHPUnit\Framework\Assert;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -15,23 +19,43 @@ final class EffectiveSettingsResolverTest extends TestCase
     public function it_pins_one_snapshot_to_the_whole_logical_operation(): void
     {
         $loads = 0;
-        $snapshot = $this->record();
-        $resolver = new EffectiveSettingsResolver(static function (int $organizationId) use (&$loads, $snapshot): array {
-            $loads++;
-            self::assertSame(17, $organizationId);
+        $global = EffectiveEstimateGenerationSettings::fromRecord($this->record('global'), 17);
+        $effective = EffectiveEstimateGenerationSettings::fromRecord($this->record('organization'), 17);
+        $store = new class($loads, $global, $effective) implements EffectiveSettingsOperationStore
+        {
+            public function __construct(
+                private int &$loads,
+                private readonly EffectiveEstimateGenerationSettings $global,
+                private readonly EffectiveEstimateGenerationSettings $effective,
+            ) {}
 
-            return $snapshot;
-        });
+            public function pin(string $correlationId, int $organizationId, int $sessionId): EffectiveSettingsPair
+            {
+                $this->loads++;
+                Assert::assertSame('7df88f6f-648e-4c0d-8e84-d2587f51cde1', $correlationId);
+                Assert::assertSame(17, $organizationId);
+                Assert::assertSame(91, $sessionId);
 
-        $first = $resolver->forOperation('7df88f6f-648e-4c0d-8e84-d2587f51cde1', 17);
-        $second = $resolver->forOperation('7df88f6f-648e-4c0d-8e84-d2587f51cde1', 17);
+                return new EffectiveSettingsPair($this->global, $this->effective);
+            }
+        };
+        $resolver = new EffectiveSettingsResolver($store);
+
+        $first = $resolver->forOperation('7df88f6f-648e-4c0d-8e84-d2587f51cde1', 17, 91);
+        $second = $resolver->forOperation('7df88f6f-648e-4c0d-8e84-d2587f51cde1', 17, 91);
 
         self::assertSame($first, $second);
         self::assertSame(1, $loads);
+
+        $afterRestart = (new EffectiveSettingsResolver($store))
+            ->forOperation('7df88f6f-648e-4c0d-8e84-d2587f51cde1', 17, 91);
+
+        self::assertSame($first->snapshotId, $afterRestart->snapshotId);
+        self::assertSame(2, $loads);
     }
 
     /** @return array<string, mixed> */
-    private function record(): array
+    private function record(string $scope): array
     {
         $snapshot = [
             'schema_version' => 1,
@@ -45,7 +69,8 @@ final class EffectiveSettingsResolverTest extends TestCase
             'budgets' => ['daily' => '250.00', 'monthly' => '4000.00', 'currency' => 'RUB'],
         ];
 
-        return ['snapshot_id' => 41, 'scope' => 'organization', 'organization_id' => 17, 'version' => 3,
+        return ['snapshot_id' => $scope === 'global' ? 40 : 41, 'scope' => $scope,
+            'organization_id' => $scope === 'global' ? null : 17, 'version' => 3,
             'snapshot_hash' => SettingsSnapshotHash::calculate($snapshot), 'snapshot' => $snapshot];
     }
 }

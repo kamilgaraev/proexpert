@@ -30,6 +30,7 @@ final class UploadEstimateGenerationDocuments
         $settings = $this->settingsResolver->forOperation(
             AiOperationContext::deterministicId("upload|{$session->id}|{$expectedVersion}"),
             (int) $session->organization_id,
+            (int) $session->id,
         );
         $existingFiles = $session->documents()->count();
         if ($existingFiles + count($files) > $settings->maxFiles()) {

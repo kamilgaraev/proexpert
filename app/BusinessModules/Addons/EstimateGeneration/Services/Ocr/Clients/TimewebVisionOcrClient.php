@@ -7,15 +7,16 @@ namespace App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Clients;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrDocumentInput;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrPageResult;
 use App\BusinessModules\Addons\EstimateGeneration\DTOs\Ocr\OcrRecognitionResult;
-use App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptBudgetAuthorizer;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPhysicalAttemptIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Contracts\OcrClientInterface;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrConfigurationException;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\Exceptions\OcrProviderException;
-use App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimitsGuard;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimits;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveEstimateGenerationSettings;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
 use Illuminate\Http\Client\ConnectionException;
@@ -23,7 +24,6 @@ use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 use Throwable;
 
 final class TimewebVisionOcrClient implements OcrClientInterface
@@ -33,8 +33,8 @@ final class TimewebVisionOcrClient implements OcrClientInterface
     public function __construct(
         private readonly ?AiUsageStore $usageStore = null,
         private readonly ?EffectiveSettingsResolver $settingsResolver = null,
-        private readonly ?AiAttemptBudgetAuthorizer $budgetAuthorizer = null,
-        private readonly ?DocumentRuntimeLimitsGuard $documentLimits = null,
+        private readonly ?AiAttemptAuthorizer $budgetAuthorizer = null,
+        private readonly ?DocumentRuntimeLimits $documentLimits = null,
     ) {}
 
     public function recognize(OcrDocumentInput $input): OcrRecognitionResult
@@ -42,7 +42,7 @@ final class TimewebVisionOcrClient implements OcrClientInterface
         $apiKey = trim((string) config('estimate-generation.ocr.timeweb.api_key', ''));
         $baseUri = rtrim(trim((string) config('estimate-generation.ocr.timeweb.base_uri', 'https://api.timeweb.ai/v1')), '/');
         $effective = $input->operationContext instanceof AiOperationContext
-            ? $this->settingsResolver?->forOperation($input->operationContext->correlationId, $input->operationContext->organizationId)
+            ? $this->settingsResolver?->forOperation($input->operationContext->correlationId, $input->operationContext->organizationId, $input->operationContext->sessionId)
             : null;
         if ($effective !== null) {
             if ($input->operationContext instanceof AiOperationContext) {
@@ -61,11 +61,10 @@ final class TimewebVisionOcrClient implements OcrClientInterface
         }
 
         $lastException = null;
-        $physicalInvocationId = (string) Str::uuid();
 
         foreach ($models as $attempt => $model) {
             try {
-                return $this->recognizeWithModel($input, $baseUri, $apiKey, $model, $attempt + 1, $physicalInvocationId, $effective);
+                return $this->recognizeWithModel($input, $baseUri, $apiKey, $model, $attempt + 1, $effective);
             } catch (OcrProviderException $exception) {
                 $lastException = $exception;
 
@@ -97,7 +96,6 @@ final class TimewebVisionOcrClient implements OcrClientInterface
         string $apiKey,
         string $model,
         int $attempt,
-        string $physicalInvocationId,
         ?EffectiveEstimateGenerationSettings $effective,
     ): OcrRecognitionResult {
         $requestPayload = [
@@ -135,7 +133,7 @@ final class TimewebVisionOcrClient implements OcrClientInterface
             ? max(1, $effective->retryAttempts('classification') + 1)
             : max(1, (int) config('estimate-generation.ocr.retry_attempts', 3));
         for ($wireAttempt = 1; $wireAttempt <= $retryAttempts; $wireAttempt++) {
-            $physicalContext = $this->physicalContext($input, $model, $attempt, $wireAttempt, $physicalInvocationId, $retryAttempts);
+            $physicalContext = $this->physicalContext($input, $model, $attempt, $wireAttempt, $retryAttempts);
             $priceSnapshot = $this->budgetAuthorizer?->authorize(
                 $physicalContext,
                 self::PROVIDER,
@@ -144,12 +142,13 @@ final class TimewebVisionOcrClient implements OcrClientInterface
                 max(512, (int) config('estimate-generation.ocr.max_tokens', 4096)),
                 $this->isImage($input) ? 1 : 0,
                 max(0, $input->pageCount ?? 0),
-            ) ?? AiPriceSnapshot::fromArray($this->priceSnapshot($model));
+            ) ?? AiPriceSnapshot::fromArray([]);
             $startedAt = hrtime(true);
             $status = 'connection_failed';
             $httpCode = null;
             $payload = [];
             try {
+                $this->markSentOrRelease($physicalContext->attemptId);
                 $response = Http::timeout($effective?->timeoutSeconds('classification') ?? (int) config('estimate-generation.ocr.timeout_seconds', 60))
                     ->acceptJson()->asJson()->withToken($apiKey)
                     ->post($baseUri.'/chat/completions', $requestPayload);
@@ -202,7 +201,6 @@ final class TimewebVisionOcrClient implements OcrClientInterface
                     $httpCode,
                     $payload,
                     (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000)),
-                    $physicalInvocationId,
                     $physicalContext,
                     $priceSnapshot,
                 );
@@ -270,6 +268,22 @@ final class TimewebVisionOcrClient implements OcrClientInterface
         );
     }
 
+    private function markSentOrRelease(string $attemptId): void
+    {
+        if ($this->budgetAuthorizer === null) {
+            return;
+        }
+        try {
+            $this->budgetAuthorizer->markSent($attemptId);
+        } catch (Throwable $exception) {
+            try {
+                $this->budgetAuthorizer->releaseBeforeWire($attemptId);
+            } catch (Throwable) {
+            }
+            throw $exception;
+        }
+    }
+
     private function retryableStatus(int $status): bool
     {
         return in_array($status, [408, 429], true) || $status >= 500;
@@ -295,7 +309,6 @@ final class TimewebVisionOcrClient implements OcrClientInterface
         ?int $httpCode,
         array $payload,
         int $durationMs,
-        string $physicalInvocationId,
         AiOperationContext $context,
         AiPriceSnapshot $priceSnapshot,
     ): void {
@@ -330,7 +343,7 @@ final class TimewebVisionOcrClient implements OcrClientInterface
         }
     }
 
-    private function physicalContext(OcrDocumentInput $input, string $model, int $routeAttempt, int $wireAttempt, string $physicalInvocationId, int $retryAttempts): AiOperationContext
+    private function physicalContext(OcrDocumentInput $input, string $model, int $routeAttempt, int $wireAttempt, int $retryAttempts): AiOperationContext
     {
         $base = $input->operationContext;
         if (! $base instanceof AiOperationContext) {
@@ -339,7 +352,7 @@ final class TimewebVisionOcrClient implements OcrClientInterface
 
         return new AiOperationContext(
             correlationId: $base->correlationId,
-            attemptId: AiOperationContext::deterministicId($physicalInvocationId.'|'.$model.'|'.$wireAttempt.'|'.$routeAttempt),
+            attemptId: AiPhysicalAttemptIdentity::fromParts($base->attemptId, $model, (($routeAttempt - 1) * $retryAttempts) + $wireAttempt, 'ocr-contract:v1'),
             organizationId: $base->organizationId,
             projectId: $base->projectId,
             sessionId: $base->sessionId,
@@ -350,18 +363,6 @@ final class TimewebVisionOcrClient implements OcrClientInterface
             pageId: $base->pageId,
             unitId: $base->unitId,
         );
-    }
-
-    /** @return array<string, mixed> */
-    private function priceSnapshot(string $model): array
-    {
-        $configured = config("estimate-generation.ai_pricing.timeweb.models.{$model}", []);
-        if (! is_array($configured)) {
-            return [];
-        }
-        $allowed = ['input_per_million', 'cached_input_per_million', 'output_per_million', 'reasoning_per_million', 'reasoning_mode', 'image_unit', 'page_unit', 'currency', 'source', 'version', 'effective_at'];
-
-        return array_intersect_key($configured, array_flip($allowed));
     }
 
     /**

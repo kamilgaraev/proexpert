@@ -88,7 +88,7 @@ final class TimewebVisionUsageAttemptTest extends TestCase
         $client->recognize($this->input());
         $client->recognize($this->input('018f47a2-4e5c-7d9a-8b1c-2d3e4f5a6b7e'));
 
-        self::assertNotSame($store->rows[0]->context->attemptId, $store->rows[1]->context->attemptId);
+        self::assertSame($store->rows[0]->context->attemptId, $store->rows[1]->context->attemptId);
         self::assertSame($store->rows[0]->context->correlationId, $store->rows[1]->context->correlationId);
         self::assertNotSame($store->rows[0]->context->attemptId, $store->rows[2]->context->attemptId);
 

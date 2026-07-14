@@ -4,12 +4,13 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision\Providers;
 
-use App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptBudgetAuthorizer;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPhysicalAttemptIdentity;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
-use App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimitsGuard;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimits;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionResponseBodyReader;
@@ -21,7 +22,6 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 use JsonException;
 use Throwable;
 
@@ -35,15 +35,15 @@ final readonly class TimewebVisionProvider implements VisionProvider
         private AiUsageStore $usageStore,
         private VisionResponseBodyReader $bodyReader,
         private ?EffectiveSettingsResolver $settingsResolver = null,
-        private ?AiAttemptBudgetAuthorizer $budgetAuthorizer = null,
-        private ?DocumentRuntimeLimitsGuard $documentLimits = null,
+        private ?AiAttemptAuthorizer $budgetAuthorizer = null,
+        private ?DocumentRuntimeLimits $documentLimits = null,
     ) {}
 
     public function analyze(VisionDocumentInput $input): VisionAnalysisData
     {
         $apiKey = trim((string) config('estimate-generation.vision.api_key', ''));
         $baseUri = rtrim(trim((string) config('estimate-generation.vision.base_uri', '')), '/');
-        $effective = $this->settingsResolver?->forOperation($input->operationContext->correlationId, $input->organizationId);
+        $effective = $this->settingsResolver?->forOperation($input->operationContext->correlationId, $input->organizationId, $input->sessionId);
         if ($effective !== null && $input->pageNumber > $effective->maxPagesPerFile()) {
             throw new VisionProviderException('vision_page_limit_exceeded');
         }
@@ -61,13 +61,12 @@ final readonly class TimewebVisionProvider implements VisionProvider
         }
 
         $payload = $this->requestPayload($input, $model, $maxElements, $contractHash);
-        $physicalInvocationId = (string) Str::uuid();
         $attempts = $effective !== null
             ? max(1, $effective->retryAttempts('vision') + 1)
             : max(1, min(5, (int) config('estimate-generation.vision.retry_attempts', 3)));
         $lastException = null;
         for ($wireAttempt = 1; $wireAttempt <= $attempts; $wireAttempt++) {
-            $physicalContext = $this->physicalContext($input, $wireAttempt, $physicalInvocationId, $contractHash);
+            $physicalContext = $this->physicalContext($input, $model, $wireAttempt, $contractHash);
             $priceSnapshot = $this->budgetAuthorizer?->authorize(
                 $physicalContext,
                 self::PROVIDER,
@@ -75,7 +74,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 max(1, (int) config('estimate-generation.vision.max_input_tokens', 1_000_000)),
                 max(256, min(16_384, (int) config('estimate-generation.vision.max_tokens', 4096))),
                 1,
-            ) ?? $this->safePriceSnapshot();
+            ) ?? AiPriceSnapshot::fromArray([]);
             $startedAt = hrtime(true);
             $responsePayload = [];
             $status = 'connection_failed';
@@ -83,6 +82,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
             $reportedModel = null;
             $analysis = null;
             try {
+                $this->markSentOrRelease($physicalContext->attemptId);
                 $timeoutSeconds = $effective?->timeoutSeconds('vision')
                     ?? max(1, min(120, (int) config('estimate-generation.vision.timeout_seconds', 60)));
                 $response = Http::timeout($timeoutSeconds)
@@ -161,7 +161,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 $lastException = new VisionProviderException('vision_request_failed', retryable: false, previous: $exception);
             } finally {
                 $this->recordAttempt(
-                    $input, $model, $reportedModel, $wireAttempt, $physicalInvocationId, $contractHash, $status, $httpCode, $responsePayload,
+                    $input, $model, $reportedModel, $status, $httpCode, $responsePayload,
                     (int) max(0, round((hrtime(true) - $startedAt) / 1_000_000)), $physicalContext, $priceSnapshot,
                 );
             }
@@ -180,6 +180,22 @@ final readonly class TimewebVisionProvider implements VisionProvider
         }
 
         throw new VisionProviderException('vision_provider_failed');
+    }
+
+    private function markSentOrRelease(string $attemptId): void
+    {
+        if ($this->budgetAuthorizer === null) {
+            return;
+        }
+        try {
+            $this->budgetAuthorizer->markSent($attemptId);
+        } catch (Throwable $exception) {
+            try {
+                $this->budgetAuthorizer->releaseBeforeWire($attemptId);
+            } catch (Throwable) {
+            }
+            throw $exception;
+        }
     }
 
     private function retryableStatus(int $status): bool
@@ -295,7 +311,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
     }
 
     /** @param array<string, mixed> $payload */
-    private function recordAttempt(VisionDocumentInput $input, string $model, ?string $reportedModel, int $wireAttempt, string $physicalInvocationId, string $contractHash, string $status, ?int $httpCode, array $payload, int $durationMs, AiOperationContext $physicalContext, AiPriceSnapshot $priceSnapshot): void
+    private function recordAttempt(VisionDocumentInput $input, string $model, ?string $reportedModel, string $status, ?int $httpCode, array $payload, int $durationMs, AiOperationContext $physicalContext, AiPriceSnapshot $priceSnapshot): void
     {
         $usage = $this->usage($payload);
         try {
@@ -313,47 +329,16 @@ final readonly class TimewebVisionProvider implements VisionProvider
         }
     }
 
-    private function physicalContext(VisionDocumentInput $input, int $wireAttempt, string $physicalInvocationId, string $contractHash): AiOperationContext
+    private function physicalContext(VisionDocumentInput $input, string $model, int $wireAttempt, string $contractHash): AiOperationContext
     {
         $context = $input->operationContext;
 
         return new AiOperationContext(
             $context->correlationId,
-            AiOperationContext::deterministicId(implode('|', [$context->attemptId, $physicalInvocationId, self::PROMPT_VERSION, $contractHash, $input->derivativeHash, (string) $wireAttempt])),
+            AiPhysicalAttemptIdentity::fromParts($context->attemptId, $model, $wireAttempt, self::PROMPT_VERSION.'|'.$contractHash.'|'.$input->derivativeHash),
             $context->organizationId, $context->projectId, $context->sessionId, $context->stage, $context->operation,
             $context->attemptOrdinal + $wireAttempt - 1, $context->documentId, $context->pageId, $context->unitId,
         );
-    }
-
-    /** @return array<string, mixed> */
-    private function priceSnapshot(): array
-    {
-        $pricing = config('estimate-generation.vision.pricing', []);
-        if (! is_array($pricing)) {
-            return [];
-        }
-        $required = ['input_per_million', 'cached_input_per_million', 'output_per_million', 'image_unit', 'currency', 'source', 'version', 'effective_at'];
-        foreach ($required as $key) {
-            if (! isset($pricing[$key]) || ! is_string($pricing[$key]) || trim($pricing[$key]) === '') {
-                return [];
-            }
-        }
-
-        return array_filter($pricing, static fn (mixed $value): bool => $value !== null && $value !== '');
-    }
-
-    private function safePriceSnapshot(): AiPriceSnapshot
-    {
-        try {
-            return AiPriceSnapshot::fromArray($this->priceSnapshot());
-        } catch (Throwable $exception) {
-            try {
-                Log::error('[EstimateGeneration Vision] invalid pricing snapshot', ['exception_class' => $exception::class]);
-            } catch (Throwable) {
-            }
-
-            return AiPriceSnapshot::fromArray([]);
-        }
     }
 
     /** @param array<mixed> $value */

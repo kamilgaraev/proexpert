@@ -78,6 +78,12 @@ final class EstimateGenerationSettingsService
                 'created_by_system_admin_id' => $actorId,
                 'created_at' => now(),
             ]);
+            DB::table('estimate_generation_setting_snapshot_hashes')->insert([
+                'setting_snapshot_id' => $snapshotId,
+                'algorithm' => 'jcs-sha256-v1',
+                'snapshot_hash' => $snapshotHash,
+                'created_at' => now(),
+            ]);
 
             $oldSnapshot = $this->decodeSnapshot(is_object($current) ? $current->snapshot : null);
             $this->recordAudit($snapshotId, $actorId, $data, $oldSnapshot, $snapshot, $commandFingerprint);
@@ -121,18 +127,19 @@ final class EstimateGenerationSettingsService
         }
 
         $decoded = $this->decodeSnapshot($snapshot->snapshot);
+        $snapshotHash = $this->canonicalHash((int) $snapshot->id);
 
         return [
             'snapshot_id' => (int) $snapshot->id,
             'scope' => (string) $snapshot->scope,
             'organization_id' => $snapshot->organization_id === null ? null : (int) $snapshot->organization_id,
             'version' => (int) $snapshot->version,
-            'snapshot_hash' => (string) $snapshot->snapshot_hash,
+            'snapshot_hash' => $snapshotHash,
             'snapshot' => $decoded,
         ];
     }
 
-    /** @return array{snapshot_id: int, scope: string, organization_id: int|null, version: int, snapshot: array<string, mixed>}|null */
+    /** @return array{snapshot_id: int, scope: string, organization_id: int|null, version: int, snapshot_hash: string, snapshot: array<string, mixed>}|null */
     public function currentSnapshot(string $scope, ?int $organizationId): ?array
     {
         if (! in_array($scope, ['global', 'organization'], true)
@@ -159,6 +166,7 @@ final class EstimateGenerationSettingsService
             'scope' => (string) $snapshot->scope,
             'organization_id' => $snapshot->organization_id === null ? null : (int) $snapshot->organization_id,
             'version' => (int) $snapshot->version,
+            'snapshot_hash' => $this->canonicalHash((int) $snapshot->id),
             'snapshot' => $this->decodeSnapshot($snapshot->snapshot),
         ];
     }
@@ -219,6 +227,19 @@ final class EstimateGenerationSettingsService
         $decoded = json_decode($value, true, 64, JSON_THROW_ON_ERROR);
 
         return is_array($decoded) ? $decoded : [];
+    }
+
+    private function canonicalHash(int $snapshotId): string
+    {
+        $hash = DB::table('estimate_generation_setting_snapshot_hashes')
+            ->where('setting_snapshot_id', $snapshotId)
+            ->where('algorithm', 'jcs-sha256-v1')
+            ->value('snapshot_hash');
+        if (! is_string($hash) || preg_match('/^[a-f0-9]{64}$/', $hash) !== 1) {
+            throw new DomainException('estimate_generation_settings_snapshot_hash_missing');
+        }
+
+        return $hash;
     }
 
     /** @return array{snapshot_id: int, version: int, idempotent_replay: bool} */

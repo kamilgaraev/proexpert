@@ -4,69 +4,35 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Settings;
 
-use Closure;
-use DomainException;
-
 final class EffectiveSettingsResolver
 {
-    private const MAX_CACHED_SNAPSHOTS = 512;
+    private const MAX_CACHED_OPERATIONS = 256;
 
-    private Closure $loader;
-
-    private ?Closure $globalLoader;
-
-    /** @var array<string, EffectiveEstimateGenerationSettings> */
+    /** @var array<string, EffectiveSettingsPair> */
     private array $operations = [];
 
-    /** @param callable(int): array<string, mixed> $loader */
-    public function __construct(callable $loader, ?callable $globalLoader = null)
+    public function __construct(private readonly EffectiveSettingsOperationStore $store) {}
+
+    public function forOperation(string $correlationId, int $organizationId, int $sessionId): EffectiveEstimateGenerationSettings
     {
-        $this->loader = Closure::fromCallable($loader);
-        $this->globalLoader = $globalLoader !== null ? Closure::fromCallable($globalLoader) : null;
+        return $this->pair($correlationId, $organizationId, $sessionId)->effective;
     }
 
-    public function forOperation(string $operationId, int $organizationId): EffectiveEstimateGenerationSettings
+    public function globalForOperation(string $correlationId, int $organizationId, int $sessionId): EffectiveEstimateGenerationSettings
     {
-        if (preg_match('/^[0-9a-f-]{36}$/i', $operationId) !== 1 || $organizationId < 1) {
-            throw new DomainException('estimate_generation_effective_settings_context_invalid');
-        }
-        if (isset($this->operations[$operationId])) {
-            $settings = $this->operations[$operationId];
-            if ($settings->scope === 'organization' && $settings->organizationId !== $organizationId) {
-                throw new DomainException('estimate_generation_effective_settings_tenant_collision');
-            }
-
-            return $settings;
-        }
-
-        $record = ($this->loader)($organizationId);
-        $settings = EffectiveEstimateGenerationSettings::fromRecord($record, $organizationId);
-        $this->remember($operationId, $settings);
-
-        return $settings;
+        return $this->pair($correlationId, $organizationId, $sessionId)->global;
     }
 
-    public function globalForOperation(string $operationId, int $organizationId): EffectiveEstimateGenerationSettings
+    private function pair(string $correlationId, int $organizationId, int $sessionId): EffectiveSettingsPair
     {
-        if ($this->globalLoader === null) {
-            throw new DomainException('estimate_generation_global_settings_loader_missing');
-        }
-        $key = 'global:'.$operationId;
+        $key = $correlationId.':'.$organizationId.':'.$sessionId;
         if (! isset($this->operations[$key])) {
-            $this->remember($key, EffectiveEstimateGenerationSettings::fromRecord(
-                ($this->globalLoader)(),
-                $organizationId,
-            ));
+            $this->operations[$key] = $this->store->pin($correlationId, $organizationId, $sessionId);
+            while (count($this->operations) > self::MAX_CACHED_OPERATIONS) {
+                array_shift($this->operations);
+            }
         }
 
         return $this->operations[$key];
-    }
-
-    private function remember(string $key, EffectiveEstimateGenerationSettings $settings): void
-    {
-        $this->operations[$key] = $settings;
-        while (count($this->operations) > self::MAX_CACHED_SNAPSHOTS) {
-            array_shift($this->operations);
-        }
     }
 }

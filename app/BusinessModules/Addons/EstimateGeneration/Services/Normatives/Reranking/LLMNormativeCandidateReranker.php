@@ -65,7 +65,23 @@ final class LLMNormativeCandidateReranker implements NormativeCandidateRerankerI
             throw new NormativeRerankingInvalidResponse('Response is not an object.');
         }
 
-        return $this->validate($decoded, $workItem, $context, $candidateSet);
+        $result = $this->validate($decoded, $workItem, $context, $candidateSet);
+        $threshold = $response['effective_confidence_threshold'] ?? null;
+        if (($response['manual_review_low_confidence'] ?? false) === true
+            && is_string($threshold) && is_numeric($threshold) && $result->confidence < (float) $threshold) {
+            return new NormativeRerankResultData(
+                $result->selectedCandidateId,
+                $result->ordering,
+                $result->explanationCodes,
+                $result->evidenceRefs,
+                $result->confidence,
+                'requires_review',
+                $result->schemaVersion,
+                $result->provider,
+            );
+        }
+
+        return $result;
     }
 
     private function validate(array $response, WorkIntentData $workItem, NormativeCandidateDecisionContextData $context, NormativeCandidateSetData $set): NormativeRerankResultData

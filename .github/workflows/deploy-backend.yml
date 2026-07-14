@@ -26,6 +26,7 @@ on:
       - 'public/**'
       - 'resources/**'
       - 'routes/**'
+      - 'scripts/**'
       - 'vendor/**'
       - '.github/workflows/deploy-backend.yml'
   workflow_dispatch:

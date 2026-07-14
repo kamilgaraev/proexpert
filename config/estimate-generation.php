@@ -53,17 +53,6 @@ return [
             'file_size_limit_bytes' => (int) env('ESTIMATE_GENERATION_CAD_FILE_SIZE_LIMIT_BYTES', 16_777_216),
             'open_file_limit' => (int) env('ESTIMATE_GENERATION_CAD_OPEN_FILE_LIMIT', 64),
         ],
-        'pricing' => [
-            'input_per_million' => $envValue('ESTIMATE_GENERATION_VISION_PRICE_INPUT_PER_MILLION'),
-            'cached_input_per_million' => $envValue('ESTIMATE_GENERATION_VISION_PRICE_CACHED_INPUT_PER_MILLION'),
-            'output_per_million' => $envValue('ESTIMATE_GENERATION_VISION_PRICE_OUTPUT_PER_MILLION'),
-            'image_unit' => $envValue('ESTIMATE_GENERATION_VISION_PRICE_IMAGE_UNIT'),
-            'reasoning_mode' => 'excluded_from_output',
-            'currency' => $envValue('ESTIMATE_GENERATION_VISION_PRICE_CURRENCY'),
-            'source' => 'contract',
-            'version' => $envValue('ESTIMATE_GENERATION_VISION_PRICE_VERSION'),
-            'effective_at' => $envValue('ESTIMATE_GENERATION_VISION_PRICE_EFFECTIVE_AT'),
-        ],
     ],
     'ocr' => [
         'provider' => env('ESTIMATE_GENERATION_OCR_PROVIDER', 'timeweb'),

@@ -114,6 +114,16 @@ final readonly class EffectiveEstimateGenerationSettings
         return $currency;
     }
 
+    public function requiresManualReview(string $reason): bool
+    {
+        $value = $this->snapshot['manual_review'][$reason] ?? null;
+        if (! is_bool($value)) {
+            throw new DomainException('estimate_generation_effective_manual_review_invalid');
+        }
+
+        return $value;
+    }
+
     /** @return array<string, mixed> */
     public function toArray(): array
     {

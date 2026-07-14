@@ -4,9 +4,17 @@ declare(strict_types=1);
 
 namespace Tests\Unit\EstimateGeneration\Vision;
 
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiAttemptAuthorizer;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationContext;
+use App\BusinessModules\Addons\EstimateGeneration\Observability\AiPriceSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\AiUsageStore;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\DocumentRuntimeLimits;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveEstimateGenerationSettings;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsOperationStore;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsPair;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\SettingsSnapshotHash;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionProvider;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\Contracts\VisionResponseBodyReader;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\VisionDocumentInput;
@@ -25,6 +33,8 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     /** @var list<AiUsageData> */
     private array $attempts = [];
 
+    private TestAiAttemptAuthorizer $authorizer;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -33,7 +43,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             'api_key' => 'secret', 'base_uri' => 'https://vision.test/v1', 'timeout_seconds' => 10,
             'retry_attempts' => 3, 'retry_delay_ms' => 0, 'max_tokens' => 2048,
             'max_response_bytes' => 100_000, 'max_elements' => 100, 'max_depth' => 12,
-            'image_detail' => 'high', 'pricing' => [],
+            'image_detail' => 'high',
         ]);
         $this->app->instance(AiUsageStore::class, new class($this->attempts) implements AiUsageStore
         {
@@ -44,6 +54,44 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
             {
                 $this->attempts[] = $usage;
             }
+        });
+        $snapshot = [
+            'schema_version' => 1,
+            'models' => ['vision' => 'vision/model-v1', 'classification' => 'classification/model-v1', 'planning' => 'planning/model-v1', 'normative_matching' => 'normative/model-v1', 'pricing' => 'pricing/model-v1'],
+            'limits' => ['max_files' => 8, 'max_pages_per_file' => 120, 'max_total_pages' => 500],
+            'timeouts' => ['vision' => 10, 'classification' => 30, 'planning' => 30, 'normative_matching' => 20, 'pricing' => 20],
+            'retries' => ['vision' => 2, 'classification' => 1, 'planning' => 1, 'normative_matching' => 2, 'pricing' => 1],
+            'confidence' => ['classification' => '0.7000', 'geometry' => '0.7800', 'normative_matching' => '0.8200', 'pricing' => '0.9000'],
+            'enabled_formats' => ['pdf'],
+            'manual_review' => ['low_confidence' => true, 'missing_evidence' => true, 'price_outlier' => true, 'normative_fallback' => true],
+            'budgets' => ['daily' => '250.00', 'monthly' => '4000.00', 'currency' => 'RUB'],
+        ];
+        $global = EffectiveEstimateGenerationSettings::fromRecord([
+            'snapshot_id' => 40, 'scope' => 'global', 'organization_id' => null, 'version' => 1,
+            'snapshot_hash' => SettingsSnapshotHash::calculate($snapshot), 'snapshot' => $snapshot,
+        ], 7);
+        $effective = EffectiveEstimateGenerationSettings::fromRecord([
+            'snapshot_id' => 41, 'scope' => 'organization', 'organization_id' => 7, 'version' => 1,
+            'snapshot_hash' => SettingsSnapshotHash::calculate($snapshot), 'snapshot' => $snapshot,
+        ], 7);
+        $store = new class($global, $effective) implements EffectiveSettingsOperationStore
+        {
+            public function __construct(
+                private readonly EffectiveEstimateGenerationSettings $global,
+                private readonly EffectiveEstimateGenerationSettings $effective,
+            ) {}
+
+            public function pin(string $correlationId, int $organizationId, int $sessionId): EffectiveSettingsPair
+            {
+                return new EffectiveSettingsPair($this->global, $this->effective);
+            }
+        };
+        $this->app->instance(EffectiveSettingsResolver::class, new EffectiveSettingsResolver($store));
+        $this->authorizer = new TestAiAttemptAuthorizer;
+        $this->app->instance(AiAttemptAuthorizer::class, $this->authorizer);
+        $this->app->instance(DocumentRuntimeLimits::class, new class implements DocumentRuntimeLimits
+        {
+            public function assertWithinTotalPages(AiOperationContext $context, EffectiveEstimateGenerationSettings $settings): void {}
         });
     }
 
@@ -338,28 +386,23 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     }
 
     #[Test]
-    public function separate_provider_invocations_have_distinct_physical_attempt_ids(): void
+    public function exact_provider_replay_keeps_the_same_physical_attempt_id(): void
     {
         Http::fake(fn () => Http::response($this->response()));
         $this->provider()->analyze($this->input());
         $this->provider()->analyze($this->input());
 
-        self::assertNotSame($this->attempts[0]->context->attemptId, $this->attempts[1]->context->attemptId);
+        self::assertSame($this->attempts[0]->context->attemptId, $this->attempts[1]->context->attemptId);
     }
 
     #[Test]
-    public function valid_pricing_snapshot_is_attached_and_invalid_pricing_does_not_drop_usage(): void
+    public function authorizer_pricing_snapshot_is_attached_and_unavailable_pricing_does_not_drop_usage(): void
     {
-        config()->set('estimate-generation.vision.pricing', [
-            'input_per_million' => '1.25', 'cached_input_per_million' => '0.25', 'output_per_million' => '5.00',
-            'image_unit' => '0.01', 'reasoning_mode' => 'excluded_from_output', 'currency' => 'RUB',
-            'source' => 'contract', 'version' => 'vision-2026-07', 'effective_at' => '2026-07-11T00:00:00+03:00',
-        ]);
         Http::fake(fn () => Http::response($this->response()));
         $this->provider()->analyze($this->input());
         self::assertTrue($this->attempts[0]->priceSnapshot?->available);
 
-        config()->set('estimate-generation.vision.pricing.input_per_million', 'invalid');
+        $this->authorizer->available = false;
         $this->provider()->analyze($this->input());
         self::assertCount(2, $this->attempts);
         self::assertFalse($this->attempts[1]->priceSnapshot?->available);
@@ -427,4 +470,35 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
     {
         return [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]];
     }
+}
+
+final class TestAiAttemptAuthorizer implements AiAttemptAuthorizer
+{
+    public bool $available = true;
+
+    public function authorize(
+        AiOperationContext $context,
+        string $provider,
+        string $model,
+        int $maxInputTokens,
+        int $maxOutputTokens,
+        int $imageCount = 0,
+        int $pageCount = 0,
+    ): AiPriceSnapshot {
+        return AiPriceSnapshot::fromArray($this->available ? [
+            'input_per_million' => '1.25',
+            'cached_input_per_million' => '0.25',
+            'output_per_million' => '5.00',
+            'image_unit' => '0.01',
+            'reasoning_mode' => 'excluded_from_output',
+            'currency' => 'RUB',
+            'source' => 'fixture',
+            'version' => 'vision-2026-07',
+            'effective_at' => '2026-07-11T00:00:00+03:00',
+        ] : []);
+    }
+
+    public function markSent(string $attemptId): void {}
+
+    public function releaseBeforeWire(string $attemptId): void {}
 }
