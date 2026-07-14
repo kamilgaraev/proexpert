@@ -1,7 +1,3 @@
 <x-filament-panels::page>
-    <form wire:submit="save" class="space-y-6">
-        {{ $this->form }}
-
-        <x-filament-panels::form.actions :actions="$this->getFormActions()" />
-    </form>
+    {{ $this->content }}
 </x-filament-panels::page>
