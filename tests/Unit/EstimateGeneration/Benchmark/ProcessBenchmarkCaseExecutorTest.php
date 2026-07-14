@@ -15,15 +15,34 @@ use PHPUnit\Framework\TestCase;
 final class ProcessBenchmarkCaseExecutorTest extends TestCase
 {
     #[Test]
-    public function windows_tree_termination_reports_injected_taskkill_success_and_failure(): void
+    public function windows_taskkill_uses_direct_argv_and_accepts_exit_zero_after_process_stops(): void
     {
-        $runtime = new WindowsProcessTreeRuntime(static fn (int $pid): bool => $pid === 101);
+        $commands = [];
+        $runtime = new WindowsProcessTreeRuntime(static function (array $command, int $timeoutMicroseconds) use (&$commands): ?int {
+            $commands[] = [$command, $timeoutMicroseconds];
+
+            return 0;
+        });
         $probes = 0;
 
         self::assertTrue($runtime->terminatePid(101, static function () use (&$probes): bool {
             return ++$probes < 2;
         }, 50_000));
-        self::assertFalse($runtime->terminatePid(202, static fn (): bool => true, 50_000));
+        self::assertSame(['taskkill', '/PID', '101', '/T', '/F'], $commands[0][0]);
+        self::assertGreaterThan(0, $commands[0][1]);
+        self::assertLessThanOrEqual(50_000, $commands[0][1]);
+    }
+
+    #[Test]
+    public function windows_taskkill_rejects_live_process_nonzero_exit_and_timeout(): void
+    {
+        $live = new WindowsProcessTreeRuntime(static fn (array $command, int $timeoutMicroseconds): ?int => 0);
+        $nonzero = new WindowsProcessTreeRuntime(static fn (array $command, int $timeoutMicroseconds): ?int => 5);
+        $timeout = new WindowsProcessTreeRuntime(static fn (array $command, int $timeoutMicroseconds): ?int => null);
+
+        self::assertFalse($live->terminatePid(101, static fn (): bool => true, 20_000));
+        self::assertFalse($nonzero->terminatePid(101, static fn (): bool => false, 20_000));
+        self::assertFalse($timeout->terminatePid(101, static fn (): bool => false, 20_000));
 
         $source = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Benchmark/ProcessBenchmarkCaseExecutor.php');
         self::assertIsString($source);
@@ -87,7 +106,7 @@ final class ProcessBenchmarkCaseExecutorTest extends TestCase
 
         $elapsed = microtime(true) - $started;
         self::assertGreaterThanOrEqual(0.15, $elapsed);
-        self::assertLessThan(2.5, $elapsed);
+        self::assertLessThan(1.5, $elapsed);
         self::assertSame('technical_failure', $result->status);
         self::assertSame(
             PHP_OS_FAMILY === 'Windows' ? 'worker_process_group_termination_failed' : 'case_timeout',

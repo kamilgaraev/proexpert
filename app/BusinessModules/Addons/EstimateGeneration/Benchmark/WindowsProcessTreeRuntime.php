@@ -10,13 +10,11 @@ use Throwable;
 
 final readonly class WindowsProcessTreeRuntime
 {
-    private const TASKKILL_LAUNCH_TIMEOUT_SECONDS = 1.0;
+    private Closure $commandRunner;
 
-    private Closure $taskkill;
-
-    public function __construct(?Closure $taskkill = null)
+    public function __construct(?Closure $commandRunner = null)
     {
-        $this->taskkill = $taskkill ?? $this->runTaskkill(...);
+        $this->commandRunner = $commandRunner ?? $this->runCommand(...);
     }
 
     public function terminate(Process $process, int $graceMicroseconds): bool
@@ -35,41 +33,66 @@ final readonly class WindowsProcessTreeRuntime
         return $terminated;
     }
 
-    public function terminatePid(int $pid, Closure $isRunning, int $graceMicroseconds): bool
+    public function terminatePid(int $pid, Closure $isRunning, int $budgetMicroseconds): bool
     {
-        if ($pid < 1) {
+        if ($pid < 1 || $budgetMicroseconds < 1) {
             return false;
         }
 
         try {
-            if (! ($this->taskkill)($pid)) {
+            $deadline = hrtime(true) + min(2_000_000, $budgetMicroseconds) * 1_000;
+            $command = ['taskkill', '/PID', (string) $pid, '/T', '/F'];
+            $exitCode = ($this->commandRunner)($command, $this->remainingMicroseconds($deadline));
+            if ($exitCode !== 0) {
                 return false;
             }
 
-            $deadline = hrtime(true) + min(2_000_000, max(1, $graceMicroseconds)) * 1_000;
-            while ($isRunning() && hrtime(true) < $deadline) {
-                usleep(5_000);
+            while (true) {
+                if (! $isRunning()) {
+                    return true;
+                }
+                $remaining = $this->remainingMicroseconds($deadline);
+                if ($remaining < 1) {
+                    return false;
+                }
+                usleep(min(5_000, $remaining));
             }
-
-            return ! $isRunning();
         } catch (Throwable) {
             return false;
         }
     }
 
-    private function runTaskkill(int $pid): bool
+    /**
+     * @param  list<string>  $command
+     */
+    private function runCommand(array $command, int $timeoutMicroseconds): ?int
     {
-        try {
-            $killer = new Process(
-                ['cmd', '/D', '/C', 'start', '', '/B', 'taskkill', '/PID', (string) $pid, '/T', '/F'],
-                timeout: self::TASKKILL_LAUNCH_TIMEOUT_SECONDS,
-            );
-            $killer->disableOutput();
-            $killer->run();
-
-            return $killer->isSuccessful();
-        } catch (Throwable) {
-            return false;
+        if ($timeoutMicroseconds < 1) {
+            return null;
         }
+
+        try {
+            $killer = new Process($command, timeout: null);
+            $killer->disableOutput();
+            $killer->start();
+            $deadline = hrtime(true) + $timeoutMicroseconds * 1_000;
+            while ($killer->isRunning() && hrtime(true) < $deadline) {
+                usleep(min(5_000, $this->remainingMicroseconds($deadline)));
+            }
+            if ($killer->isRunning()) {
+                PendingBenchmarkProcessRegistry::retainUntilKilled($killer);
+
+                return null;
+            }
+
+            return $killer->getExitCode();
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    private function remainingMicroseconds(int $deadline): int
+    {
+        return max(0, (int) floor(($deadline - hrtime(true)) / 1_000));
     }
 }

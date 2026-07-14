@@ -11,7 +11,7 @@ final readonly class ProcessBenchmarkCaseExecutor implements BenchmarkCaseExecut
 {
     private const TERMINATION_GRACE_MICROSECONDS = 100_000;
 
-    private const WINDOWS_TERMINATION_GRACE_MICROSECONDS = 1_000_000;
+    private const WINDOWS_TERMINATION_GRACE_MICROSECONDS = 750_000;
 
     private UnixProcessGroupRuntime $unixRuntime;
 
