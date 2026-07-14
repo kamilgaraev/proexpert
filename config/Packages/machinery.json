@@ -1,0 +1,19 @@
+{
+    "slug": "machinery",
+    "name": "Техника и механизмы",
+    "description": "Эксплуатация техники, заявки, смены, простои и производственные показатели.",
+    "sort_order": 9,
+    "schema_version": 2,
+    "business_outcomes": ["Прозрачная загрузка техники", "Контроль смен и простоев"],
+    "tiers": {
+        "standard": {
+            "label": "Техника и механизмы",
+            "description": "Эксплуатация техники и механизмы.",
+            "price": 7900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": ["budget-estimates", "site-requests", "machinery-operations"],
+            "highlights": ["Заявки на технику", "Сменные рапорты", "Простои"]
+        }
+    }
+}

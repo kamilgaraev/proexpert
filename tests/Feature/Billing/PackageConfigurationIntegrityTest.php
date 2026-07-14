@@ -4,110 +4,66 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Billing;
 
+use App\Services\Modules\PackageCatalogService;
 use Tests\TestCase;
 
 class PackageConfigurationIntegrityTest extends TestCase
 {
-    private const SYSTEM_MODULES = [
-        'organizations',
-        'users',
-        'project-management',
-        'contract-management',
-        'catalog-management',
-        'workflow-management',
-        'act-reporting',
-        'payments',
-        'reports',
-        'dashboard-widgets',
-        'data-filters',
-        'brigades',
+    private const EXPECTED_PACKAGES = [
+        'projects-processes' => 9900,
+        'planning-schedules' => 7900,
+        'estimates-norms' => 12900,
+        'quality-safety' => 9900,
+        'pto-handover' => 11900,
+        'supply-warehouse' => 11900,
+        'finance-contracts' => 12900,
+        'workforce-output' => 9900,
+        'machinery' => 7900,
+        'sales-contractors' => 7900,
     ];
 
     public function refreshDatabase(): void {}
 
-    public function test_package_tiers_reference_existing_modules_and_close_dependencies(): void
+    public function test_catalog_contains_exact_packages_in_stable_order_with_exact_prices(): void
     {
-        $modules = $this->loadModules();
+        $packages = $this->catalog()->allPackages();
 
-        foreach ($this->loadPackages() as $package) {
-            foreach ($package['tiers'] ?? [] as $tier => $tierConfig) {
-                $moduleSlugs = $tierConfig['modules'] ?? [];
+        $this->assertSame(array_keys(self::EXPECTED_PACKAGES), array_column($packages, 'slug'));
+        $this->assertSame(
+            array_values(self::EXPECTED_PACKAGES),
+            array_map(static fn (array $package): int => $package['tiers']['standard']['price'], $packages)
+        );
+        $this->assertSame(103000, array_sum(self::EXPECTED_PACKAGES));
 
-                $this->assertModulesExist($modules, $moduleSlugs, "{$package['slug']}/{$tier}");
-                $this->assertDependenciesClosed($modules, $moduleSlugs, "{$package['slug']}/{$tier}");
-            }
+        foreach ($packages as $index => $package) {
+            $this->assertSame($index + 1, $package['sort_order']);
+            $this->assertNotEmpty($package['description']);
+            $this->assertSame(['standard'], array_keys($package['tiers']));
         }
     }
 
-    public function test_subscription_package_matrix_closes_dependencies(): void
+    public function test_package_directory_contains_only_expected_catalog_files(): void
     {
-        $modules = $this->loadModules();
-        $packages = collect($this->loadPackages())->keyBy('slug')->all();
+        $files = array_map('basename', glob(config_path('Packages/*.json')) ?: []);
+        sort($files);
+        $expectedFiles = array_map(static fn (string $slug): string => "{$slug}.json", array_keys(self::EXPECTED_PACKAGES));
+        sort($expectedFiles);
 
-        $includedPackagesByPlan = [
-            'start' => [
-                ['package_slug' => 'objects-execution', 'tier' => 'base'],
-            ],
-            'business' => [
-                ['package_slug' => 'objects-execution', 'tier' => 'base'],
-                ['package_slug' => 'supply-warehouse', 'tier' => 'base'],
-                ['package_slug' => 'finance-acts', 'tier' => 'base'],
-                ['package_slug' => 'crm', 'tier' => 'base'],
-            ],
-            'profi' => [
-                ['package_slug' => 'objects-execution', 'tier' => 'pro'],
-                ['package_slug' => 'supply-warehouse', 'tier' => 'pro'],
-                ['package_slug' => 'finance-acts', 'tier' => 'pro'],
-                ['package_slug' => 'crm', 'tier' => 'pro'],
-                ['package_slug' => 'estimates-pto', 'tier' => 'pro'],
-                ['package_slug' => 'holding-analytics', 'tier' => 'pro'],
-                ['package_slug' => 'ai-contour', 'tier' => 'pro'],
-            ],
-            'enterprise' => [
-                ['package_slug' => 'objects-execution', 'tier' => 'enterprise'],
-                ['package_slug' => 'finance-acts', 'tier' => 'enterprise'],
-                ['package_slug' => 'supply-warehouse', 'tier' => 'enterprise'],
-                ['package_slug' => 'crm', 'tier' => 'enterprise'],
-                ['package_slug' => 'holding-analytics', 'tier' => 'enterprise'],
-                ['package_slug' => 'estimates-pto', 'tier' => 'enterprise'],
-                ['package_slug' => 'ai-contour', 'tier' => 'enterprise'],
-                ['package_slug' => 'site-quality-handover', 'tier' => 'enterprise'],
-                ['package_slug' => 'construction-safety', 'tier' => 'enterprise'],
-                ['package_slug' => 'machinery-and-labor', 'tier' => 'enterprise'],
-                ['package_slug' => 'workforce-management', 'tier' => 'enterprise'],
-                ['package_slug' => 'change-control', 'tier' => 'enterprise'],
-            ],
-        ];
-
-        foreach ($includedPackagesByPlan as $planSlug => $includedPackages) {
-            $moduleSlugs = [];
-
-            foreach ($includedPackages as $includedPackage) {
-                $package = $packages[$includedPackage['package_slug']] ?? null;
-                $this->assertNotNull($package, "Plan {$planSlug} references missing package {$includedPackage['package_slug']}");
-
-                $tierConfig = $package['tiers'][$includedPackage['tier']] ?? null;
-                $this->assertNotNull(
-                    $tierConfig,
-                    "Plan {$planSlug} references missing tier {$includedPackage['package_slug']}/{$includedPackage['tier']}"
-                );
-
-                $moduleSlugs = array_merge($moduleSlugs, $tierConfig['modules'] ?? []);
-            }
-
-            $moduleSlugs = array_values(array_unique($moduleSlugs));
-
-            $this->assertModulesExist($modules, $moduleSlugs, $planSlug);
-            $this->assertDependenciesClosed($modules, $moduleSlugs, $planSlug);
-        }
+        $this->assertSame($expectedFiles, $files);
     }
 
-    public function test_foundation_contains_completed_work_and_document_core(): void
+    public function test_standard_packages_reference_existing_modules_and_close_dependencies(): void
     {
-        $foundationModules = config('module_packages.foundation_modules');
+        $modules = $this->loadModules();
+        $foundationModules = $this->catalog()->foundationModules();
 
-        foreach (['workflow-management', 'act-reporting', 'payments', 'reports'] as $moduleSlug) {
-            $this->assertContains($moduleSlug, $foundationModules);
+        foreach ($this->catalog()->allPackages() as $package) {
+            $moduleSlugs = $package['tiers']['standard']['modules'];
+
+            $this->assertNotEmpty($moduleSlugs, "{$package['slug']} must contain commercial modules");
+            $this->assertSame([], array_values(array_intersect($foundationModules, $moduleSlugs)));
+            $this->assertModulesExist($modules, $moduleSlugs, $package['slug']);
+            $this->assertDependenciesClosed($modules, $moduleSlugs, $foundationModules, $package['slug']);
         }
     }
 
@@ -132,12 +88,9 @@ class PackageConfigurationIntegrityTest extends TestCase
     /**
      * @return array<int, array<string, mixed>>
      */
-    private function loadPackages(): array
+    private function catalog(): PackageCatalogService
     {
-        return array_values(array_filter(array_map(
-            static fn (string $filePath): ?array => json_decode((string) file_get_contents($filePath), true),
-            glob(config_path('Packages/*.json')) ?: []
-        )));
+        return new PackageCatalogService();
     }
 
     /**
@@ -155,16 +108,17 @@ class PackageConfigurationIntegrityTest extends TestCase
      * @param array<string, array<string, mixed>> $modules
      * @param array<int, string> $moduleSlugs
      */
-    private function assertDependenciesClosed(array $modules, array $moduleSlugs, string $context): void
+    private function assertDependenciesClosed(
+        array $modules,
+        array $moduleSlugs,
+        array $foundationModules,
+        string $context
+    ): void
     {
-        $moduleSet = array_fill_keys($moduleSlugs, true);
+        $moduleSet = array_fill_keys(array_merge($foundationModules, $moduleSlugs), true);
 
         foreach ($moduleSlugs as $moduleSlug) {
             foreach ($modules[$moduleSlug]['dependencies'] ?? [] as $dependencySlug) {
-                if (in_array($dependencySlug, self::SYSTEM_MODULES, true)) {
-                    continue;
-                }
-
                 $this->assertArrayHasKey(
                     $dependencySlug,
                     $moduleSet,

@@ -20,11 +20,11 @@ class PackageCatalogValidatorTest extends TestCase
         $this->basePath = dirname(__DIR__, 3);
     }
 
-    public function test_package_catalog_exposes_v2_contract_for_all_packages(): void
+    public function test_package_catalog_exposes_single_standard_commercial_variant(): void
     {
         $packages = $this->catalog()->allPackages();
 
-        $this->assertCount(12, $packages);
+        $this->assertCount(10, $packages);
 
         foreach ($packages as $package) {
             $this->assertSame(2, $package['schema_version']);
@@ -33,11 +33,11 @@ class PackageCatalogValidatorTest extends TestCase
             $this->assertArrayHasKey('recommended_addons', $package);
             $this->assertArrayHasKey('business_outcomes', $package);
             $this->assertArrayHasKey('capabilities', $package);
+            $this->assertSame(['standard'], array_keys($package['tiers']));
 
-            foreach ($package['tiers'] as $tier) {
-                $this->assertNotEmpty($tier['included_modules']);
-                $this->assertSame($tier['modules'], $tier['included_modules']);
-            }
+            $standard = $package['tiers']['standard'];
+            $this->assertNotEmpty($standard['included_modules']);
+            $this->assertSame($standard['modules'], $standard['included_modules']);
         }
     }
 
@@ -46,19 +46,6 @@ class PackageCatalogValidatorTest extends TestCase
         $result = $this->validator()->validate();
 
         $this->assertSame([], $result['errors']);
-    }
-
-    public function test_one_c_basic_exchange_is_included_in_every_package_tier(): void
-    {
-        foreach ($this->catalog()->allPackages() as $package) {
-            foreach ($package['tiers'] as $tierKey => $tier) {
-                $this->assertContains(
-                    'one-c-basic-exchange',
-                    $tier['included_modules'],
-                    "{$package['slug']}/{$tierKey} must include 1C basic exchange"
-                );
-            }
-        }
     }
 
     public function test_all_module_development_statuses_are_valid_enum_values(): void
@@ -96,7 +83,7 @@ class PackageCatalogValidatorTest extends TestCase
             [[
                 'slug' => 'broken-package',
                 'tiers' => [
-                    'base' => [
+                    'standard' => [
                         'modules' => ['missing-module'],
                     ],
                 ],
@@ -118,7 +105,7 @@ class PackageCatalogValidatorTest extends TestCase
             [[
                 'slug' => 'broken-package',
                 'tiers' => [
-                    'base' => [
+                    'standard' => [
                         'modules' => ['child-module'],
                     ],
                 ],
@@ -150,7 +137,7 @@ class PackageCatalogValidatorTest extends TestCase
             [[
                 'slug' => 'empty-package',
                 'tiers' => [
-                    'base' => [
+                    'standard' => [
                         'modules' => [],
                     ],
                 ],

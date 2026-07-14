@@ -1,0 +1,19 @@
+{
+    "slug": "estimates-norms",
+    "name": "Сметы и нормы",
+    "description": "Сметы, расценки, нормы и связанные расчёты для строительных проектов.",
+    "sort_order": 3,
+    "schema_version": 2,
+    "business_outcomes": ["Единая сметно-нормативная база", "Контролируемые расчёты стоимости"],
+    "tiers": {
+        "standard": {
+            "label": "Сметы и нормы",
+            "description": "Сметы, расценки, нормы и связанные расчёты.",
+            "price": 12900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": ["budget-estimates", "rate-management"],
+            "highlights": ["Сметы", "Расценки и нормы"]
+        }
+    }
+}

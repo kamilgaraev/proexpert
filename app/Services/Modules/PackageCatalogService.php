@@ -8,7 +8,7 @@ use RuntimeException;
 
 class PackageCatalogService
 {
-    private const TIER_ORDER = ['base', 'pro', 'enterprise'];
+    private const TIER_ORDER = ['standard'];
 
     private ?array $packages = null;
     private ?array $modules = null;

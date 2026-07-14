@@ -1,0 +1,19 @@
+{
+    "slug": "planning-schedules",
+    "name": "Графики и планирование",
+    "description": "Календарное и оперативное планирование работ по объектам.",
+    "sort_order": 2,
+    "schema_version": 2,
+    "business_outcomes": ["Управляемые сроки и последовательность работ"],
+    "tiers": {
+        "standard": {
+            "label": "Графики и планирование",
+            "description": "Календарное и оперативное планирование.",
+            "price": 7900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": ["schedule-management"],
+            "highlights": ["Календарные графики", "Оперативное планирование"]
+        }
+    }
+}

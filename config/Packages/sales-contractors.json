@@ -1,0 +1,19 @@
+{
+    "slug": "sales-contractors",
+    "name": "Продажи и подрядчики",
+    "description": "CRM, коммерческие предложения и совместная работа с подрядчиками.",
+    "sort_order": 10,
+    "schema_version": 2,
+    "business_outcomes": ["Единая воронка продаж", "Управляемая работа с подрядчиками"],
+    "tiers": {
+        "standard": {
+            "label": "Продажи и подрядчики",
+            "description": "CRM и работа с подрядчиками.",
+            "price": 7900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": ["crm", "commercial-proposals", "contractor-portal"],
+            "highlights": ["CRM", "Коммерческие предложения", "Портал подрядчиков"]
+        }
+    }
+}
