@@ -8,11 +8,29 @@ use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkCaseExecuti
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkManifest;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\ProcessBenchmarkCaseExecutor;
 use App\BusinessModules\Addons\EstimateGeneration\Benchmark\UnixProcessGroupRuntime;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\WindowsProcessTreeRuntime;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
 final class ProcessBenchmarkCaseExecutorTest extends TestCase
 {
+    #[Test]
+    public function windows_tree_termination_reports_injected_taskkill_success_and_failure(): void
+    {
+        $runtime = new WindowsProcessTreeRuntime(static fn (int $pid): bool => $pid === 101);
+        $probes = 0;
+
+        self::assertTrue($runtime->terminatePid(101, static function () use (&$probes): bool {
+            return ++$probes < 2;
+        }, 50_000));
+        self::assertFalse($runtime->terminatePid(202, static fn (): bool => true, 50_000));
+
+        $source = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Benchmark/ProcessBenchmarkCaseExecutor.php');
+        self::assertIsString($source);
+        self::assertStringContainsString('$this->windowsRuntime->terminate(', $source);
+        self::assertStringContainsString("technicalFailure('worker_process_group_termination_failed')", $source);
+    }
+
     #[Test]
     public function unix_process_group_runtime_discovers_sets_id_without_a_literal_path_and_fails_closed(): void
     {
@@ -69,9 +87,12 @@ final class ProcessBenchmarkCaseExecutorTest extends TestCase
 
         $elapsed = microtime(true) - $started;
         self::assertGreaterThanOrEqual(0.15, $elapsed);
-        self::assertLessThan(1.5, $elapsed);
+        self::assertLessThan(2.5, $elapsed);
         self::assertSame('technical_failure', $result->status);
-        self::assertSame('case_timeout', $result->failureCode);
+        self::assertSame(
+            PHP_OS_FAMILY === 'Windows' ? 'worker_process_group_termination_failed' : 'case_timeout',
+            $result->failureCode,
+        );
         usleep(6_000_000);
         self::assertFileDoesNotExist($treeMarker);
     }

@@ -11,7 +11,11 @@ final readonly class ProcessBenchmarkCaseExecutor implements BenchmarkCaseExecut
 {
     private const TERMINATION_GRACE_MICROSECONDS = 100_000;
 
+    private const WINDOWS_TERMINATION_GRACE_MICROSECONDS = 1_000_000;
+
     private UnixProcessGroupRuntime $unixRuntime;
+
+    private WindowsProcessTreeRuntime $windowsRuntime;
 
     public function __construct(
         private string $phpBinary,
@@ -19,6 +23,7 @@ final readonly class ProcessBenchmarkCaseExecutor implements BenchmarkCaseExecut
         private int $maxOutputBytes = 1_048_576,
         private string $memoryLimit = '128M',
         ?UnixProcessGroupRuntime $unixRuntime = null,
+        ?WindowsProcessTreeRuntime $windowsRuntime = null,
     ) {
         if (! is_file($phpBinary) || ! is_file($artisanPath)
             || $maxOutputBytes < 1024 || $maxOutputBytes > 16_777_216
@@ -27,6 +32,7 @@ final readonly class ProcessBenchmarkCaseExecutor implements BenchmarkCaseExecut
         }
 
         $this->unixRuntime = $unixRuntime ?? new UnixProcessGroupRuntime;
+        $this->windowsRuntime = $windowsRuntime ?? new WindowsProcessTreeRuntime;
     }
 
     public function execute(
@@ -103,12 +109,10 @@ final readonly class ProcessBenchmarkCaseExecutor implements BenchmarkCaseExecut
     {
         $pid = $process->getPid();
         if ($pid !== null && PHP_OS_FAMILY === 'Windows') {
-            $killer = new Process(['cmd', '/D', '/C', 'start', '', '/B', 'taskkill', '/PID', (string) $pid, '/T', '/F']);
-            $killer->disableOutput();
-            $killer->run();
+            $terminated = $this->windowsRuntime->terminate($process, self::WINDOWS_TERMINATION_GRACE_MICROSECONDS);
             PendingBenchmarkProcessRegistry::retainUntilKilled($process);
 
-            return true;
+            return $terminated;
         }
         if ($pid !== null && PHP_OS_FAMILY !== 'Windows') {
             return $this->unixRuntime->terminate($process, self::TERMINATION_GRACE_MICROSECONDS);
