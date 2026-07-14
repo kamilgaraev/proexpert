@@ -310,7 +310,6 @@ class CommercialWebhookServiceTest extends TestCase
     {
         return [
             'id' => [['id' => 'other-payment-id']],
-            'status' => [['status' => 'canceled', 'paid' => false]],
             'paid' => [['paid' => false]],
             'test' => [['test' => false]],
             'amount' => [['amountMinor' => 790001]],
@@ -318,6 +317,21 @@ class CommercialWebhookServiceTest extends TestCase
             'order metadata' => [['metadata' => ['order_id' => 'other-order', 'organization_id' => 1]]],
             'organization metadata' => [['metadata' => ['order_id' => '11111111-1111-4111-8111-111111111111', 'organization_id' => 999]]],
         ];
+    }
+
+    public function test_authoritative_terminal_status_overrides_external_event_name(): void
+    {
+        $this->gateway->payment = $this->paymentResult(status: 'canceled', paid: false);
+
+        $result = app(CommercialWebhookService::class)->process(
+            $this->notification('payment.succeeded', 'payment-id', 'succeeded'),
+            '185.71.76.1',
+        );
+
+        $this->assertSame('processed', $result);
+        $this->assertSame('canceled', $this->order->fresh()->status->value);
+        $this->assertSame('canceled', $this->payment->fresh()->provider_status);
+        $this->assertSame(1, Notification::query()->count());
     }
 
     public function test_full_suite_activates_exact_catalog_contour_and_preserves_unrelated_access(): void
@@ -693,6 +707,91 @@ class CommercialWebhookServiceTest extends TestCase
             'reconciliation_required' => false,
         ]);
         $this->assertSame(10000, $this->payment->fresh()->refunded_amount_minor);
+        $this->assertDatabaseCount('commercial_webhook_events', 1);
+    }
+
+    public function test_reconciliation_recovers_lost_purchase_success_once(): void
+    {
+        $this->payment->forceFill(['reconciliation_required' => true])->save();
+        OrganizationPackageSubscription::create([
+            'organization_id' => $this->organization->id,
+            'commercial_account_id' => $this->account->id,
+            'package_slug' => 'machinery',
+            'status' => 'trialing',
+            'access_source' => 'trial',
+            'price_paid' => 0,
+            'trial_started_at' => now(),
+            'trial_ends_at' => now()->addDays(3),
+        ]);
+        $this->gateway->payment = $this->paymentResult(saved: true);
+
+        $first = app(CommercialReconciliationService::class)->run(2);
+        $second = app(CommercialReconciliationService::class)->run(2);
+
+        $this->assertSame(1, $first['payments']);
+        $this->assertSame(0, $second['processed']);
+        $this->assertSame(1, $this->gateway->paymentLookups);
+        $this->assertSame('paid', $this->order->fresh()->status->value);
+        $this->assertSame('succeeded', $this->payment->fresh()->provider_status);
+        $this->assertFalse($this->payment->fresh()->reconciliation_required);
+        $this->assertSame('active', $this->account->fresh()->status->value);
+        $this->assertSame('active', OrganizationPackageSubscription::query()->sole()->status->value);
+        $this->assertSame('paid_package', OrganizationPackageSubscription::query()->sole()->access_source->value);
+        $this->assertSame(1, Notification::query()->count());
+        $this->assertDatabaseCount('commercial_webhook_events', 1);
+    }
+
+    public function test_reconciliation_recovers_lost_purchase_cancellation_once(): void
+    {
+        $this->payment->forceFill(['reconciliation_required' => true])->save();
+        $this->gateway->payment = $this->paymentResult(status: 'canceled', paid: false);
+
+        $first = app(CommercialReconciliationService::class)->run(2);
+        $second = app(CommercialReconciliationService::class)->run(2);
+
+        $this->assertSame(1, $first['payments']);
+        $this->assertSame(0, $second['processed']);
+        $this->assertSame(1, $this->gateway->paymentLookups);
+        $this->assertSame('canceled', $this->order->fresh()->status->value);
+        $this->assertSame('canceled', $this->payment->fresh()->provider_status);
+        $this->assertFalse($this->payment->fresh()->reconciliation_required);
+        $this->assertSame(1, Notification::query()->count());
+        $this->assertDatabaseCount('commercial_webhook_events', 1);
+    }
+
+    public function test_reconciliation_recovers_lost_renewal_cancellation_and_starts_grace_once(): void
+    {
+        [$cycle] = $this->configureRenewalCycle(now());
+        $cycle->forceFill(['status' => 'due'])->save();
+        $this->account->forceFill([
+            'status' => 'active',
+            'grace_started_at' => null,
+            'grace_ends_at' => null,
+        ])->save();
+        OrganizationPackageSubscription::query()->update(['status' => 'active']);
+        $this->payment->forceFill(['reconciliation_required' => true])->save();
+        $this->gateway->payment = $this->paymentResult(
+            status: 'canceled',
+            paid: false,
+            cancellationReason: 'insufficient_funds',
+        );
+
+        $first = app(CommercialReconciliationService::class)->run(2);
+        $second = app(CommercialReconciliationService::class)->run(2);
+
+        $this->assertSame(1, $first['payments']);
+        $this->assertSame(0, $second['processed']);
+        $this->assertSame(1, $this->gateway->paymentLookups);
+        $this->assertSame('pending_payment', $this->order->fresh()->status->value);
+        $this->assertSame('canceled', $this->payment->fresh()->provider_status);
+        $this->assertSame('retryable', $this->payment->fresh()->failure_category);
+        $this->assertFalse($this->payment->fresh()->reconciliation_required);
+        $this->assertSame('grace', $cycle->fresh()->status);
+        $this->assertNotNull($cycle->fresh()->next_attempt_at);
+        $this->assertSame('grace', $this->account->fresh()->status->value);
+        $this->assertTrue($this->account->fresh()->auto_renew_enabled);
+        $this->assertSame('grace', OrganizationPackageSubscription::query()->sole()->status->value);
+        $this->assertSame(2, Notification::query()->count());
         $this->assertDatabaseCount('commercial_webhook_events', 1);
     }
 

@@ -85,19 +85,14 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                 return $this->record($notification, $sourceIp, $fingerprint, $authoritative->status, 'mismatch');
             }
 
-            $expectedStatus = match ($notification->event) {
-                'payment.succeeded' => 'succeeded',
-                'payment.waiting_for_capture' => 'waiting_for_capture',
-                'payment.canceled' => 'canceled',
-                'payment.reconciliation' => $authoritative->status,
-                default => '',
+            $authoritativeEvent = match ($authoritative->status) {
+                'succeeded' => 'payment.succeeded',
+                'waiting_for_capture' => 'payment.waiting_for_capture',
+                'canceled' => 'payment.canceled',
+                default => 'payment.status_updated',
             };
 
-            if ($authoritative->status !== $expectedStatus) {
-                return $this->record($notification, $sourceIp, $fingerprint, $authoritative->status, 'stale');
-            }
-
-            if ($notification->event === 'payment.succeeded') {
+            if ($authoritativeEvent === 'payment.succeeded') {
                 if (! $authoritative->paid) {
                     return $this->record($notification, $sourceIp, $fingerprint, $authoritative->status, 'mismatch');
                 }
@@ -153,7 +148,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                 'reconciliation_required' => ! in_array($authoritative->status, ['succeeded', 'canceled'], true),
             ])->save();
 
-            if ($notification->event === 'payment.canceled'
+            if ($authoritativeEvent === 'payment.canceled'
                 && $order->status->value === 'pending_payment') {
                 if ($order->kind === 'renewal') {
                     $wasInGrace = $account->status->value === 'grace';
