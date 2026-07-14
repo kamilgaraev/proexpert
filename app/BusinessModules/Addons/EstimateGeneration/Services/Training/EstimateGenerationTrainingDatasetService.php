@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Services\Training;
 
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkDatasetType;
+use App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkManifest;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationTrainingDataset;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationTrainingExample;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationTrainingFile;
@@ -63,6 +65,35 @@ final class EstimateGenerationTrainingDatasetService
                 'dataset_type' => [trans_message('estimate_generation.training_dataset_type_invalid')],
             ]);
         }
+        $manifestFile = $data['benchmark_manifest_file'] ?? null;
+        if (! $manifestFile instanceof TemporaryUploadedFile) {
+            throw ValidationException::withMessages([
+                'benchmark_manifest_file' => [trans_message('estimate_generation.training_benchmark_manifest_required')],
+            ]);
+        }
+        $manifestPath = $manifestFile->getRealPath();
+        $referencePath = $referenceFile->getRealPath();
+        if ($manifestPath === false || $referencePath === false || ! is_file($manifestPath) || ! is_file($referencePath)
+            || ($manifestJson = file_get_contents($manifestPath)) === false || $manifestJson === '' || strlen($manifestJson) > 2_000_000) {
+            throw ValidationException::withMessages([
+                'benchmark_manifest_file' => [trans_message('estimate_generation.training_benchmark_manifest_invalid')],
+            ]);
+        }
+        try {
+            $manifestPayload = json_decode($manifestJson, true, 64, JSON_THROW_ON_ERROR);
+            if (! is_array($manifestPayload)) {
+                throw new \DomainException('benchmark_manifest_invalid');
+            }
+            $manifestSha256 = hash('sha256', $manifestJson);
+            $benchmarkManifest = BenchmarkManifest::fromArray($manifestPayload, dirname($manifestPath), $manifestSha256, false);
+            if ($benchmarkManifest->casesFor(BenchmarkDatasetType::from($datasetType)) === []) {
+                throw new \DomainException('benchmark_manifest_dataset_empty');
+            }
+        } catch (\Throwable) {
+            throw ValidationException::withMessages([
+                'benchmark_manifest_file' => [trans_message('estimate_generation.training_benchmark_manifest_invalid')],
+            ]);
+        }
 
         if ($projectId !== null) {
             $project = Project::query()
@@ -101,8 +132,26 @@ final class EstimateGenerationTrainingDatasetService
                 'accepted_rows' => 0,
                 'skipped_rows' => 0,
                 'learning_examples_created' => 0,
+                'benchmark_manifest' => [
+                    'locator' => '',
+                    'sha256' => $manifestSha256,
+                    'dataset_content_hash' => 'sha256:'.hash('sha256', (hash_file('sha256', $referencePath) ?: '').':'.$manifestSha256),
+                ],
             ],
         ]);
+
+        $manifestStoragePath = OrganizationStoragePath::forOrganization(
+            (int) $organization->id,
+            "estimate-generation/benchmarks/{$datasetType}/{$dataset->uuid}/{$manifestSha256}.json",
+        );
+        $this->fileService->disk($organization)->put($manifestStoragePath, $manifestJson, 'private');
+        $dataset->forceFill(['stats' => [
+            ...($dataset->stats ?? []),
+            'benchmark_manifest' => [
+                ...($dataset->stats['benchmark_manifest'] ?? []),
+                'locator' => 's3://'.$manifestStoragePath,
+            ],
+        ]])->save();
 
         $this->storeUploadedFile($dataset, $organization, $referenceFile, EstimateGenerationTrainingFile::ROLE_REFERENCE_ESTIMATE);
         $this->storeUploadedFiles($dataset, $organization, $data['project_documents'] ?? [], EstimateGenerationTrainingFile::ROLE_PROJECT_DOCUMENT);
@@ -213,7 +262,7 @@ final class EstimateGenerationTrainingDatasetService
             $this->heartbeat((int) $dataset->id, $processingToken);
             $tempPath = $this->downloadToTemp($referenceFile);
             $this->heartbeat((int) $dataset->id, $processingToken);
-            $stats = $this->parseAndRecord($dataset, $referenceFile, $tempPath, $processingToken);
+            $stats = [...($dataset->stats ?? []), ...$this->parseAndRecord($dataset, $referenceFile, $tempPath, $processingToken)];
 
             $affected = EstimateGenerationTrainingDataset::query()->whereKey($dataset->id)
                 ->where('processing_token', $processingToken)->where('processing_lease_expires_at', '>', now())->update([

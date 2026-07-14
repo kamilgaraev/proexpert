@@ -131,6 +131,12 @@ class TrainingDatasetResource extends Resource
                         ->storeFiles(false)
                         ->required()
                         ->columnSpanFull(),
+                    Forms\Components\FileUpload::make('benchmark_manifest_file')
+                        ->label(trans_message('estimate_generation.training_benchmark_manifest_file'))
+                        ->acceptedFileTypes(['application/json', 'text/json'])
+                        ->storeFiles(false)
+                        ->required()
+                        ->columnSpanFull(),
                     Forms\Components\FileUpload::make('project_documents')
                         ->label(trans_message('estimate_generation.training_project_documents'))
                         ->multiple()

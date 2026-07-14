@@ -45,6 +45,20 @@ final class EstimateGenerationTrainingResourceTest extends TestCase
         self::assertStringContainsString('CREATE TRIGGER eg_training_dataset_immutable', $source);
     }
 
+    #[Test]
+    public function dataset_creation_persists_a_tenant_bound_immutable_benchmark_manifest(): void
+    {
+        $resource = file_get_contents((new ReflectionClass(TrainingDatasetResource::class))->getFileName());
+        $service = file_get_contents((new ReflectionClass(\App\BusinessModules\Addons\EstimateGeneration\Services\Training\EstimateGenerationTrainingDatasetService::class))->getFileName());
+        self::assertIsString($resource);
+        self::assertStringContainsString("FileUpload::make('benchmark_manifest_file')", $resource);
+        self::assertIsString($service);
+        self::assertStringContainsString('BenchmarkManifest::fromArray', $service);
+        self::assertStringContainsString("'benchmark_manifest' =>", $service);
+        self::assertStringContainsString('estimate-generation/benchmarks/{$datasetType}', $service);
+        self::assertStringContainsString("'dataset_content_hash'", $service);
+    }
+
     public function test_old_resource_is_deleted_and_only_new_namespace_is_registered(): void
     {
         $root = dirname(__DIR__, 4);
