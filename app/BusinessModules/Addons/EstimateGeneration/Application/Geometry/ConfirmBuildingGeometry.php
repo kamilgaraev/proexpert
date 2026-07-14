@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Application\Geometry;
 
+use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\SessionStateStore;
 use App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\StaleEstimateGenerationState;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationBuildingModel;
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
@@ -22,6 +23,7 @@ final class ConfirmBuildingGeometry
         private GeometryDependencyInvalidator $invalidator,
         private GeometryConfirmationFaultInjector $faultInjector,
         private AssemblePersistedVectorGeometry $sourceAssembler,
+        private SessionStateStore $stateStore,
     ) {}
 
     /** @return array<string, mixed> */
@@ -105,7 +107,12 @@ final class ConfirmBuildingGeometry
             ], $normalized->evidenceIds));
             $invalidation = $this->invalidator->invalidate($command->sessionId, $command->expectedInputVersion, $command->expectedStateVersion + 1);
             $this->faultInjector->afterInvalidation();
-            $session->forceFill(['state_version' => $command->expectedStateVersion + 1, 'draft_payload' => null])->save();
+            $session = $this->stateStore->compareAndSet(
+                $session,
+                $command->expectedStateVersion,
+                $session->status,
+                ['draft_payload' => null],
+            );
             $intentId = $this->outbox->append(new GeometryRegenerationIntent(
                 $command->organizationId, $command->projectId, $command->sessionId, (int) $session->state_version,
                 $command->expectedInputVersion, $newInputVersion, $normalized->contentVersion(), (string) Str::uuid(),

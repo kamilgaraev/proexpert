@@ -67,6 +67,17 @@ final class EstimateGenerationMutationAtomicityTest extends TestCase
         self::assertSame(2, substr_count($dispatcher, '->afterCommit()'));
     }
 
+    #[Test]
+    public function geometry_confirmation_updates_session_only_through_the_authoritative_state_store(): void
+    {
+        $source = $this->source('Application/Geometry/ConfirmBuildingGeometry.php');
+
+        self::assertStringContainsString('SessionStateStore $stateStore', $source);
+        self::assertStringContainsString('$this->stateStore->compareAndSet(', $source);
+        self::assertStringNotContainsString("\$session->forceFill(['state_version'", $source);
+        self::assertLessThan(strpos($source, '$this->outbox->append('), strpos($source, '$this->stateStore->compareAndSet('));
+    }
+
     private function source(string $relative): string
     {
         $source = file_get_contents(dirname(__DIR__, 2).'/app/BusinessModules/Addons/EstimateGeneration/'.$relative);
