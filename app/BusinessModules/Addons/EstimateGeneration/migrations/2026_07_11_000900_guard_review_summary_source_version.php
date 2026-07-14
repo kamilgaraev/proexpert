@@ -28,6 +28,7 @@ BEGIN
            OR (NEW.draft_payload->'local_estimates' IS DISTINCT FROM OLD.draft_payload->'local_estimates' AND content_version = COALESCE(OLD.draft_payload #>> '{quality_summary,content_version}', ''))
            OR content_version !~ '^sha256:[0-9a-f]{64}$'
            OR source_version IS DISTINCT FROM content_version
+           OR input_version IS NULL
            OR input_version !~ '^sha256:[0-9a-f]{64}$'
            OR snapshot_input_version IS DISTINCT FROM input_version
            OR classifier_version <> 2 THEN
