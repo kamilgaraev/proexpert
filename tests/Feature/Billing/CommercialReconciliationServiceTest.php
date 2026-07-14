@@ -48,7 +48,7 @@ final class CommercialReconciliationServiceTest extends TestCase
         $result = app(CommercialReconciliationService::class)->run(10);
 
         $this->assertSame(2, $result['processed']);
-        $this->assertSame(['payment.succeeded', 'payment.canceled'], $this->processor->events);
+        $this->assertSame(['payment.reconciliation', 'payment.reconciliation'], $this->processor->events);
     }
 
     public function test_reconciles_succeeded_refund_and_closes_canceled_refund_idempotently(): void
@@ -57,6 +57,7 @@ final class CommercialReconciliationServiceTest extends TestCase
         $this->refund('refund-canceled');
         $this->gateway->refunds['refund-success'] = new RefundGatewayResult('refund-success', 'payment-1', 'succeeded', 1000, 'RUB', ['id' => 'refund-success']);
         $this->gateway->refunds['refund-canceled'] = new RefundGatewayResult('refund-canceled', 'payment-1', 'canceled', 1000, 'RUB', ['id' => 'refund-canceled']);
+        $this->gateway->payments['payment-1'] = $this->paymentResult('payment-1', 'succeeded', true);
         $service = app(CommercialReconciliationService::class);
 
         $first = $service->run(10);
@@ -64,8 +65,25 @@ final class CommercialReconciliationServiceTest extends TestCase
 
         $this->assertSame(2, $first['processed']);
         $this->assertSame(0, $second['processed']);
-        $this->assertContains('refund.succeeded', $this->processor->events);
+        $this->assertContains('refund.reconciliation', $this->processor->events);
         $this->assertDatabaseHas('commercial_refunds', ['provider_refund_id' => 'refund-canceled', 'provider_status' => 'canceled', 'reconciliation_required' => false]);
+    }
+
+    public function test_payment_backlog_cannot_starve_refund_candidates(): void
+    {
+        foreach (range(1, 4) as $number) {
+            $id = 'payment-'.$number;
+            $this->payment($id);
+            $this->gateway->payments[$id] = $this->paymentResult($id, 'pending', false);
+        }
+        $this->refund('refund-priority');
+        $this->gateway->refunds['refund-priority'] = new RefundGatewayResult('refund-priority', 'payment-1', 'canceled', 1000, 'RUB', ['id' => 'refund-priority']);
+
+        $result = app(CommercialReconciliationService::class)->run(2);
+
+        $this->assertSame(1, $result['payments']);
+        $this->assertSame(1, $result['refunds']);
+        $this->assertContains('refund.reconciliation', $this->processor->events);
     }
 
     private function payment(string $providerId): void
@@ -189,5 +207,15 @@ final class ReconciliationProcessorFake implements CommercialWebhookProcessor
         }
 
         return 'processed';
+    }
+
+    public function processAuthoritativePayment(YooKassaWebhookNotification $notification, string $sourceIp, PaymentGatewayResult $payment): string
+    {
+        return $this->process($notification, $sourceIp);
+    }
+
+    public function processAuthoritativeRefund(YooKassaWebhookNotification $notification, string $sourceIp, RefundGatewayResult $refund, PaymentGatewayResult $payment): string
+    {
+        return $this->process($notification, $sourceIp);
     }
 }

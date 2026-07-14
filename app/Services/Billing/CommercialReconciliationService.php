@@ -10,7 +10,6 @@ use App\Interfaces\Billing\PaymentGatewayInterface;
 use App\Models\CommercialPayment;
 use App\Models\CommercialRefund;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
 use Throwable;
 
 final class CommercialReconciliationService
@@ -23,7 +22,9 @@ final class CommercialReconciliationService
     public function run(int $limit = 100): array
     {
         $limit = max(1, min($limit, 500));
-        $paymentIds = CommercialPayment::query()
+        $refundLimit = max(1, intdiv($limit, 2));
+        $paymentLimit = max(0, $limit - $refundLimit);
+        $paymentIds = $paymentLimit === 0 ? collect() : CommercialPayment::query()
             ->whereNotNull('provider_payment_id')
             ->where(function ($query): void {
                 $query->whereIn('provider_status', ['pending', 'waiting_for_capture', 'unknown'])
@@ -31,10 +32,9 @@ final class CommercialReconciliationService
             })
             ->orderByRaw('COALESCE(last_reconciled_at, created_at)')
             ->orderBy('id')
-            ->limit($limit)
+            ->limit($paymentLimit)
             ->pluck('id');
-        $remaining = max(0, $limit - $paymentIds->count());
-        $refundIds = $remaining === 0 ? collect() : CommercialRefund::query()
+        $refundIds = CommercialRefund::query()
             ->whereNotNull('provider_refund_id')
             ->where(function ($query): void {
                 $query->whereIn('provider_status', ['created', 'pending', 'unknown'])
@@ -42,7 +42,7 @@ final class CommercialReconciliationService
             })
             ->orderByRaw('COALESCE(last_reconciled_at, created_at)')
             ->orderBy('id')
-            ->limit($remaining)
+            ->limit($refundLimit)
             ->pluck('id');
         $counts = ['processed' => 0, 'failed' => 0, 'payments' => 0, 'refunds' => 0];
 
@@ -73,62 +73,52 @@ final class CommercialReconciliationService
 
     private function payment(int $id): bool
     {
-        $payment = DB::transaction(fn (): ?CommercialPayment => CommercialPayment::query()
-            ->whereKey($id)->whereNotNull('provider_payment_id')->lockForUpdate()->first(), 3);
+        $payment = CommercialPayment::query()->whereKey($id)->whereNotNull('provider_payment_id')->first();
         if ($payment === null) {
             return false;
         }
         $result = $this->gateway->getPayment((string) $payment->provider_payment_id);
-        $event = match ($result->status) {
-            'succeeded' => 'payment.succeeded',
-            'canceled' => 'payment.canceled',
-            'waiting_for_capture' => 'payment.waiting_for_capture',
-            default => null,
-        };
-        if ($event !== null) {
-            $this->webhookProcessor->process($this->notification($event, $result->id, $result->status), '127.0.0.1');
-        }
-        CommercialPayment::query()->whereKey($id)->update([
-            'provider_status' => $result->status,
-            'safe_response' => $result->safeResponse,
-            'last_reconciled_at' => now(),
-            'reconciliation_required' => ! in_array($result->status, ['succeeded', 'canceled'], true),
-        ]);
+        $this->webhookProcessor->processAuthoritativePayment(
+            $this->notification('payment.reconciliation', $result->id, $result->status),
+            '127.0.0.1',
+            $result,
+        );
 
         return true;
     }
 
     private function refund(int $id): bool
     {
-        $refund = DB::transaction(fn (): ?CommercialRefund => CommercialRefund::query()
-            ->whereKey($id)->whereNotNull('provider_refund_id')->lockForUpdate()->first(), 3);
+        $refund = CommercialRefund::query()->whereKey($id)->whereNotNull('provider_refund_id')->first();
         if ($refund === null) {
             return false;
         }
         $result = $this->gateway->getRefund((string) $refund->provider_refund_id);
-        if ($result->status === 'succeeded') {
-            $this->webhookProcessor->process(
-                $this->notification('refund.succeeded', $result->id, $result->status),
-                '127.0.0.1',
-            );
-        }
-        CommercialRefund::query()->whereKey($id)->update([
-            'provider_status' => $result->status,
-            'safe_response' => $result->safeResponse,
-            'last_reconciled_at' => now(),
-            'reconciliation_required' => ! in_array($result->status, ['succeeded', 'canceled'], true),
-        ]);
+        $payment = $this->gateway->getPayment($result->paymentId);
+        $this->webhookProcessor->processAuthoritativeRefund(
+            $this->notification('refund.reconciliation', $result->id, $result->status),
+            '127.0.0.1',
+            $result,
+            $payment,
+        );
 
         return true;
     }
 
     private function notification(string $event, string $id, string $status): YooKassaWebhookNotification
     {
+        $runId = bin2hex(random_bytes(16));
+
         return new YooKassaWebhookNotification(
             $event,
             $id,
             $status,
-            ['type' => 'reconciliation', 'event' => $event, 'object' => ['id' => $id, 'status' => $status]],
+            [
+                'type' => 'reconciliation',
+                'run_id' => $runId,
+                'event' => $event,
+                'object' => ['id' => $id, 'status' => $status],
+            ],
         );
     }
 }

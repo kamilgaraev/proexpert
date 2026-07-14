@@ -6,6 +6,7 @@ namespace Tests\Feature\Billing;
 
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\DataTransferObjects\Billing\CreatePaymentData;
+use App\DataTransferObjects\Billing\CreateRefundData;
 use App\DataTransferObjects\Billing\CreateSavedMethodPaymentData;
 use App\DataTransferObjects\Billing\PaymentGatewayResult;
 use App\DataTransferObjects\Billing\RefundGatewayResult;
@@ -21,6 +22,8 @@ use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
 use App\Models\OrganizationPackageTrialUsage;
 use App\Models\User;
+use App\Services\Billing\CommercialReconciliationService;
+use App\Services\Billing\CommercialRefundService;
 use App\Services\Billing\CommercialWebhookService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -602,6 +605,135 @@ class CommercialWebhookServiceTest extends TestCase
         $this->assertSame(3, CommercialRefund::query()->count());
     }
 
+    public function test_fast_refund_webhook_binds_existing_intent_by_provider_metadata(): void
+    {
+        $this->order->forceFill(['status' => 'paid'])->save();
+        $this->payment->forceFill(['provider_status' => 'succeeded'])->save();
+        $this->account->forceFill(['status' => 'active'])->save();
+        OrganizationPackageSubscription::create([
+            'organization_id' => $this->organization->id,
+            'commercial_account_id' => $this->account->id,
+            'package_slug' => 'machinery',
+            'status' => 'active',
+            'access_source' => 'paid_package',
+            'price_paid' => 7900,
+            'source_order_id' => $this->order->id,
+        ]);
+        config()->set('services.yookassa.test_organization_ids', [$this->organization->id]);
+        $this->gateway->payment = $this->paymentResult(refundedAmountMinor: 10000);
+        $this->gateway->onCreateRefund = function (CreateRefundData $request, RefundGatewayResult $result): void {
+            $this->gateway->refund = $result;
+            app(CommercialWebhookService::class)->process(
+                $this->notification('refund.succeeded', $result->id, 'succeeded'),
+                '185.71.76.1',
+            );
+        };
+
+        $refund = app(CommercialRefundService::class)->create(
+            $this->order->public_id,
+            10000,
+            'RUB',
+            'Быстрый возврат',
+            'fast-refund-key',
+        );
+
+        $this->assertSame('succeeded', $refund->provider_status);
+        $this->assertSame('refund-fast-refund-key', $refund->provider_refund_id);
+        $this->assertDatabaseCount('commercial_refunds', 1);
+        $this->assertSame(10000, $this->payment->fresh()->refunded_amount_minor);
+    }
+
+    public function test_reconciliation_uses_one_authoritative_snapshot_and_real_refund_transition(): void
+    {
+        $this->order->forceFill(['status' => 'paid'])->save();
+        $this->payment->forceFill(['provider_status' => 'succeeded'])->save();
+        $this->account->forceFill(['status' => 'active'])->save();
+        OrganizationPackageSubscription::create([
+            'organization_id' => $this->organization->id,
+            'commercial_account_id' => $this->account->id,
+            'package_slug' => 'machinery',
+            'status' => 'active',
+            'access_source' => 'paid_package',
+            'price_paid' => 7900,
+            'source_order_id' => $this->order->id,
+        ]);
+        CommercialRefund::query()->create([
+            'commercial_order_id' => $this->order->id,
+            'commercial_payment_id' => $this->payment->id,
+            'provider' => 'yookassa',
+            'provider_refund_id' => 'refund-reconcile',
+            'provider_idempotency_key' => 'refund-reconcile-key',
+            'request_fingerprint' => hash('sha256', 'refund-reconcile'),
+            'provider_status' => 'pending',
+            'amount_minor' => 10000,
+            'currency' => 'RUB',
+            'reconciliation_required' => true,
+        ]);
+        $this->gateway->refund = new RefundGatewayResult(
+            'refund-reconcile',
+            'payment-id',
+            'succeeded',
+            10000,
+            'RUB',
+            ['id' => 'refund-reconcile', 'status' => 'succeeded'],
+            ['refund_idempotency_key' => 'refund-reconcile-key'],
+        );
+        $this->gateway->payment = $this->paymentResult(refundedAmountMinor: 10000);
+
+        $first = app(CommercialReconciliationService::class)->run(2);
+        $second = app(CommercialReconciliationService::class)->run(2);
+
+        $this->assertSame(1, $first['refunds']);
+        $this->assertSame(0, $second['processed']);
+        $this->assertSame(1, $this->gateway->refundLookups);
+        $this->assertSame(1, $this->gateway->paymentLookups);
+        $this->assertDatabaseHas('commercial_refunds', [
+            'provider_refund_id' => 'refund-reconcile',
+            'provider_status' => 'succeeded',
+            'reconciliation_required' => false,
+        ]);
+        $this->assertSame(10000, $this->payment->fresh()->refunded_amount_minor);
+        $this->assertDatabaseCount('commercial_webhook_events', 1);
+    }
+
+    public function test_reconciliation_mismatch_keeps_manual_reconciliation_flag(): void
+    {
+        CommercialRefund::query()->create([
+            'commercial_order_id' => $this->order->id,
+            'commercial_payment_id' => $this->payment->id,
+            'provider' => 'yookassa',
+            'provider_refund_id' => 'refund-mismatch',
+            'provider_idempotency_key' => 'refund-mismatch-key',
+            'request_fingerprint' => hash('sha256', 'refund-mismatch'),
+            'provider_status' => 'pending',
+            'amount_minor' => 10000,
+            'currency' => 'RUB',
+            'reconciliation_required' => true,
+        ]);
+        $this->gateway->refund = new RefundGatewayResult(
+            'refund-mismatch',
+            'payment-id',
+            'succeeded',
+            9999,
+            'RUB',
+            ['id' => 'refund-mismatch', 'status' => 'succeeded'],
+            ['refund_idempotency_key' => 'refund-mismatch-key'],
+        );
+        $this->gateway->payment = $this->paymentResult(refundedAmountMinor: 9999);
+
+        app(CommercialReconciliationService::class)->run(2);
+
+        $this->assertDatabaseHas('commercial_refunds', [
+            'provider_refund_id' => 'refund-mismatch',
+            'provider_status' => 'pending',
+            'reconciliation_required' => true,
+        ]);
+        $this->assertSame(
+            'mismatch',
+            CommercialWebhookEvent::query()->where('object_id', 'refund-mismatch')->sole()->processing_result,
+        );
+    }
+
     public function test_payment_method_active_is_idempotent_no_op_without_gateway_lookup(): void
     {
         $service = app(CommercialWebhookService::class);
@@ -795,6 +927,8 @@ class CommercialWebhookServiceTest extends TestCase
             $table->string('terminal_failure_reason')->nullable();
             $table->string('failure_category')->nullable();
             $table->timestamp('terminal_at')->nullable();
+            $table->boolean('reconciliation_required')->default(false);
+            $table->timestamp('last_reconciled_at')->nullable();
             $table->timestamps();
         });
         Schema::create('commercial_renewal_cycles', function (Blueprint $table): void {
@@ -848,7 +982,7 @@ class CommercialWebhookServiceTest extends TestCase
             $table->foreignId('commercial_order_id');
             $table->foreignId('commercial_payment_id');
             $table->string('provider');
-            $table->string('provider_refund_id')->unique();
+            $table->string('provider_refund_id')->nullable()->unique();
             $table->string('provider_idempotency_key', 64)->unique();
             $table->char('request_fingerprint', 64);
             $table->string('provider_status');
@@ -900,6 +1034,10 @@ class AuthoritativeGatewayFake implements PaymentGatewayInterface
 
     public int $paymentLookups = 0;
 
+    public int $refundLookups = 0;
+
+    public $onCreateRefund = null;
+
     public function createPayment(CreatePaymentData $payment): PaymentGatewayResult
     {
         throw new RuntimeException('Not used.');
@@ -922,6 +1060,7 @@ class AuthoritativeGatewayFake implements PaymentGatewayInterface
 
     public function getRefund(string $refundId): RefundGatewayResult
     {
+        $this->refundLookups++;
         if ($this->fail) {
             throw new RuntimeException('provider unavailable');
         }
@@ -929,8 +1068,21 @@ class AuthoritativeGatewayFake implements PaymentGatewayInterface
         return $this->refund ?? throw new RuntimeException('refund missing');
     }
 
-    public function createRefund(\App\DataTransferObjects\Billing\CreateRefundData $refund): RefundGatewayResult
+    public function createRefund(CreateRefundData $refund): RefundGatewayResult
     {
-        throw new RuntimeException('Not used.');
+        $result = new RefundGatewayResult(
+            'refund-'.$refund->idempotenceKey,
+            $refund->paymentId,
+            'succeeded',
+            $refund->amountMinor,
+            $refund->currency,
+            ['id' => 'refund-'.$refund->idempotenceKey, 'status' => 'succeeded'],
+            $refund->metadata,
+        );
+        if (is_callable($this->onCreateRefund)) {
+            ($this->onCreateRefund)($refund, $result);
+        }
+
+        return $result;
     }
 }

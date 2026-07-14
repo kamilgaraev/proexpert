@@ -43,15 +43,15 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
             $refund = $this->gateway->getRefund($notification->objectId);
             $payment = $this->gateway->getPayment($refund->paymentId);
 
-            return $this->processRefund($notification, $sourceIp, $refund, $payment);
+            return $this->processAuthoritativeRefund($notification, $sourceIp, $refund, $payment);
         }
 
         $payment = $this->gateway->getPayment($notification->objectId);
 
-        return $this->processPayment($notification, $sourceIp, $payment);
+        return $this->processAuthoritativePayment($notification, $sourceIp, $payment);
     }
 
-    private function processPayment(
+    public function processAuthoritativePayment(
         YooKassaWebhookNotification $notification,
         string $sourceIp,
         PaymentGatewayResult $authoritative,
@@ -89,6 +89,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                 'payment.succeeded' => 'succeeded',
                 'payment.waiting_for_capture' => 'waiting_for_capture',
                 'payment.canceled' => 'canceled',
+                'payment.reconciliation' => $authoritative->status,
                 default => '',
             };
 
@@ -148,6 +149,8 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                 'provider_status' => $authoritative->status,
                 'safe_response' => $authoritative->safeResponse,
                 'refunded_amount_minor' => $authoritative->refundedAmountMinor,
+                'last_reconciled_at' => now(),
+                'reconciliation_required' => ! in_array($authoritative->status, ['succeeded', 'canceled'], true),
             ])->save();
 
             if ($notification->event === 'payment.canceled'
@@ -197,7 +200,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
         });
     }
 
-    private function processRefund(
+    public function processAuthoritativeRefund(
         YooKassaWebhookNotification $notification,
         string $sourceIp,
         RefundGatewayResult $refund,
@@ -238,8 +241,13 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                 ->lockForUpdate()
                 ->get();
 
+            $expectedStatus = match ($notification->event) {
+                'refund.succeeded' => 'succeeded',
+                'refund.reconciliation' => $refund->status,
+                default => '',
+            };
             $valid = $refund->id === $notification->objectId
-                && $refund->status === 'succeeded'
+                && $refund->status === $expectedStatus
                 && $refund->currency === $payment->currency
                 && $refund->amountMinor > 0
                 && $authoritativePayment->id === $payment->provider_payment_id
@@ -255,6 +263,13 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                 ->where('provider_refund_id', $refund->id)
                 ->lockForUpdate()
                 ->first();
+            $correlationKey = trim((string) ($refund->metadata['refund_idempotency_key'] ?? ''));
+            if ($refundRecord === null && $correlationKey !== '') {
+                $refundRecord = CommercialRefund::query()
+                    ->where('provider_idempotency_key', $correlationKey)
+                    ->lockForUpdate()
+                    ->first();
+            }
             if ($refundRecord !== null
                 && ($refundRecord->commercial_order_id !== $order->id
                     || $refundRecord->commercial_payment_id !== $payment->id
@@ -274,16 +289,20 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                     'amount_minor' => $refund->amountMinor,
                     'currency' => $refund->currency,
                     'safe_response' => $refund->safeResponse,
-                    'reconciliation_required' => false,
+                    'reconciliation_required' => ! in_array($refund->status, ['succeeded', 'canceled'], true),
                     'last_reconciled_at' => now(),
                 ]);
             } else {
                 $refundRecord->forceFill([
+                    'provider_refund_id' => $refund->id,
                     'provider_status' => $refund->status,
                     'safe_response' => $refund->safeResponse,
-                    'reconciliation_required' => false,
+                    'reconciliation_required' => ! in_array($refund->status, ['succeeded', 'canceled'], true),
                     'last_reconciled_at' => now(),
                 ])->save();
+            }
+            if ($refund->status !== 'succeeded') {
+                return $this->record($notification, $sourceIp, $fingerprint, $refund->status, 'processed');
             }
             $previousRefundedAmount = $payment->refunded_amount_minor;
             $effectiveRefundedAmount = max(
@@ -348,6 +367,8 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
             'payment_method_saved' => ! $renewal && $canRenew,
             'safe_response' => $authoritative->safeResponse,
             'refunded_amount_minor' => $authoritative->refundedAmountMinor,
+            'last_reconciled_at' => now(),
+            'reconciliation_required' => false,
         ])->save();
         $account->forceFill([
             'status' => 'active',
@@ -563,7 +584,11 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
 
     private function fingerprint(YooKassaWebhookNotification $notification, string $status): string
     {
-        return hash('sha256', implode('|', ['yookassa', $notification->event, $notification->objectId, $status]));
+        $runId = str_ends_with($notification->event, '.reconciliation')
+            ? (string) ($notification->safePayload['run_id'] ?? '')
+            : '';
+
+        return hash('sha256', implode('|', ['yookassa', $notification->event, $notification->objectId, $status, $runId]));
     }
 
     private function isDuplicate(string $fingerprint): bool

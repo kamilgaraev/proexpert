@@ -84,6 +84,21 @@ final class CommercialRenewalServiceTest extends TestCase
         $this->assertSame(1, $this->gateway->creates);
     }
 
+    public function test_test_store_allowlist_denial_creates_no_renewal_state_or_provider_call(): void
+    {
+        config()->set('services.yookassa.mode', 'yookassa_test');
+        config()->set('services.yookassa.test_organization_ids', []);
+        $at = CarbonImmutable::parse('2026-07-31 03:00:00', 'Europe/Moscow');
+
+        $result = app(CommercialRenewalService::class)->process($at, 50);
+
+        $this->assertSame(1, $result['failed']);
+        $this->assertSame(0, $this->gateway->creates);
+        $this->assertDatabaseCount('commercial_renewal_cycles', 0);
+        $this->assertDatabaseCount('commercial_orders', 0);
+        $this->assertDatabaseCount('commercial_payments', 0);
+    }
+
     public function test_first_post_anchor_tick_renews_immutable_paid_and_corporate_period_snapshot(): void
     {
         $at = CarbonImmutable::instance($this->account->current_period_end_at)->addMinute();
@@ -805,5 +820,15 @@ final class RenewalWebhookProcessorFake implements CommercialWebhookProcessor
         ]);
 
         return 'processed';
+    }
+
+    public function processAuthoritativePayment(\App\DataTransferObjects\Billing\YooKassaWebhookNotification $notification, string $sourceIp, \App\DataTransferObjects\Billing\PaymentGatewayResult $payment): string
+    {
+        return $this->process($notification, $sourceIp);
+    }
+
+    public function processAuthoritativeRefund(\App\DataTransferObjects\Billing\YooKassaWebhookNotification $notification, string $sourceIp, \App\DataTransferObjects\Billing\RefundGatewayResult $refund, \App\DataTransferObjects\Billing\PaymentGatewayResult $payment): string
+    {
+        return $this->process($notification, $sourceIp);
     }
 }

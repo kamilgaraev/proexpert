@@ -39,6 +39,14 @@ final class CommercialRefundService
             throw new DomainException(trans_message('billing.refund.invalid'));
         }
 
+        $organizationId = (int) CommercialOrder::query()
+            ->where('public_id', $orderPublicId)
+            ->value('organization_id');
+        if ($organizationId <= 0) {
+            throw new DomainException(trans_message('billing.refund.invalid'));
+        }
+        $this->providerPolicy->assertCanCreateRefund($organizationId);
+
         [$refund, $payment] = $this->prepare(
             $orderPublicId,
             $amountMinor,
@@ -50,9 +58,7 @@ final class CommercialRefundService
             return $refund;
         }
 
-        $this->providerPolicy->assertCanCharge((int) $refund->order->organization_id);
-        $this->providerPolicy->assertCanCreatePayment();
-        $result = $this->gateway->createRefund(new CreateRefundData(
+        $request = new CreateRefundData(
             idempotenceKey: $refund->provider_idempotency_key,
             paymentId: (string) $payment->provider_payment_id,
             amountMinor: $refund->amount_minor,
@@ -61,21 +67,36 @@ final class CommercialRefundService
             metadata: [
                 'order_id' => $refund->order->public_id,
                 'organization_id' => $refund->order->organization_id,
+                'refund_idempotency_key' => $refund->provider_idempotency_key,
             ],
-        ));
+        );
+        $result = $this->gateway->createRefund($request);
+        $matchesRequest = $result->paymentId === $request->paymentId
+            && $result->amountMinor === $request->amountMinor
+            && strtoupper($result->currency) === strtoupper($request->currency)
+            && in_array($result->status, ['pending', 'succeeded', 'canceled'], true)
+            && (string) ($result->metadata['refund_idempotency_key'] ?? '') === $request->idempotenceKey;
 
-        DB::transaction(function () use ($refund, $result): void {
+        $bound = DB::transaction(function () use ($refund, $result, $matchesRequest): bool {
             $current = CommercialRefund::query()->whereKey($refund->id)->lockForUpdate()->firstOrFail();
             if ($current->provider_refund_id !== null && $current->provider_refund_id !== $result->id) {
                 throw new DomainException(trans_message('billing.refund.conflict'));
             }
+            if ($current->provider_refund_id === $result->id) {
+                return true;
+            }
             $current->forceFill([
                 'provider_refund_id' => $result->id,
-                'provider_status' => $result->status,
+                'provider_status' => $matchesRequest ? $result->status : 'unknown',
                 'safe_response' => $result->safeResponse,
                 'reconciliation_required' => true,
             ])->save();
+
+            return $matchesRequest;
         }, 3);
+        if (! $bound) {
+            throw new DomainException(trans_message('billing.refund.conflict'));
+        }
 
         return $refund->fresh();
     }

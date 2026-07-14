@@ -9,6 +9,7 @@ use App\DataTransferObjects\Billing\CreateRefundData;
 use App\DataTransferObjects\Billing\CreateSavedMethodPaymentData;
 use App\DataTransferObjects\Billing\PaymentGatewayResult;
 use App\DataTransferObjects\Billing\RefundGatewayResult;
+use App\Exceptions\Billing\PaymentGatewayConfigurationException;
 use App\Interfaces\Billing\PaymentGatewayInterface;
 use App\Models\CommercialOrder;
 use App\Models\CommercialPayment;
@@ -78,6 +79,77 @@ final class CommercialRefundServiceTest extends TestCase
             } catch (DomainException) {
                 $this->assertTrue(true);
             }
+        }
+    }
+
+    public function test_provider_policy_denial_happens_before_refund_intent_or_provider_call(): void
+    {
+        [$order] = $this->paidOrder();
+        $service = app(CommercialRefundService::class);
+
+        foreach ([
+            ['mock', [42]],
+            ['yookassa_test', []],
+            ['yookassa_test', [41]],
+            ['yookassa_live', [42]],
+        ] as [$mode, $allowlist]) {
+            config()->set('services.yookassa.mode', $mode);
+            config()->set('services.yookassa.test_organization_ids', $allowlist);
+
+            try {
+                $service->create($order->public_id, 1000, 'RUB', 'Проверка политики', 'denied-'.$mode.'-'.count($allowlist));
+                $this->fail('Provider policy must reject refund creation.');
+            } catch (PaymentGatewayConfigurationException) {
+                $this->assertDatabaseCount('commercial_refunds', 0);
+                $this->assertSame(0, $this->gateway->creates);
+            }
+        }
+    }
+
+    public function test_mismatching_provider_response_is_left_for_manual_reconciliation(): void
+    {
+        [$order] = $this->paidOrder();
+        $this->gateway->resultOverrides = ['amountMinor' => 999];
+
+        $this->expectException(DomainException::class);
+
+        try {
+            app(CommercialRefundService::class)->create(
+                $order->public_id,
+                1000,
+                'RUB',
+                'Проверка ответа',
+                'refund-mismatch',
+            );
+        } finally {
+            $this->assertDatabaseHas('commercial_refunds', [
+                'provider_status' => 'unknown',
+                'reconciliation_required' => true,
+            ]);
+        }
+    }
+
+    public function test_confirmed_command_keeps_database_clean_when_provider_policy_denies_operation(): void
+    {
+        [$order] = $this->paidOrder();
+
+        foreach ([
+            ['mock', [42]],
+            ['yookassa_test', [41]],
+            ['yookassa_live', [42]],
+        ] as $index => [$mode, $allowlist]) {
+            config()->set('services.yookassa.mode', $mode);
+            config()->set('services.yookassa.test_organization_ids', $allowlist);
+
+            $this->artisan('commercial:refund', [
+                'order' => $order->public_id,
+                'amount' => '10.00',
+                'reason' => 'Проверка команды',
+                'idempotency-key' => 'command-denied-'.$index,
+                '--confirm' => true,
+            ])->assertExitCode(1);
+            $this->assertDatabaseCount('commercial_refunds', 0);
+            $this->assertSame(0, $this->gateway->creates);
         }
     }
 
@@ -194,11 +266,21 @@ final class RefundGatewayFake implements PaymentGatewayInterface
 {
     public int $creates = 0;
 
+    public array $resultOverrides = [];
+
     public function createRefund(CreateRefundData $refund): RefundGatewayResult
     {
         $this->creates++;
 
-        return new RefundGatewayResult('refund-'.$this->creates, $refund->paymentId, 'pending', $refund->amountMinor, $refund->currency, ['id' => 'refund-'.$this->creates, 'status' => 'pending']);
+        return new RefundGatewayResult(
+            $this->resultOverrides['id'] ?? 'refund-'.$this->creates,
+            $this->resultOverrides['paymentId'] ?? $refund->paymentId,
+            $this->resultOverrides['status'] ?? 'pending',
+            $this->resultOverrides['amountMinor'] ?? $refund->amountMinor,
+            $this->resultOverrides['currency'] ?? $refund->currency,
+            ['id' => 'refund-'.$this->creates, 'status' => 'pending'],
+            $refund->metadata,
+        );
     }
 
     public function createPayment(CreatePaymentData $payment): PaymentGatewayResult

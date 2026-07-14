@@ -40,6 +40,16 @@ final class CommercialPaymentProviderPolicy
         }
     }
 
+    public function assertCanCreateRefund(int $organizationId): void
+    {
+        if (PaymentProviderMode::configured() === PaymentProviderMode::Mock) {
+            throw $this->configurationException();
+        }
+
+        $this->assertCanCharge($organizationId);
+        $this->assertCanCreatePayment();
+    }
+
     public function receipt(?string $customerEmail, string $description, int $amountMinor, string $currency): ?array
     {
         $this->assertCanCreatePayment();

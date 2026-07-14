@@ -104,6 +104,8 @@ class YooKassaPaymentGateway implements PaymentGatewayInterface
         $status = trim((string) ($data['status'] ?? ''));
         $amount = is_array($data['amount'] ?? null) ? $data['amount'] : [];
         $currency = strtoupper(trim((string) ($amount['currency'] ?? '')));
+        $rawMetadata = is_array($data['metadata'] ?? null) ? $data['metadata'] : [];
+        $metadata = array_intersect_key($rawMetadata, array_flip(['refund_idempotency_key']));
 
         if ($id === '' || $paymentId === '' || $status === '' || $currency === '') {
             throw new UnexpectedValueException('YooKassa returned an invalid refund response.');
@@ -122,6 +124,7 @@ class YooKassaPaymentGateway implements PaymentGatewayInterface
                 'amount' => ['value' => (string) ($amount['value'] ?? ''), 'currency' => $currency],
                 'created_at' => $data['created_at'] ?? null,
             ],
+            metadata: $metadata,
         );
     }
 

@@ -10,6 +10,7 @@ use App\DataTransferObjects\Billing\PaymentGatewayResult;
 use App\DataTransferObjects\Billing\RefundGatewayResult;
 use App\DataTransferObjects\Billing\YooKassaWebhookNotification;
 use App\Exceptions\Billing\CommercialCheckoutConflictException;
+use App\Exceptions\Billing\PaymentGatewayConfigurationException;
 use App\Interfaces\Billing\PaymentGatewayInterface;
 use App\Models\CommercialOrder;
 use App\Models\CommercialPayment;
@@ -76,6 +77,22 @@ class CommercialCheckoutServiceTest extends TestCase
             trans_message('billing.checkout.payment_description'),
             $this->gateway->payments[0]->description,
         );
+    }
+
+    public function test_test_store_allowlist_denial_creates_no_checkout_state_or_provider_call(): void
+    {
+        config()->set('services.yookassa.mode', 'yookassa_test');
+        config()->set('services.yookassa.test_organization_ids', []);
+
+        $this->expectException(PaymentGatewayConfigurationException::class);
+
+        try {
+            $this->checkout(['machinery']);
+        } finally {
+            $this->assertDatabaseCount('commercial_orders', 0);
+            $this->assertDatabaseCount('commercial_payments', 0);
+            $this->assertCount(0, $this->gateway->payments);
+        }
     }
 
     public function test_same_idempotency_and_payload_reuses_order_and_provider_payment(): void
@@ -455,6 +472,8 @@ class CommercialCheckoutServiceTest extends TestCase
             $table->boolean('payment_method_saved')->default(false);
             $table->json('safe_response')->nullable();
             $table->unsignedBigInteger('refunded_amount_minor')->default(0);
+            $table->boolean('reconciliation_required')->default(false);
+            $table->timestamp('last_reconciled_at')->nullable();
             $table->timestamps();
         });
         Schema::create('commercial_webhook_events', function (Blueprint $table): void {

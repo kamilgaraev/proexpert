@@ -13,5 +13,6 @@ final readonly class RefundGatewayResult
         public int $amountMinor,
         public string $currency,
         public array $safeResponse,
+        public array $metadata = [],
     ) {}
 }

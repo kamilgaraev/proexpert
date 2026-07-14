@@ -99,4 +99,14 @@ class WebhookProcessorFake implements CommercialWebhookProcessor
 
         return 'no_op';
     }
+
+    public function processAuthoritativePayment(YooKassaWebhookNotification $notification, string $sourceIp, \App\DataTransferObjects\Billing\PaymentGatewayResult $payment): string
+    {
+        return $this->process($notification, $sourceIp);
+    }
+
+    public function processAuthoritativeRefund(YooKassaWebhookNotification $notification, string $sourceIp, \App\DataTransferObjects\Billing\RefundGatewayResult $refund, \App\DataTransferObjects\Billing\PaymentGatewayResult $payment): string
+    {
+        return $this->process($notification, $sourceIp);
+    }
 }

@@ -268,7 +268,7 @@ class YooKassaPaymentGatewayTest extends TestCase
             'status' => 'pending',
             'amount' => ['value' => '1200.50', 'currency' => 'RUB'],
             'created_at' => '2026-07-14T11:00:00.000Z',
-            'metadata' => ['order_id' => 'public-order-id'],
+            'metadata' => ['order_id' => 'public-order-id', 'refund_idempotency_key' => 'refund-operation-key'],
         ], 200)]);
 
         $result = app(YooKassaPaymentGateway::class)->createRefund(new CreateRefundData(
@@ -277,18 +277,27 @@ class YooKassaPaymentGatewayTest extends TestCase
             amountMinor: 120050,
             currency: 'RUB',
             description: 'Возврат по обращению поддержки',
-            metadata: ['order_id' => 'public-order-id', 'organization_id' => 42],
+            metadata: [
+                'order_id' => 'public-order-id',
+                'organization_id' => 42,
+                'refund_idempotency_key' => 'refund-operation-key',
+            ],
         ));
 
         $this->assertSame('provider-refund-id', $result->id);
         $this->assertSame('pending', $result->status);
+        $this->assertSame('refund-operation-key', $result->metadata['refund_idempotency_key']);
         Http::assertSent(fn (Request $request): bool => $request->method() === 'POST'
             && $request->url() === 'https://api.yookassa.ru/v3/refunds'
             && $request->hasHeader('Idempotence-Key', 'refund-operation-key')
             && $request['payment_id'] === 'provider-payment-id'
             && $request['amount'] === ['value' => '1200.50', 'currency' => 'RUB']
             && $request['description'] === 'Возврат по обращению поддержки'
-            && $request['metadata'] === ['order_id' => 'public-order-id', 'organization_id' => 42]);
+            && $request['metadata'] === [
+                'order_id' => 'public-order-id',
+                'organization_id' => 42,
+                'refund_idempotency_key' => 'refund-operation-key',
+            ]);
     }
 
     public function test_rejects_malformed_refund_success_response(): void
