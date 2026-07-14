@@ -81,7 +81,7 @@ return new class extends Migration
             $table->timestampTz('started_at');
             $table->timestampTz('ends_at');
             $table->timestampsTz();
-            $table->unique(['organization_id', 'package_slug']);
+            $table->unique(['organization_id', 'package_slug'], 'org_package_trial_usage_unique');
         });
     }
 

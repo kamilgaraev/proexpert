@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use LogicException;
+use PDOException;
 use Tests\TestCase;
 
 class PackageTrialServiceTest extends TestCase
@@ -190,6 +191,41 @@ class PackageTrialServiceTest extends TestCase
         app(PackageTrialService::class)->start($this->organization->id, 'estimates-norms');
     }
 
+    public function test_maps_named_postgresql_trial_constraint_to_business_conflict(): void
+    {
+        $armed = true;
+        OrganizationPackageTrialUsage::creating(function (OrganizationPackageTrialUsage $usage) use (&$armed): void {
+            if (! $armed || $usage->package_slug !== 'quality-safety') {
+                return;
+            }
+
+            $armed = false;
+            throw $this->postgresUniqueException('org_package_trial_usage_unique');
+        });
+
+        $this->expectException(BusinessLogicException::class);
+        $this->expectExceptionCode(409);
+
+        app(PackageTrialService::class)->start($this->organization->id, 'quality-safety');
+    }
+
+    public function test_rethrows_different_postgresql_unique_constraint(): void
+    {
+        $armed = true;
+        OrganizationPackageTrialUsage::creating(function (OrganizationPackageTrialUsage $usage) use (&$armed): void {
+            if (! $armed || $usage->package_slug !== 'pto-handover') {
+                return;
+            }
+
+            $armed = false;
+            throw $this->postgresUniqueException('unrelated_unique_constraint');
+        });
+
+        $this->expectException(QueryException::class);
+
+        app(PackageTrialService::class)->start($this->organization->id, 'pto-handover');
+    }
+
     public function test_trial_usage_model_refuses_update_and_delete(): void
     {
         app(PackageTrialService::class)->start($this->organization->id, 'machinery');
@@ -217,6 +253,15 @@ class PackageTrialServiceTest extends TestCase
             'is_active' => true,
             'is_verified' => true,
         ]));
+    }
+
+    private function postgresUniqueException(string $constraint): QueryException
+    {
+        $message = sprintf('duplicate key value violates unique constraint "%s"', $constraint);
+        $previous = new PDOException($message, 23505);
+        $previous->errorInfo = ['23505', '7', $message];
+
+        return new QueryException('pgsql', 'insert into organization_package_trial_usages', [], $previous);
     }
 
     private function createAccount(Organization $organization): OrganizationCommercialAccount

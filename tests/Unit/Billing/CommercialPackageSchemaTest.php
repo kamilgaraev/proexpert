@@ -14,7 +14,10 @@ class CommercialPackageSchemaTest extends TestCase
 
         $this->assertStringContainsString("Schema::create('organization_commercial_accounts'", $migration);
         $this->assertStringContainsString("Schema::create('organization_package_trial_usages'", $migration);
-        $this->assertStringContainsString("\$table->unique(['organization_id', 'package_slug'])", $migration);
+        $this->assertStringContainsString(
+            "\$table->unique(['organization_id', 'package_slug'], 'org_package_trial_usage_unique')",
+            $migration,
+        );
         $this->assertStringContainsString("\$table->unique(['id', 'organization_id'], 'commercial_accounts_id_org_unique')", $migration);
         $this->assertStringContainsString("->foreign(['commercial_account_id', 'organization_id']", $migration);
         $this->assertStringContainsString("->references(['id', 'organization_id'])", $migration);

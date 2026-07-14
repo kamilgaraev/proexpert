@@ -24,7 +24,7 @@ use function trans_message;
 class PackageTrialService
 {
     private const TRIAL_LEDGER_UNIQUE_CONSTRAINT =
-        'organization_package_trial_usages_organization_id_package_slug_unique';
+        'org_package_trial_usage_unique';
 
     private const SQLITE_TRIAL_LEDGER_UNIQUE_MESSAGE =
         'UNIQUE constraint failed: organization_package_trial_usages.organization_id, '
