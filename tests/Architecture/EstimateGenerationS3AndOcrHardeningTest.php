@@ -57,6 +57,8 @@ final class EstimateGenerationS3AndOcrHardeningTest extends TestCase
         self::assertStringContainsString('derivativeBytes', $result);
         self::assertStringContainsString('derivativeVersionId', $result);
         self::assertStringContainsString('putImmutable(', $raster);
+        self::assertStringContainsString('S3ObjectTransportException', $raster);
+        self::assertStringContainsString('S3ObjectLocatorException', $raster);
     }
 
     #[Test]

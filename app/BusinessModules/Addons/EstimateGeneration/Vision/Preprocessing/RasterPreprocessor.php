@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\BusinessModules\Addons\EstimateGeneration\Vision\Preprocessing;
 
 use App\BusinessModules\Addons\EstimateGeneration\Storage\BoundedVersionedS3ObjectReader;
+use App\BusinessModules\Addons\EstimateGeneration\Storage\S3ObjectLocatorException;
+use App\BusinessModules\Addons\EstimateGeneration\Storage\S3ObjectTransportException;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\ProjectiveTransformData;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\RasterPreprocessInput;
 use App\BusinessModules\Addons\EstimateGeneration\Vision\DTO\RasterPreprocessResult;
@@ -96,9 +98,13 @@ final readonly class RasterPreprocessor
         $directory = "estimate-generation/{$input->sessionId}/vision/v1";
         $filename = "{$hash}.png";
         $key = "org-{$input->organizationId}/{$directory}/{$filename}";
-        $stored = $this->files->putImmutable($key, $outputBytes, 'image/png');
+        try {
+            $stored = $this->files->putImmutable($key, $outputBytes, 'image/png');
+        } catch (Throwable $exception) {
+            throw new S3ObjectTransportException('estimate_generation_derivative_storage_unavailable', 0, $exception);
+        }
         if ($stored['size'] !== strlen($outputBytes) || ! hash_equals($hash, $stored['sha256'])) {
-            throw new RasterPreprocessingException('derivative_hash_collision');
+            throw new S3ObjectLocatorException('estimate_generation_derivative_integrity_failed');
         }
         [$sharpness, $dynamicRange, $blankRatio, $clippingRatio] = $this->quality($outputBytes);
         if ($sharpness < 0.015) {

@@ -50,6 +50,22 @@ final class BoundedVersionedS3ObjectReaderTest extends TestCase
     }
 
     #[Test]
+    public function storage_reported_size_mismatch_is_terminal_integrity_not_transport(): void
+    {
+        $files = new class extends FileService
+        {
+            public function __construct() {}
+
+            public function describeVersion(string $path, ?string $versionId, int $maxBytes = 64_000_000): array
+            {
+                throw new \RuntimeException('s3_object_size_mismatch');
+            }
+        };
+        $this->expectException(\App\BusinessModules\Addons\EstimateGeneration\Storage\S3ObjectLocatorException::class);
+        (new BoundedVersionedS3ObjectReader($files))->read(7, 'org-7/a', 10, 1, 'sha256:'.str_repeat('a', 64), 'v1');
+    }
+
+    #[Test]
     public function it_rejects_a_locator_hash_that_does_not_match_the_versioned_body(): void
     {
         $reader = new BoundedVersionedS3ObjectReader($this->files('content'));
