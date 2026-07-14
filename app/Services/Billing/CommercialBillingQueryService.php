@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Billing;
 
+use App\Enums\Billing\PaymentProviderMode;
 use App\Exceptions\Billing\CommercialBillingConflictException;
 use App\Models\CommercialOrder;
 use App\Models\Organization;
@@ -81,7 +82,8 @@ final class CommercialBillingQueryService
         $payments = $order->payments->sortBy('attempt_number')->values();
         $latestPayment = $payments->last();
         $refunds = $order->refunds->sortBy('created_at')->values();
-        $refundedMinor = (int) $refunds->sum('amount_minor');
+        $succeededRefunds = $refunds->where('provider_status', 'succeeded');
+        $refundedMinor = (int) $succeededRefunds->sum('amount_minor');
         $confirmationUsable = $order->status->value === 'pending_payment'
             && $latestPayment !== null
             && in_array($latestPayment->provider_status, ['created', 'pending', 'waiting_for_capture'], true);
@@ -105,6 +107,7 @@ final class CommercialBillingQueryService
             'period_start_at' => $order->period_start_at?->toJSON(),
             'period_end_at' => $order->period_end_at?->toJSON(),
             'auto_renew_consent' => $order->auto_renew_consent,
+            'test_mode' => PaymentProviderMode::configured()->testMode(),
             'confirmation_url' => $confirmationUsable ? $latestPayment->confirmation_url : null,
             'created_at' => $order->created_at?->toJSON(),
             'paid_at' => in_array($order->status->value, ['paid', 'refunded'], true)
@@ -114,7 +117,7 @@ final class CommercialBillingQueryService
                 ? ($canceledPayment?->terminal_at ?? $canceledPayment?->updated_at)?->toJSON()
                 : null,
             'refunds_summary' => [
-                'count' => $refunds->count(),
+                'count' => $succeededRefunds->count(),
                 'amount' => $this->money($refundedMinor),
                 'amount_minor' => $refundedMinor,
                 'currency' => $order->currency,

@@ -17,6 +17,12 @@ Schedule::command('commercial:process-trial-lifecycle')
     ->withoutOverlapping(15)
     ->onOneServer();
 
+Schedule::command('commercial:reconcile --limit=100')
+    ->dailyAt('02:30')
+    ->timezone('Europe/Moscow')
+    ->withoutOverlapping(120)
+    ->onOneServer();
+
 Schedule::job(new RecoverExpiredTrainingDatasetLeasesJob)
     ->everyFiveMinutes()
     ->withoutOverlapping();

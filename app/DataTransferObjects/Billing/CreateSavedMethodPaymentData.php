@@ -13,5 +13,6 @@ final readonly class CreateSavedMethodPaymentData
         public string $paymentMethodId,
         public string $description,
         public array $metadata,
+        public ?string $customerEmail = null,
     ) {}
 }

@@ -48,7 +48,7 @@ class CommercialWebhookServiceTest extends TestCase
     {
         parent::setUp();
         $this->createSchema();
-        config()->set('services.yookassa.mode', 'test');
+        config()->set('services.yookassa.mode', 'yookassa_test');
         $this->gateway = new AuthoritativeGatewayFake;
         $this->app->instance(PaymentGatewayInterface::class, $this->gateway);
 
@@ -849,10 +849,14 @@ class CommercialWebhookServiceTest extends TestCase
             $table->foreignId('commercial_payment_id');
             $table->string('provider');
             $table->string('provider_refund_id')->unique();
+            $table->string('provider_idempotency_key', 64)->unique();
+            $table->char('request_fingerprint', 64);
             $table->string('provider_status');
             $table->unsignedBigInteger('amount_minor');
             $table->string('currency', 3);
             $table->json('safe_response')->nullable();
+            $table->boolean('reconciliation_required')->default(true);
+            $table->timestamp('last_reconciled_at')->nullable();
             $table->timestamps();
         });
         Schema::create('commercial_webhook_events', function (Blueprint $table): void {
@@ -923,5 +927,10 @@ class AuthoritativeGatewayFake implements PaymentGatewayInterface
         }
 
         return $this->refund ?? throw new RuntimeException('refund missing');
+    }
+
+    public function createRefund(\App\DataTransferObjects\Billing\CreateRefundData $refund): RefundGatewayResult
+    {
+        throw new RuntimeException('Not used.');
     }
 }

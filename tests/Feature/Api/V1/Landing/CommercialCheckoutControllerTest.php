@@ -36,6 +36,8 @@ class CommercialCheckoutControllerTest extends TestCase
     {
         parent::setUp();
 
+        config()->set('services.yookassa.mode', 'mock');
+
         $this->createSchema();
         $this->organization = Organization::withoutEvents(fn (): Organization => Organization::create([
             'name' => 'Checkout API organization',
@@ -830,5 +832,10 @@ class ControllerCheckoutGatewayFake implements PaymentGatewayInterface
     public function getRefund(string $refundId): RefundGatewayResult
     {
         throw new \RuntimeException('Not used.');
+    }
+
+    public function createRefund(\App\DataTransferObjects\Billing\CreateRefundData $refund): RefundGatewayResult
+    {
+        throw new RuntimeException('Not used.');
     }
 }

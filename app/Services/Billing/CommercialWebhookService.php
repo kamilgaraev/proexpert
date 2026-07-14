@@ -10,6 +10,7 @@ use App\DataTransferObjects\Billing\PaymentGatewayResult;
 use App\DataTransferObjects\Billing\RefundGatewayResult;
 use App\DataTransferObjects\Billing\YooKassaWebhookNotification;
 use App\Enums\Billing\CommercialOfferType;
+use App\Enums\Billing\PaymentProviderMode;
 use App\Exceptions\Billing\RetryableCommercialWebhookException;
 use App\Interfaces\Billing\PaymentGatewayInterface;
 use App\Models\CommercialOrder;
@@ -250,16 +251,40 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                 return $this->record($notification, $sourceIp, $fingerprint, $refund->status, 'mismatch');
             }
 
-            CommercialRefund::query()->create([
-                'commercial_order_id' => $order->id,
-                'commercial_payment_id' => $payment->id,
-                'provider' => 'yookassa',
-                'provider_refund_id' => $refund->id,
-                'provider_status' => $refund->status,
-                'amount_minor' => $refund->amountMinor,
-                'currency' => $refund->currency,
-                'safe_response' => $refund->safeResponse,
-            ]);
+            $refundRecord = CommercialRefund::query()
+                ->where('provider_refund_id', $refund->id)
+                ->lockForUpdate()
+                ->first();
+            if ($refundRecord !== null
+                && ($refundRecord->commercial_order_id !== $order->id
+                    || $refundRecord->commercial_payment_id !== $payment->id
+                    || $refundRecord->amount_minor !== $refund->amountMinor
+                    || $refundRecord->currency !== $refund->currency)) {
+                return $this->record($notification, $sourceIp, $fingerprint, $refund->status, 'mismatch');
+            }
+            if ($refundRecord === null) {
+                $refundRecord = CommercialRefund::query()->create([
+                    'commercial_order_id' => $order->id,
+                    'commercial_payment_id' => $payment->id,
+                    'provider' => 'yookassa',
+                    'provider_refund_id' => $refund->id,
+                    'provider_idempotency_key' => substr('webhook:'.$refund->id, 0, 64),
+                    'request_fingerprint' => hash('sha256', implode('|', [$order->id, $payment->id, $refund->id])),
+                    'provider_status' => $refund->status,
+                    'amount_minor' => $refund->amountMinor,
+                    'currency' => $refund->currency,
+                    'safe_response' => $refund->safeResponse,
+                    'reconciliation_required' => false,
+                    'last_reconciled_at' => now(),
+                ]);
+            } else {
+                $refundRecord->forceFill([
+                    'provider_status' => $refund->status,
+                    'safe_response' => $refund->safeResponse,
+                    'reconciliation_required' => false,
+                    'last_reconciled_at' => now(),
+                ])->save();
+            }
             $previousRefundedAmount = $payment->refunded_amount_minor;
             $effectiveRefundedAmount = max(
                 $previousRefundedAmount,
@@ -406,7 +431,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
             && strtoupper($authoritative->currency) === strtoupper($order->currency)
             && (string) ($authoritative->metadata['order_id'] ?? '') === $order->public_id
             && (string) ($authoritative->metadata['organization_id'] ?? '') === (string) $order->organization_id
-            && $authoritative->test === ((string) config('services.yookassa.mode', 'test') === 'test');
+            && $authoritative->test === PaymentProviderMode::configured()->testMode();
     }
 
     private function resolvePaymentForUpdate(

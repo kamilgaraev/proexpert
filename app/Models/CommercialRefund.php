@@ -12,11 +12,14 @@ class CommercialRefund extends Model
     protected $fillable = [
         'commercial_order_id', 'commercial_payment_id', 'provider', 'provider_refund_id',
         'provider_status', 'amount_minor', 'currency', 'safe_response',
+        'provider_idempotency_key', 'request_fingerprint', 'reconciliation_required', 'last_reconciled_at',
     ];
 
     protected $casts = [
         'amount_minor' => 'integer',
         'safe_response' => 'array',
+        'reconciliation_required' => 'boolean',
+        'last_reconciled_at' => 'immutable_datetime',
     ];
 
     public function order(): BelongsTo

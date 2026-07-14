@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace App\Services\Billing;
 
 use App\DataTransferObjects\Billing\CreatePaymentData;
+use App\DataTransferObjects\Billing\CreateRefundData;
 use App\DataTransferObjects\Billing\CreateSavedMethodPaymentData;
 use App\DataTransferObjects\Billing\PaymentGatewayResult;
 use App\DataTransferObjects\Billing\RefundGatewayResult;
+use App\Enums\Billing\PaymentProviderMode;
 use App\Exceptions\Billing\PaymentGatewayConfigurationException;
 use App\Interfaces\Billing\PaymentGatewayInterface;
 use Illuminate\Http\Client\ConnectionException;
@@ -15,8 +17,12 @@ use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use UnexpectedValueException;
 
+use function trans_message;
+
 class YooKassaPaymentGateway implements PaymentGatewayInterface
 {
+    public function __construct(private readonly CommercialPaymentProviderPolicy $policy) {}
+
     public function createPayment(CreatePaymentData $payment): PaymentGatewayResult
     {
         $payload = [
@@ -37,6 +43,11 @@ class YooKassaPaymentGateway implements PaymentGatewayInterface
             $payload['save_payment_method'] = true;
         }
 
+        $receipt = $this->policy->receipt($payment->customerEmail, $payment->description, $payment->amountMinor, $payment->currency);
+        if ($receipt !== null) {
+            $payload['receipt'] = $receipt;
+        }
+
         return $this->result($this->request(
             'POST',
             '/payments',
@@ -55,18 +66,39 @@ class YooKassaPaymentGateway implements PaymentGatewayInterface
 
     public function createSavedMethodPayment(CreateSavedMethodPaymentData $payment): PaymentGatewayResult
     {
-        return $this->result($this->request('POST', '/payments', [
+        $payload = [
             'amount' => ['value' => $this->money($payment->amountMinor), 'currency' => $payment->currency],
             'capture' => true,
             'payment_method_id' => $payment->paymentMethodId,
             'description' => $payment->description,
             'metadata' => $payment->metadata,
-        ], $payment->idempotenceKey));
+        ];
+        $receipt = $this->policy->receipt($payment->customerEmail, $payment->description, $payment->amountMinor, $payment->currency);
+        if ($receipt !== null) {
+            $payload['receipt'] = $receipt;
+        }
+
+        return $this->result($this->request('POST', '/payments', $payload, $payment->idempotenceKey));
     }
 
     public function getRefund(string $refundId): RefundGatewayResult
     {
-        $data = $this->request('GET', '/refunds/'.rawurlencode($refundId))->json();
+        return $this->refundResult($this->request('GET', '/refunds/'.rawurlencode($refundId)));
+    }
+
+    public function createRefund(CreateRefundData $refund): RefundGatewayResult
+    {
+        return $this->refundResult($this->request('POST', '/refunds', [
+            'payment_id' => $refund->paymentId,
+            'amount' => ['value' => $this->money($refund->amountMinor), 'currency' => $refund->currency],
+            'description' => $refund->description,
+            'metadata' => $refund->metadata,
+        ], $refund->idempotenceKey));
+    }
+
+    private function refundResult(Response $response): RefundGatewayResult
+    {
+        $data = $response->json();
         $id = trim((string) ($data['id'] ?? ''));
         $paymentId = trim((string) ($data['payment_id'] ?? ''));
         $status = trim((string) ($data['status'] ?? ''));
@@ -205,6 +237,13 @@ class YooKassaPaymentGateway implements PaymentGatewayInterface
             || (($paymentMethod['saved'] ?? false) === true && trim((string) ($paymentMethod['id'] ?? '')) === '')
             || ($refundedAmount !== [] && strtoupper((string) ($refundedAmount['currency'] ?? '')) !== $currency)) {
             throw new UnexpectedValueException('YooKassa returned an invalid payment response.');
+        }
+
+        $mode = PaymentProviderMode::configured();
+        if ($mode === PaymentProviderMode::Mock || ($data['test'] ?? null) !== $mode->testMode()) {
+            throw new PaymentGatewayConfigurationException(
+                trans_message('billing.provider.configuration_error'),
+            );
         }
         $confirmation = is_array($data['confirmation'] ?? null) ? $data['confirmation'] : [];
         $confirmationUrl = isset($confirmation['confirmation_url'])

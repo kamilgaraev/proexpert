@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Billing;
 
 use App\DataTransferObjects\Billing\CreatePaymentData;
+use App\DataTransferObjects\Billing\CreateRefundData;
 use App\DataTransferObjects\Billing\CreateSavedMethodPaymentData;
 use App\Exceptions\Billing\PaymentGatewayConfigurationException;
 use App\Services\Billing\YooKassaPaymentGateway;
@@ -24,6 +25,7 @@ class YooKassaPaymentGatewayTest extends TestCase
         parent::setUp();
 
         config()->set('services.yookassa', [
+            'mode' => 'yookassa_test',
             'shop_id' => 'test-shop',
             'secret_key' => 'test-secret',
             'api_url' => 'https://api.yookassa.ru/v3',
@@ -32,6 +34,47 @@ class YooKassaPaymentGatewayTest extends TestCase
             'retry_attempts' => 3,
             'retry_delay_ms' => 0,
         ]);
+    }
+
+    public function test_test_mode_rejects_live_provider_object(): void
+    {
+        $response = $this->providerResponse();
+        $response['test'] = false;
+        Http::fake(['*' => Http::response($response, 200)]);
+
+        $this->expectException(PaymentGatewayConfigurationException::class);
+
+        app(YooKassaPaymentGateway::class)->getPayment('provider-payment-id');
+    }
+
+    public function test_live_mode_rejects_test_provider_object(): void
+    {
+        config()->set('services.yookassa.mode', 'yookassa_live');
+        $response = $this->providerResponse();
+        Http::fake(['*' => Http::response($response, 200)]);
+
+        $this->expectException(PaymentGatewayConfigurationException::class);
+
+        app(YooKassaPaymentGateway::class)->getPayment('provider-payment-id');
+    }
+
+    public function test_live_payment_fails_before_http_without_explicit_receipt_configuration(): void
+    {
+        config()->set('services.yookassa.mode', 'yookassa_live');
+        config()->set('services.yookassa.live.enabled', true);
+        config()->set('services.yookassa.live.legal_entity_confirmed', true);
+        config()->set('services.yookassa.live.contract_confirmed', true);
+        config()->set('services.yookassa.live.receipt_settings_confirmed', true);
+        config()->set('services.yookassa.receipt.enabled', false);
+        Http::fake();
+
+        $this->expectException(PaymentGatewayConfigurationException::class);
+
+        try {
+            app(YooKassaPaymentGateway::class)->createPayment($this->paymentData('live-receipt-key'));
+        } finally {
+            Http::assertNothingSent();
+        }
     }
 
     public function test_creates_redirect_payment_with_exact_contract_and_idempotence_key(): void
@@ -215,6 +258,37 @@ class YooKassaPaymentGatewayTest extends TestCase
         $this->assertSame('RUB', $result->currency);
         Http::assertSent(fn (Request $request): bool => $request->method() === 'GET'
             && $request->url() === 'https://api.yookassa.ru/v3/refunds/provider-refund-id');
+    }
+
+    public function test_creates_typed_refund_with_exact_idempotent_contract(): void
+    {
+        Http::fake(['*' => Http::response([
+            'id' => 'provider-refund-id',
+            'payment_id' => 'provider-payment-id',
+            'status' => 'pending',
+            'amount' => ['value' => '1200.50', 'currency' => 'RUB'],
+            'created_at' => '2026-07-14T11:00:00.000Z',
+            'metadata' => ['order_id' => 'public-order-id'],
+        ], 200)]);
+
+        $result = app(YooKassaPaymentGateway::class)->createRefund(new CreateRefundData(
+            idempotenceKey: 'refund-operation-key',
+            paymentId: 'provider-payment-id',
+            amountMinor: 120050,
+            currency: 'RUB',
+            description: 'Возврат по обращению поддержки',
+            metadata: ['order_id' => 'public-order-id', 'organization_id' => 42],
+        ));
+
+        $this->assertSame('provider-refund-id', $result->id);
+        $this->assertSame('pending', $result->status);
+        Http::assertSent(fn (Request $request): bool => $request->method() === 'POST'
+            && $request->url() === 'https://api.yookassa.ru/v3/refunds'
+            && $request->hasHeader('Idempotence-Key', 'refund-operation-key')
+            && $request['payment_id'] === 'provider-payment-id'
+            && $request['amount'] === ['value' => '1200.50', 'currency' => 'RUB']
+            && $request['description'] === 'Возврат по обращению поддержки'
+            && $request['metadata'] === ['order_id' => 'public-order-id', 'organization_id' => 42]);
     }
 
     public function test_rejects_malformed_refund_success_response(): void

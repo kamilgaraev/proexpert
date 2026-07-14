@@ -6,6 +6,7 @@ namespace App\Services\Billing;
 
 use App\DataTransferObjects\Billing\CreatePaymentData;
 use App\Enums\Billing\CommercialOrderStatus;
+use App\Enums\Billing\PaymentProviderMode;
 use App\Exceptions\Billing\CommercialCheckoutAmountException;
 use App\Exceptions\Billing\CommercialCheckoutConflictException;
 use App\Interfaces\Billing\PaymentGatewayInterface;
@@ -26,10 +27,13 @@ class CommercialCheckoutService
     public function __construct(
         private readonly CommercialOfferCalculator $calculator,
         private readonly PaymentGatewayInterface $gateway,
+        private readonly CommercialPaymentProviderPolicy $providerPolicy,
     ) {}
 
     public function checkout(Organization $organization, User $user, array $input): array
     {
+        $this->providerPolicy->assertCanCharge((int) $organization->getKey());
+
         [$order, $payment, $created] = DB::transaction(function () use ($organization, $user, $input): array {
             Organization::query()->whereKey($organization->getKey())->lockForUpdate()->firstOrFail();
             $account = OrganizationCommercialAccount::query()
@@ -130,6 +134,7 @@ class CommercialCheckoutService
                     'organization_id' => $order->organization_id,
                 ],
                 savePaymentMethod: $order->auto_renew_consent,
+                customerEmail: $user->email,
             ));
 
             DB::transaction(function () use ($payment, $result): void {
@@ -213,6 +218,7 @@ class CommercialCheckoutService
             'confirmation_url' => $payment->confirmation_url,
             'payment_status' => $payment->provider_status,
             'auto_renew_consent' => $order->auto_renew_consent,
+            'test_mode' => PaymentProviderMode::configured()->testMode(),
         ];
     }
 }

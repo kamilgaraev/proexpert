@@ -107,4 +107,21 @@ class CommercialCheckoutSchemaTest extends TestCase
         $this->assertSame(1, substr_count($schedule, "Schedule::command('commercial:process-trial-lifecycle')"));
         $this->assertStringContainsString("Schedule::command('commercial:process-trial-lifecycle')\n    ->hourly()", $schedule);
     }
+
+    public function test_provider_operations_are_server_only_and_reconciliation_is_daily(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $refundCommand = file_get_contents($root.'/app/Console/Commands/CreateCommercialRefundCommand.php');
+        $reconcileCommand = file_get_contents($root.'/app/Console/Commands/ReconcileCommercialPaymentsCommand.php');
+        $schedule = file_get_contents($root.'/routes/console.php');
+        $apiRoutes = file_get_contents($root.'/routes/api/v1/landing/billing.php');
+
+        $this->assertIsString($refundCommand);
+        $this->assertIsString($reconcileCommand);
+        $this->assertStringContainsString('commercial:refund', $refundCommand);
+        $this->assertStringContainsString('{--confirm', $refundCommand);
+        $this->assertStringContainsString('commercial:reconcile --limit=100', $schedule);
+        $this->assertStringContainsString('->dailyAt(', $schedule);
+        $this->assertStringNotContainsString('refund', $apiRoutes);
+    }
 }

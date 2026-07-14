@@ -38,6 +38,7 @@ final class CommercialRenewalService
         private readonly PaymentGatewayInterface $gateway,
         private readonly CommercialBillingNotificationService $notifications,
         private readonly CommercialWebhookProcessor $webhookProcessor,
+        private readonly CommercialPaymentProviderPolicy $providerPolicy,
     ) {}
 
     public function process(CarbonInterface $at, int $limit = 100): array
@@ -111,6 +112,7 @@ final class CommercialRenewalService
     {
         return DB::transaction(function () use ($accountId, $now): array {
             $account = OrganizationCommercialAccount::query()->whereKey($accountId)->lockForUpdate()->firstOrFail();
+            $this->providerPolicy->assertCanCharge((int) $account->organization_id);
             $periodStart = CarbonImmutable::instance($account->current_period_end_at);
             $periodEnd = $periodStart->addDays(30);
             $dueDay = $periodStart->setTimezone(self::TIMEZONE)->startOfDay();
@@ -337,10 +339,18 @@ final class CommercialRenewalService
         $payment->loadMissing('order.commercialAccount');
         $order = $payment->order;
         $account = $order->commercialAccount;
+        if ((bool) config('services.yookassa.receipt.enabled', false)) {
+            $account->loadMissing('responsibleUser');
+        }
+        $customerEmail = (bool) config('services.yookassa.receipt.enabled', false)
+            ? $account->responsibleUser?->email
+            : null;
+        $this->providerPolicy->assertCanCharge((int) $order->organization_id);
         $result = $this->gateway->createSavedMethodPayment(new CreateSavedMethodPaymentData(
             $payment->provider_idempotency_key, $payment->amount_minor, $payment->currency,
             (string) $account->saved_payment_method_id, trans_message('billing.renewal.payment_description'),
             ['order_id' => $order->public_id, 'organization_id' => $order->organization_id],
+            $customerEmail,
         ));
         DB::transaction(function () use ($payment, $result): void {
             $current = CommercialPayment::query()->whereKey($payment->id)->lockForUpdate()->firstOrFail();

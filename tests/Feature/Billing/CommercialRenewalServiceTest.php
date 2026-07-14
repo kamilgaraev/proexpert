@@ -39,6 +39,8 @@ final class CommercialRenewalServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        config()->set('services.yookassa.mode', 'mock');
         $this->schema();
         $this->gateway = new RenewalGatewayFake;
         $this->app->instance(PaymentGatewayInterface::class, $this->gateway);
@@ -777,6 +779,11 @@ final class RenewalGatewayFake implements PaymentGatewayInterface
     }
 
     public function getRefund(string $refundId): RefundGatewayResult
+    {
+        throw new RuntimeException('Not used.');
+    }
+
+    public function createRefund(\App\DataTransferObjects\Billing\CreateRefundData $refund): RefundGatewayResult
     {
         throw new RuntimeException('Not used.');
     }

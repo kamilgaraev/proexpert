@@ -16,6 +16,7 @@ class CommercialPayment extends Model
         'refunded_amount_minor',
         'commercial_renewal_cycle_id', 'role', 'attempt_number', 'terminal_failure_reason',
         'failure_category', 'attempted_at', 'terminal_at',
+        'reconciliation_required', 'last_reconciled_at',
     ];
 
     protected $casts = [
@@ -26,6 +27,8 @@ class CommercialPayment extends Model
         'attempt_number' => 'integer',
         'attempted_at' => 'immutable_datetime',
         'terminal_at' => 'immutable_datetime',
+        'reconciliation_required' => 'boolean',
+        'last_reconciled_at' => 'immutable_datetime',
     ];
 
     public function order(): BelongsTo
