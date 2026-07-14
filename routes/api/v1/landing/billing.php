@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Http\Controllers\Api\V1\Landing\Billing\BalanceController;
+use App\Http\Controllers\Api\V1\Landing\Billing\CommercialCheckoutController;
 use App\Http\Controllers\Api\V1\Landing\OrganizationDashboardController;
 use Illuminate\Support\Facades\Route;
 
@@ -16,4 +17,8 @@ Route::middleware(['interface:lk'])
             Route::get('dashboard', [OrganizationDashboardController::class, 'index'])
                 ->name('dashboard.index');
         });
+
+        Route::post('commercial/checkout', [CommercialCheckoutController::class, 'store'])
+            ->middleware(['authorize:billing.manage'])
+            ->name('commercial.checkout');
     });

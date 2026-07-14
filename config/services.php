@@ -2,6 +2,18 @@
 
 return [
 
+    'yookassa' => [
+        'mode' => env('YOOKASSA_MODE', 'test'),
+        'shop_id' => env('YOOKASSA_SHOP_ID'),
+        'secret_key' => env('YOOKASSA_SECRET_KEY'),
+        'api_url' => env('YOOKASSA_API_URL', 'https://api.yookassa.ru/v3'),
+        'return_url' => env('YOOKASSA_RETURN_URL', 'https://1мост.рф/dashboard/billing'),
+        'webhook_url' => env('YOOKASSA_WEBHOOK_URL', 'https://1мост.рф/api/v1/webhooks/yookassa'),
+        'timeout' => (int) env('YOOKASSA_TIMEOUT', 10),
+        'retry_attempts' => (int) env('YOOKASSA_RETRY_ATTEMPTS', 3),
+        'retry_delay_ms' => (int) env('YOOKASSA_RETRY_DELAY_MS', 150),
+    ],
+
     /*
     |--------------------------------------------------------------------------
     | Third Party Services

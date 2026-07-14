@@ -21,23 +21,4 @@ return [
         ],
     ],
 
-    'payment_gateway' => [
-        'driver' => 'mock',
-        'webhook_url' => null,
-        'webhook_secret' => null,
-        'stripe' => [
-            'key' => '',
-            'secret' => '',
-        ],
-        'yookassa' => [
-            'shop_id' => '',
-            'secret_key' => '',
-        ],
-        'robokassa' => [
-            'merchant_login' => '',
-            'password1' => '',
-            'password2' => '',
-            'test_mode' => true,
-        ],
-    ],
 ];
