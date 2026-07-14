@@ -7,16 +7,11 @@ namespace App\Services\Entitlements;
 use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
 use App\Models\OrganizationPackageSubscription;
-use App\Models\OrganizationSubscription;
-use App\Models\SubscriptionPlan;
 use App\Services\Modules\PackageCatalogService;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Log;
 
 class OrganizationEntitlementService
 {
-    private const PACKAGES_PATH = 'Packages';
-
     public function __construct(
         private readonly PackageCatalogService $packageCatalog
     ) {}
@@ -36,6 +31,7 @@ class OrganizationEntitlementService
             ->join('modules', 'modules.id', '=', 'organization_module_activations.module_id')
             ->where('organization_module_activations.organization_id', $organizationId)
             ->where('organization_module_activations.status', 'active')
+            ->where('organization_module_activations.is_bundled_with_plan', false)
             ->where('modules.is_active', true)
             ->where(function ($query): void {
                 $query->whereNull('organization_module_activations.expires_at')
@@ -46,6 +42,7 @@ class OrganizationEntitlementService
 
         $slugs = array_values(array_unique(array_merge(
             $systemSlugs,
+            $this->packageCatalog->foundationModules(),
             $this->getAlwaysOnModuleSlugs(),
             $directSlugs,
             array_keys($this->getPackageModuleSources($organizationId))
@@ -100,132 +97,64 @@ class OrganizationEntitlementService
     {
         $sources = [];
 
-        foreach ($this->getActivePlanPackageDefinitions($organizationId) as $package) {
-            $this->appendPackageModuleSources($sources, $package, true);
-        }
-
         $packageSubscriptions = OrganizationPackageSubscription::query()
-            ->with('subscription')
             ->where('organization_id', $organizationId)
+            ->standalone()
             ->active()
-            ->get()
-            ->filter(fn (OrganizationPackageSubscription $packageSubscription): bool => $this->isPackageSubscriptionUsable($packageSubscription));
+            ->orderBy('package_slug')
+            ->orderBy('id')
+            ->get();
 
         foreach ($packageSubscriptions as $packageSubscription) {
-            $this->appendPackageModuleSources($sources, [
-                'package_slug' => $packageSubscription->package_slug,
-                'tier' => $packageSubscription->tier,
-                'subscription_id' => $packageSubscription->subscription_id,
-                'expires_at' => $packageSubscription->expires_at,
-            ], (bool) $packageSubscription->is_bundled_with_plan);
+            $this->appendPackageModuleSources($sources, $packageSubscription);
         }
 
         return $sources;
     }
 
-    private function getActivePlanPackageDefinitions(int $organizationId): array
-    {
-        $subscriptions = OrganizationSubscription::query()
-            ->with('plan')
-            ->where('organization_id', $organizationId)
-            ->where('status', 'active')
-            ->whereNull('canceled_at')
-            ->where(function ($query): void {
-                $query->whereNull('ends_at')
-                    ->orWhere('ends_at', '>', now());
-            })
-            ->get();
+    private function appendPackageModuleSources(
+        array &$sources,
+        OrganizationPackageSubscription $packageSubscription
+    ): void {
+        $packageSlug = $packageSubscription->package_slug;
 
-        $packages = [];
-
-        foreach ($subscriptions as $subscription) {
-            if (! $subscription->plan instanceof SubscriptionPlan) {
-                continue;
-            }
-
-            foreach ($this->normalizeIncludedPackages($subscription->plan) as $package) {
-                $packages[] = [
-                    'package_slug' => $package['package_slug'],
-                    'tier' => $package['tier'],
-                    'subscription_id' => $subscription->id,
-                    'expires_at' => $subscription->ends_at,
-                ];
-            }
-        }
-
-        return $packages;
-    }
-
-    private function appendPackageModuleSources(array &$sources, array $package, bool $isBundledWithPlan): void
-    {
-        $packageSlug = $package['package_slug'] ?? null;
-        $tier = $package['tier'] ?? null;
-
-        if (! is_string($packageSlug) || ! is_string($tier)) {
+        if ($this->packageCatalog->package($packageSlug) === null) {
             return;
         }
 
-        foreach ($this->getPackageTierModules($packageSlug, $tier) as $moduleSlug) {
-            $existingSource = $sources[$moduleSlug] ?? null;
-
-            if ($existingSource !== null && ($existingSource['is_bundled_with_plan'] ?? false) && ! $isBundledWithPlan) {
-                continue;
-            }
-
-            $sources[$moduleSlug] = [
+        foreach ($this->packageCatalog->tierModules($packageSlug, 'standard') as $moduleSlug) {
+            $candidate = [
                 'module_slug' => $moduleSlug,
                 'package_slug' => $packageSlug,
-                'tier' => $tier,
-                'subscription_id' => $package['subscription_id'] ?? null,
-                'expires_at' => $package['expires_at'] ?? null,
-                'is_bundled_with_plan' => $isBundledWithPlan,
+                'subscription_id' => $packageSubscription->subscription_id,
+                'expires_at' => $packageSubscription->expires_at,
+                'access_source' => 'paid_package',
             ];
+
+            if ($this->shouldUseSource($sources[$moduleSlug] ?? null, $candidate)) {
+                $sources[$moduleSlug] = $candidate;
+            }
         }
     }
 
-    private function isPackageSubscriptionUsable(OrganizationPackageSubscription $packageSubscription): bool
+    private function shouldUseSource(?array $current, array $candidate): bool
     {
-        if (! $packageSubscription->is_bundled_with_plan) {
+        if ($current === null) {
             return true;
         }
 
-        $subscription = $packageSubscription->subscription;
+        $currentExpiresAt = $current['expires_at'] ?? null;
+        $candidateExpiresAt = $candidate['expires_at'] ?? null;
 
-        return $subscription instanceof OrganizationSubscription
-            && $subscription->status === 'active'
-            && $subscription->canceled_at === null
-            && ($subscription->ends_at === null || $subscription->ends_at->isFuture());
-    }
+        if ($currentExpiresAt === null) {
+            return false;
+        }
 
-    private function normalizeIncludedPackages(SubscriptionPlan $plan): array
-    {
-        return collect($plan->included_packages ?? [])
-            ->filter(fn ($package): bool => is_array($package))
-            ->map(function (array $package): ?array {
-                $packageSlug = $package['package_slug'] ?? $package['slug'] ?? null;
-                $tier = $package['tier'] ?? null;
+        if ($candidateExpiresAt === null) {
+            return true;
+        }
 
-                if (! is_string($packageSlug) || ! is_string($tier)) {
-                    return null;
-                }
-
-                if ($this->getPackageTierModules($packageSlug, $tier) === []) {
-                    return null;
-                }
-
-                return [
-                    'package_slug' => $packageSlug,
-                    'tier' => $tier,
-                ];
-            })
-            ->filter()
-            ->values()
-            ->all();
-    }
-
-    private function getPackageTierModules(string $packageSlug, string $tier): array
-    {
-        return $this->packageCatalog->tierModules($packageSlug, $tier);
+        return $candidateExpiresAt->greaterThan($currentExpiresAt);
     }
 
     private function getAlwaysOnModuleSlugs(): array
@@ -237,22 +166,5 @@ class OrganizationEntitlementService
             ->keys()
             ->values()
             ->all();
-    }
-
-    private function getPackageConfig(string $packageSlug): array
-    {
-        $path = config_path(self::PACKAGES_PATH.'/'.$packageSlug.'.json');
-
-        if (! file_exists($path)) {
-            Log::warning('Package config is missing for entitlement calculation', [
-                'package_slug' => $packageSlug,
-            ]);
-
-            return ['tiers' => []];
-        }
-
-        $config = json_decode((string) file_get_contents($path), true);
-
-        return is_array($config) ? $config : ['tiers' => []];
     }
 }

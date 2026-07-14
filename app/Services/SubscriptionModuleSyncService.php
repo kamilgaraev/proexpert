@@ -14,17 +14,15 @@ use App\Services\Modules\PackageCatalogService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+
 use function trans_message;
 
 class SubscriptionModuleSyncService
 {
-    private const PACKAGES_PATH = 'Packages';
-
     public function __construct(
         private readonly OrganizationEntitlementService $entitlementService,
         private readonly PackageCatalogService $packageCatalog
-    ) {
-    }
+    ) {}
 
     public function syncModulesOnSubscribe(OrganizationSubscription $subscription): array
     {
@@ -340,6 +338,7 @@ class SubscriptionModuleSyncService
 
                 if (! $module instanceof Module) {
                     $result['missing_modules_count']++;
+
                     continue;
                 }
 
@@ -352,7 +351,7 @@ class SubscriptionModuleSyncService
                     'organization_id' => $organizationId,
                     'module_id' => $module->id,
                     'subscription_id' => $source['subscription_id'] ?? null,
-                    'is_bundled_with_plan' => (bool) ($source['is_bundled_with_plan'] ?? false),
+                    'is_bundled_with_plan' => false,
                     'status' => 'active',
                     'activated_at' => $existingActivation?->activated_at ?? now(),
                     'expires_at' => $source['expires_at'] ?? null,
@@ -365,12 +364,14 @@ class SubscriptionModuleSyncService
                 if (! $existingActivation) {
                     OrganizationModuleActivation::create($attributes);
                     $result['created_count']++;
+
                     continue;
                 }
 
                 if ($this->activationNeedsRepair($existingActivation, $attributes)) {
                     $existingActivation->update($attributes);
                     $result['restored_count']++;
+
                     continue;
                 }
 
@@ -409,26 +410,12 @@ class SubscriptionModuleSyncService
     private function getOrganizationsWithActivePackageEntitlements(): Collection
     {
         $packageOrganizationIds = OrganizationPackageSubscription::query()
+            ->standalone()
             ->active()
+            ->whereIn('package_slug', collect($this->packageCatalog->allPackages())->pluck('slug'))
             ->pluck('organization_id');
 
-        $planOrganizationIds = OrganizationSubscription::query()
-            ->with('plan')
-            ->where('status', 'active')
-            ->whereNull('canceled_at')
-            ->where(function ($query): void {
-                $query->whereNull('ends_at')
-                    ->orWhere('ends_at', '>', now());
-            })
-            ->get()
-            ->filter(fn (OrganizationSubscription $subscription): bool => $subscription->plan instanceof SubscriptionPlan
-                && $this->getIncludedPackages($subscription->plan) !== [])
-            ->pluck('organization_id');
-
-        return $packageOrganizationIds
-            ->merge($planOrganizationIds)
-            ->unique()
-            ->values();
+        return $packageOrganizationIds->unique()->values();
     }
 
     private function activationNeedsRepair(OrganizationModuleActivation $activation, array $attributes): bool
@@ -631,22 +618,5 @@ class SubscriptionModuleSyncService
     private function packageKey(array $package): string
     {
         return $package['package_slug'].':'.$package['tier'];
-    }
-
-    private function getPackageConfig(string $packageSlug): array
-    {
-        $package = $this->packageCatalog->package($packageSlug);
-
-        if ($package !== null) {
-            return $package;
-        }
-
-        $path = config_path(self::PACKAGES_PATH.'/'.$packageSlug.'.json');
-
-        if (! file_exists($path)) {
-            return ['tiers' => []];
-        }
-
-        return json_decode((string) file_get_contents($path), true) ?: ['tiers' => []];
     }
 }
