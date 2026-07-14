@@ -78,15 +78,18 @@ class CommercialCheckoutSchemaTest extends TestCase
         $this->assertStringContainsString("['23000', '23505', '40001', '40P01']", $service);
     }
 
-    public function test_commercial_renewal_schedule_is_registered_once_at_three_moscow_time(): void
+    public function test_commercial_due_processor_runs_every_minute_with_production_locks(): void
     {
         $schedule = file_get_contents(dirname(__DIR__, 3).'/routes/console.php');
         $this->assertIsString($schedule);
         $this->assertSame(1, substr_count($schedule, "Schedule::command('commercial:process-renewals --limit=100')"));
-        $this->assertStringContainsString("->dailyAt('03:00')", $schedule);
-        $this->assertStringContainsString("->timezone('Europe/Moscow')", $schedule);
-        $this->assertStringContainsString('->withoutOverlapping(120)', $schedule);
-        $this->assertStringContainsString('->onOneServer()', $schedule);
+        preg_match("/Schedule::command\\('commercial:process-renewals --limit=100'\\)(.*?);/s", $schedule, $matches);
+        $renewalSchedule = $matches[0] ?? '';
+        $this->assertStringContainsString('->everyMinute()', $renewalSchedule);
+        $this->assertStringContainsString("->timezone('Europe/Moscow')", $renewalSchedule);
+        $this->assertStringContainsString('->withoutOverlapping(120)', $renewalSchedule);
+        $this->assertStringContainsString('->onOneServer()', $renewalSchedule);
+        $this->assertStringNotContainsString("->dailyAt('03:00')", $renewalSchedule);
     }
 
     public function test_trial_lifecycle_has_separate_hourly_schedule(): void

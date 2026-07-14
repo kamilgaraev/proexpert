@@ -476,6 +476,39 @@ class CommercialWebhookServiceTest extends TestCase
         ];
     }
 
+    public function test_reduced_contour_cancellation_keeps_only_order_snapshot_in_grace(): void
+    {
+        [$cycle] = $this->configureRenewalCycle(now());
+        $cycle->forceFill(['status' => 'due'])->save();
+        OrganizationPackageSubscription::query()->create([
+            'organization_id' => $this->organization->id,
+            'commercial_account_id' => $this->account->id,
+            'package_slug' => 'planning-schedules',
+            'status' => 'active',
+            'access_source' => 'paid_package',
+            'price_paid' => 7900,
+            'current_period_start_at' => $this->order->period_start_at->subDays(30),
+            'current_period_end_at' => $this->order->period_start_at,
+            'source_order_id' => $this->order->id,
+        ]);
+        $this->order->forceFill([
+            'selected_package_slugs' => ['machinery'],
+            'current_package_slugs' => ['machinery', 'planning-schedules'],
+        ])->save();
+        $this->gateway->payment = $this->paymentResult(
+            status: 'canceled', paid: false, cancellationReason: 'insufficient_funds',
+        );
+
+        app(CommercialWebhookService::class)->process(
+            $this->notification('payment.canceled', 'payment-id', 'canceled'),
+            '185.71.76.1',
+        );
+
+        $statuses = OrganizationPackageSubscription::query()->pluck('status', 'package_slug');
+        $this->assertSame('grace', $statuses['machinery']->value);
+        $this->assertSame('expired', $statuses['planning-schedules']->value);
+    }
+
     public function test_canceled_pending_order_notifies_once_but_cannot_downgrade_paid_order(): void
     {
         $this->gateway->payment = $this->paymentResult(status: 'canceled', paid: false);

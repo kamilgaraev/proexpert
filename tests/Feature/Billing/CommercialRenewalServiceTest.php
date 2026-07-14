@@ -19,6 +19,7 @@ use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
 use App\Services\Billing\CommercialOfferCalculator;
 use App\Services\Billing\CommercialRenewalService;
+use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -109,6 +110,50 @@ final class CommercialRenewalServiceTest extends TestCase
         $this->assertSame(2, CommercialPayment::query()->count());
         $this->assertSame([1, 2], CommercialPayment::query()->orderBy('attempt_number')->pluck('attempt_number')->all());
         $this->assertNotSame(...CommercialPayment::query()->orderBy('attempt_number')->pluck('provider_idempotency_key')->all());
+    }
+
+    public function test_minute_ticks_keep_grace_retry_at_three_moscow_time_once_per_date(): void
+    {
+        $service = app(CommercialRenewalService::class);
+        $service->process(CarbonImmutable::parse('2026-07-31 03:00', 'Europe/Moscow'));
+        CommercialPayment::query()->sole()->forceFill([
+            'provider_status' => 'canceled',
+            'terminal_at' => '2026-07-31 03:01',
+        ])->save();
+        CommercialRenewalCycle::query()->sole()->forceFill([
+            'status' => 'grace',
+            'next_attempt_at' => CarbonImmutable::parse('2026-08-01 03:00', 'Europe/Moscow')->utc(),
+        ])->save();
+
+        $service->process(CarbonImmutable::parse('2026-08-01 00:01', 'Europe/Moscow'));
+        $service->process(CarbonImmutable::parse('2026-08-01 02:59', 'Europe/Moscow'));
+        $this->assertDatabaseCount('commercial_payments', 1);
+        $this->assertSame(1, $this->gateway->creates);
+
+        $service->process(CarbonImmutable::parse('2026-08-01 03:00', 'Europe/Moscow'));
+        $service->process(CarbonImmutable::parse('2026-08-01 03:01', 'Europe/Moscow'));
+
+        $this->assertDatabaseCount('commercial_payments', 2);
+        $this->assertSame(2, $this->gateway->creates);
+    }
+
+    public function test_pending_reconciliation_is_throttled_under_minute_cadence(): void
+    {
+        $service = app(CommercialRenewalService::class);
+        $service->process(CarbonImmutable::parse('2026-07-31 03:00', 'Europe/Moscow'));
+
+        $service->process(CarbonImmutable::parse('2026-07-31 03:01', 'Europe/Moscow'));
+        $service->process(CarbonImmutable::parse('2026-07-31 03:04', 'Europe/Moscow'));
+        $this->assertSame(0, $this->gateway->lookups);
+
+        $service->process(CarbonImmutable::parse('2026-07-31 03:05', 'Europe/Moscow'));
+        $service->process(CarbonImmutable::parse('2026-07-31 03:06', 'Europe/Moscow'));
+
+        $this->assertSame(1, $this->gateway->lookups);
+        $this->assertSame(
+            '2026-07-31 03:10',
+            CommercialRenewalCycle::query()->sole()->next_attempt_at->setTimezone('Europe/Moscow')->format('Y-m-d H:i'),
+        );
     }
 
     public function test_day_seven_suspends_without_eighth_attempt(): void
@@ -238,18 +283,18 @@ final class CommercialRenewalServiceTest extends TestCase
     {
         $anchor = CarbonImmutable::parse('2026-07-31 14:00', 'Europe/Moscow');
         $this->account->forceFill([
-            'current_period_start_at' => $anchor->subDays(30)->utc(),
-            'current_period_end_at' => $anchor->utc(),
-            'billing_anchor_at' => $anchor->utc(),
+            'current_period_start_at' => $anchor->subDays(30),
+            'current_period_end_at' => $anchor,
+            'billing_anchor_at' => $anchor,
         ])->save();
         OrganizationPackageSubscription::query()->update([
-            'current_period_start_at' => $anchor->subDays(30)->utc(),
-            'current_period_end_at' => $anchor->utc(),
+            'current_period_start_at' => $anchor->subDays(30),
+            'current_period_end_at' => $anchor,
         ]);
         $this->addPackageRows(['planning-schedules']);
         OrganizationPackageSubscription::query()->where('package_slug', 'planning-schedules')->update([
-            'current_period_start_at' => $anchor->subDays(30)->utc(),
-            'current_period_end_at' => $anchor->utc(),
+            'current_period_start_at' => $anchor->subDays(30),
+            'current_period_end_at' => $anchor,
         ]);
         $change = CommercialContourChange::query()->create([
             'public_id' => 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -278,9 +323,16 @@ final class CommercialRenewalServiceTest extends TestCase
         $this->assertDatabaseCount('commercial_orders', 0);
         $this->assertSame(0, $this->gateway->creates);
         $this->assertSame('scheduled', $change->fresh()->status);
-
+        Carbon::setTestNow($anchor->subMinute());
+        $machinery = OrganizationPackageSubscription::query()->where('package_slug', 'machinery')->firstOrFail();
+        $this->assertTrue($machinery->isActive(), json_encode([
+            'status' => $machinery->status->value,
+            'period_end' => $machinery->current_period_end_at?->toIso8601String(),
+            'now' => Carbon::now()->toIso8601String(),
+        ], JSON_THROW_ON_ERROR));
+        Carbon::setTestNow($anchor->addSeconds(30));
         app(CommercialRenewalService::class)->process(
-            $anchor,
+            $anchor->addSeconds(30),
         );
 
         $order = CommercialOrder::query()->sole();
@@ -289,11 +341,23 @@ final class CommercialRenewalServiceTest extends TestCase
         $this->assertSame('applied', $change->fresh()->status);
         $this->assertSame($order->id, $change->fresh()->commercial_order_id);
         $this->assertNotNull($change->fresh()->applied_at);
+        $this->assertTrue(
+            OrganizationPackageSubscription::query()->where('package_slug', 'machinery')->firstOrFail()->isActive(),
+        );
+        $this->assertSame(
+            'expired',
+            OrganizationPackageSubscription::query()
+                ->where('package_slug', 'planning-schedules')
+                ->firstOrFail()
+                ->status
+                ->value,
+        );
 
         app(CommercialRenewalService::class)->process(
             $anchor->addHour(),
         );
         $this->assertDatabaseCount('commercial_orders', 1);
+        Carbon::setTestNow();
     }
 
     public function test_scheduled_empty_contour_expires_paid_access_at_anchor_without_payment(): void
@@ -524,6 +588,8 @@ final class RenewalGatewayFake implements PaymentGatewayInterface
 
     public int $failCreates = 0;
 
+    public int $lookups = 0;
+
     public ?PaymentGatewayResult $lookup = null;
 
     public ?PaymentGatewayResult $createResult = null;
@@ -545,6 +611,8 @@ final class RenewalGatewayFake implements PaymentGatewayInterface
 
     public function getPayment(string $paymentId): PaymentGatewayResult
     {
+        $this->lookups++;
+
         return $this->lookup ?? throw new RuntimeException('provider unavailable');
     }
 

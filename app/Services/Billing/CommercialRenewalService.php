@@ -28,6 +28,10 @@ final class CommercialRenewalService
 {
     private const TIMEZONE = 'Europe/Moscow';
 
+    private const RETRY_HOUR = 3;
+
+    private const RECONCILIATION_INTERVAL_MINUTES = 5;
+
     public function __construct(
         private readonly CommercialOfferCalculator $calculator,
         private readonly PaymentGatewayInterface $gateway,
@@ -173,8 +177,9 @@ final class CommercialRenewalService
                     'commercial_order_id' => $order->id, 'status' => 'due', 'due_at' => $dueDay->utc(),
                     'billing_due_date' => $dueDay->toDateString(),
                     'target_period_start_at' => $periodStart, 'target_period_end_at' => $periodEnd,
-                    'grace_deadline_at' => $deadline->utc(), 'attempt_count' => 0, 'next_attempt_at' => $dueDay->addHours(3)->utc(),
+                    'grace_deadline_at' => $deadline->utc(), 'attempt_count' => 0, 'next_attempt_at' => null,
                 ]);
+                $this->preserveAccessDuringRenewal($account, $quote['target_package_slugs'], $periodStart, $deadline);
                 if ($scheduledChange !== null) {
                     $scheduledChange->forceFill([
                         'status' => 'applied',
@@ -188,7 +193,11 @@ final class CommercialRenewalService
             if ($latest !== null && $latest->provider_status === 'canceled') {
                 $lastDate = $latest->terminal_at?->setTimezone(self::TIMEZONE)->toDateString()
                     ?? $cycle->last_attempt_at?->setTimezone(self::TIMEZONE)->toDateString();
-                if ($lastDate === $now->toDateString() || $cycle->attempt_count >= 7) {
+                $retryWindow = $now->startOfDay()->addHours(self::RETRY_HOUR);
+                if ($lastDate === $now->toDateString()
+                    || $cycle->attempt_count >= 7
+                    || $now->lessThan($retryWindow)
+                    || ($cycle->next_attempt_at !== null && $now->lessThan(CarbonImmutable::instance($cycle->next_attempt_at)))) {
                     return ['created_cycles' => (int) $createdCycle];
                 }
                 $order = $cycle->order;
@@ -199,14 +208,29 @@ final class CommercialRenewalService
                     'currency' => $order->currency, 'provider_idempotency_key' => (string) Str::uuid(),
                     'payment_method_saved' => false,
                 ]);
-                $cycle->forceFill(['status' => 'grace', 'attempt_count' => $nextNumber, 'last_attempt_at' => $now, 'next_attempt_at' => $now->addDay()->startOfDay()->addHours(3)])->save();
+                $cycle->forceFill([
+                    'status' => 'grace',
+                    'attempt_count' => $nextNumber,
+                    'last_attempt_at' => $now,
+                    'next_attempt_at' => $now->addMinutes(self::RECONCILIATION_INTERVAL_MINUTES)->utc(),
+                ])->save();
 
                 return ['payment' => $latest, 'created_cycles' => (int) $createdCycle, 'created_attempts' => 1];
             }
             if ($latest !== null && in_array($latest->provider_status, ['pending', 'waiting_for_capture'], true)) {
+                if ($cycle->next_attempt_at !== null && $now->lessThan(CarbonImmutable::instance($cycle->next_attempt_at))) {
+                    return ['created_cycles' => (int) $createdCycle];
+                }
+                $cycle->forceFill(['next_attempt_at' => $now->addMinutes(self::RECONCILIATION_INTERVAL_MINUTES)->utc()])->save();
+
                 return ['reconcile_payment' => $latest, 'created_cycles' => (int) $createdCycle];
             }
             if ($latest !== null && in_array($latest->provider_status, ['succeeded', 'canceled'], true) && $latest->terminal_at === null) {
+                if ($cycle->next_attempt_at !== null && $now->lessThan(CarbonImmutable::instance($cycle->next_attempt_at))) {
+                    return ['created_cycles' => (int) $createdCycle];
+                }
+                $cycle->forceFill(['next_attempt_at' => $now->addMinutes(self::RECONCILIATION_INTERVAL_MINUTES)->utc()])->save();
+
                 return ['reconcile_payment' => $latest, 'created_cycles' => (int) $createdCycle];
             }
             if ($latest !== null && $latest->provider_status !== 'created') {
@@ -220,13 +244,48 @@ final class CommercialRenewalService
                     'currency' => $order->currency, 'provider_idempotency_key' => (string) Str::uuid(),
                     'payment_method_saved' => false,
                 ]);
-                $cycle->forceFill(['attempt_count' => 1, 'last_attempt_at' => $now])->save();
+                $cycle->forceFill([
+                    'attempt_count' => 1,
+                    'last_attempt_at' => $now,
+                    'next_attempt_at' => $now->addMinutes(self::RECONCILIATION_INTERVAL_MINUTES)->utc(),
+                ])->save();
 
                 return ['payment' => $latest, 'created_cycles' => (int) $createdCycle, 'created_attempts' => 1];
             }
 
             return ['payment' => $latest, 'created_cycles' => (int) $createdCycle];
         }, 3);
+    }
+
+    private function preserveAccessDuringRenewal(
+        OrganizationCommercialAccount $account,
+        array $targetPackageSlugs,
+        CarbonImmutable $periodStart,
+        CarbonImmutable $deadline,
+    ): void {
+        $account->forceFill([
+            'status' => 'grace',
+            'grace_started_at' => $periodStart,
+            'grace_ends_at' => $deadline->utc(),
+        ])->save();
+
+        OrganizationPackageSubscription::query()
+            ->where('commercial_account_id', $account->id)
+            ->whereIn('access_source', ['paid_package', 'full_suite'])
+            ->each(function (OrganizationPackageSubscription $subscription) use ($targetPackageSlugs, $periodStart): void {
+                if (in_array($subscription->package_slug, $targetPackageSlugs, true)) {
+                    $subscription->forceFill(['status' => 'grace'])->save();
+
+                    return;
+                }
+
+                $subscription->forceFill([
+                    'status' => 'expired',
+                    'current_period_end_at' => $periodStart,
+                    'cancel_at' => null,
+                    'canceled_at' => $periodStart,
+                ])->save();
+            });
     }
 
     private function send(CommercialPayment $payment): void

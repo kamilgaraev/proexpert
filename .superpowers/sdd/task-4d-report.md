@@ -1,5 +1,37 @@
 # Task 4D — отчёт о завершении commercial billing API
 
+## Исправление cadence планировщика и точного billing anchor
+
+### Изменения
+
+- Due-процессор коммерческого биллинга запускается каждую минуту с московской временной зоной, `withoutOverlapping(120)` и `onOneServer()`.
+- До точного `current_period_end_at` процессор не изменяет доступ; первый тик после произвольного anchor создаёт ровно один renewal cycle.
+- В момент anchor сохраняемые пакеты переводятся в grace-backstop без разрыва доступа, а удаляемые scheduled-пакеты истекают и не возвращаются в grace после отмены платежа.
+- Сверка pending-платежей ограничена пятиминутным интервалом.
+- Повтор отменённого платежа остаётся отдельным ежедневным окном в `03:00 Europe/Moscow`.
+
+### RED → GREEN evidence
+
+- Scheduler: `dailyAt('03:00')` → `everyMinute()` с production locks.
+- Grace retry: второй платёж в 00:01 → единственный повтор не ранее 03:00 московской даты.
+- Reconciliation: lookup на каждом тике → первый lookup через пять минут.
+- Anchor 14:00: разрыв доступа → отсутствие ранней мутации и активный сохранённый пакет после первого post-anchor тика.
+- Reduced contour cancellation: удалённый пакет возвращался в grace → grace получает только snapshot целевого заказа.
+
+### Проверки
+
+- Полный Task 4D regression: `OK (106 tests, 539 assertions)`.
+- Renewal suite: `OK (15 tests, 81 assertions)`.
+- `php -l`: 6/6 изменённых PHP-файлов без синтаксических ошибок.
+- Larastan/PHPStan по двум изменённым production services: `[OK] No errors`.
+- Pint по 6 изменённым PHP-файлам: PASS.
+- `git diff --check`: без ошибок.
+
+### Ограничения
+
+- Миграции и локальные DB-команды вне изолированной SQLite-схемы PHPUnit не запускались.
+- Live YooKassa и production scheduler не вызывались; секреты провайдера не использовались.
+
 ## Реализация
 
 - Добавлены защищённые LK endpoints:
