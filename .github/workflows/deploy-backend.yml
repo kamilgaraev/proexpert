@@ -114,11 +114,12 @@ jobs:
               printf 'SENTRY_RELEASE=prohelper@%s\n' "${RELEASE_SHA}" >> .env
             fi
 
-            if supervisorctl status 2>/dev/null | grep -q '^laravel-worker:'; then
+            SUPERVISOR_STATUS="$(supervisorctl status 2>/dev/null || true)"
+            if grep -Eq '^laravel-worker(_[0-9]+|:)' <<< "${SUPERVISOR_STATUS}"; then
               supervisorctl stop 'laravel-worker:*'
             fi
 
-            if pgrep -af '/var/www/prohelper/artisan queue:work' >/dev/null; then
+            if pgrep -af '^php /var/www/prohelper/artisan queue:work( |$)' >/dev/null; then
               echo 'Legacy Laravel queue workers are still running; refusing dual queue ownership'
               exit 1
             fi
