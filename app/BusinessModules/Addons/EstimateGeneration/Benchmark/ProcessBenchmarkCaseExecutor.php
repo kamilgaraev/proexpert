@@ -4,12 +4,13 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Addons\EstimateGeneration\Benchmark;
 
-use Symfony\Component\Process\Exception\ProcessTimedOutException;
 use Symfony\Component\Process\Process;
 use Throwable;
 
 final readonly class ProcessBenchmarkCaseExecutor implements BenchmarkCaseExecutor
 {
+    private const TERMINATION_GRACE_MICROSECONDS = 100_000;
+
     public function __construct(
         private string $phpBinary,
         private string $artisanPath,
@@ -28,6 +29,7 @@ final readonly class ProcessBenchmarkCaseExecutor implements BenchmarkCaseExecut
         BenchmarkCaseData $case,
         BenchmarkPipelineAdapter $adapter,
     ): BenchmarkPipelineResultData {
+        PendingBenchmarkProcessRegistry::reap();
         $command = [
             $this->phpBinary,
             '-d', 'memory_limit='.$this->memoryLimit,
@@ -40,13 +42,21 @@ final readonly class ProcessBenchmarkCaseExecutor implements BenchmarkCaseExecut
         if (PHP_OS_FAMILY !== 'Windows' && is_executable('/usr/bin/setsid')) {
             array_unshift($command, '/usr/bin/setsid');
         }
-        $process = new Process($command, dirname($this->artisanPath), timeout: $request->timeoutMs / 1000);
+        $process = new Process($command, dirname($this->artisanPath), timeout: null);
+        if (PHP_OS_FAMILY === 'Windows') {
+            $process->setOptions(['create_process_group' => true]);
+        }
         $stdout = '';
         $stderrBytes = 0;
+        $deadline = hrtime(true) + $request->timeoutMs * 1_000_000;
         try {
             $process->start();
             while ($process->isRunning()) {
-                $process->checkTimeout();
+                if (hrtime(true) >= $deadline) {
+                    $this->terminateTree($process);
+
+                    return BenchmarkPipelineResultData::technicalFailure('case_timeout');
+                }
                 $stdout .= $process->getIncrementalOutput();
                 $stderrBytes += strlen($process->getIncrementalErrorOutput());
                 if (strlen($stdout) + $stderrBytes > $this->maxOutputBytes) {
@@ -58,10 +68,6 @@ final readonly class ProcessBenchmarkCaseExecutor implements BenchmarkCaseExecut
             }
             $stdout .= $process->getIncrementalOutput();
             $stderrBytes += strlen($process->getIncrementalErrorOutput());
-        } catch (ProcessTimedOutException) {
-            $this->terminateTree($process);
-
-            return BenchmarkPipelineResultData::technicalFailure('case_timeout');
         } catch (Throwable) {
             $this->terminateTree($process);
 
@@ -81,13 +87,30 @@ final readonly class ProcessBenchmarkCaseExecutor implements BenchmarkCaseExecut
     {
         $pid = $process->getPid();
         if ($pid !== null && PHP_OS_FAMILY === 'Windows') {
-            (new Process(['taskkill', '/PID', (string) $pid, '/T', '/F']))->run();
+            $killer = new Process(['cmd', '/D', '/C', 'start', '', '/B', 'taskkill', '/PID', (string) $pid, '/T', '/F']);
+            $killer->disableOutput();
+            $killer->run();
+            PendingBenchmarkProcessRegistry::retainUntilKilled($process);
+
+            return;
         }
         if ($pid !== null && PHP_OS_FAMILY !== 'Windows' && function_exists('posix_kill')) {
-            @posix_kill(-$pid, SIGKILL);
+            @posix_kill(-$pid, SIGTERM);
+            $this->waitForExit($process);
+            if ($process->isRunning()) {
+                @posix_kill(-$pid, SIGKILL);
+            }
         }
         if ($process->isRunning()) {
             $process->stop(0.0);
+        }
+    }
+
+    private function waitForExit(Process $process): void
+    {
+        $deadline = hrtime(true) + self::TERMINATION_GRACE_MICROSECONDS * 1_000;
+        while ($process->isRunning() && hrtime(true) < $deadline) {
+            usleep(5_000);
         }
     }
 }

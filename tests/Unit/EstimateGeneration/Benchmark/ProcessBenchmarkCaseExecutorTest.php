@@ -15,6 +15,8 @@ final class ProcessBenchmarkCaseExecutorTest extends TestCase
     #[Test]
     public function hanging_worker_is_killed_with_bounded_wall_time_and_safe_timeout_code(): void
     {
+        $treeMarker = sys_get_temp_dir().'/most-benchmark-tree-'.bin2hex(random_bytes(8)).'.txt';
+        putenv('MOST_BENCHMARK_TREE_MARKER='.$treeMarker);
         $executor = new ProcessBenchmarkCaseExecutor(
             phpBinary: PHP_BINARY,
             artisanPath: dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/benchmarks/hanging-worker.php',
@@ -39,12 +41,20 @@ final class ProcessBenchmarkCaseExecutorTest extends TestCase
                 return \App\BusinessModules\Addons\EstimateGeneration\Benchmark\BenchmarkPipelineResultData::technicalFailure('not_called');
             }
         };
-        $result = $executor->execute(new BenchmarkCaseExecutionRequest(
-            'repository:v1', 'reg-dxf-001', 'current-baseline', 200,
-        ), $case, $adapter);
+        try {
+            $result = $executor->execute(new BenchmarkCaseExecutionRequest(
+                'repository:v1', 'reg-dxf-001', 'current-baseline', 200,
+            ), $case, $adapter);
+        } finally {
+            putenv('MOST_BENCHMARK_TREE_MARKER');
+        }
 
-        self::assertLessThan(2.0, microtime(true) - $started);
+        $elapsed = microtime(true) - $started;
+        self::assertGreaterThanOrEqual(0.15, $elapsed);
+        self::assertLessThan(1.5, $elapsed);
         self::assertSame('technical_failure', $result->status);
         self::assertSame('case_timeout', $result->failureCode);
+        usleep(6_000_000);
+        self::assertFileDoesNotExist($treeMarker);
     }
 }
