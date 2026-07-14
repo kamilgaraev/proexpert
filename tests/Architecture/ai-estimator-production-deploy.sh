@@ -8,14 +8,17 @@ DOCKERFILE="$ROOT/Dockerfile.prod"
 COORDINATOR="$ROOT/scripts/coordinate-most-release.sh"
 RUNBOOK="$ROOT/docs/runbooks/ai-estimator-production-readiness.md"
 ENV_EXAMPLE="$ROOT/.env.example"
+BOOTSTRAP="$ROOT/scripts/install-most-release-coordinator.sh"
 
 grep -Fq '${GITHUB_SHA}' "$WORKFLOW"
-grep -Fq 'MOST_IMAGE_TAG=${RELEASE_SHA}' "$WORKFLOW"
-grep -Fq 'docker compose run --rm --no-deps api php artisan migrate --force' "$WORKFLOW"
-
-MIGRATE_LINE=$(grep -n 'docker compose run --rm --no-deps api php artisan migrate --force' "$WORKFLOW" | cut -d: -f1)
-ACTIVATE_LINE=$(grep -n 'coordinate-most-release backend' "$WORKFLOW" | cut -d: -f1)
-[[ $MIGRATE_LINE -lt $ACTIVATE_LINE ]]
+grep -Fq 'permissions:' "$WORKFLOW"
+grep -Fq 'packages: write' "$WORKFLOW"
+grep -Fq 'steps.build.outputs.digest' "$WORKFLOW"
+grep -Fq 'IMAGE_REF="${IMAGE_REPO}@${IMAGE_DIGEST}"' "$WORKFLOW"
+grep -Fq 'git checkout --detach "${RELEASE_SHA}"' "$WORKFLOW"
+grep -Fq 'test "$(git rev-parse HEAD)" = "${RELEASE_SHA}"' "$WORKFLOW"
+grep -Fq 'bash tests/Architecture/ai-estimator-production-deploy.sh' "$WORKFLOW"
+grep -Fq 'sudo /usr/local/libexec/most/coordinate-most-release backend' "$WORKFLOW"
 
 if grep -Eq 'migrate:(safe|rollback|reset)|artisan migrate:rollback' "$WORKFLOW"; then
     echo 'deploy must keep database fix-forward' >&2
@@ -35,15 +38,30 @@ fi
 FINAL_STAGE_LINE=$(grep -n '^FROM php:' "$DOCKERFILE" | cut -d: -f1)
 RELEASE_ARG_LINE=$(grep -n '^ARG MOST_RELEASE_SHA$' "$DOCKERFILE" | cut -d: -f1)
 [[ $RELEASE_ARG_LINE -gt $FINAL_STAGE_LINE ]]
-grep -Fq 'coordinate-most-release.sh backend' "$WORKFLOW"
 grep -Fq "'scripts/**'" "$WORKFLOW"
 grep -Fq 'flock -x' "$COORDINATOR"
 grep -Fq 'smoke-ready.manifest' "$COORDINATOR"
-grep -Fq 'Cache-Control: no-store' "$COORDINATOR"
+grep -Fq 'Cache-Control:.*no-store' "$COORDINATOR"
 grep -Fq 'verify_public_release "$BACKEND_RELEASE_URL" "$backend"' "$COORDINATOR"
 grep -Fq 'verify_public_release "$ADMIN_RELEASE_URL" "$admin"' "$COORDINATOR"
-grep -Fq 'chown -R root:root "$staging"' "$COORDINATOR"
-grep -Fq 'mv "$staging" "$release"' "$COORDINATOR"
+grep -Fq 'chown -R root:root "$candidate"' "$COORDINATOR"
+grep -Fq 'mv "$candidate" "$release"' "$COORDINATOR"
+grep -Fq 'dc run --rm --no-deps api php artisan migrate --force' "$COORDINATOR"
+grep -Fq 'RepoDigests' "$COORDINATOR"
+grep -Fq 'health_gate' "$COORDINATOR"
+grep -Fq 'previous_ref=' "$COORDINATOR"
+grep -Fq 'is_digest_ref "$previous_ref"' "$COORDINATOR"
+grep -Fq 'rollback_backend' "$COORDINATOR"
+grep -Fq 'git show "$sha:docker-compose.yml"' "$COORDINATOR"
+grep -Fq 'docker compose --project-directory' "$COORDINATOR"
+grep -Fq 'find "$candidate" ! -type f ! -type d' "$COORDINATOR"
+grep -Fq 'realpath --canonicalize-existing' "$COORDINATOR"
+grep -Fq 'sha256sum' "$COORDINATOR"
+grep -Fq 'admin-release-quarantine' "$COORDINATOR"
+grep -Fq 'visudo -cf' "$BOOTSTRAP"
+grep -Fq 'backend [0-9a-f]* ghcr.io/* sha256:*' "$BOOTSTRAP"
+grep -Fq 'admin [0-9a-f]* [0-9a-f]* [0-9a-f]*' "$BOOTSTRAP"
+grep -Fq 'chown root:root "$BACKEND_ROOT/.env"' "$BOOTSTRAP"
 
 grep -Fq 'REDIS_ESTIMATE_GENERATION_BENCHMARK_RETRY_AFTER=' "$ENV_EXAMPLE"
 grep -Fq 'org-*/estimate-generation/sessions/' "$RUNBOOK"
@@ -54,5 +72,12 @@ grep -Fq 'If-None-Match: *' "$RUNBOOK"
 grep -Fq 'versionId' "$RUNBOOK"
 grep -Fq '000400' "$RUNBOOK"
 grep -Fq '000450' "$RUNBOOK"
+grep -Fq '"s3:GetObject"' "$RUNBOOK"
+grep -Fq '"AllowedOrigins"' "$RUNBOOK"
+grep -Fq '"AbortIncompleteMultipartUpload"' "$RUNBOOK"
+if grep -Fq 's3:HeadObject' "$RUNBOOK"; then
+    echo 'IAM must not contain the nonexistent s3:HeadObject action' >&2
+    exit 1
+fi
 
 echo 'AI estimator production deploy contract passed'

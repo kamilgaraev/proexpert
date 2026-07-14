@@ -6,12 +6,20 @@ use App\BusinessModules\Addons\EstimateGeneration\Settings\SettingsSnapshotHash;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
+    public $withinTransaction = false;
+
     public function up(): void
     {
+        if (DB::getDriverName() !== 'pgsql') {
+            throw new RuntimeException('estimate_generation_settings_snapshot_hashes_requires_postgresql');
+        }
+
+        DB::statement("SET lock_timeout TO '2s'");
         if (! Schema::hasTable('estimate_generation_setting_snapshot_hashes')) {
             Schema::create('estimate_generation_setting_snapshot_hashes', function (Blueprint $table): void {
                 $table->unsignedBigInteger('setting_snapshot_id');
@@ -23,7 +31,8 @@ return new class extends Migration
             });
         }
 
-        DB::table('estimate_generation_setting_snapshots')->orderBy('id')->chunkById(200, static function ($rows): void {
+        $processed = 0;
+        DB::table('estimate_generation_setting_snapshots')->orderBy('id')->chunkById(200, static function ($rows) use (&$processed): void {
             $records = [];
             foreach ($rows as $row) {
                 $snapshot = is_string($row->snapshot) ? json_decode($row->snapshot, true, 64, JSON_THROW_ON_ERROR) : $row->snapshot;
@@ -38,16 +47,20 @@ return new class extends Migration
                 ];
             }
             DB::table('estimate_generation_setting_snapshot_hashes')->insertOrIgnore($records);
+            $processed += count($records);
+            Log::info('canonical_settings_snapshot_hash_backfill_progress', [
+                'batch_size' => count($records),
+                'processed' => $processed,
+            ]);
         });
 
-        if (DB::getDriverName() === 'pgsql') {
-            DB::unprepared(<<<'SQL'
+        DB::unprepared(<<<'SQL'
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'eg_setting_snapshot_hash_value_ck') THEN
     ALTER TABLE estimate_generation_setting_snapshot_hashes
       ADD CONSTRAINT eg_setting_snapshot_hash_value_ck
-      CHECK (algorithm = 'jcs-sha256-v1' AND snapshot_hash ~ '^[a-f0-9]{64}$');
+      CHECK (algorithm = 'jcs-sha256-v1' AND snapshot_hash ~ '^[a-f0-9]{64}$') NOT VALID;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'eg_setting_snapshot_hash_immutable') THEN
     CREATE TRIGGER eg_setting_snapshot_hash_immutable
@@ -57,11 +70,10 @@ BEGIN
 END;
 $$;
 SQL);
-        }
+        DB::statement('RESET lock_timeout');
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('estimate_generation_setting_snapshot_hashes');
     }
 };

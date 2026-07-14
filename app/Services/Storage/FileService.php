@@ -187,6 +187,8 @@ class FileService
         $fullPath = $orgPrefix.'/'.$directory.'/'.$filename;
         $logFilename = $privacyMode ? hash('sha256', $file->getClientOriginalName()) : $file->getClientOriginalName();
         $logStoragePath = $privacyMode ? 'redacted' : $fullPath;
+        $logGeneratedFilename = $privacyMode ? 'redacted' : $filename;
+        $logDirectory = $privacyMode ? 'redacted' : $directory;
 
         $startTime = microtime(true);
         $fileSizeMb = round($file->getSize() / 1024 / 1024, 2);
@@ -195,11 +197,11 @@ class FileService
         $this->logging->technical('s3.upload.started', [
             'filename' => $logFilename,
             'original_name' => $logFilename,
-            'generated_filename' => $filename,
+            'generated_filename' => $logGeneratedFilename,
             'file_size_mb' => $fileSizeMb,
             'mime_type' => $file->getClientMimeType(),
             'organization_id' => $org?->id,
-            'directory' => $directory,
+            'directory' => $logDirectory,
             'full_s3_path' => $logStoragePath,
             'visibility' => $visibility,
             'org_prefix' => $orgPrefix,
@@ -228,8 +230,8 @@ class FileService
 
             Log::info('[FileService] upload(): starting upload', [
                 'org_prefix' => $orgPrefix,
-                'directory' => $directory,
-                'filename' => $filename,
+                'directory' => $logDirectory,
+                'filename' => $logGeneratedFilename,
                 'full_path' => $logStoragePath,
                 'org_id' => $org?->id,
                 'visibility' => $visibility,
@@ -333,16 +335,16 @@ class FileService
                     'organization_id' => $org?->id,
                     'duration_ms' => $durationMs,
                     'exception_class' => get_class($e),
-                    'exception_message' => $e->getMessage(),
+                    'exception_message' => $privacyMode ? 'redacted' : $e->getMessage(),
                     'aws_error_code' => $e instanceof \Aws\Exception\AwsException ? $e->getAwsErrorCode() : null,
-                    'trace' => $e->getTraceAsString(),
+                    'trace' => $privacyMode ? 'redacted' : $e->getTraceAsString(),
                 ], 'error');
 
                 Log::error('[FileService] S3 put() exception', [
                     'path' => $logStoragePath,
-                    'error' => $e->getMessage(),
+                    'error' => $privacyMode ? 'redacted' : $e->getMessage(),
                     'exception_class' => get_class($e),
-                    'trace' => $e->getTraceAsString(),
+                    'trace' => $privacyMode ? 'redacted' : $e->getTraceAsString(),
                 ]);
 
                 return false;
@@ -354,14 +356,14 @@ class FileService
                 // TECHNICAL: Успешная загрузка файла в S3
                 $this->logging->technical('s3.upload.success', [
                     'filename' => $logFilename,
-                    'generated_filename' => $filename,
+                    'generated_filename' => $logGeneratedFilename,
                     'file_size_mb' => $fileSizeMb,
                     's3_path' => $logStoragePath,
                     'organization_id' => $org?->id,
                     'duration_ms' => $durationMs,
                     'upload_speed_mbps' => $durationMs > 0 ? round(($fileSizeMb * 8 * 1000) / $durationMs, 2) : null,
                     'visibility' => $visibility,
-                    'directory' => $directory,
+                    'directory' => $logDirectory,
                 ]);
 
                 // BUSINESS: Загрузка файла - важная бизнес-метрика использования хранилища
@@ -369,7 +371,7 @@ class FileService
                     'filename' => $logFilename,
                     'file_size_mb' => $fileSizeMb,
                     'organization_id' => $org?->id,
-                    'directory' => $directory,
+                    'directory' => $logDirectory,
                     'user_id' => Auth::id(),
                 ]);
 
@@ -421,15 +423,15 @@ class FileService
                 'organization_id' => $org?->id,
                 'duration_ms' => $durationMs,
                 'exception_class' => get_class($e),
-                'exception_message' => $e->getMessage(),
+                'exception_message' => $privacyMode ? 'redacted' : $e->getMessage(),
                 'file_path' => $e->getFile(),
                 'line' => $e->getLine(),
             ], 'error');
 
             Log::error('[FileService] upload(): failed', [
                 'path' => $logStoragePath,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
+                'error' => $privacyMode ? 'redacted' : $e->getMessage(),
+                'trace' => $privacyMode ? 'redacted' : $e->getTraceAsString(),
             ]);
 
             return false;

@@ -155,18 +155,38 @@ final class EstimateGenerationSettingsTest extends TestCase
         self::assertIsString($historical);
         self::assertStringNotContainsString('snapshot_hash', $historical);
         self::assertIsString($upgrade);
-        self::assertStringContainsString("Schema::hasColumn('estimate_generation_setting_snapshots', 'snapshot_hash')", $upgrade);
-        self::assertStringContainsString('pg_catalog.sha256(pg_catalog.convert_to(snapshot::text', $upgrade);
-        self::assertStringContainsString('WHERE id > ?', $upgrade);
-        self::assertStringContainsString('ORDER BY id', $upgrade);
-        self::assertStringContainsString('LIMIT 500', $upgrade);
+        self::assertStringContainsString('ADD COLUMN IF NOT EXISTS snapshot_hash char(64) NULL', $upgrade);
+        self::assertStringContainsString('public $withinTransaction = false', $upgrade);
+        self::assertStringContainsString("SET lock_timeout TO '2s'", $upgrade);
+        self::assertStringNotContainsString('UPDATE estimate_generation_setting_snapshots', $upgrade);
+        self::assertStringNotContainsString('LOCK TABLE estimate_generation_setting_snapshots', $upgrade);
+        self::assertStringNotContainsString('DROP TRIGGER IF EXISTS eg_setting_snapshot_immutable', $upgrade);
         self::assertStringContainsString("data_type = 'character' AND character_maximum_length = 64", $upgrade);
         self::assertStringContainsString('NOT VALID', $upgrade);
-        self::assertStringContainsString('VALIDATE CONSTRAINT eg_setting_snapshot_hash_ck', $upgrade);
-        self::assertStringContainsString('ALTER COLUMN snapshot_hash SET NOT NULL', $upgrade);
-        self::assertStringContainsString('DROP COLUMN IF EXISTS snapshot_hash', $upgrade);
+        self::assertStringNotContainsString('VALIDATE CONSTRAINT eg_setting_snapshot_hash_ck', $upgrade);
+        self::assertStringNotContainsString('ALTER COLUMN snapshot_hash SET NOT NULL', $upgrade);
+        self::assertStringNotContainsString('DROP COLUMN IF EXISTS snapshot_hash', $upgrade);
         self::assertIsString($consumer);
         self::assertStringContainsString('settings_snapshot_hash', $consumer);
+    }
+
+    public function test_canonical_hash_upgrade_uses_only_resumable_side_table_backfill(): void
+    {
+        $root = dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/';
+        $compatibility = file_get_contents($root.'2026_07_14_000950_canonicalize_settings_snapshot_hashes.php');
+        $sideTable = file_get_contents($root.'2026_07_14_001125_create_canonical_settings_snapshot_hashes.php');
+
+        self::assertIsString($compatibility);
+        self::assertStringNotContainsString('DROP TRIGGER', $compatibility);
+        self::assertStringNotContainsString("->update([", $compatibility);
+        self::assertIsString($sideTable);
+        self::assertStringContainsString('public $withinTransaction = false', $sideTable);
+        self::assertStringContainsString("SET lock_timeout TO '2s'", $sideTable);
+        self::assertStringContainsString('chunkById(200', $sideTable);
+        self::assertStringContainsString('insertOrIgnore', $sideTable);
+        self::assertStringContainsString('canonical_settings_snapshot_hash_backfill_progress', $sideTable);
+        self::assertStringContainsString('NOT VALID', $sideTable);
+        self::assertStringNotContainsString('dropIfExists', $sideTable);
     }
 
     /** @return array<string, mixed> */

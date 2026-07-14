@@ -124,6 +124,8 @@ final class EstimateGenerationContractDatabaseProvisioner
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_001000_create_ai_budget_reservations.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_001050_upgrade_review_summary_freshness_guard.php',
         'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_001100_harden_ai_operation_budget_lifecycle.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_001125_create_canonical_settings_snapshot_hashes.php',
+        'app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_001150_enforce_exactly_once_ai_budget_wire_claims.php',
     ];
 
     public static function assertSafe(array $connection, bool $enabled): void

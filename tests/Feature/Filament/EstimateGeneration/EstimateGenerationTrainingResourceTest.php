@@ -39,14 +39,21 @@ final class EstimateGenerationTrainingResourceTest extends TestCase
     {
         $source = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/migrations/2026_07_14_000400_add_training_dataset_trusted_review.php');
         self::assertIsString($source);
-        self::assertStringContainsString('DROP TRIGGER IF EXISTS eg_training_dataset_immutable', $source);
+        self::assertStringNotContainsString('DROP TRIGGER IF EXISTS eg_training_dataset_immutable', $source);
+        self::assertStringContainsString('public $withinTransaction = false', $source);
+        self::assertStringContainsString("SET lock_timeout TO '2s'", $source);
+        self::assertStringContainsString('LIMIT 250', $source);
+        self::assertStringContainsString('trusted_review_status = \'draft\'', $source);
         self::assertStringContainsString("dataset_type = 'development'", $source);
         self::assertStringContainsString("status = 'approved'", $source);
         self::assertStringContainsString("trusted_review_status = 'approved'", $source);
         self::assertStringContainsString('approved_by', $source);
         self::assertStringContainsString('approved_at', $source);
         self::assertStringContainsString('trusted_review_migrated_from_approval', $source);
-        self::assertStringContainsString('CREATE TRIGGER eg_training_dataset_immutable', $source);
+        self::assertStringContainsString('training_trusted_review_backfill_progress', $source);
+        self::assertStringContainsString('$remaining', $source);
+        self::assertStringContainsString('$idleAttempts', $source);
+        self::assertStringContainsString('training_trusted_review_backfill_stalled', $source);
     }
 
     #[Test]
