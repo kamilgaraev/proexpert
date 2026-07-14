@@ -98,10 +98,14 @@ final class EstimateGenerationSessionController extends Controller
             );
         } catch (NormativeContextPinUnavailable) {
             return AdminResponse::error(trans_message('estimate_generation.normative_context_unavailable'), 422);
-        } catch (\Throwable) {
+        } catch (\Throwable $exception) {
             Log::error('[EstimateGeneration] Failed to create session', [
                 'failure_code' => 'session_create_failed',
                 'project_id' => $project->id,
+                'exception_class' => $exception::class,
+                'exception_message' => $exception->getMessage(),
+                'exception_file' => $exception->getFile(),
+                'exception_line' => $exception->getLine(),
             ]);
 
             return AdminResponse::error(trans_message('estimate_generation.session_create_error'), 500);

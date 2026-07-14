@@ -35,16 +35,18 @@ class DocumentGenerationReadinessService
         $documents = $session->relationLoaded('documents')
             ? $session->documents
             : $session->documents()->get();
-        $effective = $this->settingsResolver?->forOperation(
-            AiOperationContext::deterministicId(implode('|', [
-                'document-readiness',
-                (string) $session->organization_id,
-                (string) $session->getKey(),
-                (string) $session->state_version,
-            ])),
-            (int) $session->organization_id,
-            (int) $session->getKey(),
-        );
+        $effective = $documents->isEmpty()
+            ? null
+            : $this->settingsResolver?->forOperation(
+                AiOperationContext::deterministicId(implode('|', [
+                    'document-readiness',
+                    (string) $session->organization_id,
+                    (string) $session->getKey(),
+                    (string) $session->state_version,
+                ])),
+                (int) $session->organization_id,
+                (int) $session->getKey(),
+            );
         $summary = $this->summary($documents, $effective);
 
         return [
