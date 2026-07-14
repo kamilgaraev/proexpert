@@ -17,10 +17,12 @@ use App\Models\CommercialWebhookEvent;
 use App\Models\Organization;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
+use App\Models\OrganizationPackageTrialUsage;
 use App\Models\User;
 use App\Services\Billing\CommercialWebhookService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
 use Tests\TestCase;
 
@@ -85,6 +87,12 @@ class CommercialWebhookServiceTest extends TestCase
             'package_slug' => 'machinery', 'status' => 'trialing', 'access_source' => 'trial',
             'price_paid' => 0, 'trial_started_at' => now(), 'trial_ends_at' => now()->addDays(3),
         ]);
+        $trialUsage = OrganizationPackageTrialUsage::create([
+            'organization_id' => $this->organization->id,
+            'package_slug' => 'machinery',
+            'started_at' => now(),
+            'ends_at' => now()->addDays(3),
+        ]);
         $this->gateway->payment = $this->paymentResult(saved: true);
 
         $service = app(CommercialWebhookService::class);
@@ -107,6 +115,8 @@ class CommercialWebhookServiceTest extends TestCase
         $this->assertSame($order->id, $access->source_order_id);
         $this->assertNull($access->trial_started_at);
         $this->assertNull($access->trial_ends_at);
+        $this->assertTrue(OrganizationPackageTrialUsage::query()->whereKey($trialUsage->id)->exists());
+        $this->assertSame(1, OrganizationPackageTrialUsage::query()->count());
         $this->assertSame(1, Notification::query()->count());
         $this->assertSame(['in_app'], Notification::query()->sole()->channels);
         $this->assertSame(1, CommercialWebhookEvent::query()->count());
@@ -127,6 +137,45 @@ class CommercialWebhookServiceTest extends TestCase
         $this->assertSame(0, Notification::query()->count());
     }
 
+    public function test_success_before_checkout_saves_provider_id_binds_payment_and_activates(): void
+    {
+        $this->payment->forceFill(['provider_payment_id' => null])->save();
+        $this->gateway->payment = $this->paymentResult();
+
+        $result = app(CommercialWebhookService::class)->process(
+            $this->notification('payment.succeeded', 'payment-id', 'succeeded'),
+            '185.71.76.1',
+        );
+
+        $this->assertSame('processed', $result);
+        $this->assertSame('payment-id', $this->payment->fresh()->provider_payment_id);
+        $this->assertSame('paid', $this->order->fresh()->status->value);
+        $this->assertSame(1, OrganizationPackageSubscription::query()->count());
+    }
+
+    public function test_unknown_payment_before_local_binding_remains_retryable_without_event_marker(): void
+    {
+        $this->payment->forceFill(['provider_payment_id' => null])->save();
+        $this->gateway->payment = $this->paymentResult(metadata: [
+            'order_id' => '22222222-2222-4222-8222-222222222222',
+            'organization_id' => $this->organization->id,
+        ]);
+
+        try {
+            app(CommercialWebhookService::class)->process(
+                $this->notification('payment.succeeded', 'payment-id', 'succeeded'),
+                '185.71.76.1',
+            );
+            $this->fail('Unbound local payment must remain retryable.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('Commercial payment is not locally bindable yet.', $exception->getMessage());
+        }
+
+        $this->assertSame(0, CommercialWebhookEvent::query()->count());
+        $this->assertNull($this->payment->fresh()->provider_payment_id);
+        $this->assertSame('pending_payment', $this->order->fresh()->status->value);
+    }
+
     public function test_payment_cannot_activate_when_local_order_and_payment_amounts_diverge(): void
     {
         $this->order->forceFill(['amount_minor' => 800000, 'amount' => '8000.00'])->save();
@@ -140,6 +189,37 @@ class CommercialWebhookServiceTest extends TestCase
         $this->assertSame('mismatch', $result);
         $this->assertSame('pending_payment', $this->order->fresh()->status->value);
         $this->assertSame(0, OrganizationPackageSubscription::query()->count());
+    }
+
+    #[DataProvider('authoritativeMismatchProvider')]
+    public function test_authoritative_success_mismatch_matrix_never_activates(array $override): void
+    {
+        $this->gateway->payment = $this->paymentResult(...$override);
+
+        $result = app(CommercialWebhookService::class)->process(
+            $this->notification('payment.succeeded', 'payment-id', 'succeeded'),
+            '185.71.76.1',
+        );
+
+        $this->assertContains($result, ['mismatch', 'stale']);
+        $this->assertSame('pending_payment', $this->order->fresh()->status->value);
+        $this->assertSame(0, OrganizationPackageSubscription::query()->count());
+        $this->assertSame(0, Notification::query()->count());
+        $this->assertSame(1, CommercialWebhookEvent::query()->count());
+    }
+
+    public static function authoritativeMismatchProvider(): array
+    {
+        return [
+            'id' => [['id' => 'other-payment-id']],
+            'status' => [['status' => 'canceled', 'paid' => false]],
+            'paid' => [['paid' => false]],
+            'test' => [['test' => false]],
+            'amount' => [['amountMinor' => 790001]],
+            'currency' => [['currency' => 'USD']],
+            'order metadata' => [['metadata' => ['order_id' => 'other-order', 'organization_id' => 1]]],
+            'organization metadata' => [['metadata' => ['order_id' => '11111111-1111-4111-8111-111111111111', 'organization_id' => 999]]],
+        ];
     }
 
     public function test_full_suite_activates_exact_catalog_contour_and_preserves_unrelated_access(): void
@@ -219,6 +299,17 @@ class CommercialWebhookServiceTest extends TestCase
     public function test_partial_refund_records_amount_and_full_refund_revokes_only_source_rows(): void
     {
         $this->order->forceFill(['status' => 'paid'])->save();
+        $laterOrder = CommercialOrder::create([
+            'public_id' => '33333333-3333-4333-8333-333333333333',
+            'organization_id' => $this->organization->id,
+            'commercial_account_id' => $this->account->id,
+            'user_id' => $this->user->id,
+            'status' => 'paid', 'offer_type' => 'packages', 'quote_version' => 1,
+            'selected_package_slugs' => ['planning-schedules'], 'current_package_slugs' => ['machinery'],
+            'amount_minor' => 790000, 'amount' => '7900.00', 'currency' => 'RUB',
+            'period_start_at' => now(), 'period_end_at' => now()->addMonth(),
+            'auto_renew_consent' => false, 'client_idempotency_key' => 'later-order-key',
+        ]);
         OrganizationPackageSubscription::create([
             'organization_id' => $this->organization->id, 'commercial_account_id' => $this->account->id,
             'package_slug' => 'machinery', 'status' => 'active', 'access_source' => 'paid_package',
@@ -229,7 +320,7 @@ class CommercialWebhookServiceTest extends TestCase
             'organization_id' => $this->organization->id, 'commercial_account_id' => $this->account->id,
             'package_slug' => 'planning-schedules', 'status' => 'active', 'access_source' => 'paid_package',
             'price_paid' => 7900, 'current_period_start_at' => now(), 'current_period_end_at' => now()->addMonth(),
-            'source_order_id' => null,
+            'source_order_id' => $laterOrder->id,
         ]);
         $this->gateway->refund = $this->refundResult('refund-partial', 100000);
         $this->gateway->payment = $this->paymentResult(refundedAmountMinor: 100000);
@@ -247,6 +338,23 @@ class CommercialWebhookServiceTest extends TestCase
         $this->assertSame('active', OrganizationPackageSubscription::query()->where('package_slug', 'planning-schedules')->sole()->status->value);
         $this->assertSame(2, CommercialRefund::query()->count());
         $this->assertSame(2, Notification::query()->count());
+
+        $endedRow = OrganizationPackageSubscription::query()->where('package_slug', 'machinery')->sole();
+        $endedAt = $endedRow->current_period_end_at;
+        $canceledAt = $endedRow->canceled_at;
+        $this->gateway->refund = $this->refundResult('refund-late-partial', 50000);
+        $this->gateway->payment = $this->paymentResult(refundedAmountMinor: 100000);
+
+        $this->assertSame('stale_refund', $service->process(
+            $this->notification('refund.succeeded', 'refund-late-partial', 'succeeded'),
+            '185.71.76.1',
+        ));
+        $this->assertSame(790000, $this->payment->fresh()->refunded_amount_minor);
+        $this->assertSame('refunded', $this->order->fresh()->status->value);
+        $this->assertEquals($endedAt, $endedRow->fresh()->current_period_end_at);
+        $this->assertEquals($canceledAt, $endedRow->fresh()->canceled_at);
+        $this->assertSame(2, Notification::query()->count());
+        $this->assertSame(3, CommercialRefund::query()->count());
     }
 
     public function test_payment_method_active_is_idempotent_no_op_without_gateway_lookup(): void
@@ -286,11 +394,15 @@ class CommercialWebhookServiceTest extends TestCase
         bool $saved = false,
         ?array $metadata = null,
         int $refundedAmountMinor = 0,
+        string $id = 'payment-id',
+        bool $test = true,
+        int $amountMinor = 790000,
+        string $currency = 'RUB',
     ): PaymentGatewayResult {
         return new PaymentGatewayResult(
-            id: 'payment-id', status: $status, confirmationUrl: null, paymentMethodId: 'method-id',
+            id: $id, status: $status, confirmationUrl: null, paymentMethodId: 'method-id',
             paymentMethodSaved: $saved, safeResponse: ['id' => 'payment-id', 'status' => $status],
-            paid: $paid, test: true, amountMinor: 790000, currency: 'RUB',
+            paid: $paid, test: $test, amountMinor: $amountMinor, currency: $currency,
             metadata: $metadata ?? ['order_id' => $this->order->public_id, 'organization_id' => $this->organization->id],
             refundedAmountMinor: $refundedAmountMinor,
         );
@@ -303,7 +415,7 @@ class CommercialWebhookServiceTest extends TestCase
 
     private function createSchema(): void
     {
-        foreach (['notifications', 'commercial_webhook_events', 'commercial_refunds', 'commercial_payments', 'commercial_orders', 'organization_package_subscriptions', 'organization_commercial_accounts', 'users', 'organizations'] as $table) {
+        foreach (['notifications', 'commercial_webhook_events', 'commercial_refunds', 'commercial_payments', 'commercial_orders', 'organization_package_trial_usages', 'organization_package_subscriptions', 'organization_commercial_accounts', 'users', 'organizations'] as $table) {
             Schema::dropIfExists($table);
         }
         Schema::create('organizations', function (Blueprint $table): void {
@@ -360,7 +472,7 @@ class CommercialWebhookServiceTest extends TestCase
             $table->id();
             $table->foreignId('commercial_order_id')->unique();
             $table->string('provider');
-            $table->string('provider_payment_id')->unique();
+            $table->string('provider_payment_id')->nullable()->unique();
             $table->string('provider_status');
             $table->unsignedBigInteger('amount_minor');
             $table->string('currency', 3);
@@ -387,6 +499,15 @@ class CommercialWebhookServiceTest extends TestCase
             $table->timestamp('cancel_at')->nullable();
             $table->timestamp('canceled_at')->nullable();
             $table->foreignId('source_order_id')->nullable();
+            $table->timestamps();
+            $table->unique(['organization_id', 'package_slug']);
+        });
+        Schema::create('organization_package_trial_usages', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id');
+            $table->string('package_slug');
+            $table->timestamp('started_at');
+            $table->timestamp('ends_at');
             $table->timestamps();
             $table->unique(['organization_id', 'package_slug']);
         });

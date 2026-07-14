@@ -162,6 +162,7 @@ class YooKassaPaymentGatewayTest extends TestCase
         $this->assertSame(1290000, $result->amountMinor);
         $this->assertSame('RUB', $result->currency);
         $this->assertSame(['order_id' => 'order-id', 'organization_id' => 1], $result->metadata);
+        $this->assertSame(['order_id' => 'order-id', 'organization_id' => 1], $result->safeResponse['metadata']);
         $this->assertSame(0, $result->refundedAmountMinor);
         Http::assertSent(fn (Request $request): bool => $request->method() === 'GET'
             && $request->url() === 'https://api.yookassa.ru/v3/payments/provider-payment-id');
@@ -262,7 +263,7 @@ class YooKassaPaymentGatewayTest extends TestCase
             'test' => true,
             'paid' => false,
             'refundable' => false,
-            'metadata' => ['order_id' => 'order-id', 'organization_id' => 1],
+            'metadata' => ['order_id' => 'order-id', 'organization_id' => 1, 'private_note' => 'must-not-persist'],
             'payment_method' => [
                 'id' => 'method-id',
                 'type' => 'bank_card',

@@ -55,3 +55,22 @@ Fresh final focused and Task 4A regression run:
 ## Concerns
 
 None. Deployment still requires running the new migration through the normal release process and configuring `YOOKASSA_TRUSTED_PROXY_CIDRS` to match the production reverse-proxy topology.
+
+## Review fixes
+
+The follow-up review findings were addressed in a separate TDD wave:
+
+- A verified webhook arriving before checkout stores `provider_payment_id` now resolves the pending order from whitelisted authoritative metadata, locks the order/payment/account path, validates tenant/provider/ID/test/amount/currency, atomically binds the provider ID, and continues processing. An event that cannot yet bind remains retryable and leaves no durable event marker.
+- Checkout now locks and fills provider fields only while the local provider ID is null. A webhook-processed `succeeded` payment is not downgraded by the later checkout response; a different provider ID is rejected as a conflict.
+- Refund totals are monotonic. Only the first crossing of the full amount revokes source-owned access and emits the full-refund notification. A late partial after full is recorded as `stale_refund` without decreasing the cumulative total, changing entitlement timestamps, or notifying again.
+- Notification payload validation enforces the exact payment/refund event and object-status pairs.
+- Fingerprint race recovery now recognizes only the exact webhook fingerprint unique constraint and rethrows unrelated unique failures.
+- Payment safe snapshots and authoritative metadata retain only `order_id` and `organization_id`.
+- The composite package `source_order_id` foreign key now uses a restrict/no-action deletion policy so audit ownership cannot null the mandatory tenant column.
+- Added coverage for the provider-ID race, late checkout overwrite race, late partial after full, old-order refund versus newer source order, immutable trial ledger, exact unique-race handling, and the table-driven authoritative mismatch matrix.
+
+Review-fix verification:
+
+- Covering and checkout regression suites: 68 tests, 251 assertions, 0 failures, exit code 0.
+- PHPStan/Larastan for all changed production files: `[OK] No errors` with a 1 GB memory limit.
+- Pint, PHP syntax checks, and diff checks passed.

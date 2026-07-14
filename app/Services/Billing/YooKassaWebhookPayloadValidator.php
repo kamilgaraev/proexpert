@@ -36,6 +36,17 @@ final class YooKassaWebhookPayloadValidator
             throw new InvalidArgumentException('Invalid YooKassa notification object.');
         }
 
+        $expectedState = match ($event) {
+            'payment.succeeded', 'refund.succeeded' => 'succeeded',
+            'payment.waiting_for_capture' => 'waiting_for_capture',
+            'payment.canceled' => 'canceled',
+            default => null,
+        };
+
+        if ($expectedState !== null && $objectState !== $expectedState) {
+            throw new InvalidArgumentException('Invalid YooKassa notification state.');
+        }
+
         return new YooKassaWebhookNotification(
             event: $event,
             objectId: $objectId,

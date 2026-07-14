@@ -20,7 +20,7 @@ return new class extends Migration
             $table->foreign(['source_order_id', 'organization_id'], 'org_package_source_order_tenant_fk')
                 ->references(['id', 'organization_id'])
                 ->on('commercial_orders')
-                ->nullOnDelete();
+                ->restrictOnDelete();
             $table->index('source_order_id', 'org_package_source_order_idx');
         });
 

@@ -125,14 +125,26 @@ class CommercialCheckoutService
                 savePaymentMethod: $order->auto_renew_consent,
             ));
 
-            $payment->forceFill([
-                'provider_payment_id' => $result->id,
-                'provider_status' => $result->status,
-                'confirmation_url' => $result->confirmationUrl,
-                'payment_method_id' => $result->paymentMethodId,
-                'payment_method_saved' => $result->paymentMethodSaved,
-                'safe_response' => $result->safeResponse,
-            ])->save();
+            DB::transaction(function () use ($payment, $result): void {
+                $current = CommercialPayment::query()->whereKey($payment->id)->lockForUpdate()->firstOrFail();
+
+                if ($current->provider_payment_id === null) {
+                    $current->forceFill([
+                        'provider_payment_id' => $result->id,
+                        'provider_status' => $result->status,
+                        'confirmation_url' => $result->confirmationUrl,
+                        'payment_method_id' => $result->paymentMethodId,
+                        'payment_method_saved' => $result->paymentMethodSaved,
+                        'safe_response' => $result->safeResponse,
+                    ])->save();
+
+                    return;
+                }
+
+                if ($current->provider_payment_id !== $result->id) {
+                    throw new CommercialCheckoutConflictException('Payment intent is already bound to another provider payment.');
+                }
+            }, 3);
         }
 
         return $this->response($order->fresh(), $payment->fresh()) + ['_created' => $created];

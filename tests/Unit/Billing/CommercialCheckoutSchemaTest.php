@@ -38,5 +38,7 @@ class CommercialCheckoutSchemaTest extends TestCase
         $this->assertStringContainsString("unique('fingerprint'", $webhooks);
         $this->assertStringContainsString('refunded_amount_minor', $webhooks);
         $this->assertStringContainsString("foreign(['commercial_payment_id', 'commercial_order_id']", $webhooks);
+        $this->assertStringContainsString('->restrictOnDelete()', $webhooks);
+        $this->assertStringNotContainsString('->nullOnDelete()', $webhooks);
     }
 }

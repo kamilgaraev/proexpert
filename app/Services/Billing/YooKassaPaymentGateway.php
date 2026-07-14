@@ -182,7 +182,8 @@ class YooKassaPaymentGateway implements PaymentGatewayInterface
         $amount = is_array($data['amount'] ?? null) ? $data['amount'] : [];
         $refundedAmount = is_array($data['refunded_amount'] ?? null) ? $data['refunded_amount'] : [];
         $currency = strtoupper(trim((string) ($amount['currency'] ?? '')));
-        $metadata = is_array($data['metadata'] ?? null) ? $data['metadata'] : [];
+        $rawMetadata = is_array($data['metadata'] ?? null) ? $data['metadata'] : [];
+        $metadata = array_intersect_key($rawMetadata, array_flip(['order_id', 'organization_id']));
 
         if (! is_array($data['amount'] ?? null)
             || preg_match('/^[A-Z]{3}$/D', $currency) !== 1
@@ -229,7 +230,9 @@ class YooKassaPaymentGateway implements PaymentGatewayInterface
             'test' => $data['test'] ?? null,
             'amount' => $data['amount'] ?? null,
             'refunded_amount' => $data['refunded_amount'] ?? null,
-            'metadata' => $data['metadata'] ?? null,
+            'metadata' => isset($data['metadata']) && is_array($data['metadata'])
+                ? array_intersect_key($data['metadata'], array_flip(['order_id', 'organization_id']))
+                : null,
             'payment_method' => isset($data['payment_method']) ? [
                 'id' => $data['payment_method']['id'] ?? null,
                 'type' => $data['payment_method']['type'] ?? null,

@@ -53,6 +53,10 @@ class YooKassaWebhookPayloadValidatorTest extends TestCase
             'missing object id' => [['type' => 'notification', 'event' => 'payment.canceled', 'object' => ['status' => 'canceled']]],
             'missing payment status' => [['type' => 'notification', 'event' => 'payment.succeeded', 'object' => ['id' => 'p']]],
             'missing method type' => [['type' => 'notification', 'event' => 'payment_method.active', 'object' => ['id' => 'm']]],
+            'succeeded with canceled status' => [['type' => 'notification', 'event' => 'payment.succeeded', 'object' => ['id' => 'p', 'status' => 'canceled']]],
+            'waiting with succeeded status' => [['type' => 'notification', 'event' => 'payment.waiting_for_capture', 'object' => ['id' => 'p', 'status' => 'succeeded']]],
+            'canceled with waiting status' => [['type' => 'notification', 'event' => 'payment.canceled', 'object' => ['id' => 'p', 'status' => 'waiting_for_capture']]],
+            'refund with pending status' => [['type' => 'notification', 'event' => 'refund.succeeded', 'object' => ['id' => 'r', 'status' => 'pending']]],
         ];
     }
 }

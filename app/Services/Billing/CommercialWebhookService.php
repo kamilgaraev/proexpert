@@ -10,6 +10,7 @@ use App\DataTransferObjects\Billing\PaymentGatewayResult;
 use App\DataTransferObjects\Billing\RefundGatewayResult;
 use App\DataTransferObjects\Billing\YooKassaWebhookNotification;
 use App\Enums\Billing\CommercialOfferType;
+use App\Exceptions\Billing\RetryableCommercialWebhookException;
 use App\Interfaces\Billing\PaymentGatewayInterface;
 use App\Models\CommercialOrder;
 use App\Models\CommercialPayment;
@@ -19,8 +20,6 @@ use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
 use App\Models\User;
 use App\Services\Modules\PackageCatalogService;
-use Illuminate\Database\QueryException;
-use Illuminate\Support\Facades\DB;
 
 use function trans_message;
 
@@ -29,6 +28,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
     public function __construct(
         private readonly PaymentGatewayInterface $gateway,
         private readonly PackageCatalogService $catalog,
+        private readonly CommercialWebhookTransactionRunner $transactions,
     ) {}
 
     public function process(YooKassaWebhookNotification $notification, string $sourceIp): string
@@ -56,7 +56,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
     ): string {
         $fingerprint = $this->fingerprint($notification, $authoritative->status);
 
-        return $this->transactional($fingerprint, function () use (
+        return $this->transactions->run($fingerprint, function () use (
             $notification,
             $sourceIp,
             $authoritative,
@@ -66,15 +66,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                 return 'duplicate';
             }
 
-            $payment = CommercialPayment::query()
-                ->where('provider', 'yookassa')
-                ->where('provider_payment_id', $notification->objectId)
-                ->lockForUpdate()
-                ->first();
-
-            if ($payment === null) {
-                return $this->record($notification, $sourceIp, $fingerprint, $authoritative->status, 'no_op');
-            }
+            $payment = $this->resolvePaymentForUpdate($notification, $authoritative);
 
             $order = CommercialOrder::query()->whereKey($payment->commercial_order_id)->lockForUpdate()->firstOrFail();
             $account = OrganizationCommercialAccount::query()
@@ -145,7 +137,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
     ): string {
         $fingerprint = $this->fingerprint($notification, $refund->status);
 
-        return $this->transactional($fingerprint, function () use (
+        return $this->transactions->run($fingerprint, function () use (
             $notification,
             $sourceIp,
             $refund,
@@ -201,12 +193,25 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                 'currency' => $refund->currency,
                 'safe_response' => $refund->safeResponse,
             ]);
-            $payment->forceFill([
-                'refunded_amount_minor' => $authoritativePayment->refundedAmountMinor,
-                'safe_response' => $authoritativePayment->safeResponse,
-            ])->save();
+            $previousRefundedAmount = $payment->refunded_amount_minor;
+            $effectiveRefundedAmount = max(
+                $previousRefundedAmount,
+                $authoritativePayment->refundedAmountMinor,
+            );
+            $paymentUpdate = ['refunded_amount_minor' => $effectiveRefundedAmount];
 
-            $full = $authoritativePayment->refundedAmountMinor >= $payment->amount_minor;
+            if ($authoritativePayment->refundedAmountMinor > $previousRefundedAmount) {
+                $paymentUpdate['safe_response'] = $authoritativePayment->safeResponse;
+            }
+
+            $payment->forceFill($paymentUpdate)->save();
+
+            if ($authoritativePayment->refundedAmountMinor <= $previousRefundedAmount) {
+                return $this->record($notification, $sourceIp, $fingerprint, $refund->status, 'stale_refund');
+            }
+
+            $full = $previousRefundedAmount < $payment->amount_minor
+                && $effectiveRefundedAmount >= $payment->amount_minor;
 
             if ($full) {
                 $order->forceFill(['status' => 'refunded'])->save();
@@ -309,6 +314,15 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
         CommercialOrder $order,
     ): bool {
         return $authoritative->id === $payment->provider_payment_id
+            && $this->matchesOrderIdentity($authoritative, $payment, $order);
+    }
+
+    private function matchesOrderIdentity(
+        PaymentGatewayResult $authoritative,
+        CommercialPayment $payment,
+        CommercialOrder $order,
+    ): bool {
+        return $payment->provider === 'yookassa'
             && $authoritative->amountMinor === $payment->amount_minor
             && $authoritative->amountMinor === $order->amount_minor
             && strtoupper($authoritative->currency) === strtoupper($payment->currency)
@@ -318,11 +332,65 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
             && $authoritative->test === ((string) config('services.yookassa.mode', 'test') === 'test');
     }
 
+    private function resolvePaymentForUpdate(
+        YooKassaWebhookNotification $notification,
+        PaymentGatewayResult $authoritative,
+    ): CommercialPayment {
+        $payment = CommercialPayment::query()
+            ->where('provider', 'yookassa')
+            ->where('provider_payment_id', $notification->objectId)
+            ->lockForUpdate()
+            ->first();
+
+        if ($payment !== null) {
+            return $payment;
+        }
+
+        $publicOrderId = trim((string) ($authoritative->metadata['order_id'] ?? ''));
+        $organizationId = filter_var(
+            $authoritative->metadata['organization_id'] ?? null,
+            FILTER_VALIDATE_INT,
+            ['options' => ['min_range' => 1]],
+        );
+
+        if ($publicOrderId === '' || $organizationId === false) {
+            throw new RetryableCommercialWebhookException('Commercial payment is not locally bindable yet.');
+        }
+
+        $order = CommercialOrder::query()
+            ->where('public_id', $publicOrderId)
+            ->where('organization_id', $organizationId)
+            ->where('status', 'pending_payment')
+            ->lockForUpdate()
+            ->first();
+
+        if ($order === null) {
+            throw new RetryableCommercialWebhookException('Commercial payment is not locally bindable yet.');
+        }
+
+        $payment = CommercialPayment::query()
+            ->where('commercial_order_id', $order->id)
+            ->where('provider', 'yookassa')
+            ->lockForUpdate()
+            ->first();
+
+        if ($payment === null
+            || $payment->provider_payment_id !== null
+            || $authoritative->id !== $notification->objectId
+            || ! $this->matchesOrderIdentity($authoritative, $payment, $order)) {
+            throw new RetryableCommercialWebhookException('Commercial payment is not locally bindable yet.');
+        }
+
+        $payment->forceFill(['provider_payment_id' => $authoritative->id])->save();
+
+        return $payment;
+    }
+
     private function recordNoOp(YooKassaWebhookNotification $notification, string $sourceIp): string
     {
         $fingerprint = $this->fingerprint($notification, $notification->objectState);
 
-        return $this->transactional($fingerprint, function () use ($notification, $sourceIp, $fingerprint): string {
+        return $this->transactions->run($fingerprint, function () use ($notification, $sourceIp, $fingerprint): string {
             if ($this->isDuplicate($fingerprint)) {
                 return 'duplicate';
             }
@@ -380,18 +448,5 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
     private function isDuplicate(string $fingerprint): bool
     {
         return CommercialWebhookEvent::query()->where('fingerprint', $fingerprint)->exists();
-    }
-
-    private function transactional(string $fingerprint, callable $callback): string
-    {
-        try {
-            return DB::transaction($callback, 3);
-        } catch (QueryException $exception) {
-            if (CommercialWebhookEvent::query()->where('fingerprint', $fingerprint)->exists()) {
-                return 'duplicate';
-            }
-
-            throw $exception;
-        }
     }
 }

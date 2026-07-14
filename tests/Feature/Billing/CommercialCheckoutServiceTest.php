@@ -7,6 +7,7 @@ namespace Tests\Feature\Billing;
 use App\DataTransferObjects\Billing\CreatePaymentData;
 use App\DataTransferObjects\Billing\PaymentGatewayResult;
 use App\DataTransferObjects\Billing\RefundGatewayResult;
+use App\DataTransferObjects\Billing\YooKassaWebhookNotification;
 use App\Exceptions\Billing\CommercialCheckoutConflictException;
 use App\Interfaces\Billing\PaymentGatewayInterface;
 use App\Models\CommercialOrder;
@@ -16,6 +17,7 @@ use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
 use App\Models\User;
 use App\Services\Billing\CommercialCheckoutService;
+use App\Services\Billing\CommercialWebhookService;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -134,6 +136,35 @@ class CommercialCheckoutServiceTest extends TestCase
             $this->gateway->payments[0]->idempotenceKey,
             $this->gateway->payments[1]->idempotenceKey,
         );
+    }
+
+    public function test_late_checkout_response_does_not_downgrade_success_processed_during_provider_call(): void
+    {
+        $this->gateway->onCreate = function (CreatePaymentData $data): void {
+            $this->gateway->authoritativePayment = new PaymentGatewayResult(
+                id: 'provider-1', status: 'succeeded', confirmationUrl: null,
+                paymentMethodId: null, paymentMethodSaved: false,
+                safeResponse: ['id' => 'provider-1', 'status' => 'succeeded'],
+                paid: true, test: true, amountMinor: $data->amountMinor, currency: $data->currency,
+                metadata: $data->metadata, refundedAmountMinor: 0,
+            );
+            app(CommercialWebhookService::class)->process(
+                new YooKassaWebhookNotification(
+                    'payment.succeeded',
+                    'provider-1',
+                    'succeeded',
+                    ['type' => 'notification', 'event' => 'payment.succeeded', 'object' => ['id' => 'provider-1', 'status' => 'succeeded']],
+                ),
+                '185.71.76.1',
+            );
+        };
+
+        $result = $this->checkout(['machinery']);
+
+        $this->assertSame('paid', $result['status']);
+        $this->assertSame('succeeded', $result['payment_status']);
+        $this->assertSame('paid', CommercialOrder::query()->sole()->status->value);
+        $this->assertSame('succeeded', CommercialPayment::query()->sole()->provider_status);
     }
 
     public function test_rejects_stale_quote_unknown_package_zero_due_and_client_current_mismatch(): void
@@ -290,7 +321,7 @@ class CommercialCheckoutServiceTest extends TestCase
     private function createSchema(): void
     {
         foreach ([
-            'commercial_payments', 'commercial_orders', 'organization_package_subscriptions',
+            'notifications', 'commercial_webhook_events', 'commercial_payments', 'commercial_orders', 'organization_package_subscriptions',
             'organization_commercial_accounts', 'users', 'organizations',
         ] as $table) {
             Schema::dropIfExists($table);
@@ -340,6 +371,7 @@ class CommercialCheckoutServiceTest extends TestCase
             $table->timestamp('trial_ends_at')->nullable();
             $table->timestamp('cancel_at')->nullable();
             $table->timestamp('canceled_at')->nullable();
+            $table->foreignId('source_order_id')->nullable();
             $table->timestamps();
         });
         $this->createCommercialCheckoutTables();
@@ -381,6 +413,35 @@ class CommercialCheckoutServiceTest extends TestCase
             $table->string('payment_method_id')->nullable();
             $table->boolean('payment_method_saved')->default(false);
             $table->json('safe_response')->nullable();
+            $table->unsignedBigInteger('refunded_amount_minor')->default(0);
+            $table->timestamps();
+        });
+        Schema::create('commercial_webhook_events', function (Blueprint $table): void {
+            $table->id();
+            $table->string('provider');
+            $table->string('event_name');
+            $table->string('object_id');
+            $table->string('authoritative_status')->nullable();
+            $table->string('processing_result');
+            $table->string('source_ip');
+            $table->string('fingerprint')->unique();
+            $table->json('safe_payload')->nullable();
+            $table->timestamp('processed_at');
+            $table->timestamps();
+        });
+        Schema::create('notifications', function (Blueprint $table): void {
+            $table->uuid('id')->primary();
+            $table->string('type');
+            $table->string('notifiable_type');
+            $table->unsignedBigInteger('notifiable_id');
+            $table->unsignedBigInteger('organization_id')->nullable();
+            $table->string('notification_type');
+            $table->string('priority');
+            $table->json('channels');
+            $table->json('delivery_status');
+            $table->json('data');
+            $table->json('metadata')->nullable();
+            $table->timestamp('read_at')->nullable();
             $table->timestamps();
         });
     }
@@ -392,6 +453,10 @@ class CheckoutGatewayFake implements PaymentGatewayInterface
 
     public bool $failNext = false;
 
+    public mixed $onCreate = null;
+
+    public ?PaymentGatewayResult $authoritativePayment = null;
+
     public function createPayment(CreatePaymentData $payment): PaymentGatewayResult
     {
         $this->payments[] = $payment;
@@ -400,6 +465,10 @@ class CheckoutGatewayFake implements PaymentGatewayInterface
             $this->failNext = false;
 
             throw new RuntimeException('provider unavailable');
+        }
+
+        if (is_callable($this->onCreate)) {
+            ($this->onCreate)($payment);
         }
 
         return new PaymentGatewayResult(
@@ -414,7 +483,7 @@ class CheckoutGatewayFake implements PaymentGatewayInterface
 
     public function getPayment(string $paymentId): PaymentGatewayResult
     {
-        throw new RuntimeException('Not used.');
+        return $this->authoritativePayment ?? throw new RuntimeException('Not used.');
     }
 
     public function getRefund(string $refundId): RefundGatewayResult
