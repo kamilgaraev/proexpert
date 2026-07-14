@@ -37,7 +37,14 @@ class OcrDocumentStorageService
             throw new TypedFailureException(FailureCategory::Terminal, 'document_organization_unavailable');
         }
         $directory = sprintf('estimate-generation/sessions/%d/documents', $session->id);
-        $storagePath = $this->fileService->upload($file, $directory, null, 'private', $organization);
+        $storagePath = $this->fileService->upload(
+            $file,
+            $directory,
+            null,
+            'private',
+            $organization,
+            privacyMode: true,
+        );
 
         if ($storagePath === false) {
             throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable');

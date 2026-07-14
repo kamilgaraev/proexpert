@@ -14,6 +14,13 @@ Route::get('/', function () {
     return view('welcome');
 });
 
+Route::get('/release.json', function () {
+    return response()->file('/etc/most/release.json', [
+        'Cache-Control' => 'no-store, max-age=0',
+        'Content-Type' => 'application/json',
+    ]);
+});
+
 Route::get('/login', function () {
     return LandingResponse::error(trans_message('auth.token_missing'), 401);
 })->name('login');

@@ -50,7 +50,7 @@ jobs:
       - name: Derive image metadata
         id: meta
         run: |
-          echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "release_sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
           echo "image_repo=ghcr.io/${GITHUB_REPOSITORY}/prohelper" >> "$GITHUB_OUTPUT"
 
       - name: Build and push Docker image
@@ -59,9 +59,11 @@ jobs:
           context: .
           file: ./Dockerfile.prod
           push: true
+          build-args: |
+            MOST_RELEASE_SHA=${{ github.sha }}
           tags: |
             ${{ steps.meta.outputs.image_repo }}:latest
-            ${{ steps.meta.outputs.image_repo }}:${{ steps.meta.outputs.short_sha }}
+            ${{ steps.meta.outputs.image_repo }}:${{ steps.meta.outputs.release_sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -74,27 +76,14 @@ jobs:
           timeout: 15m
           command_timeout: 15m
           script: |
-            set -e
+            set -euo pipefail
             cd /var/www/prohelper
-            SHORT_RELEASE="${{ steps.meta.outputs.short_sha }}"
+            RELEASE_SHA="${{ steps.meta.outputs.release_sha }}"
             BACKEND_SERVICES="api websockets horizon worker-heavy worker-ifc scheduler"
             MONITORING_SERVICES="loki promtail prometheus grafana node-exporter watchdog postgres-exporter docker-cleanup"
 
             git fetch --all --prune
             git reset --hard origin/main
-
-            echo "Updating deploy metadata for backend release ${SHORT_RELEASE}"
-            if grep -q '^MOST_IMAGE_TAG=' .env; then
-              sed -i "s/^MOST_IMAGE_TAG=.*/MOST_IMAGE_TAG=${SHORT_RELEASE}/" .env
-            else
-              printf '\nMOST_IMAGE_TAG=%s\n' "${SHORT_RELEASE}" >> .env
-            fi
-
-            if grep -q '^SENTRY_RELEASE=' .env; then
-              sed -i "s/^SENTRY_RELEASE=.*/SENTRY_RELEASE=prohelper@${SHORT_RELEASE}/" .env
-            else
-              printf 'SENTRY_RELEASE=prohelper@%s\n' "${SHORT_RELEASE}" >> .env
-            fi
 
             if grep -q '^SENTRY_ENVIRONMENT=' .env; then
               sed -i "s/^SENTRY_ENVIRONMENT=.*/SENTRY_ENVIRONMENT=production/" .env
@@ -104,11 +93,11 @@ jobs:
 
             echo ${{ secrets.GHCR_PAT }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            echo "Pulling backend services: ${BACKEND_SERVICES}"
-            docker compose pull ${BACKEND_SERVICES}
+            echo "Pulling immutable backend release ${RELEASE_SHA}"
+            MOST_IMAGE_TAG=${RELEASE_SHA} docker compose pull ${BACKEND_SERVICES}
             docker compose pull ${MONITORING_SERVICES}
 
-            IMAGE_REF="ghcr.io/${{ github.repository }}/prohelper:${SHORT_RELEASE}"
+            IMAGE_REF="ghcr.io/${{ github.repository }}/prohelper:${RELEASE_SHA}"
             LARAVEL_UID="$(docker run --rm --entrypoint sh "${IMAGE_REF}" -c 'id -u www-data')"
             LARAVEL_GID="$(docker run --rm --entrypoint sh "${IMAGE_REF}" -c 'id -g www-data')"
 
@@ -127,55 +116,14 @@ jobs:
             chmod -R ug+rwX storage bootstrap/cache
             chmod 664 storage/logs/laravel.log
 
-            docker compose up -d --force-recreate --remove-orphans ${BACKEND_SERVICES}
+            echo "Expanding schema with the new image while the old runtime stays active..."
+            MOST_IMAGE_TAG=${RELEASE_SHA} docker compose run --rm --no-deps api php artisan migrate --force
+
+            install -d -o root -g root -m 0755 /usr/local/libexec/most /etc/most /var/lib/most-active-release
+            install -o root -g root -m 0555 scripts/coordinate-most-release.sh /usr/local/libexec/most/coordinate-most-release
+            test -f /etc/most/release-coordinator.conf
+            /usr/local/libexec/most/coordinate-most-release backend "${RELEASE_SHA}"
             docker compose up -d --force-recreate ${MONITORING_SERVICES}
-
-            echo "Waiting for API health endpoint..."
-            for attempt in $(seq 1 12); do
-              if docker compose exec -T api curl -fsS http://localhost:8000/up >/dev/null; then
-                echo "API is healthy."
-                break
-              fi
-
-              if [ "${attempt}" -eq 12 ]; then
-                echo "API did not become healthy in time."
-                exit 1
-              fi
-
-              sleep 5
-            done
-
-            echo "Refreshing Laravel caches..."
-            docker compose exec -T api php artisan optimize:clear
-            docker compose exec -T api php artisan clear-compiled
-            docker compose exec -T api php artisan package:discover --ansi
-
-            echo "Running production-safe migrations..."
-            docker compose exec -T api php artisan migrate:safe --force
-
-            echo "Scanning and registering business modules..."
-            docker compose exec -T api php artisan modules:scan --clear-cache
-
-            echo "Rebuilding Laravel caches..."
-            docker compose exec -T api php artisan optimize
-
-            echo "Restarting API container to refresh Octane state..."
-            docker compose restart api
-
-            echo "Waiting for API health endpoint after restart..."
-            for attempt in $(seq 1 12); do
-              if docker compose exec -T api curl -fsS http://localhost:8000/up >/dev/null; then
-                echo "API is healthy after restart."
-                break
-              fi
-
-              if [ "${attempt}" -eq 12 ]; then
-                echo "API did not become healthy after restart in time."
-                exit 1
-              fi
-
-              sleep 5
-            done
 
             echo "Pruning unused Docker images older than 48 hours..."
             docker image prune -a -f --filter "until=48h"
@@ -183,4 +131,4 @@ jobs:
             docker system df
             df -h /
 
-            echo "Backend deployment successful!"
+            echo "Backend deployment successful: ${RELEASE_SHA}"
