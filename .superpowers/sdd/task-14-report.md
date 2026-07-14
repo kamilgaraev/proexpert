@@ -18,6 +18,8 @@
 - Review-fix GREEN: тот же тест проверил `bash -n`, fail-closed негативные fixtures и положительный full-SHA fixture без сети и браузера: **PASS**.
 - Re-review RED: source production verifier завершил тест через старый безусловный entrypoint, а две независимые аттестации не обеспечивали атомарную пару и invalidation перед активацией.
 - Re-review GREEN: behavioral test вызывает тот же production main через source-only seam и проверяет exact exit `78`, строгую pair schema, generation, mismatch, owner/mode/symlink, запрет env path override, положительную пару и fail-before-GStack sentinel: **PASS**.
+- Third review RED: browser flow имел только pre-check и не закреплял generation до завершения user/Filament evidence; новый тест завершился из-за отсутствующего stable-release finalizer.
+- Third review GREEN: behavioral flow проверяет pre/post output одного production verifier. Смена generation, удаление manifest и rollback SHA-пары дают nonzero без `PASS`; неизменная точная пара создаёт атомарный `PASS`: **PASS**.
 - Первый DB-less RED после изменения тестов выявил неполную test container wiring. Контракт explicit authorization для общих ресурсов оставлен в прежней области, а AI-specific permissions проверяются отдельной least-privilege матрицей и прямыми `canAccess`/`canViewAny` assertions.
 - После container wiring: 12 passed, 382 assertions.
 - После Pint: повторно 12 passed, 382 assertions.
@@ -60,7 +62,10 @@ Live GStack smoke не выполнялся и не засчитывается. 
 - обязательное удаление public manifest и active SHA изменяемого компонента до любой activation;
 - обновление active SHA только после доказанной связи фактического artifact с SHA и public readiness/propagation;
 - атомарная публикация общей пары только при двух валидных active SHA; любой сбой после invalidation оставляет gate закрытым;
+- монотонный generation под общим lock без сброса или повторного использования при rollback;
 - exit code `78` при отсутствующей/небезопасной библиотеке, отсутствующем, небезопасном, некорректном или несовпадающем manifest до любого запуска GStack;
+- обязательные pre/post captures нормализованного `generation/backend/admin`, byte-for-byte finalization после последнего browser evidence и удаление stale `PASS` до pre-check;
+- атомарное создание `PASS` summary только при неизменных generation и reviewed SHA-паре; before/after outputs и reviewed SHA сохраняются как evidence;
 - безопасный fallback `${GSTACK_BROWSE:-$HOME/.codex/skills/gstack/browse/dist/browse}` при `set -u`;
 - исполняемый behavioral test `tests/Architecture/ai-estimator-release-gate.sh` без сети и браузера.
 

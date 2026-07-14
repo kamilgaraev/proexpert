@@ -6,13 +6,16 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 RUNBOOK="$ROOT/docs/runbooks/ai-estimator-operations.md"
 VERIFIER="$ROOT/scripts/verify-ai-estimator-release-attestations.sh"
 LIBRARY="$ROOT/scripts/lib/release-attestation.sh"
+FINALIZER="$ROOT/scripts/finalize-ai-estimator-release-gate.sh"
 SHA_A=0123456789abcdef0123456789abcdef01234567
 SHA_B=89abcdef0123456789abcdef0123456789abcdef
 
 bash -n "$VERIFIER"
 bash -n "$LIBRARY"
+bash -n "$FINALIZER"
 
 source "$VERIFIER"
+source "$FINALIZER"
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -20,6 +23,9 @@ trap 'rm -rf "$TMP"' EXIT
 TEST_LIBRARY="$TMP/release-attestation.sh"
 MANIFEST="$TMP/smoke-ready.manifest"
 SENTINEL="$TMP/gstack-called"
+BEFORE="$TMP/release-attestation.before"
+AFTER="$TMP/release-attestation.after"
+PASS_MARKER="$TMP/PASS"
 CURRENT_UID=$(id -u)
 CURRENT_GID=$(id -g)
 
@@ -121,6 +127,50 @@ rm "$MANIFEST"
 assert_exit 78 run_gate_then_gstack_probe
 [[ ! -e $SENTINEL ]]
 
+start_browser_gate_flow() {
+    rm -f "$BEFORE" "$AFTER" "$PASS_MARKER"
+    write_manifest most-active-release/v1 7 "$SHA_A" "$SHA_B"
+    verify_fixture >"$BEFORE"
+}
+
+finish_browser_gate_flow() {
+    local status
+
+    verify_fixture >"$AFTER" || {
+        status=$?
+        rm -f "$PASS_MARKER"
+        return "$status"
+    }
+
+    finalize_stable_release_gate "$BEFORE" "$AFTER" "$SHA_A" "$SHA_B" "$PASS_MARKER"
+}
+
+start_browser_gate_flow
+write_manifest most-active-release/v1 8 "$SHA_A" "$SHA_B"
+printf 'status=STALE\n' >"$PASS_MARKER"
+assert_exit 78 finish_browser_gate_flow
+[[ ! -e $PASS_MARKER ]]
+
+start_browser_gate_flow
+rm "$MANIFEST"
+printf 'status=STALE\n' >"$PASS_MARKER"
+assert_exit 78 finish_browser_gate_flow
+[[ ! -e $PASS_MARKER ]]
+
+start_browser_gate_flow
+write_manifest most-active-release/v1 8 "$SHA_B" "$SHA_A"
+printf 'status=STALE\n' >"$PASS_MARKER"
+assert_exit 78 finish_browser_gate_flow
+[[ ! -e $PASS_MARKER ]]
+
+start_browser_gate_flow
+finish_browser_gate_flow
+[[ -f $PASS_MARKER && ! -L $PASS_MARKER ]]
+grep -Fqx 'status=PASS' "$PASS_MARKER"
+grep -Fqx 'generation=7' "$PASS_MARKER"
+grep -Fqx "reviewed_backend=$SHA_A" "$PASS_MARKER"
+grep -Fqx "reviewed_admin=$SHA_B" "$PASS_MARKER"
+
 if grep -Eq 'backend\.sha256|admin\.sha256|DEPLOYED_(BACKEND|ADMIN)_SHA' "$RUNBOOK"; then
     echo "runbook must use only the atomic pair manifest" >&2
     exit 1
@@ -129,14 +179,19 @@ fi
 grep -Fq '/var/lib/most-active-release/smoke-ready.manifest' "$VERIFIER"
 grep -Fq 'flock' "$RUNBOOK"
 grep -Fq '${GSTACK_BROWSE:-$HOME/.codex/skills/gstack/browse/dist/browse}' "$RUNBOOK"
+grep -Fq 'release-attestation.before' "$RUNBOOK"
+grep -Fq 'release-attestation.after' "$RUNBOOK"
+grep -Fq 'finalize-ai-estimator-release-gate.sh' "$RUNBOOK"
 
 INVALIDATE_LINE=$(grep -n 'rm -f "\$MANIFEST" "\$STATE/\$COMPONENT.active"' "$RUNBOOK" | head -1 | cut -d: -f1)
 ACTIVATE_LINE=$(grep -n '^activate_component_and_wait_for_public_readiness' "$RUNBOOK" | head -1 | cut -d: -f1)
 PUBLISH_LINE=$(grep -n 'mv -f "\$PAIR_TMP" "\$MANIFEST"' "$RUNBOOK" | head -1 | cut -d: -f1)
 [[ $INVALIDATE_LINE -lt $ACTIVATE_LINE && $ACTIVATE_LINE -lt $PUBLISH_LINE ]]
 
-VERIFY_LINE=$(grep -n 'verify-ai-estimator-release-attestations' "$RUNBOOK" | tail -1 | cut -d: -f1)
+PRE_VERIFY_LINE=$(grep -n '/usr/local/libexec/most/verify-ai-estimator-release-attestations' "$RUNBOOK" | sed -n '2p' | cut -d: -f1)
+POST_VERIFY_LINE=$(grep -n '/usr/local/libexec/most/verify-ai-estimator-release-attestations' "$RUNBOOK" | sed -n '3p' | cut -d: -f1)
 GSTACK_LINE=$(grep -n '\$B goto' "$RUNBOOK" | head -1 | cut -d: -f1)
-[[ $VERIFY_LINE -lt $GSTACK_LINE ]]
+FINALIZER_LINE=$(grep -n '^"\$FINALIZER"' "$RUNBOOK" | head -1 | cut -d: -f1)
+[[ $PRE_VERIFY_LINE -lt $GSTACK_LINE && $GSTACK_LINE -lt $POST_VERIFY_LINE && $POST_VERIFY_LINE -lt $FINALIZER_LINE ]]
 
 echo "AI estimator atomic release manifest checks passed"

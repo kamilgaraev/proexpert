@@ -92,6 +92,8 @@ Backend и admin activation hooks используют один fixed root-owned
 
 Любой сбой после шага 1 завершает hook без повторной публикации: public manifest остаётся отсутствующим, verifier возвращает `78`, старый manifest не переживает неуспешную активацию. Rollback следует той же последовательности и не восстанавливает сохранённый старый manifest напрямую.
 
+`generation.counter` монотонно увеличивается только под тем же эксклюзивным lock. Deploy и rollback никогда не сбрасывают и не переиспользуют generation; пропуски после сбоя допустимы, уменьшение или повтор значения запрещены.
+
 Каркас coordinator hook, который должен быть встроен в оба deployment workflow:
 
 ```bash
@@ -168,18 +170,28 @@ set -euo pipefail
 [[ "$REVIEWED_BACKEND_SHA" =~ ^[0-9a-f]{40}$ ]]
 [[ "$REVIEWED_ADMIN_SHA" =~ ^[0-9a-f]{40}$ ]]
 
+test -r "$PDF_FIXTURE" && test -r "$JPEG_FIXTURE" && test -r "$PNG_FIXTURE"
+mkdir -p "$SMOKE_DIR"
+
+ROOT=$(git rev-parse --show-toplevel)
+FINALIZER="$ROOT/scripts/finalize-ai-estimator-release-gate.sh"
+ATTESTATION_BEFORE="$SMOKE_DIR/release-attestation.before"
+ATTESTATION_AFTER="$SMOKE_DIR/release-attestation.after"
+REVIEWED_RELEASE="$SMOKE_DIR/reviewed-release.sha"
+PASS_MARKER="$SMOKE_DIR/PASS"
+test -x "$FINALIZER"
+rm -f "$ATTESTATION_BEFORE" "$ATTESTATION_AFTER" "$REVIEWED_RELEASE" "$PASS_MARKER"
+printf 'backend=%s\nadmin=%s\n' "$REVIEWED_BACKEND_SHA" "$REVIEWED_ADMIN_SHA" >"$REVIEWED_RELEASE"
+
 ssh \
   -o BatchMode=yes \
   -o StrictHostKeyChecking=yes \
   -i /mnt/c/Users/kamilgaraev/.ssh/codex_readonly \
   codex-ro@89.169.44.117 \
   /usr/local/libexec/most/verify-ai-estimator-release-attestations \
-  "$REVIEWED_BACKEND_SHA" "$REVIEWED_ADMIN_SHA"
+  "$REVIEWED_BACKEND_SHA" "$REVIEWED_ADMIN_SHA" \
+  >"$ATTESTATION_BEFORE"
 
-test -r "$PDF_FIXTURE" && test -r "$JPEG_FIXTURE" && test -r "$PNG_FIXTURE"
-mkdir -p "$SMOKE_DIR"
-
-ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
 B=""
 test -n "$ROOT" && test -x "$ROOT/.agents/skills/gstack/browse/dist/browse" && B="$ROOT/.agents/skills/gstack/browse/dist/browse"
 test -n "$B" || B="${GSTACK_BROWSE:-$HOME/.codex/skills/gstack/browse/dist/browse}"
@@ -201,6 +213,30 @@ $B network
 6. Применить результат, открыть созданную новую обычную смету и записать её ID. Повторить apply для той же сессии и подтвердить тот же ID и отсутствие второй сметы.
 7. Сохранить `$B screenshot "$SMOKE_DIR/user-final.png"`; console не содержит uncaught errors, network не содержит неожиданных 4xx/5xx.
 8. Открыть `$FILAMENT_URL`, проверить dashboard/filters, session timeline, usage/cost, failures, checkpoints/queue, datasets, benchmark и settings/audit. Для роли без `monitor` прямой URL должен дать отказ. Опасные действия скрыты без `operate`, а с правом требуют confirmation. В DOM/ответах не должно быть prompt, raw document/response, stack trace, token, secret или Authorization.
-9. Повторить `console`, `network`, сохранить annotated screenshots. Только после прохождения всех пунктов gate получает `PASS` с SHA, session ID, estimate ID, временем и путями evidence.
+9. Повторить `console`, `network`, сохранить последние user и Filament screenshots. На этом browser assertions завершены, но статус `PASS` ещё не создаётся.
+
+Сразу после последнего `console`/`network`/screenshot в том же shell повторно проверить release и выполнить byte-for-byte finalization. До этого блока `PASS` отсутствует:
+
+```bash
+ssh \
+  -o BatchMode=yes \
+  -o StrictHostKeyChecking=yes \
+  -i /mnt/c/Users/kamilgaraev/.ssh/codex_readonly \
+  codex-ro@89.169.44.117 \
+  /usr/local/libexec/most/verify-ai-estimator-release-attestations \
+  "$REVIEWED_BACKEND_SHA" "$REVIEWED_ADMIN_SHA" \
+  >"$ATTESTATION_AFTER"
+
+"$FINALIZER" \
+  "$ATTESTATION_BEFORE" \
+  "$ATTESTATION_AFTER" \
+  "$REVIEWED_BACKEND_SHA" \
+  "$REVIEWED_ADMIN_SHA" \
+  "$PASS_MARKER"
+
+test -f "$PASS_MARKER" && test ! -L "$PASS_MARKER"
+```
+
+Finalizer требует точного совпадения нормализованных `generation/backend/admin` до и после browser flow. Exit `78`, отсутствие/изменение manifest, смена generation или SHA-пары означают `FAIL`: существующий `PASS` удаляется, новый marker или успешный evidence status не создаётся. Evidence сохраняет `release-attestation.before`, `release-attestation.after`, `reviewed-release.sha` и только при стабильной паре — атомарно созданный `PASS` summary.
 
 Этот сценарий подготовлен для post-deploy проверки и сам по себе не означает, что smoke уже выполнен.
