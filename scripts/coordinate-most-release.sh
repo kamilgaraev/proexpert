@@ -3,9 +3,10 @@
 set -Eeuo pipefail
 umask 077
 
-readonly STATE=/var/lib/most-active-release
-readonly CONFIG=/etc/most/release-coordinator.conf
-readonly MANIFEST="$STATE/smoke-ready.manifest"
+STATE=${STATE:-/var/lib/most-active-release}
+CONFIG=${CONFIG:-/etc/most/release-coordinator.conf}
+MANIFEST="$STATE/smoke-ready.manifest"
+readonly COORDINATOR_PROTOCOL=most-release-coordinator/v2
 BACKEND_PROJECT_ROOT=
 BACKEND_COMPOSE_FILE=
 
@@ -44,14 +45,15 @@ verify_public_release() {
 
 publish_pair() {
     local backend admin generation pair counter
+    rm -f "$MANIFEST"
     if [[ ! -f $STATE/backend.active || -L $STATE/backend.active || ! -f $STATE/admin.active || -L $STATE/admin.active ]]; then
         return 0
     fi
     backend=$(<"$STATE/backend.active")
     admin=$(<"$STATE/admin.active")
-    is_sha "$backend" && is_sha "$admin"
-    verify_public_release "$BACKEND_RELEASE_URL" "$backend"
-    verify_public_release "$ADMIN_RELEASE_URL" "$admin"
+    is_sha "$backend" && is_sha "$admin" || return 1
+    verify_public_release "$BACKEND_RELEASE_URL" "$backend" || return 1
+    verify_public_release "$ADMIN_RELEASE_URL" "$admin" || return 1
     generation=$(<"$STATE/generation.counter")
     [[ $generation =~ ^[0-9]+$ ]]
     generation=$((generation + 1))
@@ -66,6 +68,38 @@ publish_pair() {
     chown root:root "$pair"
     chmod 0444 "$pair"
     mv -f "$pair" "$MANIFEST"
+}
+
+sealed_compose_path() {
+    local sha=$1
+    is_sha "$sha"
+    printf '%s/backend-compose/%s.yml\n' "$STATE" "$sha"
+}
+
+verify_sealed_compose() {
+    local path=$1 sha=$2
+    [[ $path == "$(sealed_compose_path "$sha")" ]]
+    [[ -f $path && ! -L $path ]]
+    [[ $(stat -c '%u:%g' "$path") == 0:0 ]]
+    [[ $(stat -c '%a' "$path") == 400 ]]
+}
+
+seal_compose_from_git() {
+    local root=$1 sha=$2 path tmp
+    path=$(sealed_compose_path "$sha")
+    install -d -o root -g root -m 0700 "$(dirname "$path")"
+    tmp=$(mktemp "$(dirname "$path")/.${sha}.XXXXXX")
+    git -C "$root" show "$sha:docker-compose.yml" >"$tmp"
+    chown root:root "$tmp"
+    chmod 0400 "$tmp"
+    if [[ -e $path ]]; then
+        verify_sealed_compose "$path" "$sha"
+        cmp -s "$tmp" "$path"
+        rm -f "$tmp"
+    else
+        mv "$tmp" "$path"
+    fi
+    printf '%s\n' "$path"
 }
 
 image_has_digest() {
@@ -145,8 +179,10 @@ health_gate() {
 }
 
 rollback_backend() {
-    local root=$1 ref=$2 sha=$3 services=$4
+    local root=$1 ref=$2 sha=$3 services=$4 previous_compose=$5
     trap - ERR
+    verify_sealed_compose "$previous_compose" "$sha"
+    BACKEND_COMPOSE_FILE=$previous_compose
     write_backend_env "$root" "$ref" "$sha"
     MOST_IMAGE_REF="$ref" dc up -d --force-recreate --remove-orphans $services
     health_gate "$sha" "$services"
@@ -156,7 +192,7 @@ rollback_backend() {
 }
 
 deploy_backend() {
-    local sha=$1 repo=$2 digest=$3 root services image_ref previous_id previous_ref previous_sha compose_tmp
+    local sha=$1 repo=$2 digest=$3 root services image_ref previous_id previous_ref previous_sha previous_active previous_compose next_compose
     root=${BACKEND_ROOT:-/var/www/prohelper}
     services=${BACKEND_SERVICES:-api websockets horizon worker-heavy worker-ifc scheduler}
     image_ref="${repo}@${digest}"
@@ -165,20 +201,23 @@ deploy_backend() {
     [[ $(git rev-parse HEAD) == "$sha" ]]
     git diff --quiet -- docker-compose.yml
     git diff --cached --quiet -- docker-compose.yml
-    install -d -o root -g root -m 0700 "$STATE/backend-compose"
-    compose_tmp=$(mktemp "$STATE/backend-compose/.${sha}.XXXXXX")
-    git show "$sha:docker-compose.yml" >"$compose_tmp"
-    chown root:root "$compose_tmp"
-    chmod 0400 "$compose_tmp"
+
+    [[ -f $STATE/backend.active && ! -L $STATE/backend.active ]]
+    previous_active=$(<"$STATE/backend.active")
+    is_sha "$previous_active"
+    previous_compose=$(sealed_compose_path "$previous_active")
+    verify_sealed_compose "$previous_compose" "$previous_active"
     BACKEND_PROJECT_ROOT=$root
-    BACKEND_COMPOSE_FILE="$STATE/backend-compose/$sha.yml"
-    mv -f "$compose_tmp" "$BACKEND_COMPOSE_FILE"
+    BACKEND_COMPOSE_FILE=$previous_compose
 
     previous_id=$(container_id api)
     previous_ref=$(docker inspect -f '{{.Config.Image}}' "$previous_id")
     previous_sha=$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$previous_id")
-    is_digest_ref "$previous_ref" && is_sha "$previous_sha"
+    is_digest_ref "$previous_ref" && is_sha "$previous_sha" && [[ $previous_sha == "$previous_active" ]]
     verify_runtime_images "$previous_ref" "$previous_sha" "$services"
+
+    next_compose=$(seal_compose_from_git "$root" "$sha")
+    BACKEND_COMPOSE_FILE=$next_compose
 
     [[ -f ${GHCR_TOKEN_FILE:?GHCR_TOKEN_FILE is required} && ! -L $GHCR_TOKEN_FILE ]]
     cat "$GHCR_TOKEN_FILE" | docker login ghcr.io -u "${GHCR_USERNAME:?GHCR_USERNAME is required}" --password-stdin >/dev/null
@@ -189,7 +228,7 @@ deploy_backend() {
     MOST_IMAGE_REF="$image_ref" dc run --rm --no-deps api php artisan migrate --force
 
     rm -f "$MANIFEST" "$STATE/backend.active"
-    trap 'rm -f "$MANIFEST" "$STATE/backend.active"; rollback_backend "$root" "$previous_ref" "$previous_sha" "$services"' ERR
+    trap 'rm -f "$MANIFEST" "$STATE/backend.active"; rollback_backend "$root" "$previous_ref" "$previous_sha" "$services" "$previous_compose"' ERR
     write_backend_env "$root" "$image_ref" "$sha"
     MOST_IMAGE_REF="$image_ref" dc up -d --force-recreate --remove-orphans $services
     health_gate "$sha" "$services"
@@ -197,6 +236,62 @@ deploy_backend() {
     atomic_sha backend "$sha"
     publish_pair
     trap - ERR
+}
+
+bootstrap_backend() {
+    local root services sha compose id ref runtime_sha
+    root=${BACKEND_ROOT:-/var/www/prohelper}
+    services=${BACKEND_SERVICES:-api websockets horizon worker-heavy worker-ifc scheduler}
+    sha=$(git -C "$root" rev-parse HEAD)
+    is_sha "$sha"
+    git -C "$root" diff --quiet -- docker-compose.yml
+    git -C "$root" diff --cached --quiet -- docker-compose.yml
+    compose=$(seal_compose_from_git "$root" "$sha")
+    BACKEND_PROJECT_ROOT=$root
+    BACKEND_COMPOSE_FILE=$compose
+    id=$(container_id api)
+    ref=$(docker inspect -f '{{.Config.Image}}' "$id")
+    runtime_sha=$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$id")
+    is_digest_ref "$ref" && [[ $runtime_sha == "$sha" ]]
+    verify_runtime_images "$ref" "$sha" "$services"
+    if [[ -e $STATE/backend.active ]]; then
+        [[ -f $STATE/backend.active && ! -L $STATE/backend.active && $(<"$STATE/backend.active") == "$sha" ]]
+    fi
+    atomic_sha backend "$sha"
+    publish_pair
+}
+
+validate_release_tree() {
+    local candidate=$1 invalid path
+    [[ -d $candidate && ! -L $candidate ]]
+    invalid=$(find "$candidate" ! -type f ! -type d -print -quit)
+    [[ -z $invalid ]] || return 1
+    while IFS= read -r -d '' path; do
+        [[ $(realpath --canonicalize-existing "$path") == "$candidate"/* ]] || return 1
+    done < <(find "$candidate" -mindepth 1 -print0)
+}
+
+validate_admin_archive() {
+    local archive=$1 line type entry normalized
+    [[ -f $archive && ! -L $archive ]]
+    tar -tzf "$archive" >/dev/null
+    while IFS= read -r entry; do
+        normalized="/${entry#./}/"
+        [[ $entry != /* && $normalized != *'/../'* ]] || return 1
+    done < <(tar -tzf "$archive")
+    while IFS= read -r line; do
+        type=${line:0:1}
+        [[ $type == - || $type == d ]] || return 1
+    done < <(tar --numeric-owner -tvzf "$archive")
+}
+
+quarantine_failed_admin_release() {
+    local root=$1 release=$2 previous=$3 token=$4 sha
+    [[ $release != "$previous" ]]
+    sha=$(basename "$release")
+    is_sha "$sha" && is_staging_token "$token"
+    install -d -o root -g root -m 0700 "$root/admin-release-quarantine"
+    mv "$release" "$root/admin-release-quarantine/${sha}-${token}"
 }
 
 verify_admin_release() {
@@ -217,7 +312,7 @@ rollback_admin() {
 }
 
 deploy_admin() {
-    local sha=$1 expected_digest=$2 token=$3 root incoming_root artifact artifact_real incoming_real release previous old_sha sealed candidate invalid path
+    local sha=$1 expected_digest=$2 token=$3 root incoming_root artifact artifact_real incoming_real release previous old_sha sealed candidate
     root=${ADMIN_ROOT:?ADMIN_ROOT is required}
     incoming_root=${ADMIN_STAGING_ROOT:?ADMIN_STAGING_ROOT is required}
     release="$root/releases/$sha"
@@ -242,22 +337,18 @@ deploy_admin() {
             publish_pair
             return 0
         fi
-        install -d -o root -g root -m 0700 "$root/admin-release-quarantine"
-        mv "$release" "$root/admin-release-quarantine/${sha}-${token}"
+        quarantine_failed_admin_release "$root" "$release" "$previous" "$token"
     fi
 
     sealed=$(mktemp -d "$root/.sealing.${sha}.XXXXXX")
     install -o root -g root -m 0400 "$artifact_real" "$sealed/admin-release.tar.gz"
     [[ $(sha256sum "$sealed/admin-release.tar.gz" | awk '{print $1}') == "$expected_digest" ]]
+    validate_admin_archive "$sealed/admin-release.tar.gz"
     candidate="$sealed/candidate"
     install -d -o root -g root -m 0700 "$candidate"
     tar -xzf "$sealed/admin-release.tar.gz" --no-same-owner --no-same-permissions -C "$candidate"
 
-    invalid=$(find "$candidate" ! -type f ! -type d -print -quit)
-    [[ -z $invalid ]]
-    while IFS= read -r -d '' path; do
-        [[ $(realpath --canonicalize-existing "$path") == "$candidate"/* ]]
-    done < <(find "$candidate" -mindepth 1 -print0)
+    validate_release_tree "$candidate"
     [[ -f $candidate/release.json && $(tr -d '\r\n' <"$candidate/release.json") == "{\"sha\":\"${sha}\"}" ]]
     [[ -f $candidate/index.html ]]
 
@@ -280,6 +371,8 @@ deploy_admin() {
 
 main() {
     local component=${1-} config_mode
+    [[ $(id -u) -eq 0 ]]
+    [[ $STATE == /var/lib/most-active-release && $CONFIG == /etc/most/release-coordinator.conf ]]
     [[ -f $CONFIG && ! -L $CONFIG && $(stat -c '%u:%g' "$CONFIG") == 0:0 ]]
     config_mode=$(stat -c '%a' "$CONFIG")
     (((8#$config_mode & 0077) == 0))
@@ -304,10 +397,20 @@ main() {
             [[ $# -eq 4 ]]
             deploy_admin "$2" "$3" "$4"
             ;;
+        bootstrap-backend)
+            [[ $# -eq 1 ]]
+            bootstrap_backend
+            ;;
         *)
             return 64
             ;;
     esac
 }
 
-main "$@"
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    if [[ ${1-} == --version && $# -eq 1 ]]; then
+        printf '%s\n' "$COORDINATOR_PROTOCOL"
+        exit 0
+    fi
+    main "$@"
+fi

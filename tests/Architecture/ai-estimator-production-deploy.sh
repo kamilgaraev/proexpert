@@ -19,6 +19,10 @@ grep -Fq 'git checkout --detach "${RELEASE_SHA}"' "$WORKFLOW"
 grep -Fq 'test "$(git rev-parse HEAD)" = "${RELEASE_SHA}"' "$WORKFLOW"
 grep -Fq 'bash tests/Architecture/ai-estimator-production-deploy.sh' "$WORKFLOW"
 grep -Fq 'sudo /usr/local/libexec/most/coordinate-most-release backend' "$WORKFLOW"
+grep -Fq 'RELEASE_COORDINATOR_SHA256' "$WORKFLOW"
+grep -Fq 'sha256sum /usr/local/libexec/most/coordinate-most-release' "$WORKFLOW"
+grep -Fq 'most-release-coordinator/v2' "$WORKFLOW"
+grep -Fq 'bash tests/Architecture/most-release-coordinator-behavior.sh' "$WORKFLOW"
 
 if grep -Eq 'migrate:(safe|rollback|reset)|artisan migrate:rollback' "$WORKFLOW"; then
     echo 'deploy must keep database fix-forward' >&2
@@ -52,13 +56,18 @@ grep -Fq 'health_gate' "$COORDINATOR"
 grep -Fq 'previous_ref=' "$COORDINATOR"
 grep -Fq 'is_digest_ref "$previous_ref"' "$COORDINATOR"
 grep -Fq 'rollback_backend' "$COORDINATOR"
-grep -Fq 'git show "$sha:docker-compose.yml"' "$COORDINATOR"
+grep -Fq 'git -C "$root" show "$sha:docker-compose.yml"' "$COORDINATOR"
 grep -Fq 'docker compose --project-directory' "$COORDINATOR"
 grep -Fq 'find "$candidate" ! -type f ! -type d' "$COORDINATOR"
+grep -Fq 'validate_admin_archive "$sealed/admin-release.tar.gz"' "$COORDINATOR"
 grep -Fq 'realpath --canonicalize-existing' "$COORDINATOR"
 grep -Fq 'sha256sum' "$COORDINATOR"
 grep -Fq 'admin-release-quarantine' "$COORDINATOR"
+grep -Fq 'most-release-coordinator/v2' "$COORDINATOR"
+grep -Fq 'bootstrap-backend' "$COORDINATOR"
+grep -Fq 'previous_compose' "$COORDINATOR"
 grep -Fq 'visudo -cf' "$BOOTSTRAP"
+grep -Fq 'expected_sha256' "$BOOTSTRAP"
 grep -Fq 'backend [0-9a-f]* ghcr.io/* sha256:*' "$BOOTSTRAP"
 grep -Fq 'admin [0-9a-f]* [0-9a-f]* [0-9a-f]*' "$BOOTSTRAP"
 grep -Fq 'chown root:root "$BACKEND_ROOT/.env"' "$BOOTSTRAP"
@@ -72,12 +81,22 @@ grep -Fq 'If-None-Match: *' "$RUNBOOK"
 grep -Fq 'versionId' "$RUNBOOK"
 grep -Fq '000400' "$RUNBOOK"
 grep -Fq '000450' "$RUNBOOK"
-grep -Fq '"s3:GetObject"' "$RUNBOOK"
+grep -Fq '000950' "$RUNBOOK"
+grep -Fq '001125' "$RUNBOOK"
+grep -Fq '001150' "$RUNBOOK"
+grep -Fq 'most-module' "$RUNBOOK"
+grep -Fq 'estimate-generation' "$RUNBOOK"
+grep -Fq '"Action": "*"' "$RUNBOOK"
 grep -Fq '"AllowedOrigins"' "$RUNBOOK"
-grep -Fq '"AbortIncompleteMultipartUpload"' "$RUNBOOK"
+if grep -Fq '"Filter": {"Prefix": "org-"}' "$RUNBOOK"; then
+    echo 'lifecycle must never expire every organization object' >&2
+    exit 1
+fi
 if grep -Fq 's3:HeadObject' "$RUNBOOK"; then
     echo 'IAM must not contain the nonexistent s3:HeadObject action' >&2
     exit 1
 fi
+
+bash "$ROOT/tests/Architecture/most-release-coordinator-behavior.sh"
 
 echo 'AI estimator production deploy contract passed'

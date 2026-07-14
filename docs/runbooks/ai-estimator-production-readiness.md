@@ -28,6 +28,7 @@ Bucket имеет включённые versioning, закрытый публич
 - `org-*/estimate-generation/sessions/*/vision/v1/`
 - `org-*/estimate-generation/benchmarks/`
 - `org-*/estimate-generation/benchmark-imports/`
+- `org-*/estimate-generation/training-datasets/`
 
 `BUCKET`, `SERVICE_ACCOUNT_ID`, `STATIC_ACCESS_KEY_ID`, `FOLDER_ID` и `KMS_KEY_ID`
 заменяются фактическими значениями. Для runtime используется отдельный service account. Ему
@@ -66,12 +67,7 @@ policy action для `HeadObject` нет: этот запрос разрешае
       "Sid": "AiEstimatorVersionedObjects",
       "Effect": "Allow",
       "Principal": {"CanonicalUser": "SERVICE_ACCOUNT_ID"},
-      "Action": [
-        "s3:GetObject",
-        "s3:GetObjectVersion",
-        "s3:PutObject",
-        "s3:DeleteObjectVersion"
-      ],
+      "Action": "*",
       "Resource": "arn:aws:s3:::BUCKET/org-*/estimate-generation/*",
       "Condition": {
         "StringEquals": {"yc:access-key-id": "STATIC_ACCESS_KEY_ID"}
@@ -81,13 +77,22 @@ policy action для `HeadObject` нет: этот запрос разрешае
 }
 ```
 
+Для object resource используется документированный wildcard, потому что Yandex Object Storage
+поддерживает `PutObjectTagging`, но не публикует отдельный bucket-policy action для этого метода.
+Wildcard ограничен одновременно service account, конкретным static key и AI-префиксом. IAM остаётся
+bucket-scoped; KMS-доступ не расширяется. Каждый успешно созданный объект под
+`org-<id>/estimate-generation/` приложение маркирует на точной `versionId` тегом
+`most-module=estimate-generation`. При ошибке маркировки запись fail-closed; для immutable write с
+доказанной созданной `versionId` приложение пытается удалить только эту версию. Версия, полученная
+после обычного adapter write, не удаляется без доказательства владения. Обычные пути других модулей
+не маркируются.
+
 В policy нельзя переносить AWS KMS actions/conditions: Yandex KMS авторизуется ролями
 `kms.keys.*`, а не полями `kms:ViaService` и `kms:EncryptionContext`. Bucket настраивается
 на default encryption ключом `KMS_KEY_ID` и единственным поддерживаемым S3-значением
 алгоритма `aws:kms`.
 
-К разрешающим правилам выше добавляются явные запреты незашифрованного транспорта,
-публичных ACL и записи без `If-None-Match`:
+К разрешающим правилам выше добавляются явные запреты незашифрованного транспорта и публичных ACL:
 
 ```json
 {
@@ -112,20 +117,12 @@ policy action для `HeadObject` нет: этот запрос разрешае
           "s3:x-amz-acl": ["public-read", "public-read-write", "authenticated-read"]
         }
       }
-    },
-    {
-      "Sid": "DenyNonConditionalAiEstimatorWrites",
-      "Effect": "Deny",
-      "Principal": "*",
-      "Action": "s3:PutObject",
-      "Resource": "arn:aws:s3:::BUCKET/org-*/estimate-generation/*",
-      "Condition": {"Null": {"s3:if-none-match": "true"}}
     }
   ]
 }
 ```
 
-Неизменяемая запись выполняется с `If-None-Match: *`. Удаление требует конкретный
+Неизменяемые benchmark/import записи выполняются с `If-None-Match: *`. Удаление требует конкретный
 `versionId`; delete marker не считается удалением версии.
 
 ## Yandex Object Storage: CORS и lifecycle
@@ -151,28 +148,28 @@ policy action для `HeadObject` нет: этот запрос разрешае
     {
       "ID": "ai-estimator-version-retention",
       "Status": "Enabled",
-      "Filter": {"Prefix": "org-"},
-      "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 1},
+      "Filter": {
+        "Tag": {"Key": "most-module", "Value": "estimate-generation"}
+      },
       "Expiration": {"Days": 365},
       "NoncurrentVersionExpiration": {"NoncurrentDays": 90}
-    },
-    {
-      "ID": "ai-estimator-expired-delete-markers",
-      "Status": "Enabled",
-      "Filter": {"Prefix": "org-"},
-      "Expiration": {"ExpiredObjectDeleteMarker": true}
     }
   ]
 }
 ```
+
+Ни одно lifecycle-правило не использует общий `org-` как фильтр удаления. Незавершённые multipart
+uploads не удаляются широким prefix-rule: они контролируются отдельной метрикой и точечной
+операционной очисткой только после доказательства AI scope.
 
 Все команды AWS CLI выполняются с `--endpoint-url https://storage.yandexcloud.net`.
 Конфигурация проверяется командами `aws s3api get-bucket-versioning`,
 `get-bucket-encryption`, `get-bucket-cors`, `get-bucket-lifecycle-configuration` и
 `get-bucket-policy`. Закрытость публичного доступа проверяется через настройки bucket/ACL
 и отрицательный анонимный запрос, а не через неподдерживаемый AWS Block Public Access API.
-После проверки выполняются условный повторный put,
-чтение точной версии и удаление только этой версии на тестовом объекте организации.
+После проверки выполняются условный повторный put, `get-object-tagging` с проверкой
+`most-module=estimate-generation`, чтение точной версии и удаление только этой версии на тестовом
+объекте организации. Контрольный объект вне AI-префикса обязан оставаться без этого тега.
 
 ## Миграции
 
@@ -185,6 +182,12 @@ policy action для `HeadObject` нет: этот запрос разрешае
 - `000450` только добавляет nullable колонку и `NOT VALID` check с коротким
   `lock_timeout`. Immutable snapshots не обновляются. Канонические hashes переносятся в
   отдельную side table следующей forward migration.
+- `000950_canonicalize_settings_snapshot_hashes` — сохранённый compatibility marker. Он намеренно
+  ничего не изменяет, чтобы fresh install не запускал прежний небезопасный immutable backfill.
+- `001125_create_canonical_settings_snapshot_hashes` создаёт side table и заполняет её resumable
+  batches без обновления immutable settings snapshots.
+- `001150_enforce_exactly_once_ai_budget_wire_claims` вводит финальные exactly-once guards для
+  budget wire claims и входит в rollout после `001125`.
 - `VALIDATE CONSTRAINT` и усиление nullable выполняются отдельной короткой forward
   migration только после нулевого остатка, проверки `pg_locks`, replica lag и rehearsal
   на staging-копии production-объёма.
@@ -208,15 +211,34 @@ GHCR_USERNAME=most-production-pull
 GHCR_TOKEN_FILE=/etc/most/ghcr-token
 ```
 
-Token имеет только `read:packages`, принадлежит `root:root`, mode `0600`. Затем root
-запускает из проверенного checkout:
+Token имеет только `read:packages`, принадлежит `root:root`, mode `0600`. Coordinator обновляется
+только как отдельная out-of-band root-операция. Сначала оператор фиксирует заранее reviewed Git SHA,
+сверяет checkout и вычисляет digest ровно этого файла; digest сохраняется одинаковым секретом
+`RELEASE_COORDINATOR_SHA256` в backend и admin CI:
 
 ```bash
-scripts/install-most-release-coordinator.sh deploy-backend deploy-admin /root/release-coordinator.conf
+REVIEWED_COORDINATOR_GIT_SHA=<reviewed-full-git-sha>
+git fetch origin "$REVIEWED_COORDINATOR_GIT_SHA"
+git checkout --detach "$REVIEWED_COORDINATOR_GIT_SHA"
+test "$(git rev-parse HEAD)" = "$REVIEWED_COORDINATOR_GIT_SHA"
+EXPECTED_COORDINATOR_SHA256=$(sha256sum scripts/coordinate-most-release.sh | awk '{print $1}')
+test "${#EXPECTED_COORDINATOR_SHA256}" -eq 64
+
+sudo scripts/install-most-release-coordinator.sh \
+  deploy-backend deploy-admin /root/release-coordinator.conf \
+  "$EXPECTED_COORDINATOR_SHA256"
+test "$(sha256sum /usr/local/libexec/most/coordinate-most-release | awk '{print $1}')" \
+  = "$EXPECTED_COORDINATOR_SHA256"
+test "$(/usr/local/libexec/most/coordinate-most-release --version)" \
+  = 'most-release-coordinator/v2'
+
+sudo /usr/local/libexec/most/coordinate-most-release bootstrap-backend
 ```
 
 Скрипт устанавливает root-owned executable, проверяет sudoers через `visudo` и создаёт
-единый state-каталог. Репозиторий backend доступен deploy-backend только для точного
+единый state-каталог. `bootstrap-backend` fail-closed сверяет текущие container digest/OCI SHA,
+Git SHA и сохраняет соответствующий compose в root-owned immutable state. До успешного bootstrap
+первый CI deploy запрещён. Репозиторий backend доступен deploy-backend только для точного
 detached checkout; Docker, `/etc/most`, releases и state доступны только координатору.
 Nginx обслуживает admin через `/var/www/admin/current`; exact location `/release.json`
 всегда добавляет `Cache-Control: no-store`.
@@ -225,7 +247,8 @@ Nginx обслуживает admin через `/var/www/admin/current`; exact lo
 
 Backend передаёт координатору полный Git SHA, repository и digest build output. Под
 единым `flock` координатор проверяет checkout, OCI revision, RepoDigest и текущий
-предыдущий digest/SHA; при недоказуемом предыдущем runtime переключение запрещено.
+предыдущий digest/SHA, а также наличие root-owned sealed compose именно предыдущего SHA; при
+недоказуемом предыдущем runtime или compose переключение запрещено.
 После additive migration удаляется прежняя attestation, активируются сервисы, затем
 проверяются running/healthy состояния, `/up`, публичный no-store release SHA и digest
 каждого контейнера.
@@ -236,6 +259,6 @@ digest, отклоняет symlink/FIFO/device/socket и path escape, после
 root-owned immutable `releases/<sha>` и атомарно меняет `current`.
 
 Только после повторной публичной проверки обоих компонентов атомарно публикуется
-`/var/lib/most-active-release/smoke-ready.manifest`. При ошибке возвращается предыдущий
-digest/release, он заново проходит health и public verification; schema rollback не
-выполняется.
+`/var/lib/most-active-release/smoke-ready.manifest`. При ошибке возвращаются предыдущие digest, SHA
+и его собственный sealed compose; они заново проходят health и public verification. Новый/global
+compose для rollback не используется; schema rollback не выполняется.

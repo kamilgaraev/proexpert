@@ -50,6 +50,8 @@ class FileService
                 throw new \RuntimeException('s3_bucket_versioning_required');
             }
 
+            $this->tagEstimateGenerationObject($path, $version, true);
+
             return ['path' => $path, 'body' => $body, 'size' => strlen($body),
                 'sha256' => hash('sha256', $body), 'etag' => $etag, 'version_id' => $version,
                 'content_type' => $contentType, 'created' => true];
@@ -59,7 +61,10 @@ class FileService
                 throw new \RuntimeException('s3_conditional_put_failed', 0, $exception);
             }
 
-            return [...$this->describeVersion($path, null), 'created' => false];
+            $existing = $this->describeVersion($path, null);
+            $this->tagEstimateGenerationObject($path, $existing['version_id'], false);
+
+            return [...$existing, 'created' => false];
         } catch (\InvalidArgumentException $exception) {
             throw new \RuntimeException('s3_conditional_put_unavailable', 0, $exception);
         }
@@ -143,6 +148,54 @@ class FileService
         }
 
         return $client;
+    }
+
+    private function tagEstimateGenerationObject(
+        string $path,
+        ?string $versionId = null,
+        bool $deleteOnFailure = false,
+    ): void {
+        if (preg_match('#^org-[1-9][0-9]*/estimate-generation(?:/|$)#D', $path) !== 1) {
+            return;
+        }
+
+        $client = $this->s3Client();
+        $bucket = $this->disk()->getConfig()['bucket'] ?? null;
+        if (! is_string($bucket) || $bucket === '') {
+            throw new \RuntimeException('s3_object_tagging_unavailable');
+        }
+
+        if ($versionId === null || trim($versionId) === '') {
+            $head = $client->headObject(['Bucket' => $bucket, 'Key' => $path]);
+            $versionId = is_string($head['VersionId'] ?? null) ? trim($head['VersionId']) : null;
+        }
+        if ($versionId === null || $versionId === '') {
+            throw new \RuntimeException('s3_bucket_versioning_required');
+        }
+
+        try {
+            $client->putObjectTagging([
+                'Bucket' => $bucket,
+                'Key' => $path,
+                'VersionId' => $versionId,
+                'Tagging' => [
+                    'TagSet' => [['Key' => 'most-module', 'Value' => 'estimate-generation']],
+                ],
+            ]);
+        } catch (\Throwable $exception) {
+            if ($deleteOnFailure) {
+                try {
+                    $client->deleteObject([
+                        'Bucket' => $bucket,
+                        'Key' => $path,
+                        'VersionId' => $versionId,
+                    ]);
+                } catch (\Throwable) {
+                }
+            }
+
+            throw new \RuntimeException('s3_object_tagging_failed', 0, $exception);
+        }
     }
 
     /**
@@ -317,6 +370,9 @@ class FileService
                 ]);
 
                 $result = $disk->put($fullPath, $fileContent, $visibilityParam);
+                if ($result === true) {
+                    $this->tagEstimateGenerationObject($fullPath);
+                }
 
                 Log::info('[FileService] disk->put() result', [
                     'result' => $result,
@@ -521,6 +577,8 @@ class FileService
 
                 return false;
             }
+
+            $this->tagEstimateGenerationObject($fullPath);
 
             return $fullPath;
         } catch (\Throwable $e) {

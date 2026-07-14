@@ -42,7 +42,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Verify production release contract
-        run: bash tests/Architecture/ai-estimator-production-deploy.sh
+        run: |
+          bash tests/Architecture/ai-estimator-production-deploy.sh
+          bash tests/Architecture/most-release-coordinator-behavior.sh
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -88,13 +90,19 @@ jobs:
             IMAGE_REPO="${{ steps.meta.outputs.image_repo }}"
             IMAGE_DIGEST="${{ steps.build.outputs.digest }}"
             IMAGE_REF="${IMAGE_REPO}@${IMAGE_DIGEST}"
+            EXPECTED_COORDINATOR_SHA256="${{ secrets.RELEASE_COORDINATOR_SHA256 }}"
             [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
             [[ "${IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+            [[ "${EXPECTED_COORDINATOR_SHA256}" =~ ^[0-9a-f]{64}$ ]]
 
             cd /var/www/prohelper
             git fetch origin "${RELEASE_SHA}"
             git checkout --detach "${RELEASE_SHA}"
             test "$(git rev-parse HEAD)" = "${RELEASE_SHA}"
+            test "$(sha256sum scripts/coordinate-most-release.sh | awk '{print $1}')" = "${EXPECTED_COORDINATOR_SHA256}"
+            test "$(stat -c '%U:%G:%a' /usr/local/libexec/most/coordinate-most-release)" = 'root:root:555'
+            test "$(sha256sum /usr/local/libexec/most/coordinate-most-release | awk '{print $1}')" = "${EXPECTED_COORDINATOR_SHA256}"
+            test "$(/usr/local/libexec/most/coordinate-most-release --version)" = 'most-release-coordinator/v2'
 
             sudo /usr/local/libexec/most/coordinate-most-release backend "${RELEASE_SHA}" "${IMAGE_REPO}" "${IMAGE_DIGEST}"
 

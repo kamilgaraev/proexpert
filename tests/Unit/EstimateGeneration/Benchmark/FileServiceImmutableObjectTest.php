@@ -33,6 +33,36 @@ final class FileServiceImmutableObjectTest extends TestCase
             'ContentType' => 'application/json', 'IfNoneMatch' => '*'], $client->calls[0]['arguments']);
     }
 
+    public function test_ai_estimator_immutable_object_is_tagged_for_module_lifecycle(): void
+    {
+        $client = new RecordingS3Client([
+            new Result(['ETag' => '"etag-1"', 'VersionId' => 'version-1']),
+            new Result(),
+        ]);
+
+        $this->files($client)->putImmutable(
+            'org-7/estimate-generation/benchmarks/run/object.json',
+            'body',
+            'application/json',
+        );
+
+        self::assertSame('putObjectTagging', $client->calls[1]['name']);
+        self::assertSame('version-1', $client->calls[1]['arguments']['VersionId']);
+        self::assertSame([
+            'TagSet' => [['Key' => 'most-module', 'Value' => 'estimate-generation']],
+        ], $client->calls[1]['arguments']['Tagging']);
+    }
+
+    public function test_ordinary_immutable_object_is_not_tagged(): void
+    {
+        $client = new RecordingS3Client([new Result(['ETag' => '"etag-1"', 'VersionId' => 'version-1'])]);
+
+        $this->files($client)->putImmutable('org-7/documents/object.json', 'body', 'application/json');
+
+        self::assertCount(1, $client->calls);
+        self::assertSame('putObject', $client->calls[0]['name']);
+    }
+
     public function test_precondition_conflict_reads_same_version_and_delete_targets_exact_version(): void
     {
         $client = new RecordingS3Client;

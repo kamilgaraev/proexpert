@@ -173,4 +173,29 @@ final class EstimateGenerationContractDatabaseProvisionerTest extends TestCase
             }
         }
     }
+
+    #[Test]
+    public function pinned_inventory_digests_match_final_migration_contents(): void
+    {
+        $root = dirname(__DIR__, 4);
+        $reflection = new \ReflectionClass(EstimateGenerationContractDatabaseProvisioner::class);
+        $digests = $reflection->getConstant('INVENTORY_DIGEST');
+        self::assertIsArray($digests);
+        foreach (['geometry', 'training', 'pricing'] as $phase) {
+            self::assertSame(
+                $digests[$phase],
+                EstimateGenerationContractDatabaseProvisioner::inventoryDigest(
+                    $root,
+                    EstimateGenerationContractDatabaseProvisioner::inventory($phase),
+                ),
+            );
+        }
+        self::assertSame(
+            $reflection->getConstant('FRESH_INVENTORY_DIGEST'),
+            EstimateGenerationContractDatabaseProvisioner::inventoryDigest(
+                $root,
+                EstimateGenerationContractDatabaseProvisioner::freshInventory(),
+            ),
+        );
+    }
 }
