@@ -32,6 +32,14 @@ class CommercialCheckoutService
     {
         [$order, $payment, $created] = DB::transaction(function () use ($organization, $user, $input): array {
             Organization::query()->whereKey($organization->getKey())->lockForUpdate()->firstOrFail();
+            $account = OrganizationCommercialAccount::query()
+                ->where('organization_id', $organization->getKey())
+                ->lockForUpdate()
+                ->first();
+
+            if ($account?->status->value === 'grace') {
+                throw new CommercialCheckoutConflictException('Commercial contour cannot change during grace.');
+            }
 
             $existing = CommercialOrder::query()
                 ->where('organization_id', $organization->getKey())
@@ -51,14 +59,6 @@ class CommercialCheckoutService
 
             $this->calculator->assertCurrentQuoteVersion((int) $input['quote_version']);
 
-            $account = OrganizationCommercialAccount::query()
-                ->where('organization_id', $organization->getKey())
-                ->lockForUpdate()
-                ->first();
-
-            if ($account?->status->value === 'grace') {
-                throw new CommercialCheckoutConflictException('Commercial contour cannot change during grace.');
-            }
             $serverCurrent = $this->currentPackageSlugs((int) $organization->getKey());
             $clientCurrent = $this->normalizeClientSlugs($input['current_package_slugs'] ?? []);
 

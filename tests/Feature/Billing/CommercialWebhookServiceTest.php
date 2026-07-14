@@ -124,6 +124,47 @@ class CommercialWebhookServiceTest extends TestCase
         $this->assertSame(1, CommercialWebhookEvent::query()->count());
     }
 
+    public function test_late_purchase_success_during_grace_requires_manual_reconciliation_without_activation(): void
+    {
+        $this->account->forceFill([
+            'status' => 'grace',
+            'current_period_start_at' => now()->subDays(30),
+            'current_period_end_at' => now()->subHour(),
+            'grace_started_at' => now()->subHour(),
+            'grace_ends_at' => now()->addDays(7),
+        ])->save();
+        OrganizationPackageSubscription::query()->create([
+            'organization_id' => $this->organization->id,
+            'commercial_account_id' => $this->account->id,
+            'package_slug' => 'planning-schedules',
+            'status' => 'grace',
+            'access_source' => 'paid_package',
+            'price_paid' => 7900,
+            'current_period_start_at' => now()->subDays(30),
+            'current_period_end_at' => now()->subHour(),
+        ]);
+        $this->gateway->payment = $this->paymentResult(saved: true);
+
+        $result = app(CommercialWebhookService::class)->process(
+            $this->notification('payment.succeeded', 'payment-id', 'succeeded'),
+            '185.71.76.1',
+        );
+
+        $this->assertSame('manual_review', $result);
+        $this->assertSame('pending_payment', $this->order->fresh()->status->value);
+        $this->assertSame('succeeded', $this->payment->fresh()->provider_status);
+        $this->assertNull($this->payment->fresh()->confirmation_url);
+        $this->assertNotNull($this->payment->fresh()->terminal_at);
+        $this->assertSame('grace', $this->account->fresh()->status->value);
+        $this->assertSame(
+            ['planning-schedules'],
+            OrganizationPackageSubscription::query()->pluck('package_slug')->all(),
+        );
+        $this->assertSame('grace', OrganizationPackageSubscription::query()->sole()->status->value);
+        $this->assertSame('manual_review', CommercialWebhookEvent::query()->sole()->processing_result);
+        $this->assertDatabaseCount('notifications', 0);
+    }
+
     public function test_authoritative_mismatch_is_durable_no_op(): void
     {
         $this->gateway->payment = $this->paymentResult(metadata: ['order_id' => 'foreign', 'organization_id' => $this->organization->id]);

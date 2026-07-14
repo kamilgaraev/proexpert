@@ -139,6 +139,33 @@ class CommercialCheckoutServiceTest extends TestCase
         );
     }
 
+    public function test_retry_of_existing_purchase_intent_during_grace_has_no_provider_side_effect(): void
+    {
+        $this->gateway->failNext = true;
+
+        try {
+            $this->checkout(['machinery']);
+            $this->fail('Provider failure must be propagated.');
+        } catch (RuntimeException) {
+        }
+
+        $account = OrganizationCommercialAccount::query()->sole();
+        $account->forceFill([
+            'status' => 'grace',
+            'grace_started_at' => now()->subHour(),
+            'grace_ends_at' => now()->addDays(7),
+        ])->save();
+
+        try {
+            $this->checkout(['machinery']);
+            $this->fail('Purchase retry during grace must be rejected.');
+        } catch (CommercialCheckoutConflictException) {
+            $this->assertCount(1, $this->gateway->payments);
+            $this->assertNull(CommercialPayment::query()->sole()->provider_payment_id);
+            $this->assertSame('pending_payment', CommercialOrder::query()->sole()->status->value);
+        }
+    }
+
     public function test_late_checkout_response_does_not_downgrade_success_processed_during_provider_call(): void
     {
         $this->gateway->onCreate = function (CreatePaymentData $data): void {

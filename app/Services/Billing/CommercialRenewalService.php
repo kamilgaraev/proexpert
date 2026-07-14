@@ -85,6 +85,11 @@ final class CommercialRenewalService
             $periodEnd = $periodStart->addDays(30);
             $dueDay = $periodStart->setTimezone(self::TIMEZONE)->startOfDay();
             $deadline = $dueDay->addDays(7);
+
+            if ($now->lessThan($periodStart)) {
+                return [];
+            }
+
             $scheduledChange = CommercialContourChange::query()
                 ->where('commercial_account_id', $account->id)
                 ->where('organization_id', $account->organization_id)

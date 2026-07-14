@@ -104,6 +104,26 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                     return $this->record($notification, $sourceIp, $fingerprint, $authoritative->status, 'stale');
                 }
 
+                if ($order->kind === 'purchase' && $account->status->value === 'grace') {
+                    $payment->forceFill([
+                        'provider_status' => 'succeeded',
+                        'confirmation_url' => null,
+                        'payment_method_id' => null,
+                        'payment_method_saved' => false,
+                        'safe_response' => $authoritative->safeResponse,
+                        'refunded_amount_minor' => $authoritative->refundedAmountMinor,
+                        'terminal_at' => now(),
+                    ])->save();
+
+                    return $this->record(
+                        $notification,
+                        $sourceIp,
+                        $fingerprint,
+                        $authoritative->status,
+                        'manual_review',
+                    );
+                }
+
                 $cycle = $order->kind === 'renewal' ? CommercialRenewalCycle::query()->where('commercial_order_id', $order->id)->lockForUpdate()->first() : null;
                 if ($cycle !== null && (in_array($cycle->status, ['suspended', 'manual_review'], true) || now()->greaterThanOrEqualTo($cycle->grace_deadline_at))) {
                     $cycle->forceFill(['status' => 'manual_review', 'manual_review_at' => now()])->save();

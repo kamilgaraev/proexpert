@@ -64,6 +64,20 @@ class CommercialCheckoutSchemaTest extends TestCase
         $this->assertStringContainsString('commercial_payment_role_cycle_check', $checkout);
     }
 
+    public function test_postgres_contour_schedule_has_lock_unique_and_conflict_contract(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $migration = file_get_contents($root.'/database/migrations/2026_07_14_000004_create_commercial_contour_changes_table.php');
+        $service = file_get_contents($root.'/app/Services/Billing/CommercialContourChangeService.php');
+
+        $this->assertIsString($migration);
+        $this->assertIsString($service);
+        $this->assertStringContainsString("unique(\n                ['organization_id', 'client_idempotency_key']", $migration);
+        $this->assertStringContainsString("unique(\n                ['commercial_account_id', 'apply_at']", $migration);
+        $this->assertStringContainsString('lockForUpdate()', $service);
+        $this->assertStringContainsString("['23000', '23505', '40001', '40P01']", $service);
+    }
+
     public function test_commercial_renewal_schedule_is_registered_once_at_three_moscow_time(): void
     {
         $schedule = file_get_contents(dirname(__DIR__, 3).'/routes/console.php');

@@ -101,7 +101,9 @@ final class CommercialContourChangeService
                 return $this->payload($change) + ['_created' => true];
             }, 3);
         } catch (QueryException $exception) {
-            if (in_array((string) $exception->getCode(), ['23000', '23505'], true)) {
+            $sqlState = (string) ($exception->errorInfo[0] ?? $exception->getCode());
+
+            if (in_array($sqlState, ['23000', '23505', '40001', '40P01'], true)) {
                 throw new CommercialBillingConflictException('A contour change is already scheduled.', 0, $exception);
             }
 

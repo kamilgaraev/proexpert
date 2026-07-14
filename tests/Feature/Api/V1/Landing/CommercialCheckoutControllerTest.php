@@ -11,12 +11,14 @@ use App\DataTransferObjects\Billing\RefundGatewayResult;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Interfaces\Billing\PaymentGatewayInterface;
+use App\Models\CommercialContourChange;
 use App\Models\CommercialOrder;
 use App\Models\Organization;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
 use App\Models\User;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\QueryException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
@@ -298,6 +300,65 @@ class CommercialCheckoutControllerTest extends TestCase
             array_replace($payload, ['client_idempotency_key' => 'schedule-removal-00000000000000000002']),
         )->assertConflict();
         $this->assertDatabaseCount('commercial_contour_changes', 1);
+    }
+
+    public function test_contour_schedule_is_blocked_during_grace(): void
+    {
+        $account = $this->commercialAccount();
+        $this->package($account, 'machinery');
+        $this->package($account, 'planning-schedules');
+        $account->forceFill([
+            'status' => 'grace',
+            'grace_started_at' => now()->subHour(),
+            'grace_ends_at' => now()->addDays(7),
+        ])->save();
+
+        $this->authenticatedAs($this->owner)->postJson(
+            '/api/v1/landing/billing/commercial/contour/schedule',
+            [
+                'target_package_slugs' => ['machinery'],
+                'full_suite' => false,
+                'quote_version' => 1,
+                'client_idempotency_key' => 'schedule-grace-000000000000000000001',
+            ],
+        )->assertConflict();
+
+        $this->assertDatabaseCount('commercial_contour_changes', 0);
+        $this->assertSame(
+            ['active', 'active'],
+            OrganizationPackageSubscription::query()
+                ->orderBy('package_slug')
+                ->get()
+                ->map(static fn (OrganizationPackageSubscription $package): string => $package->status->value)
+                ->all(),
+        );
+    }
+
+    public function test_postgres_deadlock_during_schedule_is_mapped_to_business_conflict(): void
+    {
+        $account = $this->commercialAccount();
+        $this->package($account, 'machinery');
+        $this->package($account, 'planning-schedules');
+        CommercialContourChange::creating(function (): void {
+            $message = 'deadlock detected';
+            $previous = new \PDOException($message, 40_001);
+            $previous->errorInfo = ['40P01', '7', $message];
+
+            throw new QueryException('pgsql', 'insert into commercial_contour_changes', [], $previous);
+        });
+
+        $this->authenticatedAs($this->owner)->postJson(
+            '/api/v1/landing/billing/commercial/contour/schedule',
+            [
+                'target_package_slugs' => ['machinery'],
+                'full_suite' => false,
+                'quote_version' => 1,
+                'client_idempotency_key' => 'schedule-deadlock-0000000000000000001',
+            ],
+        )->assertConflict();
+
+        $this->assertDatabaseCount('commercial_contour_changes', 0);
+        $this->assertSame('active', $account->fresh()->status->value);
     }
 
     public function test_checkout_does_not_accept_client_period_boundaries(): void

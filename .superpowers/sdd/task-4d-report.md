@@ -63,3 +63,35 @@ GREEN:
 
 - Migration только статически проверена и должна быть применена штатным deployment pipeline до использования новых endpoints.
 - Интеграция не проверялась против live YooKassa: Task 4D не меняет gateway и не использует секрет провайдера.
+
+## Fix-wave по Important findings ревью
+
+### Исправления
+
+- Renewal теперь сравнивает текущее время с точным `current_period_end_at`/`apply_at`, а не только с московским календарным днём. До точного anchor не создаются order/payment, не вызывается gateway и не завершается доступ для empty contour.
+- Checkout проверяет grace до возврата ранее созданного idempotent purchase intent. Повтор intent без provider ID больше не вызывает новый provider side effect во время grace.
+- Поздний `payment.succeeded` по purchase order во время grace не активирует контур и не переводит account в active. Payment фиксируется как succeeded без confirmation URL/сохранённого метода, webhook event получает `manual_review`, а order и grace entitlements сохраняются для безопасной ручной сверки/возврата.
+- Concurrency exception mapping расширен на PostgreSQL/MySQL serialization/deadlock SQLSTATE (`40001`, `40P01`) после исчерпания трёх transaction retries.
+- Добавлен отдельный API-тест запрета schedule в grace.
+
+### Дополнительный RED → GREEN evidence
+
+- Partial scheduled contour с anchor `14:00`: в RED renewal order создавался в `03:00` того же дня; после fix до anchor order/payment/gateway отсутствуют, на anchor используется reduced contour, включая immediate-success gateway.
+- Empty scheduled contour с anchor `14:00`: в RED account становился free в `03:00`; после fix доступ active до anchor и expired ровно при обработке на anchor.
+- Retry ранее созданного purchase intent: в RED повторно вызывал gateway во время grace; после fix возвращает business conflict без нового provider call.
+- Late purchase success: в RED возвращал `processed` и активировал purchase contour; после fix возвращает `manual_review`, сохраняет grace и не меняет entitlements.
+- Exhausted PostgreSQL deadlock simulation: в RED API возвращал 500; после fix возвращает 409. Первый transient deadlock отдельно подтвердил встроенный retry, поэтому тест намеренно исчерпывает все три попытки.
+- Static PostgreSQL contract в RED не находил deadlock SQLSTATE; после fix подтверждает row locks, оба unique guard и conflict states.
+
+### Проверки fix-wave
+
+- Focused regression suite расширен static contract: `OK (103 tests, 526 assertions)`.
+- Покрывающие focused tests: renewal 13/13; checkout grace retry; late purchase webhook; schedule-in-grace; exhausted-deadlock conflict — GREEN.
+- `php -l`: 9/9 изменённых PHP-файлов без ошибок.
+- Larastan/PHPStan: 4 изменённых production services, `[OK] No errors`.
+- Pint `--test`: 9/9 файлов PASS.
+- `git diff --check`: без ошибок.
+
+### Ограничение concurrency-проверки
+
+- SQLite не доказывает реальную PostgreSQL-конкуренцию двух соединений и row-level locking. Поэтому реальная race не заявляется: проверены production PostgreSQL unique/lock contracts и детерминированная ветка exhausted deadlock через `QueryException` с SQLSTATE `40P01`.
