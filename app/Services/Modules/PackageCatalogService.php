@@ -31,8 +31,12 @@ class PackageCatalogService
         foreach (glob($this->packagesPath() . '/*.json') ?: [] as $filePath) {
             $package = json_decode((string) file_get_contents($filePath), true);
 
-            if (! is_array($package) || ! isset($package['slug'], $package['tiers'])) {
+            if (! is_array($package) || ! isset($package['slug'])) {
                 continue;
+            }
+
+            if (! $this->hasStandardTierOnly($package)) {
+                throw new RuntimeException("Package '{$package['slug']}' must define exactly one standard tier.");
             }
 
             $packages[] = $this->normalizePackage($package);
@@ -122,6 +126,15 @@ class PackageCatalogService
             fn (mixed $classification, mixed $slug): bool => is_string($slug) && is_string($classification),
             ARRAY_FILTER_USE_BOTH
         );
+    }
+
+    public function hasStandardTierOnly(array $package): bool
+    {
+        $tiers = $package['tiers'] ?? null;
+
+        return is_array($tiers)
+            && array_keys($tiers) === self::TIER_ORDER
+            && is_array($tiers['standard']);
     }
 
     private function normalizePackage(array $package): array

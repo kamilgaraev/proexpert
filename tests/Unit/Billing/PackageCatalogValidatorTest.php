@@ -8,16 +8,31 @@ use App\Enums\ModuleDevelopmentStatus;
 use App\Services\Modules\PackageCatalogService;
 use App\Services\Modules\PackageCatalogValidator;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 
 class PackageCatalogValidatorTest extends TestCase
 {
     private string $basePath;
+    private string $temporaryPackagesPath;
 
     protected function setUp(): void
     {
         parent::setUp();
 
         $this->basePath = dirname(__DIR__, 3);
+        $this->temporaryPackagesPath = sys_get_temp_dir() . '/most-package-catalog-' . bin2hex(random_bytes(8));
+        mkdir($this->temporaryPackagesPath);
+    }
+
+    protected function tearDown(): void
+    {
+        foreach (glob($this->temporaryPackagesPath . '/*.json') ?: [] as $filePath) {
+            unlink($filePath);
+        }
+
+        rmdir($this->temporaryPackagesPath);
+
+        parent::tearDown();
     }
 
     public function test_package_catalog_exposes_single_standard_commercial_variant(): void
@@ -46,6 +61,51 @@ class PackageCatalogValidatorTest extends TestCase
         $result = $this->validator()->validate();
 
         $this->assertSame([], $result['errors']);
+    }
+
+    public function test_catalog_service_rejects_standard_combined_with_base(): void
+    {
+        $this->assertCatalogServiceRejectsTiers([
+            'standard' => ['modules' => []],
+            'base' => ['modules' => []],
+        ]);
+    }
+
+    public function test_catalog_service_rejects_legacy_unknown_and_missing_standard_tiers(): void
+    {
+        foreach (['pro', 'enterprise', 'unknown'] as $tierKey) {
+            $this->assertCatalogServiceRejectsTiers([
+                $tierKey => ['modules' => []],
+            ]);
+        }
+
+        $this->assertCatalogServiceRejectsTiers([]);
+    }
+
+    public function test_validator_rejects_any_tier_set_other_than_standard_only(): void
+    {
+        $invalidTierSets = [
+            [
+                'standard' => ['modules' => []],
+                'base' => ['modules' => []],
+            ],
+            ['pro' => ['modules' => []]],
+            ['enterprise' => ['modules' => []]],
+            ['unknown' => ['modules' => []]],
+            [],
+        ];
+
+        foreach ($invalidTierSets as $tiers) {
+            $result = $this->validator()->validate(
+                [['slug' => 'broken-package', 'tiers' => $tiers]],
+                [],
+                [],
+                []
+            );
+
+            $this->assertNotEmpty($result['errors']);
+            $this->assertStringContainsString('standard', $result['errors'][0]);
+        }
     }
 
     public function test_all_module_development_statuses_are_valid_enum_values(): void
@@ -168,5 +228,32 @@ class PackageCatalogValidatorTest extends TestCase
     private function validator(): PackageCatalogValidator
     {
         return new PackageCatalogValidator($this->catalog());
+    }
+
+    private function assertCatalogServiceRejectsTiers(array $tiers): void
+    {
+        file_put_contents(
+            $this->temporaryPackagesPath . '/broken-package.json',
+            json_encode([
+                'slug' => 'broken-package',
+                'tiers' => $tiers,
+            ], JSON_THROW_ON_ERROR)
+        );
+
+        $catalog = new PackageCatalogService(
+            $this->temporaryPackagesPath,
+            $this->basePath . '/config/ModuleList'
+        );
+
+        $exception = null;
+
+        try {
+            $catalog->allPackages();
+        } catch (RuntimeException $caughtException) {
+            $exception = $caughtException;
+        }
+
+        $this->assertInstanceOf(RuntimeException::class, $exception);
+        $this->assertStringContainsString('standard', $exception->getMessage());
     }
 }

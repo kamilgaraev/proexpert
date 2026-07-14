@@ -22,6 +22,37 @@ class PackageConfigurationIntegrityTest extends TestCase
         'sales-contractors' => 7900,
     ];
 
+    private const EXPECTED_MODULES = [
+        'projects-processes' => ['site-requests', 'file-management'],
+        'planning-schedules' => ['schedule-management'],
+        'estimates-norms' => ['budget-estimates', 'rate-management'],
+        'quality-safety' => ['budget-estimates', 'file-management', 'quality-control', 'safety-management'],
+        'pto-handover' => [
+            'budget-estimates',
+            'file-management',
+            'quality-control',
+            'report-templates',
+            'executive-documentation',
+            'design-management',
+            'handover-acceptance',
+        ],
+        'supply-warehouse' => ['site-requests', 'basic-warehouse', 'procurement', 'material-analytics'],
+        'finance-contracts' => [
+            'budget-estimates',
+            'budgeting',
+            'change-management',
+            'advance-accounting',
+        ],
+        'workforce-output' => [
+            'time-tracking',
+            'budget-estimates',
+            'workforce-management',
+            'production-labor',
+        ],
+        'machinery' => ['budget-estimates', 'site-requests', 'machinery-operations'],
+        'sales-contractors' => ['crm', 'commercial-proposals', 'contractor-portal'],
+    ];
+
     public function refreshDatabase(): void {}
 
     public function test_catalog_contains_exact_packages_in_stable_order_with_exact_prices(): void
@@ -60,6 +91,7 @@ class PackageConfigurationIntegrityTest extends TestCase
         foreach ($this->catalog()->allPackages() as $package) {
             $moduleSlugs = $package['tiers']['standard']['modules'];
 
+            $this->assertSame(self::EXPECTED_MODULES[$package['slug']], $moduleSlugs);
             $this->assertNotEmpty($moduleSlugs, "{$package['slug']} must contain commercial modules");
             $this->assertSame([], array_values(array_intersect($foundationModules, $moduleSlugs)));
             $this->assertModulesExist($modules, $moduleSlugs, $package['slug']);

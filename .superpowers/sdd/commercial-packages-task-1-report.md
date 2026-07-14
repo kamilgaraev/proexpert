@@ -99,6 +99,28 @@ vendor/bin/phpstan analyse app/Services/Modules/PackageCatalogService.php --memo
 - Подписки, checkout, entitlement, маршруты, миграции и frontend не изменялись.
 - Несвязанный рефакторинг не выполнялся.
 
+## Review fix
+
+### Замечания
+
+- Исходные tier-ключи нормализовались по allowlist и могли молча потерять `base`, `pro`, `enterprise` или неизвестный ключ.
+- Integrity test проверял существование и dependency closure модулей, но не фиксировал точную согласованную матрицу `package => modules`.
+
+### RED
+
+После добавления регрессионных unit tests focused suite завершился с exit code 1: 3 failed, 7 passed, 3 environment warnings. Падения подтвердили, что сервис принимал `standard+base`, наборы `pro`/`enterprise`/`unknown` и отсутствие `standard`, а validator не возвращал ошибку.
+
+### GREEN
+
+- `PackageCatalogService` проверяет исходный массив tiers до нормализации и выбрасывает `RuntimeException`, если набор ключей не равен ровно `['standard']` или значение `standard` не является массивом.
+- `PackageCatalogValidator` использует тот же контракт и возвращает integrity error для переданных ненормализованных пакетов.
+- Unit regression tests покрывают `standard+base`, отдельные `pro`, `enterprise`, `unknown` и пустой набор без `standard`.
+- `PackageConfigurationIntegrityTest` сравнивает `assertSame` точную согласованную матрицу модулей всех десяти пакетов.
+- Targeted regression run: 3 passed, 20 assertions, exit code 0.
+- Focused suite после review fix: 10 passed, 403 assertions, exit code 0; сохранились только три ранее описанных предупреждения отсутствующего `.env`.
+- PHPStan для `PackageCatalogService.php` и `PackageCatalogValidator.php`: `[OK] No errors`, exit code 0.
+- `php -l` для двух сервисов и двух изменённых тестов: синтаксических ошибок нет; `git diff --check` чистый.
+
 ## Concerns
 
 - Focused tests завершаются успешно, но показывают три предупреждения из-за отсутствующего `.env` в worktree. Это существующее состояние тестового окружения вне scope.
