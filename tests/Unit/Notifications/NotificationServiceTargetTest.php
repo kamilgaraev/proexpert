@@ -181,10 +181,27 @@ final class NotificationServiceTargetTest extends TestCase
     public static function unsupportedWebSocketTargets(): array
     {
         return [
-            'multiple' => [['admin', 'lk']],
             'mobile' => [['mobile']],
             'customer' => [['customer']],
+            'mixed supported and unsupported' => [['admin', 'mobile']],
         ];
+    }
+
+    public function test_websocket_accepts_multiple_supported_targets(): void
+    {
+        [$service, $persistence] = $this->service();
+
+        $service->send(
+            $this->user(),
+            'general.notice',
+            ['force_send' => true],
+            notificationType: 'general',
+            channels: ['websocket'],
+            interfaces: ['admin', 'lk'],
+        );
+
+        self::assertSame(['admin', 'lk'], $this->interfaceValues($persistence->calls[0]['options']));
+        self::assertSame(1, $service->dispatchCount);
     }
 
     public function test_permission_skipped_does_not_apply_websocket_guard_or_persist(): void

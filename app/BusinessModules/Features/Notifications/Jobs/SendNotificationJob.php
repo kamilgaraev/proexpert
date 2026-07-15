@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Features\Notifications\Jobs;
 
+use App\BusinessModules\Features\Notifications\Enums\NotificationInterface;
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\BusinessModules\Features\Notifications\Services\NotificationService;
 use Illuminate\Bus\Queueable;
@@ -44,7 +45,7 @@ class SendNotificationJob implements ShouldQueue
         $deliveryStatus = $this->notification->delivery_status ?? [];
 
         foreach ($this->notification->channels as $channel) {
-            if (($deliveryStatus[$channel] ?? null) === 'sent') {
+            if ($this->shouldSkipChannel($channel, $deliveryStatus)) {
                 continue;
             }
 
@@ -77,6 +78,29 @@ class SendNotificationJob implements ShouldQueue
         if ($firstFailure !== null) {
             throw $firstFailure;
         }
+    }
+
+    private function shouldSkipChannel(string $channel, array $deliveryStatus): bool
+    {
+        if (($deliveryStatus[$channel] ?? null) !== 'sent') {
+            return false;
+        }
+
+        if ($channel !== 'websocket') {
+            return true;
+        }
+
+        $targets = $this->notification->relationLoaded('targets')
+            ? $this->notification->targets
+            : $this->notification->targets()->get();
+
+        return $targets->isNotEmpty() && $targets->every(
+            static fn ($target): bool => in_array(
+                $target->interface,
+                [NotificationInterface::Admin, NotificationInterface::Lk],
+                true,
+            ) && $target->websocket_status === 'sent'
+        );
     }
 
     public function failed(\Throwable $exception): void

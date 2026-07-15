@@ -186,14 +186,16 @@ class NotificationService
             return;
         }
 
-        $interface = count($interfaces) === 1 ? $interfaces[0] : null;
+        $unsupportedInterface = collect($interfaces)->contains(
+            static fn ($interface): bool => ! $interface instanceof NotificationInterface || ! in_array(
+                $interface,
+                [NotificationInterface::Admin, NotificationInterface::Lk],
+                true,
+            )
+        );
 
-        if (! $interface instanceof NotificationInterface || ! in_array(
-            $interface,
-            [NotificationInterface::Admin, NotificationInterface::Lk],
-            true,
-        )) {
-            throw new DomainException('WebSocket delivery requires one supported notification interface');
+        if ($interfaces === [] || $unsupportedInterface) {
+            throw new DomainException('WebSocket delivery requires supported notification interfaces');
         }
     }
 

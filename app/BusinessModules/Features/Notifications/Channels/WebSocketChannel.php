@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace App\BusinessModules\Features\Notifications\Channels;
 
+use App\BusinessModules\Features\Notifications\Enums\NotificationInterface;
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\BusinessModules\Features\Notifications\Models\NotificationAnalytics;
+use App\BusinessModules\Features\Notifications\Models\NotificationTarget;
 use Illuminate\Contracts\Broadcasting\Factory;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Throwable;
@@ -53,26 +56,70 @@ class WebSocketChannel
 
     protected function broadcastNotification(Notification $notification, object $notifiable): void
     {
-        $interface = $notification->data['interface'] ?? null;
+        $targets = $this->targets($notification);
 
-        if (! in_array($interface, ['admin', 'lk'], true)) {
-            throw new RuntimeException("Unsupported notification interface: {$interface}");
+        if ($targets->isEmpty()) {
+            throw new RuntimeException('WebSocket delivery requires at least one target');
         }
 
-        $channel = 'private-App.Models.User.'.$notifiable->id.'.'.$interface;
+        foreach ($targets as $target) {
+            if (! in_array($target->interface, [NotificationInterface::Admin, NotificationInterface::Lk], true)) {
+                throw new RuntimeException("Unsupported notification interface: {$target->interface->value}");
+            }
+        }
+
+        $firstFailure = null;
+
+        foreach ($targets as $target) {
+            if ($target->websocket_status === 'sent') {
+                continue;
+            }
+
+            try {
+                $this->broadcastTarget($notification, $notifiable, $target);
+                $target->markWebSocketSent();
+            } catch (Throwable $exception) {
+                $target->markWebSocketFailed($exception->getMessage());
+                $firstFailure ??= $exception;
+            }
+        }
+
+        if ($firstFailure !== null) {
+            throw $firstFailure;
+        }
+    }
+
+    private function broadcastTarget(
+        Notification $notification,
+        object $notifiable,
+        NotificationTarget $target,
+    ): void {
+        $interface = $target->interface->value;
+        $data = $notification->data;
+        $data['interface'] = $interface;
 
         $this->broadcasting->connection('reverb')->broadcast(
-            [$channel],
+            ['private-App.Models.User.'.$notifiable->id.'.'.$interface],
             'notification.new',
             [
                 'id' => $notification->id,
                 'type' => $notification->type,
                 'notification_type' => $notification->notification_type,
                 'priority' => $notification->priority,
-                'data' => $notification->data,
+                'interface' => $interface,
+                'data' => $data,
                 'created_at' => $notification->created_at->toIso8601String(),
                 'read_at' => $notification->read_at?->toIso8601String(),
             ]
         );
+    }
+
+    private function targets(Notification $notification): Collection
+    {
+        if ($notification->relationLoaded('targets')) {
+            return $notification->targets;
+        }
+
+        return $notification->targets()->get();
     }
 }

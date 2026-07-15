@@ -6,8 +6,10 @@ namespace Tests\Unit\Notifications;
 
 require_once dirname(__DIR__, 3).'/app/BusinessModules/Features/Notifications/Jobs/SendNotificationJob.php';
 
+use App\BusinessModules\Features\Notifications\Enums\NotificationInterface;
 use App\BusinessModules\Features\Notifications\Jobs\SendNotificationJob;
 use App\BusinessModules\Features\Notifications\Models\Notification;
+use App\BusinessModules\Features\Notifications\Models\NotificationTarget;
 use App\BusinessModules\Features\Notifications\Services\NotificationService;
 use Illuminate\Config\Repository;
 use Illuminate\Container\Container;
@@ -82,5 +84,33 @@ final class SendNotificationJobTest extends TestCase
         self::assertSame(3, $job->tries);
         self::assertSame(300, $job->backoff);
         self::assertFalse(method_exists($job, 'retryUntil'));
+    }
+
+    public function test_websocket_global_sent_status_does_not_mask_a_failed_target(): void
+    {
+        $notification = new Notification;
+        $notification->setRawAttributes([
+            'id' => 'notification-id',
+            'priority' => 'normal',
+            'channels' => json_encode(['websocket', 'email'], JSON_THROW_ON_ERROR),
+            'delivery_status' => json_encode(['websocket' => 'sent', 'email' => 'sent'], JSON_THROW_ON_ERROR),
+        ], true);
+        $failedTarget = new NotificationTarget;
+        $failedTarget->forceFill([
+            'interface' => NotificationInterface::Lk,
+            'websocket_status' => 'failed',
+        ]);
+        $notification->setRelation('targets', collect([$failedTarget]));
+
+        $service = Mockery::mock(NotificationService::class);
+        $service->shouldReceive('sendViaChannel')
+            ->once()
+            ->with($notification, 'websocket')
+            ->andReturnTrue();
+        $service->shouldNotReceive('sendViaChannel')->with($notification, 'email');
+
+        (new SendNotificationJob($notification))->handle($service);
+
+        self::assertSame('failed', $failedTarget->websocket_status);
     }
 }
