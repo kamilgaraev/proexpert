@@ -46,8 +46,7 @@ final readonly class VisionElementData
         if (count($polygon) >= 3 && $this->selfIntersects($polygon)) {
             throw new VisionContractException('self_intersecting_polygon');
         }
-        if (($type === 'opening') !== ($geometry !== null)
-            || $geometry !== null && ! self::validOpeningGeometry($geometry)) {
+        if ($geometry !== null && ($type !== 'opening' || ! self::validOpeningGeometry($geometry))) {
             throw new VisionContractException('invalid_opening_geometry');
         }
     }
@@ -56,18 +55,18 @@ final readonly class VisionElementData
     public static function fromArray(array $data): self
     {
         $keys = ['key', 'type', 'label', 'polygon', 'confidence', 'evidence_ref'];
-        if (($data['type'] ?? null) === 'opening') {
+        if (($data['type'] ?? null) === 'opening' && array_key_exists('geometry', $data)) {
             $keys[] = 'geometry';
         }
         if (! self::hasExactKeys($data, $keys)
             || ! is_string($data['key']) || ! is_string($data['type']) || ! is_array($data['polygon'])
             || $data['label'] !== null && ! is_string($data['label'])
-            || ! is_int($data['confidence']) && ! is_float($data['confidence']) || ! is_string($data['evidence_ref'])) {
+            || ! is_numeric($data['confidence']) || ! is_string($data['evidence_ref'])) {
             throw new VisionContractException('invalid_element');
         }
         $polygon = [];
         foreach ($data['polygon'] as $point) {
-            if (! is_array($point) || count($point) !== 2 || (! is_int($point[0]) && ! is_float($point[0])) || (! is_int($point[1]) && ! is_float($point[1]))) {
+            if (! is_array($point) || count($point) !== 2 || ! is_numeric($point[0]) || ! is_numeric($point[1])) {
                 throw new VisionContractException('invalid_polygon');
             }
             $polygon[] = [(float) $point[0], (float) $point[1]];

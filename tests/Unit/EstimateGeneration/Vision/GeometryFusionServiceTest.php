@@ -79,6 +79,18 @@ final class GeometryFusionServiceTest extends TestCase
     }
 
     #[Test]
+    public function one_evidence_locator_can_support_multiple_distinct_elements(): void
+    {
+        $result = (new GeometryFusionService)->fuse([
+            self::element('room-1', 'page-1', ['polygon' => [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]]),
+            self::element('room-2', 'page-1', ['polygon' => [[2.0, 0.0], [3.0, 0.0], [3.0, 1.0]]]),
+        ]);
+
+        self::assertCount(2, $result->elements);
+        self::assertSame([], $result->issues);
+    }
+
+    #[Test]
     #[\PHPUnit\Framework\Attributes\DataProvider('nestedEvidenceIdentityConflicts')]
     public function nested_provenance_evidence_cannot_be_reused_for_different_identity(string $mode): void
     {
@@ -89,7 +101,6 @@ final class GeometryFusionServiceTest extends TestCase
             $original->provenance,
         );
         $conflict = match ($mode) {
-            'key' => self::element('room-2', 'nested', ['polygon' => [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]]),
             'geometry' => self::element('room-1', 'nested', ['polygon' => [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0]]]),
             'context' => new FusedGeometryElementData('room-1', 'room', ['polygon' => [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]], 'vision', 'nested', 'sha256:'.str_repeat('d', 64), 1, 'normalized_source_v1', 'runtime:v1', 'model:v1', 0.9),
         };
@@ -100,7 +111,7 @@ final class GeometryFusionServiceTest extends TestCase
 
     public static function nestedEvidenceIdentityConflicts(): array
     {
-        return [['key'], ['geometry'], ['context']];
+        return [['geometry'], ['context']];
     }
 
     #[Test]

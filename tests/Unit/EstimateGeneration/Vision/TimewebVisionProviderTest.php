@@ -111,6 +111,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
         self::assertSame('succeeded', $this->attempts[0]->status);
         self::assertSame(1, $this->attempts[0]->imageCount);
         self::assertSame('high', $this->attempts[0]->imageDetail);
+        self::assertSame(32_768, $this->authorizer->maxInputTokens);
         self::assertSame(TimewebVisionProvider::promptHash(100), TimewebVisionProvider::promptHash());
         Http::assertSentCount(1);
         Http::assertSent(function ($request): bool {
@@ -126,6 +127,7 @@ final class TimewebVisionProviderTest extends DatabaseLessTestCase
                 && str_contains($system, 'meters_per_unit is finite in (0, 1000000]')
                 && str_contains($system, 'abs(a-b) > max(1e-9, 0.02 * min(a,b))')
                 && str_contains($system, 'Exactly 2 distinct points with nonzero length are allowed only for dimension, axis, engineering_element and text')
+                && str_contains($system, 'Opening elements additionally have exactly geometry')
                 && $user['contract_version'] === TimewebVisionProvider::PROMPT_VERSION
                 && $user['contract_sha256'] === TimewebVisionProvider::promptHash()
                 && $user['evidence_locator']['processing_unit_id'] === 19;
@@ -512,6 +514,8 @@ final class TestAiAttemptAuthorizer implements AiAttemptAuthorizer
 
     public int $releases = 0;
 
+    public int $maxInputTokens = 0;
+
     /** @var list<string> */
     public array $attemptIds = [];
 
@@ -524,6 +528,8 @@ final class TestAiAttemptAuthorizer implements AiAttemptAuthorizer
         int $imageCount = 0,
         int $pageCount = 0,
     ): AiPriceSnapshot {
+        $this->maxInputTokens = $maxInputTokens;
+
         return AiPriceSnapshot::fromArray($this->available ? [
             'input_per_million' => '1.25',
             'cached_input_per_million' => '0.25',

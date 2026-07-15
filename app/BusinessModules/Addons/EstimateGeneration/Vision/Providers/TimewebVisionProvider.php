@@ -71,7 +71,7 @@ final readonly class TimewebVisionProvider implements VisionProvider
                 $physicalContext,
                 self::PROVIDER,
                 $model,
-                max(1, (int) config('estimate-generation.vision.max_input_tokens', 1_000_000)),
+                max(1, (int) config('estimate-generation.vision.max_input_tokens', 32_768)),
                 max(256, min(16_384, (int) config('estimate-generation.vision.max_tokens', 4096))),
                 1,
             ) ?? AiPriceSnapshot::fromArray([]);
@@ -257,7 +257,8 @@ final readonly class TimewebVisionProvider implements VisionProvider
             'Each evidence item has exactly key and locator. Locator has exactly page_id, page_number, processing_unit_id, source_version, coordinate_space and must echo the supplied values without changes.',
             'page_id, page_number and processing_unit_id are positive integers; source_version is sha256 followed by 64 lowercase hex; coordinate_space is normalized_derivative_v1.',
             "Evidence and element keys match [a-z0-9][a-z0-9._:-]{0,79}. Return 1..256 evidence items, 0..{$maxElements} elements and 0..32 scale candidates.",
-            'Each element has exactly key, type, label, polygon, confidence, evidence_ref. Label is visible text or null, at most 160 Unicode characters and contains no control characters.',
+            'Each non-opening element has exactly key, type, label, polygon, confidence, evidence_ref. Label is visible text or null, at most 160 Unicode characters and contains no control characters.',
+            'Opening elements additionally have exactly geometry with exactly wall_key, opening_type, offset, width, height. wall_key references a returned wall key; opening_type is door, window, gate or other; offset is finite and nonnegative; width and height are finite and positive.',
             'Element type is exactly one of room, wall, opening, dimension, axis, engineering_element, text.',
             'polygon is an array of finite [x,y] points normalized to [0,1]. Exactly 2 distinct points with nonzero length are allowed only for dimension, axis, engineering_element and text. room, wall and opening require at least 3 points. Every ring with 3..64 points has nonzero area, no repeated points and no self-intersection. confidence is finite in [0,1].',
             'Each scale candidate has exactly source, meters_per_unit, confidence, evidence_ref, detail. meters_per_unit is finite in (0, 1000000]; confidence is finite in [0,1].',

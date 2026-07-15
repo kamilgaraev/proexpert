@@ -36,6 +36,23 @@ final class VisionGeometryContractTest extends TestCase
         self::assertCount(3, (new VisionElementData('room-valid', 'room', null, [[0.1, 0.1], [0.9, 0.1], [0.1, 0.9]], 0.8, 'page-1'))->polygon);
     }
 
+    #[Test]
+    public function provider_numeric_strings_are_normalized_and_incomplete_openings_remain_reviewable(): void
+    {
+        $element = VisionElementData::fromArray([
+            'key' => 'door-1',
+            'type' => 'opening',
+            'label' => 'Door',
+            'polygon' => [['0.1', '0.2'], ['0.3', '0.2'], ['0.3', '0.8'], ['0.1', '0.8']],
+            'confidence' => '0.95',
+            'evidence_ref' => 'page-1',
+        ]);
+
+        self::assertSame(0.95, $element->confidence);
+        self::assertSame([[0.1, 0.2], [0.3, 0.2], [0.3, 0.8], [0.1, 0.8]], $element->polygon);
+        self::assertNull($element->geometry);
+    }
+
     /** @param array<int, array{0: float, 1: float}> $geometry */
     private function assertInvalid(string $type, array $geometry): void
     {

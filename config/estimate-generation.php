@@ -19,6 +19,7 @@ return [
         'retry_attempts' => (int) env('ESTIMATE_GENERATION_VISION_RETRY_ATTEMPTS', 3),
         'retry_delay_ms' => (int) env('ESTIMATE_GENERATION_VISION_RETRY_DELAY_MS', 250),
         'max_tokens' => (int) env('ESTIMATE_GENERATION_VISION_MAX_TOKENS', 4096),
+        'max_input_tokens' => (int) env('ESTIMATE_GENERATION_VISION_MAX_INPUT_TOKENS', 32_768),
         'max_response_bytes' => (int) env('ESTIMATE_GENERATION_VISION_MAX_RESPONSE_BYTES', 1_000_000),
         'max_elements' => (int) env('ESTIMATE_GENERATION_VISION_MAX_ELEMENTS', 500),
         'max_depth' => (int) env('ESTIMATE_GENERATION_VISION_MAX_DEPTH', 16),
