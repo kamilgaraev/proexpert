@@ -18,6 +18,10 @@ final class CommercialPaymentProviderPolicy
         }
 
         $allowedIds = array_map('intval', (array) config('services.yookassa.test_organization_ids', []));
+        if ($allowedIds === []) {
+            return;
+        }
+
         if (! in_array($organizationId, $allowedIds, true)) {
             throw new PaymentGatewayConfigurationException(trans_message('billing.provider.test_unavailable'));
         }
