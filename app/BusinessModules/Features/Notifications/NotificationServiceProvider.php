@@ -3,27 +3,26 @@
 namespace App\BusinessModules\Features\Notifications;
 
 use Illuminate\Support\ServiceProvider;
-use Illuminate\Support\Facades\Event;
 
 class NotificationServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        $this->mergeConfigFrom(__DIR__ . '/config/notifications.php', 'notifications');
+        $this->mergeConfigFrom(__DIR__.'/config/notifications.php', 'notifications');
 
         $this->app->singleton(NotificationModule::class);
-        
+
         $this->registerServices();
     }
 
     public function boot(): void
     {
         $this->loadMigrations();
-        
+
         $this->loadRoutes();
-        
+
         $this->registerEvents();
-        
+
         $this->publishes([
             __DIR__.'/config/notifications.php' => config_path('notifications.php'),
         ], 'notifications-config');
@@ -31,18 +30,23 @@ class NotificationServiceProvider extends ServiceProvider
 
     protected function registerServices(): void
     {
+        $this->app->bind(
+            \App\BusinessModules\Features\Notifications\Contracts\NotificationPersistence::class,
+            \App\BusinessModules\Features\Notifications\Services\DatabaseNotificationPersistence::class,
+        );
+
         $this->app->singleton(
             \App\BusinessModules\Features\Notifications\Services\NotificationService::class
         );
-        
+
         $this->app->singleton(
             \App\BusinessModules\Features\Notifications\Services\TemplateRenderer::class
         );
-        
+
         $this->app->singleton(
             \App\BusinessModules\Features\Notifications\Services\PreferenceManager::class
         );
-        
+
         $this->app->singleton(
             \App\BusinessModules\Features\Notifications\Services\AnalyticsService::class
         );
@@ -58,8 +62,8 @@ class NotificationServiceProvider extends ServiceProvider
 
     protected function loadRoutes(): void
     {
-        $routesPath = __DIR__ . '/routes.php';
-        
+        $routesPath = __DIR__.'/routes.php';
+
         if (file_exists($routesPath)) {
             require $routesPath;
         }
@@ -67,8 +71,8 @@ class NotificationServiceProvider extends ServiceProvider
 
     protected function loadMigrations(): void
     {
-        $migrationsPath = __DIR__ . '/migrations';
-        
+        $migrationsPath = __DIR__.'/migrations';
+
         if (is_dir($migrationsPath)) {
             $this->loadMigrationsFrom($migrationsPath);
         }
@@ -79,4 +83,3 @@ class NotificationServiceProvider extends ServiceProvider
         \App\BusinessModules\Features\Notifications\Integration\ContractEventIntegration::register();
     }
 }
-

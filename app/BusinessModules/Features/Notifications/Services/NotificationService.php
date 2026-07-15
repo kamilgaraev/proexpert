@@ -8,13 +8,14 @@ use App\BusinessModules\Features\Notifications\Channels\EmailChannel;
 use App\BusinessModules\Features\Notifications\Channels\InAppChannel;
 use App\BusinessModules\Features\Notifications\Channels\TelegramChannel;
 use App\BusinessModules\Features\Notifications\Channels\WebSocketChannel;
+use App\BusinessModules\Features\Notifications\Contracts\NotificationPersistence;
 use App\BusinessModules\Features\Notifications\DTOs\NotificationDeliveryOptions;
 use App\BusinessModules\Features\Notifications\Enums\NotificationInterface;
 use App\BusinessModules\Features\Notifications\Jobs\SendNotificationJob;
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\Models\User;
+use DomainException;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Throwable;
@@ -28,6 +29,7 @@ class NotificationService
         private readonly NotificationPayloadNormalizer $payloadNormalizer,
         private readonly NotificationRecipientPermissionResolver $permissionResolver,
         private readonly NotificationTargetResolver $targetResolver,
+        private readonly NotificationPersistence $persistence,
     ) {
         $this->preferenceManager = $preferenceManager;
     }
@@ -50,6 +52,7 @@ class NotificationService
             $data,
         );
         $data = $this->payloadNormalizer->normalize($type, $data, $notificationType);
+        $data = $this->canonicalizeInterface($data, $resolvedInterfaces);
 
         $forceSend = $data['force_send'] ?? false;
         $requiredPermissions = $this->permissionResolver->requiredPermissions(
@@ -87,7 +90,7 @@ class NotificationService
                 'notification_type' => $notificationType,
             ]);
 
-            return $this->createNotification(
+            return $this->persistence->persist(
                 $user,
                 $type,
                 $data,
@@ -118,7 +121,9 @@ class NotificationService
             );
         }
 
-        $notification = $this->createNotification(
+        $this->assertWebSocketTargetsSupported($effectiveChannels, $resolvedInterfaces);
+
+        $notification = $this->persistence->persist(
             $user,
             $type,
             $data,
@@ -162,37 +167,34 @@ class NotificationService
         return $notifications;
     }
 
-    protected function createNotification(
-        User $user,
-        string $type,
-        array $data,
-        string $notificationType,
-        string $priority,
-        NotificationDeliveryOptions $options,
-    ): Notification {
-        return DB::transaction(function () use ($user, $type, $data, $notificationType, $priority, $options): Notification {
-            $notification = Notification::create([
-                'type' => $type,
-                'notifiable_type' => User::class,
-                'notifiable_id' => $user->id,
-                'organization_id' => $options->organizationId,
-                'notification_type' => $notificationType,
-                'priority' => $priority,
-                'channels' => $options->channels,
-                'data' => $data,
-                'delivery_status' => [],
-                'metadata' => [
-                    'required_permissions' => $options->requiredPermissions,
-                ],
-            ]);
+    private function canonicalizeInterface(array $data, array $interfaces): array
+    {
+        if (count($interfaces) === 1 && $interfaces[0] instanceof NotificationInterface) {
+            $data['interface'] = $interfaces[0]->value;
 
-            $notification->targets()->createMany(array_map(
-                static fn (NotificationInterface $interface): array => ['interface' => $interface->value],
-                $options->interfaces,
-            ));
+            return $data;
+        }
 
-            return $notification;
-        });
+        unset($data['interface']);
+
+        return $data;
+    }
+
+    private function assertWebSocketTargetsSupported(array $channels, array $interfaces): void
+    {
+        if (! in_array('websocket', $channels, true)) {
+            return;
+        }
+
+        $interface = count($interfaces) === 1 ? $interfaces[0] : null;
+
+        if (! $interface instanceof NotificationInterface || ! in_array(
+            $interface,
+            [NotificationInterface::Admin, NotificationInterface::Lk],
+            true,
+        )) {
+            throw new DomainException('WebSocket delivery requires one supported notification interface');
+        }
     }
 
     private function makeSkippedNotification(
