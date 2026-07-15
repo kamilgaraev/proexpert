@@ -12,14 +12,14 @@ final class CommercialPaymentProviderPolicyTest extends TestCase
 {
     public function refreshDatabase(): void {}
 
-    public function test_test_mode_empty_allowlist_denies_all_organizations(): void
+    public function test_test_mode_empty_allowlist_accepts_any_organization(): void
     {
         config()->set('services.yookassa.mode', 'yookassa_test');
         config()->set('services.yookassa.test_organization_ids', []);
 
-        $this->expectException(PaymentGatewayConfigurationException::class);
-
         app(CommercialPaymentProviderPolicy::class)->assertCanCharge(42);
+
+        $this->assertTrue(true);
     }
 
     public function test_test_mode_rejects_nonmatching_and_accepts_matching_organization(): void

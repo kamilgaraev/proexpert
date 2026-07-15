@@ -22,6 +22,7 @@ use App\Services\Billing\CommercialRenewalService;
 use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
 use Tests\TestCase;
@@ -84,10 +85,10 @@ final class CommercialRenewalServiceTest extends TestCase
         $this->assertSame(1, $this->gateway->creates);
     }
 
-    public function test_test_store_allowlist_denial_creates_no_renewal_state_or_provider_call(): void
+    public function test_non_empty_test_store_allowlist_denial_creates_no_renewal_state_or_provider_call(): void
     {
         config()->set('services.yookassa.mode', 'yookassa_test');
-        config()->set('services.yookassa.test_organization_ids', []);
+        config()->set('services.yookassa.test_organization_ids', [$this->account->organization_id + 1]);
         $at = CarbonImmutable::parse('2026-07-31 03:00:00', 'Europe/Moscow');
 
         $result = app(CommercialRenewalService::class)->process($at, 50);
@@ -280,8 +281,11 @@ final class CommercialRenewalServiceTest extends TestCase
             ])->save();
             $service->process($periodEnd->addDays($day));
         }
+        $cacheKey = "org_effective_active_modules_v2_{$this->account->organization_id}";
+        Cache::put($cacheKey, ['stale'], 60);
         $service->process(CarbonImmutable::parse('2026-08-07 03:00', 'Europe/Moscow'));
 
+        $this->assertFalse(Cache::has($cacheKey));
         $this->assertSame('suspended', $this->account->fresh()->status->value);
         $this->assertSame('expired', OrganizationPackageSubscription::query()->sole()->status->value);
         $this->assertSame(7, CommercialPayment::query()->count());
