@@ -3,7 +3,6 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
-use App\Models\Payment; // Для использования констант статусов
 
 return new class extends Migration
 {
@@ -22,7 +21,7 @@ return new class extends Migration
             
             $table->decimal('amount', 10, 2);
             $table->string('currency', 3);
-            $table->string('status')->default(Payment::STATUS_PENDING);
+            $table->string('status')->default('pending');
             $table->text('description')->nullable();
             $table->timestamp('paid_at')->nullable(); // Фактическое время успешной оплаты
             
