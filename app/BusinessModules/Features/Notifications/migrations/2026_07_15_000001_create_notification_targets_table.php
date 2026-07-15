@@ -1,0 +1,99 @@
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
+
+return new class extends Migration
+{
+    private const INTERFACES = ['admin', 'lk', 'mobile', 'customer'];
+
+    public function up(): void
+    {
+        Schema::create('notification_targets', function (Blueprint $table): void {
+            $table->uuid('id')->primary();
+            $table->foreignUuid('notification_id')->constrained('notifications')->cascadeOnDelete();
+            $table->string('interface', 20);
+            $table->timestampTz('read_at')->nullable();
+            $table->timestampTz('dismissed_at')->nullable();
+            $table->string('websocket_status', 20)->default('pending');
+            $table->timestampTz('websocket_delivered_at')->nullable();
+            $table->text('websocket_last_error')->nullable();
+            $table->timestampsTz();
+
+            $table->unique(['notification_id', 'interface']);
+            $table->index('notification_id');
+            $table->index(['interface', 'dismissed_at', 'read_at']);
+            $table->index(['interface', 'websocket_status']);
+        });
+
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement(
+                'ALTER TABLE notification_targets ADD CONSTRAINT notification_targets_interface_check '
+                ."CHECK (interface IN ('admin', 'lk', 'mobile', 'customer'))"
+            );
+        }
+
+        DB::table('notifications')
+            ->select(['id', 'data', 'read_at'])
+            ->orderBy('id')
+            ->chunkById(500, static function (Collection $notifications): void {
+                $targets = [];
+                $timestamp = now();
+
+                foreach ($notifications as $notification) {
+                    $data = $notification->data;
+
+                    if (is_string($data)) {
+                        try {
+                            $data = json_decode($data, true, flags: JSON_THROW_ON_ERROR);
+                        } catch (\JsonException) {
+                            continue;
+                        }
+                    }
+
+                    if (! is_array($data)) {
+                        continue;
+                    }
+
+                    $interface = 'admin';
+
+                    if (array_key_exists('interface', $data)) {
+                        if (! is_string($data['interface'])) {
+                            continue;
+                        }
+
+                        $interface = $data['interface'];
+                    }
+
+                    if (! in_array($interface, self::INTERFACES, true)) {
+                        continue;
+                    }
+
+                    $targets[] = [
+                        'id' => (string) Str::uuid(),
+                        'notification_id' => $notification->id,
+                        'interface' => $interface,
+                        'read_at' => $notification->read_at,
+                        'websocket_status' => 'pending',
+                        'created_at' => $timestamp,
+                        'updated_at' => $timestamp,
+                    ];
+                }
+
+                if ($targets !== []) {
+                    DB::table('notification_targets')->insertOrIgnore($targets);
+                }
+            }, 'id');
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('notification_targets');
+    }
+};

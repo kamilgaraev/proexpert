@@ -1,14 +1,18 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\Notifications\Models;
 
+use App\BusinessModules\Features\Notifications\Enums\NotificationInterface;
+use App\Models\Organization;
+use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
-use Illuminate\Database\Eloquent\Concerns\HasUuids;
-use App\Models\Organization;
-use App\Models\User;
 
 class Notification extends Model
 {
@@ -51,6 +55,19 @@ class Notification extends Model
         return $this->hasMany(NotificationAnalytics::class);
     }
 
+    public function targets(): HasMany
+    {
+        return $this->hasMany(NotificationTarget::class);
+    }
+
+    public function scopeForInterface(Builder $query, NotificationInterface $interface): Builder
+    {
+        return $query->whereHas(
+            'targets',
+            static fn (Builder $targetQuery): Builder => $targetQuery->where('interface', $interface->value)
+        );
+    }
+
     public function markAsRead(): void
     {
         if (is_null($this->getAttribute('read_at'))) {
@@ -65,7 +82,7 @@ class Notification extends Model
 
     public function isRead(): bool
     {
-        return !is_null($this->getAttribute('read_at'));
+        return ! is_null($this->getAttribute('read_at'));
     }
 
     public function scopeUnread($query)
@@ -81,7 +98,7 @@ class Notification extends Model
     public function scopeForUser($query, User $user)
     {
         return $query->where('notifiable_type', User::class)
-                    ->where('notifiable_id', $user->id);
+            ->where('notifiable_id', $user->id);
     }
 
     public function scopeForOrganization($query, int $organizationId)
@@ -104,4 +121,3 @@ class Notification extends Model
         return $query->whereJsonContains('channels', $channel);
     }
 }
-
