@@ -2,17 +2,17 @@
 
 declare(strict_types=1);
 
-use Illuminate\Foundation\Application;
-use Illuminate\Foundation\Configuration\Exceptions;
-use Illuminate\Foundation\Configuration\Middleware;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Http\Request;
-use Illuminate\Validation\ValidationException;
 use App\Http\Middleware\JwtMiddleware;
 use App\Http\Middleware\SetOrganizationContext;
 use App\Services\Logging\SafeLogWriter;
 use App\Services\Monitoring\GlitchTipReportPolicy;
 use App\Services\Monitoring\SentryScopeService;
+use Illuminate\Foundation\Application;
+use Illuminate\Foundation\Configuration\Exceptions;
+use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 $app = Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -34,11 +34,11 @@ $app = Application::configure(basePath: dirname(__DIR__))
             'authorize' => \App\Domain\Authorization\Http\Middleware\AuthorizeMiddleware::class,
             'role' => \App\Domain\Authorization\Http\Middleware\RoleMiddleware::class,
             'interface' => \App\Domain\Authorization\Http\Middleware\InterfaceMiddleware::class,
-            
+
             // Система логирования и трекинга
             'correlation.id' => \App\Http\Middleware\CorrelationIdMiddleware::class,
             'request.logging' => \App\Http\Middleware\RequestLoggingMiddleware::class,
-            
+
             // === ОСТАЛЬНЫЕ MIDDLEWARE ===
             'auth.jwt' => JwtMiddleware::class,
             'jwt.auth' => JwtMiddleware::class,
@@ -46,10 +46,9 @@ $app = Application::configure(basePath: dirname(__DIR__))
             'organization.context' => SetOrganizationContext::class,
             'organization_context' => SetOrganizationContext::class,
             'project.context' => \App\Http\Middleware\ProjectContextMiddleware::class,
-            
+
             // Дополнительные middleware
             'request.dedup' => \App\Http\Middleware\RequestDedupMiddleware::class,
-            'subscription.limit' => \App\Http\Middleware\CheckSubscriptionLimitsMiddleware::class,
             'admin.response' => \App\Http\Middleware\NormalizeAdminResponse::class,
             'module.access' => \App\Modules\Middleware\ModuleAccessMiddleware::class,
             'module.permission' => \App\Modules\Middleware\ModulePermissionMiddleware::class,
@@ -61,13 +60,13 @@ $app = Application::configure(basePath: dirname(__DIR__))
         // ГЛОБАЛЬНЫЕ MIDDLEWARE
         // Порядок важен: сначала CORS, затем Correlation ID, в конце Prometheus
         // ============================================================
-        
+
         // 1. Correlation ID - генерируем уникальный ID для трекинга запроса
         $middleware->prepend(\App\Http\Middleware\CorrelationIdMiddleware::class);
-        
+
         // 2. CORS - должен быть первым в реальной цепочке для обработки preflight запросов
         $middleware->prepend(\App\Http\Middleware\CorsMiddleware::class);
-        
+
         // 3. Prometheus - метрики в конце цепочки для корректного измерения времени
         $middleware->append(\App\Http\Middleware\PrometheusMiddleware::class);
 
@@ -87,7 +86,7 @@ $app = Application::configure(basePath: dirname(__DIR__))
         // СТРУКТУРИРОВАННОЕ ЛОГИРОВАНИЕ ИСКЛЮЧЕНИЙ
         // Логируем разные типы ошибок в отдельные каналы для удобства анализа
         // ============================================================
-        
+
         // Redis ошибки -> logs/redis/redis.log
         $exceptions->report(function (\Predis\Connection\ConnectionException $e): void {
             app(SafeLogWriter::class)->write('redis', 'error', 'Redis connection error', [
@@ -126,7 +125,7 @@ $app = Application::configure(basePath: dirname(__DIR__))
                     return $messages;
                 }
 
-                if (!is_array($messages)) {
+                if (! is_array($messages)) {
                     continue;
                 }
 
@@ -155,7 +154,7 @@ $app = Application::configure(basePath: dirname(__DIR__))
         };
 
         $exceptions->render(function (ValidationException $exception, Request $request) use ($firstValidationMessage, $responseClassForRequest) {
-            if (!$request->expectsJson() && !$request->is('api/*')) {
+            if (! $request->expectsJson() && ! $request->is('api/*')) {
                 return null;
             }
 
@@ -188,7 +187,7 @@ $app = Application::configure(basePath: dirname(__DIR__))
         // ИСКЛЮЧЕНИЯ ИЗ ЛОГИРОВАНИЯ
         // Не логируем как критические ошибки
         // ============================================================
-        
+
         $exceptions->dontReport([
             \App\Exceptions\Billing\InsufficientBalanceException::class,
         ]);
@@ -199,7 +198,7 @@ $app = Application::configure(basePath: dirname(__DIR__))
         $exceptions->report(function (\Throwable $exception): ?bool {
             $policy = app(GlitchTipReportPolicy::class);
 
-            if (!$policy->shouldCapture($exception, app()->bound('request') ? request() : null)) {
+            if (! $policy->shouldCapture($exception, app()->bound('request') ? request() : null)) {
                 return false;
             }
 
@@ -221,7 +220,7 @@ $app = Application::configure(basePath: dirname(__DIR__))
         // ИНТЕГРАЦИЯ С PROMETHEUS
         // Трекинг исключений для мониторинга
         // ============================================================
-        
+
         // ============================================================
         // ПРИМЕЧАНИЕ:
         // Вся логика рендеринга исключений (renderable) находится в
@@ -230,6 +229,6 @@ $app = Application::configure(basePath: dirname(__DIR__))
     })
     ->create();
 
-$app->useLangPath(dirname(__DIR__) . '/lang');
+$app->useLangPath(dirname(__DIR__).'/lang');
 
 return $app;

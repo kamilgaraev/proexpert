@@ -4,20 +4,15 @@ declare(strict_types=1);
 
 namespace App\Filament\Resources;
 
-use App\Filament\Support\TableEmptyState;
 use App\Enums\ModuleDevelopmentStatus;
 use App\Filament\Resources\ModuleResource\Pages;
 use App\Filament\Support\FilamentPermission;
 use App\Filament\Support\NavigationGroups;
 use App\Filament\Support\SystemAdminAccess;
+use App\Filament\Support\TableEmptyState;
 use App\Models\Module;
-use App\Models\Organization;
-use App\Services\Filament\ModuleAdminActionService;
-use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
-use Filament\Forms;
 use Filament\Infolists;
-use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
@@ -32,11 +27,11 @@ class ModuleResource extends Resource
 {
     protected static ?string $model = Module::class;
 
-    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-squares-2x2';
+    protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-squares-2x2';
 
     protected static ?int $navigationSort = 10;
 
-    public static function getNavigationGroup(): string | \UnitEnum | null
+    public static function getNavigationGroup(): string|\UnitEnum|null
     {
         return NavigationGroups::platform();
     }
@@ -160,32 +155,6 @@ class ModuleResource extends Resource
             ])
             ->actions([
                 ViewAction::make(),
-                Action::make('enable_for_organization')
-                    ->label(trans_message('filament_actions.module.enable_for_organization.label'))
-                    ->icon('heroicon-o-plus-circle')
-                    ->color('success')
-                    ->modalHeading(trans_message('filament_actions.module.enable_for_organization.heading'))
-                    ->schema([
-                        Forms\Components\Select::make('organization_id')
-                            ->label(trans_message('widgets.modules.organization'))
-                            ->options(fn (): array => Organization::query()->orderBy('name')->pluck('name', 'id')->all())
-                            ->searchable()
-                            ->required(),
-                        Forms\Components\Toggle::make('start_trial')
-                            ->label(trans_message('filament_actions.module.start_trial.label')),
-                        Forms\Components\TextInput::make('trial_days')
-                            ->label(trans_message('filament_actions.module.days'))
-                            ->numeric()
-                            ->minValue(1),
-                        Forms\Components\Textarea::make('reason')
-                            ->label(trans_message('filament_actions.module.reason'))
-                            ->required()
-                            ->maxLength(500),
-                    ])
-                    ->visible(fn (): bool => self::canManageModules())
-                    ->action(function (array $data, Module $record): void {
-                        self::enableModuleForOrganization($record, $data);
-                    }),
             ])
             ->bulkActions([])
             ->defaultSort('display_order');
@@ -232,35 +201,6 @@ class ModuleResource extends Resource
     public static function canDeleteAny(): bool
     {
         return false;
-    }
-
-    private static function enableModuleForOrganization(Module $module, array $data): void
-    {
-        $actor = SystemAdminAccess::user();
-        $organization = Organization::query()->find((int) ($data['organization_id'] ?? 0));
-
-        if ($actor === null || ! $organization instanceof Organization) {
-            return;
-        }
-
-        $trialDays = (bool) ($data['start_trial'] ?? false)
-            ? max(1, (int) ($data['trial_days'] ?? 14))
-            : null;
-
-        app(ModuleAdminActionService::class)->enableForOrganization(
-            organization: $organization,
-            module: $module,
-            actor: $actor,
-            reason: (string) ($data['reason'] ?? ''),
-            trialDays: $trialDays,
-        );
-
-        Notification::make()->success()->title(trans_message('filament_actions.module.enable_for_organization.success'))->send();
-    }
-
-    private static function canManageModules(): bool
-    {
-        return SystemAdminAccess::can(FilamentPermission::MODULES_MANAGE);
     }
 
     private static function typeLabel(?string $state): string

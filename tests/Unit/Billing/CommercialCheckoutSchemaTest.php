@@ -1,0 +1,144 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Tests\Unit\Billing;
+
+use PHPUnit\Framework\TestCase;
+
+class CommercialCheckoutSchemaTest extends TestCase
+{
+    public function test_migration_defines_isolated_orders_and_payments_with_idempotency_guards(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 3).'/database/migrations/2026_07_14_000002_create_commercial_checkout_tables.php');
+
+        $this->assertIsString($migration);
+        $this->assertStringContainsString("Schema::create('commercial_orders'", $migration);
+        $this->assertStringContainsString("Schema::create('commercial_payments'", $migration);
+        $this->assertStringContainsString("unique(['organization_id', 'client_idempotency_key']", $migration);
+        $this->assertStringContainsString('provider_idempotency_key', $migration);
+        $this->assertStringContainsString("unique(['id', 'organization_id'], 'commercial_orders_id_org_unique')", $migration);
+        $this->assertStringContainsString("foreign(['commercial_account_id', 'organization_id']", $migration);
+        $this->assertStringNotContainsString('balance_transaction', $migration);
+        $this->assertStringNotContainsString('subscription_plan', $migration);
+    }
+
+    public function test_webhook_schema_tracks_idempotent_events_refunds_and_source_entitlements(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $commercial = file_get_contents($root.'/database/migrations/2026_07_14_000001_create_commercial_package_model.php');
+        $webhooks = file_get_contents($root.'/database/migrations/2026_07_14_000003_create_commercial_webhook_tables.php');
+
+        $this->assertIsString($commercial);
+        $this->assertIsString($webhooks);
+        $this->assertStringContainsString("auto_renew_enabled')->default(false)", $commercial);
+        $this->assertStringContainsString('source_order_id', $webhooks);
+        $this->assertStringContainsString("Schema::create('commercial_refunds'", $webhooks);
+        $this->assertStringContainsString("Schema::create('commercial_webhook_events'", $webhooks);
+        $this->assertStringContainsString("unique('fingerprint'", $webhooks);
+        $this->assertStringContainsString('refunded_amount_minor', $webhooks);
+        $this->assertStringContainsString("foreign(['commercial_payment_id', 'commercial_order_id']", $webhooks);
+        $this->assertStringContainsString('->restrictOnDelete()', $webhooks);
+        $this->assertStringNotContainsString('->nullOnDelete()', $webhooks);
+    }
+
+    public function test_renewal_schema_supports_multiple_attempts_and_one_grace_cycle_per_period(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $commercial = file_get_contents($root.'/database/migrations/2026_07_14_000001_create_commercial_package_model.php');
+        $checkout = file_get_contents($root.'/database/migrations/2026_07_14_000002_create_commercial_checkout_tables.php');
+
+        $this->assertIsString($commercial);
+        $this->assertIsString($checkout);
+        $this->assertStringContainsString('saved_payment_method_id', $commercial);
+        $this->assertStringContainsString('grace_ends_at', $commercial);
+        $this->assertStringContainsString("Schema::create('commercial_renewal_cycles'", $checkout);
+        $this->assertStringContainsString("unique(['commercial_account_id', 'target_period_start_at']", $checkout);
+        $this->assertStringContainsString("enum('kind', ['purchase', 'renewal'])", $checkout);
+        $this->assertStringContainsString("enum('role', ['initial', 'renewal'])", $checkout);
+        $this->assertStringContainsString('attempt_number', $checkout);
+        $this->assertStringNotContainsString("foreignId('commercial_order_id')->unique()", $checkout);
+        $this->assertStringContainsString("date('billing_due_date')", $checkout);
+        $this->assertStringContainsString("unique('commercial_order_id'", $checkout);
+        $this->assertStringContainsString('commercial_renewal_order_account_tenant_fk', $checkout);
+        $this->assertStringContainsString('commercial_payment_role_cycle_check', $checkout);
+    }
+
+    public function test_renewal_schema_allows_only_one_open_or_succeeded_payment_attempt_per_order(): void
+    {
+        $migration = file_get_contents(
+            dirname(__DIR__, 3).'/database/migrations/2026_07_14_000007_prevent_parallel_renewal_payment_attempts.php',
+        );
+
+        $this->assertIsString($migration);
+        $this->assertStringContainsString('CREATE UNIQUE INDEX commercial_payments_one_open_renewal_attempt_unique', $migration);
+        $this->assertStringContainsString("WHERE role = 'renewal'", $migration);
+        $this->assertStringContainsString(
+            "provider_status IN ('created', 'pending', 'waiting_for_capture', 'unknown', 'succeeded')",
+            $migration,
+        );
+    }
+
+    public function test_postgres_contour_schedule_has_lock_unique_and_conflict_contract(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $migration = file_get_contents($root.'/database/migrations/2026_07_14_000004_create_commercial_contour_changes_table.php');
+        $service = file_get_contents($root.'/app/Services/Billing/CommercialContourChangeService.php');
+
+        $this->assertIsString($migration);
+        $this->assertIsString($service);
+        $this->assertStringContainsString("unique(\n                ['organization_id', 'client_idempotency_key']", $migration);
+        $this->assertStringContainsString("unique(\n                ['commercial_account_id', 'apply_at']", $migration);
+        $this->assertStringContainsString('lockForUpdate()', $service);
+        $this->assertStringContainsString("['23000', '23505', '40001', '40P01']", $service);
+        $this->assertStringContainsString("enum('status', ['scheduled', 'applied', 'canceled'])", $migration);
+        $this->assertStringContainsString("timestampTz('canceled_at')->nullable()", $migration);
+    }
+
+    public function test_commercial_due_processor_runs_every_minute_with_production_locks(): void
+    {
+        $schedule = file_get_contents(dirname(__DIR__, 3).'/routes/console.php');
+        $this->assertIsString($schedule);
+        $this->assertSame(1, substr_count($schedule, "Schedule::command('commercial:process-renewals --limit=100')"));
+        preg_match("/Schedule::command\\('commercial:process-renewals --limit=100'\\)(.*?);/s", $schedule, $matches);
+        $renewalSchedule = $matches[0] ?? '';
+        $this->assertStringContainsString('->everyMinute()', $renewalSchedule);
+        $this->assertStringContainsString("->timezone('Europe/Moscow')", $renewalSchedule);
+        $this->assertStringContainsString('->withoutOverlapping(120)', $renewalSchedule);
+        $this->assertStringContainsString('->onOneServer()', $renewalSchedule);
+        $this->assertStringNotContainsString("->dailyAt('03:00')", $renewalSchedule);
+    }
+
+    public function test_commercial_due_query_has_account_and_cycle_indexes(): void
+    {
+        $migration = file_get_contents(dirname(__DIR__, 3).'/database/migrations/2026_07_14_000005_add_commercial_renewal_due_indexes.php');
+        $this->assertIsString($migration);
+        $this->assertStringContainsString("['status', 'current_period_end_at', 'id']", $migration);
+        $this->assertStringContainsString("['commercial_account_id', 'organization_id', 'target_period_start_at', 'status', 'next_attempt_at']", $migration);
+    }
+
+    public function test_trial_lifecycle_has_separate_hourly_schedule(): void
+    {
+        $schedule = file_get_contents(dirname(__DIR__, 3).'/routes/console.php');
+        $this->assertIsString($schedule);
+        $this->assertSame(1, substr_count($schedule, "Schedule::command('commercial:process-trial-lifecycle')"));
+        $this->assertStringContainsString("Schedule::command('commercial:process-trial-lifecycle')\n    ->hourly()", $schedule);
+    }
+
+    public function test_provider_operations_are_server_only_and_reconciliation_is_daily(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $refundCommand = file_get_contents($root.'/app/Console/Commands/CreateCommercialRefundCommand.php');
+        $reconcileCommand = file_get_contents($root.'/app/Console/Commands/ReconcileCommercialPaymentsCommand.php');
+        $schedule = file_get_contents($root.'/routes/console.php');
+        $apiRoutes = file_get_contents($root.'/routes/api/v1/landing/billing.php');
+
+        $this->assertIsString($refundCommand);
+        $this->assertIsString($reconcileCommand);
+        $this->assertStringContainsString('commercial:refund', $refundCommand);
+        $this->assertStringContainsString('{--confirm', $refundCommand);
+        $this->assertStringContainsString('commercial:reconcile --limit=100', $schedule);
+        $this->assertStringContainsString('->dailyAt(', $schedule);
+        $this->assertStringNotContainsString('refund', $apiRoutes);
+    }
+}

@@ -13,7 +13,8 @@ use App\Models\ApplicationError;
 use App\Models\Blog\BlogArticle;
 use App\Models\ContactForm;
 use App\Models\Organization;
-use App\Models\OrganizationSubscription;
+use App\Models\OrganizationCommercialAccount;
+use App\Models\OrganizationPackageSubscription;
 use App\Models\User;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
@@ -24,7 +25,6 @@ final class SystemAdminDashboardService
     /**
      * @return array{
      *     organizations: array{active: int, trial: int, paying: int},
-     *     subscriptions: array{overdue: int},
      *     payments: array{failed_30_days: int},
      *     users: array{new_7_days: int, new_30_days: int},
      *     blog: array{draft: int, published: int, scheduled: int, archived: int},
@@ -42,9 +42,6 @@ final class SystemAdminDashboardService
                 'active' => $this->activeOrganizations(),
                 'trial' => $this->trialOrganizations($now),
                 'paying' => $this->payingOrganizations($now),
-            ],
-            'subscriptions' => [
-                'overdue' => $this->overdueSubscriptions($now),
             ],
             'payments' => [
                 'failed_30_days' => $this->failedPayments($now),
@@ -77,34 +74,20 @@ final class SystemAdminDashboardService
 
     private function trialOrganizations(CarbonImmutable $now): int
     {
-        return OrganizationSubscription::query()
-            ->where('status', 'trial')
-            ->where(function ($query) use ($now): void {
-                $query->whereNull('trial_ends_at')
-                    ->orWhere('trial_ends_at', '>', $now);
-            })
+        return OrganizationPackageSubscription::query()
+            ->where('status', 'trialing')
+            ->where('trial_ends_at', '>', $now)
             ->distinct('organization_id')
             ->count('organization_id');
     }
 
     private function payingOrganizations(CarbonImmutable $now): int
     {
-        return OrganizationSubscription::query()
-            ->where('status', 'active')
-            ->whereNull('canceled_at')
-            ->where('ends_at', '>', $now)
+        return OrganizationCommercialAccount::query()
+            ->whereIn('status', ['active', 'grace', 'corporate'])
+            ->where('current_period_end_at', '>', $now)
             ->distinct('organization_id')
             ->count('organization_id');
-    }
-
-    private function overdueSubscriptions(CarbonImmutable $now): int
-    {
-        return OrganizationSubscription::query()
-            ->whereNull('canceled_at')
-            ->whereNotNull('ends_at')
-            ->where('ends_at', '<', $now)
-            ->whereIn('status', ['active', 'trial', 'pending_payment', 'failed'])
-            ->count();
     }
 
     private function failedPayments(CarbonImmutable $now): int

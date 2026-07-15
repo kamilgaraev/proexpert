@@ -7,7 +7,6 @@ namespace Tests\Feature\Api\V1\Admin;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Enums\ProjectOrganizationRole;
-use App\Interfaces\Billing\SubscriptionLimitsServiceInterface;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
@@ -93,7 +92,6 @@ class ProjectCoreExperienceControllerTest extends TestCase
     {
         $context = AdminApiTestContext::create();
         $this->allowAdminAccess();
-        $this->allowSubscriptionProjectCreation();
 
         $createPayload = [
             'name' => 'Pilot Build',
@@ -335,13 +333,6 @@ class ProjectCoreExperienceControllerTest extends TestCase
                         ->get();
                 }
             );
-        });
-    }
-
-    private function allowSubscriptionProjectCreation(): void
-    {
-        $this->mock(SubscriptionLimitsServiceInterface::class, function (MockInterface $mock): void {
-            $mock->shouldReceive('canCreateProject')->andReturn(true);
         });
     }
 }

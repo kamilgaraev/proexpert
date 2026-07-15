@@ -5,7 +5,12 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
+/**
+ * @property Carbon|null $trial_ends_at
+ * @property Carbon|null $cancelled_at
+ */
 class OrganizationModuleActivation extends Model
 {
     use HasFactory;
@@ -13,21 +18,15 @@ class OrganizationModuleActivation extends Model
     protected $fillable = [
         'organization_id',
         'module_id',
-        'subscription_id',
-        'is_bundled_with_plan',
         'status',
         'activated_at',
         'expires_at',
         'trial_ends_at',
         'last_used_at',
-        'paid_amount',
-        'payment_details',
-        'next_billing_date',
         'module_settings',
         'usage_stats',
         'cancelled_at',
         'cancellation_reason',
-        'is_auto_renew_enabled',
     ];
 
     protected $casts = [
@@ -35,14 +34,9 @@ class OrganizationModuleActivation extends Model
         'expires_at' => 'datetime',
         'trial_ends_at' => 'datetime',
         'last_used_at' => 'datetime',
-        'next_billing_date' => 'datetime',
         'cancelled_at' => 'datetime',
-        'payment_details' => 'array',
         'module_settings' => 'array',
         'usage_stats' => 'array',
-        'paid_amount' => 'decimal:2',
-        'is_bundled_with_plan' => 'boolean',
-        'is_auto_renew_enabled' => 'boolean',
     ];
 
     public function organization(): BelongsTo
@@ -55,14 +49,9 @@ class OrganizationModuleActivation extends Model
         return $this->belongsTo(Module::class);
     }
 
-    public function subscription(): BelongsTo
-    {
-        return $this->belongsTo(OrganizationSubscription::class, 'subscription_id');
-    }
-
     public function isActive(): bool
     {
-        return $this->status === 'active' && 
+        return $this->status === 'active' &&
                ($this->expires_at === null || $this->expires_at->isFuture());
     }
 
@@ -73,7 +62,7 @@ class OrganizationModuleActivation extends Model
 
     public function isTrial(): bool
     {
-        return $this->status === 'trial' && 
+        return $this->status === 'trial' &&
                ($this->trial_ends_at === null || $this->trial_ends_at->isFuture());
     }
 
@@ -89,6 +78,7 @@ class OrganizationModuleActivation extends Model
         }
 
         $diff = now()->diffInDays($this->expires_at, false);
+
         return $diff >= 0 ? (int) $diff : 0;
     }
 
@@ -99,6 +89,7 @@ class OrganizationModuleActivation extends Model
         }
 
         $diff = now()->diffInDays($this->trial_ends_at, false);
+
         return $diff >= 0 ? (int) $diff : 0;
     }
 
@@ -111,24 +102,24 @@ class OrganizationModuleActivation extends Model
     {
         $stats = $this->usage_stats ?? [];
         $today = now()->format('Y-m-d');
-        
-        if (!isset($stats[$today])) {
+
+        if (! isset($stats[$today])) {
             $stats[$today] = [];
         }
-        
-        if (!isset($stats[$today][$action])) {
+
+        if (! isset($stats[$today][$action])) {
             $stats[$today][$action] = 0;
         }
-        
+
         $stats[$today][$action]++;
-        
-        if (!empty($metadata)) {
-            if (!isset($stats[$today]['metadata'])) {
+
+        if (! empty($metadata)) {
+            if (! isset($stats[$today]['metadata'])) {
                 $stats[$today]['metadata'] = [];
             }
             $stats[$today]['metadata'][] = $metadata;
         }
-        
+
         $this->update(['usage_stats' => $stats]);
     }
 
@@ -136,7 +127,7 @@ class OrganizationModuleActivation extends Model
     {
         $stats = $this->usage_stats ?? [];
         $targetDate = $date ?? now()->format('Y-m-d');
-        
+
         return $stats[$targetDate][$action] ?? 0;
     }
 
@@ -144,13 +135,13 @@ class OrganizationModuleActivation extends Model
     {
         $stats = $this->usage_stats ?? [];
         $total = 0;
-        
+
         foreach ($stats as $date => $dayStats) {
             if (isset($dayStats[$action])) {
                 $total += $dayStats[$action];
             }
         }
-        
+
         return $total;
     }
 
@@ -159,7 +150,7 @@ class OrganizationModuleActivation extends Model
         return $query->where('status', 'active')
             ->where(function ($q) {
                 $q->whereNull('expires_at')
-                  ->orWhere('expires_at', '>', now());
+                    ->orWhere('expires_at', '>', now());
             });
     }
 
@@ -173,70 +164,5 @@ class OrganizationModuleActivation extends Model
         return $query->where('status', 'active')
             ->whereNotNull('expires_at')
             ->whereBetween('expires_at', [now(), now()->addDays($days)]);
-    }
-
-    public function scopeBundled($query)
-    {
-        return $query->where('is_bundled_with_plan', true);
-    }
-
-    public function scopeStandalone($query)
-    {
-        return $query->where('is_bundled_with_plan', false);
-    }
-
-    public function isBundled(): bool
-    {
-        return $this->is_bundled_with_plan === true;
-    }
-
-    public function isStandalone(): bool
-    {
-        return !$this->isBundled();
-    }
-
-    public function syncWithSubscription(OrganizationSubscription $subscription): bool
-    {
-        if (!$this->isBundled()) {
-            return false;
-        }
-
-        return $this->update([
-            'subscription_id' => $subscription->id,
-            'expires_at' => $subscription->ends_at,
-            'next_billing_date' => $subscription->next_billing_at,
-        ]);
-    }
-
-    public function convertToBundled(OrganizationSubscription $subscription): bool
-    {
-        return $this->update([
-            'is_bundled_with_plan' => true,
-            'subscription_id' => $subscription->id,
-            'expires_at' => $subscription->ends_at,
-            'next_billing_date' => $subscription->next_billing_at,
-            'paid_amount' => 0,
-        ]);
-    }
-
-    public function convertToStandalone(): bool
-    {
-        return $this->update([
-            'is_bundled_with_plan' => false,
-            'subscription_id' => null,
-        ]);
-    }
-
-    public function deactivateAsBundled(string $reason = 'Подписка отменена'): bool
-    {
-        if (!$this->isBundled()) {
-            return false;
-        }
-
-        return $this->update([
-            'status' => 'suspended',
-            'cancelled_at' => now(),
-            'cancellation_reason' => $reason,
-        ]);
     }
 }

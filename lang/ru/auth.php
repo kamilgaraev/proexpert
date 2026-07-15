@@ -63,7 +63,6 @@ return [
     'registration_user_exists' => 'Пользователь с таким email уже существует.',
     'registration_organization_tax_number_exists' => 'Организация с таким ИНН уже зарегистрирована в системе. Если вы являетесь сотрудником этой организации, попросите владельца добавить вас в команду.',
     'registration_error' => 'Ошибка при регистрации пользователя: :message',
-    'testing_balance_description' => 'Тестовый баланс при регистрации',
     'registration_verification_required' => 'Регистрация завершена. Подтвердите email, чтобы войти в аккаунт.',
     'registration_incomplete_data' => 'Не удалось завершить регистрацию. Попробуйте позже.',
     'validation' => [

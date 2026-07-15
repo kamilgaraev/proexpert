@@ -9,7 +9,6 @@ use App\Events\ProjectOrganizationRemoved;
 use App\Events\ProjectOrganizationRoleChanged;
 use App\Listeners\InvalidateProjectContextCache;
 use App\Listeners\LogProjectOrganizationActivity;
-use App\Listeners\SendTrialExpiredNotification;
 use App\Listeners\SuggestModulesBasedOnCapabilities;
 use App\Models\CompletedWork;
 use App\Models\MaterialReceipt;
@@ -26,10 +25,8 @@ use App\Models\TaskDependency;
 // use App\Observers\MaterialReceiptObserver;
 use App\Models\TaskResource;
 use App\Modules\Core\AccessController;
-use App\Modules\Core\BillingEngine;
 use App\Modules\Core\ModuleRegistry;
 use App\Modules\Core\ModuleScanner;
-use App\Modules\Events\TrialExpired;
 use App\Observers\CompletedWorkObserver;
 use App\Observers\OrganizationObserver;
 use App\Observers\ProjectObserver;
@@ -90,23 +87,6 @@ class AppServiceProvider extends ServiceProvider
             );
         });
 
-        // Регистрируем OrganizationSubscriptionService
-        $this->app->singleton(\App\Services\Landing\OrganizationSubscriptionService::class, function ($app) {
-            return new \App\Services\Landing\OrganizationSubscriptionService(
-                $app->make(\App\Services\Logging\LoggingService::class),
-                $app->make(\App\Services\SubscriptionModuleSyncService::class),
-                $app->make(\App\Services\Billing\SubscriptionLimitsService::class),
-                $app->make(\App\Services\Contractor\ContractorReferralRewardService::class)
-            );
-        });
-
-        // Регистрируем OrganizationDashboardService
-        $this->app->singleton(\App\Services\Landing\OrganizationDashboardService::class, function ($app) {
-            return new \App\Services\Landing\OrganizationDashboardService(
-                $app->make(\App\Services\Landing\OrganizationSubscriptionService::class)
-            );
-        });
-
         $this->app->scoped(\App\Services\Schedule\AutoSchedulingService::class);
 
         // Репозиторий дашборда ЛК
@@ -129,7 +109,6 @@ class AppServiceProvider extends ServiceProvider
         // Регистрируем модульную систему
         $this->app->singleton(ModuleRegistry::class);
         $this->app->singleton(ModuleScanner::class);
-        $this->app->singleton(BillingEngine::class);
         $this->app->singleton(AccessController::class);
 
         // Регистрируем модули
@@ -175,7 +154,6 @@ class AppServiceProvider extends ServiceProvider
         Project::observe(ProjectObserver::class);
         Organization::observe(OrganizationObserver::class);
         ProjectOrganization::observe(ProjectOrganizationObserver::class);
-        \App\Models\OrganizationModuleActivation::observe(\App\Observers\OrganizationModuleActivationObserver::class);
         \App\Models\Contract::observe(\App\Observers\ContractObserver::class);
 
         // Contract-related observers for non-fixed amount contracts
@@ -207,7 +185,6 @@ class AppServiceProvider extends ServiceProvider
 
         Event::listen(OrganizationOnboardingCompleted::class, [SuggestModulesBasedOnCapabilities::class, 'handleOnboardingCompleted']);
 
-        Event::listen(TrialExpired::class, SendTrialExpiredNotification::class);
     }
 
     /**

@@ -21,7 +21,6 @@ class UserManagementController extends Controller
     public function __construct(UserService $userService)
     {
         $this->userService = $userService;
-        $this->middleware('subscription.limit:max_users')->only('store');
     }
 
     public function index(Request $request): JsonResponse
@@ -107,7 +106,7 @@ class UserManagementController extends Controller
     {
         try {
             $user = $this->userService->findOrganizationUserById((int) $id, $request);
-            if (!$user) {
+            if (! $user) {
                 return AdminResponse::error(trans_message('user.not_found'), 404);
             }
 

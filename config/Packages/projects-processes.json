@@ -1,0 +1,22 @@
+{
+    "slug": "projects-processes",
+    "name": "Проекты и процессы",
+    "description": "Управление объектами, рабочими процессами и заявками с площадки в едином контуре.",
+    "sort_order": 1,
+    "schema_version": 2,
+    "business_outcomes": [
+        "Единый порядок работы по объектам",
+        "Связь офиса и строительной площадки"
+    ],
+    "tiers": {
+        "standard": {
+            "label": "Проекты и процессы",
+            "description": "Объекты, рабочие процессы и заявки с площадки.",
+            "price": 9900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": ["site-requests", "file-management"],
+            "highlights": ["Заявки с объекта", "Файлы и документы"]
+        }
+    }
+}

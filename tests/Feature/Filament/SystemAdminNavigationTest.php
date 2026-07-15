@@ -25,12 +25,9 @@ use App\Filament\Resources\Monitoring\ApplicationErrorResource;
 use App\Filament\Resources\NotificationAnalyticsResource;
 use App\Filament\Resources\NotificationResource;
 use App\Filament\Resources\NotificationTemplateResource;
-use App\Filament\Resources\OrganizationModuleActivationResource;
 use App\Filament\Resources\OrganizationPackageSubscriptionResource;
 use App\Filament\Resources\OrganizationResource;
-use App\Filament\Resources\OrganizationSubscriptionResource;
 use App\Filament\Resources\PaymentTransactionResource;
-use App\Filament\Resources\SubscriptionPlanResource;
 use App\Filament\Resources\SupportRequestResource;
 use App\Filament\Resources\SystemAdminResource;
 use App\Filament\Resources\UserResource;
@@ -203,11 +200,6 @@ final class SystemAdminNavigationTest extends TestCase
                 'sort' => 10,
                 'icon' => 'heroicon-o-squares-2x2',
             ],
-            OrganizationModuleActivationResource::class => [
-                'group' => NavigationGroups::platform(),
-                'sort' => 20,
-                'icon' => 'heroicon-o-puzzle-piece',
-            ],
             OrganizationPackageSubscriptionResource::class => [
                 'group' => NavigationGroups::platform(),
                 'sort' => 30,
@@ -222,16 +214,6 @@ final class SystemAdminNavigationTest extends TestCase
                 'group' => NavigationGroups::organizations(),
                 'sort' => 10,
                 'icon' => 'heroicon-o-building-office-2',
-            ],
-            SubscriptionPlanResource::class => [
-                'group' => NavigationGroups::billing(),
-                'sort' => 10,
-                'icon' => 'heroicon-o-credit-card',
-            ],
-            OrganizationSubscriptionResource::class => [
-                'group' => NavigationGroups::billing(),
-                'sort' => 20,
-                'icon' => 'heroicon-o-credit-card',
             ],
             PaymentTransactionResource::class => [
                 'group' => NavigationGroups::billing(),

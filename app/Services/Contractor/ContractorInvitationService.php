@@ -3,36 +3,34 @@
 namespace App\Services\Contractor;
 
 use App\BusinessModules\ContractorMarketplace\Domain\Services\MarketplaceNetworkService;
-use App\Models\ContractorInvitation;
+use App\Exceptions\BusinessLogicException;
 use App\Models\Contractor;
+use App\Models\ContractorInvitation;
 use App\Models\Organization;
 use App\Models\User;
-use App\Services\Billing\SubscriptionLimitsService;
-use App\Services\Logging\LoggingService;
-use App\Exceptions\BusinessLogicException;
+use App\Notifications\ContractorInvitationNotification;
 use App\Repositories\Interfaces\ContractorRepositoryInterface;
+use App\Services\Logging\LoggingService;
+use Carbon\Carbon;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
-use Illuminate\Contracts\Pagination\LengthAwarePaginator;
-use App\Notifications\ContractorInvitationNotification;
-use Carbon\Carbon;
 
 class ContractorInvitationService
 {
-    protected SubscriptionLimitsService $subscriptionLimitsService;
     protected ContractorRepositoryInterface $contractorRepository;
+
     protected LoggingService $logging;
+
     protected MarketplaceNetworkService $marketplaceNetworkService;
 
     public function __construct(
-        SubscriptionLimitsService $subscriptionLimitsService,
         ContractorRepositoryInterface $contractorRepository,
         LoggingService $logging,
         MarketplaceNetworkService $marketplaceNetworkService
     ) {
-        $this->subscriptionLimitsService = $subscriptionLimitsService;
         $this->contractorRepository = $contractorRepository;
         $this->logging = $logging;
         $this->marketplaceNetworkService = $marketplaceNetworkService;
@@ -46,10 +44,6 @@ class ContractorInvitationService
         array $metadata = []
     ): ContractorInvitation {
         $this->validateInvitationRequest($organizationId, $invitedOrganizationId, $invitedBy);
-
-        if (!$this->subscriptionLimitsService->canCreateContractorInvitationForOrganization($invitedBy, $organizationId)) {
-            throw new BusinessLogicException(trans_message('contract.invitation_limit_reached'));
-        }
 
         $existingInvitation = $this->getExistingActiveInvitation($organizationId, $invitedOrganizationId);
         if ($existingInvitation) {
@@ -79,6 +73,7 @@ class ContractorInvitationService
             ]);
 
             DB::commit();
+
             return $invitation;
         } catch (\Exception $e) {
             DB::rollBack();
@@ -100,13 +95,13 @@ class ContractorInvitationService
                     ->lockForUpdate()
                     ->first();
 
-                if (!$invitation) {
+                if (! $invitation) {
                     throw new BusinessLogicException(trans_message('contract.invitation_not_found'));
                 }
 
                 if (
                     (int) $acceptedBy->current_organization_id !== (int) $invitation->invited_organization_id
-                    || !$acceptedBy->belongsToOrganization($invitation->invited_organization_id)
+                    || ! $acceptedBy->belongsToOrganization($invitation->invited_organization_id)
                 ) {
                     throw new BusinessLogicException(trans_message('contract.invitation_accept_forbidden'));
                 }
@@ -124,7 +119,7 @@ class ContractorInvitationService
                     throw new BusinessLogicException(trans_message('contract.invitation_already_processed'));
                 }
 
-                if (!$invitation->canBeAccepted()) {
+                if (! $invitation->canBeAccepted()) {
                     throw new BusinessLogicException(trans_message('contract.invitation_unavailable'));
                 }
 
@@ -169,17 +164,17 @@ class ContractorInvitationService
                 ->lockForUpdate()
                 ->first();
 
-            if (!$invitation) {
+            if (! $invitation) {
                 throw new BusinessLogicException(trans_message('contract.invitation_not_found'));
             }
 
-            if (!$invitation->canBeAccepted()) {
+            if (! $invitation->canBeAccepted()) {
                 throw new BusinessLogicException(trans_message('contract.invitation_already_processed'));
             }
 
             if (
                 (int) $declinedBy->current_organization_id !== (int) $invitation->invited_organization_id
-                || !$declinedBy->belongsToOrganization($invitation->invited_organization_id)
+                || ! $declinedBy->belongsToOrganization($invitation->invited_organization_id)
             ) {
                 throw new BusinessLogicException(trans_message('contract.invitation_decline_forbidden'));
             }
@@ -205,11 +200,11 @@ class ContractorInvitationService
                     ->lockForUpdate()
                     ->first();
 
-                if (!$invitation || !$invitation->isPending()) {
+                if (! $invitation || ! $invitation->isPending()) {
                     throw new BusinessLogicException(trans_message('contract.invitation_not_found'));
                 }
 
-                if (!$cancelledBy->belongsToOrganization($organizationId)) {
+                if (! $cancelledBy->belongsToOrganization($organizationId)) {
                     throw new BusinessLogicException(trans_message('contract.invitation_cancel_forbidden'));
                 }
 
@@ -312,12 +307,12 @@ class ContractorInvitationService
             throw new BusinessLogicException(trans_message('contract.invitation_self_not_allowed'));
         }
 
-        if (!$invitedBy->belongsToOrganization($organizationId)) {
+        if (! $invitedBy->belongsToOrganization($organizationId)) {
             throw new BusinessLogicException(trans_message('contract.invitation_create_forbidden'));
         }
 
         $invitedOrg = Organization::find($invitedOrganizationId);
-        if (!$invitedOrg || !$invitedOrg->is_active) {
+        if (! $invitedOrg || ! $invitedOrg->is_active) {
             throw new BusinessLogicException(trans_message('contract.invitation_target_unavailable'));
         }
 
@@ -356,7 +351,7 @@ class ContractorInvitationService
     protected function createContractorFromInvitation(ContractorInvitation $invitation): Contractor
     {
         $sourceOrg = $invitation->invitedOrganization;
-        
+
         $contractorData = [
             'organization_id' => $invitation->organization_id,
             'source_organization_id' => $invitation->invited_organization_id,
@@ -415,14 +410,14 @@ class ContractorInvitationService
 
             if ($organizationOwners->isNotEmpty()) {
                 Notification::send($organizationOwners, new ContractorInvitationNotification($invitation));
-                
+
                 // BUSINESS: Уведомления о приглашении подрядчика отправлены
                 $this->logging->business('contractor.invitation.notifications.sent', [
                     'invitation_id' => $invitation->id,
                     'invited_organization_id' => $invitation->invited_organization_id,
                     'inviting_organization_id' => $invitation->organization_id,
                     'recipients_count' => $organizationOwners->count(),
-                    'notification_channels' => ['mail', 'database']
+                    'notification_channels' => ['mail', 'database'],
                 ]);
 
                 // AUDIT: Отправка приглашения подрядчику
@@ -431,23 +426,23 @@ class ContractorInvitationService
                     'invited_organization_id' => $invitation->invited_organization_id,
                     'transaction_type' => 'contractor_invitation_sent',
                     'performed_by' => Auth::id() ?? 'system',
-                    'recipients_count' => $organizationOwners->count()
+                    'recipients_count' => $organizationOwners->count(),
                 ]);
-                
+
             } else {
                 // TECHNICAL: Нет владельцев организации для отправки приглашения
                 $this->logging->technical('contractor.invitation.no_recipients', [
                     'invitation_id' => $invitation->id,
                     'invited_organization_id' => $invitation->invited_organization_id,
                     'organization_owners_count' => 0,
-                    'notification_issue' => true
+                    'notification_issue' => true,
                 ], 'warning');
 
                 // BUSINESS: Приглашение не отправлено из-за отсутствия получателей
                 $this->logging->business('contractor.invitation.failed.no_recipients', [
                     'invitation_id' => $invitation->id,
                     'invited_organization_id' => $invitation->invited_organization_id,
-                    'failure_reason' => 'no_organization_owners'
+                    'failure_reason' => 'no_organization_owners',
                 ], 'warning');
             }
         } catch (\Exception $e) {
@@ -457,7 +452,7 @@ class ContractorInvitationService
                 'invited_organization_id' => $invitation->invited_organization_id,
                 'exception_class' => get_class($e),
                 'exception_message' => $e->getMessage(),
-                'notification_failure' => true
+                'notification_failure' => true,
             ], 'error');
 
             // BUSINESS: Неудачная отправка приглашения - влияет на бизнес-процесс
@@ -465,7 +460,7 @@ class ContractorInvitationService
                 'invitation_id' => $invitation->id,
                 'invited_organization_id' => $invitation->invited_organization_id,
                 'failure_reason' => 'system_exception',
-                'error_message' => $e->getMessage()
+                'error_message' => $e->getMessage(),
             ], 'error');
         }
     }

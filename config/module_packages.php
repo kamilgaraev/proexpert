@@ -39,6 +39,7 @@ return [
         'budget-estimates' => 'package',
         'budgeting' => 'package',
         'crm' => 'package',
+        'commercial-proposals' => 'package',
         'design-management' => 'package',
         'quality-control' => 'package',
         'executive-documentation' => 'package',
@@ -61,6 +62,7 @@ return [
         'one-c-basic-exchange' => 'addon',
         'video-monitoring' => 'addon',
         'contractor-portal' => 'addon',
+        'tenders' => 'addon',
         'system-logs' => 'internal',
     ],
 

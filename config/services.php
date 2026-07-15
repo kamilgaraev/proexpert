@@ -2,6 +2,42 @@
 
 return [
 
+    'yookassa' => [
+        'mode' => env('YOOKASSA_MODE'),
+        'shop_id' => env('YOOKASSA_SHOP_ID'),
+        'secret_key' => env('YOOKASSA_SECRET_KEY'),
+        'api_url' => env('YOOKASSA_API_URL', 'https://api.yookassa.ru/v3'),
+        'return_url' => env('YOOKASSA_RETURN_URL', 'https://1мост.рф/dashboard/billing'),
+        'webhook_url' => env('YOOKASSA_WEBHOOK_URL', 'https://1мост.рф/api/v1/webhooks/yookassa'),
+        'timeout' => (int) env('YOOKASSA_TIMEOUT', 10),
+        'retry_attempts' => (int) env('YOOKASSA_RETRY_ATTEMPTS', 3),
+        'retry_delay_ms' => (int) env('YOOKASSA_RETRY_DELAY_MS', 150),
+        'test_organization_ids' => array_values(array_filter(array_map(
+            static fn (string $id): ?int => ctype_digit(trim($id)) ? (int) trim($id) : null,
+            explode(',', (string) env('YOOKASSA_TEST_ORGANIZATION_IDS', '')),
+        ), static fn (?int $id): bool => $id !== null && $id > 0)),
+        'receipt' => [
+            'enabled' => filter_var(env('YOOKASSA_RECEIPT_ENABLED', false), FILTER_VALIDATE_BOOL),
+            'vat_code' => env('YOOKASSA_RECEIPT_VAT_CODE'),
+            'payment_mode' => env('YOOKASSA_RECEIPT_PAYMENT_MODE'),
+            'payment_subject' => env('YOOKASSA_RECEIPT_PAYMENT_SUBJECT'),
+        ],
+        'live' => [
+            'enabled' => filter_var(env('YOOKASSA_LIVE_ENABLED', false), FILTER_VALIDATE_BOOL),
+            'legal_entity_confirmed' => filter_var(env('YOOKASSA_LIVE_LEGAL_ENTITY_CONFIRMED', false), FILTER_VALIDATE_BOOL),
+            'contract_confirmed' => filter_var(env('YOOKASSA_LIVE_CONTRACT_CONFIRMED', false), FILTER_VALIDATE_BOOL),
+            'receipt_settings_confirmed' => filter_var(env('YOOKASSA_LIVE_RECEIPT_SETTINGS_CONFIRMED', false), FILTER_VALIDATE_BOOL),
+        ],
+        'webhook_source_cidrs' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env('YOOKASSA_WEBHOOK_SOURCE_CIDRS', '185.71.76.0/27,185.71.77.0/27,77.75.153.0/25,77.75.156.11/32,77.75.156.35/32,77.75.154.128/25,2a02:5180::/32')),
+        ))),
+        'trusted_proxy_cidrs' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env('YOOKASSA_TRUSTED_PROXY_CIDRS', '')),
+        ))),
+    ],
+
     /*
     |--------------------------------------------------------------------------
     | Third Party Services

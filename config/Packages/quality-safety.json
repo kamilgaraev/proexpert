@@ -1,0 +1,19 @@
+{
+    "slug": "quality-safety",
+    "name": "Качество и безопасность",
+    "description": "Контроль качества работ, охрана труда и безопасность на строительной площадке.",
+    "sort_order": 4,
+    "schema_version": 2,
+    "business_outcomes": ["Системный контроль качества", "Управляемая охрана труда"],
+    "tiers": {
+        "standard": {
+            "label": "Качество и безопасность",
+            "description": "Контроль качества и охрана труда.",
+            "price": 9900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": ["budget-estimates", "file-management", "quality-control", "safety-management"],
+            "highlights": ["Инспекции и дефекты", "Инструктажи и безопасность"]
+        }
+    }
+}

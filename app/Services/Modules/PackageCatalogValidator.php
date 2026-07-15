@@ -30,6 +30,11 @@ class PackageCatalogValidator
         foreach ($packages as $package) {
             $packageSlug = $package['slug'] ?? 'unknown-package';
 
+            if (! $this->catalog->hasStandardTierOnly($package)) {
+                $errors[] = "{$packageSlug} must define exactly one standard tier";
+                continue;
+            }
+
             foreach (($package['tiers'] ?? []) as $tierKey => $tier) {
                 $tierModules = $this->stringList($tier['included_modules'] ?? $tier['modules'] ?? []);
                 $availableModules = array_fill_keys(array_merge(array_keys($foundationSet), $tierModules), true);

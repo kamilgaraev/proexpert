@@ -11,7 +11,9 @@ use App\Helpers\ModuleHelper;
 final class OrganizationWorkspaceProfileCatalog
 {
     public const INTERACTION_PROJECT_PARTICIPANT = 'project_participant';
+
     public const INTERACTION_PROCUREMENT_COUNTERPARTY = 'procurement_counterparty';
+
     public const INTERACTION_SERVICE_COUNTERPARTY = 'service_counterparty';
 
     private const PROFILES = [
@@ -48,9 +50,9 @@ final class OrganizationWorkspaceProfileCatalog
                     'route' => '/dashboard/contractor-invitations',
                 ],
                 [
-                    'key' => 'open_modules',
-                    'label' => 'Проверить модули',
-                    'route' => '/dashboard/modules',
+                    'key' => 'open_packages',
+                    'label' => 'Подобрать пакеты',
+                    'route' => '/dashboard/billing',
                 ],
                 [
                     'key' => 'open_settings',
@@ -90,9 +92,9 @@ final class OrganizationWorkspaceProfileCatalog
                     'route' => '/dashboard/contractor-invitations',
                 ],
                 [
-                    'key' => 'open_modules',
-                    'label' => 'Проверить модули',
-                    'route' => '/dashboard/modules',
+                    'key' => 'open_packages',
+                    'label' => 'Подобрать пакеты',
+                    'route' => '/dashboard/billing',
                 ],
                 [
                     'key' => 'open_settings',
@@ -128,9 +130,9 @@ final class OrganizationWorkspaceProfileCatalog
                     'route' => '/dashboard/organization/settings',
                 ],
                 [
-                    'key' => 'open_modules',
-                    'label' => 'Посмотреть модули',
-                    'route' => '/dashboard/modules',
+                    'key' => 'open_packages',
+                    'label' => 'Подобрать пакеты',
+                    'route' => '/dashboard/billing',
                 ],
             ],
         ],
@@ -161,14 +163,14 @@ final class OrganizationWorkspaceProfileCatalog
                     'route' => '/dashboard/organization/settings',
                 ],
                 [
-                    'key' => 'open_modules',
-                    'label' => 'Посмотреть модули',
-                    'route' => '/dashboard/modules',
+                    'key' => 'open_packages',
+                    'label' => 'Подобрать пакеты',
+                    'route' => '/dashboard/billing',
                 ],
             ],
         ],
         OrganizationCapability::EQUIPMENT_RENTAL->value => [
-            'default_route' => '/dashboard/modules',
+            'default_route' => '/dashboard/billing',
             'interaction_modes' => [
                 self::INTERACTION_SERVICE_COUNTERPARTY,
             ],
@@ -183,13 +185,8 @@ final class OrganizationWorkspaceProfileCatalog
             ],
             'recommended_actions' => [
                 [
-                    'key' => 'open_modules',
-                    'label' => 'Проверить модули',
-                    'route' => '/dashboard/modules',
-                ],
-                [
-                    'key' => 'open_billing',
-                    'label' => 'Открыть финансы',
+                    'key' => 'open_packages',
+                    'label' => 'Подобрать пакеты',
                     'route' => '/dashboard/billing',
                 ],
                 [
@@ -205,7 +202,7 @@ final class OrganizationWorkspaceProfileCatalog
             ],
         ],
         OrganizationCapability::MATERIALS_SUPPLY->value => [
-            'default_route' => '/dashboard/modules',
+            'default_route' => '/dashboard/billing',
             'interaction_modes' => [
                 self::INTERACTION_PROCUREMENT_COUNTERPARTY,
             ],
@@ -222,13 +219,8 @@ final class OrganizationWorkspaceProfileCatalog
             ],
             'recommended_actions' => [
                 [
-                    'key' => 'open_modules',
-                    'label' => 'Проверить модули',
-                    'route' => '/dashboard/modules',
-                ],
-                [
-                    'key' => 'open_billing',
-                    'label' => 'Открыть финансы',
+                    'key' => 'open_packages',
+                    'label' => 'Подобрать пакеты',
                     'route' => '/dashboard/billing',
                 ],
                 [
@@ -268,9 +260,9 @@ final class OrganizationWorkspaceProfileCatalog
                     'route' => '/dashboard/projects',
                 ],
                 [
-                    'key' => 'open_modules',
-                    'label' => 'Посмотреть модули',
-                    'route' => '/dashboard/modules',
+                    'key' => 'open_packages',
+                    'label' => 'Подобрать пакеты',
+                    'route' => '/dashboard/billing',
                 ],
             ],
         ],
@@ -297,9 +289,9 @@ final class OrganizationWorkspaceProfileCatalog
                     'route' => '/dashboard/projects',
                 ],
                 [
-                    'key' => 'open_modules',
-                    'label' => 'Проверить модули',
-                    'route' => '/dashboard/modules',
+                    'key' => 'open_packages',
+                    'label' => 'Подобрать пакеты',
+                    'route' => '/dashboard/billing',
                 ],
                 [
                     'key' => 'open_settings',
@@ -371,7 +363,7 @@ final class OrganizationWorkspaceProfileCatalog
 
         foreach (self::workspaceOptions($capabilityValues) as $workspaceOption) {
             foreach ($workspaceOption['interaction_modes'] as $interactionMode) {
-                if (!in_array($interactionMode, $modes, true)) {
+                if (! in_array($interactionMode, $modes, true)) {
                     $modes[] = $interactionMode;
                 }
             }
@@ -398,7 +390,7 @@ final class OrganizationWorkspaceProfileCatalog
             }
 
             foreach ($definition['recommended_modules'] as $moduleSlug) {
-                if (!in_array($moduleSlug, $moduleSlugs, true)) {
+                if (! in_array($moduleSlug, $moduleSlugs, true)) {
                     $moduleSlugs[] = $moduleSlug;
                 }
             }
@@ -413,13 +405,13 @@ final class OrganizationWorkspaceProfileCatalog
 
         foreach (self::workspaceOptions($capabilityValues) as $workspaceOption) {
             foreach ($workspaceOption['allowed_project_roles'] as $role) {
-                if (!in_array($role, $roles, true)) {
+                if (! in_array($role, $roles, true)) {
                     $roles[] = $role;
                 }
             }
         }
 
-        if (!in_array(ProjectOrganizationRole::OBSERVER->value, $roles, true)) {
+        if (! in_array(ProjectOrganizationRole::OBSERVER->value, $roles, true)) {
             $roles[] = ProjectOrganizationRole::OBSERVER->value;
         }
 
@@ -466,7 +458,7 @@ final class OrganizationWorkspaceProfileCatalog
         $normalized = [];
 
         foreach ($capabilityValues as $capabilityValue) {
-            if (!is_string($capabilityValue)) {
+            if (! is_string($capabilityValue)) {
                 continue;
             }
 
@@ -474,7 +466,7 @@ final class OrganizationWorkspaceProfileCatalog
                 continue;
             }
 
-            if (!in_array($capabilityValue, $normalized, true)) {
+            if (! in_array($capabilityValue, $normalized, true)) {
                 $normalized[] = $capabilityValue;
             }
         }

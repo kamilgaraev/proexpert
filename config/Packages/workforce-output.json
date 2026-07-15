@@ -1,0 +1,19 @@
+{
+    "slug": "workforce-output",
+    "name": "Персонал и выработка",
+    "description": "Рабочее время, персонал, наряды и фактическая выработка по объектам.",
+    "sort_order": 8,
+    "schema_version": 2,
+    "business_outcomes": ["Контроль трудозатрат", "Проверяемая выработка по объектам"],
+    "tiers": {
+        "standard": {
+            "label": "Персонал и выработка",
+            "description": "Рабочее время, персонал и выработка.",
+            "price": 9900,
+            "billing_model": "subscription",
+            "duration_days": 30,
+            "modules": ["time-tracking", "budget-estimates", "workforce-management", "production-labor"],
+            "highlights": ["Учёт времени", "Персонал", "Наряды и выработка"]
+        }
+    }
+}

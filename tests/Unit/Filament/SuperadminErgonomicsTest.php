@@ -25,7 +25,6 @@ class SuperadminErgonomicsTest extends TestCase
             'blog_seo_settings' => 'app/Filament/Resources/BlogSeoSettingsResource.php',
             'blog_tags' => 'app/Filament/Resources/BlogTagResource.php',
             'knowledge_articles' => 'app/Filament/Resources/KnowledgeArticleResource.php',
-            'module_activations' => 'app/Filament/Resources/OrganizationModuleActivationResource.php',
             'modules' => 'app/Filament/Resources/ModuleResource.php',
             'notification_analytics' => 'app/Filament/Resources/NotificationAnalyticsResource.php',
             'notification_events' => 'app/Filament/Resources/NotificationResource/RelationManagers/AnalyticsRelationManager.php',
@@ -34,8 +33,6 @@ class SuperadminErgonomicsTest extends TestCase
             'organizations' => 'app/Filament/Resources/OrganizationResource.php',
             'package_subscriptions' => 'app/Filament/Resources/OrganizationPackageSubscriptionResource.php',
             'payments' => 'app/Filament/Resources/PaymentTransactionResource.php',
-            'subscription_plans' => 'app/Filament/Resources/SubscriptionPlanResource.php',
-            'subscriptions' => 'app/Filament/Resources/OrganizationSubscriptionResource.php',
             'support_requests' => 'app/Filament/Resources/SupportRequestResource.php',
             'system_admins' => 'app/Filament/Resources/SystemAdminResource.php',
             'users' => 'app/Filament/Resources/UserResource.php',
@@ -360,12 +357,12 @@ class SuperadminErgonomicsTest extends TestCase
             $this->assertNotEmpty($translations['filament'][$translationKey] ?? null);
         }
 
-        $this->assertStringContainsString("->toolbarButtons([", $source);
+        $this->assertStringContainsString('->toolbarButtons([', $source);
         $this->assertStringContainsString("['bold', 'italic', 'underline', 'link']", $source);
         $this->assertStringContainsString("['h2', 'h3', 'bulletList', 'orderedList']", $source);
         $this->assertStringContainsString("->extraInputAttributes(['style' => 'min-height: 22rem;'])", $source);
-        $this->assertStringContainsString("->autosize()", $source);
-        $this->assertStringContainsString("->suggestions(fn (): array => self::tagSuggestions())", $source);
+        $this->assertStringContainsString('->autosize()', $source);
+        $this->assertStringContainsString('->suggestions(fn (): array => self::tagSuggestions())', $source);
     }
 
     public function test_knowledge_article_targeting_options_have_business_labels(): void
