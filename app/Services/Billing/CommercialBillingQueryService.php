@@ -11,11 +11,14 @@ use App\Models\Organization;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 final class CommercialBillingQueryService
 {
     public function __construct(
         private readonly CommercialOfferCalculator $calculator,
+        private readonly CommercialReconciliationService $reconciliation,
     ) {}
 
     public function quote(Organization $organization, array $input): array
@@ -44,6 +47,23 @@ final class CommercialBillingQueryService
             ->where('public_id', $publicId)
             ->with(['payments', 'refunds'])
             ->firstOrFail();
+
+        $latestPayment = $order->payments->sortBy('attempt_number')->last();
+        if ($order->status->value === 'pending_payment'
+            && $latestPayment?->provider_payment_id !== null
+            && in_array($latestPayment->provider_status, ['created', 'pending', 'waiting_for_capture', 'unknown'], true)) {
+            try {
+                $this->reconciliation->reconcilePayment((int) $latestPayment->getKey());
+                $order->refresh()->load(['payments', 'refunds']);
+            } catch (Throwable $exception) {
+                Log::warning('Commercial payment status refresh failed.', [
+                    'order_id' => $order->public_id,
+                    'organization_id' => $order->organization_id,
+                    'payment_id' => $latestPayment->getKey(),
+                    'exception' => $exception::class,
+                ]);
+            }
+        }
 
         return $this->orderPayload($order, false);
     }
