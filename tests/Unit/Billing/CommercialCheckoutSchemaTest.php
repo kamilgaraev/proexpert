@@ -64,6 +64,21 @@ class CommercialCheckoutSchemaTest extends TestCase
         $this->assertStringContainsString('commercial_payment_role_cycle_check', $checkout);
     }
 
+    public function test_renewal_schema_allows_only_one_open_or_succeeded_payment_attempt_per_order(): void
+    {
+        $migration = file_get_contents(
+            dirname(__DIR__, 3).'/database/migrations/2026_07_14_000007_prevent_parallel_renewal_payment_attempts.php',
+        );
+
+        $this->assertIsString($migration);
+        $this->assertStringContainsString('CREATE UNIQUE INDEX commercial_payments_one_open_renewal_attempt_unique', $migration);
+        $this->assertStringContainsString("WHERE role = 'renewal'", $migration);
+        $this->assertStringContainsString(
+            "provider_status IN ('created', 'pending', 'waiting_for_capture', 'unknown', 'succeeded')",
+            $migration,
+        );
+    }
+
     public function test_postgres_contour_schedule_has_lock_unique_and_conflict_contract(): void
     {
         $root = dirname(__DIR__, 3);

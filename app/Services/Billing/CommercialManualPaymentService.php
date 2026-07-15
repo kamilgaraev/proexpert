@@ -15,11 +15,14 @@ use App\Models\Organization;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Throwable;
 
 use function trans_message;
 
 final class CommercialManualPaymentService
 {
+    private const BLOCKING_PROVIDER_STATUSES = ['created', 'pending', 'waiting_for_capture', 'unknown', 'succeeded'];
+
     public function __construct(
         private readonly PaymentGatewayInterface $gateway,
         private readonly CommercialPaymentProviderPolicy $providerPolicy,
@@ -29,7 +32,7 @@ final class CommercialManualPaymentService
     {
         $this->providerPolicy->assertCanCharge((int) $organization->getKey());
 
-        [$order, $payment, $created] = DB::transaction(function () use (
+        [$order, $payment, $created, $callProvider] = DB::transaction(function () use (
             $organization,
             $idempotencyKey,
         ): array {
@@ -84,7 +87,31 @@ final class CommercialManualPaymentService
                     throw new CommercialCheckoutConflictException('Manual payment key belongs to another intent.');
                 }
 
-                return [$order, $existing, false];
+                if ($existing->provider_payment_id === null && $existing->provider_status === 'unknown') {
+                    return [$order, $existing, false, true];
+                }
+                if (in_array($existing->provider_status, self::BLOCKING_PROVIDER_STATUSES, true)
+                    && ! $this->usableConfirmationUrl($existing->confirmation_url)) {
+                    throw new CommercialCheckoutConflictException('Manual payment is already being prepared.');
+                }
+
+                return [$order, $existing, false, false];
+            }
+
+            $openPayment = CommercialPayment::query()
+                ->where('commercial_order_id', $order->getKey())
+                ->where('commercial_renewal_cycle_id', $cycle->getKey())
+                ->where('role', 'renewal')
+                ->whereIn('provider_status', self::BLOCKING_PROVIDER_STATUSES)
+                ->lockForUpdate()
+                ->first();
+
+            if ($openPayment !== null) {
+                if ($this->usableConfirmationUrl($openPayment->confirmation_url)) {
+                    return [$order, $openPayment, false, false];
+                }
+
+                throw new CommercialCheckoutConflictException('Manual payment is already being prepared.');
             }
 
             $attemptNumber = ((int) $order->payments()->max('attempt_number')) + 1;
@@ -105,23 +132,38 @@ final class CommercialManualPaymentService
                 'next_attempt_at' => now()->addMinutes(10),
             ])->save();
 
-            return [$order, $payment, true];
+            return [$order, $payment, true, true];
         }, 3);
 
-        if ($payment->provider_payment_id === null) {
-            $result = $this->gateway->createPayment(new CreatePaymentData(
-                idempotenceKey: $payment->provider_idempotency_key,
-                amountMinor: $order->amount_minor,
-                currency: $order->currency,
-                description: trans_message('billing.renewal.manual_payment_description'),
-                metadata: [
-                    'order_id' => $order->public_id,
-                    'organization_id' => $order->organization_id,
-                    'manual_payment_key' => $payment->provider_idempotency_key,
-                ],
-                savePaymentMethod: false,
-                customerEmail: $user->email,
-            ));
+        if ($callProvider) {
+            try {
+                $result = $this->gateway->createPayment(new CreatePaymentData(
+                    idempotenceKey: $payment->provider_idempotency_key,
+                    amountMinor: $order->amount_minor,
+                    currency: $order->currency,
+                    description: trans_message('billing.renewal.manual_payment_description'),
+                    metadata: [
+                        'order_id' => $order->public_id,
+                        'organization_id' => $order->organization_id,
+                        'manual_payment_key' => $payment->provider_idempotency_key,
+                    ],
+                    savePaymentMethod: false,
+                    customerEmail: $user->email,
+                ));
+            } catch (Throwable $exception) {
+                DB::transaction(function () use ($payment): void {
+                    CommercialPayment::query()
+                        ->whereKey($payment->getKey())
+                        ->whereIn('provider_status', ['created', 'unknown'])
+                        ->update([
+                            'provider_status' => 'unknown',
+                            'reconciliation_required' => true,
+                            'attempted_at' => now(),
+                        ]);
+                }, 3);
+
+                throw $exception;
+            }
 
             DB::transaction(function () use ($payment, $result): void {
                 $current = CommercialPayment::query()->whereKey($payment->getKey())->lockForUpdate()->firstOrFail();
@@ -158,5 +200,14 @@ final class CommercialManualPaymentService
             'test_mode' => PaymentProviderMode::configured()->testMode(),
             '_created' => $created,
         ];
+    }
+
+    private function usableConfirmationUrl(?string $url): bool
+    {
+        if ($url === null || filter_var($url, FILTER_VALIDATE_URL) === false) {
+            return false;
+        }
+
+        return in_array(strtolower((string) parse_url($url, PHP_URL_SCHEME)), ['http', 'https'], true);
     }
 }

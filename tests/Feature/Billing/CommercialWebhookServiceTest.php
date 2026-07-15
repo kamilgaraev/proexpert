@@ -412,6 +412,43 @@ class CommercialWebhookServiceTest extends TestCase
         $this->assertSame(1, Notification::query()->count());
     }
 
+    public function test_second_legacy_payment_success_after_renewal_is_stale_and_does_not_repeat_activation(): void
+    {
+        [$cycle, $targetEnd] = $this->configureRenewalCycle(now()->subDay());
+        $secondPayment = CommercialPayment::query()->create([
+            'commercial_order_id' => $this->order->id,
+            'commercial_renewal_cycle_id' => $cycle->id,
+            'role' => 'renewal',
+            'attempt_number' => 2,
+            'provider' => 'yookassa',
+            'provider_payment_id' => 'payment-id-2',
+            'provider_status' => 'pending',
+            'amount_minor' => 790000,
+            'currency' => 'RUB',
+            'provider_idempotency_key' => '33333333-3333-4333-8333-333333333333',
+            'payment_method_saved' => false,
+            'refunded_amount_minor' => 0,
+        ]);
+        $service = app(CommercialWebhookService::class);
+        $this->gateway->payment = $this->paymentResult(saved: false);
+
+        $this->assertSame('processed', $service->process(
+            $this->notification('payment.succeeded', 'payment-id', 'succeeded'),
+            '185.71.76.1',
+        ));
+        $this->gateway->payment = $this->paymentResult(saved: false, id: 'payment-id-2');
+
+        $this->assertSame('stale', $service->process(
+            $this->notification('payment.succeeded', 'payment-id-2', 'succeeded'),
+            '185.71.76.1',
+        ));
+        $this->assertSame('paid', $cycle->fresh()->status);
+        $this->assertSame($targetEnd->getTimestamp(), $this->account->fresh()->current_period_end_at->getTimestamp());
+        $this->assertSame('pending', $secondPayment->fresh()->provider_status);
+        $this->assertSame(1, OrganizationPackageSubscription::query()->count());
+        $this->assertSame(1, Notification::query()->count());
+    }
+
     public function test_full_suite_renewal_activates_immutable_order_snapshot_only(): void
     {
         [$cycle] = $this->configureRenewalCycle(now()->subDay());
