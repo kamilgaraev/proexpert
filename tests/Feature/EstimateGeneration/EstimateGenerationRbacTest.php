@@ -133,6 +133,7 @@ class EstimateGenerationRbacTest extends TestCase
     public function test_estimate_generation_roles_are_explicit_and_viewer_roles_cannot_apply(): void
     {
         $root = dirname(__DIR__, 3).DIRECTORY_SEPARATOR.'config'.DIRECTORY_SEPARATOR.'RoleDefinitions';
+        $organizationOwner = json_decode((string) file_get_contents($root.'/lk/organization_owner.json'), true, 512, JSON_THROW_ON_ERROR);
         $organizationAdmin = json_decode((string) file_get_contents($root.'/lk/organization_admin.json'), true, 512, JSON_THROW_ON_ERROR);
         $projectAdmin = json_decode((string) file_get_contents($root.'/project/parent_administrator.json'), true, 512, JSON_THROW_ON_ERROR);
 
@@ -147,6 +148,7 @@ class EstimateGenerationRbacTest extends TestCase
             'estimate_generation.apply',
         ];
 
+        $this->assertSame(['*'], $organizationOwner['module_permissions']['estimate-generation']);
         $this->assertSame($expected, $organizationAdmin['module_permissions']['estimate-generation']);
         $this->assertSame($expected, $projectAdmin['module_permissions']['estimate-generation']);
 

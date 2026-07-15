@@ -61,5 +61,4 @@ app/Console/Commands/Authorization/AssignOwnerRolesCommand.php
 *.xml
 rr
 rr.exe
-.rr.yaml
 .rr

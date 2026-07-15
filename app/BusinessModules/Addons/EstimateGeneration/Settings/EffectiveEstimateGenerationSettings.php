@@ -40,7 +40,7 @@ final readonly class EffectiveEstimateGenerationSettings
             'idempotency_key' => 'runtime-validation',
             ...array_diff_key($snapshot, ['schema_version' => true]),
         ])->snapshot();
-        if ($validated !== $snapshot) {
+        if (! hash_equals($hash, SettingsSnapshotHash::calculate($validated))) {
             throw new DomainException('estimate_generation_effective_settings_invalid');
         }
 
@@ -81,7 +81,14 @@ final readonly class EffectiveEstimateGenerationSettings
 
     public function allowsFormat(string $extension): bool
     {
-        return in_array(strtolower($extension), $this->snapshot['enabled_formats'], true);
+        $extension = strtolower($extension);
+        $configuredFormat = match ($extension) {
+            'xls' => 'xlsx',
+            'tif' => 'tiff',
+            default => $extension,
+        };
+
+        return in_array($configuredFormat, $this->snapshot['enabled_formats'], true);
     }
 
     public function maxFiles(): int

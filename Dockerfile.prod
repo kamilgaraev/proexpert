@@ -16,8 +16,6 @@ RUN apk add --no-cache autoconf automake build-base curl libtool pcre2-dev pytho
 FROM php:8.2-cli-alpine@sha256:4b5ef6e3127938834568a16a2f2861e531344a8bd89023822f32029dbedd7136
 
 ARG LIBREDWG_VERSION=0.13.4
-ARG MOST_RELEASE_SHA
-LABEL org.opencontainers.image.revision="${MOST_RELEASE_SHA}"
 
 # Аргументы сборки
 ARG APP_DIR=/var/www/html
@@ -100,6 +98,9 @@ RUN npm ci --omit=dev --ignore-scripts
 # Копируем исходный код приложения после установки зависимостей.
 COPY . ${APP_DIR}
 
+ARG MOST_RELEASE_SHA
+LABEL org.opencontainers.image.revision="${MOST_RELEASE_SHA}"
+
 RUN test "$(printf '%s' "${MOST_RELEASE_SHA}" | wc -c)" -eq 40 \
     && mkdir -p /etc/most \
     && printf '{"sha":"%s"}\n' "${MOST_RELEASE_SHA}" > /etc/most/release.json \
@@ -146,4 +147,4 @@ USER www-data
 RUN php artisan view:cache
 
 # По умолчанию запускаем Octane
-CMD ["php", "artisan", "octane:start", "--server=roadrunner", "--host=0.0.0.0", "--port=8000"]
+CMD ["php", "artisan", "octane:start", "--server=roadrunner", "--host=0.0.0.0", "--port=8000", "--rr-config=/var/www/html/.rr.yaml"]

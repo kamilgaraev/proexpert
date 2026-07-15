@@ -15,6 +15,10 @@ return new class extends Migration
 
     private const FUNCTION = 'eg_session_payload_dual_write_v1';
 
+    private const REVIEW_TRIGGER = 'eg_review_summary_source_guard_trg';
+
+    private const REVIEW_FUNCTION = 'eg_review_summary_source_guard';
+
     public function up(): void
     {
         $this->convert('json', 'jsonb');
@@ -91,11 +95,13 @@ SQL);
             }
             DB::statement('DROP TRIGGER IF EXISTS '.self::TRIGGER.' ON estimate_generation_sessions');
             DB::statement('DROP FUNCTION IF EXISTS '.self::FUNCTION.'()');
+            $this->dropReviewSummaryTrigger();
             foreach (self::COLUMNS as $column) {
                 DB::statement("ALTER TABLE estimate_generation_sessions RENAME COLUMN {$column} TO {$column}__rollout_old");
                 DB::statement("ALTER TABLE estimate_generation_sessions RENAME COLUMN {$column}__{$targetType}_shadow TO {$column}");
             }
             DB::statement('ALTER TABLE estimate_generation_sessions ALTER COLUMN input_payload SET NOT NULL');
+            $this->createReviewSummaryTrigger();
         });
         $this->cleanupOldColumns();
     }
@@ -111,8 +117,20 @@ SQL);
         DB::transaction(function (): void {
             DB::statement("SET LOCAL statement_timeout = '10s'");
             DB::statement("SET LOCAL lock_timeout = '2s'");
+            $this->dropReviewSummaryTrigger();
             DB::statement('ALTER TABLE estimate_generation_sessions DROP COLUMN input_payload__rollout_old, DROP COLUMN analysis_payload__rollout_old, DROP COLUMN draft_payload__rollout_old, DROP COLUMN problem_flags__rollout_old');
+            $this->createReviewSummaryTrigger();
         });
+    }
+
+    private function dropReviewSummaryTrigger(): void
+    {
+        DB::statement('DROP TRIGGER IF EXISTS '.self::REVIEW_TRIGGER.' ON estimate_generation_sessions');
+    }
+
+    private function createReviewSummaryTrigger(): void
+    {
+        DB::statement('CREATE TRIGGER '.self::REVIEW_TRIGGER.' BEFORE UPDATE OF draft_payload ON estimate_generation_sessions FOR EACH ROW EXECUTE FUNCTION '.self::REVIEW_FUNCTION.'()');
     }
 
     /** @return array<string, string> */

@@ -41,13 +41,17 @@ final readonly class SessionSnapshotData
     /** @return array<string, mixed> */
     public function toArray(): array
     {
+        $objectInput = [
+            ...$this->objectInput,
+            'parameters' => (object) ($this->objectInput['parameters'] ?? []),
+        ];
         $base = [
             'id' => $this->id,
             'status' => $this->status->value,
             'processing_stage' => $this->processingStage,
             'processing_progress' => $this->processingProgress,
             'state_version' => $this->stateVersion,
-            'object_input' => $this->objectInput,
+            'object_input' => $objectInput,
             'available_actions' => $this->availableActions,
             'blocking_issues' => $this->blockingIssues,
             'warnings' => $this->warnings,
@@ -71,7 +75,7 @@ final readonly class SessionSnapshotData
             'processing_stage' => $this->processingStage,
             'processing_progress' => $this->processingProgress,
             'state_version' => $this->stateVersion,
-            'object_input' => $this->objectInput,
+            'object_input' => $objectInput,
             'operational_version' => $this->operationalVersion,
             'available_actions' => $this->availableActions,
             'blocking_issues' => $this->blockingIssues,

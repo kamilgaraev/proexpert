@@ -11,6 +11,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        Schema::table('estimate_generation_sessions', function (Blueprint $table): void {
+            $table->unique(['id', 'organization_id'], 'eg_sessions_organization_scope_uq');
+        });
+
         Schema::create('estimate_generation_ai_budget_reservations', function (Blueprint $table): void {
             $table->uuid('reservation_id')->primary();
             $table->uuid('attempt_id')->unique();
@@ -42,7 +46,7 @@ return new class extends Migration
         DB::statement("ALTER TABLE estimate_generation_ai_budget_reservations ADD CONSTRAINT eg_budget_reservation_status_ck CHECK (status IN ('reserved','settled'))");
         DB::statement('ALTER TABLE estimate_generation_ai_budget_reservations ADD CONSTRAINT eg_budget_reservation_amount_ck CHECK (reserved_amount >= 0 AND actual_amount >= 0 AND (actual_amount IS NULL OR actual_amount <= reserved_amount))');
         DB::statement("ALTER TABLE estimate_generation_ai_budget_reservations ADD CONSTRAINT eg_budget_reservation_state_ck CHECK ((status = 'reserved' AND actual_amount IS NULL AND settled_at IS NULL) OR (status = 'settled' AND actual_amount IS NOT NULL AND settled_at IS NOT NULL))");
-        DB::statement("ALTER TABLE estimate_generation_ai_budget_reservations ADD CONSTRAINT eg_budget_reservation_price_ck CHECK (jsonb_typeof(price_snapshot) = 'object' AND price_snapshot ?& ARRAY['currency','version','effective_at'])");
+        DB::unprepared("ALTER TABLE estimate_generation_ai_budget_reservations ADD CONSTRAINT eg_budget_reservation_price_ck CHECK (jsonb_typeof(price_snapshot) = 'object' AND price_snapshot ?& ARRAY['currency','version','effective_at'])");
         DB::unprepared(<<<'SQL'
 CREATE FUNCTION eg_reserve_ai_budget(
     p_attempt uuid,
@@ -127,5 +131,8 @@ SQL);
             DB::statement('DROP FUNCTION IF EXISTS eg_reserve_ai_budget(uuid, bigint, bigint, bigint, bigint, numeric, text, jsonb)');
         }
         Schema::dropIfExists('estimate_generation_ai_budget_reservations');
+        Schema::table('estimate_generation_sessions', function (Blueprint $table): void {
+            $table->dropUnique('eg_sessions_organization_scope_uq');
+        });
     }
 };

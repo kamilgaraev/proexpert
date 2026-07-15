@@ -41,6 +41,7 @@ final class SessionOperationalSnapshotDataTest extends TestCase
             failureSummary: ['active' => 1, 'categories' => ['recoverable' => 1]],
             appliedEstimateId: null,
             updatedAt: '2026-07-11T12:00:00+00:00',
+            objectInput: ['parameters' => []],
         );
 
         $payload = $snapshot->toArray();
@@ -50,6 +51,7 @@ final class SessionOperationalSnapshotDataTest extends TestCase
         self::assertSame('123456789012345678.12345678', $payload['estimate_summary']['total_cost']);
         self::assertSame('0.12345678', $payload['usage_summary']['cost_amount']);
         self::assertSame(4000000, $payload['estimate_summary']['items']);
+        self::assertSame('{}', json_encode($payload['object_input']['parameters'], JSON_THROW_ON_ERROR));
         self::assertArrayNotHasKey('lease_age_seconds', $payload['current_checkpoint']);
         self::assertSame([], array_intersect(
             ['pages', 'facts', 'text', 'prompt', 'payload', 'storage_path', 'provider_secret'],

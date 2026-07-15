@@ -10,6 +10,8 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
+use RuntimeException;
+use Throwable;
 
 class SendNotificationJob implements ShouldQueue
 {
@@ -18,7 +20,8 @@ class SendNotificationJob implements ShouldQueue
     public Notification $notification;
 
     public int $tries;
-    public int $retryAfter;
+
+    public int $backoff;
 
     public function __construct(Notification $notification)
     {
@@ -26,7 +29,7 @@ class SendNotificationJob implements ShouldQueue
 
         $priorityConfig = config("notifications.priorities.{$notification->priority}");
         $this->tries = $priorityConfig['retry_times'] ?? 3;
-        $this->retryAfter = $priorityConfig['retry_after'] ?? 300;
+        $this->backoff = $priorityConfig['retry_after'] ?? 300;
     }
 
     public function handle(NotificationService $notificationService): void
@@ -37,9 +40,20 @@ class SendNotificationJob implements ShouldQueue
             'attempt' => $this->attempts(),
         ]);
 
+        $firstFailure = null;
+        $deliveryStatus = $this->notification->delivery_status ?? [];
+
         foreach ($this->notification->channels as $channel) {
+            if (($deliveryStatus[$channel] ?? null) === 'sent') {
+                continue;
+            }
+
             try {
                 $success = $notificationService->sendViaChannel($this->notification, $channel);
+
+                if (! $success) {
+                    throw new RuntimeException("Notification channel {$channel} reported a failed delivery");
+                }
 
                 Log::info('Channel delivery attempt', [
                     'notification_id' => $this->notification->id,
@@ -48,7 +62,7 @@ class SendNotificationJob implements ShouldQueue
                     'attempt' => $this->attempts(),
                 ]);
 
-            } catch (\Exception $e) {
+            } catch (Throwable $e) {
                 Log::error('Channel delivery exception', [
                     'notification_id' => $this->notification->id,
                     'channel' => $channel,
@@ -56,10 +70,12 @@ class SendNotificationJob implements ShouldQueue
                     'attempt' => $this->attempts(),
                 ]);
 
-                if ($this->attempts() >= $this->tries) {
-                    $this->fail($e);
-                }
+                $firstFailure ??= $e;
             }
+        }
+
+        if ($firstFailure !== null) {
+            throw $firstFailure;
         }
     }
 
@@ -71,10 +87,4 @@ class SendNotificationJob implements ShouldQueue
             'attempts' => $this->attempts(),
         ]);
     }
-
-    public function retryUntil(): \DateTime
-    {
-        return now()->addHours(24);
-    }
 }
-

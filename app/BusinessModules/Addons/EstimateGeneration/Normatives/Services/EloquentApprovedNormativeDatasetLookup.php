@@ -10,9 +10,18 @@ use App\BusinessModules\Addons\EstimateGeneration\Normatives\Models\EstimateData
 
 final class EloquentApprovedNormativeDatasetLookup implements ApprovedNormativeDatasetLookup
 {
-    public function approved(string $version): bool
+    public function latestApprovedVersion(): ?string
     {
-        return EstimateDatasetVersion::query()->where('source_type', EstimateSourceType::FSNB_2022->value)
-            ->where('status', EstimateImportStatus::PARSED->value)->where('version_key', $version)->exists();
+        $version = EstimateDatasetVersion::query()
+            ->where('source_type', EstimateSourceType::FSNB_2022->value)
+            ->where('status', EstimateImportStatus::PARSED->value)
+            ->whereNotNull('finished_at')
+            ->where('rows_imported', '>', 0)
+            ->where('errors_count', 0)
+            ->orderByDesc('finished_at')
+            ->orderByDesc('id')
+            ->value('version_key');
+
+        return is_string($version) && $version !== '' ? $version : null;
     }
 }

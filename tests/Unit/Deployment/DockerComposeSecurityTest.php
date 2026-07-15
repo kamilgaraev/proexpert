@@ -18,6 +18,16 @@ final class DockerComposeSecurityTest extends TestCase
         self::assertStringNotContainsString('"8000:8000"', $compose);
     }
 
+    public function test_reverb_port_is_private_and_the_container_has_a_healthcheck(): void
+    {
+        $compose = file_get_contents(dirname(__DIR__, 3).'/docker-compose.yml');
+
+        self::assertIsString($compose);
+        self::assertStringContainsString('"127.0.0.1:8080:8080"', $compose);
+        self::assertStringNotContainsString('      - "8080:8080"', $compose);
+        self::assertStringContainsString('@fsockopen', $compose);
+    }
+
     public function test_production_docker_context_keeps_filament_vite_build_assets(): void
     {
         $rootPath = dirname(__DIR__, 3);
@@ -60,6 +70,25 @@ final class DockerComposeSecurityTest extends TestCase
         );
         self::assertStringContainsString('upsert_env YOOKASSA_MODE disabled', $workflow);
         self::assertStringNotContainsString('test_OH_', $workflow);
+    }
+
+    public function test_backend_image_reuses_runtime_layers_between_releases(): void
+    {
+        $rootPath = dirname(__DIR__, 3);
+        $dockerfile = file_get_contents($rootPath.'/Dockerfile.prod');
+        $workflow = file_get_contents($rootPath.'/.github/workflows/deploy-backend.yml');
+
+        self::assertIsString($dockerfile);
+        self::assertIsString($workflow);
+
+        $releaseArgument = strpos($dockerfile, 'ARG MOST_RELEASE_SHA');
+        $runtimeDependencies = strpos($dockerfile, 'RUN npm ci --omit=dev --ignore-scripts');
+
+        self::assertIsInt($releaseArgument);
+        self::assertIsInt($runtimeDependencies);
+        self::assertGreaterThan($runtimeDependencies, $releaseArgument);
+        self::assertStringContainsString("cache-from: |\n            type=gha,scope=most-backend-prod\n            type=gha", $workflow);
+        self::assertStringContainsString('cache-to: type=gha,scope=most-backend-prod,mode=max', $workflow);
     }
 
     public function test_monitoring_stack_deploys_container_alerting_services(): void

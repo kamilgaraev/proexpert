@@ -15,25 +15,31 @@ final class NormativeDatasetPinPolicyTest extends TestCase
 {
     public function test_old_request_gets_server_policy_version_and_immutable_clock_date(): void
     {
-        $policy = new NormativeDatasetPinPolicy($this->lookup(true), $this->clock('2026-07-12'), 'approved-v1');
+        $policy = new NormativeDatasetPinPolicy($this->lookup('approved-v1'), $this->clock('2026-07-12'));
         self::assertSame(['normative_dataset_version' => 'approved-v1', 'business_date' => '2026-07-12'], $policy->resolve(null));
     }
 
     public function test_explicit_mismatch_and_unapproved_policy_fail_closed(): void
     {
         $this->expectException(NormativeContextPinUnavailable::class);
-        (new NormativeDatasetPinPolicy($this->lookup(true), $this->clock('2026-07-12'), 'approved-v1'))->resolve('other-v1');
+        (new NormativeDatasetPinPolicy($this->lookup('approved-v1'), $this->clock('2026-07-12')))->resolve('other-v1');
     }
 
-    private function lookup(bool $approved): ApprovedNormativeDatasetLookup
+    public function test_missing_approved_dataset_fails_closed(): void
     {
-        return new class($approved) implements ApprovedNormativeDatasetLookup
-        {
-            public function __construct(private bool $approved) {}
+        $this->expectException(NormativeContextPinUnavailable::class);
+        (new NormativeDatasetPinPolicy($this->lookup(null), $this->clock('2026-07-12')))->resolve(null);
+    }
 
-            public function approved(string $version): bool
+    private function lookup(?string $latestVersion): ApprovedNormativeDatasetLookup
+    {
+        return new class($latestVersion) implements ApprovedNormativeDatasetLookup
+        {
+            public function __construct(private ?string $latestVersion) {}
+
+            public function latestApprovedVersion(): ?string
             {
-                return $this->approved;
+                return $this->latestVersion;
             }
         };
     }

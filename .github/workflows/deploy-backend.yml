@@ -66,8 +66,10 @@ jobs:
             MOST_RELEASE_SHA=${{ github.sha }}
           tags: |
             ${{ steps.meta.outputs.image_repo }}:${{ steps.meta.outputs.release_sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: |
+            type=gha,scope=most-backend-prod
+            type=gha
+          cache-to: type=gha,scope=most-backend-prod,mode=max
 
       - name: Deploy exact image digest
         uses: appleboy/ssh-action@v1.0.3
@@ -89,9 +91,11 @@ jobs:
             IMAGE_DIGEST="${{ steps.build.outputs.digest }}"
             IMAGE_REF="${IMAGE_REPO}@${IMAGE_DIGEST}"
             BACKEND_SERVICES="api websockets horizon worker-heavy worker-ifc scheduler"
+            REVERB_APP_KEY="${{ secrets.REVERB_APP_KEY }}"
 
             [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
             [[ "${IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+            [[ "${REVERB_APP_KEY}" =~ ^[0-9a-f]{64}$ ]]
 
             cd /var/www/prohelper
             git fetch origin "${RELEASE_SHA}"
@@ -143,12 +147,28 @@ jobs:
             else
               printf 'SENTRY_RELEASE=prohelper@%s\n' "${RELEASE_SHA}" >> .env
             fi
+            if grep -q '^REVERB_APP_KEY=' .env; then
+              sed -i "s|^REVERB_APP_KEY=.*|REVERB_APP_KEY=${REVERB_APP_KEY}|" .env
+            else
+              printf 'REVERB_APP_KEY=%s\n' "${REVERB_APP_KEY}" >> .env
+            fi
+
+            SUPERVISOR_STATUS="$(supervisorctl status 2>/dev/null || true)"
+            if grep -Eq '^laravel-worker(_[0-9]+|:)' <<< "${SUPERVISOR_STATUS}"; then
+              supervisorctl stop 'laravel-worker:*'
+            fi
+
+            if pgrep -af '^php /var/www/prohelper/artisan queue:work( |$)' >/dev/null; then
+              echo 'Legacy Laravel queue workers are still running; refusing dual queue ownership'
+              exit 1
+            fi
 
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose run --rm --no-deps api php artisan migrate:safe --force
             MOST_IMAGE_REF="${IMAGE_REF}" docker compose up -d --force-recreate --remove-orphans ${BACKEND_SERVICES}
 
             for attempt in $(seq 1 24); do
-              if docker compose exec -T api curl -fsS http://localhost:8000/up >/dev/null; then
+              if docker compose exec -T api curl -fsS http://localhost:8000/up >/dev/null \
+                && docker compose exec -T websockets php -r 'exit(@fsockopen("127.0.0.1", 8080) ? 0 : 1);'; then
                 echo "Backend deployment successful: ${IMAGE_REF}"
                 exit 0
               fi
@@ -156,4 +176,5 @@ jobs:
             done
 
             docker compose logs --tail=200 api
+            docker compose logs --tail=200 websockets
             exit 1

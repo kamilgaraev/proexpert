@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Log;
  */
 class PermissionResolver
 {
-    private const CACHE_SCHEMA_VERSION = 'v2';
+    private const CACHE_SCHEMA_VERSION = 'v3';
 
     protected RoleScanner $roleScanner;
 
@@ -294,7 +294,7 @@ class PermissionResolver
     public function getSystemPermissions(UserRoleAssignment $assignment): array
     {
         $organizationId = $this->extractOrganizationId($assignment);
-        $cacheKey = "system_perms_{$assignment->role_type}_{$assignment->role_slug}_".($organizationId ?? 'global');
+        $cacheKey = 'system_perms_'.self::CACHE_SCHEMA_VERSION."_{$assignment->role_type}_{$assignment->role_slug}_".($organizationId ?? 'global');
 
         return Cache::remember($cacheKey, 600, function () use ($assignment, $organizationId) {
             $perms = [];
@@ -321,7 +321,7 @@ class PermissionResolver
     public function getModulePermissions(UserRoleAssignment $assignment): array
     {
         $organizationId = $this->extractOrganizationId($assignment);
-        $cacheKey = "module_perms_{$assignment->role_type}_{$assignment->role_slug}_".($organizationId ?? 'global');
+        $cacheKey = 'module_perms_'.self::CACHE_SCHEMA_VERSION."_{$assignment->role_type}_{$assignment->role_slug}_".($organizationId ?? 'global');
 
         return Cache::remember($cacheKey, 600, function () use ($assignment, $organizationId) {
             // 1. Пробуем из файлов
@@ -596,6 +596,8 @@ class PermissionResolver
             Cache::forget("custom_role_{$roleSlug}_{$scopeKey}");
             Cache::forget("system_perms_{$roleType}_{$roleSlug}_{$scopeKey}");
             Cache::forget("module_perms_{$roleType}_{$roleSlug}_{$scopeKey}");
+            Cache::forget('system_perms_'.self::CACHE_SCHEMA_VERSION."_{$roleType}_{$roleSlug}_{$scopeKey}");
+            Cache::forget('module_perms_'.self::CACHE_SCHEMA_VERSION."_{$roleType}_{$roleSlug}_{$scopeKey}");
         }
 
         foreach ($userIds as $userId) {
@@ -649,6 +651,7 @@ class PermissionResolver
             'act_reports' => 'act-reporting',
             'act-reports' => 'act-reporting',
             'ai_estimates' => 'ai-estimates',
+            'estimate_generation' => 'ai-estimates',
             'time_tracking' => 'time-tracking',
             'report_templates' => 'report-templates',
             'warehouse' => 'basic-warehouse',
@@ -689,6 +692,7 @@ class PermissionResolver
             'workforce-management' => 'workforce',
             'one-c-basic-exchange' => 'one_c_exchange',
             'contractor-portal' => 'contractor_marketplace',
+            'ai-estimates' => 'estimate_generation',
         ];
 
         $variants = [

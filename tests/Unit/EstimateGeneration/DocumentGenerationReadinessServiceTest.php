@@ -5,14 +5,49 @@ declare(strict_types=1);
 namespace Tests\Unit\EstimateGeneration;
 
 use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationDocument;
+use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSession;
 use App\BusinessModules\Addons\EstimateGeneration\Services\Ocr\DocumentGenerationReadinessService;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveEstimateGenerationSettings;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsOperationStore;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsPair;
+use App\BusinessModules\Addons\EstimateGeneration\Settings\EffectiveSettingsResolver;
 use App\BusinessModules\Addons\EstimateGeneration\Settings\SettingsSnapshotHash;
+use DomainException;
 use Illuminate\Support\Collection;
 use PHPUnit\Framework\TestCase;
 
 final class DocumentGenerationReadinessServiceTest extends TestCase
 {
+    public function test_empty_session_does_not_pin_ai_settings_before_documents_are_uploaded(): void
+    {
+        $store = new class implements EffectiveSettingsOperationStore
+        {
+            public function pin(string $correlationId, int $organizationId, int $sessionId): EffectiveSettingsPair
+            {
+                throw new DomainException('AI settings must not be pinned for an empty session.');
+            }
+        };
+        $session = new EstimateGenerationSession;
+        $session->forceFill([
+            'id' => 41,
+            'organization_id' => 7,
+            'state_version' => 0,
+        ]);
+        $session->exists = true;
+        $session->setRelation('documents', collect());
+
+        $result = (new DocumentGenerationReadinessService(new EffectiveSettingsResolver($store)))
+            ->evaluate($session);
+
+        self::assertFalse($result['summary']['has_documents']);
+        self::assertSame(0, $result['summary']['total']);
+        self::assertFalse($result['can_analyze']);
+        self::assertFalse($result['can_generate']);
+        self::assertFalse($result['summary']['can_analyze']);
+        self::assertFalse($result['summary']['can_generate']);
+        self::assertSame('{}', json_encode($result['summary']['statuses'], JSON_THROW_ON_ERROR));
+    }
+
     public function test_threshold_and_toggle_change_final_document_readiness_decision(): void
     {
         $document = $this->qualitySignalDocument([

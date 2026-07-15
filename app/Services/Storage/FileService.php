@@ -187,11 +187,11 @@ class FileService
 
     protected function s3Client(): \Aws\S3\S3ClientInterface
     {
-        $adapter = $this->disk()->getAdapter();
-        if (! method_exists($adapter, 'getClient')) {
+        $disk = $this->disk();
+        if (! method_exists($disk, 'getClient')) {
             throw new \RuntimeException('s3_conditional_put_unavailable');
         }
-        $client = $adapter->getClient();
+        $client = $disk->getClient();
         if (! $client instanceof \Aws\S3\S3ClientInterface) {
             throw new \RuntimeException('s3_conditional_put_unavailable');
         }
@@ -245,6 +245,19 @@ class FileService
 
             throw new \RuntimeException('s3_object_tagging_failed', 0, $exception);
         }
+    }
+
+    private function safeStorageFailureCode(\Throwable $exception): string
+    {
+        return in_array($exception->getMessage(), [
+            's3_bucket_versioning_required',
+            's3_conditional_put_unavailable',
+            's3_object_head_invalid',
+            's3_object_tagging_failed',
+            's3_object_tagging_unavailable',
+        ], true)
+            ? $exception->getMessage()
+            : 's3_upload_failed';
     }
 
     /**
@@ -440,6 +453,7 @@ class FileService
                     'organization_id' => $org?->id,
                     'duration_ms' => $durationMs,
                     'exception_class' => get_class($e),
+                    'failure_code' => $this->safeStorageFailureCode($e),
                     'exception_message' => $privacyMode ? 'redacted' : $e->getMessage(),
                     'aws_error_code' => $e instanceof \Aws\Exception\AwsException ? $e->getAwsErrorCode() : null,
                     'trace' => $privacyMode ? 'redacted' : $e->getTraceAsString(),
@@ -449,6 +463,7 @@ class FileService
                     'path' => $logStoragePath,
                     'error' => $privacyMode ? 'redacted' : $e->getMessage(),
                     'exception_class' => get_class($e),
+                    'failure_code' => $this->safeStorageFailureCode($e),
                     'trace' => $privacyMode ? 'redacted' : $e->getTraceAsString(),
                 ]);
 

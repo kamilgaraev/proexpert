@@ -102,6 +102,43 @@ final class FileServicePrivacyTest extends TestCase
         self::assertStringContainsString('/tmp/ordinary-upload', $encoded);
     }
 
+    public function test_privacy_mode_logs_only_allowlisted_storage_failure_code(): void
+    {
+        $logging = $this->loggingSpy();
+        $disk = new class extends FilesystemAdapter
+        {
+            public function __construct() {}
+
+            public function getConfig(): array
+            {
+                return ['driver' => 's3', 'bucket' => 'private'];
+            }
+
+            public function put($path, $contents, $options = []): bool
+            {
+                throw new \RuntimeException('s3_object_tagging_failed');
+            }
+        };
+        $service = $this->service($logging, $disk);
+        $organization = new Organization();
+        $organization->id = 17;
+
+        $result = $service->upload(
+            UploadedFile::fake()->createWithContent('secret-plan.pdf', 'private-content'),
+            'estimate-generation/sessions/42/documents',
+            organization: $organization,
+            privacyMode: true,
+        );
+
+        self::assertFalse($result);
+        $failedUpload = collect($logging->contexts)
+            ->first(static fn (array $entry): bool => $entry[0] === 's3.upload.failed');
+
+        self::assertIsArray($failedUpload);
+        self::assertSame('s3_object_tagging_failed', $failedUpload[1]['failure_code'] ?? null);
+        self::assertSame('redacted', $failedUpload[1]['exception_message'] ?? null);
+    }
+
     private function service(LoggingService $logging, FilesystemAdapter $disk): FileService
     {
         return new class($logging, $disk) extends FileService
