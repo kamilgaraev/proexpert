@@ -37,6 +37,7 @@ return new class extends Migration
                 'ALTER TABLE notification_targets ADD CONSTRAINT notification_targets_interface_check '
                 ."CHECK (interface IN ('admin', 'lk', 'mobile', 'customer'))"
             );
+            DB::statement('LOCK TABLE notifications IN SHARE ROW EXCLUSIVE MODE');
         }
 
         DB::table('notifications')
@@ -49,26 +50,28 @@ return new class extends Migration
                 foreach ($notifications as $notification) {
                     $data = $notification->data;
 
-                    if (is_string($data)) {
-                        try {
-                            $data = json_decode($data, true, flags: JSON_THROW_ON_ERROR);
-                        } catch (\JsonException) {
-                            continue;
-                        }
+                    if (! is_string($data)) {
+                        continue;
                     }
 
-                    if (! is_array($data)) {
+                    try {
+                        $data = json_decode($data, false, flags: JSON_THROW_ON_ERROR);
+                    } catch (\JsonException) {
+                        continue;
+                    }
+
+                    if (! $data instanceof \stdClass) {
                         continue;
                     }
 
                     $interface = 'admin';
 
-                    if (array_key_exists('interface', $data)) {
-                        if (! is_string($data['interface'])) {
+                    if (property_exists($data, 'interface')) {
+                        if (! is_string($data->interface)) {
                             continue;
                         }
 
-                        $interface = $data['interface'];
+                        $interface = $data->interface;
                     }
 
                     if (! in_array($interface, self::INTERFACES, true)) {

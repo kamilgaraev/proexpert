@@ -45,6 +45,33 @@ final class NotificationTargetMigrationContractTest extends TestCase
     }
 
     #[Test]
+    public function migration_accepts_only_top_level_json_objects_for_legacy_targets(): void
+    {
+        $migration = $this->migrationSource();
+
+        self::assertStringContainsString('json_decode($data, false, flags: JSON_THROW_ON_ERROR)', $migration);
+        self::assertStringContainsString('if (! $data instanceof \stdClass)', $migration);
+        self::assertStringContainsString("property_exists(\$data, 'interface')", $migration);
+        self::assertStringContainsString('is_string($data->interface)', $migration);
+        self::assertStringNotContainsString('json_decode($data, true', $migration);
+        self::assertStringNotContainsString('is_array($data)', $migration);
+    }
+
+    #[Test]
+    public function migration_blocks_notification_writes_before_uuid_cursor_backfill(): void
+    {
+        $migration = $this->migrationSource();
+        $lock = "DB::statement('LOCK TABLE notifications IN SHARE ROW EXCLUSIVE MODE')";
+        $lockPosition = strpos($migration, $lock);
+        $backfillPosition = strpos($migration, 'chunkById(500');
+
+        self::assertNotFalse($lockPosition, 'PostgreSQL backfill must lock notification writes.');
+        self::assertNotFalse($backfillPosition, 'Batch backfill cursor is missing.');
+        self::assertLessThan($backfillPosition, $lockPosition, 'Write lock must be acquired before UUID cursor traversal.');
+        self::assertStringNotContainsString('$withinTransaction = false', $migration);
+    }
+
+    #[Test]
     public function notification_model_scope_filters_through_the_typed_target(): void
     {
         $model = (string) file_get_contents(
