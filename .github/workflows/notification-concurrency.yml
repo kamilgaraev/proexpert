@@ -88,7 +88,12 @@ jobs:
         run: composer install --no-interaction --prefer-dist --no-progress
 
       - name: Prepare database
-        run: php artisan migrate --force
+        run: |
+          php artisan migrate --force --path=database/migrations/0001_01_01_000000_create_users_table.php
+          php artisan migrate --force --path=database/migrations/2025_01_01_000010_create_organizations_table.php
+          php artisan migrate --force --path=database/migrations/2025_05_03_161553_add_fields_to_users_table.php
+          php artisan migrate --force --path=app/BusinessModules/Features/Notifications/migrations/2025_10_10_100001_extend_notifications_table.php
+          php artisan migrate --force --path=app/BusinessModules/Features/Notifications/migrations/2026_07_15_000001_create_notification_targets_table.php
 
       - name: Run notification concurrency contract
         run: php vendor/bin/phpunit tests/Feature/Notifications/NotificationPostgresConcurrencyTest.php
