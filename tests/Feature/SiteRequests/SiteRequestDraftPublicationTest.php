@@ -379,7 +379,8 @@ final class SiteRequestDraftPublicationTest extends TestCase
                 ?string $priority = 'normal',
                 ?array $channels = null,
                 ?int $organizationId = null,
-                string|array|null $requiredPermissions = null
+                string|array|null $requiredPermissions = null,
+                string|array|null $interfaces = null,
             ): Notification {
                 return Notification::query()->create([
                     'type' => $type,
