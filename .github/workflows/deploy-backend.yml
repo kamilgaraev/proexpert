@@ -71,12 +71,17 @@ jobs:
 
       - name: Deploy exact image digest
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          YOOKASSA_SHOP_ID: ${{ secrets.YOOKASSA_SHOP_ID }}
+          YOOKASSA_SECRET_KEY: ${{ secrets.YOOKASSA_SECRET_KEY }}
+          YOOKASSA_TEST_ORGANIZATION_IDS: ${{ secrets.YOOKASSA_TEST_ORGANIZATION_IDS }}
         with:
           host: 89.169.44.117
           username: root
           key: ${{ secrets.DEPLOY }}
           timeout: 15m
           command_timeout: 15m
+          envs: YOOKASSA_SHOP_ID,YOOKASSA_SECRET_KEY,YOOKASSA_TEST_ORGANIZATION_IDS
           script: |
             set -euo pipefail
             RELEASE_SHA="${{ steps.meta.outputs.release_sha }}"
@@ -92,6 +97,33 @@ jobs:
             git fetch origin "${RELEASE_SHA}"
             git reset --hard "${RELEASE_SHA}"
             test "$(git rev-parse HEAD)" = "${RELEASE_SHA}"
+
+            upsert_env() {
+              local key="$1"
+              local value="$2"
+              local temporary_file
+              temporary_file="$(mktemp)"
+              awk -v key="${key}" 'index($0, key "=") != 1 { print }' .env > "${temporary_file}"
+              printf '%s=%s\n' "${key}" "${value}" >> "${temporary_file}"
+              cat "${temporary_file}" > .env
+              rm -f "${temporary_file}"
+            }
+
+            if [ -n "${YOOKASSA_SHOP_ID:-}" ] && [ -n "${YOOKASSA_SECRET_KEY:-}" ]; then
+              upsert_env YOOKASSA_MODE yookassa_test
+              upsert_env YOOKASSA_SHOP_ID "${YOOKASSA_SHOP_ID}"
+              upsert_env YOOKASSA_SECRET_KEY "${YOOKASSA_SECRET_KEY}"
+              upsert_env YOOKASSA_TEST_ORGANIZATION_IDS "${YOOKASSA_TEST_ORGANIZATION_IDS:-}"
+              upsert_env YOOKASSA_RETURN_URL 'https://1мост.рф/dashboard/billing'
+              upsert_env YOOKASSA_WEBHOOK_URL 'https://1мост.рф/api/v1/webhooks/yookassa'
+              upsert_env YOOKASSA_RECEIPT_ENABLED false
+              upsert_env YOOKASSA_LIVE_ENABLED false
+              upsert_env YOOKASSA_LIVE_LEGAL_ENTITY_CONFIRMED false
+              upsert_env YOOKASSA_LIVE_CONTRACT_CONFIRMED false
+              upsert_env YOOKASSA_LIVE_RECEIPT_SETTINGS_CONFIRMED false
+            else
+              upsert_env YOOKASSA_MODE disabled
+            fi
 
             echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
             docker pull "${IMAGE_REF}"
