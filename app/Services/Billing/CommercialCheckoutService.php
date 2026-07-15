@@ -9,6 +9,7 @@ use App\Enums\Billing\CommercialOrderStatus;
 use App\Enums\Billing\PaymentProviderMode;
 use App\Exceptions\Billing\CommercialCheckoutAmountException;
 use App\Exceptions\Billing\CommercialCheckoutConflictException;
+use App\Interfaces\Billing\BalanceServiceInterface;
 use App\Interfaces\Billing\PaymentGatewayInterface;
 use App\Models\CommercialOrder;
 use App\Models\CommercialPayment;
@@ -29,6 +30,8 @@ class CommercialCheckoutService
         private readonly PaymentGatewayInterface $gateway,
         private readonly CommercialPaymentProviderPolicy $providerPolicy,
         private readonly CommercialSelfServiceGuard $selfServiceGuard,
+        private readonly BalanceServiceInterface $balanceService,
+        private readonly CommercialWebhookService $webhookService,
     ) {}
 
     public function checkout(Organization $organization, User $user, array $input): array
@@ -41,7 +44,10 @@ class CommercialCheckoutService
                 ->first();
 
             $this->selfServiceGuard->assertCanMutate($account);
-            $this->providerPolicy->assertCanCharge((int) $organization->getKey());
+            $useBalance = (bool) $input['use_balance'];
+            if (! $useBalance) {
+                $this->providerPolicy->assertCanCharge((int) $organization->getKey());
+            }
 
             if ($account?->status->value === 'grace') {
                 throw new CommercialCheckoutConflictException('Commercial contour cannot change during grace.');
@@ -112,20 +118,34 @@ class CommercialCheckoutService
                 'client_idempotency_key' => (string) $input['client_idempotency_key'],
             ]);
             $payment = $order->payments()->create([
-                'provider' => 'yookassa',
+                'provider' => $useBalance ? 'balance' : 'yookassa',
                 'role' => 'initial',
                 'attempt_number' => 1,
-                'provider_status' => 'created',
+                'provider_status' => $useBalance ? 'succeeded' : 'created',
                 'amount_minor' => $order->amount_minor,
                 'currency' => $order->currency,
                 'provider_idempotency_key' => (string) Str::uuid(),
                 'payment_method_saved' => false,
+                'terminal_at' => $useBalance ? now() : null,
             ]);
+
+            if ($useBalance) {
+                $this->balanceService->debitBalance(
+                    $organization,
+                    $order->amount_minor,
+                    trans_message('billing.checkout.balance_description'),
+                    [
+                        'type' => 'commercial_package_payment',
+                        'commercial_order_id' => $order->public_id,
+                    ],
+                );
+                $this->webhookService->settleBalancePayment($order, $payment);
+            }
 
             return [$order, $payment, true];
         }, 3);
 
-        if ($payment->provider_payment_id === null) {
+        if ($payment->provider === 'yookassa' && $payment->provider_payment_id === null) {
             $result = $this->gateway->createPayment(new CreatePaymentData(
                 idempotenceKey: $payment->provider_idempotency_key,
                 amountMinor: $order->amount_minor,
@@ -204,7 +224,8 @@ class CommercialCheckoutService
             || ! $sameCurrent
             || ($order->offer_type->value === 'full_suite') !== $requestedFullSuite
             || $order->quote_version !== (int) $input['quote_version']
-            || $order->auto_renew_consent !== (bool) $input['auto_renew_consent']) {
+            || $order->auto_renew_consent !== (bool) $input['auto_renew_consent']
+            || ($order->latestPayment?->provider === 'balance') !== (bool) $input['use_balance']) {
             throw new CommercialCheckoutConflictException('Idempotency key belongs to another checkout request.');
         }
     }
@@ -219,6 +240,7 @@ class CommercialCheckoutService
             'currency' => $order->currency,
             'confirmation_url' => $payment->confirmation_url,
             'payment_status' => $payment->provider_status,
+            'payment_source' => $payment->provider,
             'auto_renew_consent' => $order->auto_renew_consent,
             'test_mode' => PaymentProviderMode::configured()->testMode(),
         ];

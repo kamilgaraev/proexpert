@@ -866,6 +866,7 @@ class CommercialCheckoutControllerTest extends TestCase
             'quote_version' => 1,
             'client_idempotency_key' => '22222222-2222-4222-8222-222222222222',
             'auto_renew_consent' => true,
+            'use_balance' => false,
         ];
     }
 
