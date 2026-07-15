@@ -74,6 +74,32 @@ final class BuildSessionSnapshotTest extends TestCase
     }
 
     #[Test]
+    public function processing_documents_recommends_waiting_without_hiding_cancel(): void
+    {
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $this->makeSession(EstimateGenerationStatus::ProcessingDocuments),
+            permissions: ['estimate_generation.generate'],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+        );
+
+        self::assertSame(['cancel'], array_column($snapshot->availableActions, 'action'));
+        self::assertSame('wait_documents', $snapshot->nextAction);
+    }
+
+    #[Test]
+    public function terminal_service_action_is_not_recommended_as_navigation(): void
+    {
+        $snapshot = app(BuildSessionSnapshot::class)->handle(
+            session: $this->makeSession(EstimateGenerationStatus::Cancelled),
+            permissions: ['estimate_generation.generate'],
+            readinessSummary: ['blockers' => [], 'warnings' => []],
+        );
+
+        self::assertSame(['archive'], array_column($snapshot->availableActions, 'action'));
+        self::assertNull($snapshot->nextAction);
+    }
+
+    #[Test]
     public function empty_draft_does_not_expose_document_processing_action(): void
     {
         $snapshot = app(BuildSessionSnapshot::class)->handle(
