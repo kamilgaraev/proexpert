@@ -14,6 +14,7 @@ use App\Models\CommercialPayment;
 use App\Models\CommercialRenewalCycle;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
+use App\Modules\Core\AccessController;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Query\JoinClause;
@@ -40,6 +41,7 @@ final class CommercialRenewalService
         private readonly CommercialWebhookProcessor $webhookProcessor,
         private readonly CommercialPaymentProviderPolicy $providerPolicy,
         private readonly CommercialContourChangeCancellationService $contourChangeCancellation,
+        private readonly AccessController $accessController,
     ) {}
 
     public function process(CarbonInterface $at, int $limit = 100): array
@@ -49,7 +51,7 @@ final class CommercialRenewalService
         if (Schema::hasTable('notifications')) {
             $this->notifications->processRenewalLifecycle($now);
         }
-        $ids = OrganizationCommercialAccount::query()
+        $accounts = OrganizationCommercialAccount::query()
             ->from('organization_commercial_accounts as accounts')
             ->leftJoin('commercial_renewal_cycles as current_cycle', function (JoinClause $join): void {
                 $join->on('current_cycle.commercial_account_id', '=', 'accounts.id')
@@ -90,7 +92,7 @@ final class CommercialRenewalService
             ->orderBy('current_cycle.last_attempt_at')
             ->orderBy('accounts.id')
             ->limit(max(1, $limit))
-            ->pluck('accounts.id');
+            ->get(['accounts.id', 'accounts.organization_id']);
         $counts = [
             'processed' => 0,
             'created_cycles' => 0,
@@ -100,9 +102,11 @@ final class CommercialRenewalService
             'suspended' => 0,
         ];
 
-        foreach ($ids as $id) {
+        foreach ($accounts as $candidate) {
+            $id = (int) $candidate->id;
             try {
-                $phase = $this->prepare((int) $id, $now);
+                $phase = $this->prepare($id, $now);
+                $this->accessController->clearAccessCache((int) $candidate->organization_id);
                 $counts['processed']++;
                 foreach (['created_cycles', 'created_attempts', 'canceled_changes', 'suspended'] as $key) {
                     $counts[$key] += (int) ($phase[$key] ?? 0);

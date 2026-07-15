@@ -26,6 +26,7 @@ use App\Services\Billing\CommercialReconciliationService;
 use App\Services\Billing\CommercialRefundService;
 use App\Services\Billing\CommercialWebhookService;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
@@ -99,9 +100,12 @@ class CommercialWebhookServiceTest extends TestCase
             'ends_at' => now()->addDays(3),
         ]);
         $this->gateway->payment = $this->paymentResult(saved: true);
+        $cacheKey = "org_effective_active_modules_v2_{$this->organization->id}";
+        Cache::put($cacheKey, ['stale'], 60);
 
         $service = app(CommercialWebhookService::class);
         $this->assertSame('processed', $service->process($this->notification('payment.succeeded', 'payment-id', 'succeeded'), '185.71.76.1'));
+        $this->assertFalse(Cache::has($cacheKey));
         $this->assertSame('duplicate', $service->process($this->notification('payment.succeeded', 'payment-id', 'succeeded'), '185.71.76.1'));
 
         $order = $this->order->fresh();

@@ -21,6 +21,7 @@ use App\Models\CommercialWebhookEvent;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
 use App\Models\User;
+use App\Modules\Core\AccessController;
 use App\Services\Contractor\ContractorReferralRewardService;
 use App\Services\Modules\PackageCatalogService;
 
@@ -33,6 +34,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
         private readonly PackageCatalogService $catalog,
         private readonly CommercialWebhookTransactionRunner $transactions,
         private readonly ContractorReferralRewardService $referralRewards,
+        private readonly AccessController $accessController,
     ) {}
 
     public function process(YooKassaWebhookNotification $notification, string $sourceIp): string
@@ -59,12 +61,16 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
         PaymentGatewayResult $authoritative,
     ): string {
         $fingerprint = $this->fingerprint($notification, $authoritative->status);
+        $organizationId = null;
+        $entitlementsChanged = false;
 
-        return $this->transactions->run($fingerprint, function () use (
+        $result = $this->transactions->run($fingerprint, function () use (
             $notification,
             $sourceIp,
             $authoritative,
             $fingerprint,
+            &$organizationId,
+            &$entitlementsChanged,
         ): string {
             if ($this->isDuplicate($fingerprint)) {
                 return 'duplicate';
@@ -73,6 +79,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
             $payment = $this->resolvePaymentForUpdate($notification, $authoritative);
 
             $order = CommercialOrder::query()->whereKey($payment->commercial_order_id)->lockForUpdate()->firstOrFail();
+            $organizationId = (int) $order->organization_id;
             $account = OrganizationCommercialAccount::query()
                 ->whereKey($order->commercial_account_id)
                 ->where('organization_id', $order->organization_id)
@@ -130,6 +137,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                     return $this->record($notification, $sourceIp, $fingerprint, $authoritative->status, 'manual_review');
                 }
                 $this->activate($order, $payment, $account, $packageRows, $authoritative);
+                $entitlementsChanged = true;
                 if ($order->kind === 'purchase') {
                     $order->refresh();
                     $payment->refresh();
@@ -186,6 +194,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                             ])->save();
                         }
                     }
+                    $entitlementsChanged = true;
                     if (! $wasInGrace) {
                         $this->notify($order, 'commercial_grace_started_'.$order->public_id, 'billing.renewal.grace_started');
                     }
@@ -200,6 +209,12 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
 
             return $this->record($notification, $sourceIp, $fingerprint, $authoritative->status, 'processed');
         });
+
+        if ($entitlementsChanged && $organizationId !== null) {
+            $this->accessController->clearAccessCache($organizationId);
+        }
+
+        return $result;
     }
 
     public function processAuthoritativeRefund(
@@ -209,13 +224,17 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
         PaymentGatewayResult $authoritativePayment,
     ): string {
         $fingerprint = $this->fingerprint($notification, $refund->status);
+        $organizationId = null;
+        $entitlementsChanged = false;
 
-        return $this->transactions->run($fingerprint, function () use (
+        $result = $this->transactions->run($fingerprint, function () use (
             $notification,
             $sourceIp,
             $refund,
             $authoritativePayment,
             $fingerprint,
+            &$organizationId,
+            &$entitlementsChanged,
         ): string {
             if ($this->isDuplicate($fingerprint)) {
                 return 'duplicate';
@@ -232,6 +251,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
             }
 
             $order = CommercialOrder::query()->whereKey($payment->commercial_order_id)->lockForUpdate()->firstOrFail();
+            $organizationId = (int) $order->organization_id;
             OrganizationCommercialAccount::query()
                 ->whereKey($order->commercial_account_id)
                 ->where('organization_id', $order->organization_id)
@@ -337,6 +357,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                         'canceled_at' => now(),
                     ])->save();
                 }
+                $entitlementsChanged = true;
             }
 
             $this->notify(
@@ -348,6 +369,12 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
 
             return $this->record($notification, $sourceIp, $fingerprint, $refund->status, $result);
         });
+
+        if ($entitlementsChanged && $organizationId !== null) {
+            $this->accessController->clearAccessCache($organizationId);
+        }
+
+        return $result;
     }
 
     private function activate(
