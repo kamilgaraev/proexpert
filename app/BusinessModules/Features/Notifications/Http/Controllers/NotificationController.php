@@ -37,13 +37,17 @@ class NotificationController extends Controller
     {
         try {
             $interface = $this->interfaceResolver->resolve($request);
-            $query = $this->queryService->visibleTo($request)->orderByDesc('created_at');
-            $this->applyReadFilter($query, $request);
-            $this->applyListFilters($query, $request);
-
             $defaultPerPage = $interface === NotificationInterface::Customer ? 25 : 20;
             $perPage = max(1, min(100, $request->integer('per_page', $defaultPerPage)));
-            $notifications = $query->paginate($perPage);
+            $snapshot = $this->queryService->listSnapshot(
+                $request,
+                function (Builder $query) use ($request): void {
+                    $this->applyReadFilter($query, $request);
+                    $this->applyListFilters($query, $request);
+                },
+                $perPage
+            );
+            $notifications = $snapshot->notifications;
             $items = array_map(
                 fn ($notification): array => $interface === NotificationInterface::Customer
                     ? $this->presenter->presentForCustomer($notification)
@@ -51,7 +55,7 @@ class NotificationController extends Controller
                 $notifications->items()
             );
 
-            return $this->paginated($request, $items, $notifications);
+            return $this->paginated($request, $items, $notifications, $snapshot->unreadAggregates);
         } catch (Throwable $e) {
             return $this->handleUnexpectedError('index', $e, $request, trans_message('notifications.load_error'));
         }
@@ -157,36 +161,7 @@ class NotificationController extends Controller
     public function getUnreadCount(Request $request): JsonResponse
     {
         try {
-            $unreadQuery = $this->queryService->onlyUnread(
-                $this->queryService->visibleTo($request),
-                $request
-            );
-            $count = (clone $unreadQuery)->count();
-            $byCategoryResults = (clone $unreadQuery)
-                ->selectRaw(
-                    "COALESCE(NULLIF({$this->jsonDataValueExpression('category')}, ''), NULLIF(notification_type, ''), 'general') as category, COUNT(*) as count"
-                )
-                ->groupBy(DB::raw("COALESCE(NULLIF({$this->jsonDataValueExpression('category')}, ''), NULLIF(notification_type, ''), 'general')"))
-                ->get();
-            $byTypeResults = (clone $unreadQuery)
-                ->selectRaw(
-                    "COALESCE(NULLIF({$this->jsonDataValueExpression('type')}, ''), NULLIF(type, ''), NULLIF(notification_type, ''), 'general') as business_type, COUNT(*) as count"
-                )
-                ->groupBy(DB::raw("COALESCE(NULLIF({$this->jsonDataValueExpression('type')}, ''), NULLIF(type, ''), NULLIF(notification_type, ''), 'general')"))
-                ->get();
-            $byNotificationTypeResults = (clone $unreadQuery)
-                ->selectRaw(
-                    "COALESCE(NULLIF(notification_type, ''), NULLIF({$this->jsonDataValueExpression('notification_type')}, ''), NULLIF({$this->jsonDataValueExpression('category')}, ''), 'general') as notification_type, COUNT(*) as count"
-                )
-                ->groupBy(DB::raw("COALESCE(NULLIF(notification_type, ''), NULLIF({$this->jsonDataValueExpression('notification_type')}, ''), NULLIF({$this->jsonDataValueExpression('category')}, ''), 'general')"))
-                ->get();
-
-            return $this->success($request, [
-                'count' => $count,
-                'by_category' => $byCategoryResults->pluck('count', 'category')->toArray(),
-                'by_notification_type' => $byNotificationTypeResults->pluck('count', 'notification_type')->toArray(),
-                'by_type' => $byTypeResults->pluck('count', 'business_type')->toArray(),
-            ]);
+            return $this->success($request, $this->queryService->unreadAggregatesTo($request));
         } catch (Throwable $e) {
             return $this->handleUnexpectedError(
                 'getUnreadCount',
@@ -286,7 +261,8 @@ class NotificationController extends Controller
     private function paginated(
         Request $request,
         array $items,
-        LengthAwarePaginator $notifications
+        LengthAwarePaginator $notifications,
+        array $unreadAggregates
     ): JsonResponse {
         $meta = [
             'current_page' => $notifications->currentPage(),
@@ -296,6 +272,10 @@ class NotificationController extends Controller
             'per_page' => $notifications->perPage(),
             'to' => $notifications->lastItem(),
             'total' => $notifications->total(),
+            'unread_count' => $unreadAggregates['count'],
+            'unread_by_category' => $unreadAggregates['by_category'],
+            'unread_by_notification_type' => $unreadAggregates['by_notification_type'],
+            'unread_by_type' => $unreadAggregates['by_type'],
         ];
         $links = [
             'first' => $notifications->url(1),
@@ -320,24 +300,26 @@ class NotificationController extends Controller
                 code: Response::HTTP_OK,
                 meta: array_merge($meta, ['links' => $links])
             ),
-            NotificationInterface::Customer => $this->customerPaginated($request, $items),
+            NotificationInterface::Customer => $this->customerPaginated(
+                $request,
+                $items,
+                $unreadAggregates
+            ),
         };
     }
 
-    private function customerPaginated(Request $request, array $items): JsonResponse
-    {
+    private function customerPaginated(
+        Request $request,
+        array $items,
+        array $unreadAggregates
+    ): JsonResponse {
         $filters = $request->query();
-
-        $unreadCount = $this->queryService->onlyUnread(
-            $this->queryService->visibleTo($request),
-            $request
-        )->count();
 
         return CustomerResponse::success([
             'items' => $items,
             'meta' => [
                 'organization_id' => $this->organizationId($request),
-                'unread_count' => $unreadCount,
+                'unread_count' => $unreadAggregates['count'],
                 'total' => count($items),
                 'filters' => $filters,
             ],

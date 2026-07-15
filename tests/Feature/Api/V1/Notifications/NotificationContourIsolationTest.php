@@ -117,6 +117,40 @@ final class NotificationContourIsolationTest extends TestCase
         self::assertNotContains($foreign->id, $ids);
     }
 
+    public function test_filtered_list_meta_contains_global_unread_aggregates_for_trusted_contour(): void
+    {
+        $organization = Organization::factory()->verified()->create();
+        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $system = $this->notification($user, $organization->id, [NotificationInterface::Admin]);
+        $procurement = $this->notification($user, $organization->id, [NotificationInterface::Admin]);
+        $this->notification($user, $organization->id, [NotificationInterface::Lk]);
+        $system->forceFill([
+            'notification_type' => 'system',
+            'type' => 'system.notice',
+            'data' => ['category' => 'system', 'type' => 'system.notice'],
+        ])->save();
+        $procurement->forceFill([
+            'notification_type' => 'procurement',
+            'type' => 'purchase_request.created',
+            'data' => ['category' => 'procurement', 'type' => 'purchase_request.created'],
+        ])->save();
+        $this->withoutMiddleware();
+
+        $response = $this->actingAs($user, 'api_admin')
+            ->getJson('/api/v1/admin/notifications?category=system&interface=lk');
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('meta.total', 1)
+            ->assertJsonPath('meta.unread_count', 2)
+            ->assertJsonPath('meta.unread_by_category.system', 1)
+            ->assertJsonPath('meta.unread_by_category.procurement', 1)
+            ->assertJsonPath('meta.unread_by_notification_type.system', 1)
+            ->assertJsonPath('meta.unread_by_notification_type.procurement', 1);
+        self::assertSame(1, $response->json('meta.unread_by_type')['system.notice']);
+        self::assertSame(1, $response->json('meta.unread_by_type')['purchase_request.created']);
+    }
+
     public function test_customer_v1_and_legacy_aliases_read_only_customer_targets(): void
     {
         $organization = Organization::factory()->verified()->create();
