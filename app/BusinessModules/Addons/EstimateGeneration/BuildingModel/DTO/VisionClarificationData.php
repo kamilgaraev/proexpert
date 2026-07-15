@@ -12,7 +12,7 @@ final readonly class VisionClarificationData
 
     public function __construct(public string $code, public ?string $elementKey, array $evidenceRefs)
     {
-        if (! in_array($code, ['geometry_scale_unconfirmed', 'geometry_scale_conflict', 'geometry_scale_context_mismatch', 'geometry_element_conflict', 'geometry_reference_unresolved'], true)
+        if (! in_array($code, ['geometry_scale_unconfirmed', 'geometry_scale_conflict', 'geometry_scale_context_mismatch', 'geometry_element_conflict', 'geometry_element_unsupported', 'geometry_reference_unresolved'], true)
             || ! array_is_list($evidenceRefs) || count($evidenceRefs) !== count(array_unique($evidenceRefs))) {
             throw new InvalidArgumentException('Vision clarification is invalid.');
         }

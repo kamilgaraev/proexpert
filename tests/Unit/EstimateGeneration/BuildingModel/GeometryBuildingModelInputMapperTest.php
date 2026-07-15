@@ -104,6 +104,32 @@ final class GeometryBuildingModelInputMapperTest extends TestCase
         self::assertSame([404], $result->model->floors[0]->openings[0]->evidenceIds);
     }
 
+    public function test_vision_opening_without_geometry_becomes_a_review_clarification(): void
+    {
+        $fingerprint = 'sha256:'.str_repeat('f', 64);
+        $vision = VisionAnalysisData::fromProviderArray([
+            'schema_version' => 1, 'sheet_type' => 'floor_plan',
+            'evidence' => [['key' => 'opening-evidence', 'locator' => [
+                'page_id' => 1, 'page_number' => 1, 'processing_unit_id' => 2,
+                'source_version' => $fingerprint, 'coordinate_space' => 'normalized_source_v1',
+            ]]],
+            'elements' => [[
+                'key' => 'opening-1', 'type' => 'opening', 'label' => 'door',
+                'polygon' => [[0.2, 0.0], [0.4, 0.0]], 'confidence' => 0.94,
+                'evidence_ref' => 'opening-evidence',
+            ]],
+            'scale_candidates' => [], 'warnings' => ['scale_missing'],
+        ], 'timeweb', 'vision/model', 'vision/model', 'provider:v1', 'unavailable', null, null, 50);
+
+        $result = (new \App\BusinessModules\Addons\EstimateGeneration\BuildingModel\BuildingModelAssembler)->assembleVision(
+            (new GeometryBuildingModelInputMapper)->map($vision, null, ['opening-evidence' => 405]),
+        );
+
+        self::assertSame([], $result->model->floors[0]->openings);
+        self::assertSame('geometry_element_unsupported', $result->clarifications[0]->code);
+        self::assertSame(['opening-evidence'], $result->clarifications[0]->evidenceRefs);
+    }
+
     public function test_vector_opening_requires_explicit_semantics(): void
     {
         $vector = VectorGeometryData::fromArray([
