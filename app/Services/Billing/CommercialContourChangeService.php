@@ -28,6 +28,13 @@ final class CommercialContourChangeService
         try {
             return DB::transaction(function () use ($organization, $user, $input): array {
                 Organization::query()->whereKey($organization->getKey())->lockForUpdate()->firstOrFail();
+                $account = OrganizationCommercialAccount::query()
+                    ->where('organization_id', $organization->getKey())
+                    ->lockForUpdate()
+                    ->firstOrFail();
+
+                $this->selfServiceGuard->assertCanMutate($account);
+
                 $existing = CommercialContourChange::query()
                     ->where('organization_id', $organization->getKey())
                     ->where('client_idempotency_key', (string) $input['client_idempotency_key'])
@@ -38,13 +45,6 @@ final class CommercialContourChangeService
 
                     return $this->payload($existing) + ['_created' => false];
                 }
-
-                $account = OrganizationCommercialAccount::query()
-                    ->where('organization_id', $organization->getKey())
-                    ->lockForUpdate()
-                    ->firstOrFail();
-
-                $this->selfServiceGuard->assertCanMutate($account);
 
                 if ($account->status->value === 'grace') {
                     throw new CommercialBillingConflictException('Commercial contour cannot change during grace.');

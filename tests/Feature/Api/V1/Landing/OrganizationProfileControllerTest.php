@@ -11,6 +11,7 @@ use Tests\TestCase;
 class OrganizationProfileControllerTest extends TestCase
 {
     private Organization $organization;
+
     private User $user;
 
     protected function setUp(): void
@@ -46,9 +47,16 @@ class OrganizationProfileControllerTest extends TestCase
             ->assertJsonCount(2, 'data.workspace_profile.workspace_options');
 
         $this->assertSame(
-            ['open_projects', 'open_invitations', 'open_modules', 'open_settings'],
+            ['open_projects', 'open_invitations', 'open_packages', 'open_settings'],
             array_column($response->json('data.workspace_profile.recommended_actions'), 'key')
         );
+        $response->assertJsonFragment([
+            'key' => 'open_packages',
+            'label' => 'Подобрать пакеты',
+            'route' => '/dashboard/billing',
+        ])->assertJsonMissing([
+            'key' => 'open_modules',
+        ]);
     }
 
     public function test_update_business_type_rejects_value_outside_selected_capabilities(): void

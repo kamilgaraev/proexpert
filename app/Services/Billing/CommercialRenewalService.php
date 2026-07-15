@@ -39,6 +39,7 @@ final class CommercialRenewalService
         private readonly CommercialBillingNotificationService $notifications,
         private readonly CommercialWebhookProcessor $webhookProcessor,
         private readonly CommercialPaymentProviderPolicy $providerPolicy,
+        private readonly CommercialContourChangeCancellationService $contourChangeCancellation,
     ) {}
 
     public function process(CarbonInterface $at, int $limit = 100): array
@@ -55,7 +56,20 @@ final class CommercialRenewalService
                     ->on('current_cycle.organization_id', '=', 'accounts.organization_id')
                     ->on('current_cycle.target_period_start_at', '=', 'accounts.current_period_end_at');
             })
-            ->whereIn('accounts.status', ['active', 'grace'])
+            ->where(function ($status) use ($queryNow): void {
+                $status->whereIn('accounts.status', ['active', 'grace'])
+                    ->orWhere(function ($corporate) use ($queryNow): void {
+                        $corporate->where('accounts.status', 'corporate')
+                            ->whereExists(function ($changes) use ($queryNow): void {
+                                $changes->selectRaw('1')
+                                    ->from('commercial_contour_changes as corporate_changes')
+                                    ->whereColumn('corporate_changes.commercial_account_id', 'accounts.id')
+                                    ->whereColumn('corporate_changes.organization_id', 'accounts.organization_id')
+                                    ->where('corporate_changes.status', 'scheduled')
+                                    ->where('corporate_changes.apply_at', '<=', $queryNow);
+                            });
+                    });
+            })
             ->whereNotNull('accounts.current_period_end_at')
             ->where('accounts.current_period_end_at', '<=', $queryNow)
             ->where(function ($actionable) use ($queryNow): void {
@@ -77,13 +91,20 @@ final class CommercialRenewalService
             ->orderBy('accounts.id')
             ->limit(max(1, $limit))
             ->pluck('accounts.id');
-        $counts = ['processed' => 0, 'created_cycles' => 0, 'created_attempts' => 0, 'failed' => 0, 'suspended' => 0];
+        $counts = [
+            'processed' => 0,
+            'created_cycles' => 0,
+            'created_attempts' => 0,
+            'canceled_changes' => 0,
+            'failed' => 0,
+            'suspended' => 0,
+        ];
 
         foreach ($ids as $id) {
             try {
                 $phase = $this->prepare((int) $id, $now);
                 $counts['processed']++;
-                foreach (['created_cycles', 'created_attempts', 'suspended'] as $key) {
+                foreach (['created_cycles', 'created_attempts', 'canceled_changes', 'suspended'] as $key) {
                     $counts[$key] += (int) ($phase[$key] ?? 0);
                 }
                 if (($phase['payment'] ?? null) instanceof CommercialPayment) {
@@ -112,6 +133,12 @@ final class CommercialRenewalService
     {
         return DB::transaction(function () use ($accountId, $now): array {
             $account = OrganizationCommercialAccount::query()->whereKey($accountId)->lockForUpdate()->firstOrFail();
+            if ($account->status->value === 'corporate') {
+                return [
+                    'canceled_changes' => $this->contourChangeCancellation
+                        ->cancelForCorporateAccount($account, $now),
+                ];
+            }
             $this->providerPolicy->assertCanCharge((int) $account->organization_id);
             $periodStart = CarbonImmutable::instance($account->current_period_end_at);
             $periodEnd = $periodStart->addDays(30);

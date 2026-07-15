@@ -573,6 +573,34 @@ class CommercialCheckoutControllerTest extends TestCase
         $this->assertDatabaseCount('commercial_contour_changes', 0);
     }
 
+    public function test_corporate_account_rejects_repeat_of_previously_scheduled_change(): void
+    {
+        CarbonImmutable::setTestNow('2026-07-14 12:00:00');
+        $account = $this->commercialAccount();
+        $anchor = CarbonImmutable::parse('2026-07-24 12:00:00');
+        $account->forceFill(['current_period_end_at' => $anchor])->save();
+        $this->package($account, 'machinery', $anchor);
+        $this->package($account, 'planning-schedules', $anchor);
+        $payload = [
+            'target_package_slugs' => ['machinery'],
+            'full_suite' => false,
+            'quote_version' => 1,
+            'client_idempotency_key' => 'corporate-repeat-000000000000000000001',
+        ];
+
+        $this->authenticatedAs($this->owner)
+            ->postJson('/api/v1/landing/billing/commercial/contour/schedule', $payload)
+            ->assertCreated();
+        $account->forceFill(['status' => 'corporate', 'offer_type' => 'corporate'])->save();
+
+        $this->authenticatedAs($this->owner)
+            ->postJson('/api/v1/landing/billing/commercial/contour/schedule', $payload)
+            ->assertConflict()
+            ->assertJsonPath('message', trans_message('billing.commercial.corporate_self_service_disabled'));
+
+        $this->assertDatabaseCount('commercial_contour_changes', 1);
+    }
+
     public function test_contour_schedule_is_blocked_during_grace(): void
     {
         $account = $this->commercialAccount();

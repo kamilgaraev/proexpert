@@ -13,7 +13,7 @@ final class CommercialContourChange extends Model
     protected $fillable = [
         'public_id', 'organization_id', 'commercial_account_id', 'user_id', 'status',
         'offer_type', 'quote_version', 'target_package_slugs', 'current_package_slugs',
-        'apply_at', 'client_idempotency_key', 'commercial_order_id', 'applied_at',
+        'apply_at', 'client_idempotency_key', 'commercial_order_id', 'applied_at', 'canceled_at',
     ];
 
     protected $casts = [
@@ -23,6 +23,7 @@ final class CommercialContourChange extends Model
         'current_package_slugs' => 'array',
         'apply_at' => 'immutable_datetime',
         'applied_at' => 'immutable_datetime',
+        'canceled_at' => 'immutable_datetime',
     ];
 
     public function commercialAccount(): BelongsTo

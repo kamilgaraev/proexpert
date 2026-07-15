@@ -91,6 +91,8 @@ class CommercialCheckoutSchemaTest extends TestCase
         $this->assertStringContainsString("unique(\n                ['commercial_account_id', 'apply_at']", $migration);
         $this->assertStringContainsString('lockForUpdate()', $service);
         $this->assertStringContainsString("['23000', '23505', '40001', '40P01']", $service);
+        $this->assertStringContainsString("enum('status', ['scheduled', 'applied', 'canceled'])", $migration);
+        $this->assertStringContainsString("timestampTz('canceled_at')->nullable()", $migration);
     }
 
     public function test_commercial_due_processor_runs_every_minute_with_production_locks(): void

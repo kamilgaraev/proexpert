@@ -16,7 +16,7 @@ return new class extends Migration
             $table->foreignId('organization_id')->constrained('organizations')->cascadeOnDelete();
             $table->foreignId('commercial_account_id');
             $table->foreignId('user_id')->constrained('users')->restrictOnDelete();
-            $table->enum('status', ['scheduled', 'applied'])->default('scheduled');
+            $table->enum('status', ['scheduled', 'applied', 'canceled'])->default('scheduled');
             $table->enum('offer_type', ['packages', 'full_suite']);
             $table->unsignedInteger('quote_version');
             $table->jsonb('target_package_slugs');
@@ -25,6 +25,7 @@ return new class extends Migration
             $table->string('client_idempotency_key', 100);
             $table->foreignId('commercial_order_id')->nullable();
             $table->timestampTz('applied_at')->nullable();
+            $table->timestampTz('canceled_at')->nullable();
             $table->timestampsTz();
 
             $table->foreign(['commercial_account_id', 'organization_id'], 'commercial_contour_account_tenant_fk')
