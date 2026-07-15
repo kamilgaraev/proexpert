@@ -3,9 +3,9 @@
   "slug": "access_recertification",
   "version": "1.0.0",
   "type": "core",
-  "billing_model": "free",
+  "billing_model": "subscription",
   "category": "governance",
-  "description": "Кампании регулярного пересмотра пользовательских ролей, решений владельцев и evidence для аудита",
+  "description": "Кампании регулярного пересмотра пользовательских ролей, решений владельцев и подтверждений для аудита",
   "class_name": "App\\BusinessModules\\Core\\AccessRecertification\\AccessRecertificationModule",
   "permissions": [
     "access_recertification.campaigns.view",
@@ -24,7 +24,7 @@
     "Назначение ответственных проверяющих",
     "Решения: подтвердить, отозвать или оформить исключение",
     "Задачи на отзыв доступа",
-    "Evidence export для аудита"
+    "Выгрузка подтверждений для аудита"
   ],
   "dependencies": [
     "organizations",
@@ -35,9 +35,9 @@
     "max_campaign_items": 50000,
     "max_export_rows": 50000
   },
-  "auto_activate": true,
-  "is_system_module": true,
-  "can_deactivate": false,
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
   "development_status": "stable",
   "icon": "verified-user",
   "display_order": 8

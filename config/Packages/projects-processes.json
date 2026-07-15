@@ -6,7 +6,8 @@
     "schema_version": 2,
     "business_outcomes": [
         "Единый порядок работы по объектам",
-        "Связь офиса и строительной площадки"
+        "Связь офиса и строительной площадки",
+        "AI-помощник по проектным данным"
     ],
     "tiers": {
         "standard": {
@@ -15,8 +16,8 @@
             "price": 9900,
             "billing_model": "subscription",
             "duration_days": 30,
-            "modules": ["site-requests", "file-management"],
-            "highlights": ["Заявки с объекта", "Файлы и документы"]
+            "modules": ["site-requests", "file-management", "ai-assistant", "data-export"],
+            "highlights": ["Заявки с объекта", "Файлы и документы", "AI-помощник", "Экспорт данных"]
         }
     }
 }

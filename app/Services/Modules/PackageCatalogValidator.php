@@ -32,6 +32,7 @@ class PackageCatalogValidator
 
             if (! $this->catalog->hasStandardTierOnly($package)) {
                 $errors[] = "{$packageSlug} must define exactly one standard tier";
+
                 continue;
             }
 
@@ -44,12 +45,14 @@ class PackageCatalogValidator
 
                     if (! isset($knownModuleSlugs[$moduleSlug])) {
                         $errors[] = "{$packageSlug}/{$tierKey} references missing module {$moduleSlug}";
+
                         continue;
                     }
 
                     foreach ($this->stringList($modules[$moduleSlug]['dependencies'] ?? []) as $dependencySlug) {
                         if (! isset($knownModuleSlugs[$dependencySlug])) {
                             $errors[] = "{$moduleSlug} depends on unknown module {$dependencySlug}";
+
                             continue;
                         }
 
@@ -82,24 +85,45 @@ class PackageCatalogValidator
         foreach ($foundationModules as $moduleSlug) {
             if (! isset($knownModuleSlugs[$moduleSlug])) {
                 $errors[] = "Foundation references missing module {$moduleSlug}";
+
+                continue;
+            }
+
+            if (($moduleClassifications[$moduleSlug] ?? null) !== 'foundation') {
+                $errors[] = "Foundation module {$moduleSlug} must have foundation classification";
             }
         }
 
         foreach ($modules as $moduleSlug => $module) {
-            if (isset($moduleClassifications[$moduleSlug])) {
+            $classification = $moduleClassifications[$moduleSlug] ?? null;
+
+            if (! is_string($classification)) {
+                $errors[] = "{$moduleSlug} has no package classification";
+
                 continue;
             }
 
-            if (isset($referencedModules[$moduleSlug])) {
+            if (! in_array($classification, ['foundation', 'package', 'addon', 'enterprise', 'planned', 'internal'], true)) {
+                $errors[] = "{$moduleSlug} has unsupported package classification {$classification}";
+
                 continue;
             }
 
-            if (($module['is_system_module'] ?? false) === true || ($module['auto_activate'] ?? false) === true) {
-                $warnings[] = "{$moduleSlug} is auto/system and has no package classification";
+            if (in_array($classification, ['package', 'addon'], true) && ! isset($referencedModules[$moduleSlug])) {
+                $errors[] = "{$moduleSlug} is commercial, but is not assigned to a package";
+
                 continue;
             }
 
-            $errors[] = "{$moduleSlug} has no package classification";
+            if (isset($referencedModules[$moduleSlug]) && ! in_array($classification, ['package', 'addon'], true)) {
+                $errors[] = "{$moduleSlug} is assigned to a package with incompatible classification {$classification}";
+            }
+        }
+
+        foreach ($moduleClassifications as $moduleSlug => $classification) {
+            if (! isset($knownModuleSlugs[$moduleSlug])) {
+                $errors[] = "Classification references missing module {$moduleSlug}";
+            }
         }
 
         return [
@@ -115,6 +139,7 @@ class PackageCatalogValidator
         foreach ($items as $item) {
             if (is_string($item)) {
                 $slugs[] = $item;
+
                 continue;
             }
 
@@ -126,6 +151,7 @@ class PackageCatalogValidator
 
             if (is_string($value)) {
                 $slugs[] = $value;
+
                 continue;
             }
 

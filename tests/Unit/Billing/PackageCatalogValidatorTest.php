@@ -13,6 +13,7 @@ use RuntimeException;
 class PackageCatalogValidatorTest extends TestCase
 {
     private string $basePath;
+
     private string $temporaryPackagesPath;
 
     protected function setUp(): void
@@ -20,13 +21,13 @@ class PackageCatalogValidatorTest extends TestCase
         parent::setUp();
 
         $this->basePath = dirname(__DIR__, 3);
-        $this->temporaryPackagesPath = sys_get_temp_dir() . '/most-package-catalog-' . bin2hex(random_bytes(8));
+        $this->temporaryPackagesPath = sys_get_temp_dir().'/most-package-catalog-'.bin2hex(random_bytes(8));
         mkdir($this->temporaryPackagesPath);
     }
 
     protected function tearDown(): void
     {
-        foreach (glob($this->temporaryPackagesPath . '/*.json') ?: [] as $filePath) {
+        foreach (glob($this->temporaryPackagesPath.'/*.json') ?: [] as $filePath) {
             unlink($filePath);
         }
 
@@ -126,7 +127,7 @@ class PackageCatalogValidatorTest extends TestCase
 
     public function test_legacy_active_module_development_status_falls_back_to_stable(): void
     {
-        $module = new \App\Models\Module();
+        $module = new \App\Models\Module;
         $module->setRawAttributes([
             'development_status' => 'active',
         ]);
@@ -217,11 +218,62 @@ class PackageCatalogValidatorTest extends TestCase
         $this->assertStringContainsString('visible-addon', $result['errors'][0]);
     }
 
+    public function test_validator_rejects_commercial_module_without_a_package(): void
+    {
+        $result = $this->validator()->validate(
+            [[
+                'slug' => 'empty-package',
+                'tiers' => [
+                    'standard' => [
+                        'modules' => [],
+                    ],
+                ],
+            ]],
+            [
+                'forgotten-addon' => [
+                    'slug' => 'forgotten-addon',
+                    'dependencies' => [],
+                ],
+            ],
+            [],
+            ['forgotten-addon' => 'addon']
+        );
+
+        $this->assertNotEmpty($result['errors']);
+        $this->assertStringContainsString('forgotten-addon', $result['errors'][0]);
+    }
+
+    public function test_validator_rejects_unclassified_auto_module(): void
+    {
+        $result = $this->validator()->validate(
+            [[
+                'slug' => 'empty-package',
+                'tiers' => [
+                    'standard' => [
+                        'modules' => [],
+                    ],
+                ],
+            ]],
+            [
+                'forgotten-foundation' => [
+                    'slug' => 'forgotten-foundation',
+                    'auto_activate' => true,
+                    'dependencies' => [],
+                ],
+            ],
+            [],
+            []
+        );
+
+        $this->assertNotEmpty($result['errors']);
+        $this->assertStringContainsString('forgotten-foundation', $result['errors'][0]);
+    }
+
     private function catalog(): PackageCatalogService
     {
         return new PackageCatalogService(
-            $this->basePath . '/config/Packages',
-            $this->basePath . '/config/ModuleList'
+            $this->basePath.'/config/Packages',
+            $this->basePath.'/config/ModuleList'
         );
     }
 
@@ -233,7 +285,7 @@ class PackageCatalogValidatorTest extends TestCase
     private function assertCatalogServiceRejectsTiers(array $tiers): void
     {
         file_put_contents(
-            $this->temporaryPackagesPath . '/broken-package.json',
+            $this->temporaryPackagesPath.'/broken-package.json',
             json_encode([
                 'slug' => 'broken-package',
                 'tiers' => $tiers,
@@ -242,7 +294,7 @@ class PackageCatalogValidatorTest extends TestCase
 
         $catalog = new PackageCatalogService(
             $this->temporaryPackagesPath,
-            $this->basePath . '/config/ModuleList'
+            $this->basePath.'/config/ModuleList'
         );
 
         $exception = null;

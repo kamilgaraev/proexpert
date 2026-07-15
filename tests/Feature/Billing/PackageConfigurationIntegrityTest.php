@@ -23,10 +23,17 @@ class PackageConfigurationIntegrityTest extends TestCase
     ];
 
     private const EXPECTED_MODULES = [
-        'projects-processes' => ['site-requests', 'file-management'],
+        'projects-processes' => ['site-requests', 'file-management', 'ai-assistant', 'data-export'],
         'planning-schedules' => ['schedule-management'],
-        'estimates-norms' => ['budget-estimates', 'rate-management'],
-        'quality-safety' => ['budget-estimates', 'file-management', 'quality-control', 'safety-management'],
+        'estimates-norms' => ['budget-estimates', 'rate-management', 'ai-estimates'],
+        'quality-safety' => [
+            'budget-estimates',
+            'file-management',
+            'quality-control',
+            'safety-management',
+            'video-monitoring',
+            'access_recertification',
+        ],
         'pto-handover' => [
             'budget-estimates',
             'file-management',
@@ -42,6 +49,7 @@ class PackageConfigurationIntegrityTest extends TestCase
             'budgeting',
             'change-management',
             'advance-accounting',
+            'one-c-basic-exchange',
         ],
         'workforce-output' => [
             'time-tracking',
@@ -50,7 +58,13 @@ class PackageConfigurationIntegrityTest extends TestCase
             'production-labor',
         ],
         'machinery' => ['budget-estimates', 'site-requests', 'machinery-operations'],
-        'sales-contractors' => ['crm', 'commercial-proposals', 'contractor-portal'],
+        'sales-contractors' => [
+            'crm',
+            'commercial-proposals',
+            'contractor-portal',
+            'file-management',
+            'tenders',
+        ],
     ];
 
     public function refreshDatabase(): void {}
@@ -99,6 +113,54 @@ class PackageConfigurationIntegrityTest extends TestCase
         }
     }
 
+    public function test_every_module_has_an_explicit_catalog_role_and_every_bundled_module_is_assigned(): void
+    {
+        $modules = $this->loadModules();
+        $classifications = $this->catalog()->moduleClassifications();
+        $assignedModules = [];
+
+        foreach ($this->catalog()->allPackages() as $package) {
+            foreach ($package['tiers']['standard']['modules'] as $moduleSlug) {
+                $assignedModules[$moduleSlug] = true;
+            }
+        }
+
+        $this->assertSame([], array_values(array_diff(array_keys($modules), array_keys($classifications))));
+        $this->assertSame([], array_values(array_diff(array_keys($classifications), array_keys($modules))));
+
+        foreach ($classifications as $moduleSlug => $classification) {
+            $this->assertContains(
+                $classification,
+                ['foundation', 'package', 'addon', 'enterprise', 'planned', 'internal'],
+                "{$moduleSlug} has unsupported catalog role {$classification}"
+            );
+
+            if (! in_array($classification, ['package', 'addon'], true)) {
+                continue;
+            }
+
+            $this->assertArrayHasKey($moduleSlug, $assignedModules, "{$moduleSlug} is not assigned to a package");
+        }
+    }
+
+    public function test_paid_package_modules_cannot_bypass_package_access(): void
+    {
+        $modules = $this->loadModules();
+
+        foreach ($this->catalog()->allPackages() as $package) {
+            foreach ($package['tiers']['standard']['modules'] as $moduleSlug) {
+                $this->assertFalse(
+                    (bool) ($modules[$moduleSlug]['auto_activate'] ?? false),
+                    "{$moduleSlug} must not auto-activate outside package billing"
+                );
+                $this->assertFalse(
+                    (bool) ($modules[$moduleSlug]['is_system_module'] ?? false),
+                    "{$moduleSlug} must not bypass package billing as a system module"
+                );
+            }
+        }
+    }
+
     /**
      * @return array<string, array<string, mixed>>
      */
@@ -122,12 +184,12 @@ class PackageConfigurationIntegrityTest extends TestCase
      */
     private function catalog(): PackageCatalogService
     {
-        return new PackageCatalogService();
+        return new PackageCatalogService;
     }
 
     /**
-     * @param array<string, array<string, mixed>> $modules
-     * @param array<int, string> $moduleSlugs
+     * @param  array<string, array<string, mixed>>  $modules
+     * @param  array<int, string>  $moduleSlugs
      */
     private function assertModulesExist(array $modules, array $moduleSlugs, string $context): void
     {
@@ -137,16 +199,15 @@ class PackageConfigurationIntegrityTest extends TestCase
     }
 
     /**
-     * @param array<string, array<string, mixed>> $modules
-     * @param array<int, string> $moduleSlugs
+     * @param  array<string, array<string, mixed>>  $modules
+     * @param  array<int, string>  $moduleSlugs
      */
     private function assertDependenciesClosed(
         array $modules,
         array $moduleSlugs,
         array $foundationModules,
         string $context
-    ): void
-    {
+    ): void {
         $moduleSet = array_fill_keys(array_merge($foundationModules, $moduleSlugs), true);
 
         foreach ($moduleSlugs as $moduleSlug) {
