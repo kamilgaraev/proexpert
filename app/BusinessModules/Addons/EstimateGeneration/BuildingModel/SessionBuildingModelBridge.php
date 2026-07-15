@@ -67,6 +67,9 @@ final readonly class SessionBuildingModelBridge
             if (! is_array($visionPayload) && ! is_array($vectorPayload)) {
                 continue;
             }
+            if (is_array($visionPayload) && $this->isNonFloorVisionSource($visionPayload)) {
+                continue;
+            }
 
             $node = $this->evidence->insertOrGet(new EvidenceData(
                 organizationId: $context->organizationId,
@@ -107,6 +110,22 @@ final readonly class SessionBuildingModelBridge
         }
 
         return $inputs;
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function isNonFloorVisionSource(array $payload): bool
+    {
+        $sheetType = $payload['sheet_type'] ?? null;
+
+        return is_string($sheetType) && in_array($sheetType, [
+            'elevation',
+            'section',
+            'detail',
+            'site_plan',
+            'schedule',
+            'photo',
+            'unknown',
+        ], true);
     }
 
     /** @param array<string, mixed> $payload */

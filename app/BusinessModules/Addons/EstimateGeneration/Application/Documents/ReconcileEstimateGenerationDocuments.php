@@ -24,6 +24,10 @@ final class ReconcileEstimateGenerationDocuments
     public function changed(EstimateGenerationSession $session): EstimateGenerationSession
     {
         $session = $session->fresh(['documents']) ?? $session;
+        if ($session->status === EstimateGenerationStatus::Failed
+            && $session->resume_status === EstimateGenerationStatus::ProcessingDocuments) {
+            return $this->advance->documentsChanged($session);
+        }
         if (in_array($session->status, [
             EstimateGenerationStatus::InputReviewRequired,
             EstimateGenerationStatus::ReadyToGenerate,
@@ -39,6 +43,10 @@ final class ReconcileEstimateGenerationDocuments
 
     public function assertMutable(EstimateGenerationSession $session): void
     {
+        if ($session->status === EstimateGenerationStatus::Failed
+            && $session->resume_status === EstimateGenerationStatus::ProcessingDocuments) {
+            return;
+        }
         if (! in_array($session->status, [
             EstimateGenerationStatus::Draft,
             EstimateGenerationStatus::ProcessingDocuments,

@@ -154,6 +154,15 @@ final class AdvanceEstimateGeneration
 
     public function documentsChanged(EstimateGenerationSession $session): EstimateGenerationSession
     {
+        if ($session->status === EstimateGenerationStatus::Failed
+            && $session->resume_status === EstimateGenerationStatus::ProcessingDocuments) {
+            return $this->workflow->transition($session, EstimateGenerationEvent::Retried, [
+                'processing_stage' => 'processing_documents',
+                'processing_progress' => 5,
+                'last_error' => null,
+                'failure_code' => null,
+            ]);
+        }
         if ($session->status === EstimateGenerationStatus::Draft
             || $session->status === EstimateGenerationStatus::ProcessingDocuments) {
             return $this->documentsStarted($session);

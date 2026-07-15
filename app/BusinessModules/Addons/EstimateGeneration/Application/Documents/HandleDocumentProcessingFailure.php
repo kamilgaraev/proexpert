@@ -9,7 +9,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Models\EstimateGenerationSessi
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureExecutionSnapshot;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
-use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use Throwable;
 
@@ -18,7 +17,6 @@ final readonly class HandleDocumentProcessingFailure
     public function __construct(
         private FailureRecorder $failures,
         private FailDocumentProcessing $documents,
-        private FailureWorkflowHandler $workflow,
     ) {}
 
     public function handle(
@@ -59,7 +57,6 @@ final readonly class HandleDocumentProcessingFailure
                 $failure->code,
                 ['failure_fingerprint' => $failure->fingerprint],
             );
-            $this->workflow->handle($failure, $snapshot->stateVersion);
         } catch (Throwable) {
         }
     }

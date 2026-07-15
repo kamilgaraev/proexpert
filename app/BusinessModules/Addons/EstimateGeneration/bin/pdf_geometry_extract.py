@@ -258,6 +258,7 @@ def extract(args: argparse.Namespace) -> dict[str, Any]:
         "text_chars": 0,
         "max_segments": args.max_segments,
     }
+    warnings: list[str] = []
     for page_index in range(len(document)):
         page = document[page_index]
         media = safe_box(page.get_mediabox, [0.0, 0.0, *page.get_size()])
@@ -277,7 +278,9 @@ def extract(args: argparse.Namespace) -> dict[str, Any]:
         ):
             budget["objects"] += 1
             if budget["objects"] > args.max_objects:
-                raise SafeFailure("pdf_object_limit_exceeded")
+                if "pdf_vector_object_limit_reached" not in warnings:
+                    warnings.append("pdf_vector_object_limit_reached")
+                break
             handle = f"page:{page_index + 1}:object:{object_index}"
             object_matrix, transform_lineage = effective_object_transform(
                 obj, args.max_form_depth
@@ -374,7 +377,7 @@ def extract(args: argparse.Namespace) -> dict[str, Any]:
         "dimensions": [],
         "pages": pages,
         "scale_candidates": [],
-        "warnings": [],
+        "warnings": warnings,
     }
 
 
@@ -511,6 +514,7 @@ def legacy(contract: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]
             "pypdfium2_version": "5.8.0",
             "actual_provider": "pypdfium2",
             "actual_runtime_version": "5.8.0",
+            "warnings": contract.get("warnings", []),
         },
     }
 

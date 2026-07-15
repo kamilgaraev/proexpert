@@ -101,6 +101,33 @@ final class SessionBuildingModelBridgeTest extends TestCase
         self::assertSame(['floor-document-501-page-1', 'floor-document-502-page-1'], array_column($model->toArray()['floors'], 'key'));
     }
 
+    #[Test]
+    public function elevations_remain_sources_but_do_not_create_building_floors(): void
+    {
+        $context = new BuildingModelOperationContext(10, 20, 30, 'sha256:'.str_repeat('d', 64));
+        [$bridge] = $this->bridge();
+        $floor = $this->unkeyedVisionUnit(101, 501, 601, 'a', 'floor');
+        $elevation = $this->unkeyedVisionUnit(102, 502, 602, 'b', 'elevation');
+        $elevationPayload = $elevation->payload;
+        $elevationPayload['vision_analysis']['sheet_type'] = 'elevation';
+        $elevation = new SessionBuildingModelUnitData(
+            $elevation->unitId,
+            $elevation->documentId,
+            $elevation->pageId,
+            $elevation->type,
+            $elevation->index,
+            $elevation->sourceVersion,
+            $elevation->confidence,
+            $elevationPayload,
+        );
+
+        $model = $bridge->store($context, [$floor, $elevation]);
+
+        self::assertNotNull($model);
+        self::assertSame(1, $model->metrics['floor_count']);
+        self::assertSame(['floor-document-501-page-1'], array_column($model->toArray()['floors'], 'key'));
+    }
+
     /** @return array{SessionBuildingModelBridge, BuildingModelRepository} */
     private function bridge(): array
     {

@@ -88,8 +88,9 @@ final class EstimateGenerationReviewItemService
      */
     public function forSession(EstimateGenerationSession $session, array $filters = []): array
     {
-        if ($session->exists) {
-            return ($this->reviewQueueQuery ?? new EstimateGenerationReviewQueueQuery)->paginate($session, $filters);
+        $reviewQueueQuery = $this->reviewQueueQuery ?? new EstimateGenerationReviewQueueQuery;
+        if ($session->exists && $reviewQueueQuery->hasFreshProjection($session)) {
+            return $reviewQueueQuery->paginate($session, $filters);
         }
 
         $perPage = max(min((int) ($filters['per_page'] ?? 20), 100), 1);

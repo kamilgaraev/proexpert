@@ -141,6 +141,39 @@ final class PdfGeometryWorkerScriptTest extends TestCase
         self::assertFalse($published);
     }
 
+    public function test_vector_object_budget_degrades_to_raster_preview_instead_of_rejecting_pdf(): void
+    {
+        $pdf = dirname(__DIR__, 3).'/Fixtures/EstimateGeneration/benchmarks/regression/replay-vector-pdf-001/input.pdf';
+
+        $payload = (new PdfGeometryWorker(
+            scriptPath: dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/bin/pdf_geometry_extract.py',
+            pythonBinary: 'python',
+            timeoutSeconds: 45,
+            maxPages: 200,
+            maxVectorElements: 1,
+        ))->extract(
+            (string) file_get_contents($pdf),
+            basename($pdf),
+            static function (int $pageNumber, string $path, array $metadata): array {
+                $bytes = (string) file_get_contents($path);
+
+                return [
+                    'artifact_path' => 's3://org-1/pdf/page-'.$pageNumber.'.png',
+                    'content_type' => 'image/png',
+                    'sha256' => hash('sha256', $bytes),
+                    'bytes' => strlen($bytes),
+                    'version_id' => 'version-'.$pageNumber,
+                    'width' => $metadata['width'],
+                    'height' => $metadata['height'],
+                ];
+            },
+        );
+
+        self::assertNotEmpty($payload['pages'] ?? []);
+        self::assertContains('pdf_vector_object_limit_reached', $payload['metadata']['warnings'] ?? []);
+        self::assertSame('image/png', $payload['pages'][0]['preview']['content_type'] ?? null);
+    }
+
     public function test_many_page_budget_breach_is_atomic_and_cleans_private_workspace(): void
     {
         $before = glob(sys_get_temp_dir().DIRECTORY_SEPARATOR.'prohelper_pdf_preview_*') ?: [];

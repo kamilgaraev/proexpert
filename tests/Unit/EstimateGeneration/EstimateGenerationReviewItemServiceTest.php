@@ -14,6 +14,25 @@ use PHPUnit\Framework\TestCase;
 
 final class EstimateGenerationReviewItemServiceTest extends TestCase
 {
+    public function test_existing_session_with_stale_projection_uses_legacy_draft_fallback(): void
+    {
+        $session = new EstimateGenerationSession([
+            'draft_payload' => $this->draft([$this->workItem([
+                'key' => 'legacy-review',
+                'pricing_status' => 'not_calculated',
+                'pricing_blocker' => 'normative_required',
+                'validation_flags' => ['safe_norm_required'],
+            ])]),
+        ]);
+        $session->id = 50;
+        $session->exists = true;
+
+        $result = $this->service()->forSession($session, ['page' => 1, 'per_page' => 20]);
+
+        self::assertSame(1, $result['summary']['total']);
+        self::assertSame('legacy-review', $result['items'][0]['work_item_key']);
+    }
+
     public function test_collects_action_ready_review_items_and_skips_service_rows(): void
     {
         $result = $this->service()->forSession(new EstimateGenerationSession([

@@ -22,6 +22,7 @@ final class EstimateGenerationMutationPolicy
             EstimateGenerationStatus::Generating,
             EstimateGenerationStatus::EstimateReviewRequired,
             EstimateGenerationStatus::ReadyToApply,
+            EstimateGenerationStatus::Failed,
         ];
     }
 
@@ -56,6 +57,17 @@ final class EstimateGenerationMutationPolicy
     public function documents(EstimateGenerationSession $session, int $expectedVersion): void
     {
         $this->assert($session, $expectedVersion, self::documentStatuses(), 'documents_changed');
+        if ($session->status === EstimateGenerationStatus::Failed
+            && $session->resume_status !== EstimateGenerationStatus::ProcessingDocuments) {
+            throw new InvalidEstimateGenerationState($session->status, 'documents_changed');
+        }
+    }
+
+    public static function canMutateDocuments(EstimateGenerationSession $session): bool
+    {
+        return in_array($session->status, self::documentStatuses(), true)
+            && ($session->status !== EstimateGenerationStatus::Failed
+                || $session->resume_status === EstimateGenerationStatus::ProcessingDocuments);
     }
 
     /** @param list<EstimateGenerationStatus> $allowedStatuses */

@@ -26,7 +26,10 @@ final class FailureProductionIntegrationContractTest extends TestCase
             foreach ($parameters as $parameter) {
                 $byType[(string) $parameter->getType()] = $parameter;
             }
-            foreach ([FailureRecorder::class, FailureWorkflowHandler::class] as $dependency) {
+            $dependencies = $class === ProcessDocumentUnit::class
+                ? [FailureRecorder::class]
+                : [FailureRecorder::class, FailureWorkflowHandler::class];
+            foreach ($dependencies as $dependency) {
                 self::assertArrayHasKey($dependency, $byType, $class);
                 self::assertFalse($byType[$dependency]->allowsNull(), $class.' '.$dependency);
                 self::assertFalse($byType[$dependency]->isDefaultValueAvailable(), $class.' '.$dependency);
@@ -65,6 +68,17 @@ final class FailureProductionIntegrationContractTest extends TestCase
             self::assertStringContainsString('$snapshot->stateVersion', $source);
             self::assertStringContainsString('$snapshot->status', $source);
         }
+    }
+
+    #[Test]
+    public function document_failure_is_reconciled_without_failing_the_whole_session(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 4).'/app/BusinessModules/Addons/EstimateGeneration/Application/Documents/HandleDocumentProcessingFailure.php');
+
+        self::assertIsString($source);
+        self::assertStringContainsString('$this->documents->handle(', $source);
+        self::assertStringNotContainsString('FailureWorkflowHandler', $source);
+        self::assertStringNotContainsString('$this->workflow->handle(', $source);
     }
 
     #[Test]

@@ -28,7 +28,7 @@ final readonly class EstimateGenerationDocumentActionBuilder
             return [];
         }
 
-        if (! in_array($session->status, EstimateGenerationMutationPolicy::documentStatuses(), true)) {
+        if (! EstimateGenerationMutationPolicy::canMutateDocuments($session)) {
             return [];
         }
 

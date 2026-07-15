@@ -46,6 +46,27 @@ final class EstimateGenerationMutationPolicyTest extends TestCase
         );
     }
 
+    #[Test]
+    public function failed_document_processing_session_can_be_recovered_by_document_action(): void
+    {
+        $session = $this->session(EstimateGenerationStatus::Failed, 8);
+        $session->resume_status = EstimateGenerationStatus::ProcessingDocuments;
+
+        (new EstimateGenerationMutationPolicy)->documents($session, 8);
+
+        self::assertTrue(true);
+    }
+
+    #[Test]
+    public function failed_generation_session_rejects_document_action(): void
+    {
+        $session = $this->session(EstimateGenerationStatus::Failed, 8);
+        $session->resume_status = EstimateGenerationStatus::Generating;
+
+        $this->expectException(InvalidEstimateGenerationState::class);
+        (new EstimateGenerationMutationPolicy)->documents($session, 8);
+    }
+
     private function session(EstimateGenerationStatus $status, int $version): EstimateGenerationSession
     {
         $session = new EstimateGenerationSession(['status' => $status, 'state_version' => $version]);
