@@ -1,15 +1,20 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\Notifications\Services;
 
 use App\BusinessModules\Features\Notifications\Channels\EmailChannel;
 use App\BusinessModules\Features\Notifications\Channels\InAppChannel;
 use App\BusinessModules\Features\Notifications\Channels\TelegramChannel;
 use App\BusinessModules\Features\Notifications\Channels\WebSocketChannel;
+use App\BusinessModules\Features\Notifications\DTOs\NotificationDeliveryOptions;
+use App\BusinessModules\Features\Notifications\Enums\NotificationInterface;
 use App\BusinessModules\Features\Notifications\Jobs\SendNotificationJob;
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\Models\User;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Throwable;
@@ -21,7 +26,8 @@ class NotificationService
     public function __construct(
         PreferenceManager $preferenceManager,
         private readonly NotificationPayloadNormalizer $payloadNormalizer,
-        private readonly NotificationRecipientPermissionResolver $permissionResolver
+        private readonly NotificationRecipientPermissionResolver $permissionResolver,
+        private readonly NotificationTargetResolver $targetResolver,
     ) {
         $this->preferenceManager = $preferenceManager;
     }
@@ -34,11 +40,15 @@ class NotificationService
         ?string $priority = 'normal',
         ?array $channels = null,
         ?int $organizationId = null,
-        string|array|null $requiredPermissions = null
+        string|array|null $requiredPermissions = null,
+        string|array|null $interfaces = null,
     ): Notification {
-        // 🔥 Критические уведомления с флагом force_send игнорируют настройки пользователя
         $notificationType = $notificationType ?? 'system';
         $priority = $priority ?? 'normal';
+        $resolvedInterfaces = $this->targetResolver->resolve(
+            is_array($interfaces) ? $interfaces : ($interfaces === null ? [] : [$interfaces]),
+            $data,
+        );
         $data = $this->payloadNormalizer->normalize($type, $data, $notificationType);
 
         $forceSend = $data['force_send'] ?? false;
@@ -62,7 +72,12 @@ class NotificationService
                 $data,
                 $notificationType,
                 $priority,
-                $organizationId
+                new NotificationDeliveryOptions(
+                    [],
+                    $resolvedInterfaces,
+                    $organizationId,
+                    $requiredPermissions,
+                ),
             );
         }
 
@@ -78,12 +93,15 @@ class NotificationService
                 $data,
                 $notificationType,
                 $priority,
-                [],
-                $organizationId
+                new NotificationDeliveryOptions(
+                    [],
+                    $resolvedInterfaces,
+                    $organizationId,
+                    $requiredPermissions,
+                ),
             );
         }
 
-        // Для force_send используем принудительные каналы или указанные в параметрах
         if ($forceSend) {
             $effectiveChannels = $channels ?? ['in_app', 'websocket', 'email'];
             Log::info('Force sending critical notification', [
@@ -106,8 +124,12 @@ class NotificationService
             $data,
             $notificationType,
             $priority,
-            $effectiveChannels,
-            $organizationId
+            new NotificationDeliveryOptions(
+                $effectiveChannels,
+                $resolvedInterfaces,
+                $organizationId,
+                $requiredPermissions,
+            ),
         );
 
         $this->dispatch($notification);
@@ -128,7 +150,8 @@ class NotificationService
                 $options['priority'] ?? 'normal',
                 $options['channels'] ?? null,
                 $options['organization_id'] ?? null,
-                $options['required_permissions'] ?? null
+                $options['required_permissions'] ?? null,
+                $options['interfaces'] ?? null,
             );
 
             if ($notification->exists) {
@@ -145,20 +168,31 @@ class NotificationService
         array $data,
         string $notificationType,
         string $priority,
-        array $channels,
-        ?int $organizationId
+        NotificationDeliveryOptions $options,
     ): Notification {
-        return Notification::create([
-            'type' => $type,
-            'notifiable_type' => User::class,
-            'notifiable_id' => $user->id,
-            'organization_id' => $organizationId,
-            'notification_type' => $notificationType,
-            'priority' => $priority,
-            'channels' => $channels,
-            'data' => $data,
-            'delivery_status' => [],
-        ]);
+        return DB::transaction(function () use ($user, $type, $data, $notificationType, $priority, $options): Notification {
+            $notification = Notification::create([
+                'type' => $type,
+                'notifiable_type' => User::class,
+                'notifiable_id' => $user->id,
+                'organization_id' => $options->organizationId,
+                'notification_type' => $notificationType,
+                'priority' => $priority,
+                'channels' => $options->channels,
+                'data' => $data,
+                'delivery_status' => [],
+                'metadata' => [
+                    'required_permissions' => $options->requiredPermissions,
+                ],
+            ]);
+
+            $notification->targets()->createMany(array_map(
+                static fn (NotificationInterface $interface): array => ['interface' => $interface->value],
+                $options->interfaces,
+            ));
+
+            return $notification;
+        });
     }
 
     private function makeSkippedNotification(
@@ -167,18 +201,21 @@ class NotificationService
         array $data,
         string $notificationType,
         string $priority,
-        ?int $organizationId
+        NotificationDeliveryOptions $options,
     ): Notification {
         return new Notification([
             'type' => $type,
             'notifiable_type' => User::class,
             'notifiable_id' => $user->id,
-            'organization_id' => $organizationId,
+            'organization_id' => $options->organizationId,
             'notification_type' => $notificationType,
             'priority' => $priority,
             'channels' => [],
             'data' => $data,
             'delivery_status' => [],
+            'metadata' => [
+                'required_permissions' => $options->requiredPermissions,
+            ],
         ]);
     }
 

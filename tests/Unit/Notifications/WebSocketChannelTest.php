@@ -68,6 +68,19 @@ final class WebSocketChannelTest extends TestCase
         $this->channel($factory)->publish($notification, (object) ['id' => 42]);
     }
 
+    public function test_it_rejects_a_missing_interface_instead_of_selecting_a_runtime_default(): void
+    {
+        $factory = Mockery::mock(Factory::class);
+        $factory->shouldNotReceive('connection');
+        $notification = $this->notification();
+        $notification->data = ['title' => 'Test'];
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Unsupported notification interface');
+
+        $this->channel($factory)->publish($notification, (object) ['id' => 42]);
+    }
+
     private function channel(Factory $factory): WebSocketChannel
     {
         return new class($factory) extends WebSocketChannel

@@ -53,7 +53,7 @@ class WebSocketChannel
 
     protected function broadcastNotification(Notification $notification, object $notifiable): void
     {
-        $interface = $notification->data['interface'] ?? 'lk';
+        $interface = $notification->data['interface'] ?? null;
 
         if (! in_array($interface, ['admin', 'lk'], true)) {
             throw new RuntimeException("Unsupported notification interface: {$interface}");

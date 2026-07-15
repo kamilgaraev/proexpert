@@ -14,14 +14,13 @@ final class NotificationPayloadNormalizer
             ?? $notificationType;
         $entity = $this->normalizeEntity($businessType, $data);
 
-        return [
+        $payload = [
             ...$data,
             'type' => $businessType,
             'title' => $this->stringValue($data['title'] ?? null) ?? $type,
             'message' => $this->stringValue($data['message'] ?? null) ?? '',
             'category' => $category,
             'notification_type' => $this->stringValue($data['notification_type'] ?? null) ?? $notificationType,
-            'interface' => $this->stringValue($data['interface'] ?? null) ?? 'admin',
             'entity' => $entity,
             'entity_type' => $this->stringValue($data['entity_type'] ?? null) ?? $entity['type'],
             'entity_id' => $data['entity_id'] ?? $entity['id'],
@@ -31,6 +30,14 @@ final class NotificationPayloadNormalizer
             'project_name' => $this->stringValue($data['project_name'] ?? null),
             'organization_id' => $data['organization_id'] ?? null,
         ];
+
+        $interface = $this->stringValue($data['interface'] ?? null);
+
+        if ($interface !== null) {
+            $payload['interface'] = $interface;
+        }
+
+        return $payload;
     }
 
     private function normalizeEntity(string $businessType, array $data): array
