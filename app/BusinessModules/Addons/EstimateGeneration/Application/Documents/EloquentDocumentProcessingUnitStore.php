@@ -126,7 +126,7 @@ final readonly class EloquentDocumentProcessingUnitStore implements DocumentProc
                 && in_array((string) $unit->document->status, ['uploaded', 'queued', 'processing'], true)) {
                 $unit->document->forceFill([
                     'status' => 'processing',
-                    'processing_stage' => 'processing',
+                    'processing_stage' => 'preflight',
                     'progress_percent' => max(10, (int) $unit->document->progress_percent),
                     'ocr_started_at' => $unit->document->ocr_started_at ?? $now,
                 ])->save();

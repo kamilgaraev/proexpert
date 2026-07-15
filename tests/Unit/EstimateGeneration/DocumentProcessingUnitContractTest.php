@@ -716,6 +716,8 @@ final class DocumentProcessingUnitContractTest extends TestCase
         self::assertStringContainsString('setConnection($this->database->getName())', $store);
         self::assertStringContainsString("->where('organization_id', \$unit->organization_id)", $store);
         self::assertStringContainsString("->where('source_version', \$unit->source_version)", $store);
+        self::assertStringContainsString("'processing_stage' => 'preflight'", $store);
+        self::assertStringNotContainsString("'processing_stage' => 'processing'", $store);
         self::assertIsString($finalizer);
         self::assertStringContainsString("->whereIn('processing_unit_id', \$currentUnitIds)", $finalizer);
         self::assertStringContainsString("->where('source_version', \$sourceVersion)", $finalizer);
