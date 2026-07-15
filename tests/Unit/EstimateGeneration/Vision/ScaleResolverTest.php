@@ -88,13 +88,20 @@ final class ScaleResolverTest extends TestCase
     }
 
     #[Test]
-    public function duplicate_vector_evidence_is_exactly_deduplicated_and_conflicting_duplicate_rejected(): void
+    public function duplicate_scale_evidence_uses_one_measurement_and_discards_ambiguous_values(): void
     {
         $same = self::candidate('vector', 0.01, 'v1');
         self::assertSame(0.01, (new ScaleResolver)->resolve([$same, $same], [], null)->metersPerUnit);
 
-        $this->expectException(InvalidArgumentException::class);
-        (new ScaleResolver)->resolve([$same, self::candidate('vector', 0.02, 'v1')], [], null);
+        $metadataVariant = new ScaleCandidateData(
+            'vector', 0.01, 'v1', 'sha256:'.str_repeat('a', 64), 1,
+            'transform:v1', 'runtime:v2', 'model:v2', 0.7,
+        );
+        self::assertSame(0.01, (new ScaleResolver)->resolve([$same, $metadataVariant], [], null)->metersPerUnit);
+
+        $ambiguous = (new ScaleResolver)->resolve([$same, self::candidate('vector', 0.02, 'v1')], [], null);
+        self::assertSame('missing', $ambiguous->status);
+        self::assertNull($ambiguous->metersPerUnit);
     }
 
     #[Test]

@@ -75,10 +75,23 @@ final class ScaleResolver
     private function deduplicate(array $candidates): array
     {
         $unique = [];
+        $ambiguous = [];
         foreach ($candidates as $candidate) {
+            if (isset($ambiguous[$candidate->evidenceRef])) {
+                continue;
+            }
             if (isset($unique[$candidate->evidenceRef])) {
-                if ($unique[$candidate->evidenceRef] != $candidate) {
-                    throw new InvalidArgumentException('Duplicate scale evidence is inconsistent.');
+                $existing = $unique[$candidate->evidenceRef];
+                if ($existing->source !== $candidate->source
+                    || $existing->contextKey() !== $candidate->contextKey()
+                    || ! $this->consistent([$existing->metersPerUnit, $candidate->metersPerUnit])) {
+                    unset($unique[$candidate->evidenceRef]);
+                    $ambiguous[$candidate->evidenceRef] = true;
+
+                    continue;
+                }
+                if ($candidate->confidence > $existing->confidence) {
+                    $unique[$candidate->evidenceRef] = $candidate;
                 }
 
                 continue;
