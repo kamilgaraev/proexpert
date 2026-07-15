@@ -33,6 +33,7 @@ class PackageTrialService
     public function __construct(
         private readonly PackageCatalogService $packageCatalog,
         private readonly AccessController $accessController,
+        private readonly CommercialSelfServiceGuard $selfServiceGuard,
     ) {}
 
     public function start(int $organizationId, string $packageSlug, ?int $responsibleUserId = null): OrganizationPackageSubscription
@@ -69,6 +70,7 @@ class PackageTrialService
                     ['organization_id' => $organizationId],
                     $accountDefaults,
                 );
+                $this->selfServiceGuard->assertCanMutate($account);
                 if ($account->responsible_user_id === null && $responsibleUserId !== null) {
                     $account->forceFill(['responsible_user_id' => $responsibleUserId])->save();
                 }

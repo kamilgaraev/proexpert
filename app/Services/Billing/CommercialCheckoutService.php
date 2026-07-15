@@ -28,18 +28,20 @@ class CommercialCheckoutService
         private readonly CommercialOfferCalculator $calculator,
         private readonly PaymentGatewayInterface $gateway,
         private readonly CommercialPaymentProviderPolicy $providerPolicy,
+        private readonly CommercialSelfServiceGuard $selfServiceGuard,
     ) {}
 
     public function checkout(Organization $organization, User $user, array $input): array
     {
-        $this->providerPolicy->assertCanCharge((int) $organization->getKey());
-
         [$order, $payment, $created] = DB::transaction(function () use ($organization, $user, $input): array {
             Organization::query()->whereKey($organization->getKey())->lockForUpdate()->firstOrFail();
             $account = OrganizationCommercialAccount::query()
                 ->where('organization_id', $organization->getKey())
                 ->lockForUpdate()
                 ->first();
+
+            $this->selfServiceGuard->assertCanMutate($account);
+            $this->providerPolicy->assertCanCharge((int) $organization->getKey());
 
             if ($account?->status->value === 'grace') {
                 throw new CommercialCheckoutConflictException('Commercial contour cannot change during grace.');

@@ -172,6 +172,24 @@ class CommercialCheckoutControllerTest extends TestCase
         $this->assertDatabaseCount('commercial_orders', 0);
     }
 
+    public function test_corporate_checkout_returns_translated_conflict_without_provider_call(): void
+    {
+        $this->commercialAccount()->forceFill([
+            'status' => 'corporate',
+            'offer_type' => 'corporate',
+        ])->save();
+
+        $this->authenticatedAs($this->owner)->postJson(
+            '/api/v1/landing/billing/commercial/checkout',
+            $this->payload(),
+        )->assertConflict()
+            ->assertJsonPath('message', trans_message('billing.commercial.corporate_self_service_disabled'));
+
+        $this->assertDatabaseCount('commercial_orders', 0);
+        $this->assertDatabaseCount('commercial_payments', 0);
+        $this->assertSame(0, $this->gateway->createPaymentCalls);
+    }
+
     public function test_owner_creates_idempotent_manual_payment_for_fixed_grace_cycle(): void
     {
         [$account, $order, $cycle, $anchor] = $this->graceRenewal();
@@ -526,6 +544,33 @@ class CommercialCheckoutControllerTest extends TestCase
             array_replace($payload, ['client_idempotency_key' => 'schedule-removal-00000000000000000002']),
         )->assertConflict();
         $this->assertDatabaseCount('commercial_contour_changes', 1);
+    }
+
+    public function test_corporate_account_cannot_schedule_self_service_contour_change(): void
+    {
+        $account = $this->commercialAccount();
+        $account->forceFill([
+            'status' => 'corporate',
+            'offer_type' => 'corporate',
+            'current_period_start_at' => now()->subDay(),
+            'current_period_end_at' => now()->addMonth(),
+        ])->save();
+        $periodEnd = CarbonImmutable::instance($account->current_period_end_at);
+        $this->package($account, 'machinery', $periodEnd);
+        $this->package($account, 'planning-schedules', $periodEnd);
+
+        $this->authenticatedAs($this->owner)->postJson(
+            '/api/v1/landing/billing/commercial/contour/schedule',
+            [
+                'target_package_slugs' => ['machinery'],
+                'full_suite' => false,
+                'quote_version' => 1,
+                'client_idempotency_key' => 'corporate-schedule-000000000000000001',
+            ],
+        )->assertConflict()
+            ->assertJsonPath('message', trans_message('billing.commercial.corporate_self_service_disabled'));
+
+        $this->assertDatabaseCount('commercial_contour_changes', 0);
     }
 
     public function test_contour_schedule_is_blocked_during_grace(): void

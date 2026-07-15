@@ -10,6 +10,7 @@ use App\DataTransferObjects\Billing\PaymentGatewayResult;
 use App\DataTransferObjects\Billing\RefundGatewayResult;
 use App\DataTransferObjects\Billing\YooKassaWebhookNotification;
 use App\Exceptions\Billing\CommercialCheckoutConflictException;
+use App\Exceptions\Billing\CorporateSelfServiceMutationException;
 use App\Exceptions\Billing\PaymentGatewayConfigurationException;
 use App\Interfaces\Billing\PaymentGatewayInterface;
 use App\Models\CommercialOrder;
@@ -85,6 +86,28 @@ class CommercialCheckoutServiceTest extends TestCase
         config()->set('services.yookassa.test_organization_ids', []);
 
         $this->expectException(PaymentGatewayConfigurationException::class);
+
+        try {
+            $this->checkout(['machinery']);
+        } finally {
+            $this->assertDatabaseCount('commercial_orders', 0);
+            $this->assertDatabaseCount('commercial_payments', 0);
+            $this->assertCount(0, $this->gateway->payments);
+        }
+    }
+
+    public function test_corporate_account_cannot_create_self_service_checkout(): void
+    {
+        OrganizationCommercialAccount::query()->create([
+            'organization_id' => $this->organization->id,
+            'responsible_user_id' => $this->user->id,
+            'status' => 'corporate',
+            'offer_type' => 'corporate',
+            'quote_version' => 1,
+            'auto_renew_enabled' => false,
+        ]);
+
+        $this->expectException(CorporateSelfServiceMutationException::class);
 
         try {
             $this->checkout(['machinery']);

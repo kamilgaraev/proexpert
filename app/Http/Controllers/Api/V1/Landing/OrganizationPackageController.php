@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers\Api\V1\Landing;
 
+use App\Exceptions\Billing\CorporateSelfServiceMutationException;
 use App\Exceptions\BusinessLogicException;
 use App\Http\Responses\LandingResponse;
 use App\Models\User;
@@ -85,6 +86,11 @@ class OrganizationPackageController
                 'trial_ends_at' => $subscription->trial_ends_at?->toISOString(),
                 'duration_hours' => (int) config('commercial_offers.trial_hours', 72),
             ], trans_message('landing.packages.trial_started'), Response::HTTP_CREATED);
+        } catch (CorporateSelfServiceMutationException $exception) {
+            return LandingResponse::error(
+                trans_message('billing.commercial.corporate_self_service_disabled'),
+                Response::HTTP_CONFLICT,
+            );
         } catch (BusinessLogicException $exception) {
             return LandingResponse::error($exception->getMessage(), $exception->getCode());
         } catch (\Throwable $exception) {

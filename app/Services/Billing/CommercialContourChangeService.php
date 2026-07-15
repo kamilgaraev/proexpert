@@ -20,6 +20,7 @@ final class CommercialContourChangeService
     public function __construct(
         private readonly CommercialOfferCalculator $calculator,
         private readonly CommercialBillingQueryService $billing,
+        private readonly CommercialSelfServiceGuard $selfServiceGuard,
     ) {}
 
     public function schedule(Organization $organization, User $user, array $input): array
@@ -42,6 +43,8 @@ final class CommercialContourChangeService
                     ->where('organization_id', $organization->getKey())
                     ->lockForUpdate()
                     ->firstOrFail();
+
+                $this->selfServiceGuard->assertCanMutate($account);
 
                 if ($account->status->value === 'grace') {
                     throw new CommercialBillingConflictException('Commercial contour cannot change during grace.');

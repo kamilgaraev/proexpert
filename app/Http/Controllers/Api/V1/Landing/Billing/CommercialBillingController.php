@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api\V1\Landing\Billing;
 
 use App\Exceptions\Billing\CommercialBillingConflictException;
+use App\Exceptions\Billing\CorporateSelfServiceMutationException;
 use App\Exceptions\Billing\StaleCommercialOfferException;
 use App\Http\Requests\Api\V1\Landing\Billing\CommercialContourScheduleRequest;
 use App\Http\Requests\Api\V1\Landing\Billing\CommercialHistoryRequest;
@@ -118,6 +119,11 @@ final class CommercialBillingController
                 $result,
                 trans_message('billing.commercial.change_scheduled'),
                 $status,
+            );
+        } catch (CorporateSelfServiceMutationException $exception) {
+            return LandingResponse::error(
+                trans_message('billing.commercial.corporate_self_service_disabled'),
+                Response::HTTP_CONFLICT,
             );
         } catch (CommercialBillingConflictException|StaleCommercialOfferException $exception) {
             return LandingResponse::error(

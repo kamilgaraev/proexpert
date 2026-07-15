@@ -6,10 +6,12 @@ namespace App\Http\Controllers\Api\V1\Landing\Billing;
 
 use App\Exceptions\Billing\CommercialCheckoutAmountException;
 use App\Exceptions\Billing\CommercialCheckoutConflictException;
+use App\Exceptions\Billing\CorporateSelfServiceMutationException;
 use App\Exceptions\Billing\StaleCommercialOfferException;
 use App\Http\Requests\Api\V1\Landing\Billing\CommercialCheckoutRequest;
 use App\Http\Responses\LandingResponse;
 use App\Models\Organization;
+use App\Models\User;
 use App\Services\Billing\CommercialCheckoutService;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
@@ -18,7 +20,6 @@ use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use Symfony\Component\HttpFoundation\Response;
 use Throwable;
-use Tymon\JWTAuth\Facades\JWTAuth;
 
 use function trans_message;
 
@@ -31,7 +32,13 @@ class CommercialCheckoutController
     public function store(CommercialCheckoutRequest $request): JsonResponse
     {
         try {
-            $user = JWTAuth::parseToken()->authenticate();
+            $user = $request->user();
+            if (! $user instanceof User) {
+                return LandingResponse::error(
+                    trans_message('landing.not_authenticated'),
+                    Response::HTTP_UNAUTHORIZED,
+                );
+            }
             $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
 
             if (! is_numeric($organizationId)) {
@@ -50,6 +57,11 @@ class CommercialCheckoutController
                 $result,
                 trans_message('billing.checkout.created'),
                 $status,
+            );
+        } catch (CorporateSelfServiceMutationException $exception) {
+            return LandingResponse::error(
+                trans_message('billing.commercial.corporate_self_service_disabled'),
+                Response::HTTP_CONFLICT,
             );
         } catch (StaleCommercialOfferException|CommercialCheckoutConflictException $exception) {
             return LandingResponse::error(

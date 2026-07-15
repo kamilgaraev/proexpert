@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Billing;
 
+use App\Exceptions\Billing\CorporateSelfServiceMutationException;
 use App\Exceptions\BusinessLogicException;
 use App\Models\Organization;
 use App\Models\OrganizationCommercialAccount;
@@ -101,6 +102,21 @@ class PackageTrialServiceTest extends TestCase
         $this->assertTrue($usage->fresh()->ends_at->equalTo($now->addHours(72)));
         $this->assertTrue($subscription->fresh()->trial_started_at->equalTo($now));
         $this->assertTrue($subscription->fresh()->trial_ends_at->equalTo($now->addHours(72)));
+    }
+
+    public function test_corporate_account_cannot_start_package_trial(): void
+    {
+        $account = $this->createAccount($this->organization);
+        $account->forceFill(['status' => 'corporate', 'offer_type' => 'corporate'])->save();
+
+        $this->expectException(CorporateSelfServiceMutationException::class);
+
+        try {
+            app(PackageTrialService::class)->start($this->organization->id, 'machinery');
+        } finally {
+            $this->assertDatabaseCount('organization_package_trial_usages', 0);
+            $this->assertDatabaseCount('organization_package_subscriptions', 0);
+        }
     }
 
     public function test_rejects_trial_after_any_existing_package_subscription(): void

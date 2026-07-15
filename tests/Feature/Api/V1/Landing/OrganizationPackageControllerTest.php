@@ -318,6 +318,28 @@ class OrganizationPackageControllerTest extends TestCase
             ->assertJsonPath('message', trans_message('landing.packages.trial_already_used'));
     }
 
+    public function test_corporate_trial_returns_translated_conflict_without_commercial_mutation(): void
+    {
+        OrganizationCommercialAccount::query()->create([
+            'organization_id' => $this->organization->id,
+            'responsible_user_id' => $this->user->id,
+            'status' => 'corporate',
+            'offer_type' => 'corporate',
+            'quote_version' => 1,
+            'auto_renew_enabled' => false,
+        ]);
+        $token = JWTAuth::claims(['organization_id' => $this->organization->id])
+            ->fromUser($this->user);
+
+        $this->withHeader('Authorization', 'Bearer '.$token)
+            ->postJson('/api/v1/landing/packages/machinery/trial')
+            ->assertConflict()
+            ->assertJsonPath('message', trans_message('billing.commercial.corporate_self_service_disabled'));
+
+        $this->assertDatabaseCount('organization_package_trial_usages', 0);
+        $this->assertDatabaseCount('organization_package_subscriptions', 0);
+    }
+
     public function test_old_commercial_routes_are_not_registered(): void
     {
         $routes = app('router')->getRoutes();

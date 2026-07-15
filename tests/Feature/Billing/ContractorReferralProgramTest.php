@@ -117,6 +117,48 @@ final class ContractorReferralProgramTest extends TestCase
         self::assertStringNotContainsString("latest('id')", $referral);
     }
 
+    public function test_two_rewards_credit_same_inviter_balance_with_exact_distinct_transactions(): void
+    {
+        [$firstOrder, $firstPayment] = $this->scenario();
+        $invitingOrganizationId = (int) ContractorInvitation::query()
+            ->where('invited_organization_id', $firstOrder->organization_id)
+            ->value('organization_id');
+        [$secondOrder, $secondPayment] = $this->scenario();
+        ContractorInvitation::query()
+            ->where('invited_organization_id', $secondOrder->organization_id)
+            ->update(['organization_id' => $invitingOrganizationId]);
+
+        $service = app(ContractorReferralRewardService::class);
+        self::assertNotNull($service->handleFirstPaidOrder($firstOrder, $firstPayment));
+        self::assertNotNull($service->handleFirstPaidOrder($secondOrder, $secondPayment));
+        self::assertSame(2, $service->accrueEligibleRewards($firstOrder->period_end_at->addSecond()));
+
+        $rewards = ContractorReferralReward::query()->orderBy('id')->get();
+        self::assertCount(2, $rewards);
+        $transactionIds = $rewards->pluck('inviting_balance_transaction_id')->all();
+        self::assertCount(2, array_unique($transactionIds));
+
+        foreach ($rewards as $reward) {
+            $transaction = Schema::getConnection()->table('balance_transactions')
+                ->find($reward->inviting_balance_transaction_id);
+            self::assertNotNull($transaction);
+            self::assertSame(
+                $reward->id,
+                json_decode($transaction->meta, true, flags: JSON_THROW_ON_ERROR)['referral_reward_id'],
+            );
+        }
+
+        $balance = Schema::getConnection()->table('organization_balances')
+            ->where('organization_id', $invitingOrganizationId)
+            ->sole();
+        self::assertSame(1_200_000, $balance->balance);
+        self::assertSame([600_000, 1_200_000], Schema::getConnection()->table('balance_transactions')
+            ->where('organization_balance_id', $balance->id)
+            ->orderBy('id')
+            ->pluck('balance_after')
+            ->all());
+    }
+
     private function scenario(?string $invitingPhone = null, ?string $invitedPhone = null): array
     {
         $inviting = Organization::query()->create(['name' => 'Inviting', 'tax_number' => '1', 'email' => 'a@test', 'phone' => $invitingPhone]);
