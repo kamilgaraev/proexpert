@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\BusinessModules\Features\Notifications\Services;
 
 use App\BusinessModules\Features\Notifications\DTOs\NotificationListSnapshot;
+use App\BusinessModules\Features\Notifications\DTOs\NotificationMarkAllReadResult;
 use App\BusinessModules\Features\Notifications\Enums\NotificationInterface;
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\BusinessModules\Features\Notifications\Models\NotificationTarget;
@@ -77,15 +78,23 @@ final class NotificationQueryService
      *     count: int,
      *     by_category: array<string, int>,
      *     by_notification_type: array<string, int>,
-     *     by_type: array<string, int>
+     *     by_type: array<string, int>,
+     *     snapshot_sequence: int
      * }
      */
     public function unreadAggregatesTo(Request $request): array
     {
         return $this->snapshotTransactionRunner->run(function () use ($request): array {
-            return $this->unreadAggregatesForQuery(
+            $user = $this->authenticatedUser($request);
+            $interface = $this->interfaceResolver->resolve($request);
+            $aggregates = $this->unreadAggregatesForQuery(
                 $this->onlyUnread($this->visibleTo($request), $request)
             );
+
+            return [
+                ...$aggregates,
+                'snapshot_sequence' => $this->snapshotSequenceFor($user, $interface),
+            ];
         });
     }
 
@@ -155,17 +164,27 @@ final class NotificationQueryService
         return $target;
     }
 
-    public function markAllAsRead(Request $request): int
+    public function markAllAsRead(Request $request): NotificationMarkAllReadResult
     {
-        $interface = $this->interfaceResolver->resolve($request);
-        $visibleNotificationIds = $this->visibleTo($request)->select('notifications.id');
+        return $this->snapshotTransactionRunner->run(function () use ($request): NotificationMarkAllReadResult {
+            $user = $this->authenticatedUser($request);
+            $interface = $this->interfaceResolver->resolve($request);
+            $sequenceCut = $this->snapshotSequenceFor($user, $interface);
+            $visibleNotificationIds = $this->visibleFor(
+                $user,
+                $interface,
+                $this->organizationId($request, $user)
+            )->select('notifications.id');
+            $updated = NotificationTarget::query()
+                ->where('interface', $interface->value)
+                ->where('sequence', '<=', $sequenceCut)
+                ->whereNull('dismissed_at')
+                ->whereNull('read_at')
+                ->whereIn('notification_id', $visibleNotificationIds)
+                ->update(['read_at' => now()]);
 
-        return NotificationTarget::query()
-            ->where('interface', $interface->value)
-            ->whereNull('dismissed_at')
-            ->whereNull('read_at')
-            ->whereIn('notification_id', $visibleNotificationIds)
-            ->update(['read_at' => now()]);
+            return new NotificationMarkAllReadResult($updated, $sequenceCut);
+        });
     }
 
     /**

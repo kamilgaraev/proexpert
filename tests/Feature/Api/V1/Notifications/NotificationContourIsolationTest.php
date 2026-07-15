@@ -36,12 +36,21 @@ final class NotificationContourIsolationTest extends TestCase
             ->getJson('/api/v1/admin/notifications/unread-count?interface=lk')
             ->assertJsonPath('data.count', 1);
         $this->assertCountResponseShape($countResponse);
+        self::assertSame(
+            $this->target($adminNotification, NotificationInterface::Admin)->sequence,
+            $countResponse->json('data.snapshot_sequence')
+        );
         $this->assertForeignOperationsAreNotFound('api/v1/admin', 'api_admin', $user, $lkNotification);
 
-        $this->actingAs($user, 'api_admin')
+        $markAllResponse = $this->actingAs($user, 'api_admin')
             ->postJson('/api/v1/admin/notifications/mark-all-read', ['interface' => 'lk'])
             ->assertOk()
             ->assertJsonPath('data.count', 1);
+        $this->assertMarkAllResponseShape($markAllResponse);
+        self::assertSame(
+            $this->target($adminNotification, NotificationInterface::Admin)->sequence,
+            $markAllResponse->json('data.sequence_cut')
+        );
 
         $this->assertNotNull($this->target($adminNotification, NotificationInterface::Admin)->fresh()->read_at);
         $this->assertNull($this->target($lkNotification, NotificationInterface::Lk)->fresh()->read_at);
@@ -65,10 +74,11 @@ final class NotificationContourIsolationTest extends TestCase
             ->assertJsonPath('data.count', 1);
         $this->assertForeignOperationsAreNotFound('api/v1/landing', 'api_landing', $user, $adminNotification);
 
-        $this->actingAs($user, 'api_landing')
+        $markAllResponse = $this->actingAs($user, 'api_landing')
             ->postJson('/api/v1/landing/notifications/mark-all-read', ['interface' => 'admin'])
             ->assertOk()
             ->assertJsonPath('data.count', 1);
+        $this->assertMarkAllResponseShape($markAllResponse);
 
         $this->assertNotNull($this->target($lkNotification, NotificationInterface::Lk)->fresh()->read_at);
         $this->assertNull($this->target($adminNotification, NotificationInterface::Admin)->fresh()->read_at);
@@ -303,10 +313,26 @@ final class NotificationContourIsolationTest extends TestCase
         $this->target($dismissed, NotificationInterface::Customer)->dismiss();
         $this->withoutMiddleware();
 
-        $this->actingAs($user, 'api_landing')
+        $expectedSequenceCut = max(array_map(
+            fn (Notification $notification): int => $this->target(
+                $notification,
+                NotificationInterface::Customer
+            )->sequence,
+            [$current, $global, $dismissed, $foreign]
+        ));
+        $countResponse = $this->actingAs($user, 'api_landing')
+            ->getJson('/api/v1/customer/notifications/unread-count')
+            ->assertOk()
+            ->assertJsonPath('data.count', 2)
+            ->assertJsonPath('data.snapshot_sequence', $expectedSequenceCut);
+        $this->assertCountResponseShape($countResponse);
+
+        $markAllResponse = $this->actingAs($user, 'api_landing')
             ->postJson('/api/v1/customer/notifications/mark-all-read')
             ->assertOk()
             ->assertJsonPath('data.count', 2);
+        $this->assertMarkAllResponseShape($markAllResponse);
+        $markAllResponse->assertJsonPath('data.sequence_cut', $expectedSequenceCut);
 
         self::assertNotNull($this->target($current, NotificationInterface::Customer)->fresh()->read_at);
         self::assertNotNull($this->target($global, NotificationInterface::Customer)->fresh()->read_at);
@@ -366,9 +392,16 @@ final class NotificationContourIsolationTest extends TestCase
     {
         self::assertEqualsCanonicalizing(['success', 'message', 'data'], array_keys($response->json()));
         self::assertEqualsCanonicalizing(
-            ['count', 'by_category', 'by_notification_type', 'by_type'],
+            ['count', 'by_category', 'by_notification_type', 'by_type', 'snapshot_sequence'],
             array_keys($response->json('data'))
         );
+    }
+
+    private function assertMarkAllResponseShape(TestResponse $response): void
+    {
+        self::assertEqualsCanonicalizing(['success', 'message', 'data'], array_keys($response->json()));
+        self::assertEqualsCanonicalizing(['count', 'sequence_cut'], array_keys($response->json('data')));
+        self::assertIsInt($response->json('data.sequence_cut'));
     }
 
     private function fixtures(bool $sharedNotification = false): array

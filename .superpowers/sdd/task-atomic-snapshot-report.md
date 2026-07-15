@@ -13,6 +13,8 @@
 - Фильтры списка не сужают unread-сводку: она считается глобально для видимого пользователю контура и организации.
 - Customer-контракт сохранил прежнюю форму `data.items`/`data.meta`; `unread_count` переиспользует результат того же snapshot без дополнительного запроса после пагинации.
 - Endpoint `/notifications/unread-count` сохранён для обратной совместимости и теперь сам формирует все агрегаты в одном snapshot.
+- `/notifications/unread-count` возвращает `snapshot_sequence` из той же repeatable-read транзакции, что и unread-агрегаты.
+- `mark-all-read` возвращает совместимый `count` и новый `sequence_cut`; обновляются только видимые непрочитанные targets с `sequence <= sequence_cut`, поэтому уведомления, зафиксированные после cut, не помечаются прочитанными.
 - Элементы HTTP-списка и WebSocket-события содержат целочисленный `sequence`; клиент принимает из буфера только события с `sequence > snapshot_sequence`.
 
 ## Архитектура
@@ -28,9 +30,10 @@
 
 - RED: `NotificationAtomicSnapshotContractTest` — 3 ожидаемых падения до реализации.
 - RED review-wave: подтверждены отсутствие fail-closed для вложенной PostgreSQL-транзакции, стабильного tie-breaker, commit cursor, advisory lock и `sequence` в HTTP/WebSocket.
+- RED final-contract wave: подтверждены отсутствие cursor в `/unread-count` и отсутствие server cut в `mark-all-read`.
 - GREEN: весь `tests/Unit/Notifications` прошёл без ошибок.
-- Итоговый unit-прогон разделён из-за длительного AST inventory: 79 тестов / 314 assertions и 3 sender-contract теста / 5733 assertions; суммарно 82 теста / 6047 assertions, оба процесса завершились с exit code 0.
-- Дополнен DB-backed feature-тест `NotificationContourIsolationTest`: проверяет точную форму admin/ЛК/mobile/customer/count ответов, глобальную unread-сводку, `snapshot_sequence` и стабильную сортировку. Локально не запускался по запрету на DB-команды; предназначен для CI.
+- Итоговый unit-прогон разделён из-за длительного AST inventory: 80 тестов / 328 assertions и 3 sender-contract теста / 5735 assertions; суммарно 83 теста / 6063 assertions, оба процесса завершились с exit code 0.
+- Дополнен DB-backed feature-тест `NotificationContourIsolationTest`: проверяет точную форму ответов админки/ЛК/mobile/customer/count, глобальную unread-сводку, `snapshot_sequence` и стабильную сортировку. Локально не запускался по запрету на DB-команды; предназначен для CI.
 - `php -l` — все изменённые PHP-файлы без синтаксических ошибок.
 - Laravel Pint — все изменённые PHP-файлы, успешно.
 - PHPStan/Larastan — изменённый notification-модуль, ошибок нет.

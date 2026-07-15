@@ -136,12 +136,15 @@ class NotificationController extends Controller
     public function markAllAsRead(Request $request): JsonResponse
     {
         try {
-            $updated = $this->queryService->markAllAsRead($request);
+            $result = $this->queryService->markAllAsRead($request);
 
             return $this->success(
                 $request,
-                ['count' => $updated],
-                trans_message('notifications.mark_all_read', ['count' => (string) $updated])
+                [
+                    'count' => $result->count,
+                    'sequence_cut' => $result->sequenceCut,
+                ],
+                trans_message('notifications.mark_all_read', ['count' => (string) $result->count])
             );
         } catch (Throwable $e) {
             return $this->handleUnexpectedError('markAllAsRead', $e, $request, trans_message('notifications.load_error'));

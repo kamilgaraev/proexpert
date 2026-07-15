@@ -71,6 +71,28 @@ final class NotificationAtomicSnapshotContractTest extends TestCase
         self::assertStringNotContainsString('visibleTo($request)', $customerMethod);
     }
 
+    public function test_unread_count_and_mark_all_share_sequence_cuts_with_the_snapshot_runner(): void
+    {
+        $service = $this->source(
+            'app/BusinessModules/Features/Notifications/Services/NotificationQueryService.php'
+        );
+        $controller = $this->source(
+            'app/BusinessModules/Features/Notifications/Http/Controllers/NotificationController.php'
+        );
+
+        $unreadMethod = $this->methodSource($service, 'public function unreadAggregatesTo', 'public function visibleFor');
+        self::assertStringContainsString('$this->snapshotTransactionRunner->run(', $unreadMethod);
+        self::assertStringContainsString("'snapshot_sequence' =>", $unreadMethod);
+        self::assertStringContainsString('$this->snapshotSequenceFor($user, $interface)', $unreadMethod);
+
+        $markAllMethod = $this->methodSource($service, 'public function markAllAsRead', '/**');
+        self::assertStringContainsString('$this->snapshotTransactionRunner->run(', $markAllMethod);
+        self::assertStringContainsString('$sequenceCut = $this->snapshotSequenceFor($user, $interface)', $markAllMethod);
+        self::assertStringContainsString("where('sequence', '<=', \$sequenceCut)", $markAllMethod);
+        self::assertStringContainsString('new NotificationMarkAllReadResult(', $markAllMethod);
+        self::assertStringContainsString("'sequence_cut' => \$result->sequenceCut", $controller);
+    }
+
     private function source(string $path): string
     {
         $source = file_get_contents(dirname(__DIR__, 3).'/'.$path);
@@ -78,5 +100,15 @@ final class NotificationAtomicSnapshotContractTest extends TestCase
         self::assertIsString($source);
 
         return $source;
+    }
+
+    private function methodSource(string $source, string $start, string $end): string
+    {
+        $startPosition = strpos($source, $start);
+        self::assertIsInt($startPosition);
+        $endPosition = strpos($source, $end, $startPosition + strlen($start));
+        self::assertIsInt($endPosition);
+
+        return substr($source, $startPosition, $endPosition - $startPosition);
     }
 }
