@@ -37,10 +37,11 @@ final class GeometryFusionService
                     $provenance['model_version'],
                 ];
                 $reference = $provenance['evidence_ref'];
-                if (isset($identities[$reference]) && $identities[$reference] !== $identity) {
+                $elementEvidenceIdentity = $reference."\0".$element->key;
+                if (isset($identities[$elementEvidenceIdentity]) && $identities[$elementEvidenceIdentity] !== $identity) {
                     throw new InvalidArgumentException('Geometry evidence identity is inconsistent.');
                 }
-                $identities[$reference] = $identity;
+                $identities[$elementEvidenceIdentity] = $identity;
             }
             $groups[$element->key][$signature][] = $element;
         }

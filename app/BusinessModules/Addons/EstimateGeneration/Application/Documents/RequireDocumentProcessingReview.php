@@ -36,8 +36,8 @@ final readonly class RequireDocumentProcessingReview
                 'source_version' => $sourceVersion,
                 'processing_stage' => 'completed',
                 'progress_percent' => 100,
-                'quality_score' => 0.0,
-                'quality_level' => 'unusable',
+                'quality_score' => null,
+                'quality_level' => null,
                 'quality_flags' => array_values(array_unique($qualityFlags)),
                 'facts_summary' => [],
                 ...($expectedSourceVersion !== $sourceVersion ? [

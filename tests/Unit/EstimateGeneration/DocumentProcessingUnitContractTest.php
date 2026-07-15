@@ -689,6 +689,17 @@ final class DocumentProcessingUnitContractTest extends TestCase
     }
 
     #[Test]
+    public function processing_failure_does_not_mislabel_source_document_quality(): void
+    {
+        $review = file_get_contents(__DIR__.'/../../../app/BusinessModules/Addons/EstimateGeneration/Application/Documents/RequireDocumentProcessingReview.php');
+
+        self::assertIsString($review);
+        self::assertStringContainsString("'quality_score' => null", $review);
+        self::assertStringContainsString("'quality_level' => null", $review);
+        self::assertStringNotContainsString("'quality_level' => 'unusable'", $review);
+    }
+
+    #[Test]
     public function retryable_unit_attempt_cannot_transition_the_whole_session(): void
     {
         $constructor = new \ReflectionMethod(ProcessDocumentUnit::class, '__construct');
