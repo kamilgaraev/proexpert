@@ -29,7 +29,7 @@ class EstimateGenerationDashboard extends Dashboard
 
     protected static ?int $navigationSort = 1;
 
-    protected static ?string $slug = 'estimate-generation';
+    protected static string $routePath = '/estimate-generation';
 
     public static function getNavigationGroup(): string|\UnitEnum|null
     {

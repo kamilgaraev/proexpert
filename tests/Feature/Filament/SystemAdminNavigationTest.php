@@ -34,6 +34,7 @@ use App\Filament\Resources\UserResource;
 use App\Filament\Support\NavigationGroups;
 use App\Models\SystemAdmin;
 use App\Services\Security\SystemAdminRoleService;
+use Filament\Panel;
 use Illuminate\Container\Container;
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Support\Facades\Facade;
@@ -126,6 +127,14 @@ final class SystemAdminNavigationTest extends TestCase
         self::assertSame(NavigationGroups::dashboard(), Dashboard::getNavigationGroup());
         self::assertSame(10, Dashboard::getNavigationSort());
         self::assertSame('heroicon-o-chart-pie', $this->navigationIconFor(Dashboard::class));
+    }
+
+    public function test_main_and_estimate_generation_dashboards_have_distinct_route_paths(): void
+    {
+        $panel = Panel::make();
+
+        self::assertSame('/', Dashboard::getRoutePath($panel));
+        self::assertSame('/estimate-generation', EstimateGenerationDashboard::getRoutePath($panel));
     }
 
     public function test_ai_estimator_pages_use_one_ordered_navigation_group(): void
