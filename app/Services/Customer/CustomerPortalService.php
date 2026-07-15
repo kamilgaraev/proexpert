@@ -7,9 +7,9 @@ namespace App\Services\Customer;
 use App\BusinessModules\Features\Notifications\Enums\NotificationInterface;
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\BusinessModules\Features\Notifications\Services\NotificationQueryService;
-use App\Enums\Contract\ContractSideTypeEnum;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Enums\Contract\ContractSideTypeEnum;
 use App\Models\ContactForm;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
@@ -25,9 +25,8 @@ use App\Services\Contract\ContractSideResolverService;
 use App\Services\Project\ProjectCustomerResolverService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Str;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File as FileSystem;
+use Illuminate\Support\Str;
 
 class CustomerPortalService
 {
@@ -36,8 +35,7 @@ class CustomerPortalService
         private readonly ProjectCustomerResolverService $projectCustomerResolverService,
         private readonly ContractSideResolverService $contractSideResolverService,
         private readonly NotificationQueryService $notificationQueryService
-    ) {
-    }
+    ) {}
 
     public function getDashboard(User $user, int $organizationId): array
     {
@@ -166,8 +164,8 @@ class CustomerPortalService
                 ->filter(fn (Contract $contract): bool => $this->canAccessContract($organizationId, $contract))
                 ->values()
                 ->map(
-                fn (Contract $contract): array => $this->mapCustomerContract($contract)
-            )->all(),
+                    fn (Contract $contract): array => $this->mapCustomerContract($contract)
+                )->all(),
             'meta' => $this->buildContractsMeta($contracts, $appliedFilters),
         ];
     }
@@ -187,7 +185,7 @@ class CustomerPortalService
             'stateEvents:id,contract_id,event_type,event_data,created_at',
         ]);
 
-        if (!$this->canAccessContract($organizationId, $contract, $user)) {
+        if (! $this->canAccessContract($organizationId, $contract, $user)) {
             return null;
         }
 
@@ -295,9 +293,9 @@ class CustomerPortalService
 
         $items = collect()
             ->merge($contracts->map(fn (Contract $contract): array => [
-                'id' => 'contract-' . $contract->id,
+                'id' => 'contract-'.$contract->id,
                 'type' => 'contract',
-                'title' => 'Обновлен договор ' . $contract->number,
+                'title' => 'Обновлен договор '.$contract->number,
                 'subtitle' => $contract->subject,
                 'project' => ['id' => $project->id, 'name' => $project->name],
                 'related_entity' => ['type' => 'contract', 'id' => $contract->id],
@@ -306,9 +304,9 @@ class CustomerPortalService
                 'priority' => 'info',
             ]))
             ->merge($approvals->map(fn (ContractPerformanceAct $approval): array => [
-                'id' => 'approval-' . $approval->id,
+                'id' => 'approval-'.$approval->id,
                 'type' => 'approval',
-                'title' => 'Обновлен акт ' . ($approval->act_document_number ?: '#' . $approval->id),
+                'title' => 'Обновлен акт '.($approval->act_document_number ?: '#'.$approval->id),
                 'subtitle' => $approval->is_approved ? 'Согласовано' : 'Ожидает решения',
                 'project' => ['id' => $project->id, 'name' => $project->name],
                 'related_entity' => ['type' => 'approval', 'id' => $approval->id],
@@ -317,9 +315,9 @@ class CustomerPortalService
                 'priority' => $approval->is_approved ? 'info' : 'warning',
             ]))
             ->merge($documents->map(fn (File $document): array => [
-                'id' => 'document-' . $document->id,
+                'id' => 'document-'.$document->id,
                 'type' => 'document',
-                'title' => 'Добавлен документ ' . ($document->original_name ?: $document->name),
+                'title' => 'Добавлен документ '.($document->original_name ?: $document->name),
                 'subtitle' => $document->category ?: $document->type,
                 'project' => ['id' => $project->id, 'name' => $project->name],
                 'related_entity' => ['type' => 'document', 'id' => $document->id],
@@ -328,9 +326,9 @@ class CustomerPortalService
                 'priority' => 'info',
             ]))
             ->merge($issues->map(fn (CustomerIssue $issue): array => [
-                'id' => 'issue-' . $issue->id,
+                'id' => 'issue-'.$issue->id,
                 'type' => 'issue',
-                'title' => 'Открыто замечание ' . $issue->title,
+                'title' => 'Открыто замечание '.$issue->title,
                 'subtitle' => $this->resolvePortalWorkflowStatusLabel($issue->status),
                 'project' => ['id' => $project->id, 'name' => $project->name],
                 'related_entity' => ['type' => 'issue', 'id' => $issue->id],
@@ -339,9 +337,9 @@ class CustomerPortalService
                 'priority' => $this->isWorkflowOverdue($issue->status, $issue->due_date) ? 'critical' : 'warning',
             ]))
             ->merge($requests->map(fn (CustomerRequest $request): array => [
-                'id' => 'request-' . $request->id,
+                'id' => 'request-'.$request->id,
                 'type' => 'request',
-                'title' => 'Обновлен запрос ' . $request->title,
+                'title' => 'Обновлен запрос '.$request->title,
                 'subtitle' => $this->resolvePortalWorkflowStatusLabel($request->status),
                 'project' => ['id' => $project->id, 'name' => $project->name],
                 'related_entity' => ['type' => 'request', 'id' => $request->id],
@@ -410,7 +408,7 @@ class CustomerPortalService
             return null;
         }
 
-        if (!$this->canAccessWorkflowProject($organizationId, $issue->project_id, $user)) {
+        if (! $this->canAccessWorkflowProject($organizationId, $issue->project_id, $user)) {
             return null;
         }
 
@@ -462,7 +460,7 @@ class CustomerPortalService
             return null;
         }
 
-        if (!$this->canAccessWorkflowProject($organizationId, $issue->project_id, $user)) {
+        if (! $this->canAccessWorkflowProject($organizationId, $issue->project_id, $user)) {
             return null;
         }
 
@@ -503,7 +501,7 @@ class CustomerPortalService
             return null;
         }
 
-        if (!$this->canAccessWorkflowProject($organizationId, $issue->project_id, $user)) {
+        if (! $this->canAccessWorkflowProject($organizationId, $issue->project_id, $user)) {
             return null;
         }
 
@@ -556,7 +554,7 @@ class CustomerPortalService
             return null;
         }
 
-        if (!$this->canAccessWorkflowProject($organizationId, $request->project_id, $user)) {
+        if (! $this->canAccessWorkflowProject($organizationId, $request->project_id, $user)) {
             return null;
         }
 
@@ -606,7 +604,7 @@ class CustomerPortalService
             return null;
         }
 
-        if (!$this->canAccessWorkflowProject($organizationId, $request->project_id, $user)) {
+        if (! $this->canAccessWorkflowProject($organizationId, $request->project_id, $user)) {
             return null;
         }
 
@@ -647,7 +645,7 @@ class CustomerPortalService
             return null;
         }
 
-        if (!$this->canAccessWorkflowProject($organizationId, $request->project_id, $user)) {
+        if (! $this->canAccessWorkflowProject($organizationId, $request->project_id, $user)) {
             return null;
         }
 
@@ -695,7 +693,7 @@ class CustomerPortalService
 
     public function getTeamMember(User $viewer, int $organizationId, User $member): ?array
     {
-        if (!$member->belongsToOrganization($organizationId)) {
+        if (! $member->belongsToOrganization($organizationId)) {
             return null;
         }
 
@@ -948,8 +946,9 @@ class CustomerPortalService
         $scopedProjectIds = $this->resolveScopedProjectIds($organizationId, $user);
 
         if ($project) {
-            if ($scopedProjectIds !== null && !$scopedProjectIds->contains($project->id)) {
+            if ($scopedProjectIds !== null && ! $scopedProjectIds->contains($project->id)) {
                 $query->whereRaw('1 = 0');
+
                 return $query;
             }
 
@@ -1050,7 +1049,7 @@ class CustomerPortalService
             ->when(isset($filters['contractor_search']), function (Builder $builder) use ($filters): void {
                 $search = (string) $filters['contractor_search'];
                 $builder->whereHas('contractor', function (Builder $contractorQuery) use ($search): void {
-                    $contractorQuery->where('name', 'ilike', '%' . $search . '%');
+                    $contractorQuery->where('name', 'ilike', '%'.$search.'%');
                 });
             })
             ->when(isset($filters['date_from']), fn (Builder $builder) => $builder->whereDate('date', '>=', $filters['date_from']))
@@ -1059,8 +1058,8 @@ class CustomerPortalService
                 $search = (string) $filters['search'];
                 $builder->where(function (Builder $scope) use ($search): void {
                     $scope
-                        ->where('number', 'like', '%' . $search . '%')
-                        ->orWhere('subject', 'like', '%' . $search . '%');
+                        ->where('number', 'like', '%'.$search.'%')
+                        ->orWhere('subject', 'like', '%'.$search.'%');
                 });
             });
 
@@ -1175,7 +1174,7 @@ class CustomerPortalService
                 'approved_count' => $acts->where('is_approved', true)->count(),
                 'items' => $acts->map(fn ($act): array => [
                     'id' => $act->id,
-                    'number' => $act->act_document_number ?: '#' . $act->id,
+                    'number' => $act->act_document_number ?: '#'.$act->id,
                     'date' => optional($act->act_date)?->format('Y-m-d'),
                     'amount' => $act->amount !== null ? (float) $act->amount : null,
                     'status' => $act->is_approved ? 'approved' : 'pending',
@@ -1233,7 +1232,7 @@ class CustomerPortalService
 
         return [
             'id' => $approval->id,
-            'title' => 'Акт ' . ($approval->act_document_number ?: '#' . $approval->id),
+            'title' => 'Акт '.($approval->act_document_number ?: '#'.$approval->id),
             'projectName' => $project?->name,
             'projectId' => $project?->id,
             'contractId' => $hasCustomerContractAccess ? $approval->contract_id : null,
@@ -1241,8 +1240,8 @@ class CustomerPortalService
             'contractSubject' => $approval->contract?->subject,
             'contractStatus' => $approval->contract?->status?->value ?? (string) $approval->contract?->status,
             'deadlineLabel' => $approval->is_approved
-                ? 'Согласовано ' . ($approval->approval_date?->format('d.m.Y') ?? $dateLabel)
-                : 'Ожидает решения с ' . $dateLabel,
+                ? 'Согласовано '.($approval->approval_date?->format('d.m.Y') ?? $dateLabel)
+                : 'Ожидает решения с '.$dateLabel,
             'status' => $approval->is_approved ? 'approved' : 'pending',
             'amount' => $this->formatMoney($approval->amount),
         ];
@@ -1370,7 +1369,7 @@ class CustomerPortalService
         $metadata = is_array($issue->metadata) ? $issue->metadata : [];
         $history = is_array($metadata['history'] ?? null) ? $metadata['history'] : [];
         $lastResponseAt = $metadata['last_response_at'] ?? $issue->comments->max('created_at');
-        $overdueSince = $issue->due_date && $issue->due_date->isPast() && !in_array($issue->status, ['resolved', 'rejected'], true)
+        $overdueSince = $issue->due_date && $issue->due_date->isPast() && ! in_array($issue->status, ['resolved', 'rejected'], true)
             ? $issue->due_date->toDateString()
             : null;
 
@@ -1403,7 +1402,7 @@ class CustomerPortalService
             ] : null,
             'approval' => $issue->performanceAct ? [
                 'id' => $issue->performanceAct->id,
-                'number' => $issue->performanceAct->act_document_number ?: '#' . $issue->performanceAct->id,
+                'number' => $issue->performanceAct->act_document_number ?: '#'.$issue->performanceAct->id,
                 'amount' => $issue->performanceAct->amount !== null ? (float) $issue->performanceAct->amount : null,
             ] : null,
             'document' => $issue->file ? [
@@ -1426,7 +1425,7 @@ class CustomerPortalService
         $metadata = is_array($request->metadata) ? $request->metadata : [];
         $history = is_array($metadata['history'] ?? null) ? $metadata['history'] : [];
         $lastResponseAt = $metadata['last_response_at'] ?? $request->comments->max('created_at');
-        $overdueSince = $request->due_date && $request->due_date->isPast() && !in_array($request->status, ['completed', 'rejected'], true)
+        $overdueSince = $request->due_date && $request->due_date->isPast() && ! in_array($request->status, ['completed', 'rejected'], true)
             ? $request->due_date->toDateString()
             : null;
 
@@ -1575,11 +1574,11 @@ class CustomerPortalService
     private function resolveLeadLabel(Project $project): string
     {
         if ($project->customer_representative) {
-            return 'Ответственный: ' . $project->customer_representative;
+            return 'Ответственный: '.$project->customer_representative;
         }
 
         if ($project->organization?->name) {
-            return 'Организация: ' . $project->organization->name;
+            return 'Организация: '.$project->organization->name;
         }
 
         return 'Ответственный уточняется';
@@ -1591,7 +1590,7 @@ class CustomerPortalService
             return 'Бюджет уточняется';
         }
 
-        return number_format((float) $amount, 0, '.', ' ') . ' руб.';
+        return number_format((float) $amount, 0, '.', ' ').' руб.';
     }
 
     private function resolveNotificationTone(Notification $notification): string
@@ -1678,7 +1677,7 @@ class CustomerPortalService
 
         return [
             'contracts' => $contracts->map(fn (Contract $contract): array => [
-                'id' => 'contract-' . $contract->id,
+                'id' => 'contract-'.$contract->id,
                 'type' => 'contract',
                 'title' => $contract->number,
                 'subtitle' => $contract->project?->name,
@@ -1689,9 +1688,9 @@ class CustomerPortalService
                 'created_at' => $contract->created_at?->toISOString(),
             ])->all(),
             'approvals' => $approvals->map(fn (ContractPerformanceAct $approval): array => [
-                'id' => 'approval-' . $approval->id,
+                'id' => 'approval-'.$approval->id,
                 'type' => 'approval',
-                'title' => 'Акт ' . ($approval->act_document_number ?: '#' . $approval->id),
+                'title' => 'Акт '.($approval->act_document_number ?: '#'.$approval->id),
                 'subtitle' => $approval->project?->name,
                 'status' => $approval->is_approved ? 'approved' : 'pending',
                 'priority' => 'warning',
@@ -1700,7 +1699,7 @@ class CustomerPortalService
                 'created_at' => $approval->updated_at?->toISOString(),
             ])->all(),
             'issues' => $issues->map(fn (CustomerIssue $issue): array => [
-                'id' => 'issue-' . $issue->id,
+                'id' => 'issue-'.$issue->id,
                 'type' => 'issue',
                 'title' => $issue->title,
                 'subtitle' => $this->resolvePortalWorkflowStatusLabel($issue->status),
@@ -1711,7 +1710,7 @@ class CustomerPortalService
                 'created_at' => $issue->updated_at?->toISOString(),
             ])->all(),
             'requests' => $requests->map(fn (CustomerRequest $request): array => [
-                'id' => 'request-' . $request->id,
+                'id' => 'request-'.$request->id,
                 'type' => 'request',
                 'title' => $request->title,
                 'subtitle' => $this->resolvePortalWorkflowStatusLabel($request->status),
@@ -1929,12 +1928,12 @@ class CustomerPortalService
         $items = $items
             ->merge($agreements->map(fn ($agreement): array => [
                 'type' => 'agreement',
-                'title' => 'Дополнительное соглашение ' . $agreement->number,
+                'title' => 'Дополнительное соглашение '.$agreement->number,
                 'date' => optional($agreement->agreement_date)?->format('Y-m-d'),
             ]))
             ->merge($acts->map(fn ($act): array => [
                 'type' => 'approval',
-                'title' => 'Акт ' . ($act->act_document_number ?: '#' . $act->id),
+                'title' => 'Акт '.($act->act_document_number ?: '#'.$act->id),
                 'date' => optional($act->act_date)?->format('Y-m-d'),
             ]))
             ->merge($payments->map(fn ($payment): array => [
@@ -1949,7 +1948,7 @@ class CustomerPortalService
             ]));
 
         return $items
-            ->filter(fn (array $item): bool => !empty($item['date']))
+            ->filter(fn (array $item): bool => ! empty($item['date']))
             ->sortByDesc('date')
             ->values()
             ->all();
@@ -1970,7 +1969,7 @@ class CustomerPortalService
         $issueResponseHours = $issuesQuery->get()
             ->map(function (CustomerIssue $issue): ?float {
                 $lastResponseAt = data_get($issue->metadata, 'last_response_at');
-                if (!$lastResponseAt || !$issue->created_at) {
+                if (! $lastResponseAt || ! $issue->created_at) {
                     return null;
                 }
 
@@ -1980,7 +1979,7 @@ class CustomerPortalService
         $requestResponseHours = $requestsQuery->get()
             ->map(function (CustomerRequest $request): ?float {
                 $lastResponseAt = data_get($request->metadata, 'last_response_at');
-                if (!$lastResponseAt || !$request->created_at) {
+                if (! $lastResponseAt || ! $request->created_at) {
                     return null;
                 }
 
@@ -1995,7 +1994,7 @@ class CustomerPortalService
             })
             ->get()
             ->map(function (ContractPerformanceAct $approval): ?float {
-                if (!$approval->created_at) {
+                if (! $approval->created_at) {
                     return null;
                 }
 
@@ -2109,7 +2108,7 @@ class CustomerPortalService
     {
         return $dueDate instanceof \Carbon\CarbonInterface
             && $dueDate->isPast()
-            && !in_array($status, ['resolved', 'rejected', 'completed'], true);
+            && ! in_array($status, ['resolved', 'rejected', 'completed'], true);
     }
 
     private function resolveWorkflowPriority(?string $status, mixed $dueDate): string
@@ -2151,7 +2150,7 @@ class CustomerPortalService
     {
         $path = config_path('RoleDefinitions/customer');
 
-        if (!FileSystem::exists($path)) {
+        if (! FileSystem::exists($path)) {
             return [];
         }
 
@@ -2159,7 +2158,7 @@ class CustomerPortalService
             ->map(function ($file): ?array {
                 $decoded = json_decode(FileSystem::get($file->getPathname()), true);
 
-                if (!is_array($decoded) || !isset($decoded['slug'], $decoded['name'])) {
+                if (! is_array($decoded) || ! isset($decoded['slug'], $decoded['name'])) {
                     return null;
                 }
 
@@ -2177,7 +2176,7 @@ class CustomerPortalService
 
     private function normalizeIssuePayload(int $organizationId, array $payload, ?User $user = null): array
     {
-        if (isset($payload['project_id']) && !$this->baseProjectQuery($organizationId, $user)->whereKey((int) $payload['project_id'])->exists()) {
+        if (isset($payload['project_id']) && ! $this->baseProjectQuery($organizationId, $user)->whereKey((int) $payload['project_id'])->exists()) {
             unset($payload['project_id']);
         }
 
@@ -2217,7 +2216,7 @@ class CustomerPortalService
 
     private function normalizeRequestPayload(int $organizationId, array $payload, ?User $user = null): array
     {
-        if (isset($payload['project_id']) && !$this->baseProjectQuery($organizationId, $user)->whereKey((int) $payload['project_id'])->exists()) {
+        if (isset($payload['project_id']) && ! $this->baseProjectQuery($organizationId, $user)->whereKey((int) $payload['project_id'])->exists()) {
             unset($payload['project_id']);
         }
 
@@ -2241,7 +2240,7 @@ class CustomerPortalService
         $normalized = [];
 
         foreach ($modules as $module => $modulePermissions) {
-            if (!is_array($modulePermissions)) {
+            if (! is_array($modulePermissions)) {
                 continue;
             }
 
@@ -2318,7 +2317,7 @@ class CustomerPortalService
     {
         $interfaces = $this->resolveAvailableInterfaces($user, $authContext);
 
-        if (!\in_array('customer', $interfaces, true)) {
+        if (! \in_array('customer', $interfaces, true)) {
             $interfaces[] = 'customer';
         }
 
