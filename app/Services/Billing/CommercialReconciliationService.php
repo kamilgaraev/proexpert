@@ -56,6 +56,13 @@ final class CommercialReconciliationService
         return $counts;
     }
 
+    public function reconcilePayment(int $paymentId): bool
+    {
+        return Cache::lock("commercial:reconcile:payment:{$paymentId}", 120)->get(
+            fn (): bool => $this->payment($paymentId),
+        ) === true;
+    }
+
     private function attempt(string $type, int $id, array &$counts): void
     {
         try {

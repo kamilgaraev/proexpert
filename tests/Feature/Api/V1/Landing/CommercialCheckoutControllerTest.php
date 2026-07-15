@@ -420,6 +420,51 @@ class CommercialCheckoutControllerTest extends TestCase
             ->assertNotFound();
     }
 
+    public function test_pending_order_status_is_refreshed_from_provider_immediately(): void
+    {
+        [$order, $payment] = $this->commercialOrder(
+            $this->organization,
+            $this->commercialAccount(),
+            'pending_payment',
+        );
+        $providerPaymentId = 'provider-return-payment';
+        $payment->forceFill([
+            'provider_payment_id' => $providerPaymentId,
+            'provider_status' => 'pending',
+        ])->save();
+        $this->gateway->paymentResults[$providerPaymentId] = new PaymentGatewayResult(
+            id: $providerPaymentId,
+            status: 'succeeded',
+            confirmationUrl: null,
+            paymentMethodId: null,
+            paymentMethodSaved: false,
+            safeResponse: ['id' => $providerPaymentId, 'status' => 'succeeded'],
+            paid: true,
+            test: true,
+            amountMinor: 790000,
+            currency: 'RUB',
+            metadata: [
+                'order_id' => $order->public_id,
+                'organization_id' => (string) $this->organization->id,
+            ],
+        );
+
+        $response = $this->authenticatedAs($this->owner)
+            ->getJson('/api/v1/landing/billing/commercial/orders/'.$order->public_id);
+
+        $this->assertSame([$providerPaymentId], $this->gateway->requestedPaymentIds);
+        $response
+            ->assertOk()
+            ->assertJsonPath('data.status', 'paid')
+            ->assertJsonPath('data.payment_status', 'succeeded');
+
+        $this->assertDatabaseHas('organization_package_subscriptions', [
+            'organization_id' => $this->organization->id,
+            'package_slug' => 'machinery',
+            'status' => 'active',
+        ]);
+    }
+
     public function test_history_is_paginated_newest_first_tenant_isolated_and_safe(): void
     {
         $account = $this->commercialAccount();
@@ -918,7 +963,7 @@ class CommercialCheckoutControllerTest extends TestCase
     private function createSchema(): void
     {
         foreach ([
-            'commercial_refunds', 'commercial_contour_changes', 'commercial_payments', 'commercial_renewal_cycles', 'commercial_orders', 'organization_package_subscriptions',
+            'notifications', 'commercial_webhook_events', 'commercial_refunds', 'commercial_contour_changes', 'commercial_payments', 'commercial_renewal_cycles', 'commercial_orders', 'organization_package_subscriptions',
             'organization_commercial_accounts', 'organization_module_activations', 'modules',
             'role_conditions', 'user_role_assignments',
             'organization_custom_roles', 'authorization_contexts', 'organization_user', 'users', 'organizations',
@@ -1036,6 +1081,34 @@ class CommercialCheckoutControllerTest extends TestCase
             $table->timestamp('cancel_at')->nullable();
             $table->timestamp('canceled_at')->nullable();
             $table->foreignId('source_order_id')->nullable();
+            $table->timestamps();
+        });
+        Schema::create('commercial_webhook_events', function (Blueprint $table): void {
+            $table->id();
+            $table->string('provider');
+            $table->string('event_name');
+            $table->string('object_id');
+            $table->string('authoritative_status')->nullable();
+            $table->string('processing_result');
+            $table->string('source_ip');
+            $table->string('fingerprint')->unique();
+            $table->json('safe_payload')->nullable();
+            $table->timestamp('processed_at');
+            $table->timestamps();
+        });
+        Schema::create('notifications', function (Blueprint $table): void {
+            $table->uuid('id')->primary();
+            $table->string('type');
+            $table->string('notifiable_type');
+            $table->unsignedBigInteger('notifiable_id');
+            $table->unsignedBigInteger('organization_id')->nullable();
+            $table->string('notification_type');
+            $table->string('priority');
+            $table->json('channels');
+            $table->json('delivery_status');
+            $table->json('data');
+            $table->json('metadata')->nullable();
+            $table->timestamp('read_at')->nullable();
             $table->timestamps();
         });
         Schema::create('modules', function (Blueprint $table): void {
@@ -1180,6 +1253,10 @@ class ControllerCheckoutGatewayFake implements PaymentGatewayInterface
 {
     public array $createdPayments = [];
 
+    public array $paymentResults = [];
+
+    public array $requestedPaymentIds = [];
+
     public int $createPaymentCalls = 0;
 
     public int $failuresRemaining = 0;
@@ -1212,7 +1289,9 @@ class ControllerCheckoutGatewayFake implements PaymentGatewayInterface
 
     public function getPayment(string $paymentId): PaymentGatewayResult
     {
-        throw new \RuntimeException('Not used.');
+        $this->requestedPaymentIds[] = $paymentId;
+
+        return $this->paymentResults[$paymentId] ?? throw new RuntimeException('Payment result is not configured.');
     }
 
     public function getRefund(string $refundId): RefundGatewayResult
