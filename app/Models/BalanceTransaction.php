@@ -13,7 +13,6 @@ class BalanceTransaction extends Model
     protected $fillable = [
         'organization_balance_id',
         'payment_id', // Ссылка на платеж (если это пополнение)
-        'organization_subscription_id', // Ссылка на подписку (если это списание за подписку)
         'type', // credit (пополнение), debit (списание)
         'amount', // Сумма транзакции в минорных единицах (копейках)
         'balance_before', // Баланс до транзакции
@@ -30,6 +29,7 @@ class BalanceTransaction extends Model
     ];
 
     public const TYPE_CREDIT = 'credit';
+
     public const TYPE_DEBIT = 'debit';
 
     public function organizationBalance(): BelongsTo
@@ -42,11 +42,6 @@ class BalanceTransaction extends Model
         return $this->belongsTo(Payment::class)->withDefault(); // withDefault если платеж может отсутствовать
     }
 
-    public function organizationSubscription(): BelongsTo
-    {
-        return $this->belongsTo(OrganizationSubscription::class)->withDefault(); // withDefault если подписка может отсутствовать
-    }
-
     /**
      * Форматированная сумма транзакции для отображения (в рублях).
      */
@@ -54,4 +49,4 @@ class BalanceTransaction extends Model
     {
         return number_format($this->amount / 100, 2, '.', ' ');
     }
-} 
+}

@@ -211,11 +211,9 @@ class OrganizationPackageEntitlementTest extends TestCase
         $activation = OrganizationModuleActivation::create([
             'organization_id' => $this->organization->id,
             'module_id' => $module->id,
-            'is_bundled_with_plan' => false,
             'status' => 'active',
             'activated_at' => now(),
             'expires_at' => null,
-            'paid_amount' => 0,
             'module_settings' => ['source' => 'manual'],
         ]);
         $activation->refresh();
@@ -230,13 +228,9 @@ class OrganizationPackageEntitlementTest extends TestCase
 
     public function test_package_access_has_no_materialization_api(): void
     {
-        $adminService = file_get_contents(app_path('Services/Filament/ModuleAdminActionService.php'));
-
-        $this->assertIsString($adminService);
-        $this->assertFalse(method_exists(\App\Services\SubscriptionModuleSyncService::class, 'repairPackageModuleActivations'));
+        $this->assertFileDoesNotExist(app_path('Services/Filament/ModuleAdminActionService.php'));
+        $this->assertFileDoesNotExist(app_path('Services/SubscriptionModuleSyncService.php'));
         $this->assertFileDoesNotExist(app_path('Console/Commands/RepairPackageModuleEntitlementsCommand.php'));
-        $this->assertStringNotContainsString('package_repair', $adminService);
-        $this->assertStringNotContainsString('repairPackageModuleActivations', $adminService);
     }
 
     private function entitlements(): OrganizationEntitlementService
@@ -388,12 +382,9 @@ class OrganizationPackageEntitlementTest extends TestCase
             $table->id();
             $table->foreignId('organization_id');
             $table->foreignId('module_id');
-            $table->foreignId('subscription_id')->nullable();
-            $table->boolean('is_bundled_with_plan')->default(false);
             $table->string('status')->default('active');
             $table->timestamp('activated_at')->nullable();
             $table->timestamp('expires_at')->nullable();
-            $table->decimal('paid_amount', 10, 2)->default(0);
             $table->json('module_settings')->nullable();
             $table->timestamps();
         });

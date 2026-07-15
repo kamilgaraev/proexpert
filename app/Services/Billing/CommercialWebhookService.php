@@ -21,6 +21,7 @@ use App\Models\CommercialWebhookEvent;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
 use App\Models\User;
+use App\Services\Contractor\ContractorReferralRewardService;
 use App\Services\Modules\PackageCatalogService;
 
 use function trans_message;
@@ -31,6 +32,7 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
         private readonly PaymentGatewayInterface $gateway,
         private readonly PackageCatalogService $catalog,
         private readonly CommercialWebhookTransactionRunner $transactions,
+        private readonly ContractorReferralRewardService $referralRewards,
     ) {}
 
     public function process(YooKassaWebhookNotification $notification, string $sourceIp): string
@@ -128,6 +130,11 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
                     return $this->record($notification, $sourceIp, $fingerprint, $authoritative->status, 'manual_review');
                 }
                 $this->activate($order, $payment, $account, $packageRows, $authoritative);
+                if ($order->kind === 'purchase') {
+                    $order->refresh();
+                    $payment->refresh();
+                    $this->referralRewards->handleFirstPaidOrder($order, $payment);
+                }
                 if ($cycle !== null) {
                     $cycle->forceFill(['status' => 'paid', 'paid_at' => now(), 'next_attempt_at' => null])->save();
                 }

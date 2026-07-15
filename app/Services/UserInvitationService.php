@@ -2,35 +2,30 @@
 
 namespace App\Services;
 
-use App\Helpers\AdminPanelAccessHelper;
-use App\Mail\UserInvitationMail;
-use App\Models\UserInvitation;
-use App\Models\User;
-use App\Models\Organization;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Enums\UserInvitation\InvitationStatus;
 use App\Exceptions\BusinessLogicException;
-use App\Services\Billing\SubscriptionLimitsService;
+use App\Helpers\AdminPanelAccessHelper;
+use App\Mail\UserInvitationMail;
+use App\Models\User;
+use App\Models\UserInvitation;
 use App\Services\Logging\LoggingService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Hash;
-use Carbon\Carbon;
+use Illuminate\Support\Facades\Mail;
 
 class UserInvitationService
 {
-    protected SubscriptionLimitsService $subscriptionLimitsService;
     protected LoggingService $logging;
+
     protected AdminPanelAccessHelper $adminPanelHelper;
 
     public function __construct(
-        SubscriptionLimitsService $subscriptionLimitsService,
         LoggingService $logging,
         AdminPanelAccessHelper $adminPanelHelper
     ) {
-        $this->subscriptionLimitsService = $subscriptionLimitsService;
         $this->logging = $logging;
         $this->adminPanelHelper = $adminPanelHelper;
     }
@@ -38,29 +33,17 @@ class UserInvitationService
     public function createInvitation(array $data, int $organizationId, User $invitedBy): UserInvitation
     {
         $startTime = microtime(true);
-        
+
         $this->logging->business('user_invitation.creation.started', [
             'organization_id' => $organizationId,
             'invited_by_user_id' => $invitedBy->id,
             'invited_email' => $data['email'] ?? 'unknown',
             'invited_name' => $data['name'] ?? 'unknown',
-            'roles_count' => count($data['role_slugs'] ?? [])
+            'roles_count' => count($data['role_slugs'] ?? []),
         ]);
 
         try {
             $this->validateInvitationData($data, $organizationId);
-            
-            // SECURITY: Проверка лимитов подписки
-            if (!$this->subscriptionLimitsService->canCreateUser($invitedBy)) {
-                $this->logging->security('user_invitation.limit_exceeded', [
-                    'organization_id' => $organizationId,
-                    'invited_by_user_id' => $invitedBy->id,
-                    'invited_email' => $data['email'],
-                    'subscription_limit_reached' => true
-                ], 'warning');
-                
-                throw new BusinessLogicException('Достигнут лимит пользователей по вашему тарифному плану');
-            }
 
             // SECURITY: Проверка существующих пользователей
             $existingUser = User::where('email', $data['email'])->first();
@@ -70,9 +53,9 @@ class UserInvitationService
                     'invited_by_user_id' => $invitedBy->id,
                     'invited_email' => $data['email'],
                     'existing_user_id' => $existingUser->id,
-                    'already_in_organization' => true
+                    'already_in_organization' => true,
                 ], 'warning');
-                
+
                 throw new BusinessLogicException('Пользователь с таким email уже состоит в организации');
             }
 
@@ -82,24 +65,24 @@ class UserInvitationService
                 ->where('status', InvitationStatus::PENDING)
                 ->first();
 
-            if ($existingInvitation && !$existingInvitation->isExpired()) {
+            if ($existingInvitation && ! $existingInvitation->isExpired()) {
                 $this->logging->business('user_invitation.duplicate_invitation', [
                     'organization_id' => $organizationId,
                     'invited_email' => $data['email'],
                     'existing_invitation_id' => $existingInvitation->id,
-                    'existing_invitation_created' => $existingInvitation->created_at
+                    'existing_invitation_created' => $existingInvitation->created_at,
                 ], 'warning');
-                
+
                 throw new BusinessLogicException('Активное приглашение для этого email уже существует');
             }
 
             if ($existingInvitation) {
                 $existingInvitation->markAsExpired();
-                
+
                 $this->logging->technical('user_invitation.expired_previous', [
                     'organization_id' => $organizationId,
                     'invitation_id' => $existingInvitation->id,
-                    'invited_email' => $data['email']
+                    'invited_email' => $data['email'],
                 ]);
             }
 
@@ -117,9 +100,9 @@ class UserInvitationService
                 $this->sendInvitationEmail($invitation);
 
                 DB::commit();
-                
+
                 $duration = (microtime(true) - $startTime) * 1000;
-                
+
                 $this->logging->business('user_invitation.created', [
                     'invitation_id' => $invitation->id,
                     'organization_id' => $organizationId,
@@ -127,46 +110,46 @@ class UserInvitationService
                     'invited_email' => $invitation->email,
                     'invited_name' => $invitation->name,
                     'roles' => $invitation->role_slugs,
-                    'duration_ms' => $duration
+                    'duration_ms' => $duration,
                 ]);
-                
+
                 $this->logging->audit('user_invitation.created', [
                     'invitation_id' => $invitation->id,
                     'organization_id' => $organizationId,
                     'invited_by' => $invitedBy->id,
                     'invited_email' => $invitation->email,
                     'roles' => $invitation->role_slugs,
-                    'performed_by' => $invitedBy->id
+                    'performed_by' => $invitedBy->id,
                 ]);
-                
+
                 return $invitation;
-                
+
             } catch (\Exception $e) {
                 DB::rollBack();
-                
+
                 $duration = (microtime(true) - $startTime) * 1000;
-                
+
                 $this->logging->technical('user_invitation.creation.failed', [
                     'organization_id' => $organizationId,
                     'invited_by_user_id' => $invitedBy->id,
                     'invited_email' => $data['email'],
                     'error' => $e->getMessage(),
-                    'duration_ms' => $duration
+                    'duration_ms' => $duration,
                 ], 'error');
-                
-                throw new BusinessLogicException('Ошибка при создании приглашения: ' . $e->getMessage());
+
+                throw new BusinessLogicException('Ошибка при создании приглашения: '.$e->getMessage());
             }
         } catch (BusinessLogicException $e) {
             $duration = (microtime(true) - $startTime) * 1000;
-            
+
             $this->logging->business('user_invitation.creation.rejected', [
                 'organization_id' => $organizationId,
                 'invited_by_user_id' => $invitedBy->id,
                 'invited_email' => $data['email'] ?? 'unknown',
                 'reason' => $e->getMessage(),
-                'duration_ms' => $duration
+                'duration_ms' => $duration,
             ], 'warning');
-            
+
             throw $e;
         }
     }
@@ -174,21 +157,21 @@ class UserInvitationService
     public function acceptInvitation(string $token, array $userData = []): User
     {
         $startTime = microtime(true);
-        
+
         $this->logging->business('user_invitation.acceptance.started', [
-            'token_provided' => !empty($token),
-            'user_data_provided' => !empty($userData)
+            'token_provided' => ! empty($token),
+            'user_data_provided' => ! empty($userData),
         ]);
 
         try {
             $invitation = UserInvitation::where('token', $token)->first();
 
-            if (!$invitation) {
+            if (! $invitation) {
                 $this->logging->security('user_invitation.acceptance.invalid_token', [
-                    'token' => substr($token, 0, 8) . '...',
-                    'token_not_found' => true
+                    'token' => substr($token, 0, 8).'...',
+                    'token_not_found' => true,
                 ], 'warning');
-                
+
                 throw new BusinessLogicException('Приглашение не найдено');
             }
 
@@ -198,40 +181,40 @@ class UserInvitationService
                 'invitation_email' => $invitation->email,
                 'invitation_status' => $invitation->status->value,
                 'invitation_created' => $invitation->created_at,
-                'invitation_expires' => $invitation->expires_at
+                'invitation_expires' => $invitation->expires_at,
             ]);
 
-            if (!$invitation->canBeAccepted()) {
+            if (! $invitation->canBeAccepted()) {
                 $this->logging->security('user_invitation.acceptance.invalid_invitation', [
                     'invitation_id' => $invitation->id,
                     'organization_id' => $invitation->organization_id,
                     'invitation_email' => $invitation->email,
                     'invitation_status' => $invitation->status->value,
                     'is_expired' => $invitation->isExpired(),
-                    'reason' => 'invitation_cannot_be_accepted'
+                    'reason' => 'invitation_cannot_be_accepted',
                 ], 'warning');
-                
+
                 throw new BusinessLogicException('Приглашение недействительно или истекло');
             }
 
             DB::beginTransaction();
             try {
                 $existingUser = User::where('email', $invitation->email)->first();
-                
+
                 if ($existingUser) {
                     $this->logging->technical('user_invitation.acceptance.existing_user', [
                         'invitation_id' => $invitation->id,
                         'existing_user_id' => $existingUser->id,
-                        'user_email' => $existingUser->email
+                        'user_email' => $existingUser->email,
                     ]);
-                    
+
                     $user = $this->addExistingUserToOrganization($existingUser, $invitation);
                 } else {
                     $this->logging->technical('user_invitation.acceptance.new_user', [
                         'invitation_id' => $invitation->id,
-                        'invitation_email' => $invitation->email
+                        'invitation_email' => $invitation->email,
                     ]);
-                    
+
                     $user = $this->createNewUserFromInvitation($invitation, $userData);
                 }
 
@@ -239,9 +222,9 @@ class UserInvitationService
                 $invitation->markAsAccepted($user);
 
                 DB::commit();
-                
+
                 $duration = (microtime(true) - $startTime) * 1000;
-                
+
                 $this->logging->business('user_invitation.accepted', [
                     'invitation_id' => $invitation->id,
                     'organization_id' => $invitation->organization_id,
@@ -249,9 +232,9 @@ class UserInvitationService
                     'user_email' => $user->email,
                     'roles_assigned' => $invitation->role_slugs,
                     'was_existing_user' => $existingUser !== null,
-                    'duration_ms' => $duration
+                    'duration_ms' => $duration,
                 ]);
-                
+
                 $this->logging->audit('user_invitation.accepted', [
                     'invitation_id' => $invitation->id,
                     'organization_id' => $invitation->organization_id,
@@ -259,42 +242,42 @@ class UserInvitationService
                     'user_email' => $user->email,
                     'invited_by' => $invitation->invited_by_user_id,
                     'roles_assigned' => $invitation->role_slugs,
-                    'performed_by' => $user->id
+                    'performed_by' => $user->id,
                 ]);
-                
+
                 $this->logging->security('user_invitation.new_user_joined', [
                     'organization_id' => $invitation->organization_id,
                     'user_id' => $user->id,
                     'user_email' => $user->email,
                     'roles' => $invitation->role_slugs,
-                    'invited_by' => $invitation->invited_by_user_id
+                    'invited_by' => $invitation->invited_by_user_id,
                 ]);
-                
+
                 return $user;
-                
+
             } catch (\Exception $e) {
                 DB::rollBack();
-                
+
                 $duration = (microtime(true) - $startTime) * 1000;
-                
+
                 $this->logging->technical('user_invitation.acceptance.failed', [
                     'invitation_id' => $invitation->id,
                     'organization_id' => $invitation->organization_id,
                     'invitation_email' => $invitation->email,
                     'error' => $e->getMessage(),
-                    'duration_ms' => $duration
+                    'duration_ms' => $duration,
                 ], 'error');
-                
-                throw new BusinessLogicException('Ошибка при принятии приглашения: ' . $e->getMessage());
+
+                throw new BusinessLogicException('Ошибка при принятии приглашения: '.$e->getMessage());
             }
         } catch (BusinessLogicException $e) {
             $duration = (microtime(true) - $startTime) * 1000;
-            
+
             $this->logging->business('user_invitation.acceptance.rejected', [
                 'reason' => $e->getMessage(),
-                'duration_ms' => $duration
+                'duration_ms' => $duration,
             ], 'warning');
-            
+
             throw $e;
         }
     }
@@ -303,7 +286,7 @@ class UserInvitationService
     {
         $this->logging->business('user_invitation.cancellation.started', [
             'invitation_id' => $invitationId,
-            'organization_id' => $organizationId
+            'organization_id' => $organizationId,
         ]);
 
         try {
@@ -311,12 +294,12 @@ class UserInvitationService
                 ->where('organization_id', $organizationId)
                 ->first();
 
-            if (!$invitation) {
+            if (! $invitation) {
                 $this->logging->business('user_invitation.cancellation.not_found', [
                     'invitation_id' => $invitationId,
-                    'organization_id' => $organizationId
+                    'organization_id' => $organizationId,
                 ], 'warning');
-                
+
                 throw new BusinessLogicException('Приглашение не найдено');
             }
 
@@ -325,38 +308,38 @@ class UserInvitationService
                     'invitation_id' => $invitationId,
                     'organization_id' => $organizationId,
                     'current_status' => $invitation->status->value,
-                    'required_status' => InvitationStatus::PENDING->value
+                    'required_status' => InvitationStatus::PENDING->value,
                 ], 'warning');
-                
+
                 throw new BusinessLogicException('Можно отменить только ожидающие приглашения');
             }
 
             $invitation->markAsCancelled();
-            
+
             $this->logging->business('user_invitation.cancelled', [
                 'invitation_id' => $invitation->id,
                 'organization_id' => $organizationId,
                 'invitation_email' => $invitation->email,
-                'invited_by' => $invitation->invited_by_user_id
+                'invited_by' => $invitation->invited_by_user_id,
             ]);
-            
+
             $this->logging->audit('user_invitation.cancelled', [
                 'invitation_id' => $invitation->id,
                 'organization_id' => $organizationId,
                 'invitation_email' => $invitation->email,
                 'invited_by' => $invitation->invited_by_user_id,
-                'performed_by' => auth()->id() ?? 'system'
+                'performed_by' => auth()->id() ?? 'system',
             ]);
-            
+
             return true;
-            
+
         } catch (BusinessLogicException $e) {
             $this->logging->business('user_invitation.cancellation.failed', [
                 'invitation_id' => $invitationId,
                 'organization_id' => $organizationId,
-                'reason' => $e->getMessage()
+                'reason' => $e->getMessage(),
             ], 'warning');
-            
+
             throw $e;
         }
     }
@@ -367,7 +350,7 @@ class UserInvitationService
             ->where('organization_id', $organizationId)
             ->first();
 
-        if (!$invitation) {
+        if (! $invitation) {
             throw new BusinessLogicException('Приглашение не найдено');
         }
 
@@ -391,7 +374,7 @@ class UserInvitationService
         }
 
         if (isset($filters['email'])) {
-            $query->where('email', 'like', '%' . $filters['email'] . '%');
+            $query->where('email', 'like', '%'.$filters['email'].'%');
         }
 
         return $query->orderBy('created_at', 'desc')->get();
@@ -407,7 +390,7 @@ class UserInvitationService
     public function cleanupExpiredInvitations(): int
     {
         $startTime = microtime(true);
-        
+
         $this->logging->technical('user_invitation.cleanup.started');
 
         try {
@@ -422,36 +405,36 @@ class UserInvitationService
             }
 
             $duration = (microtime(true) - $startTime) * 1000;
-            
+
             $this->logging->business('user_invitation.cleanup.completed', [
                 'expired_count' => $expiredCount,
-                'duration_ms' => $duration
+                'duration_ms' => $duration,
             ]);
-            
+
             if ($expiredCount > 10) {
                 $this->logging->business('user_invitation.cleanup.high_expired_count', [
                     'expired_count' => $expiredCount,
-                    'potential_issue' => 'high_invitation_expiry_rate'
+                    'potential_issue' => 'high_invitation_expiry_rate',
                 ], 'warning');
             }
 
             return $expiredCount;
-            
+
         } catch (\Exception $e) {
             $duration = (microtime(true) - $startTime) * 1000;
-            
+
             $this->logging->technical('user_invitation.cleanup.failed', [
                 'error' => $e->getMessage(),
-                'duration_ms' => $duration
+                'duration_ms' => $duration,
             ], 'error');
-            
+
             throw $e;
         }
     }
 
     private function validateInvitationData(array $data, int $organizationId): void
     {
-        if (empty($data['email']) || !filter_var($data['email'], FILTER_VALIDATE_EMAIL)) {
+        if (empty($data['email']) || ! filter_var($data['email'], FILTER_VALIDATE_EMAIL)) {
             throw new BusinessLogicException('Некорректный email адрес');
         }
 
@@ -459,22 +442,22 @@ class UserInvitationService
             throw new BusinessLogicException('Имя пользователя обязательно');
         }
 
-        if (empty($data['role_slugs']) || !is_array($data['role_slugs'])) {
+        if (empty($data['role_slugs']) || ! is_array($data['role_slugs'])) {
             throw new BusinessLogicException('Необходимо указать роли для пользователя');
         }
 
         $validRoles = $this->adminPanelHelper->getAdminPanelRoles(null, 'lk', true);
         $invalidRoles = array_diff($data['role_slugs'], $validRoles);
-        
-        if (!empty($invalidRoles)) {
-            throw new BusinessLogicException('Недопустимые роли: ' . implode(', ', $invalidRoles));
+
+        if (! empty($invalidRoles)) {
+            throw new BusinessLogicException('Недопустимые роли: '.implode(', ', $invalidRoles));
         }
     }
 
     private function sendInvitationEmail(UserInvitation $invitation): void
     {
         $acceptUrl = rtrim((string) config('app.frontend_url', config('app.url')), '/')
-            . '/invitations/accept?token=' . urlencode($invitation->token);
+            .'/invitations/accept?token='.urlencode($invitation->token);
 
         Mail::to($invitation->email)->send(new UserInvitationMail($invitation, $acceptUrl));
 
@@ -483,7 +466,7 @@ class UserInvitationService
 
     private function addExistingUserToOrganization(User $user, UserInvitation $invitation): User
     {
-        if (!$user->belongsToOrganization($invitation->organization_id)) {
+        if (! $user->belongsToOrganization($invitation->organization_id)) {
             $user->organizations()->attach($invitation->organization_id);
         }
 
@@ -511,7 +494,7 @@ class UserInvitationService
     {
         // Получаем или создаем контекст организации
         $context = AuthorizationContext::getOrganizationContext($invitation->organization_id);
-        
+
         foreach ($invitation->role_slugs as $roleSlug) {
             // Используем updateOrCreate для атомарного создания или реактивации роли
             UserRoleAssignment::updateOrCreate(

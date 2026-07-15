@@ -6,29 +6,29 @@ namespace App\Services\Landing;
 
 use App\Models\Module;
 use App\Models\OrganizationCommercialAccount;
-use App\Models\OrganizationModuleActivation;
+use App\Services\Entitlements\OrganizationEntitlementService;
 use App\Services\Modules\PackageCatalogService;
 use Carbon\CarbonImmutable;
-use Illuminate\Support\Collection;
 
 class ModulesOverviewService
 {
     public function __construct(
         private readonly PackageCatalogService $packageCatalog,
         private readonly PackageService $packageService,
+        private readonly OrganizationEntitlementService $entitlements,
     ) {}
 
     public function build(int $organizationId): array
     {
         $solutions = $this->packageService->getAllPackages($organizationId);
         $membership = $this->packageMembership();
-        $activations = $this->activations($organizationId);
+        $activeModuleSlugs = $this->entitlements->getEffectiveModuleSlugs($organizationId);
         $modules = Module::query()
             ->where('is_active', true)
             ->orderBy('display_order')
             ->orderBy('name')
             ->get()
-            ->map(fn (Module $module): array => $this->moduleData($module, $membership, $activations))
+            ->map(fn (Module $module): array => $this->moduleData($module, $membership, $activeModuleSlugs))
             ->values();
         $standalone = $modules
             ->where('classification', 'standalone')
@@ -74,19 +74,8 @@ class ModulesOverviewService
         );
     }
 
-    private function activations(int $organizationId): Collection
+    private function moduleData(Module $module, array $membership, array $activeModuleSlugs): array
     {
-        return OrganizationModuleActivation::query()
-            ->where('organization_id', $organizationId)
-            ->with('module')
-            ->get()
-            ->filter(fn (OrganizationModuleActivation $activation): bool => $activation->module !== null)
-            ->keyBy(fn (OrganizationModuleActivation $activation): string => $activation->module->slug);
-    }
-
-    private function moduleData(Module $module, array $membership, Collection $activations): array
-    {
-        $activation = $activations->get($module->slug);
         $packageSlugs = $membership[$module->slug] ?? [];
         $isFoundation = in_array($module->slug, $this->packageCatalog->foundationModules(), true);
         $classification = $isFoundation
@@ -100,12 +89,7 @@ class ModulesOverviewService
             'classification' => $classification,
             'package_slugs' => $packageSlugs,
             'is_foundation' => $isFoundation,
-            'status' => $activation?->status ?? ($isFoundation ? 'active' : 'available'),
-            'activation' => $activation === null ? null : [
-                'status' => $activation->status,
-                'activated_at' => $activation->activated_at?->toISOString(),
-                'expires_at' => $activation->expires_at?->toISOString(),
-            ],
+            'status' => in_array($module->slug, $activeModuleSlugs, true) ? 'active' : 'available',
             'billing_model' => $module->billing_model,
             'development_status' => $module->getDevelopmentStatusInfo(),
             'can_deactivate' => (bool) ($module->can_deactivate ?? true),

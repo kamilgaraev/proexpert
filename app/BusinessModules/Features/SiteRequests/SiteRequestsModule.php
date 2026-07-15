@@ -2,20 +2,20 @@
 
 namespace App\BusinessModules\Features\SiteRequests;
 
-use App\Modules\Contracts\ModuleInterface;
+use App\Enums\BillingModel;
+use App\Enums\ModuleType;
 use App\Modules\Contracts\BillableInterface;
 use App\Modules\Contracts\ConfigurableInterface;
-use App\Enums\ModuleType;
-use App\Enums\BillingModel;
+use App\Modules\Contracts\ModuleInterface;
 use Illuminate\Support\Facades\Cache;
 
 /**
  * Модуль "Заявки с объекта"
- * 
+ *
  * Система управления заявками с строительных объектов:
  * материалы, персонал, техника
  */
-class SiteRequestsModule implements ModuleInterface, BillableInterface, ConfigurableInterface
+class SiteRequestsModule implements BillableInterface, ConfigurableInterface, ModuleInterface
 {
     private const CACHE_TTL = 3600; // 1 час
 
@@ -111,6 +111,7 @@ class SiteRequestsModule implements ModuleInterface, BillableInterface, Configur
     {
         // Проверяем что модуль project-management активирован
         $accessController = app(\App\Modules\Core\AccessController::class);
+
         return $accessController->hasModuleAccess($organizationId, 'project-management');
     }
 
@@ -253,16 +254,7 @@ class SiteRequestsModule implements ModuleInterface, BillableInterface, Configur
      */
     public function canAfford(int $organizationId): bool
     {
-        $organization = \App\Models\Organization::find($organizationId);
-
-        if (!$organization) {
-            return false;
-        }
-
-        $billingEngine = app(\App\Modules\Core\BillingEngine::class);
-        $module = \App\Models\Module::where('slug', $this->getSlug())->first();
-
-        return $module ? $billingEngine->canAfford($organization, $module) : false;
+        return false;
     }
 
     // ============================================
@@ -312,7 +304,7 @@ class SiteRequestsModule implements ModuleInterface, BillableInterface, Configur
     {
         // Валидация лимитов
         if (isset($settings['max_files_per_request'])) {
-            if (!is_int($settings['max_files_per_request']) ||
+            if (! is_int($settings['max_files_per_request']) ||
                 $settings['max_files_per_request'] < 1 ||
                 $settings['max_files_per_request'] > 20) {
                 return false;
@@ -320,7 +312,7 @@ class SiteRequestsModule implements ModuleInterface, BillableInterface, Configur
         }
 
         if (isset($settings['max_file_size_mb'])) {
-            if (!is_int($settings['max_file_size_mb']) ||
+            if (! is_int($settings['max_file_size_mb']) ||
                 $settings['max_file_size_mb'] < 1 ||
                 $settings['max_file_size_mb'] > 10) {
                 return false;
@@ -328,7 +320,7 @@ class SiteRequestsModule implements ModuleInterface, BillableInterface, Configur
         }
 
         if (isset($settings['max_templates'])) {
-            if (!is_int($settings['max_templates']) ||
+            if (! is_int($settings['max_templates']) ||
                 $settings['max_templates'] < 1 ||
                 $settings['max_templates'] > 50) {
                 return false;
@@ -338,7 +330,7 @@ class SiteRequestsModule implements ModuleInterface, BillableInterface, Configur
         // Валидация приоритета по умолчанию
         if (isset($settings['default_priority'])) {
             $validPriorities = ['low', 'medium', 'high', 'urgent'];
-            if (!in_array($settings['default_priority'], $validPriorities)) {
+            if (! in_array($settings['default_priority'], $validPriorities)) {
                 return false;
             }
         }
@@ -351,7 +343,7 @@ class SiteRequestsModule implements ModuleInterface, BillableInterface, Configur
      */
     public function applySettings(int $organizationId, array $settings): void
     {
-        if (!$this->validateSettings($settings)) {
+        if (! $this->validateSettings($settings)) {
             throw new \InvalidArgumentException('Некорректные настройки модуля заявок с объекта');
         }
 
@@ -387,7 +379,7 @@ class SiteRequestsModule implements ModuleInterface, BillableInterface, Configur
                     })
                     ->first();
 
-                if (!$activation) {
+                if (! $activation) {
                     return $this->getDefaultSettings();
                 }
 
@@ -409,6 +401,7 @@ class SiteRequestsModule implements ModuleInterface, BillableInterface, Configur
     public function hasCatalogManagement(int $organizationId): bool
     {
         $accessController = app(\App\Modules\Core\AccessController::class);
+
         return $accessController->hasModuleAccess($organizationId, 'catalog-management');
     }
 
@@ -418,6 +411,7 @@ class SiteRequestsModule implements ModuleInterface, BillableInterface, Configur
     public function hasScheduleManagement(int $organizationId): bool
     {
         $accessController = app(\App\Modules\Core\AccessController::class);
+
         return $accessController->hasModuleAccess($organizationId, 'schedule-management');
     }
 
@@ -427,6 +421,7 @@ class SiteRequestsModule implements ModuleInterface, BillableInterface, Configur
     public function hasNotifications(int $organizationId): bool
     {
         $accessController = app(\App\Modules\Core\AccessController::class);
+
         return $accessController->hasModuleAccess($organizationId, 'notifications');
     }
 
@@ -436,6 +431,7 @@ class SiteRequestsModule implements ModuleInterface, BillableInterface, Configur
     public function hasAIAssistant(int $organizationId): bool
     {
         $accessController = app(\App\Modules\Core\AccessController::class);
+
         return $accessController->hasModuleAccess($organizationId, 'ai-assistant');
     }
 }

@@ -15,7 +15,6 @@ use App\Filament\Widgets\PlatformGrowthStatsWidget;
 use App\Filament\Widgets\PlatformHealthStatsWidget;
 use App\Filament\Widgets\PlatformRiskStatsWidget;
 use App\Filament\Widgets\SaaSIncomeStatsWidget;
-use App\Filament\Widgets\SubscriptionPlanStatsWidget;
 use App\Filament\Widgets\UsersStatsWidget;
 use App\Http\Middleware\EnsureSystemAdminSessionIsFresh;
 use Filament\Http\Middleware\Authenticate;
@@ -62,7 +61,6 @@ class AdminPanelProvider extends PanelProvider
                 AccountWidget::class,
                 SaaSIncomeStatsWidget::class,
                 UsersStatsWidget::class,
-                SubscriptionPlanStatsWidget::class,
                 PlatformHealthStatsWidget::class,
                 PlatformGrowthStatsWidget::class,
                 PlatformRiskStatsWidget::class,

@@ -2,20 +2,20 @@
 
 namespace App\BusinessModules\Features\Procurement;
 
-use App\Modules\Contracts\ModuleInterface;
+use App\Enums\BillingModel;
+use App\Enums\ModuleType;
 use App\Modules\Contracts\BillableInterface;
 use App\Modules\Contracts\ConfigurableInterface;
-use App\Enums\ModuleType;
-use App\Enums\BillingModel;
+use App\Modules\Contracts\ModuleInterface;
 use Illuminate\Support\Facades\Cache;
 
 /**
  * Модуль "Управление закупками"
- * 
+ *
  * Система управления процессом закупок материалов:
  * от заявок до оплаты счетов поставщиков и приема материалов на склад
  */
-class ProcurementModule implements ModuleInterface, BillableInterface, ConfigurableInterface
+class ProcurementModule implements BillableInterface, ConfigurableInterface, ModuleInterface
 {
     private const CACHE_TTL = 3600; // 1 час
 
@@ -108,10 +108,10 @@ class ProcurementModule implements ModuleInterface, BillableInterface, Configura
     public function canActivate(int $organizationId): bool
     {
         $accessController = app(\App\Modules\Core\AccessController::class);
-        
+
         // Проверяем зависимости
         foreach ($this->getDependencies() as $dependency) {
-            if (!$accessController->hasModuleAccess($organizationId, $dependency)) {
+            if (! $accessController->hasModuleAccess($organizationId, $dependency)) {
                 return false;
             }
         }
@@ -272,16 +272,7 @@ class ProcurementModule implements ModuleInterface, BillableInterface, Configura
      */
     public function canAfford(int $organizationId): bool
     {
-        $organization = \App\Models\Organization::find($organizationId);
-
-        if (!$organization) {
-            return false;
-        }
-
-        $billingEngine = app(\App\Modules\Core\BillingEngine::class);
-        $module = \App\Models\Module::where('slug', $this->getSlug())->first();
-
-        return $module ? $billingEngine->canAfford($organization, $module) : false;
+        return false;
     }
 
     // ============================================
@@ -330,14 +321,14 @@ class ProcurementModule implements ModuleInterface, BillableInterface, Configura
         // Валидация валюты
         if (isset($settings['default_currency'])) {
             $validCurrencies = ['RUB', 'USD', 'EUR'];
-            if (!in_array($settings['default_currency'], $validCurrencies)) {
+            if (! in_array($settings['default_currency'], $validCurrencies)) {
                 return false;
             }
         }
 
         // Валидация TTL кеша
         if (isset($settings['cache_ttl'])) {
-            if (!is_int($settings['cache_ttl']) ||
+            if (! is_int($settings['cache_ttl']) ||
                 $settings['cache_ttl'] < 60) {
                 return false;
             }
@@ -351,7 +342,7 @@ class ProcurementModule implements ModuleInterface, BillableInterface, Configura
      */
     public function applySettings(int $organizationId, array $settings): void
     {
-        if (!$this->validateSettings($settings)) {
+        if (! $this->validateSettings($settings)) {
             throw new \InvalidArgumentException(trans_message('procurement.settings_invalid'));
         }
 
@@ -387,7 +378,7 @@ class ProcurementModule implements ModuleInterface, BillableInterface, Configura
                     })
                     ->first();
 
-                if (!$activation) {
+                if (! $activation) {
                     return $this->getDefaultSettings();
                 }
 

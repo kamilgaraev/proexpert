@@ -25,12 +25,9 @@ use App\Filament\Resources\Monitoring\ApplicationErrorResource;
 use App\Filament\Resources\NotificationAnalyticsResource;
 use App\Filament\Resources\NotificationResource;
 use App\Filament\Resources\NotificationTemplateResource;
-use App\Filament\Resources\OrganizationModuleActivationResource;
 use App\Filament\Resources\OrganizationPackageSubscriptionResource;
 use App\Filament\Resources\OrganizationResource;
-use App\Filament\Resources\OrganizationSubscriptionResource;
 use App\Filament\Resources\PaymentTransactionResource;
-use App\Filament\Resources\SubscriptionPlanResource;
 use App\Filament\Resources\SupportRequestResource;
 use App\Filament\Resources\SystemAdminResource;
 use App\Filament\Resources\UserResource;
@@ -155,12 +152,9 @@ class SystemAdminResourceAuthorizationTest extends TestCase
         $this->assertFalse(NotificationAnalyticsResource::canViewAny());
         $this->assertFalse(UserResource::canViewAny());
         $this->assertFalse(OrganizationResource::canViewAny());
-        $this->assertFalse(OrganizationSubscriptionResource::canViewAny());
         $this->assertFalse(PaymentTransactionResource::canViewAny());
         $this->assertFalse(ModuleResource::canViewAny());
-        $this->assertFalse(OrganizationModuleActivationResource::canViewAny());
         $this->assertFalse(OrganizationPackageSubscriptionResource::canViewAny());
-        $this->assertFalse(SubscriptionPlanResource::canViewAny());
         $this->assertFalse(SupportRequestResource::canViewAny());
         $this->assertFalse(SystemAdminResource::canViewAny());
         $this->assertFalse(ActivityEventResource::canViewAny());
@@ -178,12 +172,9 @@ class SystemAdminResourceAuthorizationTest extends TestCase
 
         $this->assertTrue(UserResource::canViewAny());
         $this->assertTrue(OrganizationResource::canViewAny());
-        $this->assertTrue(OrganizationSubscriptionResource::canViewAny());
         $this->assertTrue(PaymentTransactionResource::canViewAny());
         $this->assertTrue(ModuleResource::canViewAny());
-        $this->assertTrue(OrganizationModuleActivationResource::canViewAny());
         $this->assertTrue(OrganizationPackageSubscriptionResource::canViewAny());
-        $this->assertTrue(SubscriptionPlanResource::canViewAny());
         $this->assertTrue(BlogArticleResource::canViewAny());
         $this->assertTrue(BlogMediaAssetResource::canViewAny());
         $this->assertTrue(NotificationResource::canViewAny());
@@ -214,12 +205,9 @@ class SystemAdminResourceAuthorizationTest extends TestCase
         $this->assertTrue(SystemAdminResource::canViewAny());
         $this->assertTrue(UserResource::canViewAny());
         $this->assertTrue(OrganizationResource::canViewAny());
-        $this->assertTrue(OrganizationSubscriptionResource::canViewAny());
         $this->assertTrue(PaymentTransactionResource::canViewAny());
         $this->assertTrue(ModuleResource::canViewAny());
-        $this->assertTrue(OrganizationModuleActivationResource::canViewAny());
         $this->assertTrue(OrganizationPackageSubscriptionResource::canViewAny());
-        $this->assertTrue(SubscriptionPlanResource::canViewAny());
         $this->assertTrue(BlogArticleResource::canViewAny());
         $this->assertTrue(NotificationResource::canViewAny());
         $this->assertTrue(NotificationAnalyticsResource::canViewAny());
@@ -320,12 +308,9 @@ class SystemAdminResourceAuthorizationTest extends TestCase
             NotificationTemplateResource::class,
             ModuleResource::class,
             ApplicationErrorResource::class,
-            OrganizationModuleActivationResource::class,
             OrganizationPackageSubscriptionResource::class,
             OrganizationResource::class,
-            OrganizationSubscriptionResource::class,
             PaymentTransactionResource::class,
-            SubscriptionPlanResource::class,
             SupportRequestResource::class,
             SystemAdminResource::class,
             UserResource::class,

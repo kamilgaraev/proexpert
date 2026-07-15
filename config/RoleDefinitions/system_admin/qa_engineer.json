@@ -15,8 +15,6 @@
     "system_admin.users.create",
     "system_admin.users.update",
     "system_admin.organizations.view",
-    "system_admin.subscription_plans.view",
-    "system_admin.subscriptions.view",
     "system_admin.payments.view",
     "system_admin.modules.view",
     "system_admin.monitoring.view",
@@ -44,11 +42,7 @@
     "organizations": [
       "system_admin.organizations.view"
     ],
-    "subscription_plans": [
-      "system_admin.subscription_plans.view"
-    ],
     "billing": [
-      "system_admin.subscriptions.view",
       "system_admin.payments.view"
     ],
     "modules": [

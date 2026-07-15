@@ -17,8 +17,8 @@ use App\Models\Blog\BlogCategory;
 use App\Models\ContactForm;
 use App\Models\LandingAdmin;
 use App\Models\Organization;
-use App\Models\OrganizationSubscription;
-use App\Models\SubscriptionPlan;
+use App\Models\OrganizationCommercialAccount;
+use App\Models\OrganizationPackageSubscription;
 use App\Models\SystemAdmin;
 use App\Models\User;
 use App\Services\Filament\SystemAdminDashboardService;
@@ -55,44 +55,28 @@ class SystemAdminWidgetVisibilityTest extends TestCase
         CarbonImmutable::setTestNow($now);
         $baseline = app(SystemAdminDashboardService::class)->overview($now);
 
-        $plan = SubscriptionPlan::query()->create([
-            'name' => 'Dashboard Business',
-            'slug' => 'dashboard-business-' . Str::uuid()->toString(),
-            'price' => 10000,
-            'currency' => 'RUB',
-            'billing_cycle' => 'monthly',
-            'trial_days' => 14,
-            'features' => [],
-            'is_active' => true,
-            'display_order' => 1,
-        ]);
         $activeOrganization = Organization::factory()->create(['is_active' => true]);
         $trialOrganization = Organization::factory()->create(['is_active' => true]);
-        $overdueOrganization = Organization::factory()->create(['is_active' => true]);
+        Organization::factory()->create(['is_active' => true]);
         Organization::factory()->create(['is_active' => false]);
 
-        OrganizationSubscription::query()->create([
+        OrganizationCommercialAccount::query()->create([
             'organization_id' => $activeOrganization->id,
-            'subscription_plan_id' => $plan->id,
             'status' => 'active',
-            'starts_at' => $now->subMonth(),
-            'ends_at' => $now->addMonth(),
-            'next_billing_at' => $now->addWeek(),
+            'offer_type' => 'packages',
+            'quote_version' => 1,
+            'billing_anchor_at' => $now->subMonth(),
+            'current_period_start_at' => $now->subMonth(),
+            'current_period_end_at' => $now->addMonth(),
+            'auto_renew_enabled' => true,
         ]);
-        OrganizationSubscription::query()->create([
+        OrganizationPackageSubscription::query()->create([
             'organization_id' => $trialOrganization->id,
-            'subscription_plan_id' => $plan->id,
-            'status' => 'trial',
+            'package_slug' => 'projects-processes',
+            'status' => 'trialing',
+            'access_source' => 'trial',
             'trial_ends_at' => $now->addDays(5),
-            'starts_at' => $now->subDays(2),
-            'ends_at' => $now->addDays(5),
-        ]);
-        OrganizationSubscription::query()->create([
-            'organization_id' => $overdueOrganization->id,
-            'subscription_plan_id' => $plan->id,
-            'status' => 'active',
-            'starts_at' => $now->subMonths(2),
-            'ends_at' => $now->subDay(),
+            'trial_started_at' => $now->subDays(2),
         ]);
 
         PaymentTransaction::unguarded(fn (): PaymentTransaction => PaymentTransaction::query()->create([
@@ -123,12 +107,12 @@ class SystemAdminWidgetVisibilityTest extends TestCase
         $category = BlogCategory::query()->create([
             'blog_context' => BlogContextEnum::MARKETING->value,
             'name' => 'Dashboard Metrics',
-            'slug' => 'dashboard-metrics-' . Str::uuid()->toString(),
+            'slug' => 'dashboard-metrics-'.Str::uuid()->toString(),
             'is_active' => true,
         ]);
         $author = LandingAdmin::query()->create([
             'name' => 'Dashboard Editor',
-            'email' => 'dashboard-editor-' . Str::uuid()->toString() . '@example.test',
+            'email' => 'dashboard-editor-'.Str::uuid()->toString().'@example.test',
             'password' => Hash::make('password'),
             'role' => 'admin',
         ]);
@@ -210,7 +194,6 @@ class SystemAdminWidgetVisibilityTest extends TestCase
         $this->assertSame($baseline['organizations']['active'] + 3, $metrics['organizations']['active']);
         $this->assertSame($baseline['organizations']['trial'] + 1, $metrics['organizations']['trial']);
         $this->assertSame($baseline['organizations']['paying'] + 1, $metrics['organizations']['paying']);
-        $this->assertSame($baseline['subscriptions']['overdue'] + 1, $metrics['subscriptions']['overdue']);
         $this->assertSame($baseline['payments']['failed_30_days'] + 1, $metrics['payments']['failed_30_days']);
         $this->assertSame($baseline['users']['new_7_days'] + 1, $metrics['users']['new_7_days']);
         $this->assertSame($baseline['users']['new_30_days'] + 2, $metrics['users']['new_30_days']);

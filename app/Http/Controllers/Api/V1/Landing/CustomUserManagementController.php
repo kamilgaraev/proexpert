@@ -11,22 +11,21 @@ use App\Domain\Authorization\Services\CustomRoleService;
 use App\Domain\Authorization\Services\RolePayloadFormatter;
 use App\Domain\Authorization\Services\RoleScanner;
 use App\Exceptions\BusinessLogicException;
+use App\Helpers\AdminPanelAccessHelper;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\Landing\AdminPanelUserResource;
 use App\Http\Responses\LandingResponse;
-use App\Helpers\AdminPanelAccessHelper;
 use App\Models\User;
 use App\Repositories\UserRepository;
-use App\Services\Billing\SubscriptionLimitsService;
 use App\Services\User\UserService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
-use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
 
 use function trans_message;
@@ -40,10 +39,8 @@ class CustomUserManagementController extends Controller
         protected RolePayloadFormatter $rolePayloadFormatter,
         protected AdminPanelAccessHelper $adminPanelAccessHelper,
         protected UserRepository $userRepository,
-        protected SubscriptionLimitsService $subscriptionLimitsService,
         protected UserService $userService
-    ) {
-    }
+    ) {}
 
     public function createUserWithCustomRoles(Request $request): JsonResponse
     {
@@ -82,7 +79,7 @@ class CustomUserManagementController extends Controller
 
         $organizationId = $request->attributes->get('current_organization_id');
 
-        if (!$organizationId) {
+        if (! $organizationId) {
             return $this->organizationContextMissingResponse();
         }
 
@@ -96,7 +93,7 @@ class CustomUserManagementController extends Controller
             ->filter(function (string $roleSlug): bool {
                 $role = $this->roleScanner->getRole($roleSlug);
 
-                return !$role || !$this->rolePayloadFormatter->isAssignableSystemRole($role);
+                return ! $role || ! $this->rolePayloadFormatter->isAssignableSystemRole($role);
             })
             ->values();
 
@@ -118,14 +115,14 @@ class CustomUserManagementController extends Controller
 
                 $authContext = AuthorizationContext::getOrganizationContext($organizationId);
 
-                if (!empty($data['custom_role_ids'])) {
+                if (! empty($data['custom_role_ids'])) {
                     foreach ($data['custom_role_ids'] as $roleId) {
                         $role = OrganizationCustomRole::findOrFail($roleId);
                         $this->customRoleService->assignRoleToUser($role, $user, $authContext);
                     }
                 }
 
-                if (!empty($data['roles'])) {
+                if (! empty($data['roles'])) {
                     foreach ($data['roles'] as $roleSlug) {
                         try {
                             $this->authService->assignRole($user, $roleSlug, $authContext);
@@ -138,7 +135,7 @@ class CustomUserManagementController extends Controller
                 return $user->refresh();
             });
 
-            if (!$user->hasVerifiedEmail()) {
+            if (! $user->hasVerifiedEmail()) {
                 try {
                     $user->sendEmailVerificationNotification();
                     Log::info('[CustomUserManagementController] Email verification sent to new user', [
@@ -210,7 +207,7 @@ class CustomUserManagementController extends Controller
     {
         $organizationId = $request->attributes->get('current_organization_id');
 
-        if (!$organizationId) {
+        if (! $organizationId) {
             return $this->organizationContextMissingResponse();
         }
 
@@ -229,7 +226,7 @@ class CustomUserManagementController extends Controller
             $systemRoles = $this->roleScanner->getAllRoles()
                 ->reject(fn (array $role, string $slug): bool => $slug === 'organization_owner')
                 ->filter(fn (array $role): bool => $this->rolePayloadFormatter->isAssignableSystemRole($role))
-                ->filter(fn (array $role, string $slug): bool => !$adminPanelOnly || isset($adminPanelRoleSlugs[$slug]))
+                ->filter(fn (array $role, string $slug): bool => ! $adminPanelOnly || isset($adminPanelRoleSlugs[$slug]))
                 ->map(fn (array $role, string $slug): array => $this->rolePayloadFormatter->formatSystemRole($slug, $role))
                 ->sortBy('name', SORT_NATURAL)
                 ->values()
@@ -288,18 +285,18 @@ class CustomUserManagementController extends Controller
 
         $organizationId = $request->attributes->get('current_organization_id');
 
-        if (!$organizationId) {
+        if (! $organizationId) {
             return $this->organizationContextMissingResponse();
         }
 
         try {
             $user = $this->userRepository->find($userId);
 
-            if (!$user) {
+            if (! $user) {
                 return LandingResponse::error(trans_message('landing.custom_users.user_not_found'), 404);
             }
 
-            if (!$user->organizations()->where('organization_user.organization_id', $organizationId)->exists()) {
+            if (! $user->organizations()->where('organization_user.organization_id', $organizationId)->exists()) {
                 return LandingResponse::error(trans_message('landing.custom_users.user_not_in_organization'), 403);
             }
 
@@ -375,8 +372,7 @@ class CustomUserManagementController extends Controller
         int $organizationId,
         bool $adminPanelOnly,
         string $currentInterface
-    ): array
-    {
+    ): array {
         $roles = $this->roleScanner->getAllRoles()
             ->reject(fn (array $role, string $slug): bool => $slug === 'organization_owner')
             ->filter(fn (array $role): bool => $this->rolePayloadFormatter->isAssignableSystemRole($role));
@@ -398,14 +394,13 @@ class CustomUserManagementController extends Controller
         int $organizationId,
         bool $adminPanelOnly,
         string $currentInterface
-    ): Collection
-    {
+    ): Collection {
         $customRoles = OrganizationCustomRole::query()
             ->where('organization_id', $organizationId)
             ->where('is_active', true)
             ->get();
 
-        if (!$adminPanelOnly) {
+        if (! $adminPanelOnly) {
             return $customRoles;
         }
 
@@ -427,8 +422,7 @@ class CustomUserManagementController extends Controller
         array $data,
         array $allowedSystemRoles,
         Collection $allowedCustomRoles
-    ): array
-    {
+    ): array {
         $allowedSystemLookup = array_flip($allowedSystemRoles);
         $customRolesById = $allowedCustomRoles->keyBy('id');
         $customRolesBySlug = $allowedCustomRoles->keyBy('slug');
@@ -444,7 +438,7 @@ class CustomUserManagementController extends Controller
         $invalidRoles = [];
 
         foreach ($systemRoleSlugs as $roleSlug) {
-            if (!isset($allowedSystemLookup[$roleSlug])) {
+            if (! isset($allowedSystemLookup[$roleSlug])) {
                 $invalidRoles[] = $roleSlug;
             }
         }
@@ -452,8 +446,9 @@ class CustomUserManagementController extends Controller
         foreach ($customRoleIds as $roleId) {
             $role = $customRolesById->get($roleId);
 
-            if (!$role instanceof OrganizationCustomRole) {
+            if (! $role instanceof OrganizationCustomRole) {
                 $invalidRoles[] = (string) $roleId;
+
                 continue;
             }
 
@@ -463,6 +458,7 @@ class CustomUserManagementController extends Controller
         foreach ($this->uniqueStringList($data['role_slugs'] ?? []) as $roleSlug) {
             if (isset($allowedSystemLookup[$roleSlug])) {
                 $systemRoleSlugs[] = $roleSlug;
+
                 continue;
             }
 
@@ -470,6 +466,7 @@ class CustomUserManagementController extends Controller
 
             if ($customRole instanceof OrganizationCustomRole) {
                 $customRoleSlugs[] = $customRole->slug;
+
                 continue;
             }
 
@@ -538,7 +535,7 @@ class CustomUserManagementController extends Controller
     {
         $organizationId = $request->attributes->get('current_organization_id');
 
-        if (!$organizationId) {
+        if (! $organizationId) {
             return $this->organizationContextMissingResponse();
         }
 
@@ -546,7 +543,7 @@ class CustomUserManagementController extends Controller
             $role = OrganizationCustomRole::findOrFail($roleId);
             $user = $this->userRepository->find($userId);
 
-            if (!$user) {
+            if (! $user) {
                 return LandingResponse::error(trans_message('landing.custom_users.user_not_found'), 404);
             }
 
@@ -570,7 +567,7 @@ class CustomUserManagementController extends Controller
     {
         $organizationId = $request->attributes->get('current_organization_id');
 
-        if (!$organizationId) {
+        if (! $organizationId) {
             return $this->organizationContextMissingResponse();
         }
 
@@ -578,7 +575,7 @@ class CustomUserManagementController extends Controller
             $role = OrganizationCustomRole::findOrFail($roleId);
             $user = $this->userRepository->find($userId);
 
-            if (!$user) {
+            if (! $user) {
                 return LandingResponse::error(trans_message('landing.custom_users.user_not_found'), 404);
             }
 
@@ -602,23 +599,6 @@ class CustomUserManagementController extends Controller
             ]);
 
             return LandingResponse::error(trans_message('landing.custom_users.role_unassign_error'), 500);
-        }
-    }
-
-    public function getUserLimits(Request $request): JsonResponse
-    {
-        try {
-            $user = $request->user();
-            $limits = $this->subscriptionLimitsService->getUserLimitsData($user);
-
-            return LandingResponse::success($limits, trans_message('landing.custom_users.limits_loaded'));
-        } catch (\Throwable $e) {
-            Log::error('Error getting user limits', [
-                'user_id' => $request->user()->id ?? null,
-                'error' => $e->getMessage(),
-            ]);
-
-            return LandingResponse::error(trans_message('landing.custom_users.limits_load_error'), 500);
         }
     }
 

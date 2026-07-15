@@ -1,48 +1,39 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services\Landing;
 
-use App\Services\Landing\OrganizationSubscriptionService;
+use App\Models\Organization;
+use App\Models\OrganizationCommercialAccount;
+use App\Models\OrganizationPackageSubscription;
 
-class OrganizationDashboardService
+final class OrganizationDashboardService
 {
-    protected OrganizationSubscriptionService $subscriptionService;
-
-    public function __construct(OrganizationSubscriptionService $subscriptionService)
+    public function getDashboardData(Organization $organization): array
     {
-        $this->subscriptionService = $subscriptionService;
-    }
-
-    public function getDashboardData($organization)
-    {
-
-        $subscription = $this->subscriptionService->getCurrentSubscription($organization->id);
-        $plan = $subscription ? $subscription->plan : null;
-
-        // Остатки по лимитам
-        $usedProjects = method_exists($organization, 'projects') ? $organization->projects()->count() : null;
-        $usedStorageGb = method_exists($organization, 'usedStorageGb') ? $organization->usedStorageGb() : null;
-
-        $daysLeft = $subscription && $subscription->ends_at
-            ? (int) ceil(now()->diffInDays($subscription->ends_at, false))
-            : null;
-
-        $planData = $plan ? [
-            'name' => $plan->name,
-            'ends_at' => $subscription->ends_at,
-            'days_left' => $daysLeft,
-            'max_projects' => $plan->max_projects,
-            'max_storage_gb' => $plan->max_storage_gb,
-            'used_projects' => $usedProjects,
-            'used_storage_gb' => $usedStorageGb,
-        ] : null;
-
-        // Add-on'ы временно отключены
-        $addons = collect([]);
+        $account = OrganizationCommercialAccount::query()
+            ->where('organization_id', $organization->id)
+            ->first();
+        $packages = OrganizationPackageSubscription::query()
+            ->where('organization_id', $organization->id)
+            ->active()
+            ->orderBy('package_slug')
+            ->get();
 
         return [
-            'plan' => $planData,
-            'addons' => $addons
+            'commercial' => $account === null ? null : [
+                'status' => $account->status->value,
+                'offer_type' => $account->offer_type?->value,
+                'current_period_end_at' => $account->current_period_end_at?->toIso8601String(),
+                'auto_renew_enabled' => $account->auto_renew_enabled,
+            ],
+            'packages' => $packages->map(static fn (OrganizationPackageSubscription $package): array => [
+                'slug' => $package->package_slug,
+                'status' => $package->status->value,
+                'access_source' => $package->access_source->value,
+                'current_period_end_at' => $package->current_period_end_at?->toIso8601String(),
+            ])->values()->all(),
         ];
     }
 }

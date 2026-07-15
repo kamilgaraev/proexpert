@@ -21,7 +21,6 @@ class PlatformHealthStatsWidget extends BaseWidget
         return SystemAdminAccess::can(FilamentPermission::DASHBOARD_VIEW)
             && SystemAdminAccess::canAny([
                 FilamentPermission::ORGANIZATIONS_VIEW,
-                FilamentPermission::SUBSCRIPTIONS_VIEW,
                 FilamentPermission::BILLING_VIEW,
             ]);
     }
@@ -52,13 +51,6 @@ class PlatformHealthStatsWidget extends BaseWidget
                 ->description(trans_message('widgets.platform_health.paying_organizations_description'))
                 ->descriptionIcon('heroicon-m-banknotes')
                 ->color('primary'),
-            Stat::make(
-                trans_message('widgets.platform_health.overdue_subscriptions'),
-                $metrics['subscriptions']['overdue'],
-            )
-                ->description(trans_message('widgets.platform_health.overdue_subscriptions_description'))
-                ->descriptionIcon('heroicon-m-clock')
-                ->color($metrics['subscriptions']['overdue'] > 0 ? 'warning' : 'success'),
         ];
     }
 }

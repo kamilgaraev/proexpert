@@ -10,7 +10,6 @@ use App\Domain\Authorization\Services\RoleScanner;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\AdminResponse;
 use App\Modules\Core\AccessController;
-use App\Services\SubscriptionModuleSyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -24,6 +23,7 @@ use function trans_message;
 class UserPermissionsController extends Controller
 {
     protected AuthorizationService $authService;
+
     protected RoleScanner $roleScanner;
 
     public function __construct(AuthorizationService $authService, RoleScanner $roleScanner)
@@ -38,11 +38,9 @@ class UserPermissionsController extends Controller
             $user = Auth::user();
             $organizationId = $this->getOrganizationId($request);
 
-            if (!$user) {
+            if (! $user) {
                 return AdminResponse::error(trans_message('permissions.unauthorized'), 401);
             }
-
-            $this->ensureBundledModulesSynced($organizationId);
 
             $cacheKey = "user_permissions_full_effective_{$user->id}_{$organizationId}";
             $data = Cache::remember($cacheKey, 300, function () use ($user, $organizationId) {
@@ -107,7 +105,7 @@ class UserPermissionsController extends Controller
             ]);
 
             $user = Auth::user();
-            if (!$user) {
+            if (! $user) {
                 return AdminResponse::error(trans_message('permissions.unauthorized'), 401);
             }
 
@@ -115,7 +113,7 @@ class UserPermissionsController extends Controller
             $context = $validated['context'] ?? null;
             $interface = $validated['interface'] ?? null;
 
-            if (!$context) {
+            if (! $context) {
                 $organizationId = $this->getOrganizationId($request);
                 $context = $organizationId ? ['organization_id' => $organizationId] : null;
             }
@@ -203,40 +201,6 @@ class UserPermissionsController extends Controller
         }
     }
 
-    protected function ensureBundledModulesSynced(?int $organizationId): void
-    {
-        if (!$organizationId) {
-            return;
-        }
-
-        $cacheKey = "subscription_bundled_modules_synced_{$organizationId}";
-
-        if (Cache::has($cacheKey)) {
-            return;
-        }
-
-        try {
-            $result = app(SubscriptionModuleSyncService::class)
-                ->ensureBundledModulesSyncedForOrganization($organizationId);
-
-            Cache::put($cacheKey, true, 300);
-
-            if (
-                ($result['activated_count'] ?? 0) > 0
-                || ($result['converted_count'] ?? 0) > 0
-                || ($result['packages_activated_count'] ?? 0) > 0
-                || ($result['packages_converted_count'] ?? 0) > 0
-            ) {
-                app(AccessController::class)->clearAccessCache($organizationId);
-            }
-        } catch (Throwable $e) {
-            Log::warning('permissions.subscription_modules_sync.failed', [
-                'organization_id' => $organizationId,
-                'error' => $e->getMessage(),
-            ]);
-        }
-    }
-
     protected function flattenPermissions(array $permissions): array
     {
         $flat = [];
@@ -308,7 +272,7 @@ class UserPermissionsController extends Controller
 
             $configPath = config_path('ModuleList');
             if (is_dir($configPath)) {
-                $finder = new \Symfony\Component\Finder\Finder();
+                $finder = new \Symfony\Component\Finder\Finder;
                 $finder->files()
                     ->name("{$moduleSlug}.json")
                     ->in($configPath);
@@ -380,19 +344,19 @@ class UserPermissionsController extends Controller
             ];
 
             foreach ($roleDirectories as $directory) {
-                if (!is_dir($directory)) {
+                if (! is_dir($directory)) {
                     continue;
                 }
 
-                $files = glob($directory . '/*.json');
+                $files = glob($directory.'/*.json');
                 foreach ($files as $file) {
                     $roleData = json_decode(file_get_contents($file), true);
-                    if (!$roleData || !isset($roleData['system_permissions'])) {
+                    if (! $roleData || ! isset($roleData['system_permissions'])) {
                         continue;
                     }
 
                     foreach ($roleData['system_permissions'] as $permission) {
-                        if (str_starts_with($permission, 'admin.') && !str_contains($permission, '*')) {
+                        if (str_starts_with($permission, 'admin.') && ! str_contains($permission, '*')) {
                             $permissions[] = $permission;
                         }
                     }

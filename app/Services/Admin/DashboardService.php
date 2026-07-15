@@ -2,38 +2,41 @@
 
 namespace App\Services\Admin;
 
-use App\Repositories\UserRepository;
-use App\Repositories\ProjectRepository;
-use App\Repositories\MaterialRepository;
-use App\Repositories\SupplierRepository;
-use App\Repositories\ContractRepository;
+use App\Enums\Contract\ContractStatusEnum;
+use App\Models\CompletedWork;
+use App\Models\Contract;
+use App\Models\Contractor;
+use App\Models\Material;
+use App\Models\Project;
+use App\Models\Supplier;
 use App\Repositories\CompletedWork\CompletedWorkRepository;
-use App\Services\Billing\SubscriptionLimitsService;
-use Illuminate\Support\Facades\Auth;
+use App\Repositories\ContractRepository;
+use App\Repositories\MaterialRepository;
+use App\Repositories\ProjectRepository;
+use App\Repositories\SupplierRepository;
+use App\Repositories\UserRepository;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
-use App\Models\User;
-use App\Models\Project;
-use App\Models\Material;
-use App\Models\Supplier;
-use App\Models\Contract;
-use App\Models\CompletedWork;
-use App\Models\Contractor;
-use App\Enums\Contract\ContractStatusEnum;
-use Carbon\Carbon;
 
 class DashboardService
 {
     protected UserRepository $userRepository;
+
     protected ProjectRepository $projectRepository;
+
     protected MaterialRepository $materialRepository;
+
     protected SupplierRepository $supplierRepository;
+
     protected ContractRepository $contractRepository;
+
     protected CompletedWorkRepository $completedWorkRepository;
-    protected SubscriptionLimitsService $subscriptionLimitsService;
 
     private const CACHE_TTL_SHORT = 300; // 5 минут
+
     private const CACHE_TTL_MEDIUM = 600; // 10 минут
+
     private const CACHE_TTL_LONG = 900; // 15 минут
 
     public function __construct(
@@ -42,8 +45,7 @@ class DashboardService
         MaterialRepository $materialRepository,
         SupplierRepository $supplierRepository,
         ContractRepository $contractRepository,
-        CompletedWorkRepository $completedWorkRepository,
-        SubscriptionLimitsService $subscriptionLimitsService
+        CompletedWorkRepository $completedWorkRepository
     ) {
         $this->userRepository = $userRepository;
         $this->projectRepository = $projectRepository;
@@ -51,7 +53,6 @@ class DashboardService
         $this->supplierRepository = $supplierRepository;
         $this->contractRepository = $contractRepository;
         $this->completedWorkRepository = $completedWorkRepository;
-        $this->subscriptionLimitsService = $subscriptionLimitsService;
     }
 
     /**
@@ -134,16 +135,16 @@ class DashboardService
         // Контракты проекта (ВСЕ, без фильтра по дате)
         // Включаем как обычные контракты (project_id), так и мультипроектные (через pivot)
         $contractsQuery = Contract::where('organization_id', $organizationId)
-            ->where(function($q) use ($projectId) {
+            ->where(function ($q) use ($projectId) {
                 // Обычные контракты (project_id)
                 $q->where('project_id', $projectId)
                   // ИЛИ мультипроектные контракты (через pivot таблицу)
-                  ->orWhereExists(function($sub) use ($projectId) {
-                      $sub->select(DB::raw(1))
-                          ->from('contract_project')
-                          ->whereColumn('contract_project.contract_id', 'contracts.id')
-                          ->where('contract_project.project_id', $projectId);
-                  });
+                    ->orWhereExists(function ($sub) use ($projectId) {
+                        $sub->select(DB::raw(1))
+                            ->from('contract_project')
+                            ->whereColumn('contract_project.contract_id', 'contracts.id')
+                            ->where('contract_project.project_id', $projectId);
+                    });
             })
             ->whereNull('deleted_at');
 
@@ -310,14 +311,14 @@ class DashboardService
     {
         // Получаем контракты проекта с учетом мультипроектных
         $contracts = Contract::where('organization_id', $organizationId)
-            ->where(function($q) use ($projectId) {
+            ->where(function ($q) use ($projectId) {
                 $q->where('project_id', $projectId)
-                  ->orWhereExists(function($sub) use ($projectId) {
-                      $sub->select(DB::raw(1))
-                          ->from('contract_project')
-                          ->whereColumn('contract_project.contract_id', 'contracts.id')
-                          ->where('contract_project.project_id', $projectId);
-                  });
+                    ->orWhereExists(function ($sub) use ($projectId) {
+                        $sub->select(DB::raw(1))
+                            ->from('contract_project')
+                            ->whereColumn('contract_project.contract_id', 'contracts.id')
+                            ->where('contract_project.project_id', $projectId);
+                    });
             })
             ->whereNull('deleted_at')
             ->get();
@@ -375,6 +376,7 @@ class DashboardService
         if ($old == 0) {
             return $new > 0 ? 100.0 : 0.0;
         }
+
         return round((($new - $old) / $old) * 100, 2);
     }
 
@@ -579,14 +581,14 @@ class DashboardService
 
             // Текущий период
             $currentAmount = Contract::where('organization_id', $organizationId)
-                ->when($projectId, fn($q) => $q->where('project_id', $projectId))
+                ->when($projectId, fn ($q) => $q->where('project_id', $projectId))
                 ->whereBetween('created_at', [$current, $periodEnd])
                 ->sum('total_amount');
 
             // Предыдущий период для сравнения
             $previousPeriodEnd = $this->getPeriodEnd($previousStart, $period);
             $previousAmount = Contract::where('organization_id', $organizationId)
-                ->when($projectId, fn($q) => $q->where('project_id', $projectId))
+                ->when($projectId, fn ($q) => $q->where('project_id', $projectId))
                 ->whereBetween('created_at', [$previousStart, $previousPeriodEnd])
                 ->sum('total_amount');
 
@@ -749,7 +751,7 @@ class DashboardService
             'budget' => 'budget_amount',
             default => 'budget_amount',
         })
-        ->limit($limit);
+            ->limit($limit);
 
         return $query->get(['id', 'name', 'budget_amount', 'materials_count', 'contracts_count'])
             ->map(function ($project) {
@@ -1003,7 +1005,7 @@ class DashboardService
                 'project:id,name',
                 'contract:id,number',
                 'workType:id,name',
-                'user:id,name'
+                'user:id,name',
             ]);
 
         if ($organizationId) {
@@ -1044,12 +1046,7 @@ class DashboardService
      */
     public function getLimits(?int $organizationId = null): array
     {
-        $user = Auth::user();
-        if (!$user) {
-            return [];
-        }
-
-        return $this->subscriptionLimitsService->getUserLimitsData($user);
+        return [];
     }
 
     /**
@@ -1063,14 +1060,14 @@ class DashboardService
         return $this->remember($cacheKey, $tags, self::CACHE_TTL_MEDIUM, function () use ($organizationId, $projectId) {
             $contractsQuery = Contract::where('organization_id', $organizationId);
             if ($projectId) {
-                $contractsQuery->where(function($q) use ($projectId) {
+                $contractsQuery->where(function ($q) use ($projectId) {
                     $q->where('project_id', $projectId)
-                      ->orWhereExists(function($sub) use ($projectId) {
-                          $sub->select(DB::raw(1))
-                              ->from('contract_project')
-                              ->whereColumn('contract_project.contract_id', 'contracts.id')
-                              ->where('contract_project.project_id', $projectId);
-                      });
+                        ->orWhereExists(function ($sub) use ($projectId) {
+                            $sub->select(DB::raw(1))
+                                ->from('contract_project')
+                                ->whereColumn('contract_project.contract_id', 'contracts.id')
+                                ->where('contract_project.project_id', $projectId);
+                        });
                 });
             }
 
@@ -1111,21 +1108,21 @@ class DashboardService
      */
     public function getContractsAnalytics(int $organizationId, ?int $projectId = null, array $filters = []): array
     {
-        $cacheKey = "dashboard_contracts_analytics_{$organizationId}_{$projectId}_" . md5(serialize($filters));
+        $cacheKey = "dashboard_contracts_analytics_{$organizationId}_{$projectId}_".md5(serialize($filters));
         $tags = $this->getCacheTags($organizationId, $projectId);
 
         return $this->remember($cacheKey, $tags, self::CACHE_TTL_MEDIUM, function () use ($organizationId, $projectId, $filters) {
             $query = Contract::where('organization_id', $organizationId);
 
             if ($projectId) {
-                $query->where(function($q) use ($projectId) {
+                $query->where(function ($q) use ($projectId) {
                     $q->where('project_id', $projectId)
-                      ->orWhereExists(function($sub) use ($projectId) {
-                          $sub->select(DB::raw(1))
-                              ->from('contract_project')
-                              ->whereColumn('contract_project.contract_id', 'contracts.id')
-                              ->where('contract_project.project_id', $projectId);
-                      });
+                        ->orWhereExists(function ($sub) use ($projectId) {
+                            $sub->select(DB::raw(1))
+                                ->from('contract_project')
+                                ->whereColumn('contract_project.contract_id', 'contracts.id')
+                                ->where('contract_project.project_id', $projectId);
+                        });
                 });
             }
 
@@ -1149,11 +1146,11 @@ class DashboardService
             $contracts = $query->get();
             $total = $contracts->count();
 
-            $byStatus = $contracts->groupBy(function($contract) {
+            $byStatus = $contracts->groupBy(function ($contract) {
                 return $contract->status instanceof ContractStatusEnum
                     ? $contract->status->value
-                    : (string)$contract->status;
-            })->map(fn($group) => $group->count());
+                    : (string) $contract->status;
+            })->map(fn ($group) => $group->count());
 
             $totalAmount = $this->calculateTotalContractAmountForProject($contracts, $projectId);
             $avgAmount = $total > 0 ? $totalAmount / $total : 0;
@@ -1162,7 +1159,7 @@ class DashboardService
             $completedWorksAmount = DB::table('contract_performance_acts')
                 ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
                 ->where('contracts.organization_id', $organizationId)
-                ->when($projectId, fn($q) => $q->where('contract_performance_acts.project_id', $projectId))
+                ->when($projectId, fn ($q) => $q->where('contract_performance_acts.project_id', $projectId))
                 ->sum('contract_performance_acts.amount');
 
             return [
@@ -1189,7 +1186,7 @@ class DashboardService
      */
     public function getProjectsAnalytics(int $organizationId, array $filters = []): array
     {
-        $cacheKey = "dashboard_projects_analytics_{$organizationId}_" . md5(serialize($filters));
+        $cacheKey = "dashboard_projects_analytics_{$organizationId}_".md5(serialize($filters));
         $tags = $this->getCacheTags($organizationId);
 
         return $this->remember($cacheKey, $tags, self::CACHE_TTL_MEDIUM, function () use ($organizationId, $filters) {
@@ -1233,7 +1230,7 @@ class DashboardService
      */
     public function getMaterialsAnalytics(int $organizationId, array $filters = []): array
     {
-        $cacheKey = "dashboard_materials_analytics_{$organizationId}_" . md5(serialize($filters));
+        $cacheKey = "dashboard_materials_analytics_{$organizationId}_".md5(serialize($filters));
         $tags = $this->getCacheTags($organizationId);
 
         return $this->remember($cacheKey, $tags, self::CACHE_TTL_MEDIUM, function () use ($organizationId, $filters) {
@@ -1254,6 +1251,7 @@ class DashboardService
                 ->get()
                 ->mapWithKeys(function ($item) {
                     $categoryKey = $item->category ?? 'Без категории';
+
                     return [$categoryKey => $item->count];
                 });
 
@@ -1428,7 +1426,7 @@ class DashboardService
             foreach ($byStatus as $item) {
                 $statusValue = $item->status instanceof ContractStatusEnum
                     ? $item->status->value
-                    : (string)$item->status;
+                    : (string) $item->status;
                 $statusValues[] = $statusValue;
 
                 $statusLabel = match ($statusValue) {
@@ -1450,7 +1448,7 @@ class DashboardService
                     [
                         'label' => 'Контракты',
                         'data' => $data,
-                        'backgroundColor' => array_map(fn($status) => $colors[$status] ?? '#9ca3af', $statusValues),
+                        'backgroundColor' => array_map(fn ($status) => $colors[$status] ?? '#9ca3af', $statusValues),
                     ],
                 ],
             ];
@@ -1517,21 +1515,21 @@ class DashboardService
                 ->with('contractor:id,name');
 
             if ($projectId) {
-                $query->where(function($q) use ($projectId) {
+                $query->where(function ($q) use ($projectId) {
                     $q->where('project_id', $projectId)
-                      ->orWhereExists(function($sub) use ($projectId) {
-                          $sub->select(DB::raw(1))
-                              ->from('contract_project')
-                              ->whereColumn('contract_project.contract_id', 'contracts.id')
-                              ->where('contract_project.project_id', $projectId);
-                      });
+                        ->orWhereExists(function ($sub) use ($projectId) {
+                            $sub->select(DB::raw(1))
+                                ->from('contract_project')
+                                ->whereColumn('contract_project.contract_id', 'contracts.id')
+                                ->where('contract_project.project_id', $projectId);
+                        });
                 });
             }
 
             $contracts = $query->get();
 
             // Группируем контракты по подрядчикам
-            $byContractor = $contracts->groupBy('contractor_id')->map(function($contractorContracts) use ($projectId) {
+            $byContractor = $contracts->groupBy('contractor_id')->map(function ($contractorContracts) use ($projectId) {
                 return [
                     'count' => $contractorContracts->count(),
                     'total_amount' => $this->calculateTotalContractAmountForProject($contractorContracts, $projectId),
@@ -1581,7 +1579,7 @@ class DashboardService
 
         return $this->remember($cacheKey, $tags, self::CACHE_TTL_MEDIUM, function () use ($organizationId, $limit) {
             // Материалы связаны с проектами через completed_work_materials -> completed_works -> project_id
-            if (!DB::getSchemaBuilder()->hasTable('completed_work_materials')) {
+            if (! DB::getSchemaBuilder()->hasTable('completed_work_materials')) {
                 return [
                     'type' => 'bar',
                     'labels' => [],
@@ -1819,9 +1817,9 @@ class DashboardService
 
             $total = (clone $query)->count();
             $confirmed = (clone $query)->where('contract_performance_acts.is_approved', true)->count();
-            $pending = (clone $query)->where(function($q) {
+            $pending = (clone $query)->where(function ($q) {
                 $q->where('contract_performance_acts.is_approved', false)
-                  ->orWhereNull('contract_performance_acts.is_approved');
+                    ->orWhereNull('contract_performance_acts.is_approved');
             })->count();
             $rejected = 0; // Акты не имеют статуса rejected
 
@@ -1966,6 +1964,7 @@ class DashboardService
         if ($projectId) {
             $tags[] = "project_{$projectId}";
         }
+
         return $tags;
     }
 
@@ -1975,6 +1974,7 @@ class DashboardService
     private function supportsTaggedCache(): bool
     {
         $driver = config('cache.default');
+
         return in_array($driver, ['redis', 'memcached']);
     }
 
@@ -1986,6 +1986,7 @@ class DashboardService
         if ($this->supportsTaggedCache()) {
             return Cache::tags($tags)->remember($key, $ttl, $callback);
         }
+
         return Cache::remember($key, $ttl, $callback);
     }
 
@@ -2147,7 +2148,7 @@ class DashboardService
     {
         $fullAmount = (float) ($contract->total_amount ?? 0);
 
-        if (!$contract->is_multi_project) {
+        if (! $contract->is_multi_project) {
             return $fullAmount;
         }
 
@@ -2184,7 +2185,7 @@ class DashboardService
             $formula = is_array($decoded) ? $decoded : null;
         }
 
-        if (!is_array($formula) || ($formula['type'] ?? null) !== 'coefficient') {
+        if (! is_array($formula) || ($formula['type'] ?? null) !== 'coefficient') {
             return 0.0;
         }
 
@@ -2222,7 +2223,7 @@ class DashboardService
         $fullAmount = (float) ($contract->total_amount ?? 0);
 
         // Если контракт не мультипроектный, возвращаем полную сумму
-        if (!$contract->is_multi_project || $projectId === null) {
+        if (! $contract->is_multi_project || $projectId === null) {
             return $fullAmount;
         }
 

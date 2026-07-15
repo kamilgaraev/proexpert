@@ -10,14 +10,17 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class ContractorReferralReward extends Model
 {
     public const STATUS_PENDING = 'pending';
+
     public const STATUS_ACCRUED = 'accrued';
+
     public const STATUS_CANCELLED = 'cancelled';
 
     protected $fillable = [
         'contractor_invitation_id',
         'inviting_organization_id',
         'invited_organization_id',
-        'invited_subscription_id',
+        'commercial_order_id',
+        'commercial_payment_id',
         'inviting_balance_transaction_id',
         'invited_balance_transaction_id',
         'status',
@@ -59,8 +62,13 @@ class ContractorReferralReward extends Model
         return $this->belongsTo(Organization::class, 'invited_organization_id');
     }
 
-    public function invitedSubscription(): BelongsTo
+    public function commercialOrder(): BelongsTo
     {
-        return $this->belongsTo(OrganizationSubscription::class, 'invited_subscription_id');
+        return $this->belongsTo(CommercialOrder::class, 'commercial_order_id');
+    }
+
+    public function commercialPayment(): BelongsTo
+    {
+        return $this->belongsTo(CommercialPayment::class, 'commercial_payment_id');
     }
 }

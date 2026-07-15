@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Services\Entitlements;
 
 use App\Models\Module;
-use App\Models\OrganizationModuleActivation;
 use App\Models\OrganizationPackageSubscription;
 use App\Services\Modules\PackageCatalogService;
 use Illuminate\Support\Collection;
@@ -27,24 +26,10 @@ class OrganizationEntitlementService
             ->pluck('slug')
             ->all();
 
-        $directSlugs = OrganizationModuleActivation::query()
-            ->join('modules', 'modules.id', '=', 'organization_module_activations.module_id')
-            ->where('organization_module_activations.organization_id', $organizationId)
-            ->where('organization_module_activations.status', 'active')
-            ->where('organization_module_activations.is_bundled_with_plan', false)
-            ->where('modules.is_active', true)
-            ->where(function ($query): void {
-                $query->whereNull('organization_module_activations.expires_at')
-                    ->orWhere('organization_module_activations.expires_at', '>', now());
-            })
-            ->pluck('modules.slug')
-            ->all();
-
         $slugs = array_values(array_unique(array_merge(
             $systemSlugs,
             $this->packageCatalog->foundationModules(),
             $this->getAlwaysOnModuleSlugs(),
-            $directSlugs,
             array_keys($this->getPackageModuleSources($organizationId))
         )));
 

@@ -12,7 +12,6 @@ class Payment extends Model
 
     protected $fillable = [
         'user_id',
-        'organization_subscription_id',
         'payment_gateway_payment_id',
         'payment_gateway_charge_id', // Может быть отдельное поле для ID операции в шлюзе
         'amount',
@@ -33,21 +32,22 @@ class Payment extends Model
 
     // Статусы платежа (могут частично пересекаться со статусами YooKassa)
     public const STATUS_PENDING = 'pending'; // Ожидает оплаты / подтверждения
+
     public const STATUS_WAITING_FOR_CAPTURE = 'waiting_for_capture'; // Для двухстадийных платежей
+
     public const STATUS_SUCCEEDED = 'succeeded';
+
     public const STATUS_FAILED = 'failed';
+
     public const STATUS_CANCELED = 'canceled'; // Отменен до оплаты
+
     public const STATUS_REFUNDED = 'refunded'; // Полностью или частично возвращен
+
     public const STATUS_PARTIALLY_REFUNDED = 'partially_refunded';
 
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
-    }
-
-    public function organizationSubscription(): BelongsTo
-    {
-        return $this->belongsTo(OrganizationSubscription::class, 'organization_subscription_id');
     }
 
     /**
@@ -65,4 +65,4 @@ class Payment extends Model
     {
         return self::where('payment_gateway_payment_id', $gatewayPaymentId)->first();
     }
-} 
+}

@@ -7,7 +7,6 @@ namespace Tests\Feature;
 use App\Mail\UserInvitationMail;
 use App\Models\Organization;
 use App\Models\User;
-use App\Services\Billing\SubscriptionLimitsService;
 use App\Services\Logging\LoggingService;
 use App\Services\UserInvitationService;
 use Illuminate\Database\Schema\Blueprint;
@@ -19,9 +18,7 @@ use function trans_message;
 
 class UserInvitationEmailTest extends TestCase
 {
-    public function refreshDatabase(): void
-    {
-    }
+    public function refreshDatabase(): void {}
 
     protected function setUp(): void
     {
@@ -62,10 +59,6 @@ class UserInvitationEmailTest extends TestCase
             'is_active' => true,
         ]);
 
-        $this->mock(SubscriptionLimitsService::class, function ($mock): void {
-            $mock->shouldReceive('canCreateUser')->once()->andReturnTrue();
-        });
-
         $this->mock(LoggingService::class, function ($mock): void {
             $mock->shouldReceive('business')->zeroOrMoreTimes();
             $mock->shouldReceive('security')->zeroOrMoreTimes();
@@ -85,7 +78,7 @@ class UserInvitationEmailTest extends TestCase
 
             return $mail->invitation?->is($invitation)
                 && $mail->hasTo('new-user@example.com')
-                && $mail->acceptUrl === 'https://lk.test/invitations/accept?token=' . urlencode($invitation->token);
+                && $mail->acceptUrl === 'https://lk.test/invitations/accept?token='.urlencode($invitation->token);
         });
 
         $this->assertNotNull($invitation->fresh()->sent_at);
