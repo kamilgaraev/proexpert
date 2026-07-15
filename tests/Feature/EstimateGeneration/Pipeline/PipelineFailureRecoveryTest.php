@@ -16,7 +16,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureData;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureStore;
-use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use DateTimeImmutable;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -71,21 +70,11 @@ final class PipelineFailureRecoveryTest extends TestCase
                 return ++$this->resolved;
             }
         };
-        $workflow = new class implements FailureWorkflowHandler
-        {
-            public int $calls = 0;
-
-            public function handle(FailureData $failure, ?int $expectedStateVersion = null): void
-            {
-                $this->calls++;
-            }
-        };
         $useCase = new ProcessDocumentUnit(
             $units,
             $processor,
             $reconciler,
             failureRecorder: new FailureRecorder($failures),
-            failureWorkflowHandler: $workflow,
         );
 
         try {
@@ -100,6 +89,5 @@ final class PipelineFailureRecoveryTest extends TestCase
         self::assertSame('unexpected_internal_failure', $failures->recorded[0]->code);
         self::assertStringNotContainsString('private', json_encode($failures->recorded[0]->safeContext, JSON_THROW_ON_ERROR));
         self::assertSame(1, $failures->resolved);
-        self::assertSame(1, $workflow->calls);
     }
 }

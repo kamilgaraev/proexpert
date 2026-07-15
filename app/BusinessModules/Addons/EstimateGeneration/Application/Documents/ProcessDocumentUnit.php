@@ -8,7 +8,6 @@ use App\BusinessModules\Addons\EstimateGeneration\Observability\AiOperationConte
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureCategory;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureContext;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureRecorder;
-use App\BusinessModules\Addons\EstimateGeneration\Observability\FailureWorkflowHandler;
 use App\BusinessModules\Addons\EstimateGeneration\Observability\TypedFailureException;
 use App\BusinessModules\Addons\EstimateGeneration\Pipeline\ProcessingStage;
 use Throwable;
@@ -24,7 +23,6 @@ final readonly class ProcessDocumentUnit
         private DocumentUnitProcessor $processor,
         private DocumentUnitAggregateReconciler $reconciler,
         private FailureRecorder $failureRecorder,
-        private FailureWorkflowHandler $failureWorkflowHandler,
         private ?DocumentUnitExhaustionHandler $exhaustion = null,
     ) {}
 
@@ -83,14 +81,8 @@ final readonly class ProcessDocumentUnit
             }
         } catch (Throwable $error) {
             $code = $error instanceof DocumentUnitProcessingException ? $error->safeCode : 'unit_processing_failed';
-            $failed = $this->store->fail($claim, $code, hash('sha256', $error::class.'|'.$code), now()->toDateTimeImmutable());
-            $failure = $this->failureRecorder->capture($error, $this->failureContext($context));
-            if ($failed) {
-                try {
-                    $this->failureWorkflowHandler->handle($failure);
-                } catch (Throwable) {
-                }
-            }
+            $this->store->fail($claim, $code, hash('sha256', $error::class.'|'.$code), now()->toDateTimeImmutable());
+            $this->failureRecorder->capture($error, $this->failureContext($context));
 
             throw $error;
         }

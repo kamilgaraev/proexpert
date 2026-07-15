@@ -331,6 +331,9 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
             $readiness,
             $this->documentSummary($documents, $sources),
         );
+        $processingProgress = $base->status === \App\BusinessModules\Addons\EstimateGeneration\Domain\Workflow\EstimateGenerationStatus::ProcessingDocuments
+            ? DocumentProcessingProgress::fromSummary($documents, $base->processingProgress)
+            : $base->processingProgress;
         $revisionSources = compact('session', 'documents', 'checkpoint', 'checkpoints', 'units', 'evidence', 'usage', 'failures', 'finalization', 'estimate', 'sources');
         $operationalVersion = OperationalSnapshotRevision::fromSources($revisionSources);
 
@@ -338,7 +341,7 @@ final class BuildSessionOperationalSnapshot implements SessionOperationalSnapsho
             id: $base->id,
             status: $base->status,
             processingStage: $base->processingStage,
-            processingProgress: $base->processingProgress,
+            processingProgress: $processingProgress,
             stateVersion: $base->stateVersion,
             availableActions: $base->availableActions,
             blockingIssues: $readiness['blockers'],

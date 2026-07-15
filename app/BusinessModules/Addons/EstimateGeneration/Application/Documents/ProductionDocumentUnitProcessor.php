@@ -47,8 +47,8 @@ final readonly class ProductionDocumentUnitProcessor implements DocumentUnitProc
             throw new TypedFailureException(FailureCategory::Terminal, 'document_artifact_integrity_failed', previous: $exception);
         } catch (S3ObjectTransportException $exception) {
             throw new TypedFailureException(FailureCategory::Recoverable, 'document_storage_unavailable', previous: $exception);
-        } catch (Throwable) {
-            throw new DocumentUnitProcessingException('document_geometry_processing_failed');
+        } catch (Throwable $exception) {
+            throw new DocumentUnitProcessingException('document_geometry_processing_failed', $exception);
         }
     }
 
