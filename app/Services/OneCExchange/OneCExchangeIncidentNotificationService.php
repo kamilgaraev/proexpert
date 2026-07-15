@@ -17,15 +17,16 @@ use Throwable;
 final class OneCExchangeIncidentNotificationService
 {
     private const TYPE = 'one_c_exchange_incident';
+
     private const NOTIFICATION_TYPE = 'one_c_exchange';
+
     private const CHANNELS = ['in_app', 'websocket'];
 
     public function __construct(
         private readonly OneCExchangeIncidentRuleResolver $resolver,
         private readonly NotificationService $notifications,
         private readonly AuthorizationService $authorization,
-    ) {
-    }
+    ) {}
 
     public function notifyOperation(OneCExchangeOperation $operation): void
     {
@@ -48,7 +49,9 @@ final class OneCExchangeIncidentNotificationService
                     self::NOTIFICATION_TYPE,
                     (string) $incident['notification_priority'],
                     self::CHANNELS,
-                    (int) $operation->organization_id
+                    (int) $operation->organization_id,
+                    requiredPermissions: ['one_c_exchange.view'],
+                    interfaces: ['admin'],
                 );
             }
         } catch (Throwable $exception) {

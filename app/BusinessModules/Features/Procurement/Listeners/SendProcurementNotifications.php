@@ -2,13 +2,13 @@
 
 namespace App\BusinessModules\Features\Procurement\Listeners;
 
-use App\BusinessModules\Features\Procurement\Events\PurchaseRequestCreated;
-use App\BusinessModules\Features\Procurement\Events\PurchaseRequestApproved;
-use App\BusinessModules\Features\Procurement\Events\PurchaseOrderSent;
-use App\BusinessModules\Features\Procurement\Events\MaterialReceivedFromSupplier;
 use App\BusinessModules\Features\Notifications\Services\NotificationService;
-use App\Modules\Core\AccessController;
+use App\BusinessModules\Features\Procurement\Events\MaterialReceivedFromSupplier;
+use App\BusinessModules\Features\Procurement\Events\PurchaseOrderSent;
+use App\BusinessModules\Features\Procurement\Events\PurchaseRequestApproved;
+use App\BusinessModules\Features\Procurement\Events\PurchaseRequestCreated;
 use App\Models\User;
+use App\Modules\Core\AccessController;
 
 /**
  * Слушатель для отправки уведомлений по событиям закупок
@@ -25,9 +25,9 @@ class SendProcurementNotifications
     public function handleRequestCreated(PurchaseRequestCreated $event): void
     {
         $request = $event->purchaseRequest;
-        
+
         // Проверяем активацию модуля уведомлений
-        if (!$this->accessController->hasModuleAccess($request->organization_id, 'notifications')) {
+        if (! $this->accessController->hasModuleAccess($request->organization_id, 'notifications')) {
             return;
         }
 
@@ -57,7 +57,9 @@ class SendProcurementNotifications
                         'procurement',
                         'normal',
                         null,
-                        $request->organization_id
+                        $request->organization_id,
+                        requiredPermissions: ['notifications.receive.procurement'],
+                        interfaces: ['admin'],
                     );
                 }
             }
@@ -79,8 +81,8 @@ class SendProcurementNotifications
     public function handleRequestApproved(PurchaseRequestApproved $event): void
     {
         $request = $event->purchaseRequest;
-        
-        if (!$this->accessController->hasModuleAccess($request->organization_id, 'notifications')) {
+
+        if (! $this->accessController->hasModuleAccess($request->organization_id, 'notifications')) {
             return;
         }
 
@@ -108,7 +110,9 @@ class SendProcurementNotifications
                     'procurement',
                     'normal',
                     null,
-                    $request->organization_id
+                    $request->organization_id,
+                    requiredPermissions: ['notifications.receive.procurement'],
+                    interfaces: ['admin'],
                 );
             }
 
@@ -129,8 +133,8 @@ class SendProcurementNotifications
     public function handleOrderSent(PurchaseOrderSent $event): void
     {
         $order = $event->purchaseOrder;
-        
-        if (!$this->accessController->hasModuleAccess($order->organization_id, 'notifications')) {
+
+        if (! $this->accessController->hasModuleAccess($order->organization_id, 'notifications')) {
             return;
         }
 
@@ -162,7 +166,9 @@ class SendProcurementNotifications
                         'procurement',
                         'normal',
                         null,
-                        $order->organization_id
+                        $order->organization_id,
+                        requiredPermissions: ['notifications.receive.procurement'],
+                        interfaces: ['admin'],
                     );
                 }
             }
@@ -184,8 +190,8 @@ class SendProcurementNotifications
     public function handleMaterialsReceived(MaterialReceivedFromSupplier $event): void
     {
         $order = $event->purchaseOrder;
-        
-        if (!$this->accessController->hasModuleAccess($order->organization_id, 'notifications')) {
+
+        if (! $this->accessController->hasModuleAccess($order->organization_id, 'notifications')) {
             return;
         }
 
@@ -200,7 +206,7 @@ class SendProcurementNotifications
                     'procurement.materials.received',
                     [
                         'title' => 'Материалы получены',
-                        'message' => "Материалы по вашей заявке получены на склад",
+                        'message' => 'Материалы по вашей заявке получены на склад',
                         'type' => 'procurement.materials.received',
                         'category' => 'procurement',
                         'interface' => 'admin',
@@ -215,7 +221,9 @@ class SendProcurementNotifications
                     'procurement',
                     'high',
                     null,
-                    $order->organization_id
+                    $order->organization_id,
+                    requiredPermissions: ['notifications.receive.procurement'],
+                    interfaces: ['admin'],
                 );
             }
 
@@ -246,7 +254,9 @@ class SendProcurementNotifications
                             'procurement',
                             'high',
                             null,
-                            $order->organization_id
+                            $order->organization_id,
+                            requiredPermissions: ['notifications.receive.procurement'],
+                            interfaces: ['admin'],
                         );
                     }
                 }
@@ -263,4 +273,3 @@ class SendProcurementNotifications
         }
     }
 }
-

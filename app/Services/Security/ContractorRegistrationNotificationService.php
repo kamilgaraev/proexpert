@@ -2,11 +2,11 @@
 
 namespace App\Services\Security;
 
-use App\Models\User;
-use App\Models\Organization;
+use App\BusinessModules\Features\Notifications\Facades\Notify;
 use App\Models\Contractor;
 use App\Models\ContractorVerification;
-use App\BusinessModules\Features\Notifications\Facades\Notify;
+use App\Models\Organization;
+use App\Models\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 
@@ -18,11 +18,11 @@ class ContractorRegistrationNotificationService
         array $verificationResult
     ): void {
         $score = $verificationResult['verification_score'];
-        
+
         Log::info('[ContractorNotification] Starting customer notifications', [
             'registered_org_id' => $registeredOrg->id,
             'contractors_count' => $contractors->count(),
-            'verification_score' => $score
+            'verification_score' => $score,
         ]);
 
         foreach ($contractors as $contractor) {
@@ -34,40 +34,43 @@ class ContractorRegistrationNotificationService
                     ->pluck('project')
                     ->filter()
                     ->unique('id');
-                
+
                 if ($projectsWithContractor->isEmpty()) {
                     Log::warning('[ContractorNotification] No projects found for contractor', [
                         'contractor_id' => $contractor->id,
-                        'contractor_name' => $contractor->name
+                        'contractor_name' => $contractor->name,
                     ]);
+
                     continue;
                 }
-                
+
                 // Отправляем уведомления владельцам проектов (а не заказчикам по контракту!)
                 foreach ($projectsWithContractor as $project) {
                     $projectOwner = $project->organization;
-                    
-                    if (!$projectOwner) {
+
+                    if (! $projectOwner) {
                         Log::warning('[ContractorNotification] Project has no owner organization', [
                             'project_id' => $project->id,
-                            'contractor_id' => $contractor->id
+                            'contractor_id' => $contractor->id,
                         ]);
+
                         continue;
                     }
-                    
+
                     $admins = $this->getOrganizationAdmins($projectOwner);
-                    
+
                     if ($admins->isEmpty()) {
                         Log::warning('[ContractorNotification] No admins found for project owner', [
                             'contractor_id' => $contractor->id,
                             'project_id' => $project->id,
-                            'project_owner_id' => $projectOwner->id
+                            'project_owner_id' => $projectOwner->id,
                         ]);
+
                         continue;
                     }
-                    
+
                     $verification = $this->createOrUpdateVerificationRequest($contractor, $registeredOrg, $score);
-                    
+
                     foreach ($admins as $admin) {
                         try {
                             $this->sendNotificationToLK($admin, $contractor, $registeredOrg, $score, $verification, $project);
@@ -77,7 +80,7 @@ class ContractorRegistrationNotificationService
                                 'admin_id' => $admin->id,
                                 'contractor_id' => $contractor->id,
                                 'project_id' => $project->id,
-                                'error' => $notifEx->getMessage()
+                                'error' => $notifEx->getMessage(),
                             ]);
                             // Продолжаем для других админов
                         }
@@ -87,7 +90,7 @@ class ContractorRegistrationNotificationService
                         'contractor_id' => $contractor->id,
                         'project_id' => $project->id,
                         'project_owner_id' => $projectOwner->id,
-                        'admins_notified' => $admins->count()
+                        'admins_notified' => $admins->count(),
                     ]);
                 }
             } catch (\Exception $e) {
@@ -95,7 +98,7 @@ class ContractorRegistrationNotificationService
                     'contractor_id' => $contractor->id,
                     'registered_org_id' => $registeredOrg->id,
                     'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString()
+                    'trace' => $e->getTraceAsString(),
                 ]);
                 // Продолжаем для других подрядчиков
             }
@@ -106,19 +109,19 @@ class ContractorRegistrationNotificationService
     {
         // Получаем контекст организации для новой системы авторизации
         $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organization->id);
-        
+
         // Получаем всех пользователей с ролями owner или admin в новой системе
-        $adminsByRoles = \App\Models\User::whereHas('roleAssignments', function($q) use ($context) {
+        $adminsByRoles = \App\Models\User::whereHas('roleAssignments', function ($q) use ($context) {
             $q->whereIn('role_slug', ['organization_owner', 'organization_admin'])
-              ->where('context_id', $context->id)
-              ->where('is_active', true);
+                ->where('context_id', $context->id)
+                ->where('is_active', true);
         })->get();
-        
+
         // Также получаем владельцев через pivot таблицу (для совместимости)
         $ownersByPivot = $organization->users()
             ->wherePivot('is_owner', true)
             ->get();
-        
+
         // Объединяем и убираем дубликаты
         return $adminsByRoles->merge($ownersByPivot)->unique('id');
     }
@@ -195,7 +198,8 @@ class ContractorRegistrationNotificationService
                 'security',
                 $priority,
                 $channels,
-                $contractor->organization_id
+                $contractor->organization_id,
+                interfaces: ['lk'],
             );
 
             Log::channel('security')->info('Contractor registration notification sent to LK', [
@@ -204,7 +208,7 @@ class ContractorRegistrationNotificationService
                 'registered_org_id' => $registeredOrg->id,
                 'verification_score' => $score,
                 'priority' => $priority,
-                'channels' => $channels
+                'channels' => $channels,
             ]);
         } catch (\Exception $e) {
             Log::channel('security')->error('CRITICAL: Failed to send LK notification', [
@@ -212,7 +216,7 @@ class ContractorRegistrationNotificationService
                 'contractor_id' => $contractor->id,
                 'registered_org_id' => $registeredOrg->id,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
             throw $e; // Пробрасываем выше для повторной попытки
         }
@@ -269,7 +273,8 @@ class ContractorRegistrationNotificationService
                 'security',
                 $priority,
                 $channels,
-                $contractor->organization_id
+                $contractor->organization_id,
+                interfaces: ['admin'],
             );
 
             Log::channel('security')->info('Contractor registration notification sent to Admin', [
@@ -278,7 +283,7 @@ class ContractorRegistrationNotificationService
                 'registered_org_id' => $registeredOrg->id,
                 'verification_score' => $score,
                 'priority' => $priority,
-                'channels' => $channels
+                'channels' => $channels,
             ]);
         } catch (\Exception $e) {
             Log::channel('security')->error('CRITICAL: Failed to send Admin notification', [
@@ -286,7 +291,7 @@ class ContractorRegistrationNotificationService
                 'contractor_id' => $contractor->id,
                 'registered_org_id' => $registeredOrg->id,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
             ]);
             throw $e; // Пробрасываем выше для повторной попытки
         }
@@ -295,28 +300,28 @@ class ContractorRegistrationNotificationService
     private function buildMessage(Contractor $contractor, Organization $org, int $score, ?\App\Models\Project $project = null): string
     {
         // 🔐 КОНТЕКСТНАЯ БЛОКИРОВКА: блокируем только доступ к данным ВАШЕГО проекта
-        
+
         $projectInfo = $project ? " в вашем проекте «{$project->name}»" : '';
         $scoreText = "Рейтинг верификации: {$score}/100.";
-        
+
         if ($score >= 90) {
-            return "🔐 Подрядчик «{$contractor->name}» зарегистрировался{$projectInfo} и верифицирован через ЕГРЮЛ. {$scoreText}\n\n" .
-                   "⚠️ Доступ к данным ВАШЕГО проекта заблокирован до вашего подтверждения. " .
-                   "Подрядчик не может просматривать ваши контракты и данные проекта.\n\n" .
-                   "Подтвердите, что это ваш подрядчик, чтобы открыть ему доступ к вашему проекту.";
+            return "🔐 Подрядчик «{$contractor->name}» зарегистрировался{$projectInfo} и верифицирован через ЕГРЮЛ. {$scoreText}\n\n".
+                   '⚠️ Доступ к данным ВАШЕГО проекта заблокирован до вашего подтверждения. '.
+                   "Подрядчик не может просматривать ваши контракты и данные проекта.\n\n".
+                   'Подтвердите, что это ваш подрядчик, чтобы открыть ему доступ к вашему проекту.';
         }
 
         if ($score >= 70) {
-            return "🔐 Подрядчик «{$contractor->name}» зарегистрировался{$projectInfo} и частично верифицирован. {$scoreText}\n\n" .
-                   "⚠️ Доступ к данным ВАШЕГО проекта заблокирован до вашего подтверждения. " .
-                   "Подрядчик не может просматривать ваши контракты и данные проекта.\n\n" .
-                   "Подтвердите, что это ваш подрядчик, чтобы открыть ему доступ к вашему проекту.";
+            return "🔐 Подрядчик «{$contractor->name}» зарегистрировался{$projectInfo} и частично верифицирован. {$scoreText}\n\n".
+                   '⚠️ Доступ к данным ВАШЕГО проекта заблокирован до вашего подтверждения. '.
+                   "Подрядчик не может просматривать ваши контракты и данные проекта.\n\n".
+                   'Подтвердите, что это ваш подрядчик, чтобы открыть ему доступ к вашему проекту.';
         }
 
-        return "🔐 Подрядчик «{$contractor->name}» зарегистрировался{$projectInfo}. {$scoreText}\n\n" .
-               "⛔ Доступ к данным ВАШЕГО проекта заблокирован до вашего подтверждения. " .
-               "Подрядчик не может просматривать ваши контракты и данные проекта.\n\n" .
-               "Пожалуйста, подтвердите, что это действительно ваш подрядчик, чтобы открыть ему доступ к данным вашего проекта.";
+        return "🔐 Подрядчик «{$contractor->name}» зарегистрировался{$projectInfo}. {$scoreText}\n\n".
+               '⛔ Доступ к данным ВАШЕГО проекта заблокирован до вашего подтверждения. '.
+               "Подрядчик не может просматривать ваши контракты и данные проекта.\n\n".
+               'Пожалуйста, подтвердите, что это действительно ваш подрядчик, чтобы открыть ему доступ к данным вашего проекта.';
     }
 
     private function buildActionsLK(
@@ -360,11 +365,11 @@ class ContractorRegistrationNotificationService
         $actions = [
             [
                 'label' => 'Посмотреть контракты',
-                'route' => "contractors.show",
+                'route' => 'contractors.show',
                 'params' => ['contractor' => $contractor->id],
                 'style' => 'secondary',
                 'icon' => 'file-text',
-            ]
+            ],
         ];
 
         // 🔒 ВСЕГДА показываем кнопки подтверждения, независимо от рейтинга
@@ -393,7 +398,7 @@ class ContractorRegistrationNotificationService
 
     private function getPriority(int $score): string
     {
-        return match(true) {
+        return match (true) {
             $score >= 90 => 'normal',
             $score >= 70 => 'high',
             default => 'urgent'
@@ -411,7 +416,7 @@ class ContractorRegistrationNotificationService
 
     private function getIcon(int $score): string
     {
-        return match(true) {
+        return match (true) {
             $score >= 90 => 'check-circle',
             $score >= 70 => 'alert-circle',
             default => 'alert-triangle'
@@ -420,11 +425,10 @@ class ContractorRegistrationNotificationService
 
     private function getColor(int $score): string
     {
-        return match(true) {
+        return match (true) {
             $score >= 90 => 'success',
             $score >= 70 => 'warning',
             default => 'danger'
         };
     }
 }
-

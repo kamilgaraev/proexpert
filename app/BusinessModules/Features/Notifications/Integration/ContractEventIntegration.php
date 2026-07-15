@@ -2,9 +2,9 @@
 
 namespace App\BusinessModules\Features\Notifications\Integration;
 
-use App\Events\ContractStatusChanged;
-use App\Events\ContractLimitWarning;
 use App\BusinessModules\Features\Notifications\Facades\Notify;
+use App\Events\ContractLimitWarning;
+use App\Events\ContractStatusChanged;
 use Illuminate\Support\Facades\Event;
 
 class ContractEventIntegration
@@ -34,7 +34,9 @@ class ContractEventIntegration
                     'system',
                     'high',
                     null,
-                    $contract->organization_id
+                    $contract->organization_id,
+                    requiredPermissions: ['contracts.view'],
+                    interfaces: ['lk'],
                 );
             }
         });
@@ -64,10 +66,11 @@ class ContractEventIntegration
                     'system',
                     'critical',
                     null,
-                    $contract->organization_id
+                    $contract->organization_id,
+                    requiredPermissions: ['contracts.view'],
+                    interfaces: ['lk'],
                 );
             }
         });
     }
 }
-

@@ -14,6 +14,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
+
 use function trans_message;
 
 /**
@@ -32,7 +33,7 @@ class SiteRequestNotificationService
     {
         $settings = $this->module->getSettings($request->organization_id);
 
-        if (!$settings['notify_on_create']) {
+        if (! $settings['notify_on_create']) {
             return;
         }
 
@@ -60,8 +61,7 @@ class SiteRequestNotificationService
         SiteRequest $request,
         Collection $managers,
         string $publicationKey
-    ): void
-    {
+    ): void {
         if ($request->status === SiteRequestStatusEnum::DRAFT) {
             return;
         }
@@ -115,7 +115,7 @@ class SiteRequestNotificationService
     ): void {
         $settings = $this->module->getSettings($request->organization_id);
 
-        if (!$settings['notify_on_status_change']) {
+        if (! $settings['notify_on_status_change']) {
             return;
         }
 
@@ -163,7 +163,7 @@ class SiteRequestNotificationService
         Collection $recipients
     ): void {
         foreach ($recipients as $recipient) {
-            if (!$recipient instanceof User || $this->statusNotificationExists($recipient, $request, $transitionKey)) {
+            if (! $recipient instanceof User || $this->statusNotificationExists($recipient, $request, $transitionKey)) {
                 continue;
             }
 
@@ -220,7 +220,7 @@ class SiteRequestNotificationService
     {
         $settings = $this->module->getSettings($request->organization_id);
 
-        if (!$settings['notify_on_assign']) {
+        if (! $settings['notify_on_assign']) {
             return;
         }
 
@@ -253,7 +253,7 @@ class SiteRequestNotificationService
     {
         $settings = $this->module->getSettings($request->organization_id);
 
-        if (!$settings['notify_on_overdue']) {
+        if (! $settings['notify_on_overdue']) {
             return;
         }
 
@@ -334,7 +334,9 @@ class SiteRequestNotificationService
                     'site_requests',
                     'normal',
                     null,
-                    $organizationId
+                    $organizationId,
+                    requiredPermissions: ['notifications.receive.site_requests'],
+                    interfaces: ['admin'],
                 );
             } catch (Throwable $e) {
                 Log::warning('site_request.notification.failed', [
@@ -359,7 +361,7 @@ class SiteRequestNotificationService
     private function getOrganizationManagers(int $organizationId): \Illuminate\Support\Collection
     {
         $context = AuthorizationContext::getOrganizationContext($organizationId);
-        if (!$context) {
+        if (! $context) {
             return collect();
         }
 
@@ -374,4 +376,3 @@ class SiteRequestNotificationService
             ->get();
     }
 }
-

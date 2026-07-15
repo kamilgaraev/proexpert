@@ -28,15 +28,14 @@ class UserAuthSessionService
         private readonly AuthRiskService $riskService,
         private readonly ActivityEventRecorder $activityRecorder,
         private readonly NotificationService $notificationService,
-    ) {
-    }
+    ) {}
 
     public function createForLogin(User $user, ?int $organizationId, Request $request): UserAuthSession
     {
         return DB::transaction(function () use ($user, $organizationId, $request): UserAuthSession {
             $fingerprint = $this->fingerprints->fingerprint($request);
             $risk = $this->riskService->score($user, $request, $fingerprint);
-            $isNewDevice = !UserAuthSession::query()
+            $isNewDevice = ! UserAuthSession::query()
                 ->where('user_id', $user->id)
                 ->where('device_fingerprint', $fingerprint)
                 ->exists();
@@ -76,7 +75,7 @@ class UserAuthSessionService
 
     public function findActiveByUuid(?string $sessionUuid): ?UserAuthSession
     {
-        if (!$sessionUuid) {
+        if (! $sessionUuid) {
             return null;
         }
 
@@ -197,11 +196,11 @@ class UserAuthSessionService
 
     private function notifyNewDevice(User $user, UserAuthSession $session, bool $isNewDevice, Request $request): void
     {
-        if (!$isNewDevice || !(bool) config('auth_tokens.sessions.notify_new_device', true)) {
+        if (! $isNewDevice || ! (bool) config('auth_tokens.sessions.notify_new_device', true)) {
             return;
         }
 
-        if (!class_exists(\App\Notifications\NewDeviceLoginNotification::class)) {
+        if (! class_exists(\App\Notifications\NewDeviceLoginNotification::class)) {
             return;
         }
 
@@ -250,7 +249,8 @@ class UserAuthSessionService
                 'security',
                 'high',
                 ['in_app', 'websocket'],
-                $session->organization_id
+                $session->organization_id,
+                interfaces: ['admin'],
             );
         } catch (\Throwable $e) {
             Log::warning('Failed to create new device in-app notification', [
@@ -265,7 +265,7 @@ class UserAuthSessionService
     {
         $organizationId = $session->organization_id ?? $user->current_organization_id;
 
-        if (!$organizationId) {
+        if (! $organizationId) {
             return;
         }
 

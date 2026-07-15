@@ -15,15 +15,16 @@ use Throwable;
 final class OneCExchangeIncidentService
 {
     private const TYPE = 'one_c_exchange_incident';
+
     private const NOTIFICATION_TYPE = 'one_c_exchange';
+
     private const CHANNELS = ['in_app', 'websocket'];
 
     public function __construct(
         private readonly OneCExchangeMonitoringService $monitoring,
         private readonly NotificationService $notifications,
         private readonly AuthorizationService $authorization,
-    ) {
-    }
+    ) {}
 
     public function incidents(int $organizationId, array $filters): array
     {
@@ -54,14 +55,16 @@ final class OneCExchangeIncidentService
             $priority = (string) ($incident['notification_priority'] ?? 'normal');
             $incidentKey = (string) ($incident['key'] ?? $incident['id']);
 
-            if (!in_array($priority, ['critical', 'high'], true)) {
+            if (! in_array($priority, ['critical', 'high'], true)) {
                 $skipped++;
+
                 continue;
             }
 
             foreach ($recipients as $recipient) {
                 if ($this->alreadyNotified($recipient, $incidentKey, $organizationId)) {
                     $skipped++;
+
                     continue;
                 }
 
@@ -73,7 +76,9 @@ final class OneCExchangeIncidentService
                         self::NOTIFICATION_TYPE,
                         $priority === 'critical' ? 'critical' : 'high',
                         self::CHANNELS,
-                        $organizationId
+                        $organizationId,
+                        requiredPermissions: ['one_c_exchange.view'],
+                        interfaces: ['admin'],
                     );
                     $sent++;
                 } catch (Throwable $exception) {

@@ -18,8 +18,7 @@ final class NotificationRecipientPermissionResolver
 
     public function __construct(
         private readonly AuthorizationService $authorizationService,
-    ) {
-    }
+    ) {}
 
     public function requiredPermissions(
         string $type,
@@ -27,7 +26,11 @@ final class NotificationRecipientPermissionResolver
         array $data,
         string|array|null $explicitPermissions = null,
     ): array {
-        $explicit = $this->normalizePermissions($explicitPermissions ?? $data['required_permissions'] ?? $data['required_permission'] ?? null);
+        if ($explicitPermissions !== null) {
+            return $this->normalizePermissions($explicitPermissions);
+        }
+
+        $explicit = $this->normalizePermissions($data['required_permissions'] ?? $data['required_permission'] ?? null);
 
         if ($explicit !== []) {
             return $explicit;
@@ -91,7 +94,7 @@ final class NotificationRecipientPermissionResolver
             $permissions = [$permissions];
         }
 
-        if (!is_array($permissions)) {
+        if (! is_array($permissions)) {
             return [];
         }
 
@@ -136,7 +139,7 @@ final class NotificationRecipientPermissionResolver
 
     private function positiveInt(mixed $value): ?int
     {
-        if (!is_numeric($value)) {
+        if (! is_numeric($value)) {
             return null;
         }
 

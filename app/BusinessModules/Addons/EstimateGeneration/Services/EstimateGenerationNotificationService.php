@@ -122,7 +122,9 @@ class EstimateGenerationNotificationService
                 'custom',
                 $priority,
                 self::CHANNELS,
-                $session->organization_id
+                $session->organization_id,
+                requiredPermissions: ['budget-estimates.view'],
+                interfaces: ['admin'],
             );
             if (is_string($context['idempotency_key'] ?? null)) {
                 $this->deliverOnce($session, $type, $context['idempotency_key'], $deliver);

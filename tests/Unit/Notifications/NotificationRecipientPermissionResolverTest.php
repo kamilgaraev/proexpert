@@ -43,9 +43,19 @@ final class NotificationRecipientPermissionResolverTest extends TestCase
         );
     }
 
+    public function test_explicit_empty_permissions_disable_domain_inference(): void
+    {
+        $resolver = new NotificationRecipientPermissionResolver($this->createMock(AuthorizationService::class));
+
+        self::assertSame(
+            [],
+            $resolver->requiredPermissions('system.test', 'system_admin_broadcast', [], [])
+        );
+    }
+
     public function test_can_receive_checks_authorization_with_project_context(): void
     {
-        $user = new User();
+        $user = new User;
         $user->forceFill([
             'id' => 7,
             'current_organization_id' => 11,
@@ -81,6 +91,6 @@ final class NotificationRecipientPermissionResolverTest extends TestCase
 
         $resolver = new NotificationRecipientPermissionResolver($authorization);
 
-        self::assertFalse($resolver->canReceive(new User(), ['notifications.receive.system'], null, []));
+        self::assertFalse($resolver->canReceive(new User, ['notifications.receive.system'], null, []));
     }
 }

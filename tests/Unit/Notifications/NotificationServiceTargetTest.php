@@ -156,6 +156,74 @@ final class NotificationServiceTargetTest extends TestCase
         );
     }
 
+    public function test_contract_owner_notification_is_persisted_only_for_lk_with_contract_permission(): void
+    {
+        $authorization = $this->createMock(AuthorizationService::class);
+        $authorization->expects(self::once())
+            ->method('can')
+            ->with(self::isInstanceOf(User::class), 'contracts.view', ['organization_id' => 42])
+            ->willReturn(true);
+        [$service, $persistence] = $this->service(authorization: $authorization);
+
+        $service->send(
+            $this->user(),
+            'contract_status_changed',
+            ['force_send' => true, 'organization_id' => 42],
+            channels: ['in_app'],
+            organizationId: 42,
+            requiredPermissions: ['contracts.view'],
+            interfaces: ['lk'],
+        );
+
+        self::assertSame(['lk'], $this->interfaceValues($persistence->calls[0]['options']));
+        self::assertSame(['contracts.view'], $persistence->calls[0]['options']->requiredPermissions);
+    }
+
+    public function test_payment_notification_accepts_either_invoice_view_permission(): void
+    {
+        $authorization = $this->createMock(AuthorizationService::class);
+        $authorization->expects(self::exactly(2))
+            ->method('can')
+            ->willReturnOnConsecutiveCalls(false, true);
+        [$service, $persistence] = $this->service(authorization: $authorization);
+
+        $service->send(
+            $this->user(),
+            'payment.contract_excess',
+            ['force_send' => true, 'organization_id' => 42],
+            channels: ['in_app'],
+            organizationId: 42,
+            requiredPermissions: ['payments.invoice.view', 'payments.invoice.view_all'],
+            interfaces: ['admin'],
+        );
+
+        self::assertSame(['admin'], $this->interfaceValues($persistence->calls[0]['options']));
+        self::assertSame(
+            ['payments.invoice.view', 'payments.invoice.view_all'],
+            $persistence->calls[0]['options']->requiredPermissions,
+        );
+    }
+
+    public function test_customer_template_notification_keeps_supported_channel_as_one_logical_notification(): void
+    {
+        [$service, $persistence] = $this->service();
+
+        $service->send(
+            $this->user(),
+            'system.test',
+            ['force_send' => true],
+            notificationType: 'system_admin_broadcast',
+            channels: ['in_app'],
+            requiredPermissions: [],
+            interfaces: ['customer'],
+        );
+
+        self::assertCount(1, $persistence->calls);
+        self::assertSame(['in_app'], $persistence->calls[0]['options']->channels);
+        self::assertSame(['customer'], $this->interfaceValues($persistence->calls[0]['options']));
+        self::assertSame(1, $service->dispatchCount);
+    }
+
     #[DataProvider('unsupportedWebSocketTargets')]
     public function test_websocket_rejects_unsupported_targets_before_persistence(array $interfaces): void
     {

@@ -16,6 +16,7 @@ use App\Notifications\SystemAdminTemplatePreviewNotification;
 use App\Policies\SystemAdmin\NotificationTemplatePolicy;
 use App\Services\Filament\NotificationTemplateManagementService;
 use App\Services\Security\SystemAdminRoleService;
+use DomainException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
@@ -153,6 +154,10 @@ class NotificationManagementTest extends TestCase
         $this->assertSame(['in_app'], $sentNotification->channels);
         $this->assertSame('Notice Target User', $sentNotification->data['title']);
         $this->assertSame('Hello Target User from Current Admin.', $sentNotification->data['message']);
+        $this->assertDatabaseHas('notification_targets', [
+            'notification_id' => $sentNotification->id,
+            'interface' => 'customer',
+        ]);
 
         $this->assertDatabaseMissing('notifications', [
             'notifiable_type' => User::class,
@@ -163,6 +168,39 @@ class NotificationManagementTest extends TestCase
             'notifiable_id' => $inactiveUser->id,
         ]);
         Queue::assertPushed(SendNotificationJob::class, 1);
+    }
+
+    public function test_customer_broadcast_rejects_websocket_before_sending_to_any_recipient(): void
+    {
+        Queue::fake();
+
+        $admin = SystemAdmin::factory()->role('content_manager')->create(['is_active' => true]);
+        $targetUser = User::factory()->create(['is_active' => true]);
+        $template = $this->templateFixture([
+            'channel' => 'websocket',
+            'subject' => 'Real-time notice',
+            'content' => 'Unsupported customer delivery.',
+        ]);
+
+        try {
+            app(NotificationTemplateManagementService::class)->sendToUsers(
+                $template,
+                $admin,
+                [$targetUser->id],
+            );
+            $this->fail('Customer websocket broadcasts must be rejected.');
+        } catch (DomainException $exception) {
+            $this->assertSame(
+                trans_message('notifications.customer_websocket_unsupported'),
+                $exception->getMessage(),
+            );
+        }
+
+        $this->assertDatabaseMissing('notifications', [
+            'notifiable_type' => User::class,
+            'notifiable_id' => $targetUser->id,
+        ]);
+        Queue::assertNothingPushed();
     }
 
     public function test_template_can_be_sent_to_all_active_users(): void

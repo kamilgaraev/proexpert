@@ -23,8 +23,7 @@ class NotificationTemplateManagementService
         private readonly TemplateRenderer $templateRenderer,
         private readonly NotificationService $notificationService,
         private readonly SystemAdminAuditService $auditService,
-    ) {
-    }
+    ) {}
 
     public function preview(NotificationTemplate $template, SystemAdmin $systemAdmin, array $sampleData = []): array
     {
@@ -141,6 +140,9 @@ class NotificationTemplateManagementService
     private function sendToUserCollection(NotificationTemplate $template, SystemAdmin $systemAdmin, Collection $users): array
     {
         $recipientIds = [];
+        $channel = (string) $template->channel;
+
+        $this->assertCustomerChannelSupported($channel);
 
         $template->loadMissing('organization');
 
@@ -160,8 +162,10 @@ class NotificationTemplateManagementService
                 data: $data,
                 notificationType: 'system_admin_broadcast',
                 priority: 'normal',
-                channels: [(string) $template->channel],
+                channels: [$channel],
                 organizationId: $organizationId,
+                requiredPermissions: [],
+                interfaces: ['customer'],
             );
 
             $recipientIds[] = (int) $user->id;
@@ -171,6 +175,13 @@ class NotificationTemplateManagementService
             'sent_count' => count($recipientIds),
             'recipient_ids' => $recipientIds,
         ];
+    }
+
+    private function assertCustomerChannelSupported(string $channel): void
+    {
+        if ($channel === 'websocket') {
+            throw new DomainException(trans_message('notifications.customer_websocket_unsupported'));
+        }
     }
 
     private function templateOrganizationId(NotificationTemplate $template): ?int

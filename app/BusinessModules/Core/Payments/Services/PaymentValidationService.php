@@ -26,15 +26,15 @@ class PaymentValidationService
         $this->validateAmounts($data);
         $this->validateDates($data);
         $this->validateParties($data);
-        
+
         // Валидация уникальности номера документа (если передан)
         if (isset($data['document_number'])) {
             $this->validateDocumentNumber($data['document_number'], $data['organization_id'], $existingDocument);
         }
-        
+
         // Бизнес-валидация
         $this->validateBankDetails($data);
-        
+
         if (isset($data['source_type']) && isset($data['source_id'])) {
             $this->validateSource($data['source_type'], $data['source_id'], $data);
         }
@@ -52,29 +52,29 @@ class PaymentValidationService
         $errors = [];
 
         // Проверка обязательных полей
-        if (!$document->payer_organization_id && !$document->payer_contractor_id) {
+        if (! $document->payer_organization_id && ! $document->payer_contractor_id) {
             $errors[] = 'Не указан плательщик';
         }
 
-        if (!$document->payee_organization_id && !$document->payee_contractor_id) {
+        if (! $document->payee_organization_id && ! $document->payee_contractor_id) {
             $errors[] = 'Не указан получатель';
         }
 
-        if (!$document->amount || $document->amount <= 0) {
+        if (! $document->amount || $document->amount <= 0) {
             $errors[] = 'Некорректная сумма документа';
         }
 
-        if (!$document->payment_purpose && $document->document_type->isOutgoing()) {
+        if (! $document->payment_purpose && $document->document_type->isOutgoing()) {
             $errors[] = 'Не указано назначение платежа';
         }
 
         // Проверка банковских реквизитов для исходящих платежей
         if ($document->document_type->isOutgoing()) {
-            if (!$document->bank_account) {
+            if (! $document->bank_account) {
                 $errors[] = 'Не указан расчетный счет получателя';
             }
 
-            if (!$document->bank_bik) {
+            if (! $document->bank_bik) {
                 $errors[] = 'Не указан БИК банка получателя';
             }
         }
@@ -90,7 +90,7 @@ class PaymentValidationService
             $this->checkContractBalance($document, $errors);
         }
 
-        if (!empty($errors)) {
+        if (! empty($errors)) {
             throw new \DomainException(sprintf(
                 trans_message('payments.validation.errors_prefix'),
                 implode('; ', $errors)
@@ -106,7 +106,7 @@ class PaymentValidationService
         $required = ['organization_id', 'document_type', 'document_date', 'amount', 'currency'];
 
         foreach ($required as $field) {
-            if (!isset($data[$field]) || empty($data[$field])) {
+            if (! isset($data[$field]) || empty($data[$field])) {
                 throw new \InvalidArgumentException(sprintf(
                     trans_message('payments.validation.required_field'),
                     $this->fieldLabel($field)
@@ -148,8 +148,8 @@ class PaymentValidationService
     private function validateDates(array $data): void
     {
         if (isset($data['document_date'])) {
-            $docDate = is_string($data['document_date']) 
-                ? \Carbon\Carbon::parse($data['document_date']) 
+            $docDate = is_string($data['document_date'])
+                ? \Carbon\Carbon::parse($data['document_date'])
                 : $data['document_date'];
 
             // Дата документа не может быть в далеком будущем (более 30 дней)
@@ -159,12 +159,12 @@ class PaymentValidationService
         }
 
         if (isset($data['due_date']) && isset($data['document_date'])) {
-            $docDate = is_string($data['document_date']) 
-                ? \Carbon\Carbon::parse($data['document_date']) 
+            $docDate = is_string($data['document_date'])
+                ? \Carbon\Carbon::parse($data['document_date'])
                 : $data['document_date'];
-                
-            $dueDate = is_string($data['due_date']) 
-                ? \Carbon\Carbon::parse($data['due_date']) 
+
+            $dueDate = is_string($data['due_date'])
+                ? \Carbon\Carbon::parse($data['due_date'])
                 : $data['due_date'];
 
             if ($dueDate->lt($docDate)) {
@@ -181,37 +181,37 @@ class PaymentValidationService
         $organizationId = (int) ($data['organization_id'] ?? 0);
 
         // Проверка что указан хотя бы один плательщик
-        if (!isset($data['payer_organization_id']) && !isset($data['payer_contractor_id'])) {
+        if (! isset($data['payer_organization_id']) && ! isset($data['payer_contractor_id'])) {
             throw new \InvalidArgumentException(trans_message('payments.validation.payer_required'));
         }
 
         // Проверка что указан хотя бы один получатель
-        if (!isset($data['payee_organization_id']) && !isset($data['payee_contractor_id'])) {
+        if (! isset($data['payee_organization_id']) && ! isset($data['payee_contractor_id'])) {
             throw new \InvalidArgumentException(trans_message('payments.validation.payee_required'));
         }
 
         // Проверка существования организаций
         if (isset($data['payer_organization_id'])) {
-            if (!Organization::query()->whereKey($data['payer_organization_id'])->exists()) {
+            if (! Organization::query()->whereKey($data['payer_organization_id'])->exists()) {
                 throw new \InvalidArgumentException(trans_message('payments.validation.payer_organization_not_found'));
             }
         }
 
         if (isset($data['payee_organization_id'])) {
-            if (!Organization::query()->whereKey($data['payee_organization_id'])->exists()) {
+            if (! Organization::query()->whereKey($data['payee_organization_id'])->exists()) {
                 throw new \InvalidArgumentException(trans_message('payments.validation.payee_organization_not_found'));
             }
         }
 
         // Проверка существования контрагентов
         if (isset($data['payer_contractor_id'])) {
-            if (!$this->contractorExistsForOrganization((int) $data['payer_contractor_id'], $organizationId)) {
+            if (! $this->contractorExistsForOrganization((int) $data['payer_contractor_id'], $organizationId)) {
                 throw new \InvalidArgumentException(trans_message('payments.validation.payer_contractor_not_found'));
             }
         }
 
         if (isset($data['payee_contractor_id'])) {
-            if (!$this->contractorExistsForOrganization((int) $data['payee_contractor_id'], $organizationId)) {
+            if (! $this->contractorExistsForOrganization((int) $data['payee_contractor_id'], $organizationId)) {
                 throw new \InvalidArgumentException(trans_message('payments.validation.payee_contractor_not_found'));
             }
         }
@@ -241,8 +241,8 @@ class PaymentValidationService
             ]);
 
             throw new \InvalidArgumentException(
-                "Документ с номером '{$documentNumber}' уже существует для данной организации. " .
-                "Пожалуйста, используйте другой номер или оставьте поле пустым для автоматической генерации."
+                "Документ с номером '{$documentNumber}' уже существует для данной организации. ".
+                'Пожалуйста, используйте другой номер или оставьте поле пустым для автоматической генерации.'
             );
         }
     }
@@ -254,21 +254,21 @@ class PaymentValidationService
     {
         // БИК должен быть 9 цифр
         if (isset($data['bank_bik'])) {
-            if (!preg_match('/^\d{9}$/', $data['bank_bik'])) {
+            if (! preg_match('/^\d{9}$/', $data['bank_bik'])) {
                 throw new \InvalidArgumentException(trans_message('payments.validation.bik_invalid'));
             }
         }
 
         // Расчетный счет должен быть 20 цифр
         if (isset($data['bank_account'])) {
-            if (!preg_match('/^\d{20}$/', $data['bank_account'])) {
+            if (! preg_match('/^\d{20}$/', $data['bank_account'])) {
                 throw new \InvalidArgumentException(trans_message('payments.validation.bank_account_invalid'));
             }
         }
 
         // Корр. счет должен быть 20 цифр
         if (isset($data['bank_correspondent_account'])) {
-            if (!preg_match('/^\d{20}$/', $data['bank_correspondent_account'])) {
+            if (! preg_match('/^\d{20}$/', $data['bank_correspondent_account'])) {
                 throw new \InvalidArgumentException(trans_message('payments.validation.correspondent_account_invalid'));
             }
         }
@@ -281,7 +281,7 @@ class PaymentValidationService
     {
         $organizationId = (int) ($data['organization_id'] ?? 0);
 
-        if (!in_array($sourceType, [
+        if (! in_array($sourceType, [
             Contract::class,
             \App\Models\ContractPerformanceAct::class,
             PaymentDocument::class,
@@ -291,7 +291,7 @@ class PaymentValidationService
 
         $source = $this->resolveScopedSource($sourceType, $sourceId, $organizationId);
 
-        if (!$source) {
+        if (! $source) {
             throw new \InvalidArgumentException(trans_message('payments.validation.source_not_found'));
         }
 
@@ -301,45 +301,45 @@ class PaymentValidationService
                 // Проверяем, мультипроектный ли договор и передан ли project_id
                 $projectId = $data['project_id'] ?? null;
                 $isMultiProject = $source->is_multi_project ?? false;
-                
+
                 Log::info('payment_validation.contract_check', [
                     'contract_id' => $sourceId,
                     'is_multi_project' => $isMultiProject,
                     'project_id' => $projectId,
                     'amount' => $data['amount'],
                 ]);
-                
+
                 // Базовый запрос для подсчета платежей
                 $paymentsQuery = PaymentDocument::where('source_type', Contract::class)
                     ->where('source_id', $sourceId);
-                
+
                 // Для мультипроектных договоров фильтруем по проекту
                 if ($isMultiProject && $projectId) {
                     $paymentsQuery->where('project_id', $projectId);
                 }
-                
+
                 $existingPaymentsSum = (clone $paymentsQuery)->sum('amount');
 
                 // Определяем тип платежа
                 $invoiceTypeValue = $this->invoiceTypeValue($data['invoice_type'] ?? null);
-                
+
                 $isAdvancePayment = $invoiceTypeValue === 'advance';
                 $isFinalPayment = $invoiceTypeValue === 'final';
-                
+
                 if ($isAdvancePayment) {
                     // Для авансовых платежей проверяем плановую сумму аванса
                     if ($source->planned_advance_amount > 0) {
                         $advanceQuery = PaymentDocument::where('source_type', Contract::class)
                             ->where('source_id', $sourceId)
                             ->where('invoice_type', 'advance');
-                        
+
                         if ($isMultiProject && $projectId) {
                             $advanceQuery->where('project_id', $projectId);
                         }
-                        
+
                         $existingAdvancePayments = $advanceQuery->sum('amount');
                         $totalAdvanceWithCurrent = $existingAdvancePayments + $data['amount'];
-                        
+
                         if ($totalAdvanceWithCurrent > $source->planned_advance_amount) {
                             throw new \DomainException(
                                 sprintf(
@@ -353,7 +353,7 @@ class PaymentValidationService
                 } elseif ($this->requiresPerformedWorkLimit($invoiceTypeValue)) {
                     // Для обычных платежей (кроме финального расчета) проверяем выполненные работы
                     // Для мультипроектных договоров - только по текущему проекту
-                    
+
                     if ($isMultiProject && $projectId) {
                         // Для мультипроектного договора считаем акты только по текущему проекту
                         $performedAmount = DB::table('contract_performance_acts')
@@ -365,19 +365,19 @@ class PaymentValidationService
                         // Для обычного договора берем все акты
                         $performedAmount = $this->contractPerformedAmount($source, $projectId);
                     }
-                    
+
                     // Получаем сумму неавансовых платежей (исключая финальные расчеты)
                     $regularPaymentsQuery = PaymentDocument::where('source_type', Contract::class)
                         ->where('source_id', $sourceId);
                     $this->scopePerformedWorkPayments($regularPaymentsQuery);
-                    
+
                     if ($isMultiProject && $projectId) {
                         $regularPaymentsQuery->where('project_id', $projectId);
                     }
-                    
+
                     $existingRegularPayments = $regularPaymentsQuery->sum('amount');
                     $totalRegularWithCurrent = $existingRegularPayments + $data['amount'];
-                    
+
                     Log::info('payment_validation.performed_amount_check', [
                         'is_multi_project' => $isMultiProject,
                         'project_id' => $projectId,
@@ -386,7 +386,7 @@ class PaymentValidationService
                         'requested_amount' => $data['amount'],
                         'total_with_current' => $totalRegularWithCurrent,
                     ]);
-                    
+
                     if ($totalRegularWithCurrent > $performedAmount) {
                         $projectInfo = $isMultiProject && $projectId ? " (проект #{$projectId})" : '';
                         throw new \DomainException(
@@ -402,12 +402,12 @@ class PaymentValidationService
                     }
                 }
                 // Для финального расчета проверка по общей сумме договора - мягкая (только логирование)
-                
+
                 // Общая проверка: сумма всех платежей не должна превышать общую сумму договора
                 // ИСКЛЮЧЕНИЕ: для финального расчета разрешаем превышение (реальный бизнес-процесс)
                 $totalWithCurrent = $existingPaymentsSum + $data['amount'];
-                
-                if (!$isFinalPayment && $totalWithCurrent > $source->total_amount) {
+
+                if (! $isFinalPayment && $totalWithCurrent > $source->total_amount) {
                     $projectInfo = $isMultiProject && $projectId ? " (проект #{$projectId})" : '';
                     throw new \DomainException(
                         sprintf(
@@ -420,12 +420,12 @@ class PaymentValidationService
                         )
                     );
                 }
-                
+
                 // Для финального расчета - логируем превышение и отправляем уведомление
                 if ($isFinalPayment && $totalWithCurrent > $source->total_amount) {
                     $projectInfo = $isMultiProject && $projectId ? " (проект #{$projectId})" : '';
                     $excess = $totalWithCurrent - $source->total_amount;
-                    
+
                     Log::info('payment_validation.final_payment_exceeds_contract', [
                         'contract_id' => $sourceId,
                         'project_id' => $projectId,
@@ -435,9 +435,9 @@ class PaymentValidationService
                         'new_payment' => $data['amount'],
                         'total_with_current' => $totalWithCurrent,
                         'excess_amount' => $excess,
-                        'message' => "Финальный расчет{$projectInfo} превышает сумму договора на " . number_format($excess, 2, '.', ' ') . " ₽",
+                        'message' => "Финальный расчет{$projectInfo} превышает сумму договора на ".number_format($excess, 2, '.', ' ').' ₽',
                     ]);
-                    
+
                     // Создаем уведомление для администраторов организации
                     if (isset($data['organization_id'])) {
                         $this->notifyContractExcess(
@@ -454,8 +454,8 @@ class PaymentValidationService
             // Проверяем статус договора
             // status может быть как строкой, так и Enum объектом
             $statusValue = is_object($source->status) ? $source->status->value : $source->status;
-            
-            if (!in_array($statusValue, ['active', 'draft'])) {
+
+            if (! in_array($statusValue, ['active', 'draft'])) {
                 throw new \DomainException(trans_message('payments.validation.contract_status_invalid'));
             }
         }
@@ -500,7 +500,7 @@ class PaymentValidationService
                 'current_status' => $document->status->value,
                 'amount' => $document->amount,
                 'payee_contractor_id' => $document->payee_contractor_id,
-                'similar_documents' => $similarDocuments->map(fn($doc) => [
+                'similar_documents' => $similarDocuments->map(fn ($doc) => [
                     'id' => $doc->id,
                     'document_number' => $doc->document_number,
                     'status' => $doc->status->value,
@@ -517,7 +517,7 @@ class PaymentValidationService
      */
     private function checkCreditLimit(PaymentDocument $document, array &$errors): void
     {
-        if (!$document->payee_contractor_id) {
+        if (! $document->payee_contractor_id) {
             return;
         }
 
@@ -526,12 +526,13 @@ class PaymentValidationService
             ->where('counterparty_contractor_id', $document->payee_contractor_id)
             ->first();
 
-        if (!$account) {
+        if (! $account) {
             return; // нет счета = нет лимита
         }
 
         if ($account->is_blocked) {
             $errors[] = 'Контрагент заблокирован';
+
             return;
         }
 
@@ -558,34 +559,34 @@ class PaymentValidationService
             ->forOrganization($document->organization_id)
             ->find($document->source_id);
 
-        if (!$contract || $contract->total_amount <= 0) {
+        if (! $contract || $contract->total_amount <= 0) {
             return;
         }
 
         // Проверяем, мультипроектный ли договор и передан ли project_id
         $projectId = $document->project_id ?? null;
         $isMultiProject = $contract->is_multi_project ?? false;
-        
+
         // Базовый запрос для подсчета платежей
         $paymentsQuery = PaymentDocument::where('source_type', Contract::class)
             ->where('source_id', $contract->id)
             ->where('id', '!=', $document->id);
-        
+
         // Для мультипроектных договоров фильтруем по проекту
         if ($isMultiProject && $projectId) {
             $paymentsQuery->where('project_id', $projectId);
         }
-        
+
         $paidSum = $paymentsQuery->sum('amount');
 
         // Определяем тип платежа
         $invoiceTypeValue = $this->invoiceTypeValue($document->invoice_type);
-        
+
         $isAdvancePayment = $invoiceTypeValue === 'advance';
         $isFinalPayment = $invoiceTypeValue === 'final';
-        
+
         // Для обычных платежей (не аванс и не финальный расчет) проверяем по актам
-        if (!$isAdvancePayment && !$isFinalPayment && $this->requiresPerformedWorkLimit($invoiceTypeValue)) {
+        if (! $isAdvancePayment && ! $isFinalPayment && $this->requiresPerformedWorkLimit($invoiceTypeValue)) {
             if ($isMultiProject && $projectId) {
                 // Для мультипроектного договора считаем акты только по текущему проекту
                 $performedAmount = DB::table('contract_performance_acts')
@@ -597,20 +598,20 @@ class PaymentValidationService
                 // Для обычного договора берем все акты
                 $performedAmount = $this->contractPerformedAmount($contract, $projectId);
             }
-            
+
             // Получаем сумму неавансовых платежей (исключая финальные расчеты)
             $regularPaymentsQuery = PaymentDocument::where('source_type', Contract::class)
                 ->where('source_id', $contract->id)
                 ->where('id', '!=', $document->id);
             $this->scopePerformedWorkPayments($regularPaymentsQuery);
-            
+
             if ($isMultiProject && $projectId) {
                 $regularPaymentsQuery->where('project_id', $projectId);
             }
-            
+
             $existingRegularPayments = $regularPaymentsQuery->sum('amount');
             $totalRegularWithCurrent = $existingRegularPayments + $document->amount;
-            
+
             if ($totalRegularWithCurrent > $performedAmount) {
                 $projectInfo = $isMultiProject && $projectId ? " (проект #{$projectId})" : '';
                 $errors[] = sprintf(
@@ -621,15 +622,16 @@ class PaymentValidationService
                     $performedAmount - $existingRegularPayments,
                     $document->amount
                 );
+
                 return;
             }
         }
-        
+
         // Общая проверка по сумме договора
         // ИСКЛЮЧЕНИЕ: для финального расчета разрешаем превышение (реальный бизнес-процесс)
         $totalWithCurrent = $paidSum + $document->amount;
 
-        if (!$isFinalPayment && $totalWithCurrent > $contract->total_amount) {
+        if (! $isFinalPayment && $totalWithCurrent > $contract->total_amount) {
             $remaining = $contract->total_amount - $paidSum;
             $projectInfo = $isMultiProject && $projectId ? " (проект #{$projectId})" : '';
             $errors[] = sprintf(
@@ -639,12 +641,12 @@ class PaymentValidationService
                 $document->amount
             );
         }
-        
+
         // Для финального расчета - логируем превышение и отправляем уведомление
         if ($isFinalPayment && $totalWithCurrent > $contract->total_amount) {
             $projectInfo = $isMultiProject && $projectId ? " (проект #{$projectId})" : '';
             $excess = $totalWithCurrent - $contract->total_amount;
-            
+
             Log::info('payment_validation.final_payment_exceeds_contract_on_submit', [
                 'document_id' => $document->id,
                 'contract_id' => $contract->id,
@@ -655,9 +657,9 @@ class PaymentValidationService
                 'new_payment' => $document->amount,
                 'total_with_current' => $totalWithCurrent,
                 'excess_amount' => $excess,
-                'message' => "Финальный расчет{$projectInfo} превышает сумму договора на " . number_format($excess, 2, '.', ' ') . " ₽ (это разрешено)",
+                'message' => "Финальный расчет{$projectInfo} превышает сумму договора на ".number_format($excess, 2, '.', ' ').' ₽ (это разрешено)',
             ]);
-            
+
             // Создаем уведомление для администраторов организации
             $this->notifyContractExcess(
                 $document->organization_id,
@@ -751,7 +753,7 @@ class PaymentValidationService
 
         $source = $sourceType::query()->find($sourceId);
 
-        if (!$source) {
+        if (! $source) {
             return null;
         }
 
@@ -765,7 +767,7 @@ class PaymentValidationService
 
         return null;
     }
-    
+
     /**
      * Отправка уведомления о превышении суммы договора
      */
@@ -785,20 +787,24 @@ class PaymentValidationService
             })
                 ->get()
                 ->filter(static function (User $user) use ($organizationId): bool {
-                    return $user->can('payments.view', ['organization_id' => $organizationId]);
+                    $context = ['organization_id' => $organizationId];
+
+                    return $user->can('payments.invoice.view', $context)
+                        || $user->can('payments.invoice.view_all', $context);
                 })
                 ->values();
-            
+
             if ($users->isEmpty()) {
                 Log::warning('No users to notify about contract excess', [
                     'organization_id' => $organizationId,
                     'contract_id' => $contract->id,
                 ]);
+
                 return;
             }
-            
+
             $notificationService = app(\App\BusinessModules\Features\Notifications\Services\NotificationService::class);
-            
+
             $projectInfo = '';
             $projectName = '';
             if ($projectId && $contract->is_multi_project) {
@@ -808,11 +814,11 @@ class PaymentValidationService
                     $projectName = $project->name;
                 }
             }
-            
+
             $formattedExcess = number_format($excessAmount, 2, '.', ' ');
             $formattedPayment = number_format($paymentAmount, 2, '.', ' ');
             $formattedContract = number_format($contract->total_amount, 2, '.', ' ');
-            
+
             foreach ($users as $user) {
                 $notificationService->send(
                     $user,
@@ -839,10 +845,12 @@ class PaymentValidationService
                     'finance',
                     'high',
                     ['in_app', 'websocket'],
-                    $organizationId
+                    $organizationId,
+                    requiredPermissions: ['payments.invoice.view', 'payments.invoice.view_all'],
+                    interfaces: ['admin'],
                 );
             }
-            
+
             Log::info('Contract excess notifications sent', [
                 'organization_id' => $organizationId,
                 'contract_id' => $contract->id,
@@ -858,5 +866,4 @@ class PaymentValidationService
             ]);
         }
     }
-
 }

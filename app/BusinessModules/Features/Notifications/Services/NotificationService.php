@@ -144,6 +144,12 @@ class NotificationService
 
     public function sendBulk(Collection $users, string $type, array $data, array $options = []): Collection
     {
+        if (! array_key_exists('interfaces', $options)
+            || $options['interfaces'] === null
+            || $options['interfaces'] === []) {
+            throw new DomainException('Bulk notification interfaces must be declared explicitly');
+        }
+
         $notifications = collect();
 
         foreach ($users as $user) {
@@ -155,8 +161,8 @@ class NotificationService
                 $options['priority'] ?? 'normal',
                 $options['channels'] ?? null,
                 $options['organization_id'] ?? null,
-                $options['required_permissions'] ?? null,
-                $options['interfaces'] ?? null,
+                requiredPermissions: $options['required_permissions'] ?? null,
+                interfaces: $options['interfaces'],
             );
 
             if ($notification->exists) {
