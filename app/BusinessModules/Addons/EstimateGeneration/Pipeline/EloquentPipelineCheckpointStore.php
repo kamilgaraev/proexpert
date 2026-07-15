@@ -168,7 +168,8 @@ final class EloquentPipelineCheckpointStore implements PipelineCheckpointStore
                 || (int) $session->state_version !== $claim->context->stateVersion
                 || $session->status->value !== $claim->context->sessionStatus
                 || $claim->context->generationAttemptId === null
-                || ! hash_equals($claim->context->generationAttemptId, (string) ($session->input_payload['generation_attempt_id'] ?? ''))) {
+                || ($claim->context->documentId === null
+                    && ! hash_equals($claim->context->generationAttemptId, (string) ($session->input_payload['generation_attempt_id'] ?? '')))) {
                 return false;
             }
             $checkpoint = $this->query()
