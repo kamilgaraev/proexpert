@@ -121,15 +121,6 @@ Schedule::command('modules:scan')
     })
     ->appendOutputTo(storage_path('logs/schedule-modules-scan.log'));
 
-// Проверка истекших trial периодов модулей каждый час
-Schedule::command('modules:convert-expired-trials')
-    ->hourly()
-    ->withoutOverlapping(10)
-    ->onFailure(function () {
-        Log::channel('stderr')->error('Scheduled modules:convert-expired-trials command failed.');
-    })
-    ->appendOutputTo(storage_path('logs/schedule-trial-expired.log'));
-
 Schedule::command('temp-files:cleanup --hours=48')
     ->dailyAt('04:10')
     ->withoutOverlapping(30)
@@ -147,41 +138,6 @@ Schedule::command('projects:geocode --limit=50 --delay=2')
         Log::channel('stderr')->error('Scheduled projects:geocode command failed.');
     })
     ->appendOutputTo(storage_path('logs/schedule-projects-geocode.log'));
-
-// Автоматическое продление подписок (3 раза в день для надежности)
-Schedule::command('subscriptions:renew --days-ahead=1')
-    ->dailyAt('02:00')
-    ->withoutOverlapping(120)
-    ->onFailure(function () {
-        Log::channel('stderr')->error('Scheduled subscriptions:renew command failed.');
-    })
-    ->appendOutputTo(storage_path('logs/schedule-subscriptions-renew.log'));
-
-Schedule::command('subscriptions:renew --days-ahead=1')
-    ->dailyAt('12:00')
-    ->withoutOverlapping(120)
-    ->onFailure(function () {
-        Log::channel('stderr')->error('Scheduled subscriptions:renew command failed.');
-    })
-    ->appendOutputTo(storage_path('logs/schedule-subscriptions-renew.log'));
-
-Schedule::command('subscriptions:renew --days-ahead=1')
-    ->dailyAt('20:00')
-    ->withoutOverlapping(120)
-    ->onFailure(function () {
-        Log::channel('stderr')->error('Scheduled subscriptions:renew command failed.');
-    })
-    ->appendOutputTo(storage_path('logs/schedule-subscriptions-renew.log'));
-
-// Автоматическое продление модулей с автооплатой (каждые 5 минут)
-Schedule::command('modules:renew --days-ahead=1')
-    ->hourly()
-    ->withoutOverlapping(240)
-    ->runInBackground()
-    ->onFailure(function () {
-        Log::channel('stderr')->error('Scheduled modules:renew command failed.');
-    })
-    ->appendOutputTo(storage_path('logs/schedule-modules-renew.log'));
 
 // Автоматическое снятие истекших ограничений доступа
 Schedule::command('restrictions:lift-expired')
