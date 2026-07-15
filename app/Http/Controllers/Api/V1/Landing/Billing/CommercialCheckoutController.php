@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api\V1\Landing\Billing;
 
 use App\Exceptions\Billing\CommercialCheckoutAmountException;
 use App\Exceptions\Billing\CommercialCheckoutConflictException;
+use App\Exceptions\Billing\InsufficientBalanceException;
 use App\Exceptions\Billing\CorporateSelfServiceMutationException;
 use App\Exceptions\Billing\StaleCommercialOfferException;
 use App\Http\Requests\Api\V1\Landing\Billing\CommercialCheckoutRequest;
@@ -71,6 +72,11 @@ class CommercialCheckoutController
         } catch (CommercialCheckoutAmountException|InvalidArgumentException $exception) {
             return LandingResponse::error(
                 trans_message('billing.checkout.invalid'),
+                Response::HTTP_UNPROCESSABLE_ENTITY,
+            );
+        } catch (InsufficientBalanceException $exception) {
+            return LandingResponse::error(
+                trans_message('billing.checkout.balance_insufficient'),
                 Response::HTTP_UNPROCESSABLE_ENTITY,
             );
         } catch (ConnectionException|RequestException $exception) {

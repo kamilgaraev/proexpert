@@ -51,7 +51,9 @@ class PackageService
                     'price_minor' => $priceMinor,
                     'currency' => (string) config('commercial_offers.currency', 'RUB'),
                     'billing_period_days' => (int) config('commercial_offers.billing_period_days', 30),
-                    'modules' => $standard['included_modules'] ?? $standard['modules'] ?? [],
+                    'modules' => $this->moduleSummaries(
+                        $standard['included_modules'] ?? $standard['modules'] ?? [],
+                    ),
                     'highlights' => $standard['highlights'] ?? [],
                     'business_outcomes' => $package['business_outcomes'] ?? [],
                     'is_active' => $subscription !== null,
@@ -62,6 +64,26 @@ class PackageService
                     'trial_ends_at' => $subscription?->trial_ends_at?->toISOString(),
                     'trial_used' => $usedTrials->has($package['slug']),
                     'trial_available' => ! $usedTrials->has($package['slug']),
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    private function moduleSummaries(array $slugs): array
+    {
+        $definitions = $this->packageCatalog->moduleDefinitions();
+
+        return collect($slugs)
+            ->map(static function (string $slug) use ($definitions): array {
+                $definition = $definitions[$slug] ?? [];
+
+                return [
+                    'slug' => $slug,
+                    'name' => trim((string) ($definition['name'] ?? 'Возможность МОСТ')),
+                    'description' => trim((string) (
+                        $definition['description'] ?? 'Возможность входит в состав пакета МОСТ.'
+                    )),
                 ];
             })
             ->values()

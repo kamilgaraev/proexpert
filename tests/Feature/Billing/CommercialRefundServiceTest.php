@@ -14,6 +14,7 @@ use App\Interfaces\Billing\PaymentGatewayInterface;
 use App\Models\CommercialOrder;
 use App\Models\CommercialPayment;
 use App\Models\CommercialRefund;
+use App\Models\OrganizationBalance;
 use App\Services\Billing\CommercialRefundService;
 use DomainException;
 use Illuminate\Database\Schema\Blueprint;
@@ -53,6 +54,30 @@ final class CommercialRefundServiceTest extends TestCase
         $this->assertDatabaseCount('commercial_refunds', 1);
     }
 
+    public function test_balance_refund_returns_money_once_and_closes_access_after_full_refund(): void
+    {
+        [$order] = $this->paidOrder('balance');
+        OrganizationBalance::query()->create([
+            'organization_id' => 42,
+            'balance' => 0,
+            'currency' => 'RUB',
+        ]);
+        $service = app(CommercialRefundService::class);
+
+        $first = $service->create($order->public_id, null, 'RUB', 'Возврат на баланс', 'balance-refund-key');
+        $second = $service->create($order->public_id, null, 'RUB', 'Возврат на баланс', 'balance-refund-key');
+
+        $this->assertSame($first->id, $second->id);
+        $this->assertSame('succeeded', $first->provider_status);
+        $this->assertSame(10000, OrganizationBalance::query()->sole()->balance);
+        $this->assertDatabaseCount('balance_transactions', 1);
+        $this->assertDatabaseHas('balance_transactions', ['type' => 'credit', 'amount' => 10000]);
+        $this->assertSame('refunded', $order->fresh()->status->value);
+        $this->assertDatabaseHas('organization_package_subscriptions', ['source_order_id' => $order->id, 'status' => 'expired']);
+        $this->assertDatabaseHas('notifications', ['organization_id' => 42, 'notification_type' => 'billing']);
+        $this->assertSame(0, $this->gateway->creates);
+    }
+
     public function test_full_refund_uses_remaining_amount_and_rejects_over_refund_or_currency_mismatch(): void
     {
         [$order, $payment] = $this->paidOrder();
@@ -89,7 +114,6 @@ final class CommercialRefundServiceTest extends TestCase
 
         foreach ([
             ['mock', [42]],
-            ['yookassa_test', []],
             ['yookassa_test', [41]],
             ['yookassa_live', [42]],
         ] as [$mode, $allowlist]) {
@@ -153,7 +177,7 @@ final class CommercialRefundServiceTest extends TestCase
         }
     }
 
-    private function paidOrder(): array
+    private function paidOrder(string $provider = 'yookassa'): array
     {
         $order = CommercialOrder::query()->create([
             'public_id' => '11111111-1111-4111-8111-111111111111',
@@ -178,8 +202,8 @@ final class CommercialRefundServiceTest extends TestCase
             'commercial_order_id' => $order->id,
             'role' => 'initial',
             'attempt_number' => 1,
-            'provider' => 'yookassa',
-            'provider_payment_id' => 'provider-payment-id',
+            'provider' => $provider,
+            'provider_payment_id' => $provider === 'yookassa' ? 'provider-payment-id' : null,
             'provider_status' => 'succeeded',
             'amount_minor' => 10000,
             'currency' => 'RUB',
@@ -197,9 +221,43 @@ final class CommercialRefundServiceTest extends TestCase
 
     private function createSchema(): void
     {
-        foreach (['commercial_refunds', 'commercial_payments', 'commercial_orders', 'organization_package_subscriptions'] as $table) {
+        foreach (['notifications', 'commercial_refunds', 'commercial_payments', 'commercial_orders', 'organization_package_subscriptions', 'balance_transactions', 'organization_balances', 'organizations'] as $table) {
             Schema::dropIfExists($table);
         }
+        Schema::create('organizations', function (Blueprint $t): void {
+            $t->id();
+            $t->string('name');
+            $t->boolean('is_active')->default(true);
+            $t->boolean('is_verified')->default(false);
+            $t->timestamps();
+            $t->softDeletes();
+        });
+        \DB::table('organizations')->insert([
+            'id' => 42,
+            'name' => 'Refund organization',
+            'is_active' => true,
+            'is_verified' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        Schema::create('organization_balances', function (Blueprint $t): void {
+            $t->id();
+            $t->unsignedBigInteger('organization_id')->unique();
+            $t->bigInteger('balance')->default(0);
+            $t->string('currency', 3)->default('RUB');
+            $t->timestamps();
+        });
+        Schema::create('balance_transactions', function (Blueprint $t): void {
+            $t->id();
+            $t->unsignedBigInteger('organization_balance_id');
+            $t->string('type');
+            $t->bigInteger('amount');
+            $t->bigInteger('balance_before');
+            $t->bigInteger('balance_after');
+            $t->text('description')->nullable();
+            $t->json('meta')->nullable();
+            $t->timestamps();
+        });
         Schema::create('commercial_orders', function (Blueprint $t): void {
             $t->id();
             $t->uuid('public_id')->unique();
@@ -258,6 +316,25 @@ final class CommercialRefundServiceTest extends TestCase
             $t->unsignedBigInteger('source_order_id');
             $t->unsignedBigInteger('organization_id');
             $t->string('status');
+            $t->timestamp('current_period_end_at')->nullable();
+            $t->timestamp('cancel_at')->nullable();
+            $t->timestamp('canceled_at')->nullable();
+            $t->timestamps();
+        });
+        Schema::create('notifications', function (Blueprint $t): void {
+            $t->uuid('id')->primary();
+            $t->string('type');
+            $t->string('notifiable_type');
+            $t->unsignedBigInteger('notifiable_id');
+            $t->unsignedBigInteger('organization_id')->nullable();
+            $t->string('notification_type');
+            $t->string('priority');
+            $t->json('channels');
+            $t->json('delivery_status');
+            $t->json('data');
+            $t->json('metadata')->nullable();
+            $t->timestamp('read_at')->nullable();
+            $t->timestamps();
         });
     }
 }

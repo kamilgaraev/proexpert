@@ -20,6 +20,7 @@ final class CommercialRefundService
     public function __construct(
         private readonly PaymentGatewayInterface $gateway,
         private readonly CommercialPaymentProviderPolicy $providerPolicy,
+        private readonly CommercialWebhookService $webhookService,
     ) {}
 
     public function create(
@@ -39,13 +40,21 @@ final class CommercialRefundService
             throw new DomainException(trans_message('billing.refund.invalid'));
         }
 
-        $organizationId = (int) CommercialOrder::query()
-            ->where('public_id', $orderPublicId)
-            ->value('organization_id');
+        $orderIdentity = CommercialOrder::query()
+            ->where('commercial_orders.public_id', $orderPublicId)
+            ->leftJoin('commercial_payments', function ($join): void {
+                $join->on('commercial_payments.commercial_order_id', '=', 'commercial_orders.id')
+                    ->where('commercial_payments.provider_status', '=', 'succeeded');
+            })
+            ->orderByDesc('commercial_payments.attempt_number')
+            ->first(['commercial_orders.organization_id', 'commercial_payments.provider']);
+        $organizationId = (int) ($orderIdentity?->organization_id ?? 0);
         if ($organizationId <= 0) {
             throw new DomainException(trans_message('billing.refund.invalid'));
         }
-        $this->providerPolicy->assertCanCreateRefund($organizationId);
+        if ($orderIdentity?->provider !== 'balance') {
+            $this->providerPolicy->assertCanCreateRefund($organizationId);
+        }
 
         [$refund, $payment] = $this->prepare(
             $orderPublicId,
@@ -56,6 +65,11 @@ final class CommercialRefundService
         );
         if ($refund->provider_refund_id !== null) {
             return $refund;
+        }
+        if ($payment->provider === 'balance') {
+            $this->webhookService->settleBalanceRefund($refund);
+
+            return $refund->fresh();
         }
 
         $request = new CreateRefundData(
@@ -128,11 +142,14 @@ final class CommercialRefundService
                 $payment = CommercialPayment::query()
                     ->where('commercial_order_id', $order->id)
                     ->where('provider_status', 'succeeded')
-                    ->whereNotNull('provider_payment_id')
                     ->orderByDesc('attempt_number')
                     ->lockForUpdate()
                     ->first();
-                if ($payment === null || $payment->currency !== $currency || $payment->amount_minor !== $order->amount_minor) {
+                if ($payment === null
+                    || $payment->currency !== $currency
+                    || $payment->amount_minor !== $order->amount_minor
+                    || ($payment->provider === 'yookassa' && $payment->provider_payment_id === null)
+                    || ! in_array($payment->provider, ['yookassa', 'balance'], true)) {
                     throw new DomainException(trans_message('billing.refund.invalid'));
                 }
                 $reserved = (int) CommercialRefund::query()
@@ -148,7 +165,7 @@ final class CommercialRefundService
                 $refund = CommercialRefund::query()->create([
                     'commercial_order_id' => $order->id,
                     'commercial_payment_id' => $payment->id,
-                    'provider' => 'yookassa',
+                    'provider' => $payment->provider,
                     'provider_refund_id' => null,
                     'provider_idempotency_key' => $idempotenceKey,
                     'request_fingerprint' => $fingerprint,

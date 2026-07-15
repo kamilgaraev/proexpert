@@ -107,6 +107,11 @@ class OrganizationPackageControllerTest extends TestCase
         $payload = $response->json('data');
         $active = collect($payload)->firstWhere('slug', 'estimates-norms');
         $this->assertIsArray($active);
+        $module = collect($active['modules'])->firstWhere('slug', 'budget-estimates');
+        $this->assertIsArray($module);
+        $this->assertSame('Сметное дело', $module['name']);
+        $this->assertNotSame('', trim($module['description']));
+        $this->assertArrayNotHasKey('billing_model', $module);
         $this->assertArrayNotHasKey('tier', $active);
         $this->assertArrayNotHasKey('is_bundled_with_plan', $active);
     }

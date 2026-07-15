@@ -124,6 +124,7 @@ final class CommercialBillingQueryService
             'kind' => $order->kind,
             'status' => $status,
             'payment_status' => $latestPayment?->provider_status,
+            'payment_source' => $latestPayment?->provider,
             'amount' => $order->amount,
             'amount_minor' => $order->amount_minor,
             'currency' => $order->currency,

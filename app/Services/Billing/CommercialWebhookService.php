@@ -12,18 +12,22 @@ use App\DataTransferObjects\Billing\YooKassaWebhookNotification;
 use App\Enums\Billing\CommercialOfferType;
 use App\Enums\Billing\PaymentProviderMode;
 use App\Exceptions\Billing\RetryableCommercialWebhookException;
+use App\Interfaces\Billing\BalanceServiceInterface;
 use App\Interfaces\Billing\PaymentGatewayInterface;
 use App\Models\CommercialOrder;
 use App\Models\CommercialPayment;
 use App\Models\CommercialRefund;
 use App\Models\CommercialRenewalCycle;
 use App\Models\CommercialWebhookEvent;
+use App\Models\Organization;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
 use App\Models\User;
 use App\Modules\Core\AccessController;
 use App\Services\Contractor\ContractorReferralRewardService;
 use App\Services\Modules\PackageCatalogService;
+use Illuminate\Support\Facades\DB;
+use RuntimeException;
 
 use function trans_message;
 
@@ -35,7 +39,132 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
         private readonly CommercialWebhookTransactionRunner $transactions,
         private readonly ContractorReferralRewardService $referralRewards,
         private readonly AccessController $accessController,
+        private readonly BalanceServiceInterface $balanceService,
     ) {}
+
+    public function settleBalancePayment(CommercialOrder $sourceOrder, CommercialPayment $sourcePayment): void
+    {
+        $organizationId = (int) $sourceOrder->organization_id;
+
+        DB::transaction(function () use ($sourceOrder, $sourcePayment): void {
+            $order = CommercialOrder::query()->whereKey($sourceOrder->getKey())->lockForUpdate()->firstOrFail();
+            $payment = CommercialPayment::query()->whereKey($sourcePayment->getKey())->lockForUpdate()->firstOrFail();
+
+            if ($order->status->value === 'paid') {
+                return;
+            }
+            if ($payment->provider !== 'balance'
+                || $payment->amount_minor !== $order->amount_minor
+                || $payment->currency !== $order->currency) {
+                throw new RuntimeException('Balance payment does not match the commercial order.');
+            }
+
+            $account = OrganizationCommercialAccount::query()
+                ->whereKey($order->commercial_account_id)
+                ->where('organization_id', $order->organization_id)
+                ->lockForUpdate()
+                ->firstOrFail();
+            $packageRows = OrganizationPackageSubscription::query()
+                ->where('organization_id', $order->organization_id)
+                ->lockForUpdate()
+                ->get();
+            $authoritative = new PaymentGatewayResult(
+                id: 'balance-'.$order->public_id,
+                status: 'succeeded',
+                confirmationUrl: null,
+                paymentMethodId: null,
+                paymentMethodSaved: false,
+                safeResponse: ['source' => 'balance'],
+                paid: true,
+                test: PaymentProviderMode::configured()->testMode(),
+                amountMinor: $order->amount_minor,
+                currency: $order->currency,
+                metadata: [
+                    'order_id' => $order->public_id,
+                    'organization_id' => $order->organization_id,
+                ],
+                refundedAmountMinor: 0,
+            );
+
+            $this->activate($order, $payment, $account, $packageRows, $authoritative, true);
+            $this->referralRewards->handleFirstPaidOrder($order->fresh(), $payment->fresh());
+            $this->notify($order, 'commercial_payment_succeeded', 'billing.webhook.payment_succeeded');
+        }, 3);
+
+        $this->accessController->clearAccessCache($organizationId);
+    }
+
+    public function settleBalanceRefund(CommercialRefund $sourceRefund): void
+    {
+        $organizationId = null;
+        $fullRefund = false;
+
+        DB::transaction(function () use ($sourceRefund, &$organizationId, &$fullRefund): void {
+            $refund = CommercialRefund::query()->whereKey($sourceRefund->getKey())->lockForUpdate()->firstOrFail();
+            if ($refund->provider_status === 'succeeded') {
+                return;
+            }
+
+            $payment = CommercialPayment::query()->whereKey($refund->commercial_payment_id)->lockForUpdate()->firstOrFail();
+            $order = CommercialOrder::query()->whereKey($refund->commercial_order_id)->lockForUpdate()->firstOrFail();
+            if ($refund->provider !== 'balance'
+                || $payment->provider !== 'balance'
+                || $payment->commercial_order_id !== $order->id
+                || $refund->currency !== $payment->currency
+                || $payment->refunded_amount_minor + $refund->amount_minor > $payment->amount_minor) {
+                throw new RuntimeException('Balance refund does not match the commercial payment.');
+            }
+
+            $organizationId = (int) $order->organization_id;
+            $organization = Organization::query()->whereKey($organizationId)->firstOrFail();
+            $this->balanceService->creditBalance(
+                $organization,
+                $refund->amount_minor,
+                trans_message('billing.refund.balance_description'),
+                [
+                    'type' => 'commercial_package_refund',
+                    'commercial_order_id' => $order->public_id,
+                    'commercial_refund_id' => $refund->id,
+                ],
+            );
+
+            $refundedAmount = $payment->refunded_amount_minor + $refund->amount_minor;
+            $payment->forceFill(['refunded_amount_minor' => $refundedAmount])->save();
+            $refund->forceFill([
+                'provider_refund_id' => 'balance-'.$refund->id,
+                'provider_status' => 'succeeded',
+                'safe_response' => ['source' => 'balance'],
+                'reconciliation_required' => false,
+                'last_reconciled_at' => now(),
+            ])->save();
+
+            $fullRefund = $refundedAmount >= $payment->amount_minor;
+            if ($fullRefund) {
+                $order->forceFill(['status' => 'refunded'])->save();
+                OrganizationPackageSubscription::query()
+                    ->where('organization_id', $order->organization_id)
+                    ->where('source_order_id', $order->id)
+                    ->lockForUpdate()
+                    ->get()
+                    ->each(static fn (OrganizationPackageSubscription $row) => $row->forceFill([
+                        'status' => 'expired',
+                        'current_period_end_at' => now(),
+                        'cancel_at' => null,
+                        'canceled_at' => now(),
+                    ])->save());
+            }
+
+            $this->notify(
+                $order,
+                $fullRefund ? 'commercial_refund_full' : 'commercial_refund_partial',
+                $fullRefund ? 'billing.webhook.refund_full' : 'billing.webhook.refund_partial',
+            );
+        }, 3);
+
+        if ($fullRefund && $organizationId !== null) {
+            $this->accessController->clearAccessCache($organizationId);
+        }
+    }
 
     public function process(YooKassaWebhookNotification $notification, string $sourceIp): string
     {
@@ -383,12 +512,15 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
         OrganizationCommercialAccount $account,
         $packageRows,
         PaymentGatewayResult $authoritative,
+        bool $preserveRenewalMethod = false,
     ): void {
         $order->forceFill(['status' => 'paid'])->save();
         $renewal = $order->kind === 'renewal';
-        $canRenew = $renewal ? $account->auto_renew_enabled : ($order->auto_renew_consent
+        $canRenew = $preserveRenewalMethod
+            ? $account->auto_renew_enabled && $account->saved_payment_method_active
+            : ($renewal ? $account->auto_renew_enabled : ($order->auto_renew_consent
             && $authoritative->paymentMethodSaved
-            && trim((string) $authoritative->paymentMethodId) !== '');
+            && trim((string) $authoritative->paymentMethodId) !== ''));
         $payment->forceFill([
             'provider_status' => 'succeeded',
             'confirmation_url' => null,
@@ -407,11 +539,11 @@ final class CommercialWebhookService implements CommercialWebhookProcessor
             'current_period_end_at' => $order->period_end_at,
             'billing_anchor_at' => $order->period_end_at,
             'auto_renew_enabled' => $canRenew,
-            'saved_payment_method_id' => $renewal ? $account->saved_payment_method_id : ($canRenew ? $authoritative->paymentMethodId : null),
+            'saved_payment_method_id' => $preserveRenewalMethod || $renewal ? $account->saved_payment_method_id : ($canRenew ? $authoritative->paymentMethodId : null),
             'saved_payment_method_active' => $canRenew,
-            'saved_payment_method_at' => $renewal ? $account->saved_payment_method_at : ($canRenew ? now() : null),
-            'auto_renew_consented_at' => $renewal ? $account->auto_renew_consented_at : ($canRenew ? now() : null),
-            'auto_renew_terms_version' => $renewal ? $account->auto_renew_terms_version : ($canRenew ? (string) config('commercial_offers.auto_renew_terms_version', '1') : null),
+            'saved_payment_method_at' => $preserveRenewalMethod || $renewal ? $account->saved_payment_method_at : ($canRenew ? now() : null),
+            'auto_renew_consented_at' => $preserveRenewalMethod || $renewal ? $account->auto_renew_consented_at : ($canRenew ? now() : null),
+            'auto_renew_terms_version' => $preserveRenewalMethod || $renewal ? $account->auto_renew_terms_version : ($canRenew ? (string) config('commercial_offers.auto_renew_terms_version', '1') : null),
             'grace_started_at' => null,
             'grace_ends_at' => null,
         ])->save();

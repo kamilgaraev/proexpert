@@ -24,6 +24,7 @@ class CommercialCheckoutRequest extends FormRequest
             'quote_version' => ['required', 'integer', 'min:1'],
             'client_idempotency_key' => ['required', 'string', 'min:36', 'max:100', 'regex:/^[A-Za-z0-9-]+$/'],
             'auto_renew_consent' => ['required', 'boolean'],
+            'use_balance' => ['required', 'boolean'],
             'current_period_start_at' => ['prohibited'],
             'current_period_end_at' => ['prohibited'],
         ];

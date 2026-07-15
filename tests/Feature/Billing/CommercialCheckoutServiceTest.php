@@ -16,6 +16,7 @@ use App\Interfaces\Billing\PaymentGatewayInterface;
 use App\Models\CommercialOrder;
 use App\Models\CommercialPayment;
 use App\Models\Organization;
+use App\Models\OrganizationBalance;
 use App\Models\OrganizationCommercialAccount;
 use App\Models\OrganizationPackageSubscription;
 use App\Models\User;
@@ -80,10 +81,45 @@ class CommercialCheckoutServiceTest extends TestCase
         );
     }
 
+    public function test_pays_fully_from_balance_without_creating_yookassa_payment(): void
+    {
+        OrganizationBalance::query()->create([
+            'organization_id' => $this->organization->id,
+            'balance' => 1_000_000,
+            'currency' => 'RUB',
+        ]);
+
+        $result = $this->checkoutPayload([
+            'target_package_slugs' => ['machinery'],
+            'client_idempotency_key' => '22222222-2222-4222-8222-222222222222',
+            'use_balance' => true,
+            'auto_renew_consent' => false,
+        ]);
+
+        $this->assertSame('paid', $result['status']);
+        $this->assertSame('succeeded', $result['payment_status']);
+        $this->assertSame('balance', $result['payment_source']);
+        $this->assertNull($result['confirmation_url']);
+        $this->assertSame(210_000, OrganizationBalance::query()->sole()->balance);
+        $this->assertDatabaseHas('balance_transactions', [
+            'type' => 'debit',
+            'amount' => 790_000,
+        ]);
+        $this->assertDatabaseHas('commercial_payments', [
+            'provider' => 'balance',
+            'provider_status' => 'succeeded',
+        ]);
+        $this->assertDatabaseHas('organization_package_subscriptions', [
+            'package_slug' => 'machinery',
+            'status' => 'active',
+        ]);
+        $this->assertCount(0, $this->gateway->payments);
+    }
+
     public function test_test_store_allowlist_denial_creates_no_checkout_state_or_provider_call(): void
     {
         config()->set('services.yookassa.mode', 'yookassa_test');
-        config()->set('services.yookassa.test_organization_ids', []);
+        config()->set('services.yookassa.test_organization_ids', [$this->organization->id + 1]);
 
         $this->expectException(PaymentGatewayConfigurationException::class);
 
@@ -384,6 +420,7 @@ class CommercialCheckoutServiceTest extends TestCase
                 'quote_version' => 1,
                 'client_idempotency_key' => fake()->uuid(),
                 'auto_renew_consent' => true,
+                'use_balance' => false,
             ], $override),
         );
     }
@@ -392,7 +429,7 @@ class CommercialCheckoutServiceTest extends TestCase
     {
         foreach ([
             'notifications', 'commercial_webhook_events', 'commercial_payments', 'commercial_orders', 'organization_package_subscriptions',
-            'organization_commercial_accounts', 'users', 'organizations',
+            'balance_transactions', 'organization_balances', 'organization_commercial_accounts', 'users', 'organizations',
         ] as $table) {
             Schema::dropIfExists($table);
         }
@@ -433,6 +470,24 @@ class CommercialCheckoutServiceTest extends TestCase
             $table->string('auto_renew_terms_version')->nullable();
             $table->timestamp('grace_started_at')->nullable();
             $table->timestamp('grace_ends_at')->nullable();
+            $table->timestamps();
+        });
+        Schema::create('organization_balances', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_id')->unique();
+            $table->bigInteger('balance')->default(0);
+            $table->string('currency', 3)->default('RUB');
+            $table->timestamps();
+        });
+        Schema::create('balance_transactions', function (Blueprint $table): void {
+            $table->id();
+            $table->foreignId('organization_balance_id');
+            $table->string('type');
+            $table->bigInteger('amount');
+            $table->bigInteger('balance_before');
+            $table->bigInteger('balance_after');
+            $table->text('description')->nullable();
+            $table->json('meta')->nullable();
             $table->timestamps();
         });
         Schema::create('organization_package_subscriptions', function (Blueprint $table): void {
@@ -497,6 +552,7 @@ class CommercialCheckoutServiceTest extends TestCase
             $table->unsignedBigInteger('refunded_amount_minor')->default(0);
             $table->boolean('reconciliation_required')->default(false);
             $table->timestamp('last_reconciled_at')->nullable();
+            $table->timestamp('terminal_at')->nullable();
             $table->timestamps();
         });
         Schema::create('commercial_webhook_events', function (Blueprint $table): void {
