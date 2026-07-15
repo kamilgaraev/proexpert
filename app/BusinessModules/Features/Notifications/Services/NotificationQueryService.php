@@ -29,6 +29,15 @@ final class NotificationQueryService
 
         $interface = $this->interfaceResolver->resolve($request);
         $organizationId = $this->organizationId($request, $user);
+
+        return $this->visibleFor($user, $interface, $organizationId);
+    }
+
+    public function visibleFor(
+        User $user,
+        NotificationInterface $interface,
+        ?int $organizationId
+    ): Builder {
         $targetScope = $this->targetScope($interface);
 
         return Notification::query()
@@ -42,6 +51,26 @@ final class NotificationQueryService
             })
             ->whereHas('targets', $targetScope)
             ->with(['targets' => $targetScope]);
+    }
+
+    public function unreadFor(
+        User $user,
+        NotificationInterface $interface,
+        ?int $organizationId
+    ): Builder {
+        return $this->applyReadStateFor(
+            $this->visibleFor($user, $interface, $organizationId),
+            $interface,
+            false
+        );
+    }
+
+    public function unreadCountFor(
+        User $user,
+        NotificationInterface $interface,
+        ?int $organizationId
+    ): int {
+        return $this->unreadFor($user, $interface, $organizationId)->count();
     }
 
     public function findVisible(Request $request, string $id): Notification
@@ -86,6 +115,15 @@ final class NotificationQueryService
     private function applyReadState(Builder $query, Request $request, bool $read): Builder
     {
         $interface = $this->interfaceResolver->resolve($request);
+
+        return $this->applyReadStateFor($query, $interface, $read);
+    }
+
+    private function applyReadStateFor(
+        Builder $query,
+        NotificationInterface $interface,
+        bool $read
+    ): Builder {
 
         return $query->whereHas('targets', static function (Builder $targetQuery) use ($interface, $read): void {
             $targetQuery

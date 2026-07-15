@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Services\Customer;
 
+use App\BusinessModules\Features\Notifications\Enums\NotificationInterface;
 use App\BusinessModules\Features\Notifications\Models\Notification;
+use App\BusinessModules\Features\Notifications\Services\NotificationQueryService;
 use App\Enums\Contract\ContractSideTypeEnum;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
@@ -32,7 +34,8 @@ class CustomerPortalService
     public function __construct(
         private readonly AuthorizationService $authorizationService,
         private readonly ProjectCustomerResolverService $projectCustomerResolverService,
-        private readonly ContractSideResolverService $contractSideResolverService
+        private readonly ContractSideResolverService $contractSideResolverService,
+        private readonly NotificationQueryService $notificationQueryService
     ) {
     }
 
@@ -41,11 +44,11 @@ class CustomerPortalService
         $projects = $this->baseProjectQuery($organizationId, $user)->get();
         $documentsCount = $this->baseDocumentQuery($organizationId, null, $user)->count();
         $approvalsCount = $this->baseApprovalQuery($organizationId, null, $user)->where('is_approved', false)->count();
-        $unreadNotificationsCount = Notification::query()
-            ->forUser($user)
-            ->forOrganization($organizationId)
-            ->unread()
-            ->count();
+        $unreadNotificationsCount = $this->notificationQueryService->unreadCountFor(
+            $user,
+            NotificationInterface::Customer,
+            $organizationId
+        );
 
         return [
             'metrics' => [

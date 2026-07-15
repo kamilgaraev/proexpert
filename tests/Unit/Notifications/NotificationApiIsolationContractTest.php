@@ -41,6 +41,20 @@ final class NotificationApiIsolationContractTest extends TestCase
         self::assertStringContainsString("'organization_id' =>", $source);
         self::assertStringContainsString("'unread_count' =>", $source);
         self::assertStringContainsString("trans_message('customer.notifications_loaded')", $source);
+        self::assertStringContainsString('$filters = $request->query()', $source);
+        self::assertStringNotContainsString("unset(\$filters['interface'])", $source);
+    }
+
+    public function test_customer_dashboard_uses_customer_target_unread_count_service(): void
+    {
+        $source = $this->source('app/Services/Customer/CustomerPortalService.php');
+
+        self::assertStringContainsString('NotificationQueryService $notificationQueryService', $source);
+        self::assertStringContainsString('NotificationInterface::Customer', $source);
+        self::assertStringContainsString('$this->notificationQueryService->unreadCountFor(', $source);
+        self::assertStringContainsString('NotificationInterface::Customer,', $source);
+        self::assertStringContainsString('$organizationId', $source);
+        self::assertStringNotContainsString('$unreadNotificationsCount = Notification::query()', $source);
     }
 
     private function source(string $path): string

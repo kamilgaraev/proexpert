@@ -327,7 +327,6 @@ class NotificationController extends Controller
     private function customerPaginated(Request $request, array $items): JsonResponse
     {
         $filters = $request->query();
-        unset($filters['interface']);
 
         $unreadCount = $this->queryService->onlyUnread(
             $this->queryService->visibleTo($request),

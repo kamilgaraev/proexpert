@@ -7,6 +7,7 @@ namespace Tests\Feature\Api\V1\Notifications;
 use App\BusinessModules\Features\Notifications\Enums\NotificationInterface;
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use App\BusinessModules\Features\Notifications\Models\NotificationTarget;
+use App\BusinessModules\Features\Notifications\Services\NotificationQueryService;
 use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -125,7 +126,7 @@ final class NotificationContourIsolationTest extends TestCase
         $this->withoutMiddleware();
 
         foreach (['/api/v1/customer/notifications', '/api/customer/notifications'] as $uri) {
-            $response = $this->actingAs($user, 'api_landing')->getJson($uri);
+            $response = $this->actingAs($user, 'api_landing')->getJson($uri.'?interface=admin');
 
             $response->assertOk();
             $ids = collect($response->json('data.items'))->pluck('id')->all();
@@ -133,8 +134,108 @@ final class NotificationContourIsolationTest extends TestCase
             self::assertNotContains($admin->id, $ids);
             $response->assertJsonPath('data.meta.organization_id', $organization->id);
             $response->assertJsonPath('data.meta.unread_count', 1);
+            $response->assertJsonPath('data.meta.filters.interface', 'admin');
             $response->assertJsonPath('data.items.0.isUnread', true);
         }
+    }
+
+    public function test_missing_current_organization_exposes_only_global_notifications(): void
+    {
+        $organization = Organization::factory()->verified()->create();
+        $user = User::factory()->create(['current_organization_id' => null]);
+        $global = $this->notification($user, null, [NotificationInterface::Admin]);
+        $organizationNotification = $this->notification(
+            $user,
+            $organization->id,
+            [NotificationInterface::Admin]
+        );
+        $this->withoutMiddleware();
+
+        $response = $this->actingAs($user, 'api_admin')->getJson('/api/v1/admin/notifications');
+
+        $response->assertOk()->assertJsonPath('meta.total', 1);
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        self::assertContains($global->id, $ids);
+        self::assertNotContains($organizationNotification->id, $ids);
+    }
+
+    public function test_customer_dashboard_query_counts_only_visible_customer_targets(): void
+    {
+        $organization = Organization::factory()->verified()->create();
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $current = $this->notification($user, $organization->id, [NotificationInterface::Customer]);
+        $global = $this->notification($user, null, [NotificationInterface::Customer]);
+        $dismissed = $this->notification($user, $organization->id, [NotificationInterface::Customer]);
+        $foreign = $this->notification($user, $foreignOrganization->id, [NotificationInterface::Customer]);
+        $admin = $this->notification($user, $organization->id, [NotificationInterface::Admin]);
+        $this->target($dismissed, NotificationInterface::Customer)->dismiss();
+
+        $count = app(NotificationQueryService::class)->unreadCountFor(
+            $user,
+            NotificationInterface::Customer,
+            $organization->id
+        );
+
+        self::assertSame(2, $count);
+        self::assertNull($this->target($current, NotificationInterface::Customer)->fresh()->read_at);
+        self::assertNull($this->target($global, NotificationInterface::Customer)->fresh()->read_at);
+        self::assertNull($this->target($foreign, NotificationInterface::Customer)->fresh()->read_at);
+        self::assertNull($this->target($admin, NotificationInterface::Admin)->fresh()->read_at);
+    }
+
+    public function test_customer_aliases_support_show_and_isolated_mutations(): void
+    {
+        $organization = Organization::factory()->verified()->create();
+        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $this->withoutMiddleware();
+
+        foreach (['/api/v1/customer', '/api/customer'] as $prefix) {
+            $notification = $this->notification($user, $organization->id, [NotificationInterface::Customer]);
+            $target = $this->target($notification, NotificationInterface::Customer);
+
+            $this->actingAs($user, 'api_landing')
+                ->getJson("{$prefix}/notifications/{$notification->id}?interface=admin")
+                ->assertOk()
+                ->assertJsonPath('data.id', $notification->id);
+            $this->actingAs($user, 'api_landing')
+                ->patchJson("{$prefix}/notifications/{$notification->id}/read", ['interface' => 'admin'])
+                ->assertOk();
+            self::assertNotNull($target->fresh()->read_at);
+            $this->actingAs($user, 'api_landing')
+                ->patchJson("{$prefix}/notifications/{$notification->id}/unread", ['interface' => 'admin'])
+                ->assertOk();
+            self::assertNull($target->fresh()->read_at);
+            $this->actingAs($user, 'api_landing')
+                ->deleteJson("{$prefix}/notifications/{$notification->id}")
+                ->assertOk();
+            self::assertNotNull($target->fresh()->dismissed_at);
+        }
+    }
+
+    public function test_mark_all_ignores_dismissed_cross_organization_and_other_contour_targets(): void
+    {
+        $organization = Organization::factory()->verified()->create();
+        $foreignOrganization = Organization::factory()->verified()->create();
+        $user = User::factory()->create(['current_organization_id' => $organization->id]);
+        $current = $this->notification($user, $organization->id, [NotificationInterface::Customer]);
+        $global = $this->notification($user, null, [NotificationInterface::Customer]);
+        $dismissed = $this->notification($user, $organization->id, [NotificationInterface::Customer]);
+        $foreign = $this->notification($user, $foreignOrganization->id, [NotificationInterface::Customer]);
+        $admin = $this->notification($user, $organization->id, [NotificationInterface::Admin]);
+        $this->target($dismissed, NotificationInterface::Customer)->dismiss();
+        $this->withoutMiddleware();
+
+        $this->actingAs($user, 'api_landing')
+            ->postJson('/api/v1/customer/notifications/mark-all-read')
+            ->assertOk()
+            ->assertJsonPath('data.count', 2);
+
+        self::assertNotNull($this->target($current, NotificationInterface::Customer)->fresh()->read_at);
+        self::assertNotNull($this->target($global, NotificationInterface::Customer)->fresh()->read_at);
+        self::assertNull($this->target($dismissed, NotificationInterface::Customer)->fresh()->read_at);
+        self::assertNull($this->target($foreign, NotificationInterface::Customer)->fresh()->read_at);
+        self::assertNull($this->target($admin, NotificationInterface::Admin)->fresh()->read_at);
     }
 
     private function assertForeignOperationsAreNotFound(
