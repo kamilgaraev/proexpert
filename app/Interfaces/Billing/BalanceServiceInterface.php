@@ -2,9 +2,9 @@
 
 namespace App\Interfaces\Billing;
 
+use App\Models\BalanceTransaction;
 use App\Models\Organization;
 use App\Models\OrganizationBalance;
-use App\Models\Payment;
 
 interface BalanceServiceInterface
 {
@@ -18,9 +18,8 @@ interface BalanceServiceInterface
      *
      * @param  int  $amount  Сумма в минорных единицах (копейках).
      * @param  string  $description  Описание пополнения.
-     * @param  Payment|null  $payment  Связанный платеж (если пополнение через шлюз).
      * @param  array  $meta  Дополнительные метаданные.
-     * @return OrganizationBalance Обновленный баланс.
+     * @return BalanceTransaction Созданная операция пополнения.
      *
      * @throws \App\Exceptions\Billing\BalanceException
      */
@@ -28,9 +27,8 @@ interface BalanceServiceInterface
         Organization $organization,
         int $amount,
         string $description,
-        ?Payment $payment = null,
         array $meta = []
-    ): OrganizationBalance;
+    ): BalanceTransaction;
 
     /**
      * Списать средства с баланса организации.

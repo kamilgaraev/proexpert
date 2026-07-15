@@ -12,7 +12,6 @@ class BalanceTransaction extends Model
 
     protected $fillable = [
         'organization_balance_id',
-        'payment_id', // Ссылка на платеж (если это пополнение)
         'type', // credit (пополнение), debit (списание)
         'amount', // Сумма транзакции в минорных единицах (копейках)
         'balance_before', // Баланс до транзакции
@@ -35,11 +34,6 @@ class BalanceTransaction extends Model
     public function organizationBalance(): BelongsTo
     {
         return $this->belongsTo(OrganizationBalance::class);
-    }
-
-    public function payment(): BelongsTo
-    {
-        return $this->belongsTo(Payment::class)->withDefault(); // withDefault если платеж может отсутствовать
     }
 
     /**

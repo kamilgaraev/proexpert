@@ -7,6 +7,7 @@ namespace Tests\Feature\Billing;
 use App\Models\CommercialOrder;
 use App\Models\CommercialPayment;
 use App\Models\ContractorInvitation;
+use App\Models\ContractorReferralReward;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Contractor\ContractorReferralRewardService;
@@ -67,10 +68,59 @@ final class ContractorReferralProgramTest extends TestCase
         ]);
     }
 
-    private function scenario(): array
+    public function test_differently_formatted_equal_phones_cancel_referral(): void
     {
-        $inviting = Organization::query()->create(['name' => 'Inviting', 'tax_number' => '1', 'email' => 'a@test']);
-        $invited = Organization::query()->create(['name' => 'Invited', 'tax_number' => '2', 'email' => 'b@test']);
+        [$order, $payment] = $this->scenario('+7 (999) 000-00-00', '79990000000');
+
+        app(ContractorReferralRewardService::class)->handleFirstPaidOrder($order, $payment);
+
+        $this->assertDatabaseHas('contractor_referral_rewards', [
+            'commercial_order_id' => $order->id,
+            'status' => ContractorReferralReward::STATUS_CANCELLED,
+            'cancellation_reason' => 'same_phone',
+        ]);
+    }
+
+    public function test_accrual_links_exact_bonus_transactions_and_is_idempotent(): void
+    {
+        [$order, $payment] = $this->scenario();
+        $service = app(ContractorReferralRewardService::class);
+        $reward = $service->handleFirstPaidOrder($order, $payment);
+
+        self::assertNotNull($reward);
+        self::assertSame(1, $service->accrueEligibleRewards($order->period_end_at->addSecond()));
+        self::assertSame(0, $service->accrueEligibleRewards($order->period_end_at->addSeconds(2)));
+
+        $reward->refresh();
+        $invitedTransaction = Schema::getConnection()->table('balance_transactions')->find($reward->invited_balance_transaction_id);
+        $invitingTransaction = Schema::getConnection()->table('balance_transactions')->find($reward->inviting_balance_transaction_id);
+
+        self::assertSame('contractor_referral_welcome', json_decode($invitedTransaction->meta, true, flags: JSON_THROW_ON_ERROR)['type']);
+        self::assertSame('contractor_referral_reward', json_decode($invitingTransaction->meta, true, flags: JSON_THROW_ON_ERROR)['type']);
+        self::assertSame(2, Schema::getConnection()->table('balance_transactions')->count());
+    }
+
+    public function test_balance_credit_contract_locks_balance_and_returns_created_transaction(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $service = file_get_contents($root.'/app/Services/Billing/BalanceService.php');
+        $contract = file_get_contents($root.'/app/Interfaces/Billing/BalanceServiceInterface.php');
+        $referral = file_get_contents($root.'/app/Services/Contractor/ContractorReferralRewardService.php');
+
+        self::assertIsString($service);
+        self::assertIsString($contract);
+        self::assertIsString($referral);
+        self::assertStringContainsString('lockForUpdate()', $service);
+        self::assertStringContainsString('): BalanceTransaction', $contract);
+        self::assertStringContainsString("'invited_balance_transaction_id' => \$invitedTransaction->id", $referral);
+        self::assertStringContainsString("'inviting_balance_transaction_id' => \$invitingTransaction->id", $referral);
+        self::assertStringNotContainsString("latest('id')", $referral);
+    }
+
+    private function scenario(?string $invitingPhone = null, ?string $invitedPhone = null): array
+    {
+        $inviting = Organization::query()->create(['name' => 'Inviting', 'tax_number' => '1', 'email' => 'a@test', 'phone' => $invitingPhone]);
+        $invited = Organization::query()->create(['name' => 'Invited', 'tax_number' => '2', 'email' => 'b@test', 'phone' => $invitedPhone]);
         $user = User::query()->create(['name' => 'Inviter', 'email' => 'u@test', 'password' => 'secret']);
         ContractorInvitation::query()->create([
             'organization_id' => $inviting->id,
@@ -179,7 +229,6 @@ final class ContractorReferralProgramTest extends TestCase
         Schema::create('balance_transactions', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('organization_balance_id');
-            $table->foreignId('payment_id')->nullable();
             $table->string('type');
             $table->bigInteger('amount');
             $table->bigInteger('balance_before');

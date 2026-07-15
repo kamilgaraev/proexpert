@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services\Billing;
 
 use App\Exceptions\Billing\BalanceException;
@@ -8,7 +10,6 @@ use App\Interfaces\Billing\BalanceServiceInterface;
 use App\Models\BalanceTransaction;
 use App\Models\Organization;
 use App\Models\OrganizationBalance;
-use App\Models\Payment;
 use App\Services\Logging\LoggingService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -34,15 +35,19 @@ class BalanceService implements BalanceServiceInterface
         Organization $organization,
         int $amount,
         string $description,
-        ?Payment $payment = null,
         array $meta = []
-    ): OrganizationBalance {
+    ): BalanceTransaction {
         if ($amount <= 0) {
             throw new BalanceException('Credit amount must be positive.');
         }
 
-        return DB::transaction(function () use ($organization, $amount, $description, $payment, $meta) {
-            $orgBalance = $this->getOrCreateOrganizationBalance($organization);
+        $this->getOrCreateOrganizationBalance($organization);
+
+        return DB::transaction(function () use ($organization, $amount, $description, $meta): BalanceTransaction {
+            $orgBalance = OrganizationBalance::query()
+                ->where('organization_id', $organization->id)
+                ->lockForUpdate()
+                ->firstOrFail();
             $balanceBefore = $orgBalance->balance;
 
             $orgBalance->balance += $amount;
@@ -50,7 +55,6 @@ class BalanceService implements BalanceServiceInterface
 
             $transaction = BalanceTransaction::create([
                 'organization_balance_id' => $orgBalance->id,
-                'payment_id' => $payment?->id,
                 'type' => BalanceTransaction::TYPE_CREDIT,
                 'amount' => $amount,
                 'balance_before' => $balanceBefore,
@@ -63,7 +67,6 @@ class BalanceService implements BalanceServiceInterface
             $this->logging->business('billing.balance.credited', [
                 'organization_id' => $organization->id,
                 'transaction_id' => $transaction->id,
-                'payment_id' => $payment?->id,
                 'amount_cents' => $amount,
                 'amount_rubles' => round($amount / 100, 2),
                 'balance_before_cents' => $balanceBefore,
@@ -83,12 +86,11 @@ class BalanceService implements BalanceServiceInterface
                 'balance_change_cents' => $amount,
                 'performed_by' => request()->user()?->id ?? 'system',
                 'description' => $description,
-                'payment_reference' => $payment?->id,
             ]);
 
             Cache::forget("organization_balance_{$organization->id}");
 
-            return $orgBalance->refresh();
+            return $transaction;
         });
     }
 
@@ -102,8 +104,13 @@ class BalanceService implements BalanceServiceInterface
             throw new BalanceException('Debit amount must be positive.');
         }
 
+        $this->getOrCreateOrganizationBalance($organization);
+
         return DB::transaction(function () use ($organization, $amount, $description, $meta) {
-            $orgBalance = $this->getOrCreateOrganizationBalance($organization);
+            $orgBalance = OrganizationBalance::query()
+                ->where('organization_id', $organization->id)
+                ->lockForUpdate()
+                ->firstOrFail();
 
             if ($orgBalance->balance < $amount) {
                 $amountRubles = number_format($amount / 100, 2, '.', '');

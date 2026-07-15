@@ -19,7 +19,6 @@ use Illuminate\Http\Request;
  *     @OA\Property(property="balance_before_cents", type="integer", example=0),
  *     @OA\Property(property="balance_after_cents", type="integer", example=100000),
  *     @OA\Property(property="description", type="string", nullable=true, example="Пополнение баланса"),
- *     @OA\Property(property="payment_id", type="integer", nullable=true, example=123),
  *     @OA\Property(property="meta", type="object", nullable=true, description="Дополнительные данные"),
  *     @OA\Property(property="created_at", type="string", format="date-time", example="2025-07-21T15:03:01Z")
  * )
@@ -43,7 +42,6 @@ class BalanceTransactionResource extends ModelJsonResource
             'balance_before_cents' => (int) $this->balance_before,
             'balance_after_cents' => (int) $this->balance_after,
             'description' => $this->description,
-            'payment_id' => $this->payment_id,
             'meta' => $this->meta,
             'created_at' => $this->created_at?->toIso8601String(),
         ];

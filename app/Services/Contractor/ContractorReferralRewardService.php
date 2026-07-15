@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Services\Contractor;
 
 use App\Interfaces\Billing\BalanceServiceInterface;
-use App\Models\BalanceTransaction;
 use App\Models\CommercialOrder;
 use App\Models\CommercialPayment;
 use App\Models\ContractorInvitation;
@@ -127,18 +126,21 @@ final class ContractorReferralRewardService
             return false;
         }
 
+        $this->balanceService->getOrCreateOrganizationBalance($invited);
+        $this->balanceService->getOrCreateOrganizationBalance($inviting);
+
         return DB::transaction(function () use ($reward, $inviting, $invited): bool {
             $locked = ContractorReferralReward::query()->whereKey($reward->id)->lockForUpdate()->first();
             if ($locked === null || $locked->status !== ContractorReferralReward::STATUS_PENDING) {
                 return false;
             }
 
-            $invitedBalance = $this->balanceService->creditBalance($invited, $locked->invited_welcome_amount, 'Бонус за приглашение подрядчика', null, ['type' => 'contractor_referral_welcome', 'referral_reward_id' => $locked->id]);
-            $invitingBalance = $this->balanceService->creditBalance($inviting, $locked->inviting_reward_amount, 'Бонус за приглашённую организацию', null, ['type' => 'contractor_referral_reward', 'referral_reward_id' => $locked->id]);
+            $invitedTransaction = $this->balanceService->creditBalance($invited, $locked->invited_welcome_amount, 'Бонус за приглашение подрядчика', ['type' => 'contractor_referral_welcome', 'referral_reward_id' => $locked->id]);
+            $invitingTransaction = $this->balanceService->creditBalance($inviting, $locked->inviting_reward_amount, 'Бонус за приглашённую организацию', ['type' => 'contractor_referral_reward', 'referral_reward_id' => $locked->id]);
             $locked->update([
                 'status' => ContractorReferralReward::STATUS_ACCRUED,
-                'invited_balance_transaction_id' => BalanceTransaction::query()->where('organization_balance_id', $invitedBalance->id)->latest('id')->value('id'),
-                'inviting_balance_transaction_id' => BalanceTransaction::query()->where('organization_balance_id', $invitingBalance->id)->latest('id')->value('id'),
+                'invited_balance_transaction_id' => $invitedTransaction->id,
+                'inviting_balance_transaction_id' => $invitingTransaction->id,
                 'invited_welcome_accrued_at' => now(),
                 'accrued_at' => now(),
             ]);
@@ -190,12 +192,17 @@ final class ContractorReferralRewardService
         if ($inviting === null || $invited === null) {
             return 'organization_not_found';
         }
-        foreach (['tax_number', 'email', 'phone'] as $field) {
+        foreach (['tax_number', 'email'] as $field) {
             $first = mb_strtolower(trim((string) $inviting->{$field}));
             $second = mb_strtolower(trim((string) $invited->{$field}));
             if ($first !== '' && $first === $second) {
                 return 'same_'.$field;
             }
+        }
+        $invitingPhone = $this->normalizePhone((string) $inviting->phone);
+        $invitedPhone = $this->normalizePhone((string) $invited->phone);
+        if ($invitingPhone !== '' && $invitingPhone === $invitedPhone) {
+            return 'same_phone';
         }
 
         return null;
@@ -207,6 +214,11 @@ final class ContractorReferralRewardService
         $raw = (int) round($amount * $percent / 100);
 
         return $roundTo > 0 ? (int) (round($raw / $roundTo) * $roundTo) : $raw;
+    }
+
+    private function normalizePhone(string $phone): string
+    {
+        return preg_replace('/\D+/', '', $phone) ?? '';
     }
 
     private function hasRequiredTables(): bool
