@@ -72,6 +72,22 @@ final class NotificationQueryServiceTest extends TestCase
         self::assertNotContains(42, $query->getBindings());
     }
 
+    public function test_target_scope_accepts_the_has_many_relation_used_by_eager_loading(): void
+    {
+        $query = $this->service()->visibleFor(
+            $this->user(),
+            NotificationInterface::Admin,
+            42
+        );
+        $targetScope = $query->getEagerLoads()['targets'];
+        $targets = (new Notification)->targets();
+
+        $targetScope($targets);
+
+        self::assertStringContainsString('"interface" = ?', $targets->toSql());
+        self::assertStringContainsString('"dismissed_at" is null', $targets->toSql());
+    }
+
     private function service(): NotificationQueryService
     {
         return new NotificationQueryService(

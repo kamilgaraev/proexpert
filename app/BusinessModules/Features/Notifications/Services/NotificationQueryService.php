@@ -15,6 +15,7 @@ use Closure;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -257,7 +258,7 @@ final class NotificationQueryService
 
     private function targetScope(NotificationInterface $interface): callable
     {
-        return static fn (Builder $targetQuery): Builder => $targetQuery
+        return static fn (Builder|Relation $targetQuery): Builder|Relation => $targetQuery
             ->where('interface', $interface->value)
             ->whereNull('dismissed_at');
     }
