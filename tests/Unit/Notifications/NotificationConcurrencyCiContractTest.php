@@ -35,6 +35,15 @@ final class NotificationConcurrencyCiContractTest extends TestCase
         self::assertStringNotContainsString("|| ! function_exists('pcntl_fork')", $source);
     }
 
+    public function test_postgres_concurrency_test_keeps_the_prepared_schema_outside_refresh_database_transactions(): void
+    {
+        $source = $this->source(
+            'tests/Feature/Notifications/NotificationPostgresConcurrencyTest.php'
+        );
+
+        self::assertStringContainsString('public function refreshDatabase(): void', $source);
+    }
+
     public function test_dedicated_workflow_runs_the_opt_in_postgres_test_on_notification_changes(): void
     {
         $workflow = $this->source('.github/workflows/notification-concurrency.yml');

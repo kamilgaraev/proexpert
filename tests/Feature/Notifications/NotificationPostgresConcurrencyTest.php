@@ -26,6 +26,8 @@ use Throwable;
 
 final class NotificationPostgresConcurrencyTest extends TestCase
 {
+    public function refreshDatabase(): void {}
+
     protected function setUp(): void
     {
         parent::setUp();
