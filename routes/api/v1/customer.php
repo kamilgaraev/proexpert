@@ -2,11 +2,12 @@
 
 declare(strict_types=1);
 
+use App\BusinessModules\Features\Notifications\Http\Controllers\NotificationController;
+use App\Http\Controllers\Api\V1\Customer\Auth\AuthController as CustomerAuthController;
+use App\Http\Controllers\Api\V1\Customer\Auth\EmailVerificationController as CustomerEmailVerificationController;
 use App\Http\Controllers\Api\V1\Customer\ContractController;
 use App\Http\Controllers\Api\V1\Customer\CustomerRequestController;
 use App\Http\Controllers\Api\V1\Customer\FinanceController;
-use App\Http\Controllers\Api\V1\Customer\Auth\AuthController as CustomerAuthController;
-use App\Http\Controllers\Api\V1\Customer\Auth\EmailVerificationController as CustomerEmailVerificationController;
 use App\Http\Controllers\Api\V1\Customer\InvitationController;
 use App\Http\Controllers\Api\V1\Customer\IssueController;
 use App\Http\Controllers\Api\V1\Customer\OrganizationSearchController;
@@ -86,7 +87,21 @@ Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'verified', 'orga
         Route::get('/documents', [PortalController::class, 'documents'])->name('documents');
         Route::get('/approvals', [PortalController::class, 'approvals'])->name('approvals');
         Route::get('/conversations', [PortalController::class, 'conversations'])->name('conversations');
-        Route::get('/notifications', [PortalController::class, 'notifications'])->name('notifications');
+        Route::get('/notifications', [NotificationController::class, 'index'])->name('notifications');
+        Route::get('/notifications/unread-count', [NotificationController::class, 'getUnreadCount'])
+            ->name('notifications.unread-count');
+        Route::get('/notifications/unread', [NotificationController::class, 'unread'])
+            ->name('notifications.unread');
+        Route::post('/notifications/mark-all-read', [NotificationController::class, 'markAllAsRead'])
+            ->name('notifications.mark-all-read');
+        Route::get('/notifications/{id}', [NotificationController::class, 'show'])
+            ->name('notifications.show');
+        Route::patch('/notifications/{id}/read', [NotificationController::class, 'markAsRead'])
+            ->name('notifications.mark-as-read');
+        Route::patch('/notifications/{id}/unread', [NotificationController::class, 'markAsUnread'])
+            ->name('notifications.mark-as-unread');
+        Route::delete('/notifications/{id}', [NotificationController::class, 'destroy'])
+            ->name('notifications.destroy');
         Route::get('/permissions', [PortalController::class, 'permissions'])->name('permissions');
         Route::get('/profile', [PortalController::class, 'profile'])->name('profile');
         Route::get('/support', [PortalController::class, 'supportIndex'])->name('support.index');

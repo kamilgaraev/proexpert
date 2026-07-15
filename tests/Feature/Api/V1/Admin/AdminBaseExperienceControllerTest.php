@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Api\V1\Admin;
 
 use App\BusinessModules\Features\Notifications\Models\Notification;
+use App\BusinessModules\Features\Notifications\Models\NotificationTarget;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Models\Organization;
@@ -227,28 +228,30 @@ class AdminBaseExperienceControllerTest extends TestCase
 
         $readResponse->assertOk();
         $readResponse->assertJsonPath('success', true);
-        $this->assertNotNull($ownNotification->fresh()->read_at);
+        $this->assertNotNull($this->adminTarget($ownNotification)->fresh()->read_at);
+        $this->assertNull($ownNotification->fresh()->read_at);
 
         $unreadResponse = $this->withHeaders($context->authHeaders())
             ->patchJson("/api/v1/admin/notifications/{$ownNotification->id}/unread");
 
         $unreadResponse->assertOk();
         $unreadResponse->assertJsonPath('success', true);
-        $this->assertNull($ownNotification->fresh()->read_at);
+        $this->assertNull($this->adminTarget($ownNotification)->fresh()->read_at);
 
         $foreignReadResponse = $this->withHeaders($context->authHeaders())
             ->patchJson("/api/v1/admin/notifications/{$foreignNotification->id}/read");
 
         $foreignReadResponse->assertNotFound();
         $foreignReadResponse->assertJsonPath('success', false);
-        $this->assertNull($foreignNotification->fresh()->read_at);
+        $this->assertNull($this->adminTarget($foreignNotification)->fresh()->read_at);
 
         $deleteResponse = $this->withHeaders($context->authHeaders())
             ->deleteJson("/api/v1/admin/notifications/{$ownNotification->id}");
 
         $deleteResponse->assertOk();
         $deleteResponse->assertJsonPath('success', true);
-        $this->assertDatabaseMissing('notifications', ['id' => $ownNotification->id]);
+        $this->assertDatabaseHas('notifications', ['id' => $ownNotification->id]);
+        $this->assertNotNull($this->adminTarget($ownNotification)->fresh()->dismissed_at);
 
         $foreignDeleteResponse = $this->withHeaders($context->authHeaders())
             ->deleteJson("/api/v1/admin/notifications/{$foreignNotification->id}");
@@ -275,9 +278,9 @@ class AdminBaseExperienceControllerTest extends TestCase
         $response->assertJsonPath('success', true);
         $response->assertJsonPath('data.count', 2);
 
-        $this->assertNotNull($ownFirst->fresh()->read_at);
-        $this->assertNotNull($ownSecond->fresh()->read_at);
-        $this->assertNull($foreign->fresh()->read_at);
+        $this->assertNotNull($this->adminTarget($ownFirst)->fresh()->read_at);
+        $this->assertNotNull($this->adminTarget($ownSecond)->fresh()->read_at);
+        $this->assertNull($this->adminTarget($foreign)->fresh()->read_at);
     }
 
     public function test_dashboard_settings_are_saved_merged_reset_and_limited_to_user_organization(): void
@@ -376,7 +379,7 @@ class AdminBaseExperienceControllerTest extends TestCase
 
     private function createNotification(Organization $organization, User $user, array $attributes = []): Notification
     {
-        return Notification::query()->create(array_replace_recursive([
+        $notification = Notification::query()->create(array_replace_recursive([
             'type' => 'admin_notification',
             'notifiable_type' => User::class,
             'notifiable_id' => $user->id,
@@ -393,6 +396,18 @@ class AdminBaseExperienceControllerTest extends TestCase
             'metadata' => [],
             'read_at' => null,
         ], $attributes));
+
+        $notification->targets()->create([
+            'interface' => 'admin',
+            'read_at' => $attributes['read_at'] ?? null,
+        ]);
+
+        return $notification;
+    }
+
+    private function adminTarget(Notification $notification): NotificationTarget
+    {
+        return $notification->targets()->where('interface', 'admin')->firstOrFail();
     }
 
     private function dashboardPayload(): array
